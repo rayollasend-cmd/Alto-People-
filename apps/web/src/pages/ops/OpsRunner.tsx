@@ -51,12 +51,14 @@ import {
   getMySop,
   getOpsOpenOptions,
   getOpsShift,
+  getOpsShiftPreview,
   openOpsShift,
   opsPhotoUrl,
   patchOpsTask,
   uploadOpsTaskPhoto,
   type OpsHandoverKind,
   type OpsShiftDetail,
+  type OpsShiftPreview,
   type OpsTaskRow,
 } from '@/lib/opsApi';
 import {
@@ -398,6 +400,14 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   const options: Awaited<
     ReturnType<typeof getOpsOpenOptions>
   > | null = optionsQuery.data ?? null;
+  // Before the shift starts: what it will need — the last shift's notes,
+  // the checklists they lead, who is on (F500 G2: a lone Clock-in card).
+  const previewQuery = useQuery({
+    queryKey: ['ops', 'shift-preview', bounded, clientId],
+    queryFn: () => getOpsShiftPreview(bounded ? undefined : clientId),
+    enabled: !(!bounded && !clientId) && !!options && !options.resumeShift && !submitted,
+    staleTime: 60_000,
+  });
   const error = optionsQuery.error ? optionsQuery.error instanceof ApiError ? optionsQuery.error.message : tr('opsRun.loadTodayFailed') : null;
 
   const clientPicker = !bounded && clients.length > 1 && (
@@ -516,6 +526,10 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
           )}
         </div>
       </div>
+
+      {!options.resumeShift && !submitted && previewQuery.data && (
+        <ShiftPreview preview={previewQuery.data} />
+      )}
 
       {/* The SOP their window actually has assigned. Offered ahead of the
           by-position picker because that one infers the standard from the
@@ -682,6 +696,102 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+/** The shift ahead, before it starts: notes, checklists, crew. */
+export function ShiftPreview({ preview }: { preview: OpsShiftPreview }) {
+  const { t: tr } = useI18n();
+  const clock = (iso: string) => fmtTime(new Date(iso));
+  const CREW_SHOWN = 8;
+  return (
+    <div className="space-y-3" data-testid="ops-shift-preview">
+      {preview.myShift && (
+        <p className="text-sm text-silver">
+          {tr('opsRun.preview.yourShift', {
+            position: preview.myShift.position,
+            start: clock(preview.myShift.startsAt),
+            end: clock(preview.myShift.endsAt),
+            store: preview.myShift.store ? ` · ${preview.myShift.store}` : '',
+          })}
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <Card className="min-w-0">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-sm">{tr('opsRun.preview.handoverTitle')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {preview.handover.length === 0 ? (
+              <p className="text-xs text-silver/70">{tr('opsRun.preview.noHandover')}</p>
+            ) : (
+              <ul className="space-y-2">
+                {preview.handover.map((h) => (
+                  <li key={h.id} className="text-sm">
+                    <span className={cn('block text-ink', h.priority === 'HIGH' && 'text-warning')}>{h.body}</span>
+                    <span className="text-2xs text-silver/60">
+                      {h.department} · {clock(h.at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+        <Card className="min-w-0">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-sm">{tr('opsRun.preview.sopsTitle')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {preview.sops.length === 0 ? (
+              <p className="text-xs text-silver/70">{tr('opsRun.preview.noSops')}</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {preview.sops.map((sop) => (
+                  <li key={`${sop.templateId}-${sop.window}`} className="flex items-baseline justify-between gap-2 text-sm">
+                    <span className="min-w-0 text-ink">
+                      {sop.name}
+                      <span className="block text-2xs text-silver/60">
+                        {sop.window} · {sop.store}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-silver">
+                      {tr('opsRun.preview.items', { count: sop.items, n: sop.items })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+        <Card className="min-w-0">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-sm">{tr('opsRun.preview.crewTitle')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {preview.crew.length === 0 ? (
+              <p className="text-xs text-silver/70">{tr('opsRun.preview.noCrew')}</p>
+            ) : (
+              <ul className="space-y-1">
+                {preview.crew.slice(0, CREW_SHOWN).map((c) => (
+                  <li key={c.id} className="flex items-baseline justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate text-ink">{c.name}</span>
+                    <span className="shrink-0 text-2xs tabular-nums text-silver/70">
+                      {c.position} · {clock(c.startsAt)}
+                    </span>
+                  </li>
+                ))}
+                {preview.crew.length > CREW_SHOWN && (
+                  <li className="text-2xs text-silver/60">
+                    {tr('opsRun.preview.more', { n: preview.crew.length - CREW_SHOWN })}
+                  </li>
+                )}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

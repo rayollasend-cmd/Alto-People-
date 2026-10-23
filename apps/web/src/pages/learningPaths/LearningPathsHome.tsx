@@ -21,7 +21,7 @@ import {
   type PathEnrollment,
 } from '@/lib/learningPaths114Api';
 import { listCourses, type Course } from '@/lib/lms94Api';
-import { useAuth, useTerm } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge, statusLabel } from '@/lib/status';
@@ -38,7 +38,6 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
-  SearchInput,
   Select,
   SkeletonRows,
 } from '@/components/ui';
@@ -47,6 +46,7 @@ import { AssociatePicker, type PickedAssociate } from '@/components/ui/Associate
 import { Input, Textarea } from '@/components/ui/Input';
 import { fmtDate } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
+import { useUrlParam } from '@/lib/useUrlState';
 import { Label } from '@/components/ui/Label';
 
 /** Shared load-failure block: message + Retry. Never fake an empty state. */
@@ -70,13 +70,12 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
 // enrollments in LearningHome): ASSIGNED is a to-do awaiting the associate
 // (amber), IN_PROGRESS is actively worked (gold per the Badge contract).
 const PATH_ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } as const;
+const PATH_FILTERS = ['ALL', 'DRAFT', 'PUBLISHED', 'ARCHIVED'] as const;
 
 export function LearningPathsHome() {
-  const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<LearningPathStatus | 'ALL'>('ALL');
+  const [statusFilter, setStatusFilter] = useUrlParam<LearningPathStatus | 'ALL'>('status', 'ALL', PATH_FILTERS);
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LearningPathSummary | null>(null);
@@ -90,48 +89,16 @@ export function LearningPathsHome() {
   const error = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load learning paths.') : null;
   const refresh = () => void refreshQuery.refetch();
 
-  const q = search.trim().toLowerCase();
-  const filtered = (rows ?? []).filter(
-    (p) =>
-      (!q || p.title.toLowerCase().includes(q)) &&
-      (statusFilter === 'ALL' || p.status === statusFilter),
-  );
+  const filtered = (rows ?? []).filter((p) => statusFilter === 'ALL' || p.status === statusFilter);
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Learning paths"
         subtitle="Sequence courses into ordered tracks. People work through them in order."
-        breadcrumbs={[{ label: term('nav.people') }, { label: 'Learning paths' }]}
+        related={[{ label: 'Courses & enrollments', to: '/learning' }]}
+        actions={canManage ? [{ label: 'New path', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <SearchInput
-          className="h-8 w-64"
-          placeholder="Search paths…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search learning paths by name"
-        />
-        <Select
-          size="sm"
-          className="w-40"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as LearningPathStatus | 'ALL')}
-          aria-label="Filter learning paths by status"
-        >
-          <option value="ALL">All statuses</option>
-          <option value="DRAFT">Draft</option>
-          <option value="PUBLISHED">Published</option>
-          <option value="ARCHIVED">Archived</option>
-        </Select>
-        <div className="ml-auto">
-          {canManage && (
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> New path
-            </Button>
-          )}
-        </div>
-      </div>
       <Card>
         <CardContent className="p-0">
           {error ? (
@@ -139,10 +106,11 @@ export function LearningPathsHome() {
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
+            // No search or filter over an empty list: the empty state names the first step.
             <EmptyState
               icon={RouteIcon}
-              title="No learning paths"
-              description="Create one to bundle courses into a curriculum."
+              title="No learning paths yet"
+              description="Bundle courses into an ordered track — onboarding, a promotion, a certification — and enroll people in it."
               action={
                 canManage ? (
                   <Button onClick={() => setShowNew(true)}>
@@ -151,20 +119,31 @@ export function LearningPathsHome() {
                 ) : undefined
               }
             />
-          ) : filtered.length === 0 ? (
-            <EmptyState
-              icon={RouteIcon}
-              title="No matching paths"
-              description="Adjust the search or status filter."
-            />
           ) : (
             <DataGrid<NonNullable<typeof filtered>[number]>
               id="learning-paths"
               caption="Learning paths"
+              noun={{ one: 'path', many: 'paths' }}
               rows={filtered}
               rowKey={(lp) => lp.id}
-              search={false}
-              urlState={false}
+              search={{ placeholder: 'Search paths…' }}
+              urlKey="paths"
+              filters={
+                <Select
+                  size="sm"
+                  className="w-40"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as LearningPathStatus | 'ALL')}
+                  aria-label="Filter learning paths by status"
+                >
+                  <option value="ALL">All statuses</option>
+                  <option value="DRAFT">Draft</option>
+                  <option value="PUBLISHED">Published</option>
+                  <option value="ARCHIVED">Archived</option>
+                </Select>
+              }
+              activeFilters={statusFilter === 'ALL' ? 0 : 1}
+              onClearFilters={() => setStatusFilter('ALL')}
               exportCsv={{ filename: 'learning-paths' }}
               onRowClick={(lp) => setEditing(lp.id)}
               rowActionLabel={(lp) => `Open ${lp.title}`}

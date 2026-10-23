@@ -52,9 +52,49 @@ describe('Compliance evidence', () => {
     renderAsAdmin(<ComplianceEvidenceHome />, '/admin/compliance-evidence');
     expect(await screen.findByText(`1 of ${COMPLIANCE_CONTROLS.length}`)).toBeInTheDocument();
     expect(screen.getByText('Quarterly access review')).toBeInTheDocument();
-    expect(screen.getAllByText('Needs sign-off').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('No evidence').length).toBe(COMPLIANCE_CONTROLS.length - 2);
+    const table = screen.getByRole('table');
+    expect(within(table).getAllByText('Needs sign-off').length).toBe(1);
+    expect(within(table).getAllByText('No evidence').length).toBe(COMPLIANCE_CONTROLS.length - 2);
     expect(screen.getByText('All 4 per-job secrets are set.')).toBeInTheDocument();
+  });
+
+  it('opens on the status tiles (F500 G4): exact counts, and each tile filters the table', async () => {
+    const user = userEvent.setup();
+    renderAsAdmin(<ComplianceEvidenceHome />, '/admin/compliance-evidence');
+    const strip = await screen.findByRole('group', { name: 'Controls by status' });
+    const tile = (name: RegExp) => within(strip).getByRole('button', { name });
+    // The tiles count up; wait for the settled numbers.
+    await waitFor(() => {
+      expect(tile(/^Passing/)).toHaveTextContent(`1 of ${COMPLIANCE_CONTROLS.length}`);
+      expect(tile(/^Needs sign-off/)).toHaveTextContent(/^Needs sign-off1/);
+      expect(tile(/^Failing/)).toHaveTextContent(/^Failing0/);
+      expect(tile(/^No evidence/)).toHaveTextContent(new RegExp(`^No evidence${COMPLIANCE_CONTROLS.length - 2}`));
+    }, { timeout: 4000 });
+    await user.click(tile(/^Needs sign-off/));
+    expect(tile(/^Needs sign-off/)).toHaveAttribute('aria-pressed', 'true');
+    const table = screen.getByRole('table');
+    await waitFor(() => expect(within(table).getAllByRole('row').length).toBe(2)); // header + the access review
+    expect(within(table).getByText('Quarterly access review')).toBeInTheDocument();
+    // The setting comes after the status and the table.
+    const contact = screen.getByRole('heading', { name: 'Security contact' });
+    expect(strip.compareDocumentPosition(contact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(table.compareDocumentPosition(contact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('says what each control means in plain words, and what to do when it is not passing', async () => {
+    const user = userEvent.setup();
+    renderAsAdmin(<ComplianceEvidenceHome />, '/admin/compliance-evidence');
+    await screen.findByText('Quarterly access review');
+    // No rollout-plan language: a control with no evidence says so plainly.
+    expect(screen.queryByText(/Collected from step/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('Not collected yet').length).toBe(COMPLIANCE_CONTROLS.length - 2);
+    expect(screen.getByText('The app talks to its database over an encrypted connection.')).toBeInTheDocument();
+    const row = screen.getByRole('row', { name: 'Open TLS to the database' });
+    await user.click(within(row).getByRole('button', { name: /What to do/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Require SSL on the database connection/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Owner: HR Administrator/i)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/step \d of Brief/)).not.toBeInTheDocument();
   });
 
   it('opens a control and signs its latest evidence off with a note', async () => {

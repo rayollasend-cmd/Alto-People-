@@ -31,6 +31,8 @@ type Db = PrismaClient | Prisma.TransactionClient;
 export interface ContractDuty {
   key: string;
   label: string;
+  /** What is owed ("Workers' comp certificate of insurance"). */
+  deliverable: string;
   cadence: AttestationCadence;
   periodStart: string;
   dueDate: string;
@@ -87,6 +89,7 @@ export async function overdueContractDuties(db: Db, user: SessionUser, now: Date
     items.push({
       key: config.key,
       label: config.label,
+      deliverable: config.deliverable ?? config.label,
       cadence: config.cadence,
       periodStart: ymd(periodStart),
       dueDate: ymd(due),

@@ -24,8 +24,9 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeDocuments } from '../lib/scope.js';
+import { scopeActiveAssociates, scopeDocuments } from '../lib/scope.js';
 import {
+  enqueueAudit,
   recordCriticalAudit,
   recordDocumentEvent,
   recordOnboardingEvent,
@@ -497,6 +498,9 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
 
 /* ===== HR/Ops queue ===================================================== */
 
+/** A document that can still lapse: in review or verified (EXPIRED already has; REJECTED never counted). */
+const EXPIRING_STATUSES = ['UPLOADED', 'VERIFIED'] as const;
+
 /** Pages are cut server-side; 200 was the old hard cap and stays the ceiling. */
 const DOC_PAGE_MAX = 200;
 const DOC_PAGE_DEFAULT = 50;
@@ -535,10 +539,15 @@ documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
     const associateId = req.query.associateId?.toString();
     const q = req.query.q?.toString().trim();
     const status = parseStatuses(req.query.status?.toString());
+    // ?expiringWithin=30 — documents still good today whose expiry falls in
+    // the next N days (the vault's "Expiring in 30 days" tile).
+    const expiringDays = z.coerce.number().int().min(1).max(365).optional().parse(req.query.expiringWithin || undefined);
+    const now = new Date();
     const where: Prisma.DocumentRecordWhereInput = {
       ...scopeDocuments(req.user!),
       tenantId: tenantIdForWrite(),
-      ...(status ? { status } : {}),
+      ...(status ? { status } : expiringDays ? { status: { in: [...EXPIRING_STATUSES] } } : {}),
+      ...(expiringDays ? { expiresAt: { gte: now, lt: new Date(now.getTime() + expiringDays * 86_400_000) } } : {}),
       ...(kind ? { kind: kind as Prisma.DocumentRecordWhereInput['kind'] } : {}),
       ...(associateId ? { associateId } : {}),
       // Search belongs here too: filtering a page in the browser searches
@@ -595,7 +604,8 @@ documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
 documentsRouter.get('/admin/stats', MANAGE, async (req, res, next) => {
   try {
     const base = scopeDocuments(req.user!);
-    const [grouped, oldest] = await Promise.all([
+    const now = new Date();
+    const [grouped, oldest, expiring30] = await Promise.all([
       prisma.documentRecord.groupBy({
         by: ['status'],
         where: base,
@@ -606,6 +616,10 @@ documentsRouter.get('/admin/stats', MANAGE, async (req, res, next) => {
         orderBy: { createdAt: 'asc' },
         select: { createdAt: true },
       }),
+      // Still good today, lapsing within 30 days: the renewals to chase now.
+      prisma.documentRecord.count({
+        where: { ...base, status: { in: [...EXPIRING_STATUSES] }, expiresAt: { gte: now, lt: new Date(now.getTime() + 30 * 86_400_000) } },
+      }),
     ]);
     const by = (s: string) => grouped.find((g) => g.status === s)?._count._all ?? 0;
     res.json(
@@ -615,6 +629,7 @@ documentsRouter.get('/admin/stats', MANAGE, async (req, res, next) => {
         verified: by('VERIFIED'),
         rejected: by('REJECTED'),
         expired: by('EXPIRED'),
+        expiring30,
         oldestPendingAt: oldest?.createdAt.toISOString() ?? null,
       }),
     );
@@ -1311,6 +1326,54 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
     });
 
     res.json(toRecord(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /documents/admin/request — ask someone for a document they haven't
+ * uploaded (F500 2026-10-22: the vault had no way to ask). Sends the
+ * person a notice that links to their documents page with the kind
+ * preselected (/documents?kind=…), and records who asked. Nothing is stored
+ * on a document row: the upload, when it comes, is the record.
+ */
+const DocumentRequestSchema = z.object({
+  associateId: z.string().uuid(),
+  kind: DocumentKindSchema,
+  note: z.string().trim().max(500).optional().nullable(),
+});
+
+documentsRouter.post('/admin/request', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const input = DocumentRequestSchema.parse(req.body ?? {});
+    // Only someone in the caller's tenant and reach.
+    const associate = await prisma.associate.findFirst({
+      where: { AND: [{ id: input.associateId }, scopeActiveAssociates(user)] },
+      select: { id: true, firstName: true },
+    });
+    if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    const kindLabel = input.kind.replace(/_/g, ' ').toLowerCase();
+    enqueueAudit(
+      {
+        actorUserId: user.id,
+        action: 'document.requested',
+        entityType: 'Associate',
+        entityId: associate.id,
+        metadata: { kind: input.kind, note: input.note ?? null },
+      },
+      'documents.request',
+    );
+    void notifyAssociate(associate.id, {
+      subject: `[Action Required] Please upload your ${kindLabel}`,
+      body:
+        `${associate.firstName || 'Hi'}, HR asked you to upload your ${kindLabel}.` +
+        (input.note ? ` ${input.note}` : ''),
+      category: 'documents',
+      linkUrl: `/documents?kind=${input.kind}`,
+    });
+    res.status(202).json({ ok: true });
   } catch (err) {
     next(err);
   }

@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { LocalTaxRulesSection } from '@/components/payroll/LocalTaxRulesSection';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -18,7 +17,6 @@ import {
   type PayFrequency,
   type ReviewStatus,
 } from '@/lib/taxJurisdictionsApi';
-import { ListTemplate } from '@/components/templates';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -28,6 +26,8 @@ import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, Draw
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -57,11 +57,18 @@ const CONFIDENCE_LABEL: Record<JurisdictionRow['confidence'], string> = {
 };
 
 type Filter = 'attention' | 'in-use' | 'all';
+const FILTERS: readonly Filter[] = ['attention', 'in-use', 'all'];
 
-export function TaxJurisdictions() {
+/**
+ * Tax tables › Local. (It was its own page, /payroll/tax-jurisdictions, with
+ * the reciprocity table and the hand-set rules form underneath; those are
+ * tabs of their own now — F500 G3.)
+ */
+export function LocalTaxTables() {
   const term = useTerm();
+  const { can } = useAuth();
   const workers = term('workers').toLowerCase();
-  const [filter, setFilter] = useState<Filter>('attention');
+  const [filter, setFilter] = useUrlParam<Filter>('filter', 'attention', FILTERS);
   const [open, setOpen] = useState<JurisdictionRow | null>(null);
   const q = useQuery({ queryKey: ['payroll', 'tax-jurisdictions'], queryFn: getJurisdictions });
   const rows = useMemo(() => {
@@ -114,94 +121,85 @@ export function TaxJurisdictions() {
   const counts = q.data?.counts;
   const engine = q.data?.engine;
   return (
-    <ListTemplate
-      title="Tax jurisdictions"
-      subtitle="The local taxes payroll withholds where your people live and work — and the ones waiting on a review with your tax adviser."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Tax jurisdictions' }]}
-      summary={
-        counts ? (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <MetricCard label="In use" value={counts.inUse} hint={`jurisdictions your ${workers} owe`} />
-              <MetricCard label="Awaiting review" value={counts.awaitingInUse} hint="in use, not yet signed off" accent={counts.awaitingInUse > 0} />
-              <MetricCard
-                label="Blocked from payroll"
-                value={counts.blockedWorkers}
-                hint={counts.blockedWorkers ? `${workers} owing a jurisdiction not yet reviewed` : 'nobody is blocked'}
-                accent={counts.blockedWorkers > 0}
-              />
-              <MetricCard
-                label="Questions to answer"
-                value={counts.unresolvedWorkers}
-                hint={counts.unresolvedWorkers ? `${workers} whose home jurisdiction isn’t known` : 'every home jurisdiction is known'}
-                accent={counts.unresolvedWorkers > 0}
-              />
-            </div>
-            {engine && (
-              <p className="text-sm text-ink-muted">
-                {engine.key === 'IN_HOUSE' ? (
-                  <>Worked out by the built-in tax engine. </>
-                ) : (
-                  <>
-                    Worked out by {engine.label}
-                    {engine.environment === 'SANDBOX' ? ' (sandbox)' : ''}; if it doesn’t answer, the built-in engine steps in and the run says so.{' '}
-                  </>
-                )}
-                <Link to="/integrations" className="text-accent underline-offset-2 hover:underline">
-                  Tax engine settings
-                </Link>
-              </p>
-            )}
-          </div>
-        ) : (
-          <Skeleton className="h-24" />
-        )
-      }
-      filters={
-        <SegmentedControl
-          className="flex-wrap"
-          ariaLabel="Show"
-          value={filter}
-          onChange={setFilter}
-          options={[
-            { value: 'attention', label: 'Needs review' },
-            { value: 'in-use', label: 'In use' },
-            { value: 'all', label: 'Every jurisdiction' },
-          ]}
-        />
-      }
-    >
-      <div className="space-y-6">
-        {q.data && q.data.unresolved.length > 0 && <OpenQuestions items={q.data.unresolved} />}
-        <DataGrid
-          id="tax-jurisdictions"
-          caption="Local tax jurisdictions"
-          rows={q.data ? rows : undefined}
-          columns={columns}
-          rowKey={(r) => r.code}
-          loading={q.isLoading}
-          error={q.isError ? (q.error instanceof ApiError ? q.error.message : 'Could not load jurisdictions.') : null}
-          onRetry={() => void q.refetch()}
-          noun={{ one: 'jurisdiction', many: 'jurisdictions' }}
-          defaultSort={{ key: 'workers', direction: 'desc' }}
-          onRowClick={(r) => setOpen(r)}
-          rowActionLabel={(r) => `Open ${r.name}`}
-          empty={{
-            icon: MapPinHouse,
-            title: filter === 'attention' ? 'Nothing needs review' : 'No jurisdictions here',
-            description:
-              filter === 'attention'
-                ? `Every local tax your ${workers} owe has been reviewed.`
-                : filter === 'in-use'
-                  ? `None of your ${workers} live or work where a local tax applies.`
-                  : 'Switch to Every jurisdiction to see the whole list.',
-          }}
-        />
-        <Reciprocity />
-        <LocalTaxRulesSection />
-      </div>
+    <div className="space-y-[var(--d-stack)]">
+      {counts ? (
+        <MetricStrip label="Local taxes at a glance">
+          <MetricCard label="In use" value={counts.inUse} hint={`jurisdictions your ${workers} owe`} onClick={() => setFilter('in-use')} selected={filter === 'in-use'} />
+          <MetricCard label="Awaiting review" value={counts.awaitingInUse} hint="in use, not yet signed off" tone={counts.awaitingInUse > 0 ? 'warning' : 'default'} onClick={() => setFilter('attention')} selected={filter === 'attention'} />
+          <MetricCard
+            label="Blocked from payroll"
+            value={counts.blockedWorkers}
+            nothing={counts.blockedWorkers === 0 ? 'Nobody is blocked' : undefined}
+            hint={`${workers} owing a jurisdiction not yet reviewed`}
+            tone={counts.blockedWorkers > 0 ? 'alert' : 'default'}
+          />
+          <MetricCard
+            label="Questions to answer"
+            value={counts.unresolvedWorkers}
+            nothing={counts.unresolvedWorkers === 0 ? 'Every home jurisdiction is known' : undefined}
+            hint={`${workers} whose home jurisdiction isn’t known`}
+            tone={counts.unresolvedWorkers > 0 ? 'warning' : 'default'}
+          />
+        </MetricStrip>
+      ) : (
+        <Skeleton className="h-24" />
+      )}
+      {engine && (
+        <p className="text-sm text-ink-muted">
+          {engine.key === 'IN_HOUSE' ? (
+            <>Worked out by the built-in tax engine. </>
+          ) : (
+            <>
+              Worked out by {engine.label}
+              {engine.environment === 'SANDBOX' ? ' (sandbox)' : ''}; if it doesn’t answer, the built-in engine steps in and the run says so.{' '}
+            </>
+          )}
+          {/* Named for what it opens, and only for someone who can open it. */}
+          {can('view:integrations') && (
+            <Link to="/integrations" className="text-accent underline-offset-2 hover:underline">
+              Change the tax engine in Integrations
+            </Link>
+          )}
+        </p>
+      )}
+      <SegmentedControl
+        className="flex-wrap"
+        ariaLabel="Show"
+        value={filter}
+        onChange={setFilter}
+        options={[
+          { value: 'attention', label: 'Needs review' },
+          { value: 'in-use', label: 'In use' },
+          { value: 'all', label: 'Every jurisdiction' },
+        ]}
+      />
+      {q.data && q.data.unresolved.length > 0 && <OpenQuestions items={q.data.unresolved} />}
+      <DataGrid
+        id="tax-jurisdictions"
+        caption="Local tax jurisdictions"
+        rows={q.data ? rows : undefined}
+        columns={columns}
+        rowKey={(r) => r.code}
+        loading={q.isLoading}
+        error={q.isError ? (q.error instanceof ApiError ? q.error.message : 'Could not load jurisdictions.') : null}
+        onRetry={() => void q.refetch()}
+        noun={{ one: 'jurisdiction', many: 'jurisdictions' }}
+        defaultSort={{ key: 'workers', direction: 'desc' }}
+        onRowClick={(r) => setOpen(r)}
+        rowActionLabel={(r) => `Open ${r.name}`}
+        empty={{
+          icon: MapPinHouse,
+          title: filter === 'attention' ? 'Nothing needs review' : 'No jurisdictions here',
+          description:
+            filter === 'attention'
+              ? `Every local tax your ${workers} owe has been reviewed.`
+              : filter === 'in-use'
+                ? `None of your ${workers} live or work where a local tax applies.`
+                : 'Switch to Every jurisdiction to see the whole list.',
+        }}
+      />
       <JurisdictionDrawer row={open} onClose={() => setOpen(null)} />
-    </ListTemplate>
+    </div>
   );
 }
 
@@ -228,7 +226,8 @@ function OpenQuestions({ items }: { items: Array<{ associateId: string; name: st
   );
 }
 
-function Reciprocity() {
+/** Tax tables › Reciprocity: which states' residents pay only their home state's tax. */
+export function ReciprocityTable() {
   const q = useQuery({ queryKey: ['payroll', 'tax-reciprocity'], queryFn: getReciprocity });
   return (
     <Card>

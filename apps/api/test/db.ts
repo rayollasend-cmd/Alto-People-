@@ -248,6 +248,8 @@ const TABLES = [
   'BillingInvoice',
   // Brief 2-5 step 3: the keyring canary (platform-level, no keys to anything).
   'EncryptionCanary',
+  // F500 G5: status-page email subscribers (no key to anything).
+  'StatusSubscriber',
   'SecurityAlert',
   // Access pack: the tenant's sign-in posture, remembered devices,
   // certification campaigns and held notifications.

@@ -293,6 +293,28 @@ export function getOpsOpenOptions(clientId?: string): Promise<{
   );
 }
 
+/** What the supervisor's shift will need, before they clock in (F500 G2). */
+export interface OpsShiftPreview {
+  dateKey: string;
+  timezone: string;
+  myShift: { startsAt: string; endsAt: string; position: string; store: string | null } | null;
+  handover: {
+    id: string;
+    kind: string;
+    body: string;
+    priority: 'LOW' | 'MEDIUM' | 'HIGH' | string;
+    at: string;
+    department: string;
+    period: OpsPeriod;
+  }[];
+  sops: { templateId: string; name: string; department: string; window: string; store: string; items: number }[];
+  crew: { id: string; name: string | null; position: string; startsAt: string; endsAt: string }[];
+}
+
+export function getOpsShiftPreview(clientId?: string): Promise<OpsShiftPreview> {
+  return apiFetch(`/ops/shift-preview${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`);
+}
+
 export function openOpsShift(body: {
   clientId?: string;
   position: string;
@@ -531,6 +553,9 @@ export function getOpsBoard(
   /** Still ACTIVE 6h+ past their end — never submitted. Not live: an
    *  exception to close out or void. Absent on an older API. */
   neverClosed?: OpsShiftRow[];
+  /** When nothing is live: the next scheduled shift in the next 24h inside
+   *  the board's filter, or null when none is scheduled. Absent on an older API. */
+  nextShift?: { startsAt: string; position: string; store: string | null } | null;
 }> {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);

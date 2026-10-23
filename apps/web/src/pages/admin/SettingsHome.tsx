@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ChevronRight } from 'lucide-react';
+import { ArrowUpRight, ChevronRight } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -12,7 +12,11 @@ import { useSettingsRail, type SettingsRailEntry } from '@/pages/settings/settin
 interface HealthItem {
   key: string;
   tone: 'bad' | 'warn';
+  /** The card's badge ("1 failing"). */
   label: string;
+  /** The "Needs attention" row: what is wrong, in a sentence, and the one action that fixes it. */
+  message?: string;
+  action?: string;
 }
 
 /**
@@ -38,7 +42,13 @@ export function SettingsHome() {
   });
   const badge = new Map((health.data?.items ?? []).map((h) => [h.key, h]));
   const term = q.trim().toLowerCase();
-  const shown = term ? rail.filter((i) => `${i.label} ${i.description} ${i.section ?? ''}`.toLowerCase().includes(term)) : rail;
+  // Name, line, section and the words people use for what is on the page ("two-step", "MFA").
+  const shown = term ? rail.filter((i) => `${i.label} ${i.description} ${i.section ?? ''} ${i.keywords ?? ''}`.toLowerCase().includes(term)) : rail;
+  // What needs someone now, first — each with the page that fixes it (only pages this person may open).
+  const attention = (health.data?.items ?? []).flatMap((h) => {
+    const page = rail.find((r) => r.key === h.key);
+    return page ? [{ ...h, page }] : [];
+  });
   const sections: Array<[string, SettingsRailEntry[]]> = [];
   for (const item of shown) {
     const s = item.section ?? '';
@@ -53,8 +63,31 @@ export function SettingsHome() {
         title="Settings & trust"
         subtitle="How the organization is run — and the evidence that it is."
       />
+      {attention.length > 0 && !term && (
+        <section aria-labelledby="settings-attention" className="rounded-lg border border-warning/40 bg-warning/5 p-3.5">
+          <h2 id="settings-attention" className="mb-2 text-sm font-semibold text-ink">
+            Needs attention
+          </h2>
+          <ul className="divide-y divide-line" role="list">
+            {attention.map((h) => (
+              <li key={h.key} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="flex min-w-0 items-center gap-2 text-sm text-ink">
+                  <Badge variant={h.tone === 'bad' ? 'destructive' : 'pending'} size="sm">
+                    {h.page.label}
+                  </Badge>
+                  {h.message ?? h.label}
+                </span>
+                <Link to={h.page.to} className="text-sm font-medium text-accent underline-offset-2 hover:underline">
+                  {h.action ?? 'Open'}
+                  <span className="sr-only"> {h.page.label}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <div className="max-w-md">
-        <SearchInput aria-label="Find a setting" placeholder="Find a setting — “SSO”, “retention”, “logo”…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <SearchInput aria-label="Find a setting" placeholder="Find a setting: “two-step”, “retention”, “logo”…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {shown.length === 0 && <EmptyState title="No setting matches" description="Try another word, or clear the search." />}
       {sections.map(([name, items]) => (
@@ -87,7 +120,11 @@ export function SettingsHome() {
                       </span>
                       <span className="mt-0.5 block text-xs leading-relaxed text-ink-muted">{item.description}</span>
                     </span>
-                    <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-ink-muted/60 transition-colors group-hover:text-ink-muted" aria-hidden="true" />
+                    {item.leaves ? (
+                      <ArrowUpRight className="mt-1 h-4 w-4 shrink-0 text-ink-muted/60 transition-colors group-hover:text-ink-muted" aria-label="Opens outside Settings & trust" role="img" />
+                    ) : (
+                      <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-ink-muted/60 transition-colors group-hover:text-ink-muted" aria-hidden="true" />
+                    )}
                   </Link>
                 </li>
               );

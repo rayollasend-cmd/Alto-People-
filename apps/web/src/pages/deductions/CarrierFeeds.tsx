@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Download, FileText, Plus, Send } from 'lucide-react';
@@ -14,16 +13,20 @@ import {
   send834,
   updateCarrier,
   type Carrier,
+  type CarrierFeedHealth,
   type CarrierInput,
   type CarrierPlan,
   type Edi834File,
 } from '@/lib/deductionsApi';
 import { fmtDate } from '@/lib/format';
+import { useUrlParam } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
@@ -33,66 +36,101 @@ import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 
 /**
- * Carrier feeds: each insurance carrier's connection and the EDI 834
- * enrollment files sent to it. A full file lists everyone covered; a
- * change file lists only additions, ends and changes since the last one.
+ * Carrier feeds: each insurance carrier and the enrollment files (EDI 834)
+ * sent to it. A full file lists everyone covered; a change file lists only
+ * additions, ends and changes since the last one.
+ *
+ * The page leads with how each feed is doing — who is in it, what is
+ * waiting for the next file, the last file and whether it was delivered —
+ * and keeps the setup (IDs, the SFTP connection) in the carrier's edit
+ * dialog, read before edit.
  */
 
 const LINE_LABEL: Record<string, string> = { HLT: 'Medical', DEN: 'Dental', VIS: 'Vision', LIF: 'Life', LTD: 'Long-term disability', STD: 'Short-term disability', AG: 'Accidental death', ADD: 'AD&D' };
 
+/** Editing a carrier, or adding one; `connection` opens straight onto its delivery settings. */
+type Editing = { carrier: Carrier | null; connection?: boolean };
+
+/** "Delivery: SFTP, not connected" — how files reach the carrier, in one read. */
+export function deliveryWords(c: Pick<Carrier, 'transport' | 'connection'>): { text: string; needsSetup: boolean } {
+  if (c.transport === 'DOWNLOAD') return { text: 'Delivery: download and upload by hand', needsSetup: false };
+  const how = c.transport === 'SFTP' ? 'SFTP' : 'secure upload';
+  if (!c.connection.hasSecret) return { text: `Delivery: ${how}, not connected`, needsSetup: true };
+  const where = c.transport === 'SFTP' ? c.connection.host : c.connection.baseUrl;
+  return { text: `Delivery: ${how}${where ? ` to ${where}` : ''}`, needsSetup: false };
+}
+
+/** The last file's delivery, plainly: sent, failed (with why), or made and not sent. */
+export function deliveryResult(f: NonNullable<CarrierFeedHealth['lastFile']>): { label: string; tone: 'good' | 'alert' | 'warning' } {
+  if (f.status === 'SENT') return { label: 'Sent', tone: 'good' };
+  if (f.status === 'FAILED') return { label: 'Failed', tone: 'alert' };
+  return { label: 'Made, not sent', tone: 'warning' };
+}
+
 export function CarrierFeeds() {
-  const [params, setParams] = useSearchParams();
   const q = useQuery({ queryKey: ['carriers'], queryFn: listCarriers });
-  const [editing, setEditing] = useState<Carrier | 'new' | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [picked, setPicked] = useUrlParam<string>('carrier', '');
   const carriers = q.data?.carriers ?? [];
-  const selectedId = params.get('carrier') ?? carriers[0]?.id ?? null;
-  const carrier = carriers.find((c) => c.id === selectedId) ?? null;
+  const carrier = carriers.find((c) => c.id === picked) ?? carriers[0] ?? null;
   return (
     <ListTemplate
       title="Carrier feeds"
       subtitle="Enrollment files for each insurance carrier, made from benefit elections, covered dependents and life events."
-      breadcrumbs={[{ label: 'Benefits', to: '/benefits' }, { label: 'Carrier feeds' }]}
-      primaryAction={
-        <Button size="sm" onClick={() => setEditing('new')}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Add a carrier
-        </Button>
-      }
-      filters={
-        carriers.length > 1 ? (
-          <Select
-            size="sm"
-            aria-label="Carrier"
-            className="w-64 max-w-full"
-            value={selectedId ?? ''}
-            onChange={(e) => {
-              const next = new URLSearchParams(params);
-              next.set('carrier', e.target.value);
-              setParams(next, { replace: true });
-            }}
-          >
-            {carriers.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </Select>
-        ) : null
-      }
+      actions={[{ label: 'Add a carrier', icon: Plus, primary: carriers.length === 0, onSelect: () => setEditing({ carrier: null }) }]}
     >
       {q.isError ? (
         <QueryError what="carriers" query={q} />
       ) : q.isLoading ? (
         <SkeletonRows count={5} />
       ) : !carrier ? (
-        <EmptyState icon={Send} title="No carriers yet" description="Add each insurer you send enrollments to, with the IDs from its EDI setup form." action={<Button onClick={() => setEditing('new')}>Add a carrier</Button>} />
+        <EmptyState icon={Send} title="No carriers yet" description="Add each insurer you send enrollments to, with the IDs from its EDI setup form." action={<Button onClick={() => setEditing({ carrier: null })}>Add a carrier</Button>} />
       ) : (
-        <CarrierView carrier={carrier} allPlans={q.data?.plans ?? []} onEdit={() => setEditing(carrier)} />
+        <div className="space-y-4">
+          {carriers.length > 1 && <FeedsGrid carriers={carriers} selectedId={carrier.id} onPick={(id) => setPicked(id === carriers[0]?.id ? '' : id)} />}
+          <CarrierView carrier={carrier} allPlans={q.data?.plans ?? []} onEdit={(connection) => setEditing({ carrier, connection })} />
+        </div>
       )}
-      {editing && <CarrierDialog carrier={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      {editing && <CarrierDialog carrier={editing.carrier} focusConnection={!!editing.connection} onClose={() => setEditing(null)} />}
     </ListTemplate>
   );
 }
 
-function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans: CarrierPlan[]; onEdit: () => void }) {
+/** Every feed at once (two or more carriers): who's in it, what's waiting, the last file and its delivery. */
+function FeedsGrid({ carriers, selectedId, onPick }: { carriers: Carrier[]; selectedId: string; onPick: (id: string) => void }) {
+  return (
+    <DataGrid<Carrier>
+      id="carrier-feeds"
+      caption="Feeds"
+      rows={carriers}
+      rowKey={(c) => c.id}
+      noun={{ one: 'carrier', many: 'carriers' }}
+      search={false}
+      exportCsv={false}
+      onRowClick={(c) => onPick(c.id)}
+      rowActionLabel={(c) => `Open ${c.name}`}
+      columns={[
+        { key: 'name', header: 'Carrier', primary: true, sortable: true, accessor: (c) => c.name, cell: (c) => <span className={c.id === selectedId ? 'font-medium text-gold' : 'font-medium text-ink'}>{c.name}</span> },
+        { key: 'people', header: 'People', align: 'right', searchable: false, className: 'tabular-nums', accessor: (c) => c.health?.people ?? 0 },
+        { key: 'waiting', header: 'Changes waiting', align: 'right', searchable: false, className: 'tabular-nums', accessor: (c) => c.health?.changesWaiting ?? -1, cell: (c) => (c.health?.changesWaiting == null ? '—' : c.health.changesWaiting) },
+        { key: 'last', header: 'Last file', cardMeta: true, accessor: (c) => c.health?.lastFile?.createdAt ?? '', cell: (c) => (c.health?.lastFile ? `${fmtDate(c.health.lastFile.createdAt)} · ${c.health.lastFile.mode === 'FULL' ? 'full' : 'changes'}` : 'None yet') },
+        {
+          key: 'delivery',
+          header: 'Delivery',
+          accessor: (c) => c.health?.lastFile?.status ?? '',
+          cell: (c) => {
+            const f = c.health?.lastFile;
+            if (!f) return <span className="text-ink-muted">—</span>;
+            const r = deliveryResult(f);
+            return <Badge size="sm" variant={r.tone === 'good' ? 'success' : r.tone === 'alert' ? 'destructive' : 'pending'}>{r.label}</Badge>;
+          },
+        },
+      ]}
+    />
+  );
+}
+
+function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans: CarrierPlan[]; onEdit: (connection?: boolean) => void }) {
   const qc = useQueryClient();
   const files = useQuery({ queryKey: ['carriers', 'files', carrier.id], queryFn: () => list834(carrier.id) });
   const [linking, setLinking] = useState(false);
@@ -101,7 +139,7 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
     mutationFn: (mode: 'FULL' | 'CHANGE') => make834(carrier.id, mode),
     onSuccess: (r) => {
       setExcluded(r.excluded);
-      if (r.file) toast.success(`${r.file.mode === 'FULL' ? 'Full' : 'Change'} file made with ${r.file.memberCount} ${r.file.memberCount === 1 ? 'member' : 'members'}.`);
+      if (r.file) toast.success(`${r.file.mode === 'FULL' ? 'Full' : 'Change'} enrollment file made with ${r.file.memberCount} ${r.file.memberCount === 1 ? 'member' : 'members'}.`);
       else toast.success(r.message ?? 'Nothing to send.');
       void qc.invalidateQueries({ queryKey: ['carriers'] });
     },
@@ -118,6 +156,7 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
       void qc.invalidateQueries({ queryKey: ['carriers', 'files', carrier.id] });
     },
   });
+  const delivery = deliveryWords(carrier);
   return (
     <div className="space-y-4">
       <Card>
@@ -128,12 +167,22 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
               <Badge variant={carrier.usageIndicator === 'P' ? 'success' : 'pending'}>{carrier.usageIndicator === 'P' ? 'Production' : 'Testing'}</Badge>
             </CardTitle>
             <CardDescription>
-              {[carrier.policyNumber ? `Group ${carrier.policyNumber}` : null, `Receiver ${carrier.receiverId}`, carrier.transport === 'DOWNLOAD' ? 'Files download for upload by hand' : carrier.connection.hasSecret ? `Sent by ${carrier.transport}` : `${carrier.transport} not connected yet`].filter(Boolean).join(' · ')}
+              {carrier.policyNumber ? `Group ${carrier.policyNumber} · ` : ''}
+              {delivery.text}
+              {delivery.needsSetup && (
+                <>
+                  {' · '}
+                  <button type="button" className="text-gold underline-offset-2 hover:underline" onClick={() => onEdit(true)}>
+                    Set up
+                  </button>
+                </>
+              )}
             </CardDescription>
           </div>
-          <Button size="sm" variant="outline" onClick={onEdit}>Edit carrier</Button>
+          <Button size="sm" variant="outline" onClick={() => onEdit()}>Edit carrier</Button>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
+          <FeedHealthStrip health={carrier.health} />
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium text-ink">Plans in this feed</p>
             <Button size="sm" variant="ghost" onClick={() => setLinking(true)}>Choose plans</Button>
@@ -170,7 +219,7 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
       <Card>
         <CardHeader>
           <CardTitle>Send log</CardTitle>
-          <CardDescription>Every 834 made for this carrier, with its control number.</CardDescription>
+          <CardDescription>Every enrollment file made for this carrier, with its control number.</CardDescription>
         </CardHeader>
         <CardContent>
           {files.isError ? (
@@ -178,7 +227,7 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
           ) : (
             <DataGrid<Edi834File>
               id="carrier-files"
-              caption="834 files"
+              caption="Enrollment files"
               rows={files.data?.files}
               loading={files.isLoading}
               rowKey={(f) => f.id}
@@ -207,7 +256,7 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
                   accessor: () => '',
                   cell: (f) => (
                     <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="ghost" aria-label="Download the 834 file" onClick={() => void download834(f.id).catch((e: Error) => toast.error(e.message))}>
+                      <Button size="sm" variant="ghost" aria-label="Download the enrollment file" onClick={() => void download834(f.id).catch((e: Error) => toast.error(e.message))}>
                         <Download className="h-4 w-4" aria-hidden />
                       </Button>
                       {f.status !== 'SENT' && carrier.transport !== 'DOWNLOAD' && (
@@ -226,21 +275,99 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
         </CardContent>
       </Card>
 
-      {carrier.transport !== 'DOWNLOAD' && <CarrierConnection carrier={carrier} />}
       {linking && <LinkPlansDialog carrier={carrier} allPlans={allPlans} onClose={() => setLinking(false)} />}
     </div>
   );
 }
 
-function CarrierDialog({ carrier, onClose }: { carrier: Carrier | null; onClose: () => void }) {
+/**
+ * How the feed is doing, from the send log. There is no carrier schedule in
+ * the data, so no "due" date is invented; what's waiting is the real count
+ * of people whose enrollment changed since the last file.
+ */
+function FeedHealthStrip({ health }: { health: CarrierFeedHealth | undefined }) {
+  if (!health) return null;
+  const f = health.lastFile;
+  const result = f ? deliveryResult(f) : null;
+  return (
+    <div className="space-y-2">
+      <MetricStrip
+        label="Feed health"
+        // A feed with no one in it and no file yet has nothing to report: no
+        // row of four empty tiles (the plans section below says what to do).
+        empty={health.people === 0 && !f}
+      >
+        <MetricCard label="People in the feed" value={health.people} tone="neutral" hint="Everyone a full file would carry" nothing={health.people === 0 ? 'No one enrolled in these plans' : undefined} />
+        <MetricCard
+          label="Waiting for the next file"
+          value={health.changesWaiting ?? 0}
+          tone={health.changesWaiting ? 'warning' : 'default'}
+          hint={health.changesWaiting ? `${health.changesWaiting === 1 ? 'person' : 'people'} changed since the last file` : undefined}
+          nothing={health.changesWaiting === null ? 'First file: make a full one' : health.changesWaiting === 0 ? 'Nothing changed since the last file' : undefined}
+        />
+        <MetricCard
+          label="Last file"
+          value={f ? fmtDate(f.createdAt) : '—'}
+          tone="neutral"
+          hint={f ? `${f.mode === 'FULL' ? 'Full' : 'Changes'} · control ${f.controlNumber} · ${f.memberCount} ${f.memberCount === 1 ? 'member' : 'members'}` : undefined}
+          nothing={f ? undefined : 'No file made yet'}
+        />
+        <MetricCard
+          label="Delivery"
+          value={result?.label ?? '—'}
+          tone={result?.tone}
+          hint={f?.status === 'SENT' && f.sentAt ? `Sent ${fmtDate(f.sentAt)}` : f?.error ?? undefined}
+          nothing={f ? undefined : 'Nothing sent yet'}
+        />
+      </MetricStrip>
+      {f && <p className="text-xs text-ink-muted">
+        A carrier’s acknowledgment (999 or TA1) isn’t received here, so delivery is as far as this goes — the carrier’s portal shows whether it accepted a file.
+      </p>}
+    </div>
+  );
+}
+
+function CarrierDialog({ carrier, focusConnection, onClose }: { carrier: Carrier | null; focusConnection: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const [f, setF] = useState<CarrierInput>(
     carrier
       ? { name: carrier.name, receiverId: carrier.receiverId, receiverQualifier: carrier.receiverQualifier, senderId: carrier.senderId, senderQualifier: carrier.senderQualifier, sponsorTaxId: carrier.sponsorTaxId, policyNumber: carrier.policyNumber, usageIndicator: carrier.usageIndicator, transport: carrier.transport, active: carrier.active }
       : { name: '', receiverId: '', receiverQualifier: 'ZZ', senderId: '', senderQualifier: 'ZZ', sponsorTaxId: null, policyNumber: null, usageIndicator: 'T', transport: 'DOWNLOAD' },
   );
+  // The delivery settings live here now, read before edit — not as an always-open form under the log.
+  const [conn, setConn] = useState({
+    baseUrl: carrier?.connection.baseUrl ?? '',
+    apiKey: '',
+    host: carrier?.connection.host ?? '',
+    port: '22',
+    username: carrier?.connection.username ?? '',
+    password: '',
+    privateKey: '',
+    remoteDir: carrier?.connection.remoteDir ?? '',
+  });
+  const hasSecret = carrier?.connection.hasSecret ?? false;
+  const connTouched =
+    conn.apiKey !== '' ||
+    conn.password !== '' ||
+    conn.privateKey !== '' ||
+    conn.baseUrl !== (carrier?.connection.baseUrl ?? '') ||
+    conn.host !== (carrier?.connection.host ?? '') ||
+    conn.username !== (carrier?.connection.username ?? '') ||
+    conn.remoteDir !== (carrier?.connection.remoteDir ?? '') ||
+    conn.port !== '22';
   const m = useMutation({
-    mutationFn: () => (carrier ? updateCarrier(carrier.id, f) : createCarrier(f)),
+    mutationFn: async () => {
+      const saved = carrier ? await updateCarrier(carrier.id, f) : await createCarrier(f);
+      if (f.transport !== 'DOWNLOAD' && connTouched) {
+        await saveCarrierConnection(
+          saved.carrier.id,
+          f.transport === 'SFTP'
+            ? { host: conn.host || undefined, port: Number(conn.port) || 22, username: conn.username || undefined, password: conn.password || undefined, privateKey: conn.privateKey || undefined, remoteDir: conn.remoteDir || undefined }
+            : { baseUrl: conn.baseUrl || undefined, apiKey: conn.apiKey || undefined },
+        );
+      }
+      return saved;
+    },
     onSuccess: () => {
       toast.success(carrier ? 'Carrier saved.' : 'Carrier added. Choose the plans it insures next.');
       void qc.invalidateQueries({ queryKey: ['carriers'] });
@@ -256,6 +383,7 @@ function CarrierDialog({ carrier, onClose }: { carrier: Carrier | null; onClose:
           <DialogTitle>{carrier ? `Edit ${carrier.name}` : 'Add a carrier'}</DialogTitle>
           <DialogDescription>The IDs come from the carrier’s EDI enrollment setup form or companion guide.</DialogDescription>
         </DialogHeader>
+        <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Carrier name" required className="sm:col-span-2">{(p) => <Input {...p} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />}</Field>
           <Field label="Carrier’s receiver ID" required hint="ISA08">{(p) => <Input {...p} value={f.receiverId} maxLength={15} onChange={(e) => setF({ ...f, receiverId: e.target.value })} />}</Field>
@@ -281,6 +409,32 @@ function CarrierDialog({ carrier, onClose }: { carrier: Carrier | null; onClose:
               </Select>
             )}
           </Field>
+        </div>
+        {f.transport !== 'DOWNLOAD' && (
+          <section aria-labelledby="carrier-delivery" className="space-y-3 rounded-lg border border-line p-3">
+            <div>
+              <h3 id="carrier-delivery" className="text-sm font-medium text-ink">
+                {f.transport === 'SFTP' ? 'SFTP connection' : 'Secure upload'}
+              </h3>
+              <p className="text-xs text-ink-muted">{hasSecret ? 'Connected. Leave a secret blank to keep the one saved; secrets are stored encrypted.' : 'Fill this in to send files from here. Secrets are stored encrypted.'}</p>
+            </div>
+            {f.transport === 'SFTP' ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="SFTP host">{(p) => <Input {...p} autoFocus={focusConnection} value={conn.host} onChange={(e) => setConn({ ...conn, host: e.target.value })} />}</Field>
+                <Field label="Port">{(p) => <Input {...p} type="number" value={conn.port} onChange={(e) => setConn({ ...conn, port: e.target.value })} />}</Field>
+                <Field label="User name">{(p) => <Input {...p} autoComplete="off" value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} />}</Field>
+                <Field label="Password">{(p) => <Input {...p} type="password" autoComplete="new-password" value={conn.password} placeholder={hasSecret ? 'Saved' : ''} onChange={(e) => setConn({ ...conn, password: e.target.value })} />}</Field>
+                <Field label="Folder">{(p) => <Input {...p} value={conn.remoteDir} placeholder="/inbound" onChange={(e) => setConn({ ...conn, remoteDir: e.target.value })} />}</Field>
+                <Field label="Private key, instead of a password" className="sm:col-span-2">{(p) => <Textarea {...p} rows={3} value={conn.privateKey} placeholder={hasSecret ? 'Saved' : ''} onChange={(e) => setConn({ ...conn, privateKey: e.target.value })} />}</Field>
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Upload address" hint="Starts with https://">{(p) => <Input {...p} autoFocus={focusConnection} value={conn.baseUrl} onChange={(e) => setConn({ ...conn, baseUrl: e.target.value })} />}</Field>
+                <Field label="API key">{(p) => <Input {...p} type="password" autoComplete="new-password" value={conn.apiKey} placeholder={hasSecret ? 'Saved' : ''} onChange={(e) => setConn({ ...conn, apiKey: e.target.value })} />}</Field>
+              </div>
+            )}
+          </section>
+        )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -347,54 +501,5 @@ function LinkPlansDialog({ carrier, allPlans, onClose }: { carrier: Carrier; all
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function CarrierConnection({ carrier }: { carrier: Carrier }) {
-  const qc = useQueryClient();
-  const sftp = carrier.transport === 'SFTP';
-  const [f, setF] = useState({ baseUrl: carrier.connection.baseUrl ?? '', apiKey: '', host: carrier.connection.host ?? '', port: '22', username: carrier.connection.username ?? '', password: '', privateKey: '', remoteDir: carrier.connection.remoteDir ?? '' });
-  const m = useMutation({
-    mutationFn: () =>
-      saveCarrierConnection(
-        carrier.id,
-        sftp
-          ? { host: f.host || undefined, port: Number(f.port) || 22, username: f.username || undefined, password: f.password || undefined, privateKey: f.privateKey || undefined, remoteDir: f.remoteDir || undefined }
-          : { baseUrl: f.baseUrl || undefined, apiKey: f.apiKey || undefined },
-      ),
-    onSuccess: () => {
-      toast.success('Connection saved. Secrets are stored encrypted.');
-      setF((p) => ({ ...p, apiKey: '', password: '', privateKey: '' }));
-      void qc.invalidateQueries({ queryKey: ['carriers'] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Connection</CardTitle>
-        <CardDescription>{carrier.connection.hasSecret ? 'Connected. Leave a secret blank to keep the one saved.' : 'Fill this in to send files from here.'}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {sftp ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="SFTP host">{(p) => <Input {...p} value={f.host} onChange={(e) => setF({ ...f, host: e.target.value })} />}</Field>
-            <Field label="Port">{(p) => <Input {...p} type="number" value={f.port} onChange={(e) => setF({ ...f, port: e.target.value })} />}</Field>
-            <Field label="User name">{(p) => <Input {...p} autoComplete="off" value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} />}</Field>
-            <Field label="Password">{(p) => <Input {...p} type="password" autoComplete="new-password" value={f.password} placeholder={carrier.connection.hasSecret ? 'Saved' : ''} onChange={(e) => setF({ ...f, password: e.target.value })} />}</Field>
-            <Field label="Folder">{(p) => <Input {...p} value={f.remoteDir} placeholder="/inbound/834" onChange={(e) => setF({ ...f, remoteDir: e.target.value })} />}</Field>
-            <Field label="Private key, instead of a password" className="sm:col-span-2">{(p) => <Textarea {...p} rows={3} value={f.privateKey} placeholder={carrier.connection.hasSecret ? 'Saved' : ''} onChange={(e) => setF({ ...f, privateKey: e.target.value })} />}</Field>
-          </div>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Upload address" hint="Starts with https://">{(p) => <Input {...p} value={f.baseUrl} onChange={(e) => setF({ ...f, baseUrl: e.target.value })} />}</Field>
-            <Field label="API key">{(p) => <Input {...p} type="password" autoComplete="new-password" value={f.apiKey} placeholder={carrier.connection.hasSecret ? 'Saved' : ''} onChange={(e) => setF({ ...f, apiKey: e.target.value })} />}</Field>
-          </div>
-        )}
-        <div className="flex justify-end">
-          <Button variant="outline" onClick={() => m.mutate()} loading={m.isPending}>Save connection</Button>
-        </div>
-      </CardContent>
-    </Card>
   );
 }

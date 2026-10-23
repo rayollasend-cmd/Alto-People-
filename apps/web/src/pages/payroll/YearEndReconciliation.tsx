@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, ChevronRight, FileSpreadsheet, Info, Users } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronRight, Info, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDateTime, fmtMoney } from '@/lib/format';
@@ -14,14 +14,13 @@ import {
   type ReconRow,
   type ReconSection,
 } from '@/lib/yearEndApi';
-import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { Select } from '@/components/ui/Select';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 
@@ -39,63 +38,44 @@ const SEVERITY: Record<ChecklistItem['severity'], { label: string; tone: 'destru
   INFO: { label: 'Note', tone: 'info', Icon: Info },
 };
 
-export function YearEndReconciliation() {
-  const lastYear = new Date().getUTCFullYear() - 1;
-  const thisYear = lastYear + 1;
-  const [year, setYear] = useState(lastYear);
+/** Download the year's reconciliation workbook (the Year-end page's header action on this tab). */
+export async function downloadReconWorkbook(year: number): Promise<void> {
+  try {
+    await downloadYearEndWorkbook(year);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : 'Could not download the workbook.');
+  }
+}
+
+/**
+ * The Year-end page's Reconcile tab. (It was its own page,
+ * /payroll/year-end/reconciliation — F500 G3: one home for year-end.)
+ */
+export function YearEndReconcile({ year }: { year: number }) {
   const [drill, setDrill] = useState<{ metric: PersonMetric; label: string } | null>(null);
-  const [downloading, setDownloading] = useState(false);
   const q = useQuery({ queryKey: ['payroll', 'year-end-recon', year], queryFn: () => getYearEndReconciliation(year) });
   const d = q.data;
-
-  const download = async () => {
-    setDownloading(true);
-    try {
-      await downloadYearEndWorkbook(year);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not download the workbook.');
-    } finally {
-      setDownloading(false);
-    }
-  };
+  // The 941 quarters with no return on file are already a "Before you file" item; only the
+  // yearly 940 (no checklist item of its own) gets this note.
+  const generatedYearly = (d?.generatedQuarters ?? []).filter((g) => !g.includes('-Q'));
+  const nothingPaid = !!d && d.people === 0 && d.summary.variances === 0;
 
   return (
-    <ListTemplate
-      title="Year-end reconciliation"
-      subtitle="Paychecks, Forms 941, deposits and W-2s side by side, for every tax and every jurisdiction, before anything is filed."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Year-end close', to: '/payroll/year-end-close' }, { label: 'Reconciliation' }]}
-      primaryAction={
-        <Select value={String(year)} onChange={(e) => setYear(Number(e.target.value))} aria-label="Tax year" className="w-28">
-          {[thisYear, lastYear, lastYear - 1, lastYear - 2].map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
+    <div className="space-y-[var(--d-stack)]">
+      {d && !nothingPaid ? (
+        <MetricStrip label={`${year} reconciliation`}>
+          <MetricCard label="People paid" value={String(d.people)} hint={`${d.w2Count} W-2${d.w2Count === 1 ? '' : 's'} · ${d.storedW2s} generated`} />
+          <MetricCard label="Figures compared" value={String(d.summary.rows)} hint={`Prepared ${fmtDateTime(d.generatedAt)}`} />
+          <MetricCard label="Variances" value={String(d.summary.variances)} tone={d.summary.variances > 0 ? 'warning' : 'default'} hint={d.summary.variances ? 'Over $1 apart' : 'Everything agrees to the dollar'} />
+          <MetricCard label="Blocking items" value={String(d.summary.blocking)} tone={d.summary.blocking > 0 ? 'alert' : 'default'} hint={`${d.summary.warnings} to check`} />
+        </MetricStrip>
+      ) : q.isLoading ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <Skeleton key={i} className="h-28" />
           ))}
-        </Select>
-      }
-      secondaryActions={
-        <Button variant="secondary" onClick={() => void download()} loading={downloading} disabled={downloading || !d}>
-          <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
-          Excel
-        </Button>
-      }
-      summary={
-        d ? (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <MetricCard label="People paid" value={String(d.people)} hint={`${d.w2Count} W-2${d.w2Count === 1 ? '' : 's'} · ${d.storedW2s} generated`} />
-            <MetricCard label="Figures compared" value={String(d.summary.rows)} hint={`Prepared ${fmtDateTime(d.generatedAt)}`} />
-            <MetricCard label="Variances" value={String(d.summary.variances)} accent={d.summary.variances > 0} hint={d.summary.variances ? 'Over $1 apart' : 'Everything agrees to the dollar'} />
-            <MetricCard label="Blocking items" value={String(d.summary.blocking)} accent={d.summary.blocking > 0} hint={`${d.summary.warnings} to check`} />
-          </div>
-        ) : q.isLoading ? (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {Array.from({ length: 4 }, (_, i) => (
-              <Skeleton key={i} className="h-28" />
-            ))}
-          </div>
-        ) : null
-      }
-    >
+        </div>
+      ) : null}
       {q.isError ? (
         <EmptyState
           title="We couldn’t reconcile this year"
@@ -108,14 +88,15 @@ export function YearEndReconciliation() {
         />
       ) : !d ? (
         <Skeleton className="h-96" />
-      ) : d.people === 0 && d.sections.length === 0 ? (
+      ) : nothingPaid ? (
+        // Nothing was paid: not a page of $0 tables each marked "Agrees".
         <EmptyState title={`No pay in ${year}`} description="Nothing was paid this year, so there is nothing to reconcile." />
       ) : (
         <>
-          {d.generatedQuarters.length > 0 && (
+          {generatedYearly.length > 0 && (
             <p className="flex items-start gap-2 rounded-lg border border-line bg-surface-raised p-3 text-sm text-ink-muted">
               <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              No return on file for {d.generatedQuarters.join(', ')}: those figures are generated from paychecks for this view.
+              No Form 940 on file for {generatedYearly.join(', ')}: its figures are generated from paychecks for this view.
             </p>
           )}
           <Checklist items={d.checklist} />
@@ -125,7 +106,7 @@ export function YearEndReconciliation() {
         </>
       )}
       <PeopleDrawer year={year} drill={drill} onClose={() => setDrill(null)} />
-    </ListTemplate>
+    </div>
   );
 }
 

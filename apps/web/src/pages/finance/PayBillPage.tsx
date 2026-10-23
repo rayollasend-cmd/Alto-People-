@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtMoney, fmtStatementNo } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtMoney, fmtMoneyCompact, fmtStatementNo } from '@/lib/format';
+import { useStoreScope } from '@/lib/storeScope';
+import { useUrlParam } from '@/lib/useUrlState';
 import { cn } from '@/lib/cn';
 import { decideApprovalRequest } from '@/lib/approvalRequestsApi';
 import {
@@ -29,7 +30,10 @@ import {
   type BilledNotPaidRow,
 } from '@/lib/payBillApi';
 import { ListTemplate } from '@/components/templates';
-import { CHART, ChartFrame } from '@/components/ui/ChartFrame';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { PALETTE, StackedBarChart } from '@/components/ui/charts';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { QueryError } from '@/components/ui/QueryError';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { AssociateLink, Badge, Button, Card, CardContent, EmptyState, Field, Input, MetricCard, SegmentedControl, Select, Skeleton } from '@/components/ui';
@@ -57,28 +61,21 @@ const TABS: Array<{ value: Tab; label: string }> = [
 
 const GAP_REASONS = new Set(['NO_STATEMENT', 'AWAITING_REVIEW', 'NO_RATE']);
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
-const statementLabel = (n: number | null) => (n != null ? `#${String(n).padStart(4, '0')}` : 'draft');
+/** One statement number format everywhere (lib/format): "No. 0004", or "Draft". */
+const statementLabel = (n: number | null) => fmtStatementNo(n);
+/** A statement opens in the statements list, where it is read, marked paid or voided. */
+const statementHref = (id: string) => `/clients/statements?statement=${id}`;
+const TAB_KEYS = TABS.map((t) => t.value);
 
 export function PayBillPage() {
-  const [params, setParams] = useSearchParams();
-  const tab = (TABS.some((t) => t.value === params.get('tab')) ? params.get('tab') : 'reconciliation') as Tab;
-  const setTab = (v: Tab) => {
-    const next = new URLSearchParams(params);
-    next.set('tab', v);
-    setParams(next, { replace: true });
-  };
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'reconciliation', TAB_KEYS, { history: 'push' });
 
   return (
     <ListTemplate
       title="Pay and bill"
       topbarTitle="Pay and bill"
       subtitle="Every paycheck against the bill it should reach: margin per check, billable pay on no statement, and premiums and retro pay rebilled by contract."
-      breadcrumbs={[{ label: 'Pay & finance', to: '/' }, { label: 'Pay and bill' }]}
-      filters={
-        <div className="overflow-x-auto">
-          <SegmentedControl ariaLabel="Section" value={tab} onChange={setTab} options={TABS} />
-        </div>
-      }
+      filters={<SegmentedControl ariaLabel="Section" value={tab} onChange={setTab} options={TABS} />}
     >
       {tab === 'reconciliation' && <PeriodScoped render={(p) => <Reconciliation {...p} />} />}
       {tab === 'margin' && <PeriodScoped render={(p) => <Margin {...p} />} />}
@@ -91,23 +88,32 @@ export function PayBillPage() {
 
 /* ----- Period picker -------------------------------------------------------- */
 
+/**
+ * The pay period is in the URL (?period=2026-09-05:2026-09-18), so a link
+ * to one period's reconciliation is that period. With none, the newest
+ * finalized payroll — and the picker says so.
+ */
 function PeriodScoped({ render }: { render: (p: { periodStart: string; periodEnd: string }) => React.ReactNode }) {
   const q = useQuery({ queryKey: ['pay-bill', 'periods'], queryFn: getPayPeriods });
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useUrlParam<string>('period', '');
   const periods = q.data?.periods ?? [];
-  const value = picked ?? (periods[0] ? `${periods[0].periodStart}:${periods[0].periodEnd}` : null);
+  const latest = periods[0] ? `${periods[0].periodStart}:${periods[0].periodEnd}` : null;
+  const valid = /^\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2}$/.test(picked) ? picked : '';
+  const value = valid || latest;
   if (q.isLoading) return <Skeleton className="h-40" />;
   if (q.isError) return <QueryError what="pay periods" query={q} />;
   if (!value) return <EmptyState title="No finalized payroll yet" description="Once a payroll is finalized, its paychecks are reconciled against client bills here." />;
-  const [periodStart, periodEnd] = value.split(':');
+  const [periodStart, periodEnd] = value.split(':') as [string, string];
+  // A linked period that has no finalized run any more still shows as itself.
+  const options = periods.some((p) => `${p.periodStart}:${p.periodEnd}` === value) ? periods : [{ periodStart, periodEnd, runs: 0 }, ...periods];
   return (
     <div className="space-y-4">
-      <div className="max-w-xs">
-        <Field label="Pay period">
-          <Select value={value} onChange={(e) => setPicked(e.target.value)}>
-            {periods.map((p) => (
+      <div className="max-w-sm">
+        <Field label="Pay period" hint={value === latest ? 'The newest finalized payroll.' : undefined}>
+          <Select value={value} onChange={(e) => setPicked(e.target.value === latest ? '' : e.target.value)}>
+            {options.map((p) => (
               <option key={`${p.periodStart}:${p.periodEnd}`} value={`${p.periodStart}:${p.periodEnd}`}>
-                {fmtDate(p.periodStart)} – {fmtDate(p.periodEnd)}
+                {fmtDateOnlyRange(p.periodStart, p.periodEnd)}
               </option>
             ))}
           </Select>
@@ -136,7 +142,19 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
     { key: 'client', header: 'Client', accessor: (r) => r.clientName, cardMeta: true },
     { key: 'week', header: 'Week of', accessor: (r) => r.weekStart, cell: (r) => fmtDate(r.weekStart), sortable: true },
     { key: 'hours', header: 'Hours billed', accessor: (r) => r.hours, cell: (r) => `${r.hours.toFixed(2)}h`, align: 'right', sortable: true, className: 'tabular-nums text-alert' },
-    { key: 'statement', header: 'Statement', accessor: (r) => r.statementNumber ?? 0, cell: (r) => (r.statementNumber != null ? fmtStatementNo(r.statementNumber) : 'Final'), cardMeta: true },
+    {
+      key: 'statement',
+      header: 'Statement',
+      accessor: (r) => r.statementNumber ?? 0,
+      csv: (r) => statementLabel(r.statementNumber),
+      cell: (r) => (
+        <Link to={statementHref(r.statementId)} className="text-accent underline-offset-2 hover:underline">
+          {statementLabel(r.statementNumber)}
+        </Link>
+      ),
+      cardMeta: true,
+      stopRowClick: true,
+    },
   ];
   const unbilledCols: GridColumn<UnbilledRow>[] = [
     { key: 'worker', header: 'Worker', accessor: (r) => r.associateName, cell: (r) => <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>, primary: true },
@@ -159,17 +177,64 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
     },
   ];
 
+  // Billing here is counted against paychecks. Hours a final statement
+  // billed with no paycheck sit outside that count — say so above it, by
+  // statement, instead of "Billed $0.00" beside "136.00h billed, not paid".
+  const billedNoPay = d.billedNotPaid ?? [];
+  const byStatement = [...billedNoPay.reduce((m, r) => {
+    const cur = m.get(r.statementId) ?? { id: r.statementId, number: r.statementNumber, hours: 0 };
+    cur.hours = Math.round((cur.hours + r.hours) * 100) / 100;
+    return m.set(r.statementId, cur);
+  }, new Map<string, { id: string; number: number | null; hours: number }>()).values()];
+  const noChecks = nothingPaid ? 'No paychecks in this period' : undefined;
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Billed" value={fmtMoney(d.totals.billed)} hint={d.totals.pending ? `${fmtMoney(d.totals.pending)} more on drafts and queued` : 'Nothing waiting on a draft'} />
-        <MetricCard label="Employer cost" value={fmtMoney(d.totals.cost)} hint={`${fmtMoney(d.totals.wages)} of it wages`} />
-        <MetricCard label="Margin" value={fmtMoney(d.totals.margin)} hint={d.totals.marginPct != null ? `${d.totals.marginPct.toFixed(1)}% of what's billed and pending` : 'Nothing billed yet'} />
-        <MetricCard label="Billable pay on no statement" value={<span className={cn(d.totals.gapPay > 0 && 'text-alert')}>{fmtMoney(d.totals.gapPay)}</span>} hint={d.totals.gapPay > 0 ? 'Gaps to close — listed below' : 'No gaps this period'} />
-      </div>
+      {byStatement.length > 0 && (
+        <div role="status" className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-ink">
+          <p className="font-medium">
+            {(d.billedNotPaidHours ?? 0).toFixed(2)} hours billed on{' '}
+            {byStatement.map((st, i) => (
+              <span key={st.id}>
+                {i > 0 && (i === byStatement.length - 1 ? ' and ' : ', ')}
+                <Link to={statementHref(st.id)} className="text-accent underline-offset-2 hover:underline">
+                  {statementLabel(st.number)}
+                </Link>
+              </span>
+            ))}{' '}
+            with no paycheck.
+          </p>
+          <p className="mt-0.5 text-ink-muted">
+            The client was charged for work nobody was paid for, so it isn’t in the billed and margin numbers below — they count what was billed against paychecks.{' '}
+            <a href="#billed-not-paid" className="text-accent underline-offset-2 hover:underline">
+              See who
+            </a>
+          </p>
+        </div>
+      )}
+
+      <MetricStrip label="This period at a glance">
+        <MetricCard label="Billed against paychecks" value={fmtMoney(d.totals.billed)} hint={d.totals.pending ? `${fmtMoney(d.totals.pending)} more on drafts and queued` : 'Nothing waiting on a draft'} nothing={noChecks} />
+        <MetricCard label="Employer cost" value={fmtMoney(d.totals.cost)} hint={`${fmtMoney(d.totals.wages)} of it wages`} tone="neutral" nothing={noChecks} />
+        <MetricCard
+          label="Margin on paychecks"
+          value={fmtMoney(d.totals.margin)}
+          tone={d.totals.margin < 0 ? 'alert' : 'default'}
+          hint={d.totals.marginPct != null ? `${d.totals.marginPct.toFixed(1)}% of what’s billed and pending` : 'Nothing billed against them yet'}
+          href="/finance/pay-bill?tab=margin"
+          nothing={noChecks}
+        />
+        <MetricCard
+          label="Billable pay on no statement"
+          value={fmtMoney(d.totals.gapPay)}
+          tone={d.totals.gapPay > 0 ? 'alert' : 'default'}
+          hint={d.totals.gapPay > 0 ? 'Gaps to close — listed below' : undefined}
+          nothing={nothingPaid ? noChecks : d.totals.gapPay > 0 ? undefined : 'No gaps this period'}
+        />
+      </MetricStrip>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <PaidBilled title="Hours" unit="h" rows={[['Paid', d.hours.paid], ['On a final statement', d.hours.billed], ['On a draft', d.hours.onDraft], ['On no statement', d.hours.unbilled], ['Billed, not paid', d.billedNotPaidHours ?? 0]]} />
+        <PaidBilled title="Hours" unit="h" rows={[['Paid', d.hours.paid], ['Paid and on a final statement', d.hours.billed], ['Paid and on a draft', d.hours.onDraft], ['Paid, on no statement', d.hours.unbilled], ['Billed, not paid', d.billedNotPaidHours ?? 0]]} />
         <PaidBilled title="Premiums" rows={[['Paid', d.premiums.paid], ['Billed', d.premiums.billed], ['Queued or in review', d.premiums.queued + d.premiums.awaitingReview], ['Not billable by contract', d.premiums.notBillable], ['Not billed', d.premiums.unbilled]]} />
         <PaidBilled title="Retro pay" rows={[['Paid', d.retro.paid], ['Rebilled', d.retro.rebilled], ['Queued or in review', d.retro.queued + d.retro.awaitingReview], ['Not rebilled', d.retro.notRebilled]]} />
       </div>
@@ -190,51 +255,62 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
         height={220}
         empty={<EmptyState title="No premiums or retro pay this period" size="sm" />}
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke={CHART.grid} vertical={false} />
-            <XAxis dataKey="line" tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
-            <YAxis tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(v: number) => `$${Math.round(v)}`} />
-            <Tooltip contentStyle={CHART.tooltip} formatter={(v) => fmtMoney(Number(v))} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="paid" name="Paid" fill={CHART.series[1]} />
-            <Bar dataKey="billed" name="Billed" fill={CHART.good} />
-            <Bar dataKey="waiting" name="Waiting" fill={CHART.warn} />
-            <Bar dataKey="notBilled" name="Not billed" fill={CHART.bad} />
-          </BarChart>
-        </ResponsiveContainer>
+        <StackedBarChart
+          data={chartRows}
+          x="line"
+          stacked={false}
+          format={(v) => fmtMoneyCompact(v)}
+          series={[
+            { key: 'paid', name: 'Paid', color: PALETTE.primary },
+            { key: 'billed', name: 'Billed', color: PALETTE.good },
+            { key: 'waiting', name: 'Waiting', color: PALETTE.warn },
+            { key: 'notBilled', name: 'Not billed', color: PALETTE.bad },
+          ]}
+        />
       </ChartFrame>
 
-      <DataGrid
-        id="pay-bill-unbilled"
-        caption="Billable pay on no bill"
-        rows={d.unbilled}
-        columns={unbilledCols}
-        rowKey={(r) => `${r.payrollItemId}:${r.kind}:${r.clientId}:${r.label}:${r.reason}`}
-        noun={{ one: 'line', many: 'lines' }}
-        defaultSort={{ key: 'pay', direction: 'desc' }}
-        empty={
-          nothingPaid
-            ? // Nothing paid is nothing to check — not "all clear" (finance walk 11).
-              { title: 'Nothing paid to check', description: 'No finalized paychecks in this period, so there is no pay to match to a bill. Billed hours with no paycheck are listed below.' }
-            : { title: 'Everything paid is on a bill', description: 'Every billable hour, premium and retro dollar this period reached a client statement.' }
-        }
-      />
+      <section className="space-y-2" aria-labelledby="pay-bill-unbilled-title">
+        <SectionTitle
+          title={<span id="pay-bill-unbilled-title">Billable pay on no bill{d.unbilled.length ? ` · ${d.unbilled.length}` : ''}</span>}
+          description="Pay for client work that reached no statement, with why — a gap to close, or the contract working as written."
+        />
+        <DataGrid
+          id="pay-bill-unbilled"
+          caption="Billable pay on no bill"
+          rows={d.unbilled}
+          columns={unbilledCols}
+          rowKey={(r) => `${r.payrollItemId}:${r.kind}:${r.clientId}:${r.label}:${r.reason}`}
+          noun={{ one: 'line', many: 'lines' }}
+          defaultSort={{ key: 'pay', direction: 'desc' }}
+          empty={
+            nothingPaid
+              ? // Nothing paid is nothing to check — not "all clear" (finance walk 11).
+                { title: 'Nothing paid to check', description: 'No finalized paychecks in this period, so there is no pay to match to a bill. Billed hours with no paycheck are listed below.' }
+              : { title: 'Everything paid is on a bill', description: 'Every billable hour, premium and retro dollar this period reached a client statement.' }
+          }
+        />
+      </section>
 
-      <DataGrid
-        id="pay-bill-billed-not-paid"
-        caption="Billed, not paid"
-        rows={d.billedNotPaid ?? []}
-        columns={billedCols}
-        rowKey={(r) => `${r.associateId}:${r.clientId}:${r.weekStart}`}
-        noun={{ one: 'week', many: 'weeks' }}
-        defaultSort={{ key: 'hours', direction: 'desc' }}
-        empty={
-          (d.billedNotPaid ?? []).length === 0 && d.hours.billed === 0
-            ? { title: 'No final statements to check', description: 'Nothing was billed on a final statement in this period yet.' }
-            : { title: 'Every billed hour was paid', description: 'Each person-week on a final statement has a paystub.' }
-        }
-      />
+      <section id="billed-not-paid" className="scroll-mt-24 space-y-2" aria-labelledby="pay-bill-bnp-title">
+        <SectionTitle
+          title={<span id="pay-bill-bnp-title">Billed, not paid{billedNoPay.length ? ` · ${(d.billedNotPaidHours ?? 0).toFixed(2)}h` : ''}</span>}
+          description="Hours a final statement billed that no paycheck covers, by person and week."
+        />
+        <DataGrid
+          id="pay-bill-billed-not-paid"
+          caption="Billed, not paid"
+          rows={billedNoPay}
+          columns={billedCols}
+          rowKey={(r) => `${r.associateId}:${r.clientId}:${r.weekStart}`}
+          noun={{ one: 'week', many: 'weeks' }}
+          defaultSort={{ key: 'hours', direction: 'desc' }}
+          empty={
+            billedNoPay.length === 0 && d.hours.billed === 0
+              ? { title: 'No final statements to check', description: 'Nothing was billed on a final statement in this period yet.' }
+              : { title: 'Every billed hour was paid', description: 'Each person-week on a final statement has a paystub.' }
+          }
+        />
+      </section>
     </div>
   );
 }
@@ -292,7 +368,7 @@ function Margin({ periodStart, periodEnd }: { periodStart: string; periodEnd: st
         r.statements.length ? (
           <span className="flex flex-wrap gap-1">
             {r.statements.map((s) => (
-              <Link key={s.id} to={`/clients/${s.clientId}?section=statements`} className="text-xs text-accent underline-offset-2 hover:underline">
+              <Link key={s.id} to={statementHref(s.id)} className="text-xs text-accent underline-offset-2 hover:underline">
                 {statementLabel(s.number)}
               </Link>
             ))}
@@ -315,7 +391,7 @@ function Margin({ periodStart, periodEnd }: { periodStart: string; periodEnd: st
       onRetry={() => void q.refetch()}
       noun={{ one: 'paycheck', many: 'paychecks' }}
       defaultSort={{ key: 'margin', direction: 'asc' }}
-      empty={{ title: "No paychecks in this period" }}
+      empty={{ title: 'No paychecks in this period', description: 'Once this period’s payroll is finalized, each paycheck’s cost is set against what its hours billed.' }}
     />
   );
 }
@@ -333,7 +409,7 @@ function Adjustments() {
   const { can } = useAuth();
   const canWrite = can('process:payroll');
   const qc = useQueryClient();
-  const [status, setStatus] = useState<BillingAdjustmentRow['status'] | 'ALL'>('PENDING_REVIEW');
+  const [status, setStatus] = useUrlParam<BillingAdjustmentRow['status'] | 'ALL'>('status', 'PENDING_REVIEW', ['PENDING_REVIEW', 'READY', 'BILLED', 'VOID', 'ALL']);
   const q = useQuery({ queryKey: ['pay-bill', 'adjustments', status], queryFn: () => getBillingAdjustments(status === 'ALL' ? undefined : status) });
   const refresh = () => void qc.invalidateQueries({ queryKey: ['pay-bill'] });
   const decide = useMutation({
@@ -380,7 +456,7 @@ function Adjustments() {
         <span className="flex flex-col items-start gap-0.5">
           <Badge variant={ADJ_STATUS[r.status].tone}>{ADJ_STATUS[r.status].label}</Badge>
           {r.billedStatement && (
-            <Link to={`/clients/${r.clientId}?section=statements`} className="text-2xs text-accent hover:underline">
+            <Link to={statementHref(r.billedStatement.id)} className="text-2xs text-accent hover:underline">
               On statement {statementLabel(r.billedStatement.number)}
             </Link>
           )}
@@ -414,20 +490,18 @@ function Adjustments() {
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto">
-        <SegmentedControl
-          ariaLabel="Status"
-          value={status}
-          onChange={setStatus}
-          options={[
-            { value: 'PENDING_REVIEW', label: 'Waiting for review' },
-            { value: 'READY', label: 'Next statement' },
-            { value: 'BILLED', label: 'Billed' },
-            { value: 'VOID', label: 'Not billed' },
-            { value: 'ALL', label: 'All' },
-          ]}
-        />
-      </div>
+      <SegmentedControl
+        ariaLabel="Status"
+        value={status}
+        onChange={setStatus}
+        options={[
+          { value: 'PENDING_REVIEW', label: 'Waiting for review' },
+          { value: 'READY', label: 'Next statement' },
+          { value: 'BILLED', label: 'Billed' },
+          { value: 'VOID', label: 'Not billed' },
+          { value: 'ALL', label: 'All' },
+        ]}
+      />
       <DataGrid
         id="pay-bill-adjustments"
         caption="Billing adjustments"
@@ -452,15 +526,37 @@ function Adjustments() {
 
 const todayYmd = () => new Date().toISOString().slice(0, 10);
 
+/** "Retro: Finance reviews · Overtime: 1.5× · …" — a version of the terms in one read. */
+function termsWords(h: { retroRebill: string; overtimeBilling: string; defaultMarkupPct: number | null; premiumRules: Record<PremiumKey, PremiumRule> }) {
+  const retro = h.retroRebill === 'AUTO' ? 'rebill automatically' : h.retroRebill === 'REVIEW' ? 'Finance reviews' : 'never rebill';
+  const billable =
+    PREMIUM_KEYS.filter((k) => h.premiumRules[k].mode !== 'NOT_BILLABLE')
+      .map((k) => `${PREMIUM_LABEL[k].toLowerCase()} (${h.premiumRules[k].mode === 'AT_COST' ? `at cost${h.premiumRules[k].markupPct ? ` + ${h.premiumRules[k].markupPct}%` : ''}` : 'at markup'})`)
+      .join(', ') || 'no premiums';
+  return { retro, overtime: h.overtimeBilling === 'STRAIGHT' ? 'straight time' : '1.5× the bill rate', markup: h.defaultMarkupPct != null ? `${h.defaultMarkupPct}%` : 'none', billable };
+}
+
+/**
+ * Each client's billing terms, read first: what's in force and its
+ * history. Changing them is a deliberate step ("Change terms"), not a form
+ * that sits open in a report. The client follows the top bar's choice.
+ */
 function ContractTerms() {
   const { can } = useAuth();
   const canWrite = can('process:payroll');
   const qc = useQueryClient();
+  const scope = useStoreScope();
   const clientsQ = useQuery({ queryKey: ['pay-bill', 'clients'], queryFn: getBillingClients });
-  const [clientId, setClientId] = useState<string | null>(null);
-  const selected = clientId ?? clientsQ.data?.clients[0]?.id ?? null;
+  const [clientId, setClientId] = useUrlParam<string>('client', '');
+  const list = clientsQ.data?.clients ?? [];
+  const fromBar = scope.clientId && list.some((c) => c.id === scope.clientId) ? scope.clientId : null;
+  const selected = (clientId && list.some((c) => c.id === clientId) ? clientId : null) ?? fromBar ?? list[0]?.id ?? null;
   const termsQ = useQuery({ queryKey: ['pay-bill', 'terms', selected], queryFn: () => getClientTerms(selected!), enabled: !!selected });
   const [form, setForm] = useState<TermsInput | null>(null);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    setEditing(false);
+  }, [selected]);
   useEffect(() => {
     const c = termsQ.data?.current;
     if (!c) return;
@@ -470,6 +566,7 @@ function ContractTerms() {
     mutationFn: (input: TermsInput) => saveClientTerms(selected!, input),
     onSuccess: (_r, input) => {
       toast.success(`${termsQ.data?.client.name ?? 'The client'}'s billing terms are saved, in force from ${fmtDate(input.effectiveFrom)}.`);
+      setEditing(false);
       void qc.invalidateQueries({ queryKey: ['pay-bill'] });
     },
     onError: (e) => toast.error(errText(e, 'Could not save the terms.')),
@@ -477,28 +574,71 @@ function ContractTerms() {
 
   if (clientsQ.isLoading) return <Skeleton className="h-64" />;
   if (clientsQ.isError) return <QueryError what="clients" query={clientsQ} />;
-  if (!clientsQ.data?.clients.length) return <EmptyState title="No clients yet" description="Billing terms are set per client." />;
+  if (!list.length) return <EmptyState title="No clients yet" description="Billing terms are set per client." />;
 
   const setRule = (k: PremiumKey, patch: Partial<PremiumRule>) =>
     setForm((f) => (f ? { ...f, premiumRules: { ...f.premiumRules, [k]: { ...f.premiumRules[k], ...patch } } } : f));
+  const current = termsQ.data?.current;
+  const now = current ? termsWords(current) : null;
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
       <Card className="min-w-0">
         <CardContent className="space-y-4">
-          <Field label="Client">
-            <Select value={selected ?? ''} onChange={(e) => setClientId(e.target.value)}>
-              {clientsQ.data.clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <Field label="Client" className="min-w-0 flex-1 sm:max-w-sm">
+              <Select value={selected ?? ''} onChange={(e) => setClientId(e.target.value)}>
+                {list.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {canWrite && !editing && current && (
+              <Button variant="secondary" onClick={() => setEditing(true)}>
+                Change terms
+              </Button>
+            )}
+          </div>
           {termsQ.isLoading || !form ? (
             <Skeleton className="h-48" />
           ) : termsQ.isError ? (
             <QueryError what="billing terms" query={termsQ} />
+          ) : !editing ? (
+            <dl className="grid gap-3 text-sm sm:grid-cols-2" aria-label="Terms in force">
+              <div>
+                <dt className="text-ink-muted">Retro pay</dt>
+                <dd className="text-ink">{now?.retro}</dd>
+              </div>
+              <div>
+                <dt className="text-ink-muted">Overtime</dt>
+                <dd className="text-ink">{now?.overtime}</dd>
+              </div>
+              <div>
+                <dt className="text-ink-muted">Default markup</dt>
+                <dd className="text-ink">{now?.markup}</dd>
+              </div>
+              <div>
+                <dt className="text-ink-muted">Premiums billed</dt>
+                <dd className="text-ink">{now?.billable}</dd>
+              </div>
+              {current?.notes && (
+                <div className="sm:col-span-2">
+                  <dt className="text-ink-muted">Notes</dt>
+                  <dd className="text-ink">{current.notes}</dd>
+                </div>
+              )}
+              {selected && (
+                <div className="sm:col-span-2">
+                  <dd>
+                    <Link to={`/clients/${selected}?section=rates`} className="text-accent underline-offset-2 hover:underline">
+                      The client’s bill rates
+                    </Link>
+                  </dd>
+                </div>
+              )}
+            </dl>
           ) : (
             <form
               className="space-y-4"
@@ -513,7 +653,6 @@ function ContractTerms() {
                 </Field>
                 <div className="space-y-1.5">
                   <span className="block text-sm font-medium text-ink" id="retro-label">Retro pay</span>
-                  <div className="overflow-x-auto">
                   <SegmentedControl
                     ariaLabel="Retro pay"
                     value={form.retroRebill}
@@ -524,7 +663,6 @@ function ContractTerms() {
                       { value: 'NEVER', label: 'Never rebill' },
                     ]}
                   />
-                  </div>
                 </div>
                 <div className="space-y-1.5">
                   <span className="block text-sm font-medium text-ink">Overtime</span>
@@ -584,9 +722,14 @@ function ContractTerms() {
                 </Field>
               </fieldset>
               {canWrite && (
-                <Button type="submit" disabled={save.isPending}>
-                  {save.isPending ? 'Saving…' : 'Save terms'}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" disabled={save.isPending}>
+                    {save.isPending ? 'Saving…' : 'Save terms'}
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => setEditing(false)}>
+                    Cancel
+                  </Button>
+                </div>
               )}
             </form>
           )}
@@ -601,15 +744,10 @@ function ContractTerms() {
                 <li key={h.id} className="text-sm">
                   <div className="font-medium text-ink">From {fmtDate(h.effectiveFrom)}</div>
                   <div className="text-xs text-ink-muted">
-                    Retro: {h.retroRebill === 'AUTO' ? 'rebill automatically' : h.retroRebill === 'REVIEW' ? 'Finance reviews' : 'never'} · Overtime: {h.overtimeBilling === 'STRAIGHT' ? 'straight time' : '1.5×'}
+                    Retro: {termsWords(h).retro} · Overtime: {termsWords(h).overtime}
                     {h.defaultMarkupPct != null ? ` · Default markup ${h.defaultMarkupPct}%` : ''}
                   </div>
-                  <div className="text-xs text-ink-muted">
-                    Billable:{' '}
-                    {PREMIUM_KEYS.filter((k) => h.premiumRules[k].mode !== 'NOT_BILLABLE')
-                      .map((k) => `${PREMIUM_LABEL[k].toLowerCase()} (${h.premiumRules[k].mode === 'AT_COST' ? `at cost${h.premiumRules[k].markupPct ? ` + ${h.premiumRules[k].markupPct}%` : ''}` : 'at markup'})`)
-                      .join(', ') || 'no premiums'}
-                  </div>
+                  <div className="text-xs text-ink-muted">Billable: {termsWords(h).billable}</div>
                 </li>
               ))}
             </ol>
@@ -636,15 +774,16 @@ function ThisWeek() {
     { key: 'now', header: 'On the clock', accessor: (r) => r.onClockNow, align: 'right', cardMeta: true },
   ];
   if (q.isError) return <QueryError what="this week's payroll cost" query={q} />;
+  const none = d && d.totals.hours === 0 ? 'No hours yet this week' : undefined;
   return (
     <div className="space-y-4">
       {d ? (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <MetricCard label="Loaded cost so far" value={fmtMoney(d.totals.loadedCost)} hint={`Week of ${fmtDate(d.weekStart)}`} />
-          <MetricCard label="Wages so far" value={fmtMoney(d.totals.wages)} />
-          <MetricCard label="Hours" value={d.totals.hours.toFixed(2)} />
-          <MetricCard label="On the clock now" value={d.totals.onClockNow} />
-        </div>
+        <MetricStrip label="This week so far">
+          <MetricCard label="Loaded cost so far" value={fmtMoney(d.totals.loadedCost)} hint={`Week of ${fmtDate(d.weekStart)}`} nothing={none} />
+          <MetricCard label="Wages so far" value={fmtMoney(d.totals.wages)} tone="neutral" nothing={none} />
+          <MetricCard label="Hours" value={d.totals.hours.toFixed(2)} tone="neutral" nothing={none} />
+          <MetricCard label="On the clock now" value={d.totals.onClockNow} tone="neutral" nothing={d.totals.onClockNow ? undefined : 'No one on the clock'} />
+        </MetricStrip>
       ) : (
         <Skeleton className="h-24" />
       )}
@@ -660,18 +799,19 @@ function ThisWeek() {
           ]}
           rows={chartRows}
           csvName={`running-cost-${d.weekStart}`}
-          height={240}
+          height={Math.max(160, chartRows.length * 30 + 48)}
         >
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke={CHART.grid} vertical={false} />
-              <XAxis dataKey="store" tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} interval={0} />
-              <YAxis tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(v: number) => `$${Math.round(v)}`} />
-              <Tooltip contentStyle={CHART.tooltip} formatter={(v) => fmtMoney(Number(v))} />
-              <Bar dataKey="wages" name="Wages" stackId="c" fill={CHART.series[0]} />
-              <Bar dataKey="loaded" name="Burden and overhead" stackId="c" fill={CHART.series[1]} />
-            </BarChart>
-          </ResponsiveContainer>
+          {/* Store names read down the side, never cut to "Walm…" under a column. */}
+          <StackedBarChart
+            data={chartRows}
+            x="store"
+            layout="horizontal"
+            format={(v) => fmtMoneyCompact(v)}
+            series={[
+              { key: 'wages', name: 'Wages', color: PALETTE.primary },
+              { key: 'loaded', name: 'Burden and overhead', color: PALETTE.secondary },
+            ]}
+          />
         </ChartFrame>
       )}
       <DataGrid

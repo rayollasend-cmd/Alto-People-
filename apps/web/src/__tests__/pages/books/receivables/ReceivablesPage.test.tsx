@@ -65,7 +65,11 @@ beforeEach(() => {
   api.listDepositAccounts.mockResolvedValue({ accounts: [{ id: 'acc-op', code: '1000', name: 'Operating checking', isDefault: true, forChecks: false }, { id: 'acc-ud', code: '1050', name: 'Undeposited funds', isDefault: false, forChecks: true }] });
   api.recordClientPayment.mockResolvedValue({ payment: { amount: 1200, clientName: 'Coastal Resort', unapplied: 0 } });
   api.getCollectionsWorklist.mockResolvedValue(WORKLIST);
-  api.getDsoTrend.mockResolvedValue({ months: [{ key: '2026-09', label: 'Sep 26', days: 31, statements: 2, collected: 2400 }, { key: '2026-10', label: 'Oct 26', days: 26, statements: 1, collected: 900 }] });
+  api.getDsoTrend.mockResolvedValue({
+    months: [{ key: '2026-08', label: 'Aug 26', days: 35, statements: 1, collected: 700 }, { key: '2026-09', label: 'Sep 26', days: 31, statements: 2, collected: 2400 }, { key: '2026-10', label: 'Oct 26', days: 26, statements: 1, collected: 900 }],
+    last90: { days: 29, statements: 4 },
+    collectedThisMonth: { amount: 3300, payments: 2 },
+  });
   api.sendReminderNow.mockResolvedValue({ stage: 3, recipients: 2 });
   api.addCollectionNote.mockResolvedValue({ note: { id: 'n1' } });
   api.backfillPosting.mockResolvedValue({ payrollRuns: 3, statements: 2, taxPayments: 0, taxDeposits: 0, garnishmentRemittances: 0, wageAdvances: 0, failed: [] });
@@ -110,16 +114,24 @@ describe('Receivables', () => {
     await waitFor(() => expect(api.recordClientPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 1500, applications: [{ statementId: S1, amount: 1000 }, { statementId: S2, amount: 500 }] })));
   });
 
-  it('posts history with a summary of what it did; read-only roles see no buttons', async () => {
-    const user = userEvent.setup();
-    const { unmount } = renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
-    await user.click(await screen.findByRole('button', { name: /Post history/ }));
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Posted 3 payroll runs, 2 statements.'));
-    unmount();
+  it('leads with days to collect (last 90 days) and what came in this month; Post history is the close checklist’s, not a header button', async () => {
+    renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
+    const strip = await screen.findByRole('group', { name: 'Receivables at a glance' });
+    const days = within(strip).getByText('Days to collect').parentElement!;
+    await waitFor(() => expect(days).toHaveTextContent('29days'));
+    expect(days).toHaveTextContent('Last 90 days · 4 statements paid');
+    const collected = within(strip).getByText('Collected this month').closest('a')!;
+    expect(collected).toHaveAttribute('href', '/books/receivables?view=payments');
+    await waitFor(() => expect(collected).toHaveTextContent('$3,300.00'));
+    expect(collected).toHaveTextContent('2 payments');
+    expect(within(strip).getByText('Past due').closest('a')).toHaveAttribute('href', '/books/receivables?view=collections');
+    expect(screen.queryByRole('button', { name: /Post history/ })).toBeNull();
+  });
+
+  it('read-only roles see no buttons', async () => {
     renderAs('EXECUTIVE_CHAIRMAN', <ReceivablesPage />, '/books/receivables');
     await screen.findByRole('link', { name: 'Coastal Resort' });
     expect(screen.queryByRole('button', { name: /Record a payment/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Post history/ })).toBeNull();
   });
 });
 
@@ -151,7 +163,20 @@ describe('collections (finance walk 7)', () => {
   it('the aging view shows what each client owes by age and the days-to-collect trend', async () => {
     renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
     expect(await screen.findByRole('img', { name: /1 client with money open; 1 past due\. Most owed: Coastal Resort, \$1,500\.00\./ })).toBeInTheDocument();
-    expect(await screen.findByRole('img', { name: /Days to collect over the last 2 months: Sep 26 31, Oct 26 26\./ })).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: /Days to collect over the last 3 months: Aug 26 35, Sep 26 31, Oct 26 26\./ })).toBeInTheDocument();
+  });
+
+  it('with fewer than three months of payments the trend isn’t drawn — two points float on the axis', async () => {
+    api.getDsoTrend.mockResolvedValue({
+      months: [{ key: '2026-09', label: 'Sep 26', days: 31, statements: 2, collected: 2400 }, { key: '2026-10', label: 'Oct 26', days: 26, statements: 1, collected: 900 }],
+      last90: { days: 29, statements: 3 },
+      collectedThisMonth: { amount: 900, payments: 1 },
+    });
+    renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
+    expect(await screen.findByRole('img', { name: /1 client with money open/ })).toBeInTheDocument();
+    const strip = await screen.findByRole('group', { name: 'Receivables at a glance' });
+    expect(within(strip).getByText('Days to collect')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Days to collect over the last/ })).toBeNull();
   });
 });
 

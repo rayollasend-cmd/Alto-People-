@@ -1,11 +1,11 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CalendarRange, ChevronDown, Download, ExternalLink, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TimesheetHistoryPeriod, TimesheetHistoryResponse, TimesheetHistoryWeek } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useTenant } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, fmtDateTz, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { downloadTimesheetHistoryCsv, getTimesheetHistory, markFieldglassEntered, setTimesheetNote } from '@/lib/timeApi';
@@ -15,10 +15,13 @@ import {
   Button,
   Card,
   EmptyState,
+  MetricCard,
+  MetricStrip,
   SegmentedControl,
   Skeleton,
   Textarea,
 } from '@/components/ui';
+import type { BreadcrumbSegment } from '@/components/ui/Breadcrumb';
 import { CopyValue } from './FieldglassDesk';
 import { ListTemplate } from '@/components/templates';
 
@@ -101,6 +104,9 @@ const LEGEND: Array<[Tone, string]> = [
 
 const weekKey = (w: TimesheetHistoryWeek) => `${w.weekStart}|${w.clientId ?? ''}`;
 
+/** Fewer weeks than this and "Hours by week" is left out (the tables say it). */
+export const MIN_CHART_WEEKS = 3;
+
 /** Needs a look: rejected, past due, not in Fieldglass, hours that differ, or not approved yet. */
 function needsAttention(w: TimesheetHistoryWeek): boolean {
   const f = w.fieldglass;
@@ -122,6 +128,20 @@ export function TimesheetHistory() {
   // Fieldglass is a client's vendor system: a tenant with no clients never sees its columns (tenant profile §5.3 item 5).
   const { moduleOn } = useTenant();
   const fieldglass = moduleOn('clientPortal');
+  const { can } = useAuth();
+  // A person's timesheets sit under the person (People › Ann Lee), not
+  // under the vendor page; a viewer who can't open People keeps the way
+  // back to the week they came from.
+  // The leaf is the published title, so the in-page trail reads
+  // "People › Ann Lee" over "Timesheets", and the tab and top bar say
+  // whose ("Ann Lee · Timesheets").
+  const leafFor = (name: string | null) => (name ? `${name} · Timesheets` : 'Timesheets');
+  const crumbsFor = (name: string | null): BreadcrumbSegment[] => [
+    ...(can('view:org')
+      ? [{ label: 'People', to: '/people' }, ...(name ? [{ label: name, to: `/people/${associateId}` }] : [])]
+      : [{ label: 'Client hours', to: '/time-attendance/timesheets' }]),
+    { label: leafFor(name) },
+  ];
   const [year, setYear] = useState<number | 'all'>('all');
   const [show, setShow] = useState<'all' | 'attention'>('all');
   const [openWeek, setOpenWeek] = useState<string | null>(null);
@@ -163,9 +183,7 @@ export function TimesheetHistory() {
   if (!h) {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
-      <ListTemplate
-          title="Timesheet history" breadcrumbs={[{ label: fieldglass ? 'Client hours' : 'Timesheets', to: '/time-attendance/timesheets' }, { label: 'History' }]}
-      >
+      <ListTemplate title="Timesheets" breadcrumbs={crumbsFor(null)}>
         <EmptyState
           title="Couldn’t load this timesheet"
           description={q.error instanceof ApiError ? q.error.message : 'They may not work at a client you can see.'}
@@ -179,9 +197,10 @@ export function TimesheetHistory() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title={a.name}
-        subtitle={fieldglass ? 'Timesheet history — every week worked, by the pay period that paid it, and where it stands in Fieldglass.' : 'Timesheet history — every week worked, by the pay period that paid it.'}
-        breadcrumbs={[{ label: fieldglass ? 'Client hours' : 'Timesheets', to: '/time-attendance/timesheets' }, { label: a.name }]}
+        title="Timesheets"
+        topbarTitle={leafFor(a.name)}
+        subtitle={fieldglass ? 'Every week worked, by the pay period that paid it, and where it stands in Fieldglass.' : 'Every week worked, by the pay period that paid it.'}
+        breadcrumbs={crumbsFor(a.name)}
         primaryAction={
           <Button variant="secondary" size="sm" onClick={() => void exportCsv()} loading={exporting} disabled={allWeeks.length === 0}>
             <Download className="h-3.5 w-3.5" />
@@ -261,7 +280,8 @@ function Identity({ h, fieldglass }: { h: TimesheetHistoryResponse; fieldglass: 
         <div className="flex min-w-0 items-center gap-3">
           <Avatar src={a.photoUrl} name={a.name} size="xl" ringed />
           <div className="min-w-0">
-            <div className="truncate text-lg font-semibold text-white">{a.worker}</div>
+            {/* The name as Alto writes it; Fieldglass's "Last, First" is only in its copy field. */}
+            <div className="truncate text-lg font-semibold text-white" data-testid="timesheet-person">{a.name}</div>
             <div className="truncate text-sm text-silver">
               {[a.clientName, a.position].filter(Boolean).join(' · ') || 'No client yet'}
             </div>
@@ -288,24 +308,25 @@ function Identity({ h, fieldglass }: { h: TimesheetHistoryResponse; fieldglass: 
           <div className="divide-y divide-navy-secondary/50">
             {fieldglass && <CopyValue label="Worker ID" value={a.workerId} mono />}
             {fieldglass && a.securityId !== null && <CopyValue label="Security ID" value={a.securityId} mono />}
-            <CopyValue label="Worker" value={a.worker} />
+            {fieldglass && <CopyValue label="Worker" value={a.worker} />}
           </div>
-          <div className="divide-y divide-navy-secondary/50">
-            <CopyValue label="First clock-in" value={a.firstClockIn ? `${usDate(a.firstClockIn.date)} ${a.firstClockIn.time}` : null} />
-            <CopyValue label="Last worked" value={a.lastWorked ? usDate(a.lastWorked) : null} />
-          </div>
+          {/* Dates are read, not pasted into Fieldglass: no copy buttons. */}
+          <dl className="divide-y divide-navy-secondary/50">
+            <Fact label="First clock-in" value={a.firstClockIn ? `${mdy(a.firstClockIn.date)}, ${a.firstClockIn.time}` : null} />
+            <Fact label="Last worked" value={a.lastWorked ? `${wd(a.lastWorked)}, ${mdy(a.lastWorked)}` : null} />
+          </dl>
         </div>
       </div>
     </Card>
   );
 }
 
-function Tile({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: ReactNode; tone?: string }) {
+/** A read-only fact beside the copy fields: label left, value right. */
+function Fact({ label, value }: { label: string; value: string | null }) {
   return (
-    <div className="rounded-lg border border-navy-secondary bg-navy/60 px-3 py-2.5">
-      <div className="text-2xs font-semibold uppercase tracking-wider text-silver/70">{label}</div>
-      <div className={cn('mt-0.5 text-xl font-semibold tabular-nums text-white', tone)}>{value}</div>
-      {hint && <div className="text-xs text-silver/80">{hint}</div>}
+    <div className="flex items-center justify-between gap-3 py-1.5 text-sm">
+      <dt className="text-silver/70">{label}</dt>
+      <dd className={cn('tabular-nums', value ? 'text-white' : 'text-silver/40')}>{value ?? '—'}</dd>
     </div>
   );
 }
@@ -315,17 +336,19 @@ function Totals({ h, fieldglass }: { h: TimesheetHistoryResponse; fieldglass: bo
   const fg = t.fieldglass;
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-        <Tile label={`${t.year} hours`} value={hrs(t.yearHours)} />
-        <Tile label="All-time hours" value={hrs(t.hours)} hint={h.associate.firstClockIn ? `since ${mdy(h.associate.firstClockIn.date)}` : undefined} />
-        <Tile label="Weeks worked" value={t.weeks} hint={`${hrs(t.avgWeekHours)}h a week on average`} />
-        <Tile
+      {/* Hours carry their unit, every tile ("0.57h", not a bare "0.57"). */}
+      <MetricStrip label="Hours">
+        <MetricCard label={`Worked in ${t.year}`} value={hrs(t.yearHours)} unit="h" />
+        <MetricCard label="Worked, all time" value={hrs(t.hours)} unit="h" hint={h.associate.firstClockIn ? `since ${mdy(h.associate.firstClockIn.date)}` : undefined} />
+        <MetricCard label="Weeks worked" value={t.weeks} hint={`${hrs(t.avgWeekHours)}h a week on average`} />
+        <MetricCard
           label="Not approved yet"
           value={hrs(t.pendingHours)}
-          tone={t.pendingHours > 0 ? 'text-warning' : 'text-silver'}
+          unit="h"
+          tone={t.pendingHours > 0 ? 'warning' : 'neutral'}
           hint={t.pendingHours > 0 ? 'worked, awaiting a supervisor' : 'nothing waiting'}
         />
-      </div>
+      </MetricStrip>
       {fieldglass && (
       <div className="flex flex-wrap items-center gap-1.5 text-xs" aria-label="Weeks in Fieldglass">
         <span className="mr-1 text-silver/70">In Fieldglass:</span>
@@ -340,8 +363,8 @@ function Totals({ h, fieldglass }: { h: TimesheetHistoryResponse; fieldglass: bo
       )}
       {t.money && (
         <div className="grid grid-cols-3 gap-px overflow-hidden rounded-md border border-navy-secondary bg-navy-secondary/60 text-center">
-          <Money label="Approved" value={t.money.approved} tone="text-success" />
-          <Money label="With the buyer" value={t.money.awaiting} tone="text-white" />
+          <Money label="Approved" value={t.money.approved} tone={t.money.approved > 0 ? 'text-success' : 'text-silver'} />
+          <Money label="With the buyer" value={t.money.awaiting} tone={t.money.awaiting > 0 ? 'text-white' : 'text-silver'} />
           <Money label="At risk" value={t.money.atRisk} tone={t.money.atRisk > 0 ? 'text-alert' : 'text-silver'} />
         </div>
       )}
@@ -366,7 +389,9 @@ function WeekBars({ weeks, fieldglass, onPick }: { weeks: TimesheetHistoryWeek[]
     for (const w of weeks) m.set(w.weekStart, [...(m.get(w.weekStart) ?? []), w]);
     return [...m.entries()].sort(([x], [y]) => x.localeCompare(y));
   }, [weeks]);
-  if (byWeek.length === 0) return null;
+  // One or two weeks draw an empty plot with a dashed line; the period
+  // tables below already say it all. The chart earns its place at three.
+  if (byWeek.length < MIN_CHART_WEEKS) return null;
   // Headroom over the tallest week, and never so short the 40h line leaves the chart.
   const max = Math.max(44, ...byWeek.map(([, ws]) => ws.reduce((s, w) => s + w.total + w.pendingHours, 0) * 1.08));
   return (
@@ -382,12 +407,13 @@ function WeekBars({ weeks, fieldglass, onPick }: { weeks: TimesheetHistoryWeek[]
           ))}
         </div>
       </div>
-      <div className="relative overflow-x-auto">
-        {/* The 40-hour week, for scale. */}
-        <div className="pointer-events-none absolute inset-x-0 border-t border-dashed border-silver/25" style={{ bottom: `${(40 / max) * 100}%` }} aria-hidden="true">
-          <span className="absolute -top-4 right-0 text-2xs text-silver/50">40h</span>
-        </div>
-        <div className="flex h-32 min-w-full items-end gap-1" style={{ width: byWeek.length > 60 ? `${byWeek.length * 10}px` : undefined }}>
+      {/* pt-4: room for the 40h label above its line (the scroller clipped it). */}
+      <div className="overflow-x-auto pt-4">
+        <div className="relative flex h-32 min-w-full items-end gap-1" style={{ width: byWeek.length > 60 ? `${byWeek.length * 10}px` : undefined }}>
+          {/* The 40-hour week, for scale. */}
+          <div className="pointer-events-none absolute inset-x-0 border-t border-dashed border-silver/25" style={{ bottom: `${(40 / max) * 100}%` }} aria-hidden="true">
+            <span className="absolute -top-4 right-0 text-2xs text-silver/50">40h</span>
+          </div>
           {byWeek.map(([ws, parts]) => {
             const total = parts.reduce((s, w) => s + w.total, 0);
             const pending = parts.reduce((s, w) => s + w.pendingHours, 0);
@@ -416,10 +442,10 @@ function WeekBars({ weeks, fieldglass, onPick }: { weeks: TimesheetHistoryWeek[]
           })}
         </div>
       </div>
-      {/* First and last week; one week is one date ("Sep 18" beside "Sep 18, 2026" read as two). */}
+      {/* First and last week ending, one format. */}
       <div className="mt-1 flex justify-between text-2xs tabular-nums text-silver/60">
-        {byWeek.length > 1 && <span>{md(byWeek[0]![1][0]!.weekEnd)}</span>}
-        <span className={byWeek.length > 1 ? undefined : 'ml-auto'}>{mdy(byWeek[byWeek.length - 1]![1][0]!.weekEnd)}</span>
+        <span>{mdy(byWeek[0]![1][0]!.weekEnd)}</span>
+        <span>{mdy(byWeek[byWeek.length - 1]![1][0]!.weekEnd)}</span>
       </div>
     </Card>
   );
@@ -514,8 +540,9 @@ function PeriodCard({
                         <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-silver transition-transform', open && 'rotate-180')} aria-hidden="true" />
                         <span>
                           <span className="font-medium tabular-nums text-white">{w.weekEnding}</span>
-                          <span className="block max-w-[11rem] truncate text-xs2 text-silver/70" title={w.site}>
-                            {w.site}
+                          {/* The client in Alto's words; the Fieldglass site label is the tooltip. */}
+                          <span className="block max-w-[11rem] truncate text-xs2 text-silver/70" title={fieldglass ? `In Fieldglass: ${w.site}` : undefined}>
+                            {w.clientName ?? w.site}
                           </span>
                         </span>
                       </button>

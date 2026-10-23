@@ -230,6 +230,15 @@ describe('job-board syndication', () => {
     expect(r.body).toMatchObject({ schedule: 'PART_TIME', payUnit: 'HOUR', orgName: expect.any(String) });
   });
 
+  it('the open-jobs list names the organization hiring, newest first (F500 G5)', async () => {
+    await posting();
+    const r = await request(app()).get('/careers');
+    expect(r.status).toBe(200);
+    expect(r.body.orgName).toEqual(expect.any(String));
+    expect(r.body.orgName.length).toBeGreaterThan(0);
+    expect(r.body.postings).toHaveLength(1);
+  });
+
   it('a recruiter can take a posting out of the feeds', async () => {
     const { a } = await recruiter();
     const p = await posting();

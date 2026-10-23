@@ -84,7 +84,14 @@ export interface DsoMonth {
 }
 
 export const getCollectionsWorklist = () => apiFetch<CollectionsWorklist>(`${B}/worklist`);
-export const getDsoTrend = (months = 6) => apiFetch<{ months: DsoMonth[] }>(`${B}/dso?months=${months}`);
+export interface DsoResponse {
+  months: DsoMonth[];
+  /** Statements paid in the last 90 days: average days from finalized to paid (null with none). */
+  last90: { days: number | null; statements: number };
+  /** Client payments received this calendar month, undone ones left out. */
+  collectedThisMonth: { amount: number; payments: number };
+}
+export const getDsoTrend = (months = 6) => apiFetch<DsoResponse>(`${B}/dso?months=${months}`);
 export const sendReminderNow = (clientId: string, statementId: string) =>
   apiFetch<{ stage: number; recipients: number }>(`/clients/${clientId}/dunning/send-now`, { method: 'POST', body: { statementId } });
 export const addCollectionNote = (

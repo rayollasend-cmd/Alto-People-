@@ -1,12 +1,15 @@
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtPercent } from '@/lib/format';
 import { getPayChecks, resolvePayCheckFlags, type PayChecksSummary } from '@/lib/payExpApi';
 import { listPayrollRuns } from '@/lib/payrollApi';
-import { ListTemplate } from '@/components/templates';
+import { RunPageShell, type RunSubPageProps } from './RunPageShell';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -16,20 +19,35 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { RunStatusBadge } from '@/lib/payrollRunStatus';
 
 /**
- * "Check my pay before payday", payroll's side: for one run, how many
- * people confirmed their check, who flagged a line and why, and the link to
- * the case or punch fix behind each flag. Open flags block the guided close
- * until they're handled here.
+ * Paycheck confirmations — "Check my pay before payday", payroll's side: for
+ * one run, how many people confirmed their check, who flagged a line and
+ * why, and the link to the case or punch fix behind each flag. Open flags
+ * block the guided close until they're handled here.
+ *
+ * Named "Paycheck confirmations" (F500 G3): "Pay checks", "Paper checks"
+ * and "Manual checks" were three meanings of "checks". It is also the run
+ * record's Confirmations tab (embedded, the run comes from the record).
  */
 
 type Row = PayChecksSummary['open'][number];
 
-export function PayChecksPage() {
+export function PayChecksPage({ runId: fixedRunId, embedded = false }: RunSubPageProps = {}) {
   const term = useTerm();
   const qc = useQueryClient();
-  const [params] = useSearchParams();
-  const runId = params.get('run');
+  const [params, setParams] = useSearchParams();
+  const runId = fixedRunId ?? params.get('run');
   const q = useQuery({ queryKey: ['payroll', 'pay-checks', runId], queryFn: () => getPayChecks(runId!), enabled: !!runId });
+  // Opened without a run: the run still open (draft or finalized) is the one to check — open it.
+  const openRuns = useQuery({ queryKey: ['payroll', 'runs', 'OPEN'], queryFn: () => listPayrollRuns({ status: 'OPEN' }), enabled: !runId });
+  const openRun = (openRuns.data?.runs ?? []).find((r) => r.status === 'DRAFT' || r.status === 'FINALIZED') ?? null;
+  useEffect(() => {
+    if (runId || !openRun) return;
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('run', openRun.id);
+      return next;
+    }, { replace: true });
+  }, [runId, openRun, setParams]);
   const resolve = useMutation({
     mutationFn: (associateId: string) => resolvePayCheckFlags(runId!, associateId),
     onSuccess: () => {
@@ -70,6 +88,7 @@ export function PayChecksPage() {
       key: 'actions',
       header: '',
       accessor: () => '',
+      stopRowClick: true,
       cell: (r) => (
         <Button size="sm" variant="secondary" disabled={resolve.isPending} onClick={() => resolve.mutate(r.associateId)} aria-label={`Mark ${r.name}'s flags handled`}>
           Mark handled
@@ -78,25 +97,32 @@ export function PayChecksPage() {
     },
   ];
   return (
-    <ListTemplate
-      title="Pay checks before payday"
-      subtitle={d ? `Pay period ${fmtDate(d.run.periodStart)} – ${fmtDate(d.run.periodEnd)}: who confirmed their check and what was flagged.` : 'Who confirmed their check and what was flagged.'}
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, ...(runId ? [{ label: 'Guided close', to: `/payroll/runs/${runId}/close` }] : []), { label: 'Pay checks before payday' }]}
+    <RunPageShell
+      embedded={embedded}
+      title="Paycheck confirmations"
+      subtitle={d ? `Pay period ${fmtDate(d.run.periodStart)} – ${fmtDate(d.run.periodEnd)}: who confirmed their paycheck before payday, and what they flagged.` : 'Who confirmed their paycheck before payday, and what they flagged.'}
+      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, ...(runId ? [{ label: 'Run', to: `/payroll/runs/${runId}` }] : []), { label: 'Paycheck confirmations' }]}
       summary={
         d ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Stat label="Confirmed" value={`${Math.round(d.confirmationRate * 100)}%`} hint={`${d.confirmed} of ${d.people}`} />
-            <Stat label="Open flags" value={String(d.openFlags)} hint={d.openFlags ? 'Blocking the close' : 'Nothing blocking'} />
-            <Stat label="Flagged" value={String(d.flagged)} hint="people who flagged a line" />
-            <Stat label="No answer" value={String(d.unanswered)} hint="haven’t looked yet" />
-          </div>
+          <MetricStrip label="Paycheck confirmations">
+            {/* No one to confirm is "nothing", never a fake 0%. */}
+            <MetricCard
+              label="Confirmed"
+              value={d.people === 0 ? '—' : fmtPercent(d.confirmationRate, { fromFraction: true })}
+              nothing={d.people === 0 ? 'No one to confirm yet' : undefined}
+              hint={d.people > 0 ? `${d.confirmed} of ${d.people}` : undefined}
+            />
+            <MetricCard label="Open flags" value={String(d.openFlags)} hint={d.openFlags ? 'Blocking the close' : 'Nothing blocking'} tone={d.openFlags > 0 ? 'alert' : 'default'} />
+            <MetricCard label="Flagged" value={String(d.flagged)} hint="people who flagged a line" />
+            <MetricCard label="No answer" value={String(d.unanswered)} hint="haven’t looked yet" />
+          </MetricStrip>
         ) : runId ? (
           <Skeleton className="h-24" />
         ) : null
       }
     >
       {!runId ? (
-        <RunPicker />
+        openRuns.isLoading || openRun ? <Skeleton className="h-64" /> : <RunPicker />
       ) : (
         <DataGrid
           id="pay-check-flags"
@@ -105,12 +131,13 @@ export function PayChecksPage() {
           columns={columns}
           rowKey={(r) => r.associateId}
           loading={q.isLoading}
-          error={q.isError ? (q.error instanceof ApiError ? q.error.message : 'Could not load pay checks.') : null}
+          error={q.isError ? (q.error instanceof ApiError ? q.error.message : 'Could not load the confirmations.') : null}
           onRetry={() => void q.refetch()}
           noun={{ one: 'person with open flags', many: 'people with open flags' }}
+          empty={{ title: 'No open flags', description: 'Nobody has flagged a line on their paycheck, or every flag is handled.' }}
         />
       )}
-    </ListTemplate>
+    </RunPageShell>
   );
 }
 
@@ -121,13 +148,13 @@ function RunPicker() {
   const recent = (runs.data?.runs ?? []).filter((r) => r.status !== 'CANCELLED').slice(0, 8);
   if (runs.isLoading) return <Skeleton className="h-64" />;
   if (!recent.length) {
-    return <EmptyState title="No payroll runs yet" description="Pay checks open for review once a run is drafted." action={<Button asChild variant="secondary"><Link to="/payroll">Go to payroll</Link></Button>} />;
+    return <EmptyState title="No payroll runs yet" description="Paycheck confirmations open once a run is drafted." action={<Button asChild variant="secondary"><Link to="/payroll">Go to payroll</Link></Button>} />;
   }
   return (
     <Card>
       <CardHeader>
         <CardTitle>Choose a run</CardTitle>
-        <CardDescription>See who confirmed their check and what they flagged.</CardDescription>
+        <CardDescription>No run is open right now. Pick a past run to see who confirmed their paycheck and what they flagged.</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         <ul className="divide-y divide-line">
@@ -148,18 +175,6 @@ function RunPicker() {
             </li>
           ))}
         </ul>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Stat({ label, value, hint }: { label: string; value: string; hint: string }) {
-  return (
-    <Card>
-      <CardContent>
-        <div className="text-2xs font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</div>
-        <div className="mt-2 font-display text-2xl leading-none tabular-nums text-ink">{value}</div>
-        <div className="mt-1.5 truncate text-xs text-ink-muted">{hint}</div>
       </CardContent>
     </Card>
   );

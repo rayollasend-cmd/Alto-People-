@@ -104,7 +104,7 @@ beforeEach(() => {
 
 describe('the roster’s agent scorecard column', () => {
   it('shows each live agent’s last seven days and opens its Scorecard tab', async () => {
-    renderAs('HR_ADMINISTRATOR', <WorkerTypesAdmin />, '/workers?group=none');
+    renderAs('HR_ADMINISTRATOR', <WorkerTypesAdmin />, '/workers?type=AGENT&group=none');
     expect(await screen.findByRole('columnheader', { name: /Scorecard \(7 days\)/ })).toBeInTheDocument();
     const good = await screen.findByRole('link', { name: /42 tasks/ });
     expect(good).toHaveAttribute('href', '/agents/w2?tab=scorecard');
@@ -140,11 +140,13 @@ describe('People and Agents open the roster on their own type', () => {
     expect(await screen.findByRole('link', { name: /Workforce roster/ })).toHaveAttribute('href', '/workers?type=AGENT');
   });
 
-  it('the roster honours ?type= — the chip is set and the list asks for that type', async () => {
+  it('the roster honours ?type= — the chip is set and the list shows only that type', async () => {
     renderAs('HR_ADMINISTRATOR', <WorkerTypesAdmin />, '/workers?type=AGENT');
     await screen.findByText('Roster Bot');
     const chips = screen.getByRole('radiogroup', { name: 'Worker type' });
     expect(within(chips).getByRole('radio', { name: 'Agents' })).toHaveAttribute('aria-checked', 'true');
-    await waitFor(() => expect(calls.some((c) => c.path.startsWith('/workers?') && c.path.includes('type=AGENT'))).toBe(true));
+    // One read of the roster; the type is a view of it (the page used to read it twice).
+    await waitFor(() => expect(calls.filter((c) => c.path.split('?')[0] === '/workers').length).toBe(1));
+    expect(screen.queryByText('Maria Lopez')).not.toBeInTheDocument();
   });
 });

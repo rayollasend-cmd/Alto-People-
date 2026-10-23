@@ -272,15 +272,37 @@ describe('Fieldglass setup — filters', () => {
     expect(screen.getByRole('button', { name: /Nia Fournier/ })).toBeInTheDocument();
   });
 
-  it('keeps only one kind of work on screen', async () => {
+  it('keeps only one kind of work on screen — the tiles are the filter, and there is no second chip row', async () => {
     renderWith(TWO_CLIENTS);
     await screen.findByRole('radio', { name: 'To do (3)' });
+    // One control per filter: no All / To add / Transfers / To close chips.
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'To close' }));
+    const toClose = screen.getByRole('button', { name: /^To close/ });
+    expect(toClose).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(toClose);
 
     expect(await screen.findByRole('radio', { name: 'To do (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^To close/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: /Cy Vega/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Jay Patel/ })).not.toBeInTheDocument();
+    // The other tiles keep their counts while one is picked (2 to add, 0 transfers).
+    // (The values count up, so wait for them to land.)
+    await waitFor(() => expect(screen.getByRole('button', { name: /^To add/ })).toHaveTextContent(/^To add2/), { timeout: 3000 });
+    expect(screen.getByRole('button', { name: /^Transfers/ })).toHaveTextContent(/^Transfers0/);
+
+    // Again: everything to do.
+    await userEvent.click(screen.getByRole('button', { name: /^To close/ }));
+    expect(await screen.findByRole('radio', { name: 'To do (3)' })).toBeInTheDocument();
+  });
+
+  it('a kind tile on the In Fieldglass tab goes back to To do, showing that kind', async () => {
+    renderWith(TWO_CLIENTS, '/fieldglass?tab=registered');
+    await screen.findByRole('table');
+    await userEvent.click(screen.getByRole('button', { name: /^To add/ }));
+    expect(await screen.findByRole('radio', { name: 'To do (2)' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('button', { name: /Nia Fournier/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Cy Vega/ })).not.toBeInTheDocument();
   });
 
   it('carries the filters in the URL, and applies them to who is registered', async () => {

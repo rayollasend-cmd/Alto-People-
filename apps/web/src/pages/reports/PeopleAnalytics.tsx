@@ -1,12 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { STOCK_LEGEND, seriesColor } from '@/components/ui/charts';
-import { ArrowLeft, Download, Users } from 'lucide-react';
+import { Download, Users } from 'lucide-react';
 import { useTenant, useTerm } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtMonth, ymdLocal } from '@/lib/format';
+import { urlEnum, urlNumber, useUrlState, type UrlCodec } from '@/lib/useUrlState';
 import { getPeopleAnalytics, type PeopleAnalytics as PeopleAnalyticsData, type TurnoverGroup } from '@/lib/peopleAnalyticsApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -14,6 +14,7 @@ import { CHART, ChartFrame } from '@/components/ui/ChartFrame';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -31,23 +32,45 @@ import { cn } from '@/lib/cn';
  */
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${v}%`);
-const monthLabel = (ym: string) => fmtDate(parseYmd(`${ym}-01`)).replace(/ \d{1,2},/, ',').replace(/,\s*/, ' ');
+/** "Nov 2025" — one month formatter for the axes, the tables and the CSVs. */
+const monthLabel = (ym: string) => fmtMonth(ym);
+const WINDOWS = [6, 12, 24] as const;
+/** ?months= — one of the windows; anything else reads as 12. */
+const MONTHS_CODEC: UrlCodec<number> = {
+  parse: (raw) => {
+    const n = urlNumber({ integer: true }).parse(raw);
+    return n !== undefined && (WINDOWS as readonly number[]).includes(n) ? n : undefined;
+  },
+  serialize: (n) => String(n),
+};
+const TREND_BY = urlEnum(['company', 'store'] as const);
+
+/** A site row's name: an active site as the API labels it ("Client · Site"); every closed site as one row. */
+function useSiteLabel() {
+  const term = useTerm();
+  return (r: { label?: string; storeName?: string; inactive?: boolean; siteCount?: number }) =>
+    r.inactive
+      ? `Inactive ${term('label.stores').toLowerCase()}${r.siteCount ? ` (${r.siteCount})` : ''}`
+      : (r.label ?? r.storeName ?? '—');
+}
 const axis = { fill: CHART.axis, fontSize: 11 };
 
 function TurnoverTable({ id, caption, rows, header }: { id: string; caption: string; rows: TurnoverGroup[]; header: string }) {
+  const siteLabel = useSiteLabel();
   const columns: GridColumn<TurnoverGroup>[] = [
-    { key: 'label', header, accessor: (r) => r.label, sortable: true, primary: true, className: 'text-ink' },
+    { key: 'label', header, accessor: (r) => siteLabel(r), sortable: true, primary: true, className: 'text-ink' },
     { key: 'headcount', header: 'On the books', accessor: (r) => r.headcount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
     { key: 'separations', header: 'Left', accessor: (r) => r.separations, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
     { key: 'rate', header: 'Annualized turnover', accessor: (r) => r.annualizedTurnoverPct ?? -1, sortable: true, searchable: false, align: 'right', cell: (r) => <span className={cn('tabular-nums', (r.annualizedTurnoverPct ?? 0) >= 50 ? 'text-alert' : (r.annualizedTurnoverPct ?? 0) >= 25 ? 'text-warning' : 'text-ink')}>{pct(r.annualizedTurnoverPct)}</span> },
   ];
-  return <DataGrid<TurnoverGroup> id={id} caption={caption} rows={rows} rowKey={(r) => r.key} search={{ placeholder: `${header}…` }} urlState={false} exportCsv={{ filename: id }} columns={columns} />;
+  return <DataGrid<TurnoverGroup> id={id} caption={caption} empty={{ title: 'No one on the books or leaving in this window' }} rows={rows} rowKey={(r) => r.key} search={{ placeholder: `${header}…` }} urlState={false} exportCsv={{ filename: id }} columns={columns} />;
 }
 
 /** Where early leavers leave: store rows, tenure-band columns, shaded by share of the store's leavers. */
 function EarlyTurnoverGrid({ d }: { d: PeopleAnalyticsData }) {
   const term = useTerm();
   const hasClients = useTenant().moduleOn('clientPortal');
+  const siteLabel = useSiteLabel();
   const grid = d.turnoverGrid;
   if (!grid || grid.rows.length === 0) {
     return (
@@ -66,7 +89,7 @@ function EarlyTurnoverGrid({ d }: { d: PeopleAnalyticsData }) {
   const csv = () =>
     downloadCsv(`early-turnover-${ymdLocal()}.csv`, [
       [...(hasClients ? [term('label.client')] : []), term('label.store'), 'Hired in window', 'Left in window', ...grid.bands.map((b) => b.label)],
-      ...grid.rows.map((r) => [...(hasClients ? [r.clientName ?? ''] : []), r.storeName, String(r.hires), String(r.separations), ...r.bands.map(String)]),
+      ...grid.rows.map((r) => [...(hasClients ? [r.clientName ?? ''] : []), siteLabel(r), String(r.hires), String(r.separations), ...r.bands.map(String)]),
     ]);
   return (
     <Card>
@@ -106,7 +129,7 @@ function EarlyTurnoverGrid({ d }: { d: PeopleAnalyticsData }) {
               {grid.rows.map((r) => (
                 <tr key={r.storeId} className="border-b border-line/60 last:border-0">
                   <th scope="row" className="px-2 py-1.5 text-left font-normal">
-                    <div className="text-ink">{r.storeName}</div>
+                    <div className={r.inactive ? 'text-ink-muted' : 'text-ink'}>{siteLabel(r)}</div>
                     {hasClients && r.clientName && <div className="text-2xs text-ink-muted">{r.clientName}</div>}
                   </th>
                   <td className="px-2 py-1.5 text-right tabular-nums text-ink">{r.hires}</td>
@@ -129,8 +152,9 @@ function EarlyTurnoverGrid({ d }: { d: PeopleAnalyticsData }) {
 export function PeopleAnalytics() {
   const term = useTerm();
   const hasClients = useTenant().moduleOn('clientPortal');
-  const [months, setMonths] = useState<6 | 12 | 24>(12);
-  const [trendBy, setTrendBy] = useState<'company' | 'store'>('company');
+  // The window and the trend's cut live in the URL, so Back and a shared link keep them.
+  const [months, setMonths] = useUrlState<number>('months', 12, MONTHS_CODEC);
+  const [trendBy, setTrendBy] = useUrlState<'company' | 'store'>('by', 'company', TREND_BY);
   const query = useQuery({ queryKey: ['people-analytics', months], queryFn: () => getPeopleAnalytics(months) });
   const d: PeopleAnalyticsData | undefined = query.data;
   const headcountNow = d?.headcount[d.headcount.length - 1]?.headcount ?? null;
@@ -146,7 +170,8 @@ export function PeopleAnalytics() {
     });
   }, [d]);
   const survivalRows = useMemo(() => {
-    if (!d?.survival?.length) return [];
+    // No cohort has reached a single milestone yet: nothing to draw (not an empty axis).
+    if (!d?.survival?.some((c) => c.points.some((p) => p.pct !== null))) return [];
     const days = d.survival[0]!.points.map((p) => p.day);
     return days.map((day, k) => {
       const row: Record<string, string | number | null> = { day: `Day ${day}` };
@@ -154,31 +179,37 @@ export function PeopleAnalytics() {
       return row;
     });
   }, [d]);
-  const absence = useMemo(() => (d?.absenceTrend ?? []).map((a) => ({ month: monthLabel(a.month), rate: a.absenceRatePct, days: a.absenceDays, scheduled: a.scheduledShiftDays })), [d]);
+  const absence = useMemo(() => {
+    const rows = (d?.absenceTrend ?? []).map((a) => ({ month: monthLabel(a.month), rate: a.absenceRatePct, days: a.absenceDays, scheduled: a.scheduledShiftDays }));
+    // No shifts and no days off all window: a 0% line would be a reading of nothing.
+    return rows.some((r) => r.days > 0 || r.scheduled > 0) ? rows : [];
+  }, [d]);
+  // Turnover by tenure with nobody leaving in the window is 0% in every band: say
+  // that in a line instead of drawing four empty bars on an axis (F500 G4).
+  const nobodyLeft = !!d && d.turnover.byTenure.every((b) => b.separations === 0);
+  const tenureRows = d && !nobodyLeft ? d.turnover.byTenure : [];
   const fillByClient = d?.timeToFill.byClient ?? [];
   const fillByPosition = d?.timeToFill.byPosition ?? [];
 
   return (
     <ListTemplate
       title="People analytics"
-      subtitle={`Headcount, who leaves and how early, the first 90 days, time to fill and absence — by ${term('label.store').toLowerCase()} where it matters. Computed from the records as of now.`}
-      breadcrumbs={[{ label: 'Reports', to: '/reports' }, { label: 'People analytics' }]}
-      secondaryActions={
-        <Button asChild variant="outline">
-          <Link to="/reports">
-            <ArrowLeft className="h-4 w-4" />
-            Report builder
-          </Link>
-        </Button>
-      }
-      filters={<SegmentedControl ariaLabel="Window" options={([6, 12, 24] as const).map((m) => ({ value: m, label: `${m} months` }))} value={months} onChange={(m) => setMonths(m)} />}
+      subtitle={`Who is on the books, who leaves and how early, the first 90 days, time to fill and absence — by ${term('label.store').toLowerCase()} where it matters. Computed from the records as of now.`}
+      related={[
+        { label: 'Report builder', to: '/reports' },
+        { label: 'Analytics', to: '/analytics' },
+      ]}
       summary={
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="space-y-3">
+        {/* The window first: it sets every number under it. */}
+        <SegmentedControl ariaLabel="Window" options={WINDOWS.map((m) => ({ value: m, label: `${m} months` }))} value={months} onChange={(m) => setMonths(m)} />
+        <MetricStrip label="People at a glance">
           <MetricCard label="Annualized turnover" value={d ? pct(d.turnover.annualizedPct) : '—'} accent={Boolean(d && (d.turnover.annualizedPct ?? 0) >= 25)} hint={d ? `${d.turnover.separations} left · average ${d.turnover.averageHeadcount} on the books` : undefined} />
           {/* "On the books" (hired, not separated): the number Headcount and Analytics show (apps/api/src/lib/peopleStatus.ts). */}
           <MetricCard label="On the books" value={headcountNow ?? '—'} valueTitle="Hired and not separated" hint={headcountThen !== null && headcountNow !== null ? `${headcountNow - headcountThen >= 0 ? '+' : ''}${headcountNow - headcountThen} since ${d ? monthLabel(d.headcount[0]!.month) : ''}` : undefined} />
           <MetricCard label="Median time to fill" value={d && d.timeToFill.medianDays !== null ? `${d.timeToFill.medianDays} days` : '—'} hint={d ? `${d.timeToFill.filled} seats filled in the window` : undefined} />
           <MetricCard label="Absence rate" value={d ? pct(d.absence.absenceRatePct) : '—'} hint={d ? `${d.absence.absenceDays} days off against ${d.absence.scheduledShiftDays} shift days` : undefined} />
+        </MetricStrip>
         </div>
       }
     >
@@ -188,7 +219,7 @@ export function PeopleAnalytics() {
       ) : d ? (
         <div className="space-y-5">
           <ChartFrame
-            title="Headcount, month by month"
+            title="On the books, month by month"
             description={
               d.headcountByStore?.length ? (
                 <SegmentedControl
@@ -201,23 +232,23 @@ export function PeopleAnalytics() {
                   ]}
                 />
               ) : (
-                'Headcount at month end, with the hires and leavers that moved it.'
+                'Hired and not separated at each month’s end, with the hires and leavers that moved it.'
               )
             }
             summary={
               trendBy === 'company'
-                ? `Headcount went from ${headcountThen ?? 0} to ${headcountNow ?? 0} over ${months} months, with ${trend.reduce((s, t) => s + t.hires, 0)} hires and ${trend.reduce((s, t) => s + t.left, 0)} leavers.`
-                : `Headcount by ${term('label.store').toLowerCase()} for the ${d.headcountByStore?.length ?? 0} busiest.`
+                ? `On the books went from ${headcountThen ?? 0} to ${headcountNow ?? 0} over ${months} months, with ${trend.reduce((s, t) => s + t.hires, 0)} hires and ${trend.reduce((s, t) => s + t.left, 0)} leavers.`
+                : `On the books by ${term('label.store').toLowerCase()} for the ${d.headcountByStore?.length ?? 0} busiest.`
             }
             columns={
               trendBy === 'company'
                 ? [
                     { key: 'month', label: 'Month' },
-                    { key: 'headcount', label: 'Headcount', numeric: true },
+                    { key: 'headcount', label: 'On the books', numeric: true },
                     { key: 'hires', label: 'Hires', numeric: true },
                     { key: 'left', label: 'Left', numeric: true },
                   ]
-                : [{ key: 'month', label: 'Month' }, ...(d.headcountByStore ?? []).map((s) => ({ key: s.storeName, label: s.storeName, numeric: true }))]
+                : [{ key: 'month', label: 'Month' }, ...(d.headcountByStore ?? []).map((s) => ({ key: s.storeName, label: s.clientName ? `${s.clientName} · ${s.storeName}` : s.storeName, numeric: true }))]
             }
             rows={trendBy === 'company' ? trend : storeTrend}
             csvName={trendBy === 'company' ? 'headcount-trend' : 'headcount-by-store'}
@@ -232,7 +263,7 @@ export function PeopleAnalytics() {
                   <Legend {...STOCK_LEGEND} />
                   <Bar dataKey="hires" name="Hires" fill={CHART.good} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="left" name="Left" fill={CHART.bad} radius={[3, 3, 0, 0]} />
-                  <Line dataKey="headcount" name="Headcount" stroke={CHART.series[0]} strokeWidth={2} dot={false} />
+                  <Line dataKey="headcount" name="On the books" stroke={CHART.series[0]} strokeWidth={2} dot={false} />
                 </ComposedChart>
               ) : (
                 <LineChart data={storeTrend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
@@ -252,7 +283,8 @@ export function PeopleAnalytics() {
 
           <EarlyTurnoverGrid d={d} />
 
-          <div className="grid gap-5 lg:grid-cols-2">
+          {/* items-start: an empty card keeps its own height instead of stretching to its neighbour's chart. */}
+          <div className="grid items-start gap-5 lg:grid-cols-2">
             <ChartFrame
               title="The first 90 days"
               description="Share of each hiring month still here, week by week."
@@ -290,8 +322,13 @@ export function PeopleAnalytics() {
                 { key: 'separations', label: 'Left', numeric: true },
                 { key: 'annualizedTurnoverPct', label: 'Annualized', numeric: true, format: (v) => pct(v as number | null) },
               ]}
-              rows={d.turnover.byTenure}
+              rows={tenureRows}
               csvName="turnover-by-tenure"
+              empty={
+                <p className="text-sm text-ink-muted">
+                  {d.turnover.byTenure.some((b) => b.headcount > 0) ? 'Nobody left in this window: turnover is 0% in every tenure band.' : 'No one on the books or leaving in this window.'}
+                </p>
+              }
             >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={d.turnover.byTenure} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
@@ -307,7 +344,7 @@ export function PeopleAnalytics() {
 
           <CohortGrid cohorts={d.cohorts} />
 
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className="grid items-start gap-5 lg:grid-cols-2">
             <ChartFrame
               title={hasClients ? `Time to fill, by ${term('label.client').toLowerCase()}` : 'Time to fill, by department'}
               description="Median days from a seat opening to its fill."
@@ -344,6 +381,7 @@ export function PeopleAnalytics() {
               ]}
               rows={absence}
               csvName="absence-trend"
+              empty={<p className="text-sm text-ink-muted">No shifts or days off in this window.</p>}
             >
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={absence} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>

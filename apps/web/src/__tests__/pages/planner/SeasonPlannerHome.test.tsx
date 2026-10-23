@@ -181,4 +181,26 @@ describe('SeasonPlannerHome', () => {
     expect(screen.queryByRole('button', { name: /save demand/i })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Front Beach May 1 day')).toBeDisabled();
   });
+
+  it('with no plan yet, both ways in sit in the empty state (F500 G2)', async () => {
+    vi.mocked(listSeasonPlans).mockResolvedValue({ plans: [] });
+    renderPage();
+    expect(await screen.findByText('No season plan yet')).toBeInTheDocument();
+    // The header no longer repeats them; the empty state carries both.
+    expect(screen.getAllByRole('button', { name: /Start from the forecast/ })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Blank plan/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /new plan/i })).not.toBeInTheDocument();
+  });
+
+  it('the weekly chart is the kit chart in a ChartFrame, with every weekly figure as its table (F500 G2)', async () => {
+    renderPage('/season-planner?plan=p1');
+    await screen.findByText('Associates needed at peak');
+    await userEvent.click(screen.getByRole('button', { name: 'Table' }));
+    const table = await screen.findByRole('table', { name: /Associates needed, week by week/ });
+    for (const header of ['Week of', 'Associates', 'Beds needed', 'Van seats carried', 'Short days (forecast)']) {
+      expect(table).toHaveTextContent(header);
+    }
+    expect(screen.getByRole('button', { name: /Download Associates needed, week by week as CSV/ })).toBeInTheDocument();
+  });
 });
+

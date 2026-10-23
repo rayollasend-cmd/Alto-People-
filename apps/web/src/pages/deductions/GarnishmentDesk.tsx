@@ -1,5 +1,4 @@
 import { useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CheckCircle2, Download, FileUp, Inbox, Landmark, Plus, Scale, Send } from 'lucide-react';
@@ -48,6 +47,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -101,28 +102,28 @@ function StatusBadge({ status }: { status: DeskOrder['status'] }) {
 }
 
 export function GarnishmentDesk() {
-  const [params, setParams] = useSearchParams();
-  const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'orders') as Tab;
-  const setTab = (t: Tab) => {
-    const next = new URLSearchParams(params);
-    if (t === 'orders') next.delete('tab');
-    else next.set('tab', t);
-    setParams(next, { replace: true });
-  };
+  // A tab is a place: in the URL, and Back returns to the last one.
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'orders', TABS, { history: 'push' });
   const desk = useQuery({ queryKey: ['garnishment-desk'], queryFn: getDesk });
   const [adding, setAdding] = useState(false);
   const qc = useQueryClient();
+  const t = desk.data?.totals;
 
   return (
     <ListTemplate
       title="Garnishments"
       subtitle="Withholding orders, what each still owes and when its next payment is due, and the e-IWO orders agencies send."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Garnishments' }]}
-      primaryAction={
-        <Button size="sm" onClick={() => setAdding(true)}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Add an order
-        </Button>
+      actions={[{ key: 'add', label: 'Add an order', icon: Plus, primary: true, onSelect: () => setAdding(true) }]}
+      // The numbers span the tabs (e-IWO to answer, payments waiting), so they sit above them (F500 G3).
+      summary={
+        t ? (
+          <MetricStrip label="Garnishments at a glance">
+            <MetricCard label="Active orders" value={String(t.active)} hint="Withholding every paycheck" onClick={() => setTab('orders')} selected={tab === 'orders'} />
+            <MetricCard label="e-IWO to answer" value={String(t.eiwoToReview)} hint="Agencies wait for your acknowledgment" tone={t.eiwoToReview ? 'warning' : 'default'} onClick={() => setTab('eiwo')} selected={tab === 'eiwo'} />
+            <MetricCard label="Payments waiting" value={fmtMoney(t.remittancesPendingAmount)} hint={`${t.remittancesPending} to send`} onClick={() => setTab('remittances')} selected={tab === 'remittances'} />
+            <MetricCard label="Late payments" value={String(t.overdue)} hint="Past 7 business days from payday" tone={t.overdue ? 'alert' : 'default'} onClick={() => setTab('remittances')} />
+          </MetricStrip>
+        ) : null
       }
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -154,11 +155,10 @@ export function GarnishmentDesk() {
 
 /* ----- Orders ------------------------------------------------------------- */
 
-function OrdersTab({ query, onTab }: { query: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getDesk>>>>; onTab: (t: Tab) => void }) {
+function OrdersTab({ query }: { query: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getDesk>>>>; onTab?: (t: Tab) => void }) {
   const term = useTerm();
   const [open, setOpen] = useState<DeskOrder | null>(null);
   if (query.isError) return <QueryError what="garnishment orders" query={query} />;
-  const t = query.data?.totals;
   const columns: GridColumn<DeskOrder>[] = [
     {
       key: 'person',
@@ -208,12 +208,6 @@ function OrdersTab({ query, onTab }: { query: ReturnType<typeof useQuery<Awaited
   ];
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Active orders" value={t ? String(t.active) : '—'} hint="Withholding every paycheck" />
-        <MetricCard label="e-IWO to answer" value={t ? String(t.eiwoToReview) : '—'} hint="Agencies wait for your acknowledgment" accent={!!t?.eiwoToReview} wrap={(c) => <button type="button" className="text-left" onClick={() => onTab('eiwo')}>{c}</button>} />
-        <MetricCard label="Payments waiting" value={t ? fmtMoney(t.remittancesPendingAmount) : '—'} hint={t ? `${t.remittancesPending} to send` : undefined} wrap={(c) => <button type="button" className="text-left" onClick={() => onTab('remittances')}>{c}</button>} />
-        <MetricCard label="Late payments" value={t ? String(t.overdue) : '—'} hint="Past 7 business days from payday" accent={!!t?.overdue} />
-      </div>
       <DataGrid
         id="garnishment-desk-orders"
         caption="Garnishment orders"
@@ -633,10 +627,18 @@ function EiwoTab({ rejectReasons }: { rejectReasons: Array<{ code: string; label
       accessor: () => '',
       cell: (d) =>
         d.status === 'RECEIVED' ? (
-          <div className="flex justify-end gap-2">
-            <Button size="sm" variant="outline" onClick={() => setRejecting(d)}>Reject</Button>
-            <Button size="sm" onClick={() => setAccepting(d)}>Accept</Button>
-          </div>
+          // No one on file has the order's SSN: rejecting it as not our employee is the likely answer, so it's the primary (F500 G3).
+          !d.associateId ? (
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setAccepting(d)}>Accept</Button>
+              <Button size="sm" onClick={() => setRejecting(d)}>Reject: not our employee</Button>
+            </div>
+          ) : (
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setRejecting(d)}>Reject</Button>
+              <Button size="sm" onClick={() => setAccepting(d)}>Accept</Button>
+            </div>
+          )
         ) : d.hasAck ? (
           <div className="flex justify-end">
             <Button size="sm" variant="ghost" onClick={() => void downloadAck(d.id).catch((e: Error) => toast.error(e.message))}>

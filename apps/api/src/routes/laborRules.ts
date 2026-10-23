@@ -206,6 +206,7 @@ laborRulesRouter.post('/sets/:id/retire', MANAGE, async (req, res) => {
  *
  *   GET  /labor-rules/activations               each covered state: shadow, waiting or live, with history
  *   GET  /labor-rules/change-report             what the last runs would have paid, by person and rule
+ *   GET  /labor-rules/last-run                  the last run replayed per state (totals only)
  *   POST /labor-rules/activations               go live: counsel's sign-off + a second person (202 when waiting)
  *   POST /labor-rules/activations/:id/end       back to shadow, at once
  */
@@ -278,6 +279,24 @@ laborRulesRouter.get('/change-report', VIEW, async (req, res) => {
   const tenantId = tenantIdForWrite();
   if (q.siteId && !(await prisma.site.findFirst({ where: { id: q.siteId, tenantId, deletedAt: null }, select: { id: true } }))) throw new HttpError(404, 'site_not_found', 'Site not found.');
   res.json(await buildChangeReport(prisma, tenantId, { jurisdiction: q.jurisdiction, siteId: q.siteId ?? null, runs: q.runs }));
+});
+
+/**
+ * The number each state's row leads with: the last finalized run replayed under that state's
+ * rules, as the change report does (state totals only, no names). A state with no sites is
+ * left out: nothing there to replay.
+ */
+laborRulesRouter.get('/last-run', VIEW, async (_req, res) => {
+  const tenantId = tenantIdForWrite();
+  const sites = await prisma.site.findMany({ where: { tenantId, deletedAt: null }, select: { state: true }, take: 2000 });
+  const worked = new Set(sites.map((s) => `US-${(s.state ?? '').toUpperCase()}`));
+  const states: Array<{ jurisdiction: string; periodStart: string; periodEnd: string; replayed: number; people: number; amountDifference: number }> = [];
+  for (const j of LIVE_JURISDICTIONS.filter((x) => worked.has(x))) {
+    const r = await buildChangeReport(prisma, tenantId, { jurisdiction: j, runs: 1 });
+    const run = r.runs[0];
+    if (run) states.push({ jurisdiction: j, periodStart: run.periodStart, periodEnd: run.periodEnd, replayed: r.replayed, people: r.people, amountDifference: r.amountDifference });
+  }
+  res.json({ states });
 });
 
 laborRulesRouter.post('/activations', MANAGE, async (req, res) => {

@@ -8,9 +8,11 @@ import {
   Button,
   Card,
   CardContent,
-  ErrorBanner,
   Skeleton,
 } from '@/components/ui';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { QueryError } from '@/components/ui/QueryError';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
@@ -53,7 +55,7 @@ export function W4SsnRecollection() {
       const skippedNote =
         result.skipped.length > 0 ? ` (${result.skipped.length} skipped)` : '';
       toast.success(
-        `Re-entry request emailed to ${result.queued} associate${result.queued === 1 ? '' : 's'}${skippedNote}.`,
+        `Re-entry request emailed to ${result.queued} ${result.queued === 1 ? 'person' : 'people'}${skippedNote}.`,
       );
       clearSelection();
       void queryClient.invalidateQueries({ queryKey: ['w4-recollection'] });
@@ -70,35 +72,26 @@ export function W4SsnRecollection() {
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    // The trail comes from the nav (Payroll › …); the page is reached from the admin home while the campaign runs.
     <ListTemplate
         title="W-4 SSN re-collection"
-        subtitle="Each affected associate must re-enter their SSN on the W-4 step and upload a photo of their Social Security card — email them the request from here."
+        subtitle="Each person affected re-enters their Social Security number on the W-4 step and uploads a photo of their card. Email them the request from here."
     >
 
-      {query.error && (
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
-              Retry
-            </Button>
-          }
-        >
-          {query.error instanceof ApiError
-            ? query.error.message
-            : 'Failed to load the re-collection roster.'}
-        </ErrorBanner>
-      )}
+      {query.error && <QueryError what="the re-collection list" query={query} />}
 
       {summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <SummaryCard
+        // One tone rule for every tile: colour only for something to act on, never for a zero (F500 G3).
+        <MetricStrip label="Re-collection">
+          <MetricCard
             label="Still outstanding"
             value={summary.outstanding}
-            tone={summary.outstanding > 0 ? 'alert' : 'success'}
+            nothing={summary.outstanding === 0 ? 'Nobody outstanding' : undefined}
+            tone={summary.outstanding > 0 ? 'alert' : 'default'}
           />
-          <SummaryCard label="Emailed at least once" value={summary.notified} tone="neutral" />
-          <SummaryCard label="Resolved since first email" value={summary.resolved} tone="success" />
-        </div>
+          <MetricCard label="Emailed at least once" value={summary.notified} />
+          <MetricCard label="Resolved since first email" value={summary.resolved} />
+        </MetricStrip>
       )}
 
       {query.isLoading ? (
@@ -114,10 +107,9 @@ export function W4SsnRecollection() {
           <CardContent className="py-5 flex items-center gap-3">
             <FileCheck2 className="h-5 w-5 text-success shrink-0" aria-hidden="true" />
             <div>
-              <div className="text-white font-medium">All SSNs and card photos are in</div>
-              <div className="text-sm text-silver">
-                Every stored W-4 Social Security number decrypts under the current key and
-                every contacted associate has a card image on file. The campaign is complete.
+              <div className="text-ink font-medium">All Social Security numbers and card photos are in</div>
+              <div className="text-sm text-ink-muted">
+                Everyone affected has re-entered their number, and everyone contacted has a card photo on file. The campaign is complete.
               </div>
             </div>
           </CardContent>
@@ -126,10 +118,10 @@ export function W4SsnRecollection() {
         <Card>
           <CardContent>
             <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
-              <div className="text-sm text-silver">
+              <div className="text-sm text-ink-muted">
                 {selected.size > 0
                   ? `${selected.size} selected`
-                  : `${rows.length} associate${rows.length === 1 ? '' : 's'} outstanding`}
+                  : `${rows.length} ${rows.length === 1 ? 'person' : 'people'} outstanding`}
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={toggleAll}>
@@ -150,7 +142,7 @@ export function W4SsnRecollection() {
 
             <DataGrid<W4RecollectionRow>
               id="w4-recollection"
-              caption="Associates still owing an SSN re-entry, a card photo, or both"
+              caption="People still owing an SSN re-entry, a card photo, or both"
               rows={rows}
               rowKey={(r) => r.associateId}
               search={{ placeholder: 'Name, email…' }}
@@ -160,7 +152,7 @@ export function W4SsnRecollection() {
               columns={[
                 {
                   key: 'associate',
-                  header: 'Associate',
+                  header: 'Name',
                   accessor: (r) => `${r.firstName} ${r.lastName}`.trim(),
                   sortable: true,
                   primary: true,
@@ -175,7 +167,7 @@ export function W4SsnRecollection() {
                             to={`/onboarding/applications/${r.applicationId}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-white hover:text-gold-bright"
+                            className="text-ink hover:text-gold-bright"
                             title="Open the onboarding application in a new tab"
                           >
                             {name}
@@ -183,7 +175,7 @@ export function W4SsnRecollection() {
                         ) : (
                           name
                         )}
-                        {r.ssnLast4 && <span className="ml-2 font-mono text-xs text-silver">•••-••-{r.ssnLast4}</span>}
+                        {r.ssnLast4 && <span className="ml-2 font-mono text-xs text-ink-muted">•••-••-{r.ssnLast4}</span>}
                       </>
                     );
                   },
@@ -196,7 +188,7 @@ export function W4SsnRecollection() {
                   cardMeta: true,
                   cell: (r) =>
                     r.hasAccount ? (
-                      <span className="text-silver">{r.email ?? '—'}</span>
+                      <span className="text-ink-muted">{r.email ?? '—'}</span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 text-warning text-xs">
                         <UserX className="h-3.5 w-3.5" aria-hidden="true" />
@@ -217,7 +209,7 @@ export function W4SsnRecollection() {
                     </div>
                   ),
                 },
-                { key: 'w4', header: 'W-4 submitted', accessor: (r) => r.w4SubmittedAt, sortable: true, searchable: false, className: 'text-silver', cell: (r) => fmtDate(r.w4SubmittedAt) },
+                { key: 'w4', header: 'W-4 submitted', accessor: (r) => r.w4SubmittedAt, sortable: true, searchable: false, className: 'text-ink-muted', cell: (r) => fmtDate(r.w4SubmittedAt) },
                 {
                   key: 'shortcut',
                   header: 'Shortcut',
@@ -235,7 +227,7 @@ export function W4SsnRecollection() {
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-                        title="An SSN card or I-9 document image is on file — opens this associate's Documents tab in a new tab so you can view it and re-key the number without waiting on the associate."
+                        title="An SSN card or I-9 image is on file. Opens their Documents tab in a new tab, so you can read the number from it without waiting on them."
                       >
                         <Badge variant="accent">
                           <ShieldAlert className="h-3 w-3 mr-1" aria-hidden="true" />
@@ -243,7 +235,7 @@ export function W4SsnRecollection() {
                         </Badge>
                       </Link>
                     ) : (
-                      <span className="text-silver text-xs">—</span>
+                      <span className="text-ink-muted text-xs">—</span>
                     ),
                 },
                 {
@@ -253,7 +245,7 @@ export function W4SsnRecollection() {
                   csv: (r) => (r.lastEmailedAt ? `${fmtDate(r.lastEmailedAt)}${r.emailCount > 1 ? ` (×${r.emailCount})` : ''}` : 'Never'),
                   sortable: true,
                   searchable: false,
-                  className: 'text-silver text-xs',
+                  className: 'text-ink-muted text-xs',
                   cell: (r) =>
                     r.lastEmailedAt ? (
                       <>
@@ -272,27 +264,3 @@ export function W4SsnRecollection() {
     </ListTemplate>
   );
 }
-
-function SummaryCard({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: 'alert' | 'success' | 'neutral';
-}) {
-  const color =
-    tone === 'alert' ? 'text-alert' : tone === 'success' ? 'text-success' : 'text-gold';
-  return (
-    <Card>
-      <CardContent>
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-          {label}
-        </div>
-        <div className={`font-display text-3xl tabular-nums mt-1 ${color}`}>{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-

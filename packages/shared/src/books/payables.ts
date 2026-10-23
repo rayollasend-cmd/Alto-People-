@@ -62,6 +62,10 @@ export const BooksVendorSchema = z.object({
   isActive: z.boolean(),
   /** Open bills owed (approved, not yet paid). */
   balance: Money,
+  /** Paid to this vendor this calendar year, every method, voids left out. */
+  paidThisYear: Money,
+  /** The newest payment's date, voids left out; null when never paid. */
+  lastPaidOn: Ymd.nullable(),
   /** A change to the bank details waiting on a second person. */
   pendingBankChange: z.object({ approvalId: z.string(), accountLast4: z.string(), requestedAt: z.string(), requestedByName: z.string().nullable() }).nullable(),
   createdAt: z.string(),

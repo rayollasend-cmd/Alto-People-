@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Select } from '@/components/ui/Select';
 import { fmtDate } from '@/lib/format';
 
@@ -72,7 +73,6 @@ export function CertifiedPayrollDesk() {
     <ListTemplate
       title="Certified payroll"
       subtitle="Public-works projects paid at prevailing wage, and the weekly WH-347 each one owes the agency."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Certified payroll' }]}
       primaryAction={
         <Button onClick={() => setCreating(true)}>
           <Plus className="mr-1.5 h-4 w-4" aria-hidden />
@@ -81,11 +81,12 @@ export function CertifiedPayrollDesk() {
       }
       summary={
         rows ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          // No projects: the empty list carries the page, not three zero tiles (F500 G3).
+          <MetricStrip label="Certified payroll at a glance" empty={rows.length === 0}>
             <MetricCard label="Active projects" value={String(active.length)} />
-            <MetricCard label="Weeks owed" value={String(due)} hint="Ended weeks not yet submitted" accent={due > 0} />
-            <MetricCard label="Waiting for a signature" value={String(unsigned)} hint="The Statement of Compliance" accent={unsigned > 0} />
-          </div>
+            <MetricCard label="Weeks owed" value={String(due)} hint="Ended weeks not yet submitted" tone={due > 0 ? 'warning' : 'default'} />
+            <MetricCard label="Waiting for a signature" value={String(unsigned)} hint="The Statement of Compliance" tone={unsigned > 0 ? 'warning' : 'default'} />
+          </MetricStrip>
         ) : null
       }
     >

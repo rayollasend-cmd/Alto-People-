@@ -13,6 +13,33 @@ import type {
 import { apiFetch } from './api';
 import { withOfflineQueue } from './offlineQueue';
 
+/** One approved leave in the two-week "Who's off" strip. */
+export interface WhosOffRow {
+  id: string;
+  associateId: string;
+  name: string;
+  category: TimeOffCategory;
+  startDate: string;
+  endDate: string;
+}
+
+/** Who is out, in the caller's reach (GET /time-off/admin/summary). Counts are people. */
+export interface TimeOffSummary {
+  today: string;
+  weekStart: string;
+  weekEnd: string;
+  horizonEnd: string;
+  outToday: number;
+  outThisWeek: number;
+  pending: number;
+  upcoming: number;
+  whosOff: WhosOffRow[];
+}
+
+export function getTimeOffSummary() {
+  return apiFetch<TimeOffSummary>('/time-off/admin/summary');
+}
+
 export function getMyBalance() {
   return apiFetch<TimeOffMyBalanceResponse>('/time-off/me/balance');
 }

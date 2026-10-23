@@ -248,6 +248,8 @@ describe('the store manager sees who leads each shift', () => {
     const leads = day.body.windowLeads as Array<{ label: string; leads: string[] }>;
     expect(leads.find((w) => w.label === 'Overnight')!.leads).toEqual(['Dana Lead']);
     expect(leads.find((w) => w.label === 'Morning')!.leads).toEqual([]);
+    // Each window carries its contracted headcount, so an empty day can say what it is short of (F500 G5).
+    expect(leads.find((w) => w.label === 'Overnight')).toMatchObject({ targetCount: 5 });
 
     const overview = await portal.get('/client-portal/overview');
     const people = overview.body.leads.people as Array<{ name: string; shifts: string[] }>;
@@ -302,9 +304,26 @@ describe('who is missing a lead — across every client', () => {
     expect(c.noShift).toEqual([omar.id]);
     expect(c.supervisors.map((u: { name: string }) => u.name).sort()).toEqual(['Dana Lead', 'Omar Lead']);
 
+    // Every shift at the client, with who leads it ("No lead" = no names).
+    expect(c.windows.map((w: { label: string; leads: string[] }) => [w.label, w.leads])).toEqual(
+      expect.arrayContaining([
+        ['Overnight', ['Dana Lead']],
+        ['Morning', []],
+      ]),
+    );
+    expect(c.windows).toHaveLength(2);
+
     await hr.put(`/admin/users/${omar.id}/shift-windows`).send({ windows: [{ locationId: store.id, label: 'Morning' }] });
     const after = await hr.get('/admin/shift-windows/gaps');
     expect(after.body).toEqual({ total: 2, covered: 2, clients: [] });
+    // ?all=1 keeps the all-clear client, each shift with its lead (Store leads).
+    const all = await hr.get('/admin/shift-windows/gaps?all=1');
+    expect(all.body).toMatchObject({ total: 2, covered: 2 });
+    expect(all.body.clients).toHaveLength(1);
+    expect(all.body.clients[0].uncovered).toEqual([]);
+    expect(
+      Object.fromEntries(all.body.clients[0].windows.map((w: { label: string; leads: string[] }) => [w.label, w.leads])),
+    ).toEqual({ Overnight: ['Dana Lead'], Morning: ['Omar Lead'] });
   });
 
   it('the Workforce Manager, who staffs supervisors, can read the picker and the gaps', async () => {

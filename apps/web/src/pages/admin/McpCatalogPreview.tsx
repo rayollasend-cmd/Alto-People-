@@ -32,18 +32,20 @@ export function McpCatalogPreview() {
   });
   return (
     <div className="space-y-2" data-testid="mcp-catalog">
-      <p className="text-xs2 text-silver">What the MCP server at <code className="text-white">/api/mcp</code> offers, generated from the agents&rsquo; capabilities. An agent connects with its own credential and sees only the tools it holds. A tool that needs approval returns an approval id and does nothing else.</p>
       {catalog.error ? (
         <QueryError what="the MCP catalog" query={catalog} />
       ) : (
-        <ul className="mt-2 divide-y divide-navy-secondary">
+        <ul className="divide-y divide-line">
           {(catalog.data?.tools ?? []).map((t) => (
-            <li key={t.name} className="flex flex-wrap items-center gap-2 py-2 text-sm">
-              <code className="text-white">{t.name}</code>
+            <li key={t.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
+              {/* The tool's name in words first; the key an agent calls, second (F500 G4). */}
+              <span className="min-w-0 flex-1">
+                <span className="block text-ink">{t.title}</span>
+                <code className="block text-xs text-ink-muted">{t.name}</code>
+              </span>
               <Badge variant={EFFECT[t.effect].variant} size="sm">
                 {EFFECT[t.effect].label}
               </Badge>
-              <span className="text-silver">{t.title}</span>
             </li>
           ))}
         </ul>

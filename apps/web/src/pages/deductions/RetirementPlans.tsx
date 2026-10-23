@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, FileUp, PiggyBank, Plus, RefreshCw, Send, Trash2, Upload, Users } from 'lucide-react';
+import { AlertTriangle, Download, FileUp, PiggyBank, Plus, RefreshCw, Send, Trash2, Upload, Users } from 'lucide-react';
 import {
   addLoan,
   changeElection,
@@ -97,17 +97,29 @@ export function RetirementPlans() {
     else next.delete(k);
     setParams(next, { replace: true });
   };
+  // Once a plan is live, the job every pay date is its contribution file: the oldest pay date with no file is the primary.
+  const qc = useQueryClient();
+  const dates = useQuery({ queryKey: ['retirement', 'pay-dates', plan?.id], queryFn: () => listPayDates(plan!.id), enabled: !!plan });
+  const nextFile = [...(dates.data?.payDates ?? [])].filter((d) => !d.fileStatus).sort((a, b) => a.payDate.localeCompare(b.payDate))[0] ?? null;
+  const makeFile = useMutation({
+    mutationFn: (d: string) => makeContributionFile(plan!.id, d),
+    onSuccess: () => {
+      toast.success('Contribution file made. Send it or download it under Pay dates and files.');
+      void qc.invalidateQueries({ queryKey: ['retirement'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   return (
     <ListTemplate
       title="Retirement plans"
       subtitle="401(k) plans for each employer: who is in, what they save, the match, and the files your recordkeeper needs every pay date."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Retirement plans' }]}
-      primaryAction={
-        <Button size="sm" onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Set up a plan
-        </Button>
-      }
+      actions={[
+        ...(plan && nextFile
+          ? [{ key: 'file', label: `Make the ${fmtDate(nextFile.payDate)} file`, primary: true, loading: makeFile.isPending, onSelect: () => makeFile.mutate(nextFile.payDate) }]
+          : []),
+        // No plan yet: setting one up is the page's job. With one live, adding another is occasional (F500 G3).
+        { key: 'add', label: plans.length ? 'Add a plan' : 'Set up a plan', icon: Plus, primary: !plans.length, overflow: plans.length > 0, onSelect: () => setCreating(true) },
+      ]}
       filters={
         plans.length > 1 ? (
           <Select size="sm" aria-label="Plan" className="w-72 max-w-full" value={planId ?? ''} onChange={(e) => setParam('plan', e.target.value)}>
@@ -242,8 +254,28 @@ function PeopleTab({ plan }: { plan: RetirementPlan }) {
     },
     { key: 'source', header: 'Last changed by', accessor: (e) => e.source, defaultHidden: true, cell: (e) => ({ EMPLOYEE: 'Employee', AUTO: 'Auto-enrollment', RECORDKEEPER: 'Recordkeeper', HR: 'HR' } as Record<string, string>)[e.source] ?? e.source },
   ];
+  // People the plan can't place: no birth or hire date, so payroll can't tell when they may join (F500 G3: the real to-do is data).
+  const noDates = (q.data?.elections ?? []).filter((e) => e.status === 'NOT_ELIGIBLE' && !e.eligibleOn);
   return (
     <div className="space-y-3">
+      {noDates.length > 0 && (
+        <div role="status" className="flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/[0.06] p-3 text-sm sm:flex-row sm:items-start" data-testid="retirement-missing-dates">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-ink">
+              {noDates.length === 1 ? '1 person is missing a birth or hire date' : `${noDates.length} people are missing a birth or hire date`}, so the plan can’t tell when they may join.
+            </p>
+            <p className="mt-1 flex flex-wrap gap-x-3 text-xs">
+              {noDates.slice(0, 6).map((e) => (
+                <Link key={e.id} to={`/people?associateId=${e.associateId}&tab=employment`} className="text-accent underline underline-offset-2">
+                  {`Fix ${e.name}`}
+                </Link>
+              ))}
+              {noDates.length > 6 && <span className="text-ink-muted">{`and ${noDates.length - 6} more`}</span>}
+            </p>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={() => sync.mutate()} loading={sync.isPending}>
           <RefreshCw className="h-4 w-4" aria-hidden />

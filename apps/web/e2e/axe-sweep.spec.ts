@@ -53,11 +53,8 @@ const ALLOWLIST = JSON.parse(readFileSync('e2e/axe-allowlist.json', 'utf8')) as 
  * shrinks: a listed page that fits again fails the run until its line is
  * deleted, and an unlisted page that overflows fails it outright.
  */
-const PHONE_OVERFLOW_ALLOWLIST: Record<string, string> = {
-  '/agents': 'F500 G2: AgentCards.tsx grid has no base column count; cards widen the page (~81px)',
-  '/ops': 'F500 G2: OpsBoard.tsx:946 `grid xl:grid-cols-[1fr_360px]` lets a min-content child widen the page (~69px)',
-  '/fieldglass': 'F500 G2: FieldglassSetup.tsx start/end date row overflows by ~15px',
-};
+// F2 G2 (2026-10-22) fixed /agents, /ops and /fieldglass (each measures 390 on a 390px screen).
+const PHONE_OVERFLOW_ALLOWLIST: Record<string, string> = {};
 
 /** Pages the audit found overflowing that no persona's sweep opens — measured on the admin's phone pass. */
 const PHONE_OVERFLOW_EXTRA = ['/ops', '/fieldglass', '/admin/branding', '/marketing'];

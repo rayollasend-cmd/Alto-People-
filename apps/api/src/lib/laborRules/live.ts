@@ -147,6 +147,8 @@ export interface ChangeReport {
   siteId: string | null;
   runs: Array<{ id: string; periodStart: string; periodEnd: string }>;
   people: number;
+  /** People whose hours at these sites were replayed (paid differently or not). */
+  replayed: number;
   /** Live pay minus what was paid, premiums included. */
   amountDifference: number;
   premiumAmount: number;
@@ -181,6 +183,7 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
   const byRule = { OVERTIME: 0, MEAL: 0, REST: 0, REST_BETWEEN_SHIFTS: 0, SPREAD_OF_HOURS: 0, SPLIT_SHIFT: 0 };
   const asIfLive: PayRules = { any: true, activationFor: () => true, rulesFor: (site, date) => (site ? rulesForSite(pinned, site, date) : null) };
   const people = new Map<string, ChangeReportPerson>();
+  const replayed = new Set<string>();
   for (const run of runs) {
     const items = await db.payrollItem.findMany({ where: { payrollRunId: run.id }, select: { associateId: true, hourlyRate: true, associate: { select: { firstName: true, lastName: true } } } });
     if (!items.length || !siteIds.size) continue;
@@ -192,6 +195,7 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
     for (const item of items) {
       const mine = entries.filter((e) => e.associateId === item.associateId);
       if (!mine.length) continue;
+      replayed.add(item.associateId);
       const rate = Number(item.hourlyRate);
       const work = mine.map((e) => ({ id: e.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: siteById.get(e.locationId!) ?? null }));
       // What was paid (today's weekly split) against these rules as if signed: every entry here is at the jurisdiction's sites.
@@ -235,6 +239,7 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
     siteId: input.siteId ?? null,
     runs: runs.map((r) => ({ id: r.id, periodStart: r.periodStart.toISOString().slice(0, 10), periodEnd: r.periodEnd.toISOString().slice(0, 10) })),
     people: rows.length,
+    replayed: replayed.size,
     amountDifference: round2(rows.reduce((a, r) => a + r.difference, 0)),
     premiumAmount: round2(rows.reduce((a, r) => a + r.premiumAmount, 0)),
     byRule: { OVERTIME: round2(byRule.OVERTIME), MEAL: round2(byRule.MEAL), REST: round2(byRule.REST), REST_BETWEEN_SHIFTS: round2(byRule.REST_BETWEEN_SHIFTS), SPREAD_OF_HOURS: round2(byRule.SPREAD_OF_HOURS), SPLIT_SHIFT: round2(byRule.SPLIT_SHIFT) },

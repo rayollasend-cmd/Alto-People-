@@ -66,3 +66,45 @@ export function stuckWhere(now: Date = new Date()): Prisma.ApplicationWhereInput
 export function idleDraftsWhere(now: Date = new Date()): Prisma.ApplicationWhereInput {
   return stuckWhere(now);
 }
+
+/* ---- "Starting in 7 days" (F500 G1 /onboarding tile) ----------------------
+ * The hires whose start date falls in the seven days that begin on the
+ * caller's `today` (a YYYY-MM-DD from their own clock — the start date is a
+ * calendar date, so the server's UTC "today" would flip a day early in the
+ * evening west of UTC). Anything not called off counts: an approved hire
+ * starting Monday is as much the desk's week as a draft one; the tile's hint
+ * says how many of them are still unfinished.
+ */
+export const STARTING_SOON_DAYS = 7;
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The caller's day if it is a real YYYY-MM-DD, else the server's UTC day. */
+export function callerToday(raw: unknown, now: Date = new Date()): string {
+  if (typeof raw === 'string' && YMD.test(raw) && !Number.isNaN(Date.parse(`${raw}T00:00:00Z`))) return raw;
+  return now.toISOString().slice(0, 10);
+}
+
+function plusDays(ymd: string, days: number): Date {
+  const d = new Date(`${ymd}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
+}
+
+export function startingSoonWhere(today: string): Prisma.ApplicationWhereInput {
+  return {
+    status: { notIn: ['REJECTED', 'CANCELLED'] },
+    startDate: { gte: plusDays(today, 0), lte: plusDays(today, STARTING_SOON_DAYS - 1) },
+  };
+}
+
+/** Of those, the ones the desk still has to finish: in flight with a task open. */
+export function startingSoonUnfinishedWhere(today: string): Prisma.ApplicationWhereInput {
+  return {
+    AND: [
+      startingSoonWhere(today),
+      { status: { in: [...IN_FLIGHT] } },
+      { OR: [{ checklist: { is: null } }, { checklist: { is: { tasks: { some: { status: { notIn: [...DONE] } } } } } }] },
+    ],
+  };
+}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useUrlParam } from '@/lib/useUrlState';
 import { useQuery } from '@tanstack/react-query';
 import { getLaborRuleSite, getLaborShadowRun, listLaborRuleSites, listLaborShadowRuns, type LaborRuleSite, type LaborRuleSummary, type LaborShadowRun } from '@/lib/laborRulesApi';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -21,20 +21,22 @@ import { LaborScheduleChangesTab, LaborTimekeepingTab } from './LaborTimekeeping
  * date (federal, its state, its city, then the organization's and the site's
  * own), and for one site which rule set supplied each value, with its
  * citation (step 2); the organization's own rules, drafted and signed under
- * manage:org (step 6, LaborOverridesSection); and the engine in shadow beside
- * each finalized pay run (step 3); and, state by state, the switch to paying
+ * manage:org (step 6, LaborOverridesSection); and test runs: each finalized
+ * pay run recomputed under the rules beside what it paid (step 3); and, state by state, the switch to paying
  * by them (step 4: counsel's sign-off and a second person, LaborGoLive), with
  * the timekeeping rules beside them (rounding, fair overtime, predictability pay).
  */
 
-type Tab = 'states' | 'sites' | 'shadow' | 'timekeeping' | 'schedule';
+type Tab = 'states' | 'sites' | 'tests' | 'timekeeping' | 'schedule';
 const TABS: Array<{ value: Tab; label: string }> = [
   { value: 'states', label: 'By state' },
   { value: 'sites', label: 'Rules by site' },
-  { value: 'shadow', label: 'Shadow runs' },
+  { value: 'tests', label: 'Test runs' },
   { value: 'timekeeping', label: 'Timekeeping' },
   { value: 'schedule', label: 'Schedule changes' },
 ];
+
+const TAB_VALUES: ReadonlyArray<Tab | 'shadow'> = [...TABS.map((t) => t.value), 'shadow'];
 
 const hours = (h: number | null, none = 'None') => (h === null ? none : `${h} h`);
 
@@ -118,14 +120,9 @@ function SiteDrawer({ id, date, onClose }: { id: string; date: string; onClose: 
 export function LaborRulesPage() {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [open, setOpen] = useState<string | null>(null);
-  const [params, setParams] = useSearchParams();
-  const tab: Tab = (TABS.find((t) => t.value === params.get('tab'))?.value ?? 'states') as Tab;
-  const setTab = (next: Tab) => {
-    const p = new URLSearchParams(params);
-    if (next === 'states') p.delete('tab');
-    else p.set('tab', next);
-    setParams(p, { replace: true });
-  };
+  // "shadow" was the test-runs tab's old name; a link that still says it opens the same tab.
+  const [raw, setTab] = useUrlParam<Tab | 'shadow'>('tab', 'states', TAB_VALUES, { history: 'push' });
+  const tab: Tab = raw === 'shadow' ? 'tests' : raw;
   const q = useQuery({ queryKey: ['labor-rules', 'sites', date], queryFn: () => listLaborRuleSites(date), enabled: tab === 'sites' && /^\d{4}-\d{2}-\d{2}$/.test(date) });
 
   return (
@@ -133,7 +130,6 @@ export function LaborRulesPage() {
     <ListTemplate
         title="Labor rules"
         subtitle="Overtime, meal, rest and schedule rules by state and site — which ones pay today, and the timekeeping rules beside them."
-        breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Labor rules' }]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList className="max-w-full overflow-x-auto">
@@ -147,7 +143,7 @@ export function LaborRulesPage() {
       {tab === 'states' && <LaborGoLiveTab />}
       {tab === 'timekeeping' && <LaborTimekeepingTab />}
       {tab === 'schedule' && <LaborScheduleChangesTab />}
-      {tab === 'shadow' && <LaborShadowSection />}
+      {tab === 'tests' && <LaborShadowSection />}
       {tab === 'sites' && (
       <>
       <div className="flex flex-wrap items-end gap-3">
@@ -199,7 +195,7 @@ export function LaborRulesPage() {
   );
 }
 
-/* Brief 2-2 step 3 — the engine in shadow: each finalized run recomputed beside what it paid. */
+/* Brief 2-2 step 3 — test runs: each finalized run recomputed under the rules beside what it paid. */
 
 function ShadowRunDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const q = useQuery({ queryKey: ['labor-rules', 'shadow', id], queryFn: () => getLaborShadowRun(id) });
@@ -207,12 +203,12 @@ function ShadowRunDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   return (
     <Drawer open onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{d ? `Pay period ${fmtDateOnlyRange(d.periodStart, d.periodEnd)}` : 'Shadow run'}</DrawerTitle>
-        <DrawerDescription>What the rules engine would have paid, beside what was paid. Nothing here changes pay.</DrawerDescription>
+        <DrawerTitle>{d ? `Pay period ${fmtDateOnlyRange(d.periodStart, d.periodEnd)}` : 'Test run'}</DrawerTitle>
+        <DrawerDescription>What these rules would have paid, beside what was paid. Nothing here changes pay.</DrawerDescription>
       </DrawerHeader>
       <DrawerBody className="space-y-3">
         {q.isError ? (
-          <QueryError what="this shadow run" query={q} />
+          <QueryError what="this test run" query={q} />
         ) : !d ? (
           <SkeletonRows count={3} />
         ) : d.differences.length === 0 ? (
@@ -225,7 +221,7 @@ function ShadowRunDrawer({ id, onClose }: { id: string; onClose: () => void }) {
                 <span className={x.amountDifference > 0 ? 'text-warning' : 'text-ink-muted'}>{fmtMoney(x.amountDifference)}</span>
               </div>
               <p className="mt-1 text-xs text-ink-muted">
-                Paid {x.paid.regularHours} h + {x.paid.overtimeHours} h overtime · engine {x.engine.regularHours} h + {x.engine.overtimeHours} h overtime
+                Paid {x.paid.regularHours} h + {x.paid.overtimeHours} h overtime · under the rules {x.engine.regularHours} h + {x.engine.overtimeHours} h overtime
                 {x.engine.doubleTimeHours ? ` + ${x.engine.doubleTimeHours} h double time` : ''} at {fmtMoney(x.hourlyRate)}/h
                 {x.penaltyHours ? ` · ${x.penaltyHours} premium h shown, not paid` : ''}
               </p>
@@ -249,23 +245,23 @@ export function LaborShadowSection() {
   const total = runs?.reduce((a, r) => a + r.differences, 0) ?? 0;
   return (
     <section aria-labelledby="shadow-title" className="space-y-2">
-      <h2 id="shadow-title" className="text-base font-semibold text-ink">Engine in shadow</h2>
+      <h2 id="shadow-title" className="text-base font-semibold text-ink">Test runs</h2>
       <p className="text-sm text-ink-muted">
-        Each finalized pay run is recomputed under these rules beside what it paid. A state pays by these rules only once it goes live (the By state tab).
+        Each finalized pay run is recomputed under the state rules beside what it paid. Nothing here changes pay: a state pays by its rules only once it goes live (the By state tab).
         {runs && runs.length > 0 && (total === 0 ? ' No differences so far.' : ` ${total} difference${total === 1 ? '' : 's'} to review.`)}
       </p>
       <Card>
         <CardContent className="p-0">
           {q.isError ? (
-            <div className="p-6"><QueryError what="the shadow runs" query={q} /></div>
+            <div className="p-6"><QueryError what="the test runs" query={q} /></div>
           ) : !runs ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : runs.length === 0 ? (
-            <p className="p-6 text-sm text-ink-muted">No finalized pay runs shadowed yet; each one is recomputed within the hour after it is finalized.</p>
+            <p className="p-6 text-sm text-ink-muted">No finalized pay runs tested yet; each one is recomputed within the hour after it is finalized.</p>
           ) : (
             <DataGrid<LaborShadowRun>
               id="labor-rules-shadow"
-              caption="Pay runs recomputed by the rules engine"
+              caption="Pay runs recomputed under the state rules"
               rows={runs}
               rowKey={(r) => r.id}
               urlState={false}
@@ -275,7 +271,7 @@ export function LaborShadowSection() {
                 { key: 'period', header: 'Pay period', accessor: (r) => r.periodStart, sortable: true, primary: true, cell: (r) => fmtDateOnlyRange(r.periodStart, r.periodEnd) },
                 { key: 'people', header: 'People paid', accessor: (r) => r.associates, sortable: true },
                 { key: 'diffs', header: 'Differences', accessor: (r) => r.differences, sortable: true, cell: (r) => <Badge variant={r.differences ? 'pending' : 'success'} size="sm">{r.differences}</Badge> },
-                { key: 'amount', header: 'Engine − paid', accessor: (r) => r.amountDifference, sortable: true, cell: (r) => fmtMoney(r.amountDifference) },
+                { key: 'amount', header: 'Difference vs. what was paid', accessor: (r) => r.amountDifference, sortable: true, cell: (r) => fmtMoney(r.amountDifference) },
                 { key: 'premium', header: 'Premium hours shown', accessor: (r) => r.penaltyHours, sortable: true },
               ]}
             />

@@ -64,6 +64,7 @@ export const updateOshaIncident = (
     isRecordable?: boolean;
   },
 ) => apiFetch<{ ok: true }>(`/osha/incidents/${id}`, { method: 'PUT', body: input });
+/** `clientId` '' = every client (the company-wide summary). */
 export const get300A = (clientId: string, year: number) =>
   apiFetch<{
     totalCases: number;
@@ -79,7 +80,7 @@ export const get300A = (clientId: string, year: number) =>
     trir?: number | null;
     /** Days-away and restricted cases per 100 full-time workers. */
     dart?: number | null;
-  }>(`/osha/300a?clientId=${clientId}&year=${year}`);
+  }>(`/osha/300a?${clientId ? `clientId=${clientId}&` : ''}year=${year}`);
 
 export const listWcClassCodes = (stateCode?: string) =>
   apiFetch<{ codes: WcClassCode[] }>(
@@ -93,11 +94,12 @@ export const createWcClassCode = (input: {
   effectiveFrom: string;
 }) => apiFetch<{ id: string }>('/wc/class-codes', { method: 'POST', body: input });
 
+/** `clientId` '' = everyone employed, company-wide. */
 export const getEeoReport = (clientId: string) =>
   apiFetch<{
     total: number;
     buckets: Array<{ category: string; race: string; gender: string; count: number }>;
-  }>(`/eeo/report?clientId=${clientId}`);
+  }>(clientId ? `/eeo/report?clientId=${clientId}` : '/eeo/report');
 
 // EEO-1 self-identification enums — mirror EeoInputSchema in
 // apps/api/src/routes/oshaWcEeo.ts.

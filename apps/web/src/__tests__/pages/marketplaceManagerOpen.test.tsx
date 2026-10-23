@@ -151,6 +151,13 @@ describe('manager open shifts', () => {
     await waitFor(() => expect(vi.mocked(listInviteCounts).mock.calls.length).toBeGreaterThan(1));
   });
 
+  it('tells a manager what the page is for them', async () => {
+    vi.mocked(listShifts).mockResolvedValue({ shifts: [], truncated: false });
+    renderHome();
+    expect(await screen.findByText('Approve pickups and see which open shifts nobody has claimed.')).toBeInTheDocument();
+    expect(screen.queryByText(/qualified to pick up/)).not.toBeInTheDocument();
+  });
+
   it('says why nobody was asked, and says so when the send fails', async () => {
     vi.mocked(listShifts).mockResolvedValue({ shifts: [shift()], truncated: false });
     vi.mocked(rebroadcastShift).mockResolvedValueOnce(result({ skipped: { declined: 0, timeOff: 0, unavailable: 0, unqualified: 0, recent: 3 } }));

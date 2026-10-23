@@ -135,20 +135,34 @@ function renderActions(d: ApplicationDetail, over: Partial<Parameters<typeof Det
   return handlers;
 }
 
-describe('<DetailActions> — the application header (HR 21)', () => {
-  it('keeps Resend, Cancel and Download behind More', async () => {
-    const h = renderActions(detail());
+describe('<DetailActions> — the application header (HR 21, F500 G1)', () => {
+  it('one primary (Approve) and two beside it; the rest in More, Cancel and Reject last', async () => {
+    const h = renderActions(detail(), { onNudge: vi.fn() });
+    const row = screen.getByTestId('page-actions');
+    // Approve, Nudge and Onboard in person stand in the row; Reject is not a button there.
+    expect(within(row).getByRole('button', { name: /^Approve/ })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Nudge' })).toBeInTheDocument();
+    expect(within(row).getByRole('link', { name: 'Onboard in person' })).toHaveAttribute('href', '/onboarding/in-person/app1');
+    expect(within(row).queryByRole('button', { name: /Reject/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Resend invite/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /View packet/ })).toHaveAttribute('href', expect.stringContaining('?inline=1'));
     await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
     const menu = await screen.findByRole('menu');
     expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent?.trim())).toEqual([
       'Resend invite',
-      'Cancel invite',
+      'View packetThe audit packet, in a new tab',
       'Download packet (PDF)',
+      'Cancel invite…',
+      'Reject…',
     ]);
     await userEvent.click(within(menu).getByRole('menuitem', { name: 'Resend invite' }));
-    expect(h.onResend).toHaveBeenCalled();
+    await waitFor(() => expect(h.onResend).toHaveBeenCalled());
+  });
+
+  it('Reject sits in More and opens the reject dialog (no second confirm)', async () => {
+    const h = renderActions(detail());
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await userEvent.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Reject…' }));
+    await waitFor(() => expect(h.onReject).toHaveBeenCalled());
   });
 
   it('says under Approve why it is off — in words, not a hover', () => {
@@ -156,12 +170,18 @@ describe('<DetailActions> — the application header (HR 21)', () => {
     const approve = screen.getByRole('button', { name: /^Approve/ });
     expect(approve).toBeDisabled();
     expect(screen.getByText('2 of 4 tasks pending')).toBeInTheDocument();
-    expect(approve).toHaveAttribute('aria-describedby', 'approve-why-app1');
+    expect(approve).toHaveAccessibleDescription('2 of 4 tasks pending');
   });
 
   it('a finished checklist with no schedule says so under Approve', () => {
     renderActions(detail({ percentComplete: 100, tasks: [] }), { needsSchedule: true });
     expect(screen.getByRole('button', { name: /^Approve/ })).toBeEnabled();
     expect(screen.getByText('No pay schedule covers this hire yet — choose one as you approve')).toBeInTheDocument();
+  });
+
+  it('a cancelled invite offers Reopen as the one primary', () => {
+    renderActions(detail({ status: 'CANCELLED' }));
+    expect(screen.getByRole('button', { name: 'Reopen' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Approve/ })).not.toBeInTheDocument();
   });
 });

@@ -43,6 +43,8 @@ const REAL_KINDS = new Set([
   'BACKGROUND_CHECK',
   'J1_DOCS',
   'E_SIGN',
+  // The schedule's own editor, embedded (App.tsx …/tasks/availability).
+  'AVAILABILITY',
 ]);
 
 // 8-task template matching the apps/api/prisma/seed.ts production shape.
@@ -126,6 +128,8 @@ describe('E2E: associate next-step after Profile info', () => {
       'DIRECT_DEPOSIT',
       'POLICY_ACK',
       'E_SIGN',
+      // Injected on every checklist (lib/checklistTasks): when they can work.
+      'AVAILABILITY',
     ]);
     expect(initial.every((t) => t.status === 'PENDING')).toBe(true);
 
@@ -199,9 +203,9 @@ describe('E2E: associate next-step after Profile info', () => {
     const expectedHref = `/onboarding/me/${applicationId}/tasks/${nextTask!.kind.toLowerCase()}`;
     expect(expectedHref).toBe(`/onboarding/me/${applicationId}/tasks/profile_photo`);
 
-    // 11. Progress reflects 1/8 ≈ 13% (matching what HR sees in prod).
-    expect(after.body.percentComplete).toBeGreaterThanOrEqual(12);
-    expect(after.body.percentComplete).toBeLessThanOrEqual(13);
+    // 11. Progress reflects 1/9 ≈ 11% (eight template tasks + availability, matching what HR sees).
+    expect(after.body.percentComplete).toBeGreaterThanOrEqual(11);
+    expect(after.body.percentComplete).toBeLessThanOrEqual(12);
   });
 
   it('regression guard: every TaskKind seeded in production must be in REAL_KINDS', async () => {

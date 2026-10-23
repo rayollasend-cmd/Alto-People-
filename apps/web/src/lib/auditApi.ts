@@ -1,4 +1,4 @@
-import type { AuditSearchResponse } from '@alto-people/shared';
+import type { AuditCategory, AuditSearchResponse } from '@alto-people/shared';
 import { apiFetch } from './api';
 
 export interface AuditFilters {
@@ -10,6 +10,10 @@ export interface AuditFilters {
   since?: string;
   before?: string;
   q?: string;
+  /** A reviewer's category (shared auditLog.ts). */
+  category?: AuditCategory;
+  /** '1' leaves out the API's own request trail. */
+  hideSystem?: '1';
   limit?: number;
 }
 
@@ -32,5 +36,25 @@ export function searchAuditLogs(filters: AuditFilters = {}): Promise<AuditSearch
  * apiFetch. Hand to an `<a download>` so the browser streams it.
  */
 export function auditCsvUrl(filters: AuditFilters = {}): string {
-  return `/api/audit/logs.csv${toQuery(filters)}`;
+  const { limit: _limit, ...rest } = filters;
+  return `/api/audit/logs.csv${toQuery(rest)}`;
+}
+
+/** The full archive (manage:org): every row, with the chain's hashes. */
+export const AUDIT_ARCHIVE_URL = '/api/audit/export.csv';
+
+export interface AuditActor {
+  id: string;
+  email: string;
+  name: string;
+}
+
+/** The Actor filter's people-picker: this organization's accounts by name or email. */
+export function searchAuditActors(q: string): Promise<{ actors: AuditActor[] }> {
+  return apiFetch<{ actors: AuditActor[] }>(`/audit/actors?q=${encodeURIComponent(q)}`);
+}
+
+/** One account by id — the name for an actor kept in the URL. */
+export function getAuditActor(id: string): Promise<{ actors: AuditActor[] }> {
+  return apiFetch<{ actors: AuditActor[] }>(`/audit/actors?id=${encodeURIComponent(id)}`);
 }

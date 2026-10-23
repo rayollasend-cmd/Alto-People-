@@ -127,7 +127,7 @@ export function GoalCascade({ goals, onOpen }: { goals: Goal[]; onOpen: (g: Goal
             )}
             <Icon className={cn('h-4 w-4 shrink-0', scope === 'COMPANY' ? 'text-accent' : 'text-ink-muted')} aria-hidden="true" />
             <button type="button" tabIndex={-1} onClick={() => onOpen(g)} className="min-w-0 flex-1 text-left">
-              <span className="block truncate text-sm text-ink hover:underline">{g.title}</span>
+              <span className="block line-clamp-2 break-words text-sm text-ink hover:underline" title={g.title}>{g.title}</span>
               <span className="block truncate text-xs text-ink-muted">
                 {SCOPE_LABEL[scope]}
                 {scope === 'PERSON' && g.associateName ? ` · ${g.associateName}` : ''}

@@ -453,3 +453,40 @@ describe('GET /scheduling/labor-costs', () => {
     }
   });
 });
+
+describe('GET /scheduling/labor-costs/periods', () => {
+  it("gives the report's readers the pay periods it opens on, without manage:time", async () => {
+    // Biweekly, Sat→Fri, anchored on a Saturday (Alto's schedule).
+    await prisma.payrollSchedule.create({
+      data: { name: 'Biweekly', frequency: 'BIWEEKLY', anchorDate: new Date('2026-09-12T00:00:00.000Z'), payDateOffsetDays: 7 },
+    });
+    const { user: finance } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const a = await loginAs(finance.email);
+    const res = await a.get('/scheduling/labor-costs/periods');
+    expect(res.status).toBe(200);
+    const periods = res.body.periods as Array<{ start: string; end: string; current: boolean }>;
+    expect(periods.length).toBeGreaterThanOrEqual(2);
+    const today = new Date().toISOString().slice(0, 10);
+    const current = periods.find((p) => p.current)!;
+    expect(current.start <= today && today <= current.end).toBe(true);
+    // Fourteen days, starting on a Saturday, on the anchor's cadence.
+    const start = new Date(`${current.start}T00:00:00.000Z`);
+    const end = new Date(`${current.end}T00:00:00.000Z`);
+    expect((end.getTime() - start.getTime()) / 86_400_000).toBe(13);
+    expect(start.getUTCDay()).toBe(6);
+    expect(((start.getTime() - Date.UTC(2026, 8, 12)) / 86_400_000) % 14).toBe(0);
+    // Newest first: the period before the current one sits right after it.
+    const idx = periods.indexOf(current);
+    const previous = periods[idx + 1]!;
+    expect(new Date(`${previous.end}T00:00:00.000Z`).getTime() + 86_400_000).toBe(start.getTime());
+  });
+
+  it('keeps the same gate as the report: a store supervisor is refused', async () => {
+    const mine = await createClient('Mine LLC');
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: mine.id });
+    const a = await loginAs(sup.email);
+    const res = await a.get('/scheduling/labor-costs/periods');
+    expect(res.status).toBe(403);
+    expect(res.body.periods).toBeUndefined();
+  });
+});

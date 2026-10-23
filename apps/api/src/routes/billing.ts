@@ -11,7 +11,7 @@ import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
 /**
  * Brief 2-6 step 4 — the billing page's reads and the platform's levers.
  *
- *   GET  /billing                       plan, this month's running counts by type, invoices (manage:org or Finance, decision 11)
+ *   GET  /billing                       plan, this month's running counts by type, the last six months' counts, invoices (manage:org or Finance, decision 11)
  *   GET  /billing/usage?month=          the daily snapshot counts behind a month
  *   PUT  /billing/contact               the billing contact (manage:org); the Stripe customer follows
  *   PUT  /billing/prices                the platform operator sets a plan's price per type (decision 3)
@@ -35,6 +35,23 @@ billingRouter.get('/', VIEW, async (_req, res) => {
   const snaps = await prisma.usageSnapshot.findMany({ where: { tenantId, day: { gte: from } }, select: { type: true, ids: true, day: true } });
   const running = Object.fromEntries(WORKER_TYPES.map((t) => [t, new Set(snaps.filter((s) => s.type === t).flatMap((s) => s.ids)).size]));
   const [invoices, contact] = await Promise.all([prisma.billingInvoice.findMany({ where: { tenantId }, orderBy: { month: 'desc' }, take: 24 }), billingContact(prisma, tenantId)]);
+  // The six months before this one, by the same rule as the running count:
+  // each id active on at least one day of the month counts once (F500 G4).
+  const [y, m] = month.split('-').map(Number) as [number, number];
+  const monthKey = (offset: number) => {
+    const d = new Date(Date.UTC(y, m - 1 - offset, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  };
+  const historyFrom = new Date(`${monthKey(6)}-01T00:00:00Z`);
+  const past = await prisma.usageSnapshot.findMany({ where: { tenantId, day: { gte: historyFrom, lt: from } }, select: { type: true, ids: true, day: true } });
+  const history = Array.from({ length: 6 }, (_, i) => monthKey(i + 1)).map((key) => {
+    const inMonth = past.filter((s) => s.day.toISOString().slice(0, 7) === key);
+    return {
+      month: key,
+      daysCounted: new Set(inMonth.map((s) => s.day.toISOString())).size,
+      counts: Object.fromEntries(WORKER_TYPES.map((t) => [t, new Set(inMonth.filter((s) => s.type === t).flatMap((s) => s.ids)).size])),
+    };
+  });
   res.json({
     contact,
     plan: tenant?.plan ?? 'internal',
@@ -43,6 +60,7 @@ billingRouter.get('/', VIEW, async (_req, res) => {
     month,
     daysCounted: new Set(snaps.map((s) => s.day.toISOString())).size,
     running,
+    history,
     invoices: invoices.map((i) => ({ id: i.id, month: i.month, status: i.status, totalCents: i.totalCents, lines: i.lines, holdReason: i.holdReason, hostedUrl: i.hostedUrl, lastPaymentError: i.lastPaymentError, paidAt: i.paidAt?.toISOString() ?? null })),
   });
 });

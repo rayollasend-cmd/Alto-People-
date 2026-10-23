@@ -19,7 +19,7 @@ import type { InboxSource } from '@alto-people/shared';
 import { useInbox } from '@/lib/inboxApi';
 import { getMyTraining } from '@/lib/lms94Api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtWeekday } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtWeekday } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 
@@ -59,7 +59,9 @@ const NOT_A_TASK = new Set(['my-notifications']);
 /** Most pressing first: the soonest deadline, then the order above. */
 const ORDER = Object.keys(ROW);
 function byPressing(a: InboxSource, b: InboxSource): number {
-  const due = (s: InboxSource) => (s.dueAt ? Date.parse(s.dueAt) : Number.POSITIVE_INFINITY);
+  // A calendar-day deadline (dueDate) sorts as that day's noon; an instant as itself.
+  const due = (s: InboxSource) =>
+    s.dueDate ? Date.parse(`${s.dueDate}T12:00:00Z`) : s.dueAt ? Date.parse(s.dueAt) : Number.POSITIVE_INFINITY;
   const rank = (s: InboxSource) => (ORDER.includes(s.key) ? ORDER.indexOf(s.key) : ORDER.length);
   return due(a) - due(b) || rank(a) - rank(b);
 }
@@ -133,6 +135,9 @@ export function AssociateNeedsYou({ hide }: { hide?: readonly string[] } = {}) {
                   <span className="block">{def ? t(def.label) : s.label}</span>
                   {done !== null && total ? (
                     <span className="block text-xs text-silver">{t('needs.progress', { done, total })}</span>
+                  ) : s.dueDate ? (
+                    // A date-only deadline reads as its own day in every zone (it read a day early west of UTC).
+                    <span className="block text-xs text-silver">{t('needs.dueOn', { date: fmtDateOnly(s.dueDate, { weekday: true, year: 'auto' }) })}</span>
                   ) : s.dueAt ? (
                     <span className="block text-xs text-silver">{t('needs.dueOn', { date: plainDay(s.dueAt) })}</span>
                   ) : null}
@@ -156,7 +161,7 @@ export function AssociateNeedsYou({ hide }: { hide?: readonly string[] } = {}) {
 function UnreadLine({ source }: { source: InboxSource }) {
   const { t } = useI18n();
   return (
-    <Link to={source.path} className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-gold-bright" data-testid="needs-unread">
+    <Link to={source.path} className="inline-flex min-h-6 items-center gap-1.5 py-1 text-xs text-silver hover:text-gold-bright coarse:min-h-11" data-testid="needs-unread">
       <Inbox className="h-3.5 w-3.5" aria-hidden="true" />
       {t('needs.unreadNotices', { n: source.count })}
     </Link>

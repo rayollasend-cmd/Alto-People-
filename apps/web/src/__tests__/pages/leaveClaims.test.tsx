@@ -34,7 +34,7 @@ const claims = vi.hoisted(() => ({
 vi.mock('@/lib/claimsApi', async (orig) => ({ ...(await orig<typeof import('@/lib/claimsApi')>()), ...claims }));
 
 import { LeaveHome } from '@/pages/leave/LeaveHome';
-import { UnemploymentClaimsHome } from '@/pages/claims/UnemploymentClaimsHome';
+import { UnemploymentClaimsHome, mostUrgent } from '@/pages/claims/UnemploymentClaimsHome';
 import { WorkersCompHome } from '@/pages/claims/WorkersCompHome';
 
 const leaveCase = (o: Partial<LeaveCase> = {}): LeaveCase => ({
@@ -114,6 +114,33 @@ describe('the leave desk', () => {
     expect(deny).toBeEnabled();
   });
 
+  it('the tiles are the filter: a tile narrows the queue to its own cases, and tapping it again goes back (F500 G2)', async () => {
+    leave.listLeaveCases.mockResolvedValue({ cases: [leaveCase()], total: 1, page: 1, pageSize: 50, hasMore: false });
+    renderAs('HR_ADMINISTRATOR', <LeaveHome />, '/leave');
+    await screen.findByText('Overdue: Send the eligibility notice · by Nov 20, 2026', { exact: false });
+    expect(screen.queryByRole('button', { name: 'Waiting on certification' })).not.toBeInTheDocument();
+    const notices = screen.getByRole('button', { name: /Notices to send/ });
+    await userEvent.click(notices);
+    await waitFor(() => expect(leave.listLeaveCases).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'notices' })));
+    expect(screen.getByRole('button', { name: /Notices to send/ })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(screen.getByRole('button', { name: /Notices to send/ }));
+    await waitFor(() => expect(leave.listLeaveCases).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'open' })));
+  });
+
+  it('on a wide screen the most urgent case opens beside the queue (F500 G2)', async () => {
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes('min-width: 1024px'), media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+    try {
+      leave.listLeaveCases.mockResolvedValue({ cases: [leaveCase()], total: 1, page: 1, pageSize: 50, hasMore: false });
+      leave.getLeaveCase.mockResolvedValue({ case: leaveCase(), balance: null });
+      renderAs('HR_ADMINISTRATOR', <LeaveHome />, '/leave');
+      await waitFor(() => expect(leave.getLeaveCase).toHaveBeenCalledWith('lc1'));
+      expect(screen.queryByText('Pick a case')).not.toBeInTheDocument();
+    } finally {
+      window.matchMedia = mm;
+    }
+  });
+
   it('staff without leave admin get their own leave, not the desk', async () => {
     leave.listMyLeave.mockResolvedValue({ cases: [], linked: true });
     renderAs('OPERATIONS_MANAGER', <LeaveHome />, '/leave');
@@ -152,6 +179,8 @@ describe('my leave (the worker)', () => {
     expect(await screen.findByText(/Send your certification by Dec 16, 2026/)).toBeInTheDocument();
     expect(screen.getByText('Your job is protected while you’re on this leave')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /your rights notice/i })).toHaveAttribute('href', '/api/me/leave/lc1/notices/eligibility');
+    // Everyday time off is its own page, one line away (F500 G2).
+    expect(screen.getByRole('link', { name: 'Time off →' })).toHaveAttribute('href', '/time-off');
 
     await userEvent.click(screen.getByRole('button', { name: 'Ask for leave' }));
     const dialog = await screen.findByRole('dialog');
@@ -270,3 +299,59 @@ describe('workers’ comp claims', () => {
     expect(screen.getByText('No open shift in the next two weeks fits these restrictions.')).toBeInTheDocument();
   });
 });
+
+describe('claims, read first and urgent first (F500 G6)', () => {
+  const uiClaim = (o: Partial<UiClaim> = {}): UiClaim => ({
+    id: 'u1', associateId: 'a2', associateName: 'Kai Gone', clientId: 'c1', clientName: 'Coastal', separationId: 's1', state: 'FL',
+    claimDate: '2026-12-01', noticeReceivedAt: '2026-12-02', responseDueAt: '2026-12-12', stateClaimNumber: null, status: 'NEW', decision: null, decisionReason: null,
+    respondedAt: null, determination: null, determinationAt: null, chargesAmount: null, hearingAt: null, hearingOutcome: null, appealFiledAt: null, appealOutcome: null,
+    outcome: null, notes: null, next: { key: 'respond', label: 'Respond to the state', dueAt: '2026-12-12', overdue: false }, createdAt: '2026-12-02T10:00:00.000Z', ...o,
+  });
+  const evidence: ClaimEvidence = {
+    separation: { id: 's1', reason: 'INVOLUNTARY_MISCONDUCT', reasonLabel: 'Discharged — misconduct', lastDayWorked: '2026-11-20', noticeDate: null, status: 'COMPLETE', notes: null, finalPaycheckDate: null },
+    lastAssignment: { store: 'Front Beach', client: 'Coastal', startedAt: '2026-05-01', endedAt: '2026-11-20', reason: null, stillPlaced: false },
+    discipline: [], attendance: { score: 4, asOf: '2026-11-20', events: [] }, signedPolicies: [], workOffers: [],
+    posture: { kind: 'strong', points: ['Discharged for misconduct.'] },
+  };
+  const summary = { open: 2, responsesDueThisWeek: 1, overdue: 0, hearingsNext14Days: 0, contestedDecided: 0, winRate: null, estimatedSuiImpact: 0, suiImpactFactor: 1, byClient: [] };
+
+  it('mostUrgent: overdue first, then the soonest deadline', () => {
+    const later = uiClaim({ id: 'a', next: { key: 'respond', label: 'x', dueAt: '2026-12-20', overdue: false } });
+    const soon = uiClaim({ id: 'b', next: { key: 'respond', label: 'x', dueAt: '2026-12-10', overdue: false } });
+    const late = uiClaim({ id: 'c', next: { key: 'respond', label: 'x', dueAt: '2026-12-01', overdue: true } });
+    expect(mostUrgent([later, soon])?.id).toBe('b');
+    expect(mostUrgent([later, soon, late])?.id).toBe('c');
+    expect(mostUrgent([])).toBeNull();
+  });
+
+  it('on a wide screen the most urgent claim opens by itself — no “Pick a claim”; no $0.00 tax impact before any charge', async () => {
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes('min-width: 1024px'), media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+    try {
+      const soon = uiClaim({ id: 'u9', associateName: 'Due Friday', next: { key: 'respond', label: 'Respond', dueAt: '2026-10-24', overdue: false } });
+      claims.getUiSummary.mockResolvedValue(summary);
+      claims.listUiClaims.mockResolvedValue({ claims: [uiClaim({ next: { key: 'respond', label: 'Respond', dueAt: '2026-11-30', overdue: false } }), soon], total: 2, hasMore: false });
+      claims.getUiClaim.mockResolvedValue({ claim: soon, evidence });
+      renderAs('HR_ADMINISTRATOR', <UnemploymentClaimsHome />, '/claims/unemployment');
+      await waitFor(() => expect(claims.getUiClaim).toHaveBeenCalledWith('u9'));
+      expect(screen.queryByText('Pick a claim')).not.toBeInTheDocument();
+      const strip = screen.getByRole('group', { name: 'Claims at a glance' });
+      expect(within(strip).getByText('No charges yet')).toBeInTheDocument();
+    } finally {
+      window.matchMedia = mm;
+    }
+  });
+
+  it('a decided claim reads its outcome; changing it is “Update outcome”', async () => {
+    const decided = uiClaim({ status: 'DETERMINED', determination: 'DENIED', outcome: 'DENIED', chargesAmount: 0, next: null });
+    claims.getUiSummary.mockResolvedValue(summary);
+    claims.listUiClaims.mockResolvedValue({ claims: [decided], total: 1, hasMore: false });
+    claims.getUiClaim.mockResolvedValue({ claim: decided, evidence });
+    renderAs('HR_ADMINISTRATOR', <UnemploymentClaimsHome />, '/claims/unemployment?claim=u1');
+    expect(await screen.findByText('First determination')).toBeInTheDocument();
+    expect(screen.queryByLabelText('First determination')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Update outcome' }));
+    expect(await screen.findByLabelText('First determination')).toHaveValue('DENIED');
+  });
+});
+

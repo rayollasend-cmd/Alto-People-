@@ -140,6 +140,10 @@ export interface NewHireReportRow {
   confirmation: string | null;
   submittedAt: string | null;
   blockedBy: string[];
+  /** The same gaps, split: the person's (fix on their record) and the employer's (fix once, in Employers). */
+  missing?: { person: Array<'ssn' | 'address'>; employer: Array<'ein' | 'address'> };
+  /** The employer of record, when something blocks the report. */
+  employer?: { id: string; name: string } | null;
   filingService: string | null;
 }
 

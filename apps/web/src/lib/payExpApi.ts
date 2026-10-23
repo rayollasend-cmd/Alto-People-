@@ -146,7 +146,8 @@ export interface SickPayInput {
 }
 export const recordSickPay = (body: SickPayInput) =>
   apiFetch<{ id: string; employerTaxes: { fica: number; medicare: number; futa: number; suta: number } }>('/payroll/sick-pay', { method: 'POST', body });
-export const voidSickPay = (id: string) => apiFetch<{ ok: true }>(`/payroll/sick-pay/${id}/void`, { method: 'POST', body: {} });
+/** Void a sick pay record; the reason goes on the audit record (asked in the page's prompt). */
+export const voidSickPay = (id: string, reason?: string) => apiFetch<{ ok: true }>(`/payroll/sick-pay/${id}/void`, { method: 'POST', body: reason ? { reason } : {} });
 
 /* ---- Check my pay before payday ---- */
 

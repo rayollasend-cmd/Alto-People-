@@ -26,6 +26,7 @@ vi.mock('@/lib/clientsApi', () => ({
 }));
 
 vi.mock('@/lib/payRulesApi', () => ({
+  payRulesSummary: vi.fn(async () => ({ clients: [{ clientId: 'c1', clientName: 'Coastal Resort', projects: 2, premiumRules: 0, openTipPools: 1 }] })),
   listProjects: vi.fn(async () => ({ projects: [] })),
   listPremiumPayRules: vi.fn(async () => ({ rules: [] })),
   listTipPools: vi.fn(async () => ({ pools: [] })),
@@ -41,6 +42,8 @@ vi.mock('@/lib/payRulesApi', () => ({
 }));
 
 vi.mock('@/lib/compApi', () => ({
+  // Compensation opens on its Overview (F500 G1): no bands yet.
+  getCompOverview: vi.fn(async () => ({ people: 3, belowMin: 0, aboveMax: 0, inBand: 0, noBand: 2, noRate: 1, outsideBand: [], outsideTruncated: false, pendingPayChanges: 0, cycle: null })),
   listBands: vi.fn(async () => ({ bands: [] })),
   listCycles: vi.fn(async () => ({ cycles: [] })),
   listProposals: vi.fn(async () => ({ proposals: [] })),
@@ -56,6 +59,13 @@ vi.mock('@/lib/compApi', () => ({
 vi.mock('@/lib/benefitsApi', () => ({
   listMyEnrollments: vi.fn(async () => ({ enrollments: [] })),
   listPlans: vi.fn(async () => ({ plans: [] })),
+  listMyPlans: vi.fn(async () => ({ client: null, plans: [] })),
+  getBenefitsOverview: vi.fn(async () => ({
+    totals: { activePlans: 1, enrolledPeople: 3, employeeCentsPerPeriod: 15000, employerCentsPerPeriod: 30000, lifeEventsWaiting: 1, cobraPending: 0 },
+    clients: [{ clientId: 'c1', clientName: 'Coastal Resort', plans: [{ id: 'p1', clientId: 'c1', name: 'PPO 500', kind: 'HEALTH_MEDICAL', isActive: true, enrolled: 3, employeeCentsPerPeriod: 15000, employerCentsPerPeriod: 30000 }] }],
+    openEnrollment: [],
+    carriers: [],
+  })),
   enrollMe: vi.fn(),
   terminateMyEnrollment: vi.fn(),
 }));
@@ -112,6 +122,8 @@ vi.mock('@/lib/tuition127Api', () => ({
 
 vi.mock('@/lib/reimbursements97Api', () => ({
   listReimbursements: vi.fn(async () => ({ reimbursements: [] })),
+  getReimbursementSummary: vi.fn(async () => ({ toApprove: { count: 0, amount: 0 }, readyToSettle: { count: 0, amount: 0 }, queuedForPayroll: { count: 0, amount: 0 }, paidThisMonth: { count: 0, amount: 0 } })),
+  settleReimbursementsBulk: vi.fn(),
   getReimbursement: vi.fn(),
   RECOMMENDED_CATEGORIES: ['Travel'],
   addExpenseLine: vi.fn(),
@@ -147,6 +159,8 @@ vi.mock('@/lib/vto130Api', () => ({
   decideVolunteerEntry: vi.fn(),
   matchVolunteerEntry: vi.fn(),
   submitVolunteerEntry: vi.fn(),
+  getVtoPolicy: vi.fn(async () => ({ policy: null, effective: { annualHoursCap: '40', matchRatio: '0', matchCurrency: 'USD' } })),
+  setVtoPolicy: vi.fn(),
 }));
 
 vi.mock('@/lib/expirations113Api', () => ({
@@ -316,20 +330,22 @@ function renderPage(page: ReactNode) {
 
 describe('axe: time & pay pages (settled empty states)', () => {
   it('<PayRulesHome> has no axe violations', async () => {
+    // With "All clients" in the top bar, the page opens on every client's rules.
     const { container } = renderPage(<PayRulesHome />);
-    await screen.findByText('No projects');
+    await screen.findAllByText('Coastal Resort');
     await expectNoViolations(container);
   });
 
   it('<CompensationHome> has no axe violations', async () => {
     const { container } = renderPage(<CompensationHome />);
-    await screen.findByText('No pay bands');
+    await screen.findByText('No pay bands yet');
     await expectNoViolations(container);
   });
 
   it('<BenefitsHome> has no axe violations', async () => {
+    // An HR admin gets the benefits desk (plans by client, who's enrolled).
     const { container } = renderPage(<BenefitsHome />);
-    await screen.findByText('No active benefits');
+    await screen.findByText('PPO 500');
     await expectNoViolations(container);
   });
 
@@ -340,20 +356,23 @@ describe('axe: time & pay pages (settled empty states)', () => {
   });
 
   it('<EquityHome> has no axe violations', async () => {
+    // An HR admin issues grants: the page opens on all of them.
     const { container } = renderPage(<EquityHome />);
-    await screen.findByText('No equity grants');
+    await screen.findByText('No equity grants yet');
     await expectNoViolations(container);
   });
 
   it('<TuitionHome> has no axe violations', async () => {
     const { container } = renderPage(<TuitionHome />);
-    await screen.findByText('No requests yet');
+    // Approvers land on the queue now (F500 G1).
+    await screen.findByText('Nothing to review');
     await expectNoViolations(container);
   });
 
   it('<ReimbursementsHome> has no axe violations', async () => {
+    // An HR admin settles: the page opens on the settling queue.
     const { container } = renderPage(<ReimbursementsHome />);
-    await screen.findByText('No reimbursements');
+    await screen.findByText('Nothing ready to settle', { selector: 'h2, h3, p, div' });
     await expectNoViolations(container);
   });
 
@@ -365,7 +384,8 @@ describe('axe: time & pay pages (settled empty states)', () => {
 
   it('<VtoHome> has no axe violations', async () => {
     const { container } = renderPage(<VtoHome />);
-    await screen.findByText('No volunteer hours yet');
+    // Reviewers land on the queue now (F500 G1).
+    await screen.findByText('Nothing to review');
     await expectNoViolations(container);
   });
 

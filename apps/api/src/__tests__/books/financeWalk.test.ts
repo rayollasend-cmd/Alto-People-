@@ -4,6 +4,7 @@ import type { Test } from 'supertest';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { agent, loginAs } from '../../../test/http.js';
 import { accountBalance, accountByKey, cashOnHand, postEntry } from '../../lib/books/ledger.js';
+import { ensureChart } from '../../lib/books/chart.js';
 import { postStatement } from '../../lib/books/posting/statements.js';
 import { recordClientPayment } from '../../lib/books/posting/receivables.js';
 import { flushPendingBooks } from '../../lib/books/posting/common.js';
@@ -12,6 +13,7 @@ import { totalsWithTax } from '../../lib/clientStatement.js';
 import { remittanceStub, statementContext, statementMoney } from '../../lib/statementPdf.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import type { StatementSnapshot } from '../../lib/clientStatement.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 
 /**
  * The finance and books walk (2026-10-20) and audit Tier 1 #17/#18:
@@ -34,7 +36,10 @@ import type { StatementSnapshot } from '../../lib/clientStatement.js';
 type Agent = TestAgent<Test>;
 const DAY = 86_400_000;
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
-const daysFrom = (n: number) => new Date(Date.now() + n * DAY);
+// The company's calendar day (books, receivables and the forecast count on it, not UTC's).
+const companyToday = () => orgDateKey(new Date());
+// Noon UTC on the company's day, n days on: its date is the company's date + n.
+const daysFrom = (n: number) => new Date(Date.parse(`${companyToday()}T12:00:00.000Z`) + n * DAY);
 const sum = (xs: number[]) => Math.round(xs.reduce((a, b) => a + b, 0) * 100) / 100;
 
 beforeEach(async () => {
@@ -141,8 +146,18 @@ describe('the remit-to (audit #17)', () => {
 /* ---- #18 / walk 2: the cash forecast ------------------------------------- */
 
 describe('the cash forecast (audit #18, walk 2)', () => {
+  it('says when no bank balance is on file instead of a fake $0.00 (F500 finance home)', async () => {
+    const today = companyToday();
+    await ensureChart(prisma);
+    // The chart holds bank accounts, but nothing is posted to them yet.
+    expect(await cashOnHand(prisma, today)).toMatchObject({ total: 0, postedAccounts: 0 });
+    expect((await cashForecast(new Date())).opening).toMatchObject({ balance: 0, onFile: false });
+    await postEntry(prisma, { date: today, source: 'MANUAL', lines: [{ account: 'CASH_OPERATING', debit: 1200 }, { account: 'OWNER_EQUITY', credit: 1200 }] });
+    expect((await cashForecast(new Date())).opening).toMatchObject({ balance: 1200, onFile: true });
+  });
+
   it('starts at the Books cash, carries the bills, never drops a payday, and marks the low point against the floor', async () => {
-    const today = ymd(new Date());
+    const today = companyToday();
     await postEntry(prisma, { date: today, source: 'MANUAL', lines: [{ account: 'CASH_OPERATING', debit: 5000 }, { account: 'OWNER_EQUITY', credit: 5000 }] });
     expect(await cashOnHand(prisma, today)).toMatchObject({ total: 5000 });
     // Nobody on the schedule, and the last run paid two months ago.
@@ -333,7 +348,7 @@ describe('the collections worklist (walk 7)', () => {
     await prisma.client.update({ where: { id: client.id }, data: { contactEmail: 'ap@coastal.test' } });
     const late = await finalStatement(client.id, { amount: 900, number: 5, dueAt: daysFrom(-10) });
     await finalStatement(client.id, { amount: 400, number: 6, dueAt: daysFrom(20) });
-    const today = ymd(new Date());
+    const today = companyToday();
 
     const w = (await p.a.get('/books/receivables/worklist')).body;
     expect(w.items).toHaveLength(2);
@@ -356,7 +371,7 @@ describe('the collections worklist (walk 7)', () => {
     expect((await p.a.get(`/clients/${client.id}/collection-notes`)).body.notes).toHaveLength(1);
 
     // Days to collect, by the month payments landed.
-    await prisma.clientStatement.create({ data: { clientId: client.id, periodStart: new Date('2026-06-01'), periodEnd: new Date('2026-06-07'), status: 'FINAL', number: 1, finalizedAt: daysFrom(-20), paidAt: new Date(), snapshot: { totals: { amount: 100 } } } });
+    await prisma.clientStatement.create({ data: { clientId: client.id, periodStart: new Date('2026-06-01'), periodEnd: new Date('2026-06-07'), status: 'FINAL', number: 1, finalizedAt: new Date(Date.now() - 20 * DAY), paidAt: new Date(), snapshot: { totals: { amount: 100 } } } });
     const dso = (await p.a.get('/books/receivables/dso?months=3')).body.months;
     expect(dso).toHaveLength(3);
     expect(dso[2]).toMatchObject({ key: today.slice(0, 7), days: 20, statements: 1, collected: 100 });

@@ -136,7 +136,7 @@ function day(over: Partial<StoreOpsDay> = {}): StoreOpsDay {
         department: 'Meat & Produce',
         period: 'MORNING',
         storeName: 'Front Beach 218',
-        title: 'Morning — SOP not started',
+        title: 'Checklist not started',
         detail: 'Meat & Produce — Morning (6 AM–3 PM)',
         at: at(-2),
       },
@@ -227,7 +227,7 @@ function day(over: Partial<StoreOpsDay> = {}): StoreOpsDay {
   };
 }
 
-function renderPage(payload: StoreOpsDay) {
+function renderPage(payload: StoreOpsDay, path = '/portal/ops') {
   vi.mocked(apiFetch).mockImplementation(async (path: string) => {
     if (path.startsWith('/client-portal/ops?')) return payload;
     throw new Error(`unexpected ${path}`);
@@ -247,7 +247,7 @@ function renderPage(payload: StoreOpsDay) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <AuthContext.Provider value={auth}>
-        <MemoryRouter initialEntries={['/portal/ops']}>
+        <MemoryRouter initialEntries={[path]}>
           <PortalOps />
         </MemoryRouter>
       </AuthContext.Provider>
@@ -263,7 +263,9 @@ describe('<PortalOps> — the store manager’s store operations', () => {
     const rows = within(list).getAllByRole('listitem');
     expect(rows[0]).toHaveTextContent('Dairy cooler °F 44°F — outside 33–41°F');
     expect(rows[0]).toHaveTextContent('Food safety');
-    expect(rows[1]).toHaveTextContent('Morning — SOP not started');
+    // The client's word is "checklist"; one period vocabulary (Morning), no store-window name beside it.
+    expect(rows[1]).toHaveTextContent('Checklist not started');
+    expect(rows[1]).toHaveTextContent('Not started · Meat & Produce · Morning');
     expect(screen.getByText('1/3')).toBeInTheDocument(); // submitted of expected
     expect(screen.getByText('88%')).toBeInTheDocument();
   });
@@ -274,7 +276,8 @@ describe('<PortalOps> — the store manager’s store operations', () => {
     const cell = await screen.findByRole('button', { name: /Frozen & Dairy Morning: 2 overdue, 12 of 30 done/ });
     expect(within(cell).getByText(/Now: Backroom · 7:30–9:30/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Frozen & Dairy Overnight: Submitted/ })).toBeInTheDocument();
-    expect(screen.getByText(/no SOP open/)).toBeInTheDocument();
+    // "Scheduled 2:00 PM · not started" — it read "Started … — no SOP open" beside a NOT STARTED chip.
+    expect(screen.getByText(/^Scheduled .* · not started$/)).toBeInTheDocument();
 
     await user.click(cell);
     const blocks = await screen.findByRole('list', { name: 'Blocks' });
@@ -310,6 +313,47 @@ describe('<PortalOps> — the store manager’s store operations', () => {
       }),
     );
     expect(await screen.findByText('Every department is on track')).toBeInTheDocument();
+  });
+});
+
+describe('<PortalOps> — honest words (F500 G5)', () => {
+  it('a past day is the record: "needed attention", never "needs you now"', async () => {
+    renderPage(day({ date: '2026-10-21', storeToday: today, live: [] }), '/portal/ops?date=2026-10-21');
+    expect(await screen.findByText('2 things needed attention')).toBeInTheDocument();
+    expect(screen.queryByText(/need you now/)).not.toBeInTheDocument();
+  });
+
+  it('no temperature taken is "No readings yet", not "0 · all in range"', async () => {
+    renderPage(day({ temps: [], summary: { ...day().summary, tempChecks: 0, tempsDue: 0, tempAlerts: 0, tempOpen: 0 } }));
+    const label = await screen.findByText('Temperatures');
+    const tile = label.parentElement!;
+    expect(tile).toHaveTextContent('—');
+    expect(tile).toHaveTextContent('No readings yet');
+    expect(tile).not.toHaveTextContent('all in range');
+  });
+
+  it('says "checklist", never the floor\'s "SOP"', async () => {
+    renderPage(day());
+    await screen.findByText('2 things need you now');
+    expect(document.body.textContent).not.toMatch(/\bSOPs?\b/);
+  });
+
+  it('on a phone the day fits one row and the shift and department filters sit behind one chip', async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: !/min-width:\s*640px/.test(q), media: q, addEventListener() {}, removeEventListener() {}, onchange: null, addListener() {}, removeListener() {}, dispatchEvent: () => false })) as never;
+    try {
+      const user = userEvent.setup();
+      renderPage(day());
+      const chip = await screen.findByTestId('ops-filters');
+      expect(screen.queryByRole('combobox', { name: 'Filter by shift' })).not.toBeInTheDocument();
+      // Last night stays one tap away, by its name.
+      expect(screen.getByRole('button', { name: 'Last night' })).toBeInTheDocument();
+      await user.click(chip);
+      expect(await screen.findByRole('combobox', { name: 'Filter by shift' })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: 'Filter by department' })).toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });
 

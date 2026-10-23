@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Camera, CheckCircle2, FileText, Save, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
@@ -14,7 +14,7 @@ import { finishJ1Docs, getJ1Profile, saveJ1Profile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { TaskShell, inputCls, Field, useNextTask } from './ProfileInfoTask';
+import { ContinueLabel, TaskFooter, TaskShell, inputCls, Field, fmtLimit, taskButtonCls, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
 import { statusTone } from '@/lib/status';
@@ -188,7 +188,7 @@ export function J1DocsTask() {
     e.target.value = '';
     if (!file) return;
     if (file.size > MAX_BYTES) {
-      setError(t('ob.j1.tooLarge', { max: fmtSize(MAX_BYTES) }));
+      setError(t('ob.j1.tooLarge', { max: fmtLimit(MAX_BYTES) }));
       return;
     }
     setError(null);
@@ -252,7 +252,7 @@ export function J1DocsTask() {
   };
 
   return (
-    <TaskShell title={t('ob.j1.title')} backTo={backTo}>
+    <TaskShell title={t('ob.j1.title')} backTo={backTo} kind="J1_DOCS">
       <p className="text-silver text-sm mb-5">
         {t('ob.j1.intro')}
       </p>
@@ -488,27 +488,25 @@ export function J1DocsTask() {
           </p>
         )}
 
-        <div className="flex items-center gap-3 pt-2">
+        <TaskFooter backTo={backTo} cancelLabel={t('ob.j1.cancel')}>
           <Button
             type="button"
             onClick={onFinish}
             loading={finishing}
             disabled={!hasAtLeastOneDoc || !profileSaved || finishing}
+            className={taskButtonCls}
           >
-            {finishing
-              ? t('ob.j1.submitting')
-              : !profileSaved
-                ? t('ob.j1.saveFirst')
-                : !hasAtLeastOneDoc
-                  ? t('ob.j1.uploadFirst')
-                  : next
-                    ? t('ob.j1.submitContinue', { label: next.label })
-                    : t('ob.j1.submitDone')}
+            {finishing ? (
+              t('ob.j1.submitting')
+            ) : !profileSaved ? (
+              t('ob.j1.saveFirst')
+            ) : !hasAtLeastOneDoc ? (
+              t('ob.j1.uploadFirst')
+            ) : (
+              <ContinueLabel label={next ? t('ob.docs.submitAndContinue') : t('ob.j1.submitDone')} next={next} />
+            )}
           </Button>
-          <Link to={backTo} className="text-sm text-silver hover:text-white">
-            {t('ob.j1.cancel')}
-          </Link>
-        </div>
+        </TaskFooter>
       </div>
       <ConfirmDialog
         open={deleteTarget !== null}

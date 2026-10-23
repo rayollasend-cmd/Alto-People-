@@ -18,12 +18,17 @@ vi.mock('@/lib/openShiftInvitesApi', () => ({
   declineOpenShift: vi.fn(),
   undoDeclineOpenShift: vi.fn(),
 }));
+vi.mock('@/lib/settingsApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/settingsApi')>()),
+  patchNotificationPreference: vi.fn().mockResolvedValue({}),
+}));
 const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }));
 vi.mock('sonner', () => ({ toast: toastMock }));
 
 import { listOpenShifts } from '@/lib/qualApi';
 import { declineOpenShift, undoDeclineOpenShift } from '@/lib/openShiftInvitesApi';
 import { MarketplaceHome } from '@/pages/marketplace/MarketplaceHome';
+import { patchNotificationPreference } from '@/lib/settingsApi';
 
 /**
  * The associate's side of Rebroadcast (role walk, ops 11): "Not for me" on
@@ -109,5 +114,19 @@ describe('Not for me', () => {
     await user.click(await screen.findByRole('button', { name: 'Not for me' }));
     await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Could not save that. Try again.'));
     expect(screen.getByText('Housekeeper')).toBeInTheDocument();
+  });
+});
+
+describe('Open shifts for an associate (F500 G2)', () => {
+  it('reads to the associate, carries no hand-written "Time & Pay" crumb, and an empty board offers availability and Notify me', async () => {
+    vi.mocked(listOpenShifts).mockResolvedValue({ shifts: [] });
+    const user = renderAsAssociate();
+    expect(await screen.findByText(/Open shifts you're qualified to pick up\. A manager approves each pickup\./)).toBeInTheDocument();
+    expect(screen.queryByText('Time & Pay')).not.toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: /set my availability/i })).toHaveAttribute('href', '/scheduling?sheet=availability');
+    expect(screen.queryByRole('button', { name: /refresh/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /notify me/i }));
+    await waitFor(() => expect(patchNotificationPreference).toHaveBeenCalledWith('scheduling', { inAppEnabled: true, emailEnabled: true }));
+    expect(await screen.findByText('You’ll be told when a shift opens')).toBeInTheDocument();
   });
 });

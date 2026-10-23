@@ -14,6 +14,7 @@ import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { realName } from '../lib/displayName.js';
 import {
   canMessageAsync,
   canUseMessenger,
@@ -82,20 +83,48 @@ const USER_SELECT = {
   associateId: true,
   photoS3Key: true,
   photoUpdatedAt: true,
-  associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
+  // The account's own name (portal and staff accounts carry no associate).
+  displayName: true,
+  // Where they work, for "Associate · Front Beach 218" (F500 G5).
+  location: { select: { name: true } },
+  client: { select: { name: true } },
+  associate: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
+      assignments: { where: { endedAt: null }, select: { location: { select: { name: true } } }, orderBy: { startedAt: 'desc' }, take: 1 },
+    },
+  },
 } as const;
 
 type UserRow = Prisma.UserGetPayload<{ select: typeof USER_SELECT }>;
+
+/** Where a person works: their store, else their current placement, else their client. */
+function siteOf(u: UserRow): string | null {
+  return u.location?.name ?? u.associate?.assignments[0]?.location.name ?? u.client?.name ?? null;
+}
 
 function person(u: UserRow) {
   return {
     id: u.id,
     name: displayName(u),
+    /** False when `name` is the "Role · email" fallback — the role line would repeat it. */
+    named: realName(u) !== null,
     role: u.role,
     roleLabel: roleLabel(u.role),
+    siteName: siteOf(u),
     photoUrl: accountPhotoUrlFor(u),
   };
 }
+
+/** A conversation's own store and client, for the store channel's name. */
+const CONVO_PLACE = {
+  location: { select: { name: true } },
+  client: { select: { name: true, locations: { where: { deletedAt: null, isActive: true }, select: { name: true }, take: 2 } } },
+} as const;
 
 function me(req: { user?: Messenger & { role: string } }): Messenger {
   const u = req.user!;
@@ -113,6 +142,7 @@ async function myThread(userId: string, conversationId: string) {
       conversation: {
         include: {
           participants: { include: { user: { select: USER_SELECT } } },
+          ...CONVO_PLACE,
         },
       },
     },
@@ -124,10 +154,20 @@ async function myThread(userId: string, conversationId: string) {
 /** A thread's display title for one viewer: the store for a channel,
  *  the other person for a direct thread, the group title or names. */
 function titleFor(
-  convo: { kind: string; title: string | null; participants: Array<{ user: UserRow }> },
+  convo: {
+    kind: string;
+    title: string | null;
+    participants: Array<{ user: UserRow }>;
+    location?: { name: string } | null;
+    client?: { name: string; locations: Array<{ name: string }> } | null;
+  },
   viewerId: string,
 ): string {
-  if (convo.kind === 'STORE_CHANNEL') return convo.title ?? 'Store';
+  // The store channel is named by its store (it read "Coastal Resort Holdings"):
+  // its own location, or the client's one store.
+  if (convo.kind === 'STORE_CHANNEL') {
+    return convo.location?.name ?? (convo.client?.locations.length === 1 ? convo.client.locations[0]!.name : null) ?? convo.title ?? 'Store';
+  }
   const others = convo.participants.filter((p) => p.user.id !== viewerId).map((p) => displayName(p.user));
   if (convo.kind === 'DIRECT') return others[0] ?? '—';
   return convo.title ?? others.slice(0, 3).join(', ') + (others.length > 3 ? ` +${others.length - 3}` : '');
@@ -139,15 +179,20 @@ messagesRouter.get('/conversations', requireAuth, async (req, res, next) => {
   try {
     const user = me(req);
     await ensureStoreChannels(user);
-    const rows = await prisma.conversationParticipant.findMany({
-      where: { userId: user.id },
-      include: {
-        conversation: {
-          include: { participants: { include: { user: { select: USER_SELECT } } } },
+    const rows = (
+      await prisma.conversationParticipant.findMany({
+        where: { userId: user.id },
+        include: {
+          conversation: {
+            include: { participants: { include: { user: { select: USER_SELECT } } }, ...CONVO_PLACE },
+          },
         },
-      },
-      take: 200,
-    });
+        take: 200,
+      })
+    )
+      // A thread nobody has written in isn't a conversation yet (an old
+      // empty "Start" left them behind); a store channel always shows.
+      .filter((r) => r.conversation.kind === 'STORE_CHANNEL' || r.conversation.lastMessageAt !== null);
     const unread = await Promise.all(
       rows.map((r) =>
         prisma.message.count({
@@ -268,38 +313,41 @@ messagesRouter.post('/conversations', requireAuth, async (req, res, next) => {
         throw new HttpError(403, 'forbidden', `You can't message ${displayName(t)} from this account.`);
       }
     }
-    // A direct thread between two people is unique: reuse it.
+    // A direct thread between two people is unique (the per-tenant directKey):
+    // reuse it.
     let conversationId: string | null = null;
     let createdNow = false;
-    if (targets.length === 1) {
-      const existing = await prisma.conversation.findFirst({
-        where: {
-          kind: 'DIRECT',
-          AND: [
-            { participants: { some: { userId: user.id } } },
-            { participants: { some: { userId: targets[0]!.id } } },
-          ],
-        },
-        select: { id: true },
-      });
-      conversationId = existing?.id ?? null;
+    const directKey = targets.length === 1 ? directKeyOf(user.id, targets[0]!.id) : null;
+    if (directKey) conversationId = await findDirect(directKey, user.id, targets[0]!.id);
+    // A new thread starts with its first message — an empty one is noise in
+    // two inboxes (F500 G5). An existing direct thread just opens.
+    if (!conversationId && !input.body?.trim()) {
+      throw new HttpError(400, 'first_message_needed', 'Write the first message to start the conversation.');
     }
     if (!conversationId) {
       const clientIds = new Set(
         [user.clientId, ...targets.map((t) => t.clientId)].filter((c): c is string => !!c),
       );
-      const created = await prisma.conversation.create({
-        data: {
-          kind: targets.length === 1 ? 'DIRECT' : 'GROUP',
-          title: targets.length === 1 ? null : (input.title ?? null),
-          clientId: clientIds.size === 1 ? [...clientIds][0]! : null,
-          createdById: user.id,
-          participants: { create: [user.id, ...targets.map((t) => t.id)].map((userId) => ({ userId })) },
-        },
-        select: { id: true },
-      });
-      conversationId = created.id;
-      createdNow = true;
+      try {
+        const created = await prisma.conversation.create({
+          data: {
+            kind: targets.length === 1 ? 'DIRECT' : 'GROUP',
+            title: targets.length === 1 ? null : (input.title ?? null),
+            directKey,
+            clientId: clientIds.size === 1 ? [...clientIds][0]! : null,
+            createdById: user.id,
+            participants: { create: [user.id, ...targets.map((t) => t.id)].map((userId) => ({ userId })) },
+          },
+          select: { id: true },
+        });
+        conversationId = created.id;
+        createdNow = true;
+      } catch (err) {
+        // Two starts at once: the other one made the thread — use it.
+        if (!directKey || (err as { code?: string }).code !== 'P2002') throw err;
+        conversationId = await findDirect(directKey, user.id, targets[0]!.id);
+        if (!conversationId) throw err;
+      }
     }
     if (input.body) {
       try {
@@ -312,6 +360,46 @@ messagesRouter.post('/conversations', requireAuth, async (req, res, next) => {
       }
     }
     res.status(201).json({ id: conversationId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** The key that makes a direct thread unique: the two user ids, sorted. */
+function directKeyOf(a: string, b: string): string {
+  return [a, b].sort().join(':');
+}
+
+/** The direct thread between two people, by its key (or an older unkeyed one). */
+async function findDirect(directKey: string, a: string, b: string): Promise<string | null> {
+  const keyed = await prisma.conversation.findUnique({
+    where: { tenantId_directKey: { tenantId: tenantIdForWrite(), directKey } },
+    select: { id: true },
+  });
+  if (keyed) return keyed.id;
+  const legacy = await prisma.conversation.findFirst({
+    where: { kind: 'DIRECT', tenantId: tenantIdForWrite(), AND: [{ participants: { some: { userId: a } } }, { participants: { some: { userId: b } } }] },
+    select: { id: true },
+  });
+  return legacy?.id ?? null;
+}
+
+/**
+ * GET /messages/direct/:userId — the direct thread with one person, if there
+ * is one, and who they are: the /messages?to= deep link opens the thread, or
+ * a draft that becomes a thread with its first message (never an empty one).
+ */
+messagesRouter.get('/direct/:userId', requireAuth, async (req, res, next) => {
+  try {
+    const user = me(req);
+    const otherId = z.string().uuid().parse(req.params.userId);
+    if (otherId === user.id) throw new HttpError(400, 'self', 'That is your own account.');
+    const other = await prisma.user.findFirst({
+      where: { id: otherId, tenantId: tenantIdForWrite(), status: 'ACTIVE', deletedAt: null },
+      select: USER_SELECT,
+    });
+    if (!other || !(await canMessageAsync(user, other))) throw new HttpError(404, 'not_found', 'You can’t message that person from this account.');
+    res.json({ conversationId: await findDirect(directKeyOf(user.id, other.id), user.id, other.id), person: person(other) });
   } catch (err) {
     next(err);
   }

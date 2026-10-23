@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Camera, Check, Clock, Copy, LogIn, LogOut, Phone, Share2, ShieldAlert, Siren, X } from 'lucide-react';
+import { AlertTriangle, Bus, Camera, Check, Clock, Copy, LogIn, LogOut, Phone, Share2, ShieldAlert, Siren, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -12,7 +12,7 @@ import {
   driverClockOut,
   driverOk,
   getDriverProfile,
-  getDriverShifts,
+  getSeatRequests,
   getDriverTime,
   getDriverToday,
   getPreTrip,
@@ -144,9 +144,9 @@ export function DriverTodayCard() {
   const queryClient = useQueryClient();
   const today = useQuery({ queryKey: ['transport', 'driver', 'today'], queryFn: getDriverToday, refetchInterval: 60_000 });
   const time = useQuery({ queryKey: ['transport', 'driver', 'time'], queryFn: getDriverTime, enabled: !!today.data?.associateId });
-  // Audit Tier 3: the two-week list (/transport/driver/shifts), one tap from the next five.
-  const [allShifts, setAllShifts] = useState(false);
-  const twoWeeks = useQuery({ queryKey: ['transport', 'driver', 'shifts', 14], queryFn: () => getDriverShifts(undefined, 14), enabled: allShifts && !!today.data?.associateId });
+  // The van rides in the Today card's header (it sat under "Seat requests").
+  const requests = useQuery({ queryKey: ['transport', 'driver', 'requests'], queryFn: getSeatRequests, refetchInterval: 30_000 });
+  const van = requests.data?.van ?? null;
   const [busy, setBusy] = useState(false);
   if (today.isLoading) return <Skeleton className="h-28" />;
   if (today.isError) return <QueryError what="your day" query={today} />;
@@ -194,6 +194,21 @@ export function DriverTodayCard() {
           </div>
         ) : null}
       />
+      {van && (
+        <div className="flex items-center gap-2.5 text-sm" data-testid="today-van">
+          <Bus className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">
+            <span className="text-silver">{t('drive.yourVan')} · </span>
+            <span className="font-medium text-ink">{van.name}</span>
+            {van.look && <span className="text-silver"> · {van.look}</span>}
+          </span>
+          {van.plate && (
+            <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-0.5 font-mono text-xs font-bold tracking-wider text-on-accent">
+              {van.plate}
+            </span>
+          )}
+        </div>
+      )}
       <CredentialBanner credentials={d.credentials} />
       <div className="grid grid-cols-3 gap-2">
         {tiles.map((x) => (
@@ -207,32 +222,19 @@ export function DriverTodayCard() {
         <p className="text-xs text-silver">{t('drive.noAssociate')}</p>
       ) : (
         <>
-          <div>
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-2xs font-semibold uppercase tracking-wider text-silver">{t('drive.myShifts')}</h3>
-              <Button size="xs" variant="ghost" onClick={() => setAllShifts((v) => !v)} aria-expanded={allShifts}>
-                {allShifts ? t('drive.shiftsFewer') : t('drive.shiftsTwoWeeks')}
-              </Button>
-            </div>
-            {allShifts && twoWeeks.isError ? (
-              <QueryError what="your shifts" query={twoWeeks} />
-            ) : allShifts && twoWeeks.isLoading ? (
-              <Skeleton className="mt-1 h-16" />
-            ) : (allShifts ? (twoWeeks.data?.shifts ?? []) : d.shifts).length === 0 ? (
-              <p className="mt-1 text-xs text-silver">{t('drive.noShifts')}</p>
-            ) : (
-              <ul className="mt-1 space-y-1">
-                {(allShifts ? (twoWeeks.data?.shifts ?? []) : d.shifts.slice(0, 5)).map((s) => (
-                  <li key={s.id} className={cn('flex items-center gap-2 text-sm', s.today ? 'text-ink' : 'text-silver')}>
-                    <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span className="tabular-nums">
-                      {fmtRelativeDayTz(s.startsAt, tz)} · {fmtTimeTz(s.startsAt, tz)}–{fmtTimeTz(s.endsAt, tz)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          {/* Today's driver shift only — the week (shifts and runs, day by day) is the
+              "Your week" calendar below; two schedule views for one driver was one too many. */}
+          {(() => {
+            const todays = d.shifts.filter((sh) => sh.today);
+            return (
+              <p className="flex items-center gap-2 text-sm text-silver" data-testid="today-shift">
+                <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {todays.length === 0
+                  ? t('drive.noShiftToday')
+                  : todays.map((sh) => `${fmtTimeTz(sh.startsAt, tz)}–${fmtTimeTz(sh.endsAt, tz)}`).join(', ')}
+              </p>
+            );
+          })()}
           {(time.data?.entries.length ?? 0) > 0 && (
             <div>
               <h3 className="text-2xs font-semibold uppercase tracking-wider text-silver">{t('drive.payLink')}</h3>

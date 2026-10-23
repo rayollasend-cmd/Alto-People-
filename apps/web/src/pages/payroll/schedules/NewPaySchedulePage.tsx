@@ -86,6 +86,13 @@ export function NewPaySchedulePage() {
   const calendar = useQuery({ queryKey: ['paySchedules', 'previewPattern', params], queryFn: () => previewPattern({ ...params, months: 12 }) });
   // The first period that hasn't started: people can join a schedule from today on, never back-dated.
   const first = calendar.data?.periods.find((p) => p.periodStart >= ymdLocal()) ?? calendar.data?.periods[0];
+  // The period already under way when the schedule starts later: who pays it, said (F500 G3).
+  const inProgress = (() => {
+    if (!first || !weekly || first.periodStart <= ymdLocal()) return null;
+    const days = frequency === 'WEEKLY' ? 7 : 14;
+    const start = addDays(first.periodStart, -days);
+    return start <= ymdLocal() ? { start, end: addDays(first.periodStart, -1) } : null;
+  })();
   const facets = useQuery({ queryKey: ['paySchedules', 'candidates', 'facets'], queryFn: () => listScheduleCandidates({}), enabled: step >= 3 });
   const names = useMemo(() => {
     const f = facets.data?.facets;
@@ -138,7 +145,6 @@ export function NewPaySchedulePage() {
     <ListTemplate
       title="New pay schedule"
       subtitle="Describe how you pay. You’ll see every payday for the year before anything is saved."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Pay schedules', to: '/payroll/schedules' }, { label: 'New' }]}
     >
       <Stepper current={step} steps={STEPS} onStepClick={setStep} className="max-w-3xl" />
 
@@ -251,6 +257,11 @@ export function NewPaySchedulePage() {
                   <p className="mt-1 text-lg font-semibold text-ink">{payDay(first.payDate)}</p>
                   <p className="text-xs text-ink-muted">For {payDay(first.periodStart, false)} – {payDay(first.periodEnd, false)}</p>
                   {first.adjustedFor && <p className="mt-1 text-xs text-warning">{first.adjustedFor} — moved from {payDay(first.unadjustedPayDate, false)}</p>}
+                  {inProgress && (
+                    <p className="mt-2 text-xs text-ink-muted" data-testid="period-in-progress">
+                      The period in progress ({payDay(inProgress.start, false)} – {payDay(inProgress.end, false)}) is paid by each person’s current schedule; this one starts with the next.
+                    </p>
+                  )}
                 </div>
               ) : null}
             </CardContent>

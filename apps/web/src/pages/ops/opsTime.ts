@@ -46,6 +46,21 @@ export function opsTimeZoneCity(): string {
   return currentTz.split('/').pop()?.replace(/_/g, ' ') ?? currentTz;
 }
 
+/** The zone with its abbreviation, for a label beside the times: "New York (EDT)". */
+export function opsTimeZoneLabel(at: Date = new Date()): string {
+  let abbr: string;
+  try {
+    abbr =
+      new Intl.DateTimeFormat('en-US', { timeZone: currentTz, timeZoneName: 'short' })
+        .formatToParts(at)
+        .find((p) => p.type === 'timeZoneName')?.value ?? '';
+  } catch {
+    abbr = '';
+  }
+  const city = opsTimeZoneCity();
+  return abbr ? `${city} (${abbr})` : city;
+}
+
 /** Take the zone an ops read names (idempotent; call it with each response). */
 export function setOpsTimeZone(tz: string | null | undefined): void {
   if (!tz || tz === currentTz) return;

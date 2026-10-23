@@ -36,6 +36,8 @@ export interface FieldglassQueueRow {
   email: string | null;
   phone: string | null;
   hireDate: string | null;
+  /** Their photo (null: none on file — no request is made). */
+  photoUrl?: string | null;
 }
 
 export function FieldglassQueueList({ queue, returnTo }: { queue: FieldglassQueueRow[]; returnTo: string }) {
@@ -115,7 +117,8 @@ export function FieldglassQueueList({ queue, returnTo }: { queue: FieldglassQueu
           <li key={w.associateId} className="py-2.5">
             <div className="flex items-center gap-3">
               <Avatar
-                src={`/api/associates/${w.associateId}/photo`}
+                src={w.photoUrl ?? `/api/associates/${w.associateId}/photo`}
+                hasPhoto={w.photoUrl === undefined ? undefined : w.photoUrl !== null}
                 name={w.name}
                 email=""
                 size="md"
@@ -129,11 +132,13 @@ export function FieldglassQueueList({ queue, returnTo }: { queue: FieldglassQueu
                 className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
               >
                 <div className="flex items-center gap-1.5">
-                  <span className="truncate text-sm font-medium text-white">
+                  {/* On a phone the client goes on its own line ("Aaliyah Brooks · Co…" was cut). */}
+                  <span className="min-w-0 text-sm font-medium text-white sm:truncate">
                     {w.name}
                     {w.clientName && (
-                      <span className="font-normal text-silver/80">
-                        {' '}· {w.clientName}
+                      <span className="block truncate font-normal text-silver/80 sm:inline">
+                        <span className="hidden sm:inline">{' '}· </span>
+                        {w.clientName}
                       </span>
                     )}
                   </span>

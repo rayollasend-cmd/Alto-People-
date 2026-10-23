@@ -14,7 +14,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
- * Brief 3-2: the engine's rules, tenant-wide or for one site. How long a
+ * Brief 3-2: the assignment rules, tenant-wide or for one site. How long a
  * machine's stalled task waits before a person gets it, what the engine
  * may spend on its own, who may hold high-risk work, what a robot's task
  * costs, and the span of control Brief 3-3 warns on.
@@ -35,6 +35,8 @@ export function TaskPolicyPage() {
   const sites = useOrgSites(true);
   const [locationId, setLocationId] = useState('');
   const q = useQuery({ queryKey: ['tasks', 'policy', { locationId }], queryFn: () => getTaskPolicy(locationId || null) });
+  // Sites with their own policy, marked in the picker so nobody hunts for them.
+  const custom = new Set((q.data as { overrideLocationIds?: string[] } | undefined)?.overrideLocationIds ?? []);
 
   const [handoff, setHandoff] = useState('30');
   const [maxAuto, setMaxAuto] = useState('');
@@ -88,15 +90,18 @@ export function TaskPolicyPage() {
   return (
     <ListTemplate
       title="Task assignment"
-      subtitle="How the engine decides who holds a task, and when a person takes over."
-      breadcrumbs={[{ label: 'Settings' }, { label: 'Task assignment' }]}
+      subtitle="Who holds a task when it comes in, what can be assigned without a person, and when a person takes over."
       filters={
         <div className="flex flex-wrap items-center gap-2">
-          <Select size="sm" aria-label="Scope" value={locationId} onChange={(e) => setLocationId(e.target.value)} className="w-64">
+          <label htmlFor="task-policy-scope" className="text-sm text-ink-muted">
+            Applies to
+          </label>
+          <Select id="task-policy-scope" size="sm" value={locationId} onChange={(e) => setLocationId(e.target.value)} className="w-full sm:w-72">
             <option value="">Every {siteLabel.toLowerCase()} (the default)</option>
             {(sites ?? []).map((s) => (
               <option key={s.id} value={s.id}>
-                {s.name} (overrides the default)
+                {s.name}
+                {custom.has(s.id) ? ' (custom)' : ''}
               </option>
             ))}
           </Select>
@@ -138,7 +143,7 @@ export function TaskPolicyPage() {
           </Card>
           <Card>
             <CardContent className="space-y-4">
-              <SectionTitle title="What the engine may spend" />
+              <SectionTitle title="What may be assigned without a person" />
               <Field label="Assign on its own up to ($ per task)" hint="Leave empty for no cap. Dearer work queues for a person.">
                 {(p) => <Input {...p} type="number" min={0} step="0.01" value={maxAuto} onChange={(e) => setMaxAuto(e.target.value)} disabled={!canEdit} className="w-40" placeholder="No cap" />}
               </Field>

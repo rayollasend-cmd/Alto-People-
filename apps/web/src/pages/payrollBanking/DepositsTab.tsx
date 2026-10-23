@@ -6,6 +6,7 @@ import { Badge, type BadgeProps } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { fmtDate } from '@/lib/format';
 
 /**
@@ -61,12 +62,13 @@ export function DepositsTab({ requirePrenote, onAch }: { requirePrenote: boolean
   ];
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* With no accounts on file, four zeros say nothing: the empty list below says it once. */}
+      <MetricStrip label="Direct deposit at a glance" empty={!!q.data && q.data.accounts.length === 0}>
         <MetricCard label="Test cleared" value={c ? String(c.cleared) : '—'} hint="Ready for pay" />
         <MetricCard label="Test out" value={c ? String(c.sent) : '—'} hint="Clears in two banking days" />
-        <MetricCard label="Test came back" value={c ? String(c.returned) : '—'} hint="Pay is held from these" accent={(c?.returned ?? 0) > 0} />
+        <MetricCard label="Test came back" value={c ? String(c.returned) : '—'} hint="Pay is held from these" tone={(c?.returned ?? 0) > 0 ? 'alert' : 'default'} />
         <MetricCard label="Split paychecks" value={c ? String(c.split) : '—'} hint="Accounts taking a share" />
-      </div>
+      </MetricStrip>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="max-w-prose text-sm text-ink-muted">
           {requirePrenote

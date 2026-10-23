@@ -177,7 +177,9 @@ describe('the driver decides on seat requests', () => {
     });
     renderAs('DRIVER', <DriverHome />);
     const list = await screen.findByRole('region', { name: 'Seat requests' });
-    expect(await within(list).findByText('White Ford Transit 2023', { exact: false })).toBeInTheDocument();
+    // The van rides in the Today card's header now (F500): the requests are just the requests.
+    expect(await within(list).findByText('Maria Lopez')).toBeInTheDocument();
+    expect(within(list).queryByText('White Ford Transit 2023', { exact: false })).toBeNull();
     const items = within(list).getAllByRole('listitem');
     expect(items[0]).toHaveTextContent('Maria Lopez');
     expect(items[0]).toHaveTextContent(/Fits your .* run/);
@@ -280,7 +282,8 @@ describe('the director runs the fleet — and has the last word', () => {
       if (path === '/transport/vans/v1' && init?.method === 'PATCH') return { van: fleetVan() };
     });
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    await userEvent.click(await screen.findByRole('tab', { name: 'Fleet' }));
+    // F500 G2: Fleet sits under Setup (its first section).
+    await userEvent.click(await screen.findByRole('tab', { name: 'Setup' }));
     expect(await screen.findByText('White Ford Transit 2023 · 12 seats')).toBeInTheDocument();
     expect(screen.getAllByText('$125.00').length).toBeGreaterThan(0);
     expect(screen.getByText('33%')).toBeInTheDocument();
@@ -307,7 +310,8 @@ describe('the director runs the fleet — and has the last word', () => {
       if (path === '/transport/driver-access/x1/decide' && init?.method === 'POST') return { row: {} };
     });
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    await userEvent.click(await screen.findByRole('tab', { name: 'Fleet' }));
+    // F500 G2: Fleet sits under Setup (its first section).
+    await userEvent.click(await screen.findByRole('tab', { name: 'Setup' }));
     const asks = await screen.findByRole('region', { name: 'Access requests' });
     expect(within(asks).getByText(/Mike Chen/)).toBeInTheDocument();
     expect(within(asks).getByText(/I live near the Coastal stores/)).toBeInTheDocument();

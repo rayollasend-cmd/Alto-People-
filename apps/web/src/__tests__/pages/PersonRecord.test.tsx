@@ -62,7 +62,7 @@ const ANA: DirectoryEntry = {
   employmentType: 'W2_EMPLOYEE',
   j1Status: false,
   status: 'ACTIVE',
-  workplaceClientId: null,
+  workplaceClientId: '44444444-4444-4444-8444-444444444444',
   workplaceClientName: null,
   position: 'Housekeeper',
   startDate: '2026-03-02',
@@ -87,8 +87,30 @@ const ANA: DirectoryEntry = {
   currentAssignmentStartedAt: '2026-03-02',
 };
 
+const OVERVIEW = {
+  windowDays: 14,
+  work: {
+    minutes: 480,
+    entries: 1,
+    awaitingReview: 1,
+    lastWorkedAt: '2026-10-14T13:00:00.000Z',
+    nextShift: {
+      id: '55555555-5555-4555-8555-555555555555',
+      startsAt: '2099-01-05T15:00:00.000Z',
+      endsAt: '2099-01-05T23:00:00.000Z',
+      position: 'Housekeeper',
+      locationName: 'The Grand Hotel',
+      timezone: 'America/New_York',
+    },
+    noShows30d: 0,
+  },
+  documents: { expiringSoon: 1, expired: 0 },
+  pay: { scheduleId: '66666666-6666-4666-8666-666666666666', scheduleName: 'Biweekly' },
+};
+
 const FIXTURES: Record<string, unknown> = {
   [`/people/directory/${ID}`]: ANA,
+  [`/people/directory/${ID}/overview`]: OVERVIEW,
   '/time/admin/entries': {
     entries: [
       {
@@ -257,20 +279,23 @@ describe('<PersonRecord>', () => {
     expect(await screen.findByRole('heading', { name: 'Ana Reyes' })).toBeInTheDocument();
     await settle();
     expect(calls).toContain(`/people/directory/${ID}`);
-    expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
-    // The facts strip.
-    // The manager is a link to their own record (the strip and the Profile tab both name them).
+    expect(calls).toContain(`/people/directory/${ID}/overview`);
+    // The one status word, not the old three.
+    expect(screen.getAllByText('Working').length).toBeGreaterThan(0);
+    // The facts strip: the manager links to their own record; the store, its start.
     expect(screen.getAllByRole('link', { name: 'Dana Flores' }).some((l) => l.getAttribute('href') === `/people/${OTHER}`)).toBe(true);
-    expect(screen.getAllByText('Mar 2, 2026').length).toBeGreaterThan(0);
-    // Every facet, including the four the drawer never had.
+    expect(screen.getByText(/since Mar 2, 2026/)).toBeInTheDocument();
+    // Every facet, Overview first and open.
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\(\d+\)/, '').trim());
-    expect(tabs).toEqual(['Profile', 'Employment', 'Pay', 'Time', 'Time off', 'Performance', 'Cases', 'Documents', 'Thread']);
+    expect(tabs).toEqual(['Overview', 'Profile', 'Employment', 'Pay', 'Time', 'Time off', 'Performance', 'Cases', 'Documents', 'Thread']);
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
     // Counts in the labels, from the per-person endpoints.
     expect(screen.getByRole('tab', { name: /^Time\s*\(1\)/ })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /^Time off\s*\(1\)/ })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /^Cases\s*\(1\)/ })).toBeInTheDocument();
-    // The quick look is one click away and keeps its deep link.
-    expect(screen.getByRole('link', { name: /quick view/i })).toHaveAttribute('href', `/people?associateId=${ID}`);
+    // One home for a person: no "Quick view" back into a drawer; sibling pages are links.
+    expect(screen.queryByRole('link', { name: /quick view/i })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Schedule' })).toHaveAttribute('href', `/scheduling?associate=${ID}`);
   });
 
   it('?tab= picks the facet, and the new tabs read this person’s data', async () => {
@@ -303,8 +328,11 @@ describe('<PersonRecord>', () => {
     expect(within(perf).getByRole('link', { name: 'Learn the turndown standard' })).toBeInTheDocument();
     expect(within(perf).getByText('Verbal warning')).toBeInTheDocument();
 
-    // Back to Profile drops the param.
     await userEvent.click(screen.getByRole('tab', { name: 'Profile' }));
+    await settle();
+    expect(lastLocation).toBe(`/people/${ID}?tab=profile`);
+    // Back to Overview (the default) drops the param.
+    await userEvent.click(screen.getByRole('tab', { name: 'Overview' }));
     await settle();
     expect(lastLocation).toBe(`/people/${ID}`);
   });
@@ -315,9 +343,9 @@ describe('<PersonRecord>', () => {
     await screen.findByRole('heading', { name: 'Ana Reyes' });
     await settle();
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\(\d+\)/, '').trim());
-    expect(tabs).toEqual(['Profile', 'Employment', 'Time', 'Time off', 'Documents', 'Thread']);
-    // An unknown ?tab= falls back to Profile rather than an empty page.
-    expect(screen.getByRole('tab', { name: 'Profile' })).toHaveAttribute('aria-selected', 'true');
+    expect(tabs).toEqual(['Overview', 'Profile', 'Employment', 'Time', 'Time off', 'Documents', 'Thread']);
+    // A ?tab= the role can't open falls back to Overview rather than an empty page.
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('says so, with a retry, when the person cannot be loaded', async () => {
@@ -328,12 +356,12 @@ describe('<PersonRecord>', () => {
   });
 
   it('a hotel tenant sees none of the staffing company’s words on any facet', async () => {
-    for (const tab of ['', 'time', 'timeoff', 'performance', 'cases']) {
+    for (const tab of ['', 'profile', 'time', 'timeoff', 'performance', 'cases']) {
       renderRecord(HOTEL, `/people/${ID}${tab ? `?tab=${tab}` : ''}`);
       await screen.findByRole('heading', { name: 'Ana Reyes' });
       await settle();
       const found = offenders(visibleText());
-      expect(found, `${tab || 'profile'}:\n${found.join('\n')}`).toEqual([]);
+      expect(found, `${tab || 'overview'}:\n${found.join('\n')}`).toEqual([]);
       cleanup();
     }
   });
@@ -347,6 +375,9 @@ describe('<PersonRecord> life-cycle actions (HR walk 12 and 13)', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]!);
     expect(await screen.findByRole('menuitem', { name: 'Transfer…' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Promote…' })).toBeInTheDocument();
+    // Pausing sits with the other life-cycle moves now, not at the foot of Profile.
+    expect(screen.getByRole('menuitem', { name: 'Deactivate…' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Erase personal data…' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('menuitem', { name: 'Separate…' }));
     // …with the way back to this record (?return=), so the desk lands here again.
     expect(lastLocation).toBe(`/separations?associateId=${ID}&return=${encodeURIComponent(`/people/${ID}`)}`);
@@ -359,8 +390,11 @@ describe('<PersonRecord> life-cycle actions (HR walk 12 and 13)', () => {
       await screen.findByRole('heading', { name: 'Ana Reyes' });
       await settle();
       await userEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]!);
-      expect(await screen.findByRole('menuitem', { name: 'Transfer…' })).toBeInTheDocument();
+      // Gone already: nothing to separate, transfer, promote or pause — erasure is what's left.
+      expect(await screen.findByRole('menuitem', { name: 'Erase personal data…' })).toBeInTheDocument();
       expect(screen.queryByRole('menuitem', { name: 'Separate…' })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: 'Transfer…' })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: 'Deactivate…' })).toBeNull();
     } finally {
       FIXTURES[`/people/directory/${ID}`] = ANA;
     }
@@ -374,5 +408,73 @@ describe('<PersonRecord> life-cycle actions (HR walk 12 and 13)', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Open a case for someone')).toBeInTheDocument();
     expect(within(dialog).getByText('Ana Reyes')).toBeInTheDocument();
+  });
+});
+
+describe('<PersonRecord> Overview (F500 fix-up)', () => {
+  it('opens on what needs attention, their work and their pay, from the overview numbers', async () => {
+    renderRecord(ALTO);
+    await screen.findByRole('heading', { name: 'Ana Reyes' });
+    await settle();
+    const panel = screen.getByRole('tabpanel');
+    const attention = within(panel).getByTestId('attention-list');
+    // No clock-in number on file (the kiosk list is empty), one document
+    // running out, one clock-in waiting — exactly the fixture's numbers.
+    expect(attention).toHaveTextContent('No clock-in number issued yet.');
+    expect(attention).toHaveTextContent('1 document expires in the next 30 days.');
+    expect(attention).toHaveTextContent('1 clock-in waiting for approval.');
+    expect(within(attention).getByRole('link', { name: 'Open documents' })).toHaveAttribute('href', `/people/${ID}?tab=documents`);
+    expect(within(attention).getByRole('link', { name: 'Review time' })).toHaveAttribute('href', `/time-attendance/timesheets/history/${ID}`);
+    // Her manager is set, so no "No manager" line.
+    expect(attention).not.toHaveTextContent(/No .* assigned/);
+    // Work and pay.
+    expect(panel).toHaveTextContent('Hours (14 days)8h');
+    expect(panel).toHaveTextContent('No-shows (30 days)0');
+    expect(panel).toHaveTextContent('$18.50/hr');
+    expect(panel).toHaveTextContent('Biweekly');
+    // The strip: hours link to the Time tab; the next shift names its store.
+    expect(screen.getAllByText('8h').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/The Grand Hotel/).length).toBeGreaterThan(0);
+  });
+
+  it('says so when nothing needs attention', async () => {
+    FIXTURES[`/people/directory/${ID}/overview`] = { ...OVERVIEW, work: { ...OVERVIEW.work, awaitingReview: 0 }, documents: { expiringSoon: 0, expired: 0 } };
+    FIXTURES['/kiosk-pins'] = { pins: [{ id: 'p1', associateId: ID, associateName: 'Ana Reyes', associateEmail: 'ana@example.com', clientId: ANA.workplaceClientId, clientName: 'Grand', locationId: null, locationName: null, employeeNumber: '4821', wontClockIn: false, active: true, faceConsentStatus: null, createdAt: '2026-03-01T00:00:00.000Z' }] };
+    try {
+      renderRecord(ALTO);
+      await screen.findByRole('heading', { name: 'Ana Reyes' });
+      await settle();
+      expect(screen.getByTestId('attention-none')).toHaveTextContent('All clear on this record.');
+    } finally {
+      FIXTURES[`/people/directory/${ID}/overview`] = OVERVIEW;
+      FIXTURES['/kiosk-pins'] = { pins: [] };
+    }
+  });
+
+  it('a clock-in number filed under another client is named, with the re-issue link', async () => {
+    FIXTURES['/kiosk-pins'] = { pins: [{ id: 'p1', associateId: ID, associateName: 'Ana Reyes', associateEmail: 'ana@example.com', clientId: '77777777-7777-4777-8777-777777777777', clientName: 'Coastal Resort Holdings', locationId: null, locationName: null, employeeNumber: '4821', wontClockIn: false, active: true, faceConsentStatus: null, createdAt: '2026-03-01T00:00:00.000Z' }] };
+    try {
+      renderRecord(ALTO);
+      await screen.findByRole('heading', { name: 'Ana Reyes' });
+      await settle();
+      const attention = screen.getByTestId('attention-list');
+      expect(attention).toHaveTextContent("Their clock-in number won't work: it's filed under Coastal Resort Holdings");
+      expect(within(attention).getByRole('link', { name: 'Re-issue' }).getAttribute('href')).toContain(`issue=${ID}`);
+    } finally {
+      FIXTURES['/kiosk-pins'] = { pins: [] };
+    }
+  });
+
+  it('erasing personal data is in More, behind the typed confirm — not a red button on Profile', async () => {
+    renderRecord(ALTO, `/people/${ID}?tab=profile`);
+    await screen.findByRole('heading', { name: 'Ana Reyes' });
+    await settle();
+    expect(within(screen.getByRole('tabpanel')).queryByRole('button', { name: /erase personal data/i })).toBeNull();
+    expect(within(screen.getByRole('tabpanel')).queryByText('Danger zone')).toBeNull();
+    await userEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]!);
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Erase personal data…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Type the .* last name/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Erase permanently' })).toBeDisabled();
   });
 });

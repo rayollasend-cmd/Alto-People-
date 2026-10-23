@@ -121,13 +121,26 @@ export interface NewHireRecord {
   stateOfHire: string;
 }
 
+export type NewHirePersonGap = 'ssn' | 'address';
+export type NewHireEmployerGap = 'ein' | 'address';
+
+/** A report that can't be filed yet: every reason in words, and the same split into the person's gaps and the employer's. */
+export interface NewHireBlock {
+  reportId: string;
+  reasons: string[];
+  person: NewHirePersonGap[];
+  employer: NewHireEmployerGap[];
+  employerId: string;
+  employerName: string;
+}
+
 /** Records ready to file, and the reports that cannot be filed yet with why. */
 export async function buildNewHireRecords(
   db: Db,
   reports: Array<NewHireReport>,
-): Promise<{ records: NewHireRecord[]; blocked: Array<{ reportId: string; reasons: string[] }> }> {
+): Promise<{ records: NewHireRecord[]; blocked: NewHireBlock[] }> {
   const records: NewHireRecord[] = [];
-  const blocked: Array<{ reportId: string; reasons: string[] }> = [];
+  const blocked: NewHireBlock[] = [];
   for (const r of reports) {
     const a = await db.associate.findUnique({
       where: { id: r.associateId },
@@ -136,12 +149,28 @@ export async function buildNewHireRecords(
     if (!a) continue;
     const employer = await employerFor(db, r.associateId, r.hireDate);
     const reasons: string[] = [];
-    if (!a.w4Submission?.ssnEncrypted) reasons.push('No SSN on file');
-    if (!a.addressLine1 || !a.city || !a.state || !a.zip) reasons.push('Home address incomplete');
-    if (!employer.ein) reasons.push('Employer EIN missing');
-    if (!employer.addressLine1 || !employer.city || !employer.state || !employer.zip) reasons.push('Employer address incomplete');
+    // The person's gaps and the employer's are told apart: one employer gap blocks every
+    // hire it employs, so the page says it once per employer, not on every row (F500 G3).
+    const person: NewHirePersonGap[] = [];
+    const employerGaps: NewHireEmployerGap[] = [];
+    if (!a.w4Submission?.ssnEncrypted) {
+      reasons.push('No SSN on file');
+      person.push('ssn');
+    }
+    if (!a.addressLine1 || !a.city || !a.state || !a.zip) {
+      reasons.push('Home address incomplete');
+      person.push('address');
+    }
+    if (!employer.ein) {
+      reasons.push('Employer EIN missing');
+      employerGaps.push('ein');
+    }
+    if (!employer.addressLine1 || !employer.city || !employer.state || !employer.zip) {
+      reasons.push('Employer address incomplete');
+      employerGaps.push('address');
+    }
     if (reasons.length > 0) {
-      blocked.push({ reportId: r.id, reasons });
+      blocked.push({ reportId: r.id, reasons, person, employer: employerGaps, employerId: employer.id, employerName: employer.legalName });
       continue;
     }
     records.push({

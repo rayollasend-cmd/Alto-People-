@@ -374,6 +374,13 @@ export interface HeatDay {
   scheduled: number[];
   /** 24 entries: unfilled slots at the top of each hour. */
   open: number[];
+  /**
+   * Optional, 24 entries: the contracted headcount at the top of each hour
+   * (0 outside every contracted window). When given, every contracted hour
+   * below it is marked — also an hour with nothing scheduled, which the
+   * single `target` couldn't tell from an hour nobody contracted.
+   */
+  target?: number[];
 }
 
 /**
@@ -450,7 +457,7 @@ export function CoverageHeatmap({
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: STATUS.bad }} aria-hidden="true" />
           {labels.unfilled}
         </span>
-        {target !== null && (
+        {(target !== null || days.some((d) => d.target?.some((n) => n > 0))) && (
           <span className="flex items-center gap-1.5">
             <span className="h-0.5 w-3.5 rounded-full" style={{ background: STATUS.warn }} aria-hidden="true" />
             {labels.belowTarget}
@@ -490,7 +497,9 @@ function DayRow({
       </div>
       {day.scheduled.map((n, h) => {
         const open = day.open[h] ?? 0;
-        const below = target !== null && n < target && (n > 0 || open > 0);
+        // Per-hour contract when the day carries one: every contracted hour short of it.
+        const hourTarget = day.target ? (day.target[h] ?? 0) : null;
+        const below = hourTarget !== null ? hourTarget > 0 && n < hourTarget : target !== null && n < target && (n > 0 || open > 0);
         const opacity = n === 0 ? 0 : 0.12 + (n / max) * 0.83;
         const text = labels.cell(day.label, hourLabelShort(h), n, open);
         return (
@@ -514,6 +523,7 @@ function DayRow({
             )}
             {below && (
               <span
+                data-testid="heat-below"
                 className="absolute inset-x-0.5 bottom-0 h-0.5 rounded-full"
                 style={{ background: STATUS.warn }}
                 aria-hidden="true"

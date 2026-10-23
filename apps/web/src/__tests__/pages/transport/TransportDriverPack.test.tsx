@@ -154,11 +154,25 @@ describe('the driver', () => {
     expect(within(card).getByText('1/3')).toBeInTheDocument();
     expect(within(card).getByText('2.5h')).toBeInTheDocument();
     expect(within(card).getByText('$245.50')).toBeInTheDocument();
-    expect(within(card).getByText('My driver shifts')).toBeInTheDocument();
+    // Today's driver shift only — the week lives in "Your week" (F500: one schedule view).
+    expect(within(card).getByTestId('today-shift')).not.toHaveTextContent('No driver shift today');
+    expect(within(card).queryByText('My driver shifts')).toBeNull();
     expect(await within(card).findByText('8h')).toBeInTheDocument();
     await userEvent.click(within(card).getByRole('button', { name: /clock in/i }));
     await waitFor(() => expect(calls).toEqual(['in']));
     expect(await within(card).findByRole('button', { name: /clock out/i })).toBeInTheDocument();
+  });
+
+  it('carries the van in the Today card header (F500)', async () => {
+    routes((path) => {
+      if (path === '/transport/driver/today') return today();
+      if (path === '/transport/driver/requests') return { van: { id: 'v1', name: 'Van 1', plate: 'ALT 101', capacity: 12, look: 'White Ford Transit 2023' }, requests: [] };
+    });
+    renderAs('DRIVER', <DriverTodayCard />);
+    const van = await screen.findByTestId('today-van');
+    expect(van).toHaveTextContent('Van 1');
+    expect(van).toHaveTextContent('White Ford Transit 2023');
+    expect(van).toHaveTextContent('ALT 101');
   });
 
   it('is told plainly when their licence lapsed; a driver with no person record is told why there is no pay', async () => {

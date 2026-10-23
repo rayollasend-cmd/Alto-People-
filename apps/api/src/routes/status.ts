@@ -6,8 +6,10 @@ import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
 import { requireCapability } from '../middleware/auth.js';
-import { loginIpLimiter } from '../middleware/rateLimit.js';
+import { anonReportFileLimiter, loginIpLimiter } from '../middleware/rateLimit.js';
 import { computePublicStatus } from '../lib/statusPage.js';
+import { confirmStatusSubscription, notifyStatusSubscribers, subscribeToStatus, unsubscribeFromStatus } from '../lib/statusSubscribers.js';
+import { logger } from '../lib/logger.js';
 
 /**
  * The public status page (beside the Trust Center).
@@ -32,6 +34,37 @@ statusRouter.get('/public', loginIpLimiter, async (_req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=60');
   res.json(await computePublicStatus(prisma));
 });
+
+/*
+ * Incident updates by email (F500 G5): double opt-in. The answer to a
+ * subscribe is the same whether or not the address was already on the
+ * list, so the form can't be used to test who is subscribed.
+ */
+const SubscribeSchema = z.object({ email: z.string().trim().email().max(254) });
+const TokenSchema = z.object({ token: z.string().min(10).max(200) });
+
+statusRouter.post('/subscribe', anonReportFileLimiter, async (req, res) => {
+  const { email } = SubscribeSchema.parse(req.body);
+  await subscribeToStatus(prisma, email);
+  res.status(202).json({ ok: true });
+});
+
+statusRouter.post('/subscribe/confirm', loginIpLimiter, async (req, res) => {
+  const { token } = TokenSchema.parse(req.body);
+  if (!(await confirmStatusSubscription(prisma, token))) throw new HttpError(404, 'link_not_valid', 'This confirmation link is not valid. Ask for updates again from the status page.');
+  res.json({ ok: true });
+});
+
+statusRouter.post('/unsubscribe', loginIpLimiter, async (req, res) => {
+  const { token } = TokenSchema.parse(req.body);
+  if (!(await unsubscribeFromStatus(prisma, token))) throw new HttpError(404, 'link_not_valid', 'This unsubscribe link is not valid.');
+  res.json({ ok: true });
+});
+
+/** Tell the subscribers, off the request path: a slow mailer never holds up the operator. */
+function tellSubscribers(incident: { title: string; component: string; impact: string; state: string; note: string }): void {
+  void notifyStatusSubscribers(prisma, incident).catch((err) => logger.warn({ err }, 'status subscribers not told'));
+}
 
 const operatorOnly = requireCapability('manage:org');
 function assertOperator(): void {
@@ -89,6 +122,7 @@ statusRouter.post('/incidents', operatorOnly, async (req, res) => {
     { actorUserId: req.user!.id, clientId: null, tenantId: ALTO_TENANT_ID, action: 'status.incident.posted', entityType: 'StatusIncident', entityId: row.id, metadata: { component: input.component, impact: input.impact } },
     'status',
   );
+  tellSubscribers({ title: row.title, component: row.component, impact: row.impact, state: row.state, note: input.note });
   res.status(201).json(shape(row));
 });
 
@@ -113,5 +147,7 @@ statusRouter.post('/incidents/:id/updates', operatorOnly, async (req, res) => {
     { actorUserId: req.user!.id, clientId: null, tenantId: ALTO_TENANT_ID, action: 'status.incident.updated', entityType: 'StatusIncident', entityId: row.id, metadata: { state: input.state } },
     'status',
   );
+  // Subscribers hear when it starts and when it's over, not every note in between.
+  if (input.state === 'RESOLVED') tellSubscribers({ title: row.title, component: row.component, impact: row.impact, state: row.state, note: input.note });
   res.json(shape(row));
 });

@@ -93,7 +93,11 @@ describe('<WorkerBadgeCard>', () => {
     const badge = await screen.findByRole('group', { name: /Ana Lopez/ });
     expect(within(badge).getByText('Cashier')).toBeInTheDocument();
     expect(within(badge).getByText('Front Beach 218')).toBeInTheDocument();
-    expect(within(badge).getByText('4321')).toBeInTheDocument();
+    // The clock-in number is masked on the card until asked (F500 G5) — as on Home and My profile.
+    expect(within(badge).getByTestId('badge-number')).toHaveTextContent('••••');
+    expect(within(badge).queryByText('4321')).toBeNull();
+    await userEvent.click(within(badge).getByRole('button', { name: 'Show my clock-in number' }));
+    expect(within(badge).getByTestId('badge-number')).toHaveTextContent('4321');
     // iPhone: Apple Wallet only, opened in Safari (the web view can't add passes).
     expect(screen.queryByRole('button', { name: /google wallet/i })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: /add to apple wallet/i }));

@@ -35,6 +35,8 @@ import {
   DrawerTitle,
   EmptyState,
   Input,
+  MetricCard,
+  MetricStrip,
   Select,
   SkeletonRows,
   Textarea,
@@ -101,6 +103,8 @@ export function AssetsHome() {
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<AssetKind | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<AssetStatus | 'ALL'>('ALL');
+  // The recovery view: kit still held by people who have left.
+  const [leaversOnly, setLeaversOnly] = useState(false);
   const [storeFilter, setStoreFilter] = useState('');
   const term = useTerm();
   const stores = useStores();
@@ -122,6 +126,14 @@ export function AssetsHome() {
     queryFn: () => listAssets(),
   });
   const rows = refreshQuery.data?.assets ?? null;
+  const summary = refreshQuery.data?.summary ?? null;
+  const statusTile = (st: AssetStatus) => ({
+    onClick: () => {
+      setLeaversOnly(false);
+      setStatusFilter(statusFilter === st ? 'ALL' : st);
+    },
+    selected: statusFilter === st && !leaversOnly,
+  });
   const loadError = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load assets.') : null;
   const refresh = () => void refreshQuery.refetch();
 
@@ -130,6 +142,7 @@ export function AssetsHome() {
     (a) =>
       (kindFilter === 'ALL' || a.kind === kindFilter) &&
       (statusFilter === 'ALL' || a.status === statusFilter) &&
+      (!leaversOnly || !!a.currentAssignment?.holderLeft) &&
       (!storeFilter || (storeFilter === 'none' ? !a.locationId : a.locationId === storeFilter)) &&
       (!q ||
         (a.storeName ?? '').toLowerCase().includes(q) ||
@@ -162,7 +175,29 @@ export function AssetsHome() {
     <ListTemplate
         title="Assets"
         subtitle={`Laptops, phones, badges, keys, and other physical items assigned to ${term('workers').toLowerCase()}.`}
-        breadcrumbs={[{ label: 'Assets' }]}
+        summary={
+          // Nothing tracked yet: the empty state stands alone, no wall of zeros.
+          summary && (rows?.length ?? 0) > 0 ? (
+            // The tiles are the filter; tap the picked one again for all.
+            <MetricStrip label="Assets by status">
+              <MetricCard label="Assigned" value={String(summary.assigned)} hint="Out with a person" {...statusTile('ASSIGNED')} />
+              <MetricCard label="Available" value={String(summary.available)} hint="Ready to hand out" {...statusTile('AVAILABLE')} />
+              <MetricCard label="In repair" value={String(summary.inRepair)} {...statusTile('IN_REPAIR')} />
+              <MetricCard label="Lost" value={String(summary.lost)} tone={summary.lost > 0 ? 'warning' : 'default'} {...statusTile('LOST')} />
+              <MetricCard
+                label="Held by people who've left"
+                value={String(summary.heldByLeavers)}
+                hint={summary.heldByLeavers > 0 ? 'To recover' : 'Nothing to recover'}
+                tone={summary.heldByLeavers > 0 ? 'alert' : 'default'}
+                onClick={() => {
+                  setStatusFilter('ALL');
+                  setLeaversOnly((v) => !v);
+                }}
+                selected={leaversOnly}
+              />
+            </MetricStrip>
+          ) : undefined
+        }
     >
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-sm text-silver">
@@ -180,6 +215,8 @@ export function AssetsHome() {
           )}
         </div>
       </div>
+      {(rows?.length ?? 0) > 0 && (
+      <>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="text-silver">Kind:</span>
         {(['ALL', ...KIND_OPTIONS] as (AssetKind | 'ALL')[]).map((k) => (
@@ -197,20 +234,25 @@ export function AssetsHome() {
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-silver">Status:</span>
-        {(['ALL', ...STATUS_OPTIONS] as (AssetStatus | 'ALL')[]).map((s) => (
-          <Button
-            key={s}
-            type="button"
-            size="xs"
-            variant={statusFilter === s ? 'primary' : 'secondary'}
-            className="rounded-full"
-            aria-pressed={statusFilter === s}
-            onClick={() => setStatusFilter(s)}
-          >
-            {s === 'ALL' ? 'All' : STATUS_LABEL[s]}
-          </Button>
-        ))}
+        {/* The tiles above filter by status; this select also reaches Retired. */}
+        <Select
+          size="sm"
+          aria-label="Filter by status"
+          value={leaversOnly ? 'LEAVERS' : statusFilter}
+          onChange={(e) => {
+            const v = e.target.value;
+            setLeaversOnly(v === 'LEAVERS');
+            setStatusFilter(v === 'LEAVERS' ? 'ALL' : (v as AssetStatus | 'ALL'));
+          }}
+        >
+          <option value="ALL">Every status</option>
+          {STATUS_OPTIONS.map((st) => (
+            <option key={st} value={st}>
+              {STATUS_LABEL[st]}
+            </option>
+          ))}
+          <option value="LEAVERS">Held by people who've left</option>
+        </Select>
         {stores.length > 0 && (
           <Select size="sm" aria-label={`Filter by ${term('label.store').toLowerCase()}`} value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)}>
             <option value="">Every {term('label.store').toLowerCase()}</option>
@@ -226,10 +268,12 @@ export function AssetsHome() {
           className="ml-auto w-56"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder={`Search label, serial, holder, ${term('label.store').toLowerCase()}…`}
+          placeholder="Search assets…"
           aria-label="Search assets"
         />
       </div>
+      </>
+      )}
       <Card>
         <CardContent className="p-0">
           {loadError ? (
@@ -259,7 +303,8 @@ export function AssetsHome() {
               rowKey={(a) => a.id}
               search={false}
               urlState={false}
-              exportCsv={{ filename: 'assets' }}
+              // The page's Export CSV carries every column; one export.
+              exportCsv={false}
               columns={[
                 {
                   key: 'kind',

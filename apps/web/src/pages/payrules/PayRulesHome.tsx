@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { errorText } from '@/lib/errorText';
@@ -14,7 +13,10 @@ import {
   ymdLocal,
 } from '@/lib/format';
 import { useClients } from '@/lib/useClients';
-import { useAuth, useTerm } from '@/lib/auth';
+import { useStoreScope } from '@/lib/storeScope';
+import { useUrlParam } from '@/lib/useUrlState';
+import { FilterBar } from '@/components/ui/FilterBar';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { pickOne } from '@/lib/validationCopy';
 import { boundedClientOf } from '@/lib/roles';
 import {
@@ -31,6 +33,7 @@ import {
   listProjects,
   listTipPools,
   payOutTipPool,
+  payRulesSummary,
   updateProject,
   type PremiumPayKind,
   type PremiumPayRule,
@@ -63,10 +66,12 @@ import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
-type Tab = 'projects' | 'premium' | 'tips';
+type Tab = 'premium' | 'tips' | 'projects';
+const TABS: Tab[] = ['premium', 'tips', 'projects'];
 
 export function PayRulesHome() {
   const { user, can } = useAuth();
+  const term = useTerm();
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Seed and pin the picker to their one client instead.
   const boundedClient = useMemo(() => boundedClientOf(user), [user]);
@@ -76,81 +81,110 @@ export function PayRulesHome() {
     () => (boundedClient ? [boundedClient] : fetchedClients),
     [boundedClient, fetchedClients],
   );
-  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
-  const [tab, setTab] = useState<Tab>('projects');
-
-  useEffect(() => {
-    if (clients.length > 0) setClientId((prev) => prev || clients[0].id);
-  }, [clients]);
+  // The client follows the top bar ("All clients" there = the cross-client
+  // table here) until someone picks one on this page; 'all' is every client
+  // on purpose. Tab and client are in the URL.
+  const scope = useStoreScope();
+  // Billing terms and a choice of clients are a staffing firm's; a hotel
+  // has one book of rules, its own — no picker, no "all clients" table.
+  const bills = useTenant().moduleOn('clientPortal');
+  const seesAll = bills && can('process:payroll') && !boundedClient;
+  const [clientParam, setClientParam] = useUrlParam<string>('client', '');
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'premium', TABS, { history: 'push' });
+  const followed = clientParam === 'all' ? '' : clientParam || scope.clientId;
+  const clientId = boundedClient?.id ?? (seesAll ? followed : followed || clients[0]?.id || '');
+  const setClientId = (id: string) => setClientParam(id === '' ? (scope.clientId ? 'all' : '') : id === scope.clientId ? '' : id);
+  const clientName = clients.find((c) => c.id === clientId)?.name ?? null;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Pay rules"
-        subtitle="Project codes, premium-pay differentials (OT, night, holiday), and tip pools."
-        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Pay rules' }]}
-        secondaryActions={
-          // Worktags are the sibling finance-config surface (spend/reporting
-          // dimensions); its route is gated on view:hr-admin, so only show
-          // the door to people it opens for.
-          can('view:hr-admin') ? (
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/worktags">Worktags</Link>
-            </Button>
-          ) : undefined
+        subtitle={`Premium pay (overtime, nights, holidays), tip pools and project codes — what people are paid on top of their rate.${bills ? ` What a ${term('label.client').toLowerCase()} is billed for it is its contract terms.` : ''}`}
+        related={[
+          ...(bills && can('process:payroll') ? [{ label: 'Contract terms (billing)', to: `/finance/pay-bill?tab=terms${clientId ? `&client=${clientId}` : ''}` }] : []),
+          // Tags for reporting is the sibling finance-config page; its route is
+          // gated on view:hr-admin, so only show the door to people it opens for.
+          ...(can('view:hr-admin') ? [{ label: 'Tags for reporting', to: '/worktags' }] : []),
+        ]}
+        filters={
+          !bills ? undefined : <FilterBar>
+            <label htmlFor="payrules-client" className="text-xs2 uppercase tracking-wider text-silver">
+              {term('label.client')}
+            </label>
+            {boundedClient ? (
+              // Client-bound role — the client is fixed, not a choice.
+              <div
+                id="payrules-client"
+                className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-2.5 text-sm text-white"
+                title="Your account is scoped to this client"
+              >
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select id="payrules-client" size="sm" className="min-w-0 max-w-full sm:w-64" value={clientId} onChange={(e) => setClientId(e.target.value)}>
+                {seesAll ? <option value="">All {term('label.clients').toLowerCase()}</option> : clients.length === 0 && <option value="">—</option>}
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </FilterBar>
         }
     >
-      <Card>
-        <CardContent className="flex items-center gap-3 flex-wrap">
-          <label
-            htmlFor="payrules-client"
-            className="text-xs2 uppercase tracking-wider text-silver"
-          >
-            Client
-          </label>
-          {boundedClient ? (
-            // Client-bound role — the client is fixed, not a choice.
-            <div
-              id="payrules-client"
-              className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-2.5 text-sm text-white"
-              title="Your account is scoped to this client"
-            >
-              {boundedClient.name}
-            </div>
-          ) : (
-            <Select
-              id="payrules-client"
-              size="sm"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            >
-              {clients.length === 0 && <option value="">—</option>}
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
-          )}
-        </CardContent>
-      </Card>
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList>
-          <TabsTrigger value="projects">Projects</TabsTrigger>
-          <TabsTrigger value="premium">Premium pay</TabsTrigger>
-          <TabsTrigger value="tips">Tip pools</TabsTrigger>
-        </TabsList>
-        <TabsContent value="projects">
-          {clientId && <ProjectsTab clientId={clientId} />}
-        </TabsContent>
-        <TabsContent value="premium">
-          {clientId && <PremiumTab clientId={clientId} />}
-        </TabsContent>
-        <TabsContent value="tips">
-          {clientId && <TipsTab clientId={clientId} />}
-        </TabsContent>
-      </Tabs>
+      {!clientId && seesAll ? (
+        <AllClients onPick={(id) => setClientId(id)} />
+      ) : (
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+          <TabsList>
+            <TabsTrigger value="premium">Premium pay</TabsTrigger>
+            <TabsTrigger value="tips">Tip pools</TabsTrigger>
+            <TabsTrigger value="projects">Projects</TabsTrigger>
+          </TabsList>
+          {bills && clientName && <p className="mt-2 text-sm text-ink-muted">For {clientName}.</p>}
+          <TabsContent value="premium">
+            {clientId && <PremiumTab clientId={clientId} />}
+          </TabsContent>
+          <TabsContent value="tips">
+            {clientId && <TipsTab clientId={clientId} />}
+          </TabsContent>
+          <TabsContent value="projects">
+            {clientId && <ProjectsTab clientId={clientId} />}
+          </TabsContent>
+        </Tabs>
+      )}
     </ListTemplate>
+  );
+}
+
+/** "All clients": each client's rules at a glance; a row opens that client's. */
+function AllClients({ onPick }: { onPick: (clientId: string) => void }) {
+  const term = useTerm();
+  const q = useQuery({ queryKey: ['pay-rules', 'summary'], queryFn: payRulesSummary });
+  type Row = Awaited<ReturnType<typeof payRulesSummary>>['clients'][number];
+  return (
+    <DataGrid<Row>
+      id="pay-rules-all-clients"
+      caption={`Pay rules by ${term('label.client').toLowerCase()}`}
+      noun={{ one: term('label.client').toLowerCase(), many: term('label.clients').toLowerCase() }}
+      rows={q.data?.clients}
+      loading={q.isPending}
+      error={q.isError ? errorText(q.error, 'Could not load the pay rules.') : null}
+      onRetry={() => void q.refetch()}
+      rowKey={(r) => r.clientId}
+      onRowClick={(r) => onPick(r.clientId)}
+      rowActionLabel={(r) => `Open ${r.clientName}’s pay rules`}
+      defaultSort={{ key: 'client', direction: 'asc' }}
+      columns={[
+        { key: 'client', header: term('label.client'), accessor: (r) => r.clientName, sortable: true, primary: true, cell: (r) => <span className="font-medium text-ink">{r.clientName}</span> },
+        { key: 'premium', header: 'Premium rules', accessor: (r) => r.premiumRules, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => (r.premiumRules ? r.premiumRules : <span className="text-ink-muted">None</span>) },
+        { key: 'tips', header: 'Open tip pools', accessor: (r) => r.openTipPools, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => (r.openTipPools ? r.openTipPools : <span className="text-ink-muted">None</span>) },
+        { key: 'projects', header: 'Projects', accessor: (r) => r.projects, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cardMeta: true, cell: (r) => (r.projects ? r.projects : <span className="text-ink-muted">None</span>) },
+      ]}
+      empty={{ title: `No ${term('label.clients').toLowerCase()} yet`, description: 'Pay rules are set per client.' }}
+    />
   );
 }
 

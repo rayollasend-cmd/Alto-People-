@@ -54,8 +54,8 @@ function suggest(fn: (id: string) => Sugg) {
 }
 const NONE: Sugg = { matches: [], rule: null, lastTime: null, exactLineId: null, client: null };
 
-import { BankPage } from '@/pages/books/bank/BankPage';
-import { BankAccountPage } from '@/pages/books/bank/BankAccountPage';
+import { BankPage, needsReconciling, STALE_DAYS } from '@/pages/books/bank/BankPage';
+import { BankAccountPage, bankGapWords } from '@/pages/books/bank/BankAccountPage';
 import { ReconcilePage } from '@/pages/books/bank/ReconcilePage';
 
 const FEED = '00000000-0000-4000-8000-0000000000f1';
@@ -372,6 +372,11 @@ describe('reconciling', () => {
 
     expect(await screen.findByText('Deposits and other credits')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Difference must be zero' })).toBeDisabled();
+    // The balance bar rides at the bottom of the screen while the lines scroll; the panes stack until lg.
+    const bar = screen.getByTestId('reconcile-balance-bar');
+    expect(bar).toHaveClass('sticky', 'bottom-0');
+    expect(bar).toHaveTextContent('Difference$4,200.00');
+    expect(screen.getByText('Deposits and other credits').closest('.grid')).toHaveClass('grid-cols-1', 'lg:grid-cols-2');
     await user.click(screen.getByRole('checkbox', { name: /Coastal payment/ }));
     await waitFor(() => expect(api.tickReconciliation).toHaveBeenCalledWith('rec1', ['l1'], true));
     const complete = await screen.findByRole('button', { name: 'Complete the reconciliation' });
@@ -381,3 +386,87 @@ describe('reconciling', () => {
     expect(await screen.findAllByText('Reconciled')).not.toHaveLength(0);
   });
 });
+
+describe('bank and cards — F500', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+
+  it('“Need reconciling” is the 45-day rule, and the tile says so', async () => {
+    expect(STALE_DAYS).toBe(45);
+    expect(needsReconciling({ lastReconciled: null })).toBe(true);
+    expect(needsReconciling({ lastReconciled: { statementEndDate: daysAgo(44), statementBalance: 0 } })).toBe(false);
+    expect(needsReconciling({ lastReconciled: { statementEndDate: daysAgo(47), statementBalance: 0 } })).toBe(true);
+    api.listBankAccounts.mockResolvedValue({
+      accounts: [
+        account({ lastReconciled: { statementEndDate: daysAgo(10), statementBalance: 1 } }),
+        account({ id: 'f2', name: 'Payroll checking', lastReconciled: { statementEndDate: daysAgo(60), statementBalance: 1 } }),
+        account({ id: 'f3', name: 'Company card', subtype: 'CREDIT_CARD', lastReconciled: null }),
+      ],
+    });
+    renderAs('FINANCE_ACCOUNTANT', <BankPage />, '/books/bank');
+    const strip = await screen.findByRole('group', { name: 'Bank and cards at a glance' });
+    const tile = within(strip).getByText('Need reconciling').parentElement!;
+    await waitFor(() => expect(tile).toHaveTextContent('2'));
+    expect(tile).toHaveTextContent('over 45 days ago, or never');
+    expect(within(strip).getByText('Owed on cards').parentElement).toHaveTextContent('1 card');
+  });
+
+  it('no tiles before the first account', async () => {
+    api.listBankAccounts.mockResolvedValue({ accounts: [] });
+    renderAs('FINANCE_ACCOUNTANT', <BankPage />, '/books/bank');
+    expect(await screen.findByText('Add your first bank account')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Bank and cards at a glance' })).toBeNull();
+  });
+
+  it('a card names its bank and, separately, the account in the books — nothing cut off', async () => {
+    api.listBankAccounts.mockResolvedValue({ accounts: [account()] });
+    renderAs('FINANCE_ACCOUNTANT', <BankPage />, '/books/bank');
+    const card = (await screen.findAllByText('Operating checking'))[0]!.closest('a')!;
+    // The name and both lines wrap rather than end in "…".
+    for (const text of ['First Coast Bank ··0042', 'In the books as 1000 Operating checking']) expect(within(card).getByText(text)).not.toHaveClass('truncate');
+    expect(within(card).getAllByText('Operating checking')[0]).not.toHaveClass('truncate');
+  });
+
+  it('the company-wide rules live on Bank and cards (?view=rules), and apply to every account', async () => {
+    api.listBankAccounts.mockResolvedValue({ accounts: [account()] });
+    api.listBankRules.mockResolvedValue({
+      rules: [{ id: 'r1', name: 'Fuel', contains: 'shell', direction: 'OUT', minAmount: null, maxAmount: null, accountId: FUEL, accountCode: '6200', accountName: 'Vehicle fuel', vendorId: null, clientId: null, departmentId: null, priority: 10, autoApply: true, isActive: true }],
+    });
+    api.applyBankRules.mockResolvedValue({ categorized: 4 });
+    const user = userEvent.setup();
+    renderAs('FINANCE_ACCOUNTANT', <BankPage />, '/books/bank?view=rules');
+    expect(await screen.findByText('Fuel')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Rules' })).toHaveAttribute('aria-selected', 'true');
+    await user.click(screen.getByRole('button', { name: /Apply rules now/ }));
+    await waitFor(() => expect(api.applyBankRules).toHaveBeenCalledWith());
+  });
+
+  it('an account’s old ?tab=rules link lands on the rules; the account itself has no Rules tab', async () => {
+    api.getBankAccount.mockResolvedValue({ account: account() });
+    api.listBankTransactions.mockResolvedValue({ transactions: [], counts: { UNMATCHED: 0, CATEGORIZED: 0, MATCHED: 0, EXCLUDED: 0 } });
+    renderAs(
+      'FINANCE_ACCOUNTANT',
+      <Routes>
+        <Route path="/books/bank/:id" element={<BankAccountPage />} />
+        <Route path="/books/bank" element={<p>Bank and cards list</p>} />
+      </Routes>,
+      `/books/bank/${FEED}?tab=rules`,
+    );
+    expect(await screen.findByText('Bank and cards list')).toBeInTheDocument();
+  });
+
+  it('the account header: the gap to the books as a hint, the books’ account as a fact, rules as a related page', async () => {
+    expect(bankGapWords(212627.4, 214137.9)).toBe('$1,510.50 more than the books');
+    expect(bankGapWords(100, 90)).toBe('$10.00 less than the books');
+    expect(bankGapWords(100, 100)).toBe('Same as the books');
+    expect(bankGapWords(100, null)).toBeNull();
+    api.getBankAccount.mockResolvedValue({ account: account({ booksBalance: 212627.4, bankBalance: 214137.9 }) });
+    api.listBankTransactions.mockResolvedValue({ transactions: [], counts: { UNMATCHED: 0, CATEGORIZED: 0, MATCHED: 0, EXCLUDED: 0 } });
+    renderAccount();
+    const strip = await screen.findByRole('group', { name: 'Operating checking at a glance' });
+    expect(within(strip).getByText('Per the bank').parentElement).toHaveTextContent('$1,510.50 more than the books');
+    expect(screen.getByRole('link', { name: '1000 Operating checking' })).toHaveAttribute('href', `/books/accounts/${CASH}`);
+    expect(screen.getByRole('link', { name: 'Bank rules' })).toHaveAttribute('href', '/books/bank?view=rules');
+    expect(screen.queryByRole('tab', { name: 'Rules' })).toBeNull();
+  });
+});
+

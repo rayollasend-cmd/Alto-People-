@@ -131,9 +131,10 @@ function mergeTerms(base: Terminology, patch: UpdateTenantProfileInput['terminol
 }
 
 /** What the session carries: the profile of the user's tenant (Alto HR when the user has none), and what its team calls the assistant. */
-export async function tenantForSession(user: object | null | undefined): Promise<(TenantProfile & { id: string; assistantName: string }) | null> {
+export async function tenantForSession(user: object | null | undefined): Promise<(TenantProfile & { id: string; assistantName: string; orgName: string }) | null> {
   if (!user) return null;
   const id = (user as { tenantId?: string | null }).tenantId ?? ALTO_TENANT_ID;
   const [profile, branding] = await Promise.all([loadTenantProfile(id), ensureBrandingLoaded(prisma, id)]);
-  return { id, assistantName: branding.assistantName, ...profile };
+  // orgName: the tenant's display name, which client-facing copy says ({org} on the web, F500 G5).
+  return { id, assistantName: branding.assistantName, orgName: branding.orgName, ...profile };
 }

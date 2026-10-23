@@ -62,9 +62,9 @@ const OshaUpdateSchema = z.object({
 });
 
 oshaWcEeoRouter.get('/osha/incidents', VIEW_COMP, async (req, res) => {
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const clientId = z.string().uuid().optional().parse(req.query.clientId || undefined);
   const rows = await prisma.oshaIncident.findMany({
-    where: clientId ? { clientId } : {},
+    where: { tenantId: tenantIdForWrite(), ...(clientId ? { clientId } : {}) },
     include: {
       associate: { select: { firstName: true, lastName: true } },
       client: { select: { name: true } },
@@ -244,9 +244,15 @@ oshaWcEeoRouter.put('/osha/incidents/:id', MANAGE_COMP, async (req, res) => {
  * employers post by Feb 1 each year covering the prior calendar year.
  */
 oshaWcEeoRouter.get('/osha/300a', VIEW_COMP, async (req, res) => {
-  const clientId = z.string().uuid().parse(req.query.clientId);
+  // No client = the whole company: the Compliance page links here from a
+  // scorecard that counts every client, so the default view does too.
+  const clientId = z.string().uuid().optional().parse(req.query.clientId || undefined) ?? null;
+  if (clientId) await assertSameTenant('client', clientId);
   const year = z.coerce.number().int().min(2000).max(2100).parse(req.query.year);
-  const [summary, hoursWorked] = await Promise.all([osha300aSummary(prisma, clientId, year), clientHoursInYear(clientId, year)]);
+  const [summary, hoursWorked] = await Promise.all([
+    osha300aSummary(prisma, clientId, year, tenantIdForWrite()),
+    clientHoursInYear(clientId, year),
+  ]);
   // The injury rates OSHA normalises to 100 full-time workers (200,000 hours a year).
   const rate = (cases: number) => (hoursWorked > 0 ? Math.round(((cases * 200_000) / hoursWorked) * 100) / 100 : null);
   res.json({
@@ -258,12 +264,13 @@ oshaWcEeoRouter.get('/osha/300a', VIEW_COMP, async (req, res) => {
 });
 
 /**
- * Hours actually worked for one client in a calendar year (closed, accepted
- * entries) — the 300A's "total hours worked by all employees". Unpaid meal
- * breaks are not hours worked, so they come off; paid rest breaks stay.
- * Summed in SQL; a raw query sees no tenant guard, so it names the tenant.
+ * Hours actually worked for one client (null = every client) in a calendar
+ * year (closed, accepted entries) — the 300A's "total hours worked by all
+ * employees". Unpaid meal breaks are not hours worked, so they come off;
+ * paid rest breaks stay. Summed in SQL; a raw query sees no tenant guard,
+ * so it names the tenant.
  */
-async function clientHoursInYear(clientId: string, year: number): Promise<number> {
+async function clientHoursInYear(clientId: string | null, year: number): Promise<number> {
   const start = new Date(Date.UTC(year, 0, 1));
   const end = new Date(Date.UTC(year + 1, 0, 1));
   const tenantId = tenantIdForWrite();
@@ -280,7 +287,7 @@ async function clientHoursInYear(clientId: string, year: number): Promise<number
     WHERE te."clockOutAt" IS NOT NULL
       AND te."status"::text IN ('COMPLETED', 'APPROVED')
       AND te."clockInAt" >= ${start} AND te."clockInAt" < ${end}
-      AND te."clientId" = ${clientId}::uuid
+      ${clientId ? Prisma.sql`AND te."clientId" = ${clientId}::uuid` : Prisma.empty}
       AND te."tenantId" = ${tenantId}::uuid`);
   return Math.max(0, Number(rows[0]?.hours ?? 0));
 }
@@ -432,8 +439,10 @@ oshaWcEeoRouter.put('/eeo/associates/:id', MANAGE_COMP, async (req, res) => {
  * "Decline to Self-Identify" buckets EEOC requires.
  */
 oshaWcEeoRouter.get('/eeo/report', VIEW_COMP, async (req, res) => {
-  const clientId = z.string().uuid().parse(req.query.clientId);
-  await assertSameTenant('client', clientId);
+  // No client = everyone employed, company-wide (EEO-1 is filed per
+  // employer, not per client).
+  const clientId = z.string().uuid().optional().parse(req.query.clientId || undefined) ?? null;
+  if (clientId) await assertSameTenant('client', clientId);
   // "Associates of a client": where they work now — an open assignment
   // there, else (none open) their application there (lib/scope.atClient),
   // so a transferred associate reports under the client they moved to.
@@ -442,7 +451,7 @@ oshaWcEeoRouter.get('/eeo/report', VIEW_COMP, async (req, res) => {
   const people: Prisma.AssociateWhereInput = {
     AND: [
       { tenantId: tenantIdForWrite(), deletedAt: null, deactivatedAt: null },
-      atClient(clientId),
+      ...(clientId ? [atClient(clientId)] : []),
       scopeAssociates(req.user!),
     ],
   };

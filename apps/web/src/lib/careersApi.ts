@@ -26,7 +26,7 @@ export interface CareerPosting extends CareerPostingSummary {
 }
 
 export const listCareerPostings = () =>
-  apiFetch<{ postings: CareerPostingSummary[] }>('/careers');
+  apiFetch<{ postings: CareerPostingSummary[]; /** Who is hiring (absent from an older API). */ orgName?: string }>('/careers');
 
 export const getCareerPosting = (slug: string) =>
   apiFetch<CareerPosting>(`/careers/${encodeURIComponent(slug)}`);

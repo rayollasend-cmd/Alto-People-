@@ -5,14 +5,17 @@ import { getTransportTrends, type TransportTrendWeek } from '@/lib/transportApi'
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
 import { MetricCard, type MetricTrend } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
  * Eight weeks of the vans, under the day's board: riders carried, pickups
  * on time, the no-show rate, and what the vans earned against what they
- * cost. The last week is the one still running, so each tile's change
- * compares the two weeks before it.
+ * cost. Weeks run Saturday to Friday, the org week everything else uses.
+ * The last week is the one still running, so each tile's change compares
+ * the two weeks before it. A week nobody rode reads as one plain line,
+ * not four tiles of zeros and dashes.
  */
 
 const dollars = (c: number) => fmtMoney(c / 100);
@@ -49,11 +52,23 @@ export function TransportTrends() {
     net: (w.revenueCents - w.costCents) / 100,
   }));
   const net = last.revenueCents - last.costCents;
+  const quietLastWeek = last.riders + last.noShows === 0;
+  const lastRide = q.data.lastRideDate ? fmtDateOnly(q.data.lastRideDate, { year: false }) : null;
 
   return (
     <section aria-labelledby="transport-trends" className="space-y-3">
-      <SectionTitle as="h2" title={<span id="transport-trends">The last 8 weeks</span>} description="Week by week, Monday to Sunday. Each change compares the last full week with the one before." />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <SectionTitle
+        as="h2"
+        title={<span id="transport-trends">The last 8 weeks</span>}
+        description={`Week by week, ${q.data.weekStartsOn === 'SATURDAY' ? 'Saturday to Friday' : 'Monday to Sunday'}. Each change compares the last full week with the one before.`}
+      />
+      {quietLastWeek ? (
+        <p className="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-muted" data-testid="transport-quiet-week">
+          No rides last week{lastRide ? ` — last ride ${lastRide}` : ''}.
+          {last.costCents > 0 && ` The vans still cost ${dollars(last.costCents)} that week.`}
+        </p>
+      ) : (
+      <MetricStrip label="Last full week">
         <MetricCard label="Riders last week" value={last.riders.toLocaleString('en-US')} trend={trendOf(weeks, (w) => w.riders)} />
         <MetricCard
           label="On time"
@@ -76,10 +91,10 @@ export function TransportTrends() {
           accent={net < 0}
           trend={trendOf(weeks, (w) => (w.revenueCents - w.costCents) / 100, (n) => fmtMoneyCompact(n))}
         />
-      </div>
+      </MetricStrip>
+      )}
       <ChartFrame
         title="Earned against cost"
-        description={q.data.note}
         summary={`Over the last ${weeks.length} weeks the vans earned ${dollars(weeks.reduce((s, w) => s + w.revenueCents, 0))} and cost ${dollars(weeks.reduce((s, w) => s + w.costCents, 0))}.`}
         csvName="transport-weekly"
         columns={[
@@ -102,10 +117,20 @@ export function TransportTrends() {
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar dataKey="revenue" name="Earned" fill={PALETTE.series[0]} radius={[3, 3, 0, 0]} maxBarSize={28} />
             <Bar dataKey="cost" name="Cost" fill={PALETTE.other} radius={[3, 3, 0, 0]} maxBarSize={28} />
-            <Line dataKey="net" name="Net" stroke={PALETTE.series[1]} strokeWidth={2} dot={false} type="monotone" />
+            {/* Straight segments with a dot per week: a smoothed curve drew a
+                valley between weeks that never happened (F500 G2). */}
+            <Line dataKey="net" name="Net" stroke={PALETTE.series[1]} strokeWidth={2} dot={{ r: 3, fill: PALETTE.series[1], strokeWidth: 0 }} type="linear" />
           </ComposedChart>
         </ResponsiveContainer>
       </ChartFrame>
+      {/* The definitions, one tap away under the chart — not two lines of
+          prose above it (F500 G5). */}
+      {q.data.note && (
+        <details className="text-xs text-silver" data-testid="trends-definitions">
+          <summary className="inline-flex min-h-8 cursor-pointer items-center hover:text-ink">What these numbers mean</summary>
+          <p className="mt-1 max-w-prose">{q.data.note}</p>
+        </details>
+      )}
     </section>
   );
 }

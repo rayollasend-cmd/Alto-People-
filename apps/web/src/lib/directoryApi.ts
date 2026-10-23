@@ -2,6 +2,7 @@ import type {
   DirectoryEntry,
   DirectoryListResponse,
   DirectoryStatus,
+  PersonOverview,
   WorkStatus,
   WorkStatusCounts,
 } from '@alto-people/shared';
@@ -97,4 +98,23 @@ export function directoryQuery(filters: DirectoryFilters) {
  */
 export function getDirectoryEntry(id: string): Promise<DirectoryEntry> {
   return apiFetch<DirectoryEntry>(`/people/directory/${encodeURIComponent(id)}`);
+}
+
+/**
+ * The numbers a person's record opens on (GET /people/directory/:id/overview):
+ * hours in the active window, last and next shift, time waiting approval,
+ * no-shows, documents running out, pay schedule — each in the caller's reach,
+ * a section left out when the caller may not read it.
+ */
+export function getPersonOverview(id: string): Promise<PersonOverview> {
+  return apiFetch<PersonOverview>(`/people/directory/${encodeURIComponent(id)}/overview`);
+}
+
+export function personOverviewQuery(id: string) {
+  return queryOptions({
+    queryKey: ['directory', 'overview', id] as const,
+    queryFn: () => getPersonOverview(id),
+    enabled: id.length > 0,
+    staleTime: 30_000,
+  });
 }

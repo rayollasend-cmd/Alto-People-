@@ -155,7 +155,8 @@ export interface ProjectInput {
 
 export const listProjects = () => apiFetch<{ projects: ProjectSummary[] }>(`${CP}/projects`);
 export const createProject = (input: ProjectInput) => apiFetch<{ id: string }>(`${CP}/projects`, { method: 'POST', body: input });
-export const getProject = (id: string) => apiFetch<{ project: ProjectDetail; weeks: WeekRow[] }>(`${CP}/projects/${id}`);
+export const getProject = (id: string) =>
+  apiFetch<{ project: ProjectDetail; weeks: WeekRow[]; totals?: { grossReported: number; weeksReported: number } }>(`${CP}/projects/${id}`);
 export const updateProject = (id: string, input: Partial<ProjectInput> & { status?: ProjectSummary['status'] }) => apiFetch<{ ok: true }>(`${CP}/projects/${id}`, { method: 'PATCH', body: input });
 export const addRate = (id: string, input: { classification: string; baseRate: number; fringeRate: number; apprenticesPerJourneyman?: number | null; effectiveFrom: string }) =>
   apiFetch<{ id: string }>(`${CP}/projects/${id}/rates`, { method: 'POST', body: input });

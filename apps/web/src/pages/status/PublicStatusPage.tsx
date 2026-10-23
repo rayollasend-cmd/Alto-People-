@@ -1,15 +1,21 @@
-import { useQuery } from '@tanstack/react-query';
-import { Activity, CheckCircle2, CircleDashed, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Activity, CheckCircle2, CircleDashed, Mail, ShieldAlert, TriangleAlert } from 'lucide-react';
 import {
   STATUS_INCIDENT_STATE_LABELS,
   STATUS_STATE_LABELS,
   type PublicStatus,
   type StatusComponentPublic,
+  type StatusDayPublic,
   type StatusIncidentPublic,
   type StatusState,
 } from '@alto-people/shared';
-import { getPublicStatus } from '@/lib/statusApi';
-import { fmtDateTime } from '@/lib/format';
+import { confirmStatusSubscription, getPublicStatus, subscribeToStatus, unsubscribeFromStatus } from '@/lib/statusApi';
+import { ApiError } from '@/lib/api';
+import { fmtDateOnly, fmtDateTime } from '@/lib/format';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -70,23 +76,123 @@ function Hero({ data }: { data: PublicStatus }) {
   );
 }
 
+const CELL: Record<StatusState, string> = {
+  OPERATIONAL: 'bg-positive/70',
+  DEGRADED: 'bg-caution/80',
+  OUTAGE: 'bg-negative/80',
+  UNMEASURED: 'bg-line',
+};
+
+/** Ninety days, one cell each, coloured by the day's worst state — the same days the % counts (F500 G5). */
+function UptimeBar({ days, label }: { days: StatusDayPublic[]; label: string }) {
+  const count = (s: StatusState) => days.filter((d) => d.state === s).length;
+  const summary = `${label}, last 90 days: ${count('OPERATIONAL')} operational, ${count('DEGRADED')} degraded, ${count('OUTAGE')} down, ${count('UNMEASURED')} not measured.`;
+  return (
+    <div className="mt-2">
+      <div className="flex h-7 gap-px" role="img" aria-label={summary} data-testid="uptime-bar">
+        {days.map((d) => (
+          <span
+            key={d.date}
+            className={cn('min-w-0 flex-1 rounded-[1px]', CELL[d.state])}
+            title={`${fmtDateOnly(d.date)} · ${STATUS_STATE_LABELS[d.state]}${d.pct !== null ? ` · ${d.pct}%` : ''}`}
+            data-state={d.state}
+          />
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between text-2xs text-ink-subtle" aria-hidden="true">
+        <span>90 days ago</span>
+        <span>Today</span>
+      </div>
+    </div>
+  );
+}
+
 function ComponentRow({ c }: { c: StatusComponentPublic }) {
   return (
-    <li className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="font-medium text-ink">{c.label}</div>
-        <div className="mt-0.5 text-xs2 text-ink-muted">{c.what}</div>
-        <div className="mt-1 text-xs2 text-ink-muted">{c.note}</div>
+    <li className="px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <div className="min-w-0 flex-1">
+          <div className="font-medium text-ink">{c.label}</div>
+          <div className="mt-0.5 text-xs2 text-ink-muted">{c.what}</div>
+          <div className="mt-1 text-xs2 text-ink-muted">{c.note}</div>
+        </div>
+        <div className="flex items-center gap-4">
+          {c.uptime90d !== null && (
+            <span className="text-xs2 tabular-nums text-ink-muted">
+              {c.uptime90d}% <span className="text-ink-subtle">· 90 days</span>
+            </span>
+          )}
+          {stateBadge(c.state)}
+        </div>
       </div>
-      <div className="flex items-center gap-4">
-        {c.uptime90d !== null && (
-          <span className="text-xs2 tabular-nums text-ink-muted">
-            {c.uptime90d}% <span className="text-ink-subtle">· 90 days</span>
-          </span>
-        )}
-        {stateBadge(c.state)}
-      </div>
+      {c.days && c.days.length > 0 && <UptimeBar days={c.days} label={c.label} />}
     </li>
+  );
+}
+
+/**
+ * "Get updates by email" (F500 G5): double opt-in — the answer is the same
+ * whether or not the address was already on the list — and the emailed
+ * confirm / unsubscribe links land back here (?confirm= / ?unsubscribe=).
+ */
+function Subscribe() {
+  const [email, setEmail] = useState('');
+  const [params, setParams] = useSearchParams();
+  const [linkResult, setLinkResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const handled = useRef(false);
+  const ask = useMutation({ mutationFn: (e: string) => subscribeToStatus(e) });
+  useEffect(() => {
+    if (handled.current) return;
+    const confirm = params.get('confirm');
+    const unsub = params.get('unsubscribe');
+    if (!confirm && !unsub) return;
+    handled.current = true;
+    const run = confirm ? confirmStatusSubscription(confirm) : unsubscribeFromStatus(unsub!);
+    void run
+      .then(() => setLinkResult({ ok: true, text: confirm ? 'You’re subscribed. We’ll email you when an incident starts and when it’s resolved.' : 'You’re unsubscribed. No more status emails.' }))
+      .catch((err) => setLinkResult({ ok: false, text: err instanceof ApiError ? err.message : 'That link didn’t work. Try again from the status page.' }))
+      .finally(() => {
+        const next = new URLSearchParams(params);
+        next.delete('confirm');
+        next.delete('unsubscribe');
+        setParams(next, { replace: true });
+      });
+  }, [params, setParams]);
+  return (
+    <section aria-labelledby="status-subscribe">
+      <SectionTitle id="status-subscribe" title="Get updates by email" description="An email when an incident starts and when it’s resolved. We confirm the address first, and every email has a link to stop them." />
+      <Card>
+        <CardContent>
+          {linkResult && (
+            <p role="status" className={cn('mb-3 text-sm', linkResult.ok ? 'text-positive' : 'text-negative')} data-testid="status-link-result">
+              {linkResult.text}
+            </p>
+          )}
+          {ask.isSuccess ? (
+            <p role="status" className="text-sm text-ink" data-testid="status-subscribe-done">
+              Check your inbox: we sent a link to confirm {email}.
+            </p>
+          ) : (
+            <form
+              className="flex flex-col gap-2 sm:flex-row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (email.trim()) ask.mutate(email.trim());
+              }}
+            >
+              <Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" aria-label="Email for status updates" autoComplete="email" className="sm:max-w-xs" />
+              <Button type="submit" loading={ask.isPending}>
+                <Mail className="h-4 w-4" aria-hidden="true" />
+                Get updates
+              </Button>
+            </form>
+          )}
+          {ask.isError && (
+            <p className="mt-2 text-sm text-negative">{ask.error instanceof ApiError ? ask.error.message : 'That didn’t go through. Try again.'}</p>
+          )}
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -159,6 +265,7 @@ export function PublicStatusPage() {
               q.data.incidents.map((i) => <Incident key={i.id} i={i} componentLabel={labels[i.component] ?? i.component} />)
             )}
           </section>
+          <Subscribe />
         </>
       )}
     </PublicShell>

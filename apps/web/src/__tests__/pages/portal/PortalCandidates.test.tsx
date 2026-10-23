@@ -98,7 +98,8 @@ describe('<PortalCandidates>', () => {
     // The answered one, with the reason given.
     expect(screen.getByText('Lee Ray')).toBeInTheDocument();
     expect(screen.getByText('Needs weekend availability.')).toBeInTheDocument();
-    expect(screen.getByText('Not interviewed by Alto yet')).toBeInTheDocument();
+    // {org}: the tenant's own name (the default branding here), never a hard-coded "Alto" (F500 G5).
+    expect(screen.getByText('Not interviewed by Alto HR yet')).toBeInTheDocument();
   });
 
   it('passing needs a reason, and sends it', async () => {

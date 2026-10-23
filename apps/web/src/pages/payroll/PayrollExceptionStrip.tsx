@@ -85,9 +85,9 @@ export function fixHref(ex: PayrollException, period?: ExceptionPeriod | null): 
     case 'DEFERRAL_LIMIT':
       return '/payroll/compliance?tab=roth';
     case 'LOCAL_TAX_REVIEW':
-      return '/payroll/tax-jurisdictions';
+      return '/payroll/tax-tables?tab=local';
     case 'UNSUPPORTED_STATE':
-      return '/payroll/state-tax';
+      return '/payroll/tax-tables?tab=state';
     case 'BELOW_PREVAILING_WAGE':
     case 'APPRENTICE_RATIO':
       return '/payroll/certified';
@@ -171,7 +171,7 @@ export function ExceptionStrip({
   const [approving, setApproving] = useState(false);
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-xs2 text-silver/70 py-2">
+      <div className="flex items-center gap-2 text-xs2 text-ink-muted py-2">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         Checking pre-flight exceptions…
       </div>
@@ -208,7 +208,7 @@ export function ExceptionStrip({
   }
   const { blocking, warning, info } = exceptions.counts;
   const open = openChoice ?? blocking > 0;
-  const tone = blocking > 0 ? 'border-alert/40 bg-alert/5 text-alert' : warning > 0 ? 'border-warning/30 bg-warning/5 text-warning' : 'border-silver/20 bg-black/40 text-silver';
+  const tone = blocking > 0 ? 'border-alert/40 bg-alert/5 text-alert' : warning > 0 ? 'border-warning/30 bg-warning/5 text-warning' : 'border-line bg-black/40 text-ink-muted';
   const Icon = blocking > 0 ? ShieldAlert : warning > 0 ? AlertTriangle : Info;
   const unapprovedIds = [...new Set(exceptions.exceptions.filter((e) => e.kind === 'UNAPPROVED_TIME').map((e) => e.associateId))];
 
@@ -245,12 +245,12 @@ export function ExceptionStrip({
                 ? `${blocking} blocking ${blocking === 1 ? 'issue' : 'issues'}`
                 : `${exceptions.exceptions.length} ${exceptions.exceptions.length === 1 ? 'issue' : 'issues'} to review`}
             </span>
-            <span className="text-silver/70">
+            <span className="text-ink-muted">
               {warning > 0 && ` · ${warning} warning${warning === 1 ? '' : 's'}`}
               {info > 0 && ` · ${info} info`}
             </span>
           </span>
-          {open ? <ChevronDown className="h-4 w-4 text-silver/70" /> : <ChevronRight className="h-4 w-4 text-silver/70" />}
+          {open ? <ChevronDown className="h-4 w-4 text-ink-muted" /> : <ChevronRight className="h-4 w-4 text-ink-muted" />}
         </button>
         {onRecheck && (
           <button type="button" onClick={onRecheck} className="shrink-0 px-2 py-2 text-2xs text-gold hover:underline" title="Re-run the pre-flight scan after fixing issues in another tab">
@@ -259,8 +259,8 @@ export function ExceptionStrip({
         )}
       </div>
       {open && period && unapprovedIds.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-silver/10 px-3 py-2 text-xs">
-          <span className="flex-1 text-silver">
+        <div className="flex flex-wrap items-center gap-2 border-t border-line px-3 py-2 text-xs">
+          <span className="flex-1 text-ink-muted">
             {unapprovedIds.length} {unapprovedIds.length === 1 ? 'person has' : 'people have'} unapproved time in this period — it won’t be paid until approved.
           </span>
           <Button size="xs" onClick={() => void approve()} loading={approving}>
@@ -270,7 +270,7 @@ export function ExceptionStrip({
         </div>
       )}
       {open && (
-        <ul className="border-t border-silver/10 divide-y divide-silver/5 max-h-56 overflow-y-auto">
+        <ul className="border-t border-line divide-y divide-silver/5 max-h-56 overflow-y-auto">
           {exceptions.exceptions.map((ex, i) => (
             <li key={`${ex.associateId}-${ex.kind}-${i}`} className="px-3 py-2 text-xs">
               <div className="flex items-center gap-2">
@@ -289,7 +289,7 @@ export function ExceptionStrip({
                   Fix <ExternalLink className="h-2.5 w-2.5" />
                 </Link>
               </div>
-              <div className="text-silver/70 mt-0.5 ml-4">{ex.message}</div>
+              <div className="text-ink-muted mt-0.5 ml-4">{ex.message}</div>
             </li>
           ))}
         </ul>

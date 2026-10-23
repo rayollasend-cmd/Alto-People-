@@ -47,7 +47,7 @@ const gaps: ShiftCoverageGaps = {
   ],
 };
 
-function renderCard(data: ShiftCoverageGaps, props: { hideWhenClear?: boolean } = {}, role: Role = 'WORKFORCE_MANAGER') {
+function renderCard(data: ShiftCoverageGaps, props: { hideWhenClear?: boolean; showLed?: boolean } = {}, role: Role = 'WORKFORCE_MANAGER') {
   vi.mocked(getShiftCoverageGaps).mockResolvedValue(data);
   vi.mocked(listClientShiftWindows).mockResolvedValue({ stores: [] });
   const caps = ROLE_CAPABILITIES[role];
@@ -98,6 +98,41 @@ describe('<ShiftLeadsCard> — every shift has a lead', () => {
     expect(
       await screen.findByRole('heading', { name: 'Marcus Hill’s shift and shift supervisor' }),
     ).toBeInTheDocument();
+  });
+
+  it('with showLed (Store leads) lists every shift with its lead or "No lead", all-clear clients too', async () => {
+    const withWindows: ShiftCoverageGaps = {
+      total: 4,
+      covered: 2,
+      clients: [
+        {
+          ...gaps.clients[0]!,
+          windows: [
+            { locationId: 'l1', locationName: 'Front Beach 218', label: 'Morning', startMinute: 360, endMinute: 840, leads: [] },
+            { locationId: 'l1', locationName: 'Front Beach 218', label: 'Swing', startMinute: 840, endMinute: 1320, leads: [] },
+            { locationId: 'l1', locationName: 'Front Beach 218', label: 'Overnight', startMinute: 1320, endMinute: 360, leads: ['Dana Reyes'] },
+          ],
+        },
+        {
+          clientId: 'c2',
+          clientName: 'Pier Park Holdings',
+          uncovered: [],
+          noShift: [],
+          supervisors: [{ userId: 'u-lee', name: 'Lee Park', email: 'lee@altohr.com', windows: [{ locationId: 'l9', locationName: 'Pier Park', label: 'Day' }] }],
+          floorSupervisors: [],
+          windows: [{ locationId: 'l9', locationName: 'Pier Park', label: 'Day', startMinute: 480, endMinute: 960, leads: ['Lee Park'] }],
+        },
+      ],
+    };
+    renderCard(withWindows, { showLed: true });
+    const lists = await screen.findAllByTestId('shift-leads-all');
+    expect(getShiftCoverageGaps).toHaveBeenCalledWith({ all: true });
+    expect(lists[0]!.textContent).toContain('Dana Reyes · Overnight');
+    expect(lists[0]!.querySelectorAll('li')).toHaveLength(3);
+    expect(screen.getAllByText('No lead')).toHaveLength(2);
+    // The all-clear client shows its shift and lead, and no assign chips.
+    expect(lists[1]!.textContent).toContain('Lee Park · Day');
+    expect(screen.queryByRole('button', { name: /Lee Park/ })).not.toBeInTheDocument();
   });
 
   it('says so when every shift has a lead — or stays out of the way', async () => {

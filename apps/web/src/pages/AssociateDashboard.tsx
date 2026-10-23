@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
-  CalendarDays,
+  CalendarPlus,
   CalendarOff,
   Clock,
   FileText,
@@ -46,7 +46,8 @@ import { EarningsCard, useMyEarnings } from '@/components/EarningsCard';
 import { RingMeter } from '@/components/ui/charts';
 import { FirstPaycheckCard } from '@/components/FirstPaycheckCard';
 import { RideStrip } from '@/pages/transport/RideStrip';
-import { StatTile } from '@/pages/portal/portalCharts';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { MyShiftHero, MyNext14Strip, pickNextShift } from '@/pages/associate/MyShiftHero';
 import { AssociateNeedsYou, TrainingNudge, useAssociateNeedsYou } from '@/components/home/AssociateNeedsYou';
 
@@ -235,7 +236,7 @@ export function AssociateDashboard() {
         </div>
         {/* One look ahead, one look at the money: the next 14 days, and
             what this pay period has earned so far (floor walk 26). */}
-        <div className="mb-4 grid gap-4 md:grid-cols-[2fr_1fr] [&>*]:mb-0">
+        <div className="mb-4 grid gap-4 xl:grid-cols-[2fr_1fr] [&>*]:mb-0">
           <MyNext14Strip shifts={shiftsQuery.isError ? null : shifts} />
           <EarnedThisPeriod />
         </div>
@@ -419,58 +420,52 @@ function MyNumbers({
   const nextPayday = paydayQuery.data?.nextPayday ?? null;
   const primary = balances && balances.length > 0 ? [...balances].sort((a, b) => b.balanceMinutes - a.balanceMinutes)[0]! : null;
 
+  // Before the first paycheck, the payday is the useful thing to say.
+  const noPay = paystub === null && !payFailed
+    ? nextPayday
+      ? t('tile.nextPayday', { date: fmtDayShort(parseYmd(nextPayday.payDate), { anchored: true }) ?? nextPayday.payDate })
+      : t('tile.noPayYet')
+    : undefined;
+  const noBalance = balances !== undefined && balances !== null && !primary && !balanceFailed ? t('tile.accrues') : undefined;
   return (
-    <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 animate-enter">
-      <TileLink to={paystub ? `/payroll?item=${paystub.id}` : '/payroll'}>
-        <StatTile
-          className="h-full"
-          label={t('tile.lastPay')}
-          value={paystub ? fmtMoney(paystub.netPay) : '—'}
-          sub={
-            payFailed
-              ? t('dash.loadFailed')
-              : paystub === undefined
-                ? undefined
-                : paystub
-                  ? paystub.disbursedAt
-                    ? t('tile.paidOn', { date: fmtDate(paystub.disbursedAt) })
-                    : t('dash.netWorked', { hours: fmtHours(paystub.hoursWorked) })
-                  : nextPayday
-                    ? t('tile.nextPayday', {
-                        date:
-                          fmtDayShort(parseYmd(nextPayday.payDate), { anchored: true }) ?? nextPayday.payDate,
-                      })
-                    : t('tile.noPayYet')
-          }
-        />
-      </TileLink>
-      <TileLink to="/time-off">
-        <StatTile
-          className="h-full"
-          label={t('tile.timeOff')}
-          value={primary ? fmtHours(primary.balanceMinutes / 60) : '—'}
-          sub={
-            balanceFailed
-              ? t('dash.loadFailed')
-              : balances === undefined
-                ? undefined
-                : primary
-                  ? CATEGORY_KEY[primary.category]
-                    ? t(CATEGORY_KEY[primary.category]!)
-                    : primary.category
-                  : t('tile.accrues')
-          }
-        />
-      </TileLink>
-      <TileLink to="/marketplace">
-        <StatTile
-          className="h-full"
-          label={t('tile.openShifts')}
-          value={openShiftCount ?? '—'}
-          sub={openShiftCount === null ? undefined : openShiftCount > 0 ? t('tile.openSome') : t('tile.openNone')}
-        />
-      </TileLink>
-    </div>
+    // One strip (two across on a phone, compact): no tile left alone on a row.
+    // Open shifts shows only when there are some — the shift hero already
+    // offers "Pick up a shift" then, and "0 · None right now" sat alone.
+    <MetricStrip label={t('dash.myNumbers')} className="mb-4 animate-enter">
+      <MetricCard
+        href={paystub ? `/payroll?item=${paystub.id}` : '/payroll'}
+        label={t('tile.lastPay')}
+        value={paystub ? fmtMoney(paystub.netPay) : '—'}
+        nothing={noPay}
+        hint={
+          payFailed
+            ? t('dash.loadFailed')
+            : paystub
+              ? paystub.disbursedAt
+                ? t('tile.paidOn', { date: fmtDate(paystub.disbursedAt) })
+                : t('dash.netWorked', { hours: fmtHours(paystub.hoursWorked) })
+              : undefined
+        }
+      />
+      <MetricCard
+        href="/time-off"
+        label={t('tile.timeOff')}
+        value={primary ? fmtHours(primary.balanceMinutes / 60) : '—'}
+        nothing={noBalance}
+        hint={
+          balanceFailed
+            ? t('dash.loadFailed')
+            : primary
+              ? CATEGORY_KEY[primary.category]
+                ? t(CATEGORY_KEY[primary.category]!)
+                : primary.category
+              : undefined
+        }
+      />
+      {openShiftCount !== null && openShiftCount > 0 && (
+        <MetricCard href="/marketplace" label={t('tile.openShifts')} value={openShiftCount} hint={t('tile.openSome')} />
+      )}
+    </MetricStrip>
   );
 }
 
@@ -536,6 +531,9 @@ function EarnedThisPeriod() {
   const minutes = entries.data.entries
     .filter((e) => e.status !== 'REJECTED')
     .reduce((n, e) => n + (e.netMinutes ?? e.minutesElapsed), 0);
+  // Nothing clocked this period yet: no card. "$0.00 · 0h worked" beside a
+  // "Day 13 of 14" ring read as progress (F500 G5).
+  if (minutes === 0) return null;
   const hours = minutes / 60;
   const earned = Math.round(hours * rate * 100) / 100;
   const total = daysBetween(period.start, period.end) + 1;
@@ -561,22 +559,11 @@ function EarnedThisPeriod() {
   );
 }
 
-/** A tile that opens where the number is worked — same as My floor's. */
-function TileLink({ to, children }: { to: string; children: React.ReactNode }) {
-  return (
-    <Link
-      to={to}
-      className="group block rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40"
-    >
-      {children}
-    </Link>
-  );
-}
-
 const QUICK_LINKS: { to: string; labelKey: MessageKey; icon: typeof Clock }[] = [
   // Same words as the page it opens ("My time"), and a calendar for the schedule.
   { to: '/time-attendance', labelKey: 'time.myTime', icon: Clock },
-  { to: '/scheduling', labelKey: 'dash.scheduleSwaps', icon: CalendarDays },
+  // The schedule is a tab already; open shifts are not (F500 G5).
+  { to: '/marketplace', labelKey: 'tile.openShifts', icon: CalendarPlus },
   { to: '/documents', labelKey: 'dash.documents', icon: FileText },
   // ?new=1 lands straight in the request dialog — one tap to ask for a day.
   { to: '/time-off?new=1', labelKey: 'dash.requestTimeOff', icon: CalendarOff },

@@ -4,6 +4,7 @@ import { createHmac } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { atClient } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { jobSecret } from '../lib/jobSecrets.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
@@ -170,6 +171,73 @@ pulseSurveysRouter.get('/pulse-surveys', ADMIN_READ, async (_req, res) => {
       responseCount: s._count.responses,
       createdAt: s.createdAt.toISOString(),
     })),
+  });
+});
+
+/**
+ * GET /pulse-surveys/summary — what the admin tab opens on (F500
+ * 2026-10-22): the latest survey that has started, its score (the average
+ * on a 1–5 scale, the share answering yes on a yes/no one), its response
+ * rate against the people it went to (active logins in its audience,
+ * counted today), and the trend over the last six surveys on the same scale.
+ */
+const TREND_SURVEYS = 6;
+
+function scoreOf(scale: string, values: number[]): number | null {
+  if (values.length === 0) return null;
+  if (scale === 'SCORE_1_5') return Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10;
+  return Math.round((values.filter((v) => v === 1).length / values.length) * 100);
+}
+
+pulseSurveysRouter.get('/pulse-surveys/summary', ADMIN_READ, async (_req, res) => {
+  const now = new Date();
+  const T = { tenantId: tenantIdForWrite() };
+  const [latest, openNow] = await Promise.all([
+    prisma.pulseSurvey.findFirst({ where: { ...T, openFrom: { lte: now } }, orderBy: { openFrom: 'desc' } }),
+    prisma.pulseSurvey.count({ where: { ...T, openFrom: { lte: now }, openUntil: { gt: now } } }),
+  ]);
+  if (!latest) {
+    res.json({ latest: null, trend: [], openNow });
+    return;
+  }
+  const series = await prisma.pulseSurvey.findMany({
+    where: { ...T, scale: latest.scale, openFrom: { lte: latest.openFrom } },
+    orderBy: { openFrom: 'desc' },
+    take: TREND_SURVEYS,
+    select: { id: true, openFrom: true, responses: { select: { scoreValue: true } } },
+  });
+  const audience = await prisma.user.count({
+    where: {
+      ...T,
+      status: 'ACTIVE',
+      associate: {
+        is: {
+          ...(latest.audience === 'BY_DEPARTMENT' && latest.audienceDepartmentId ? { departmentId: latest.audienceDepartmentId } : {}),
+          ...(latest.audience === 'BY_CLIENT' && latest.audienceClientId ? atClient(latest.audienceClientId) : {}),
+        },
+      },
+    },
+  });
+  const trend = series
+    .map((s) => ({ id: s.id, openFrom: s.openFrom.toISOString(), responses: s.responses.length, score: scoreOf(latest.scale, s.responses.map((r) => r.scoreValue)) }))
+    .reverse();
+  const mine = trend[trend.length - 1]!;
+  const previous = trend.length > 1 ? trend[trend.length - 2]! : null;
+  res.json({
+    latest: {
+      id: latest.id,
+      question: latest.question,
+      scale: latest.scale,
+      isOpen: latest.openUntil.getTime() > now.getTime(),
+      openUntil: latest.openUntil.toISOString(),
+      responses: mine.responses,
+      audience,
+      responseRate: audience > 0 ? Math.round((mine.responses / audience) * 100) : null,
+      score: mine.score,
+      previousScore: previous?.score ?? null,
+    },
+    trend,
+    openNow,
   });
 });
 

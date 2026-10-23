@@ -12,6 +12,8 @@
  *                days PAST DUE — never days since finalized
  */
 
+import { orgDateKey } from '../timeAnomalies.js';
+
 export const AGING_BUCKETS = ['current', 'days1to30', 'days31to60', 'days61to90', 'over90'] as const;
 export type AgingBucket = (typeof AGING_BUCKETS)[number];
 export type AgingBuckets = Record<AgingBucket, number>;
@@ -31,7 +33,9 @@ export function bucketFor(daysPastDue: number): AgingBucket {
 /** The day a statement falls due: dueAt, else the day it was finalized, else its period end. */
 export function dueOnFor(s: { dueAt?: Date | string | null; finalizedAt?: Date | string | null; periodEnd?: Date | string | null }): string | null {
   if (s.dueAt) return ymd(s.dueAt);
-  if (s.finalizedAt) return ymd(s.finalizedAt);
+  // dueAt and periodEnd are calendar dates; finalizedAt is a moment, so its
+  // day is the company's calendar day it happened on.
+  if (s.finalizedAt) return orgDateKey(typeof s.finalizedAt === 'string' ? new Date(s.finalizedAt) : s.finalizedAt);
   if (s.periodEnd) return ymd(s.periodEnd);
   return null;
 }
@@ -39,7 +43,11 @@ export function dueOnFor(s: { dueAt?: Date | string | null; finalizedAt?: Date |
 /** Whole days past due as of `asOf` (a date or YYYY-MM-DD); negative while not yet due. */
 export function daysPastDue(dueOn: string | null, asOf: Date | string = new Date()): number {
   if (!dueOn) return 0;
-  return Math.floor((midnight(ymd(asOf)) - midnight(dueOn)) / DAY);
+  // "Today" is the company's calendar day, not UTC's: every receivable figure
+  // (finance home, Books, the client list, the executive view) ages the same,
+  // including after 5 PM Pacific when UTC has already moved on.
+  const today = typeof asOf === 'string' ? asOf.slice(0, 10) : orgDateKey(asOf);
+  return Math.floor((midnight(today) - midnight(dueOn)) / DAY);
 }
 
 export const zeroBuckets = (): AgingBuckets => ({ current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 });

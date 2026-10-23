@@ -443,3 +443,44 @@ describe('year-end reconciliation', () => {
     }
   });
 });
+
+describe('the overview tells the truth about what has posted (F500 G3)', () => {
+  it('a paid payroll that never posted its taxes is counted, not hidden behind "paid up"; posting clears it and fills the quarter', async () => {
+    const { a } = await payrollAdmin();
+    const today = new Date().toISOString().slice(0, 10);
+    const run = await paidRun(today);
+    // Not posted yet.
+    let ov = await a.get('/payroll-taxes/overview');
+    expect(ov.status).toBe(200);
+    // Per CA person 100 + 62 + 14.5 + 30 withheld, 62 + 14.5 + 6 + 34 employer = 323; the TX person 286.
+    expect(ov.body.unposted).toEqual({ count: 1, amount: 932, runs: [expect.objectContaining({ id: run.id, paidOn: today, amount: 932, paychecksMissing: false })] });
+    expect(ov.body.hasLiabilities).toBe(false);
+    expect(ov.body.quarter).toMatchObject({ posted: 0, deposited: 0 });
+
+    await postLiabilitiesForRun(prisma, run.id);
+    ov = await a.get('/payroll-taxes/overview');
+    expect(ov.body.unposted.count).toBe(0);
+    expect(ov.body.hasLiabilities).toBe(true);
+    expect(ov.body.quarter.posted).toBe(932);
+    expect(ov.body.quarter.deposited).toBe(0);
+  });
+
+  it('a paid run whose stored totals withheld tax but that has no paid paychecks is told apart', async () => {
+    const { a } = await payrollAdmin();
+    const run = await prisma.payrollRun.create({
+      data: { periodStart: D('2026-08-29'), periodEnd: D('2026-09-11'), status: 'DISBURSED', disbursedAt: new Date('2026-09-18T15:00:00Z'), totalGross: 4054.5, totalTax: 564.3, totalNet: 3490.2, totalEmployerTax: 0 },
+    });
+    const ov = await a.get('/payroll-taxes/overview');
+    expect(ov.body.unposted.runs).toEqual([expect.objectContaining({ id: run.id, amount: 564.3, paychecksMissing: true, periodStart: '2026-08-29', periodEnd: '2026-09-11' })]);
+  });
+
+  it('one list of accounts to register: federal withholding and unemployment are on it until they exist', async () => {
+    const { a } = await payrollAdmin();
+    const regs = (await a.get('/payroll-taxes/overview')).body.registrations as Array<{ kind: string; jurisdiction: string }>;
+    expect(regs.slice(0, 2).map((r) => r.kind)).toEqual(['FEDERAL_WITHHOLDING', 'FEDERAL_UNEMPLOYMENT']);
+    await prisma.taxAgencyAccount.create({ data: { kind: 'FEDERAL_WITHHOLDING', jurisdiction: 'US', agencyName: 'Internal Revenue Service', depositFrequency: 'MONTHLY', status: 'ACTIVE' } });
+    const after = (await a.get('/payroll-taxes/registrations')).body.registrations as Array<{ kind: string }>;
+    expect(after.some((r) => r.kind === 'FEDERAL_WITHHOLDING')).toBe(false);
+    expect(after.some((r) => r.kind === 'FEDERAL_UNEMPLOYMENT')).toBe(true);
+  });
+});

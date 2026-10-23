@@ -19,6 +19,8 @@ import { inviteWhen } from '../lib/interviewInvites.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { saveEeoSelfId } from '../lib/hiringCompliance.js';
 import { EeoSelfIdInputSchema } from '@alto-people/shared';
+import { resolveTenantFrom } from '../lib/tenant.js';
+import { candidateRecruiter } from '../lib/recruiterContact.js';
 
 /**
  * The candidate's own page, and the recruiter's calendar feed.
@@ -368,6 +370,8 @@ candidatePortalRouter.post('/recruiting/me/calendar-url/rotate', requireAuth, VI
 
 async function candidateByToken(raw: string) {
   if (!raw || raw.length > 128) throw new HttpError(404, 'not_found', 'This link is not valid.');
+  // The hash is unique across organizations: the request learns its tenant from it.
+  await resolveTenantFrom(() => prisma.candidate.findUnique({ where: { portalTokenHash: hashToken(raw) }, select: { tenantId: true } }).then((r) => r?.tenantId));
   const c = await prisma.candidate.findFirst({
     where: { portalTokenHash: hashToken(raw), deletedAt: null },
     select: {
@@ -380,15 +384,17 @@ async function candidateByToken(raw: string) {
       jobPosting: { select: { title: true, slug: true } },
     },
   });
-  if (!c || !c.portalTokenExpiresAt || c.portalTokenExpiresAt.getTime() < Date.now()) {
-    throw new HttpError(404, 'link_expired', 'This link has expired. Ask your recruiter for a new one.');
+  // Unknown is 404; a real link past its days is 410, with whom to ask for a new one (F500 G5).
+  if (!c) throw new HttpError(404, 'not_found', 'This link is not valid.');
+  if (!c.portalTokenExpiresAt || c.portalTokenExpiresAt.getTime() < Date.now()) {
+    throw new HttpError(410, 'link_expired', 'This link has expired.', { recruiter: await candidateRecruiter(prisma, c.id) });
   }
   return c;
 }
 
 candidatePortalRouter.get('/candidate-portal/:token', signedLinkIpLimiter, async (req, res) => {
   const c = await candidateByToken(req.params.token);
-  const [interviews, docs, branding] = await Promise.all([
+  const [interviews, docs, branding, recruiter] = await Promise.all([
     prisma.interview.findMany({
       where: { candidateId: c.id, completedAt: null, scheduledFor: { gte: new Date(Date.now() - 3_600_000) } },
       orderBy: { scheduledFor: 'asc' },
@@ -397,6 +403,7 @@ candidatePortalRouter.get('/candidate-portal/:token', signedLinkIpLimiter, async
     }),
     prisma.candidateDocumentRequest.findMany({ where: { candidateId: c.id }, orderBy: { createdAt: 'asc' } }),
     ensureBrandingLoaded(prisma),
+    candidateRecruiter(prisma, c.id),
   ]);
   // Only whether they answered the voluntary EEO form — never the answers.
   const eeoAnswered = (await prisma.eeoSelfIdentification.count({ where: { candidateId: c.id } })) > 0;
@@ -411,6 +418,8 @@ candidatePortalRouter.get('/candidate-portal/:token', signedLinkIpLimiter, async
     stageLabel: words.label,
     stageDetail: words.detail,
     expiresAt: c.portalTokenExpiresAt!.toISOString(),
+    // Who to ask — named, not "your recruiter".
+    recruiter,
     eeoAnswered,
     interviews: interviews.map((i) => ({
       id: i.id,

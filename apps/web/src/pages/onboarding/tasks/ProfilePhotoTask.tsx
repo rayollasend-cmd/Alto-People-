@@ -7,7 +7,7 @@ import { finishProfilePhoto } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { TaskShell, useNextTask } from './ProfileInfoTask';
+import { ContinueLabel, TaskShell, useNextTask } from './ProfileInfoTask';
 import { DocumentCapture } from '@/components/DocumentCapture';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import { Avatar } from '@/components/ui/Avatar';
@@ -83,7 +83,7 @@ export function ProfilePhotoTask() {
   };
 
   return (
-    <TaskShell title={t('ob.photo.title')} backTo={backTo}>
+    <TaskShell title={t('ob.photo.title')} backTo={backTo} kind="PROFILE_PHOTO">
       {cameraOpen ? (
         <DocumentCapture
           filenameBase="profile-photo"
@@ -121,10 +121,16 @@ export function ProfilePhotoTask() {
               {hasPhoto ? t('ob.photo.retake') : t('ob.photo.openCamera')}
             </Button>
             {hasPhoto && (
-              <Button variant="outline" onClick={() => void applyCurrent()} loading={busy}>
-                {next
-                  ? t('ob.photo.useAndContinue', { next: next.label })
-                  : t('ob.photo.usePhoto')}
+              <Button
+                variant="outline"
+                onClick={() => void applyCurrent()}
+                loading={busy}
+                className="h-auto min-h-10 max-w-full py-1.5 coarse:min-h-11"
+              >
+                <ContinueLabel
+                  label={next ? t('ob.photo.useAndContinueShort') : t('ob.photo.usePhoto')}
+                  next={next}
+                />
               </Button>
             )}
           </div>

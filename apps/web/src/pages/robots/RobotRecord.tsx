@@ -22,6 +22,7 @@ import { useConfirm } from '@/lib/confirm';
 import { fmtDate, fmtDateTime, fmtShiftTz } from '@/lib/format';
 import { listClientLocations, listClients } from '@/lib/clientsApi';
 import { listAdminUsers } from '@/lib/usersAdminApi';
+import { zoneNameAt } from '@/lib/robotZones';
 import {
   addMaintenance,
   completeChecklist,
@@ -33,6 +34,7 @@ import {
   listRobotEvents,
   listRobotIncidents,
   listRobotSamples,
+  listSafetyZones,
   reportRobotIncident,
   resumeRobot,
   saveCommissioning,
@@ -123,7 +125,6 @@ export function RobotRecord() {
 
   return (
     <RecordTemplate
-      breadcrumbs={[{ label: 'Operations', to: '/control-room' }, { label: 'Robots', to: '/robots' }, { label: r.name }]}
       identity={
         <span className="grid h-10 w-10 place-items-center rounded-full bg-accent/15 text-accent">
           <Bot className="h-5 w-5" aria-hidden="true" />
@@ -185,6 +186,16 @@ function LiveTab({ robot, canFloor }: { robot: RobotDetail; canFloor: boolean })
     onError: (e) => toast.error(err(e, 'The shift could not start.')),
   });
   const latest = robot.latest;
+  // Where it is, in the site's words: the zone the point falls in, with the
+  // raw map units in the tooltip.
+  const zonesQuery = useQuery({
+    queryKey: ['robots', 'zones', robot.site?.id ?? ''],
+    queryFn: () => listSafetyZones(robot.site!.id),
+    enabled: !!robot.site,
+    staleTime: 60_000,
+  });
+  const hasPoint = latest?.x !== null && latest?.x !== undefined && latest?.y !== null && latest?.y !== undefined;
+  const zoneName = hasPoint ? zoneNameAt(zonesQuery.data?.zones ?? [], latest!.x, latest!.y) : null;
   const rows = samples.data?.samples ?? [];
   const lows = rows.filter((s) => (s.batteryPct ?? 100) < 20).length;
   const errors = rows.filter((s) => s.status === 'ERROR').length;
@@ -193,7 +204,17 @@ function LiveTab({ robot, canFloor }: { robot: RobotDetail; canFloor: boolean })
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <Fact label="Right now" value={<RobotStatusBadge status={latest?.status} size="default" />} sub={latest ? sampleLine(latest) : 'The fleet has not reported yet.'} />
         <Fact label="Battery" value={<BatteryMeter pct={latest?.batteryPct} />} sub={latest ? `as of ${fmtDateTime(latest.at)}` : '—'} />
-        <Fact label="Position" value={latest?.x !== null && latest?.x !== undefined ? `${latest.x}, ${latest.y}` : '—'} sub={robot.site ? `${robot.site.name} map units` : 'Not placed at a site'} />
+        <Fact
+          label="Position"
+          value={
+            hasPoint ? (
+              <span title={`${latest!.x}, ${latest!.y} on the ${robot.site?.name ?? 'site'} map`}>{zoneName ?? 'Outside every zone'}</span>
+            ) : (
+              '—'
+            )
+          }
+          sub={robot.site ? (hasPoint ? `${robot.site.name} · ${latest!.x}, ${latest!.y} map units` : robot.site.name) : 'Not placed at a site'}
+        />
         <Fact label="Last 24 hours" value={`${rows.length} readings`} sub={`${errors} error${errors === 1 ? '' : 's'} · ${lows} low-battery reading${lows === 1 ? '' : 's'}`} />
       </div>
 

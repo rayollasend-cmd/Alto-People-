@@ -35,6 +35,7 @@ export type ModuleKey =
   | 'compliance-evidence'
   | 'emergency'
   | 'programs'
+  | 'safety-eeo'
   | 'season-planner'
   | 'supervisor-corps'
   | 'wallet'
@@ -86,8 +87,8 @@ export type ModuleKey =
   | 'earned-wage'
   | 'daily-pay'
   | 'manual-checks'
+  // "Tax tables" (/payroll/tax-tables): federal, state and local tax reference in one place (F500 G3).
   | 'state-tax'
-  | 'tax-jurisdictions'
   | 'wotc'
   | 'aca'
   | 'documents'
@@ -138,17 +139,19 @@ export type ModuleKey =
   | 'team'
   | 'workflows'
   | 'me'
+  | 'my-discipline'
   | 'compensation'
   | 'reimbursements'
   | 'learning'
   | 'marketplace'
   | 'payrules'
-  | 'dircomms'
   | 'integrations'
   | 'users'
   | 'branding'
   | 'billing'
   | 'reports'
+  // F500 G4: People analytics, the one home for retention, in the Insights door.
+  | 'people-analytics'
   // The office pack (2026-10-17): marketing's hub and the client NPS results.
   | 'marketing'
   | 'client-nps'
@@ -227,9 +230,11 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'ops',
   'compensation',
   'compliance',
+  'safety-eeo',
   'audit',
   'analytics',
   'reports',
+  'people-analytics',
   // The board numbers that were missing from the exec nav (2026-10-17).
   'client-nps',
   'client-pipeline',
@@ -268,6 +273,7 @@ export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'me',
   'messages', // their supervisors and the desks reach them here, and they reply (field roles, 2026-10)
   'wallet', // what they've earned, carried with them
+  'my-discipline', // their own notices on file, under My records (F500 G5)
   'benefits', // their own elections — open enrollment, life events
   'scheduling',
   'marketplace', // open shifts to pick up
@@ -338,7 +344,6 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'daily-pay',
   'manual-checks',
   'state-tax',
-  'tax-jurisdictions',
   'wotc',
   'aca',
   'payrules',
@@ -365,6 +370,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'holidays',
   'analytics',
   'reports',
+  'people-analytics',
 ]);
 
 /** The field-leadership nav: the people-supply chain plus the floor —
@@ -407,15 +413,16 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'transport',
   'performance',
   'compliance',
+  'safety-eeo',
   'skills',
   'expirations',
   'learning-paths',
   'headcount',
   'headcount-plan',
   'communications',
-  'dircomms',
   'analytics',
   'reports',
+  'people-analytics',
 ]);
 
 /**
@@ -526,8 +533,10 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   'time-off': 'time',
   'hr-cases': 'hrCases',
   discipline: 'hrCases',
+  'my-discipline': 'hrCases',
   hotline: 'hrCases',
   compliance: 'compliance',
+  'safety-eeo': 'compliance',
   documents: 'compliance',
   'doc-templates': 'compliance',
   expirations: 'compliance',
@@ -574,7 +583,6 @@ export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
   volunteer: 'perks',
   region: 'clientPortal',
   clients: 'clientPortal',
-  dircomms: 'clientPortal',
   // The messenger is the portal's store channels; the agent registry is the agent builder's (the API 404s both the same way).
   messages: 'clientPortal',
   agents: 'agentBuilder',
@@ -685,7 +693,9 @@ export function visibleModules(
       // own client (/client-portal/day opts the role in). Nobody else has
       // a client to open it on without a preview id.
       (m.key !== 'floor-today' || role === 'SHIFT_SUPERVISOR' || role === 'FLOOR_SUPERVISOR') &&
-      (m.key !== 'messages' || role !== 'LIVE_ASN'),
+      (m.key !== 'messages' || role !== 'LIVE_ASN') &&
+      // An associate's own notices: the associate's door, nobody else's rail.
+      (m.key !== 'my-discipline' || role === 'ASSOCIATE'),
   ).filter(
     // "Timesheets" is Finance's name for the T&A surface — everyone else
     // already has Time & attendance; two entries would double-list it.
@@ -851,6 +861,16 @@ export const MODULES: ModuleNav[] = [
     label: 'My profile',
     description:
       'Personal info, emergency contacts, dependents, beneficiaries, life events, and tax documents — all the personal records you can manage yourself.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    // F500 G5: the associate's own disciplinary notices — under My records,
+    // not a second "My record" next to the "My records" group.
+    key: 'my-discipline',
+    path: '/me/discipline',
+    label: 'Notices on file',
+    description: 'Disciplinary notices on your record: read them, acknowledge them, and add your side.',
     requires: 'view:dashboard',
     group: 'core',
   },
@@ -1452,7 +1472,8 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'payroll-go-live',
     path: '/payroll/go-live',
-    label: 'Run payroll in-house',
+    // "Run payroll in-house" read like a place to run payroll (F500 G3).
+    label: 'Payroll setup checklist',
     description:
       'Everything the company needs on file to run payroll itself — the EIN, federal and state tax accounts, filing, how paychecks go out, schedules and controls — checked, with where to fix each.',
     requires: 'process:payroll',
@@ -1630,20 +1651,13 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
+    // One home for tax reference (F500 G3): the federal tables (was /payroll/config, with no nav
+    // home), state coverage (/payroll/state-tax) and local jurisdictions (/payroll/tax-jurisdictions).
     key: 'state-tax',
-    path: '/payroll/state-tax',
-    label: 'State tax coverage',
+    path: '/payroll/tax-tables',
+    label: 'Tax tables',
     description:
-      'Where payroll can withhold state income tax, the states waiting on a review with your tax adviser, and a calculator to check them.',
-    requires: 'process:payroll',
-    group: 'payroll-finance',
-  },
-  {
-    key: 'tax-jurisdictions',
-    path: '/payroll/tax-jurisdictions',
-    label: 'Tax jurisdictions',
-    description:
-      'The city, county, school and transit taxes payroll withholds where people live and work, each one’s review with your tax adviser, and a paycheck calculator.',
+      'The federal, state and local taxes payroll withholds, the states and cities waiting on a review with your tax adviser, hand-set local rules and state reciprocity.',
     requires: 'process:payroll',
     group: 'payroll-finance',
   },
@@ -1739,19 +1753,20 @@ export const MODULES: ModuleNav[] = [
     path: '/payroll/contractors',
     label: 'Contractors',
     description:
-      'W-9s, IRS name and TIN checks, B-notices and 24% backup withholding, contractor payment runs, state 1099 filing and the year-end summary.',
+      'W-9s, IRS name and TIN checks, B-notices and 24% backup withholding, contractor payment runs and state 1099 filing.',
     // TINs, backup withholding and company-wide contractor payments.
     requires: 'process:payroll',
     group: 'payroll-finance',
   },
   {
     key: 'payroll-tax',
-    // The Payroll taxes desk's Returns tab (the old /payroll/tax redirects there);
-    // garnishment orders are on the garnishment desk.
-    path: '/payroll/taxes?tab=returns',
-    label: 'Tax forms',
+    // One home for year-end (F500 G3): the close checklist, the reconciliation and the
+    // W-2 / 1099 / 941 / 940 forms (the old /payroll/tax, /payroll/year-end-close and
+    // /payroll/year-end/reconciliation redirect here).
+    path: '/payroll/year-end',
+    label: 'Year-end',
     description:
-      'Quarterly 941/940 builders, W-2 / 1099 generation, e-file and the forms an agency rejected, and the employer submitter profile.',
+      'Close the tax year: the checklist, paychecks reconciled against the 941s and W-2s, W-2 and 1099 generation, e-file, recipient copies and the forms an agency rejected.',
     // Employer-side tax operations with company-wide garnishment PII —
     // process:payroll, never the view:payroll every associate holds for
     // their own paystubs. (An associate's own W-2s live at /me?tab=tax-docs.)
@@ -1765,7 +1780,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'State new-hire reporting, state pay notices, the 2026 Roth catch-up rule and paystub rules.',
     requires: 'process:payroll',
-    group: 'compliance',
+    group: 'payroll-finance',
   },
   {
     key: 'marketplace',
@@ -1901,6 +1916,15 @@ export const MODULES: ModuleNav[] = [
     group: 'compliance',
   },
   {
+    key: 'safety-eeo',
+    path: '/compliance/osha',
+    label: 'Safety & EEO',
+    description:
+      'The OSHA injury log and the Form 300A summary, Workers’ Comp class codes, and the EEO-1 report.',
+    requires: 'view:compliance',
+    group: 'compliance',
+  },
+  {
     key: 'programs',
     path: '/programs',
     label: 'Programs',
@@ -2016,18 +2040,6 @@ export const MODULES: ModuleNav[] = [
     group: 'payroll-finance',
   },
   {
-    key: 'dircomms',
-    path: '/directory',
-    label: 'Directory & comms',
-    description:
-      'Search the people directory, send broadcasts, and run pulse / eNPS / open-ended surveys.',
-    // Staff tool: the directory tab exposes every associate's email +
-    // phone, so it's gated like the People directory (view:org) — NOT
-    // view:dashboard, which every associate has.
-    requires: 'view:org',
-    group: 'client-services',
-  },
-  {
     key: 'communications',
     path: '/communications',
     // "Notifications", not "Broadcasts": an associate's own notification
@@ -2099,6 +2111,17 @@ export const MODULES: ModuleNav[] = [
     label: 'Reports',
     description:
       'Custom tabular reports — pick an entity (associates, time entries, payroll runs, applications…), choose columns and filters, save, run, and export.',
+    requires: 'view:analytics',
+    group: 'payroll-finance',
+  },
+  {
+    // The one home for retention (F500 G4): reachable only through a button
+    // on Reports before, and drawn again on Analytics with other definitions.
+    key: 'people-analytics',
+    path: '/reports/people',
+    label: 'People analytics',
+    description:
+      'On the books month by month, who leaves and how early, hiring cohorts, the first 90 days, time to fill and absence.',
     requires: 'view:analytics',
     group: 'payroll-finance',
   },
@@ -2232,7 +2255,9 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   pay: {
     key: 'pay',
     label: 'Pay & finance',
-    children: ['payroll', 'payroll-go-live', 'pay-schedules', 'payroll-banking', 'cash-forecast', 'pay-bill', 'market-rates', 'payroll-taxes', 'payroll-tax', 'garnishments', 'retirement', 'certified-payroll', 'contractors', 'state-tax', 'tax-jurisdictions', 'wotc', 'earned-wage', 'daily-pay', 'manual-checks', 'payrules', 'compensation', 'benefits', 'carrier-feeds', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
+    // Payroll compliance sits here, under its path's parent (Payroll), so the sidebar and the
+    // breadcrumb name one parent (F500 G3; it was filed under Compliance).
+    children: ['payroll', 'payroll-go-live', 'pay-schedules', 'payroll-banking', 'cash-forecast', 'pay-bill', 'market-rates', 'payroll-taxes', 'payroll-tax', 'payroll-compliance', 'garnishments', 'retirement', 'certified-payroll', 'contractors', 'state-tax', 'wotc', 'earned-wage', 'daily-pay', 'manual-checks', 'payrules', 'compensation', 'benefits', 'carrier-feeds', 'aca', 'reimbursements', 'tuition', 'equity', 'statements', 'fieldglass-setup'],
   },
   // The company's own books (2027-01): its hub is the overview.
   books: {
@@ -2244,14 +2269,15 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   compliance: {
     key: 'compliance',
     label: (term) => term('nav.compliance'),
-    children: ['compliance', 'documents', 'doc-templates', 'policy-campaigns', 'expirations', 'vaccinations', 'agreements', 'hr-cases', 'leave', 'unemployment-claims', 'workers-comp', 'discipline', 'hotline', 'payroll-compliance', 'programs', 'audit'],
+    children: ['compliance', 'safety-eeo', 'documents', 'doc-templates', 'policy-campaigns', 'expirations', 'vaccinations', 'agreements', 'hr-cases', 'leave', 'unemployment-claims', 'workers-comp', 'discipline', 'hotline', 'programs', 'audit'],
   },
   operations: { key: 'operations', label: 'Operations', children: ['control-room', 'tasks', 'ops', 'robots'] },
   transport: { key: 'transport', label: (term) => term('nav.transport'), children: ['transport'] },
   clients: { key: 'clients', label: (term) => term('nav.clients'), children: ['clients', 'client-pipeline', 'client-nps'] },
-  comms: { key: 'comms', label: 'Communications', children: ['communications', 'dircomms', 'pulse'] },
+  // "Directory & comms" retired (F500 G4): the directory is People, broadcasts are under Notifications, surveys are Pulse.
+  comms: { key: 'comms', label: 'Communications', children: ['communications', 'pulse'] },
   marketing: { key: 'marketing', label: 'Marketing', children: ['marketing'] },
-  insights: { key: 'insights', label: 'Insights', children: ['analytics', 'reports'] },
+  insights: { key: 'insights', label: 'Insights', children: ['analytics', 'reports', 'people-analytics'] },
   settings: {
     key: 'settings',
     label: 'Settings & trust',
@@ -2262,7 +2288,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   // The associate's doors — the same modules, in the first person.
   'my-schedule': { key: 'my-schedule', label: 'My schedule', children: ['scheduling', 'marketplace', 'time-off', 'time-attendance'] },
   'my-pay': { key: 'my-pay', label: 'My pay', children: ['payroll', 'benefits', 'reimbursements'] },
-  'my-records': { key: 'my-records', label: 'My records', children: ['documents', 'agreements', 'hr-cases', 'leave', 'communications'] },
+  'my-records': { key: 'my-records', label: 'My records', children: ['documents', 'agreements', 'hr-cases', 'leave', 'communications', 'my-discipline'] },
   more: { key: 'more', label: 'More', children: [] },
 };
 

@@ -1,4 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
+import { AuthContext, useTerm } from '@/lib/auth';
 import {
   DndContext,
   MouseSensor,
@@ -1004,6 +1006,8 @@ export function WeekCalendarView({
               dayKey: dayKeys[i],
               dayStart: d,
               label: `${fmtWeekdayTz(d)} ${fmtDateTz(d)}`,
+              // "Sat 17" on the row: the long form wrapped to two lines.
+              shortLabel: `${fmtWeekdayTz(d)} ${d.getDate()}`,
               coverage: coverageByDay.get(dayKeys[i]) ?? { scheduled: Array(24).fill(0), open: Array(24).fill(0) },
             }))}
             target={coverageTarget}
@@ -1216,14 +1220,7 @@ const Row = memo(function Row({
               {associate.firstName} {associate.lastName}
             </div>
           )}
-          {associate.offRoster && (
-            <div
-              className="text-2xs text-warning/80"
-              title="Not on this store's active roster — deactivated, separated, or from another site. Shown because they have shifts this week."
-            >
-              Off the roster
-            </div>
-          )}
+          {associate.offRoster && <OffRosterNote associateId={associate.id} />}
           <div className="text-2xs tabular-nums">
             <span
               className={cn(
@@ -1690,6 +1687,7 @@ function ShiftChip({
         )}
         title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position} · ${unfilled ? 'Went unfilled' : SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
+        <div className="w-full min-w-0">
         <div className="w-full flex items-center gap-1.5 min-w-0">
           <span
             className={cn(
@@ -1721,12 +1719,15 @@ function ShiftChip({
               <span className="sr-only">Short rest before this shift</span>
             </span>
           )}
-          {unfilled && (
-            <span className="shrink-0 rounded bg-alert/20 px-1 text-2xs font-medium text-alert" data-testid="unfilled-tag">
-              Unfilled
-            </span>
-          )}
-          <StatusMark status={shift.status} />
+          {!unfilled && <StatusMark status={shift.status} />}
+        </div>
+        {/* "Unfilled" on its own line inside the tile — as a pill beside the
+            time it pushed past the tile's edge in a narrow day. */}
+        {unfilled && (
+          <div className="truncate text-2xs font-medium leading-tight text-alert" data-testid="unfilled-tag">
+            Unfilled
+          </div>
+        )}
         </div>
       </button>
       <ShiftTouchMenuButton
@@ -1746,6 +1747,38 @@ function ShiftChip({
               scales to the bar height so it never overflows. */}
           <div className="w-0.5 h-1/2 max-h-4 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * "Not on this store's roster" — said plainly, with the why on hover and,
+ * for someone who can place people, the way to fix it: their record,
+ * where "Assign to location" puts them on this store's roster.
+ */
+function OffRosterNote({ associateId }: { associateId: string }) {
+  const canPlace = useContext(AuthContext)?.can('manage:org') ?? false;
+  const inRouter = useInRouterContext();
+  // The tenant's word for a site ("store", "property").
+  const site = useTerm()('site').toLowerCase();
+  return (
+    <div
+      className="text-2xs text-warning/80"
+      title={`Not placed at this ${site} — deactivated, separated, or covering from another ${site}. Shown because they have shifts this week; their hours still count in the day totals.`}
+      data-testid="off-roster"
+    >
+      Not on this {site}’s roster
+      {canPlace && inRouter && (
+        <>
+          {' · '}
+          <Link
+            to={`/people?associateId=${associateId}&return=${encodeURIComponent('/scheduling')}`}
+            className="underline underline-offset-2 hover:text-gold no-print"
+          >
+            Place here
+          </Link>
+        </>
       )}
     </div>
   );

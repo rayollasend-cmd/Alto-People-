@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Award, Briefcase, CalendarDays, RefreshCw } from 'lucide-react';
+import { Award, BellRing, Briefcase, CalendarDays, Check, Clock } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { patchNotificationPreference } from '@/lib/settingsApi';
 import { ApiError } from '@/lib/api';
 import {
   claimShift,
@@ -79,10 +81,11 @@ export function MarketplaceHome() {
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    // The trail comes from the nav ("Time & scheduling › Open shifts"); a
+    // manager reads what the page is for them, not the associate's pitch.
     <ListTemplate
         title={t('mk.title')}
-        subtitle={t('mk.subtitle')}
-        breadcrumbs={[{ label: t('mk.crumbSection') }, { label: t('mk.title') }]}
+        subtitle={canManage ? t('mk.subtitleManager') : t('mk.subtitle')}
     >
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -114,6 +117,41 @@ export function MarketplaceHome() {
 }
 
 // ============ Available shifts ============
+
+/** "Notify me": schedule notifications on, so the next open shift reaches them. */
+function NotifyMe() {
+  const { t } = useI18n();
+  const [state, setState] = useState<'idle' | 'busy' | 'on'>('idle');
+  if (state === 'on') {
+    return (
+      <span className="inline-flex items-center gap-1 text-sm text-success">
+        <Check className="h-4 w-4" aria-hidden="true" />
+        {t('sched.notifyOn')}
+      </span>
+    );
+  }
+  return (
+    <Button
+      variant="outline"
+      loading={state === 'busy'}
+      disabled={state === 'busy'}
+      onClick={async () => {
+        setState('busy');
+        try {
+          await patchNotificationPreference('scheduling', { inAppEnabled: true, emailEnabled: true });
+          setState('on');
+          toast.success(t('sched.notifyOn'));
+        } catch (err) {
+          setState('idle');
+          toast.error(err instanceof ApiError ? err.message : t('sched.notifyFailed'));
+        }
+      }}
+    >
+      <BellRing className="h-4 w-4" aria-hidden="true" />
+      {t('sched.notifyMe')}
+    </Button>
+  );
+}
 
 function AvailableTab() {
   const { t } = useI18n();
@@ -258,15 +296,23 @@ function AvailableTab() {
   }
 
   if (rows.every((s) => s.declinedByMe)) {
+    // Nothing to pick up: the two things that bring the next one — the
+    // hours they can work, and a ping when one is posted.
     return (
       <EmptyState
         icon={Briefcase}
         title={t('mk.emptyTitle')}
         description={t('mk.emptyDesc')}
         action={
-          <Button variant="secondary" onClick={refresh}>
-            <RefreshCw className="mr-2 h-4 w-4" /> {t('mk.refresh')}
-          </Button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button asChild variant="secondary">
+              <Link to="/scheduling?sheet=availability">
+                <Clock className="h-4 w-4" aria-hidden="true" />
+                {t('mk.setAvailability')}
+              </Link>
+            </Button>
+            <NotifyMe />
+          </div>
         }
       />
     );

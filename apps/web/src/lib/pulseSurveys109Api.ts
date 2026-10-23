@@ -73,3 +73,26 @@ export const submitPulseResponse = (
     method: 'POST',
     body: input,
   });
+
+/** GET /pulse-surveys/summary — what the admin tab opens on. */
+export interface PulseSummary {
+  latest: {
+    id: string;
+    question: string;
+    scale: PulseScale;
+    isOpen: boolean;
+    openUntil: string;
+    responses: number;
+    /** Active logins in the survey's audience, counted today. */
+    audience: number;
+    /** Responses as a share of the audience, 0–100; null with no audience. */
+    responseRate: number | null;
+    /** The average (1–5) or the share answering yes (0–100). */
+    score: number | null;
+    previousScore: number | null;
+  } | null;
+  /** The last surveys on the latest's scale, oldest first. */
+  trend: Array<{ id: string; openFrom: string; responses: number; score: number | null }>;
+  openNow: number;
+}
+export const getPulseSummary = () => apiFetch<PulseSummary>('/pulse-surveys/summary');

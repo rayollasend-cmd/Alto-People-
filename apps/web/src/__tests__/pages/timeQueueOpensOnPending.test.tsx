@@ -28,6 +28,11 @@ vi.mock('@/lib/timeApi', () => ({
   exportTimeSummary: vi.fn(),
   exportExternalPayrollSheet: vi.fn(),
   getActiveDashboard: vi.fn(async () => ({ entries: [] })),
+  getTimeExceptions: vi.fn(async () => ({
+    missedPunches: { count: 0, oldestAt: null },
+    lateToday: { count: 0, dayFrom: '', dayTo: '' },
+    overtimeRisk: { count: 0, thresholdHours: 36, weekStart: '', weekEnd: '', people: [] },
+  })),
   listAdminTimeEntries: vi.fn(async () => ({ entries: [] })),
   listPayPeriods: vi.fn(),
   rejectTimeEntry: vi.fn(),
@@ -139,20 +144,22 @@ beforeEach(() => {
 });
 
 describe('the timesheet queue opens where the pending rows are', () => {
-  it('opens on the oldest period with pending entries and shows the chip', async () => {
+  it('opens on the oldest period with pending entries, and the tile says where the work is', async () => {
     renderAt('/time-attendance?tab=queue');
     // The picker lands on the paid period, not the current one.
     await waitFor(() => {
-      expect((screen.getByLabelText('Pay period') as HTMLSelectElement).value).toBe(`${PAID.start}|${PAID.end}`);
+      expect((screen.getByLabelText(/pay period/i) as HTMLSelectElement).value).toBe(`${PAID.start}|${PAID.end}`);
     });
     // The count asked for the per-period breakdown.
     expect(vi.mocked(countAdminTimeEntries).mock.calls[0]?.[2]).toEqual({ groupBy: 'payPeriod' });
-    // The chip says where the work is.
-    const chip = screen.getByTestId('pending-period-chip');
-    expect(chip.textContent).toMatch(/^6 pending · /);
-    // The dropdown carries the count next to the period.
-    const option = screen.getByRole('option', { name: /6 pending · paid/ });
-    expect(option).toBeTruthy();
+    // The Pending review tile (the filter for these rows) says where they
+    // sit; the separate "6 pending · …" chip that repeated the picker is gone.
+    const tile = await screen.findByRole('button', { name: /pending review\s*6/i });
+    expect(tile.textContent).toMatch(/Oldest in /);
+    expect(tile).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByTestId('pending-period-chip')).toBeNull();
+    // The period's option is marked paid, without a count to cut off.
+    expect(screen.getByRole('option', { name: /· paid$/ })).toBeTruthy();
     // The list was asked for that window.
     await waitFor(() => {
       const last = vi.mocked(listAdminTimeEntries).mock.calls.at(-1)?.[0];
@@ -208,16 +215,22 @@ describe('the timesheet queue opens where the pending rows are', () => {
     try {
       const user = renderAt(`/time-attendance?tab=queue&from=${PAID.start}&to=${PAID.end}`);
       await screen.findByText('Maria Lopez');
-      // The list is the first screen: no filter controls, no exports.
-      expect(screen.queryByLabelText('Pay period')).toBeNull();
-      expect(screen.queryByRole('button', { name: /CSV/ })).toBeNull();
-      const chip = screen.getByTestId('queue-filter-chip');
-      expect(chip.textContent).toMatch(/^Pending review · /);
+      // The list is the first screen: the search and one "Filters" chip, no
+      // filter controls and no export menu.
+      expect(screen.queryByLabelText(/pay period/i)).toBeNull();
+      expect(screen.queryByRole('button', { name: /export & payroll/i })).toBeNull();
+      expect(screen.getByPlaceholderText(/search associates/i)).toBeTruthy();
+      // One compact row per punch: the day, in–out and hours on one line
+      // (not a 2×2 grid of labelled fields), the actions as a trailing pair.
+      expect(screen.getByText(/· 9:00 AM–5:00 PM · 8\.00h$/)).toBeTruthy();
+      expect(screen.queryByText('Duration')).toBeNull();
+      const chip = screen.getByTestId('filter-sheet-chip');
+      expect(chip.textContent).toMatch(/^Filters/);
       await user.click(chip);
       // The sheet holds the filters.
       await screen.findByRole('dialog');
-      expect(screen.getByLabelText('Pay period')).toBeTruthy();
-      expect(screen.queryByRole('button', { name: /CSV/ })).toBeNull();
+      expect(screen.getByLabelText(/pay period/i)).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /export & payroll/i })).toBeNull();
     } finally {
       window.matchMedia = original;
     }

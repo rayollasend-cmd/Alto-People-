@@ -50,6 +50,7 @@ import {
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
+import { QueryError } from '@/components/ui/QueryError';
 
 const LEVEL_VARIANT: Record<SkillLevel, 'pending' | 'accent' | 'success' | 'destructive'> = {
   BEGINNER: 'pending',
@@ -79,8 +80,17 @@ export function CareerHome() {
     queryFn: () => listLadders(),
   });
   const ladders: LadderRow[] | null = refreshQuery.data?.ladders ?? null;
-  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load career ladders.' : null;
   const refresh = () => void refreshQuery.refetch();
+  // A workforce provider starts from the field leadership ladder.
+  const canAddField = canManage && fieldTenant && ladders !== null && !ladders.some((l) => l.family === 'Field leadership');
+  const addFieldLadder = () =>
+    void createFieldLeadershipLadder()
+      .then(() => {
+        toast.success('Field leadership ladder added. People on the field are placed by their role.');
+        refresh();
+        void mine.refetch();
+      })
+      .catch((err) => toast.error(err instanceof ApiError ? err.message : 'Could not add the ladder.'));
 
   const families = useMemo(
     () =>
@@ -107,14 +117,7 @@ export function CareerHome() {
     <ListTemplate
         title="Career ladders"
         subtitle="Where you are, what the next step asks of you, and every path the company offers."
-        breadcrumbs={[{ label: 'Me', to: '/me' }, { label: 'Career ladders' }]}
-        primaryAction={
-          canManage ? (
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> New ladder
-            </Button>
-          ) : undefined
-        }
+        actions={canManage ? [{ label: 'New ladder', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
 
       {user?.associateId && (
@@ -126,32 +129,22 @@ export function CareerHome() {
         </section>
       )}
 
-      {canManage && fieldTenant && ladders && !ladders.some((l) => l.family === 'Field leadership') && (
+      {canAddField && ladders && ladders.length > 0 && (
         <Card>
           <CardContent className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-ink-muted">
               Start from the field leadership ladder — crew member, lead, shift supervisor, store manager — with time-in-job and review requirements you can edit.
             </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                void createFieldLeadershipLadder()
-                  .then(() => {
-                    toast.success('Field leadership ladder added. People on the field are placed by their role.');
-                    refresh();
-                    void mine.refetch();
-                  })
-                  .catch((err) => toast.error(err instanceof ApiError ? err.message : 'Could not add the ladder.'))
-              }
-            >
+            <Button variant="outline" size="sm" onClick={addFieldLadder}>
               Add the field leadership ladder
             </Button>
           </CardContent>
         </Card>
       )}
 
-      <FilterBar>
+      {/* No search or family chips over an empty catalog. */}
+      {ladders && ladders.length > 0 && (
+      <FilterBar bare>
         {families.map((f) => (
           <FilterChip
             key={f}
@@ -169,16 +162,10 @@ export function CareerHome() {
           aria-label="Search ladders by name"
         />
       </FilterBar>
+      )}
 
-      {loadError ? (
-        <ErrorBanner>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>{loadError}</span>
-            <Button size="sm" variant="outline" onClick={refresh}>
-              Retry
-            </Button>
-          </div>
-        </ErrorBanner>
+      {refreshQuery.error ? (
+        <QueryError what="career ladders" query={refreshQuery} />
       ) : filtered === null ? (
         <Card>
           <CardContent>
@@ -194,15 +181,20 @@ export function CareerHome() {
               description={
                 ladders && ladders.length > 0
                   ? 'No ladder matches the current search or family filter.'
-                  : canManage
-                    ? 'Create the first ladder for your job family.'
-                    : 'HR has not set up career ladders yet.'
+                  : canAddField
+                    ? 'Start from the field leadership ladder — crew member, lead, shift supervisor, store manager — with time-in-job and review requirements you can edit. Or build your own.'
+                    : canManage
+                      ? 'Create the first ladder for your job family.'
+                      : 'HR has not set up career ladders yet.'
               }
               action={
                 canManage && (!ladders || ladders.length === 0) ? (
-                  <Button onClick={() => setShowNew(true)}>
-                    <Plus className="mr-2 h-4 w-4" /> New ladder
-                  </Button>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {canAddField && <Button onClick={addFieldLadder}>Add the field leadership ladder</Button>}
+                    <Button variant={canAddField ? 'outline' : 'primary'} onClick={() => setShowNew(true)}>
+                      <Plus className="mr-2 h-4 w-4" /> New ladder
+                    </Button>
+                  </div>
                 ) : undefined
               }
             />

@@ -185,7 +185,7 @@ export function WorkflowsHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Workflows"
-        subtitle="Trigger-condition-action automation. Replaces hard-coded chains in route handlers — define once, fire on every matching event."
+        subtitle="Automate the follow-ups: when something happens (a new hire, a missed punch), the next step happens on its own."
         breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Workflows' }]}
         primaryAction={
           canManage ? (
@@ -219,9 +219,10 @@ export function WorkflowsHome() {
             <Zap className="h-3.5 w-3.5" />
             Run history
           </TabsTrigger>
+          {/* Not "Tasks": that is the floor's work board (/tasks). */}
           <TabsTrigger value="tasks">
             <ListTodo className="h-3.5 w-3.5" />
-            Tasks
+            To-dos from workflows
           </TabsTrigger>
         </TabsList>
 

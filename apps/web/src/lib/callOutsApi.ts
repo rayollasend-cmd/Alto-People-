@@ -35,8 +35,20 @@ export interface CallOutItem {
   cover: { state: 'covered' | 'looking' | 'uncovered'; by: string | null; steps: Array<{ key: string; status: string; detail: string }> };
 }
 
+export type CallOutRange = 'today' | 'week' | '30d';
+
 export interface CallOutList {
-  range: 'today' | 'week';
+  range: CallOutRange;
+  /** The site the list is narrowed to, or null for every site in reach. */
+  siteId?: string | null;
+  /** Every site in this range's call-outs: the site filter's options. */
+  sites?: Array<{ id: string; name: string }>;
+  /** Median minutes from a call-out to the shift being someone else's (null: nothing covered by a person). */
+  medianMinutesToCover?: number | null;
+  /** People with two or more call-outs in the range. */
+  repeatCallers?: Array<{ associateId: string; name: string; count: number }>;
+  /** The last seven days' record, for the line a quiet day shows. */
+  last7Days?: { total: number; covered: number; coveredPct: number | null; medianMinutesToCover: number | null };
   total: number;
   covered: number;
   looking: number;
@@ -51,7 +63,8 @@ export const callOutMine = (body: { shiftId: string; reason: CallOutReason; note
 
 export const listMyCallOuts = () => apiFetch<{ callOuts: MyCallOut[] }>('/me/call-outs');
 
-export const listCallOuts = (range: 'today' | 'week') => apiFetch<CallOutList>(`/call-outs?range=${range}`);
+export const listCallOuts = (range: CallOutRange, siteId?: string | null) =>
+  apiFetch<CallOutList>(`/call-outs?range=${range}${siteId ? `&siteId=${encodeURIComponent(siteId)}` : ''}`);
 
 export const recordCallOutFor = (body: { associateId: string; shiftId: string; reason: CallOutReason; note?: string }) =>
   apiFetch<{ callOutId: string; outcome: string }>('/call-outs', { method: 'POST', body });

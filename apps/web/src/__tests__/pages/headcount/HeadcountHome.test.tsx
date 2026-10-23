@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -25,7 +25,7 @@ function overview(over: Partial<HeadcountOverview> = {}): HeadcountOverview {
     windowDays: 14,
     active: 1234,
     scheduledThisWeek: 980,
-    onPayrollLastPeriod: { count: 1210, periodStart: '2026-09-26', periodEnd: '2026-10-02' },
+    onPayrollLastPeriod: { count: 1210, periodStart: '2026-09-26', periodEnd: '2026-10-02', finalizedOn: '2026-10-05' },
     inHousing: null,
     notActive: { employedNotPlaced: 12, placedNoRecentWork: 40, separated: 300, deactivated: 7, onboarding: 25 },
     byClient: [{ id: 'c1', name: 'Coastal Resort', active: 800, scheduledThisWeek: 640, withoutRate: null }],
@@ -75,10 +75,16 @@ describe('HeadcountHome', () => {
     // "Working": one of the two named numbers every page shows (F500 SH-4).
     expect(screen.getByText('Working')).toBeInTheDocument();
     expect(screen.getByText('Worked in the last 14 days or scheduled ahead')).toBeInTheDocument();
-    expect(screen.getByText(/clocked in within the last 14 days or scheduled ahead/)).toBeInTheDocument();
+    // The definition rides the number's tooltip, not the subtitle (F500 G1).
+    expect(screen.getByText("Who's working, where, and how that's changing.")).toBeInTheDocument();
     // The companions beside the hero.
     expect(screen.getByText('980')).toBeInTheDocument();
+    // The last payroll run, named and dated — not "last period" (F500 G1).
+    expect(screen.getByText('Last payroll run')).toBeInTheDocument();
     expect(screen.getByText('1,210')).toBeInTheDocument();
+    expect(screen.getByText('Paid Sep 26 – Oct 2, 2026 · finalized Oct 5, 2026')).toBeInTheDocument();
+    // Headcount plan is a sibling page, not a button.
+    expect(screen.getByRole('link', { name: 'Headcount plan' })).toHaveAttribute('href', '/headcount/plan');
     // No housing link: no "In housing" tile at all (a dash said nothing; F500 G1).
     expect(screen.queryByText('In housing')).not.toBeInTheDocument();
     // Turnover rides its own query keyed on the window.
@@ -118,9 +124,24 @@ describe('HeadcountHome', () => {
     expect(screen.getByText('1,207')).toBeInTheDocument();
   });
 
-  it('lets manage:org change the activity window and PATCHes the org setting', async () => {
+  it('explains a Working count below the scheduled one', async () => {
+    vi.mocked(getHeadcountOverview).mockResolvedValue(overview({ active: 0, scheduledThisWeek: 2, scheduledNotWorking: 2 }));
+    renderPage();
+    expect(await screen.findByText("2 scheduled this week haven't worked in 14 days")).toBeInTheDocument();
+  });
+
+  it('says plainly when no payroll has run', async () => {
+    vi.mocked(getHeadcountOverview).mockResolvedValue(overview({ onPayrollLastPeriod: null }));
+    renderPage();
+    expect(await screen.findByText('No payroll run yet')).toBeInTheDocument();
+  });
+
+  it('lets manage:org change the activity window from the header and PATCHes the org setting', async () => {
     const user = userEvent.setup();
     renderPage('HR_ADMINISTRATOR');
+    // Not a form in the middle of the page: a header action opens it.
+    expect(screen.queryByLabelText('Activity window (days)')).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: /Activity window/ }));
     const input = (await screen.findByLabelText('Activity window (days)')) as HTMLInputElement;
     await waitFor(() => expect(input).toHaveValue(14));
     const save = screen.getByRole('button', { name: 'Save' });
@@ -133,13 +154,12 @@ describe('HeadcountHome', () => {
     expect(getHeadcountOverview).toHaveBeenCalledTimes(2);
   });
 
-  it('shows the window as text only to a read-only role', async () => {
+  it('gives a read-only role no window control; the tile names the window', async () => {
     renderPage('FINANCE_ACCOUNTANT');
     expect(await screen.findByText('1,234')).toBeInTheDocument();
-    const ro = screen.getByTestId('window-readonly');
-    expect(within(ro).getByText('14 days')).toBeInTheDocument();
+    expect(screen.getByText('Worked in the last 14 days or scheduled ahead')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Activity window/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Activity window (days)')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
   });
 
   it('lists the not-active reasons plainly and cuts the grid by store or client', async () => {

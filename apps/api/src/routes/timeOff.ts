@@ -38,8 +38,11 @@ import {
   parseDateUTC,
 } from '../lib/timeOffRequests.js';
 import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
+import { getLaborPolicy } from '../lib/stateLaborPolicy.js';
 import { syncPolicyEntitlements } from '../lib/timeOffPolicy.js';
-import { scopeAssociates, scopeTimeOffRequests } from '../lib/scope.js';
+import { scopeAssociates, scopeTimeOffRequests, scopeWhere } from '../lib/scope.js';
+import { companyWorkweek, orgDateKey } from '../lib/timeAnomalies.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { promptShiftHandover } from '../lib/floorLeads.js';
@@ -210,7 +213,11 @@ timeOffRouter.get('/me/balance', async (req, res, next) => {
       }),
     ]);
 
+    // The state's sick-time rule, so a 0.0h row can say how it builds up.
+    const me = await prisma.associate.findUnique({ where: { id: user.associateId }, select: { state: true } });
+    const sickRate = getLaborPolicy(me?.state ?? null).paidSickLeaveAccrualPerHour;
     const payload = TimeOffMyBalanceResponseSchema.parse({
+      sickAccrual: sickRate > 0 ? { hoursWorkedPerHour: Math.round(1 / sickRate) } : null,
       balances: balances.map<TimeOffBalance>((b) => ({
         category: b.category,
         balanceMinutes: b.balanceMinutes,
@@ -420,6 +427,82 @@ timeOffRouter.post('/me/requests/:id/cancel', async (req, res, next) => {
 });
 
 /* ----------------------------- HR / Admin side ----------------------------- */
+
+/** YYYY-MM-DD ± days, on the calendar (no zone). */
+function addDays(key: string, days: number): string {
+  const d = new Date(`${key}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * GET /time-off/admin/summary — who is out, in the caller's reach (F500 G2:
+ * the manager view opened on an empty queue with no sense of who is off).
+ *
+ *   outToday     approved leave covering the org's today
+ *   outThisWeek  approved leave touching the org workweek (Sat→Fri)
+ *   pending      requests waiting for a decision
+ *   upcoming     approved leave that starts in the next 14 days
+ *   whosOff      approved leave touching today … today+13, one row each,
+ *                for the two-week "Who's off" strip
+ */
+timeOffRouter.get('/admin/summary', MANAGE, async (req, res, next) => {
+  try {
+    const today = orgDateKey(new Date());
+    const { weekStartsOn } = companyWorkweek();
+    const back = (new Date(`${today}T12:00:00Z`).getUTCDay() - weekStartsOn + 7) % 7;
+    const weekStart = addDays(today, -back);
+    const weekEnd = addDays(weekStart, 6);
+    const horizonEnd = addDays(today, 13);
+    const from = weekStart < today ? weekStart : today;
+    const to = horizonEnd > weekEnd ? horizonEnd : weekEnd;
+    const scope = (extra: Prisma.TimeOffRequestWhereInput) =>
+      scopeWhere<Prisma.TimeOffRequestWhereInput>({ tenantId: tenantIdForWrite() }, scopeTimeOffRequests(req.user!), extra);
+    const [pending, approved] = await Promise.all([
+      prisma.timeOffRequest.count({ where: scope({ status: 'PENDING' }) }),
+      prisma.timeOffRequest.findMany({
+        where: scope({
+          status: 'APPROVED',
+          endDate: { gte: parseDateUTC(from) },
+          startDate: { lte: parseDateUTC(to) },
+        }),
+        orderBy: [{ startDate: 'asc' }],
+        take: 500,
+        select: {
+          id: true,
+          associateId: true,
+          category: true,
+          startDate: true,
+          endDate: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+    ]);
+    const rows = approved.map((r) => ({
+      id: r.id,
+      associateId: r.associateId,
+      name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
+      category: r.category,
+      startDate: formatDateUTC(r.startDate),
+      endDate: formatDateUTC(r.endDate),
+    }));
+    const touches = (a: string, b: string) => rows.filter((r) => r.startDate <= b && r.endDate >= a);
+    const people = (list: typeof rows) => new Set(list.map((r) => r.associateId)).size;
+    res.json({
+      today,
+      weekStart,
+      weekEnd,
+      horizonEnd,
+      outToday: people(touches(today, today)),
+      outThisWeek: people(touches(weekStart, weekEnd)),
+      pending,
+      upcoming: people(rows.filter((r) => r.startDate > today && r.startDate <= addDays(today, 14))),
+      whosOff: touches(today, horizonEnd),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 timeOffRouter.get('/admin/requests', MANAGE, async (req, res, next) => {
   try {

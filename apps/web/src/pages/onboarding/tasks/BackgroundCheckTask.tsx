@@ -1,12 +1,12 @@
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { authorizeBackgroundCheck } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { TaskShell, inputCls, Field, useNextTask } from './ProfileInfoTask';
+import { ContinueLabel, TaskFooter, TaskShell, inputCls, Field, taskButtonCls, useNextTask } from './ProfileInfoTask';
 import { Button } from '@/components/ui/Button';
 
 export function BackgroundCheckTask() {
@@ -72,9 +72,17 @@ export function BackgroundCheckTask() {
   };
 
   return (
-    <TaskShell title={t('ob.bg.title')} backTo={backTo}>
+    <TaskShell title={t('ob.bg.title')} backTo={backTo} kind="BACKGROUND_CHECK">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-4 text-sm text-silver whitespace-pre-line leading-relaxed">
+        {/* One card: the disclosure scrolls inside it rather than sitting in
+            a second bordered card of its own. */}
+        <div
+          className="max-h-72 overflow-y-auto border-y border-navy-secondary py-3 text-sm text-silver whitespace-pre-line leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40"
+          tabIndex={0}
+          role="region"
+          aria-label={t('ob.bg.disclosureLabel')}
+          data-testid="bg-disclosure"
+        >
           {disclosure}
         </div>
 
@@ -106,23 +114,21 @@ export function BackgroundCheckTask() {
           </p>
         )}
 
-        <div className="flex items-center gap-3 pt-2">
+        <TaskFooter backTo={backTo} cancelLabel={t('common.cancel')}>
           <Button
             type="submit"
             loading={submitting}
             disabled={submitting || !accepted || !typedName.trim()}
+            className={taskButtonCls}
           >
-            {!submitting && <ShieldCheck className="h-4 w-4" />}
-            {submitting
-              ? t('ob.bg.authorizing')
-              : next
-                ? t('ob.bg.authorizeContinue', { next: next.label })
-                : t('ob.bg.authorize')}
+            {!submitting && <ShieldCheck className="h-4 w-4 shrink-0" />}
+            {submitting ? (
+              t('ob.bg.authorizing')
+            ) : (
+              <ContinueLabel label={next ? t('ob.bg.authorizeAndContinue') : t('ob.bg.authorize')} next={next} />
+            )}
           </Button>
-          <Link to={backTo} className="text-sm text-silver hover:text-white">
-            {t('common.cancel')}
-          </Link>
-        </div>
+        </TaskFooter>
       </form>
     </TaskShell>
   );

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronLeft, ChevronRight, FileText, Printer } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, FileText, Printer, UserPlus } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -14,7 +14,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { CoverageHeatmap, DetailsTable, WeekFillChart, type HeatDay } from './portalCharts';
+import { CoverageHeatmap, DetailsTable, type HeatDay } from './portalCharts';
 import { coverageByHour } from './coverage';
 import { ListTemplate } from '@/components/templates';
 import { ServiceReportDialog } from './ServiceReportDialog';
@@ -47,8 +47,24 @@ interface PortalSchedule {
   days: Array<{ date: string; shifts: ScheduleShift[] }>;
   filled: number;
   open: number;
+  /** The contracted windows (store-local minutes; end <= start wraps midnight). Absent from an older server. */
+  targets?: Array<{ locationId: string; label: string; startMinute: number; endMinute: number; headcount: number }>;
   generatedAt: string;
 }
+
+/** The contracted headcount at the top of each hour: every window covering it, summed. */
+export function hourlyContract(targets: NonNullable<PortalSchedule['targets']>): number[] {
+  return Array.from({ length: 24 }, (_, h) => {
+    const m = h * 60;
+    return targets.reduce((n, w) => {
+      const inside = w.endMinute > w.startMinute ? m >= w.startMinute && m < w.endMinute : m >= w.startMinute || m < w.endMinute;
+      return inside ? n + w.headcount : n;
+    }, 0);
+  });
+}
+
+/** A window's length in hours (one that ends at or before its start runs past midnight). */
+const windowHours = (w: { startMinute: number; endMinute: number }) => (((w.endMinute - w.startMinute + 1440) % 1440) || 1440) / 60;
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
@@ -115,6 +131,10 @@ export function PortalSchedule() {
   const target = overview.data?.now.target ?? null;
   const tz = overview.data?.store?.timezone ?? null;
 
+  // The contract hour by hour: the heatmap marks every contracted hour short
+  // of it — six days with nothing scheduled against a contract of 8 looked
+  // neutral when only hours with a slot could be "below" (F500 G5).
+  const contractByHour = useMemo(() => (data?.targets?.length ? hourlyContract(data.targets) : null), [data]);
   const heatDays: HeatDay[] = useMemo(
     () =>
       (data?.days ?? []).map((d) => {
@@ -124,16 +144,17 @@ export function PortalSchedule() {
           label: dayShort(d.date),
           scheduled: points.map((p) => p.scheduled),
           open: points.map((p) => p.open),
+          ...(contractByHour ? { target: contractByHour } : {}),
         };
       }),
-    [data, tz],
+    [data, tz, contractByHour],
   );
-  const weekDays = (data?.days ?? []).map((d) => ({
-    date: d.date,
-    day: dayShort(d.date),
-    filled: d.shifts.filter((s) => s.state !== 'open').length,
-    open: d.shifts.filter((s) => s.state === 'open').length,
-  }));
+  // The week in hours: scheduled (staffed shifts) against contracted (each window × its length × 7).
+  const scheduledHours = (data?.days ?? []).reduce(
+    (n, d) => n + d.shifts.filter((s) => s.state !== 'open').reduce((a, sh) => a + (Date.parse(sh.endsAt) - Date.parse(sh.startsAt)) / 3_600_000, 0),
+    0,
+  );
+  const contractedHours = (data?.targets ?? []).reduce((n, w) => n + w.headcount * windowHours(w) * 7, 0);
 
   if (!isPortal && !canPreview) {
     return <EmptyState icon={FileText} title={t('portal.noAccess')} description="" />;
@@ -163,40 +184,43 @@ export function PortalSchedule() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="print-area"
-        title={data ? (data.store ? data.store.name : data.client.name) : t('portal.schedule')}
+        // Titled by page like its siblings (Today, History, Store operations); the store and week below.
+        title={t('portal.schedule')}
         topbarTitle={t('portal.schedule')}
         subtitle={
           data
-            ? t('portal.schedWeek', {
+            ? `${data.store ? data.store.name : data.client.name} · ${t('portal.schedWeek', {
                 start: fmtDate(parseYmd(data.week.start)),
                 end: fmtDate(parseYmd(data.week.end)),
-              })
+              })}`
             : undefined
         }
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
         breadcrumbs={[{ label: t('portal.title'), to: `/portal${homeQs}` }, { label: t('portal.schedule') }]}
-        secondaryActions={
-          <>
-            <Button size="sm" variant="outline" className="print:hidden" onClick={() => setReportOpen(true)}>
-              <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.svcReport')}
-            </Button>
-            <ServiceReportDialog
-              open={reportOpen}
-              onClose={() => setReportOpen(false)}
-              scope={scopeQs}
-              initial={{ kind: 'range', from: data?.week.start ?? week, to: data?.week.end ?? week }}
-            />
-          </>
-        }
-        primaryAction={
-          <Button size="sm" className="hidden print:hidden sm:inline-flex" onClick={() => window.print()}>
-            <Printer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            {t('portal.print')}
-          </Button>
-        }
+        // A week with gaps wants coverage, not a printout: Request coverage leads (F500 G5).
+        actions={[
+          {
+            key: 'request',
+            label: t('portal.requestCoverage'),
+            icon: UserPlus,
+            primary: true,
+            hidden: !isPortal,
+            to: `/portal/requests?${new URLSearchParams([
+              ['new', 'STAFFING'],
+              ['subject', t('portal.coverageForWeek', { date: fmtDate(parseYmd(data?.week.start ?? week)) })],
+            ]).toString()}`,
+          },
+          { key: 'report', label: t('portal.svcReport'), icon: FileText, onSelect: () => setReportOpen(true) },
+          { key: 'print', label: t('portal.print'), icon: Printer, onSelect: () => window.print() },
+        ]}
     >
+      <ServiceReportDialog
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        scope={scopeQs}
+        initial={{ kind: 'range', from: data?.week.start ?? week, to: data?.week.end ?? week }}
+      />
 
       <div className="sticky top-0 z-10 -mx-4 flex items-center justify-between gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0 print:hidden">
         <Button size="sm" variant="ghost" onClick={() => goWeek(-1)} aria-label={t('portal.prevWeek')}>
@@ -236,8 +260,15 @@ export function PortalSchedule() {
                 className="mb-0"
                 title={t('portal.heatTitle')}
                 trailing={
-                  <span className="text-xs text-silver tabular-nums">
+                  <span className="text-xs text-silver tabular-nums" data-testid="sched-summary">
                     {t('portal.schedSummary', { filled: data.filled, open: data.open })}
+                    {/* Scheduled against contracted hours: the week's gap in one number. */}
+                    {contractedHours > 0 && (
+                      <span className={cn(scheduledHours < contractedHours && 'text-warning')}>
+                        {' · '}
+                        {t('portal.schedVsContract', { scheduled: Math.round(scheduledHours), contracted: Math.round(contractedHours) })}
+                      </span>
+                    )}
                   </span>
                 }
               />
@@ -251,7 +282,7 @@ export function PortalSchedule() {
                       t('portal.heatCell', { day, hour, scheduled, open }),
                     scale: { low: t('portal.heatLow'), high: t('portal.heatHigh') },
                     unfilled: t('portal.heatUnfilled'),
-                    belowTarget: t('portal.heatBelow', { target: target ?? 0 }),
+                    belowTarget: contractByHour ? t('portal.heatBelowContract') : t('portal.heatBelow', { target: target ?? 0 }),
                     swipe: t('portal.heatSwipe'),
                   }}
                 />
@@ -272,32 +303,6 @@ export function PortalSchedule() {
                       d.open.reduce((a, b) => a + b, 0) > 0 ? t('portal.yes') : t('portal.no'),
                     ];
                   })}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* ---- How many, per day --------------------------------------- */}
-          <Card className="print:hidden">
-            <CardContent>
-              <SectionTitle size="sm" className="mb-0" title={t('portal.week')} />
-              <div className="mt-2">
-                <WeekFillChart
-                  days={weekDays}
-                  todayKey={today}
-                  labels={{
-                    filled: t('portal.chartFilled'),
-                    open: t('portal.chartOpen'),
-                    heading: (d) => {
-                      const row = weekDays.find((x) => x.day === d);
-                      return row ? fmtDate(parseYmd(row.date)) : d;
-                    },
-                  }}
-                />
-                <DetailsTable
-                  label={t('portal.details')}
-                  columns={[t('portal.chartDay'), t('portal.chartFilled'), t('portal.chartOpen')]}
-                  rows={weekDays.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
                 />
               </div>
             </CardContent>

@@ -132,3 +132,7 @@ export const closeTipPool = (id: string) =>
   apiFetch<{ ok: true }>(`/tip-pools/${id}/close`, { method: 'PUT', body: {} });
 export const payOutTipPool = (id: string) =>
   apiFetch<{ ok: true }>(`/tip-pools/${id}/pay-out`, { method: 'PUT', body: {} });
+
+/** Every client in reach with its active projects, active premium rules and open tip pools (the "All clients" view). */
+export const payRulesSummary = () =>
+  apiFetch<{ clients: Array<{ clientId: string; clientName: string; projects: number; premiumRules: number; openTipPools: number }> }>('/pay-rules/summary');

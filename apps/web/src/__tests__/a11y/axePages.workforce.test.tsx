@@ -74,6 +74,8 @@ vi.mock('@/lib/discipline118Api', () => ({
   acknowledgeDisciplinaryAction: vi.fn(),
   issueDisciplinaryAction: vi.fn(),
   listDisciplinaryActions: vi.fn().mockResolvedValue({ actions: [] }),
+  getDisciplineSummary: vi.fn().mockResolvedValue({ inForce: 0, awaitingAck: 0, finalWarningPeople: 0, issued90d: 0 }),
+  getLadder: vi.fn(),
   rescindDisciplinaryAction: vi.fn(),
   KIND_LABELS: {
     VERBAL_WARNING: 'Verbal warning',
@@ -191,6 +193,8 @@ vi.mock('@/lib/skills111Api', () => ({
   searchSkills: vi.fn(),
   // The "To verify" tab's self-claims (wave 2).
   listPendingSkillClaims: vi.fn().mockResolvedValue({ claims: [] }),
+  // The Overview tab that opens the page (F500 G1).
+  getSkillsOverview: vi.fn().mockResolvedValue({ catalog: 3, peopleWithSkill: 2, peopleWithVerified: 1, toVerify: 1, top: [{ id: 's1', name: 'Forklift', category: null, people: 2, verified: 1 }] }),
 }));
 
 vi.mock('@/lib/celebrations107Api', () => ({
@@ -312,7 +316,7 @@ describe('axe — workforce/HR long-tail pages', () => {
     // Desk staff without an associate record land on the QUEUE tab now
     // (their "mine" would always be empty), so the queue's empty state is
     // the settled render.
-    await screen.findByText('Queue is empty');
+    await screen.findByText('No open cases');
     await expectNoViolations(container);
   });
 
@@ -325,20 +329,20 @@ describe('axe — workforce/HR long-tail pages', () => {
   it('<SeparationHome> has no axe violations', async () => {
     const { container } = renderPage(<SeparationHome />);
     await screen.findByText('No separations');
-    await screen.findByText('Exit interviews (90d)');
     await expectNoViolations(container);
   });
 
   it('<ProbationHome> has no axe violations', async () => {
     const { container } = renderPage(<ProbationHome />);
     await screen.findByText('No probations');
-    await screen.findByText('Ending in 14 days');
+    // No probations ever: the all-zero tiles stand down (F500 G1).
     await expectNoViolations(container);
   });
 
   it('<SuccessionHome> has no axe violations', async () => {
     const { container } = renderPage(<SuccessionHome />);
-    await screen.findByText(/No stores here/i);
+    // No stores at all: an honest empty state, not "change the filter" (F500 G1).
+    await screen.findByText(/No stores yet/i);
     await expectNoViolations(container);
   });
 
@@ -362,8 +366,9 @@ describe('axe — workforce/HR long-tail pages', () => {
 
   it('<SkillsHome> has no axe violations', async () => {
     const { container } = renderPage(<SkillsHome />);
-    // Search tab is the default; its form renders synchronously.
+    // The Overview tab is the default (F500 G1): wait for its numbers.
     await screen.findByRole('tab', { name: /find people/i });
+    await screen.findByText('Most held skills');
     await expectNoViolations(container);
   });
 

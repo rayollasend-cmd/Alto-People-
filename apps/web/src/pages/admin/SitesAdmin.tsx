@@ -9,6 +9,8 @@ import { Link } from 'react-router-dom';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { ORG_UNIT_TYPE_LABEL, SITE_TYPE_LABEL, createSite, listSites, updateSite, type SiteRow, type SiteUpdateInput } from '@/lib/orgApi';
 import { Badge } from '@/components/ui/Badge';
+import { FilterChip } from '@/components/ui/FilterBar';
+import { urlBoolean, useUrlParam, useUrlState } from '@/lib/useUrlState';
 import { Button } from '@/components/ui/Button';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
@@ -34,7 +36,9 @@ export function SitesAdmin() {
   const canManage = can('manage:org');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<SiteRow | null>(null);
-  const [region, setRegion] = useState<string>('');
+  // The region and whether closed sites show live in the URL (?region=, ?inactive=1).
+  const [region, setRegion] = useUrlParam<string>('region', '');
+  const [showInactive, setShowInactive] = useUrlState<boolean>('inactive', false, urlBoolean);
   const query = useQuery({ queryKey: ['org', 'sites'], queryFn: listSites });
   const all = useMemo(() => (query.data?.sites ?? []).filter((s): s is SiteRow => !!s && typeof s.id === 'string'), [query.data]);
   // Grouped the way the business runs: region, then client, then name.
@@ -43,9 +47,12 @@ export function SitesAdmin() {
     for (const r of all) if (r.regionId && r.regionName) m.set(r.regionId, r.regionName);
     return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [all]);
+  // Active by default: ten closed "The Grand Hotel" rows led the list (F500 G4).
+  const inactiveCount = useMemo(() => all.filter((r) => !r.isActive).length, [all]);
   const rows = useMemo(
     () =>
       all
+        .filter((r) => showInactive || r.isActive)
         .filter((r) => !region || (region === 'none' ? !r.regionId : r.regionId === region))
         .sort(
           (a, b) =>
@@ -53,7 +60,7 @@ export function SitesAdmin() {
             (a.clientName ?? '').localeCompare(b.clientName ?? '') ||
             a.name.localeCompare(b.name),
         ),
-    [all, region],
+    [all, region, showInactive],
   );
   const sitesNoun = term('sites');
   const siteNoun = term('site');
@@ -70,8 +77,8 @@ export function SitesAdmin() {
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-ink">{r.name}</span>
           {r.clientId && moduleOn('clientPortal') && (
-            <Badge variant="outline" size="sm" withDot={false}>
-              {clientNoun}’s
+            <Badge variant="outline" size="sm" withDot={false} title={`Comes from the ${clientNoun.toLowerCase()} record; edit it there`}>
+              {clientNoun}-owned
             </Badge>
           )}
           {!r.isActive && (
@@ -110,34 +117,10 @@ export function SitesAdmin() {
       <PageHeader
         title={sitesNoun}
         subtitle={`Every place work happens: its time zone and its state for tax and overtime. Regions and cost centers are set in the Org chart.`}
-        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: sitesNoun }]}
-        primaryAction={
-          canManage ? (
-            <Button size="sm" onClick={() => setAdding(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Add {siteNoun.toLowerCase()}
-            </Button>
-          ) : undefined
-        }
+        actions={[{ label: `Add ${siteNoun.toLowerCase()}`, icon: Plus, primary: true, onSelect: () => setAdding(true), hidden: !canManage }]}
+        related={[{ label: 'Arrange regions in the Org chart', to: '/org/chart?view=field' }]}
       />
       {query.isError ? <QueryError what={sitesNoun.toLowerCase()} query={query} /> : null}
-      <div className="flex flex-wrap items-center gap-3">
-        <label htmlFor="sites-region" className="text-sm text-ink-muted">
-          Region
-        </label>
-        <Select id="sites-region" size="sm" value={region} onChange={(e) => setRegion(e.target.value)}>
-          <option value="">Every region</option>
-          {regions.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-          <option value="none">No region</option>
-        </Select>
-        <Link to="/org/chart?view=field" className="text-sm text-accent underline-offset-2 hover:underline">
-          Arrange regions in the Org chart
-        </Link>
-      </div>
       <DataGrid<SiteRow>
         id="sites"
         caption={sitesNoun}
@@ -145,10 +128,43 @@ export function SitesAdmin() {
         columns={columns}
         rowKey={(r) => r.id}
         loading={query.isPending}
-        urlState={false}
+        urlKey="sites"
+        filters={
+          <>
+            <Select aria-label="Region" size="sm" className="w-full sm:w-48" value={region} onChange={(e) => setRegion(e.target.value)}>
+              <option value="">Every region</option>
+              {regions.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+              <option value="none">No region</option>
+            </Select>
+            {inactiveCount > 0 && (
+              <FilterChip active={showInactive} onClick={() => setShowInactive(!showInactive)} count={inactiveCount}>
+                Include inactive
+              </FilterChip>
+            )}
+          </>
+        }
+        filterKeys={['region', 'inactive']}
         exportCsv={{ filename: 'sites' }}
         search={{ placeholder: `Search ${sitesNoun.toLowerCase()}` }}
-        empty={{ icon: Building2, title: `No ${sitesNoun.toLowerCase()} yet`, description: `Add the first ${siteNoun.toLowerCase()} to schedule shifts and pin people to it.` }}
+        empty={
+          // Only closed places on file: say so, never "No stores yet" over ten inactive ones.
+          all.length > 0 && !showInactive && inactiveCount === all.length
+            ? {
+                icon: Building2,
+                title: `No active ${sitesNoun.toLowerCase()}`,
+                description: `${inactiveCount} inactive ${inactiveCount === 1 ? siteNoun.toLowerCase() : sitesNoun.toLowerCase()} on file.`,
+                action: (
+                  <Button size="sm" variant="outline" onClick={() => setShowInactive(true)}>
+                    Show inactive
+                  </Button>
+                ),
+              }
+            : { icon: Building2, title: `No ${sitesNoun.toLowerCase()} yet`, description: `Add the first ${siteNoun.toLowerCase()} to schedule shifts and pin people to it.` }
+        }
         onRowClick={(r) => setEditing(r)}
         rowActionLabel={(r) => `Edit ${r.name}`}
       />

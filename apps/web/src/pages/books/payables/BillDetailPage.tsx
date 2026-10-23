@@ -22,6 +22,9 @@ import {
   withdrawBill,
 } from '@/lib/books/payablesApi';
 import { RecordTemplate } from '@/components/templates';
+import { PageHeader, type PageAction, type PageFact } from '@/components/ui/PageHeader';
+import { StickyActionBar } from '@/components/ui/StickyActionBar';
+import { useMinWidth } from '@/lib/useViewport';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -32,7 +35,7 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { toast } from '@/components/ui/Toaster';
-import { BillStatusBadge, LinesEditor, METHOD_LABEL, PayBillsDialog, blankLine, dueWords, errText, invalidatePayables, linesTotal, money, toLineInputs, useBooksWrite, type DraftLine } from './payablesKit';
+import { BillStatusBadge, LinesEditor, METHOD_LABEL, PayBillsDialog, blankLine, errText, invalidatePayables, linesTotal, money, toLineInputs, useBooksWrite, type DraftLine } from './payablesKit';
 
 /**
  * One bill: what it's for, line by line; who approves it (never the person
@@ -145,6 +148,7 @@ function NewBill() {
   const [form, setForm] = useState<FormState>({ vendorId: params.get('vendorId') ?? '', billNumber: '', billDate: ymdLocal(), dueDate: '', dueTouched: false, memo: '', lines: [blankLine()] });
   const [file, setFile] = useState<File | null>(null);
   const [entered, setEntered] = useState(0);
+  const wide = useMinWidth(640);
   const save = useMutation({
     mutationFn: async (how: 'draft' | 'submit' | 'another') => {
       const { bill } = await createBill(toInput(form));
@@ -167,39 +171,46 @@ function NewBill() {
     },
     onError: (err) => toast.error(errText(err, 'Could not save the bill.')),
   });
+  const ready = formReady(form) && !save.isPending;
+  const busy = (how: 'draft' | 'submit' | 'another') => save.isPending && save.variables === how;
   return (
-    <RecordTemplate
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Bills', to: '/books/bills' }, { label: 'New bill' }]}
-      title="New bill"
-      subtitle={entered > 0 ? `${entered} sent for approval this sitting. Enter it as the vendor sent it.` : 'Enter it as the vendor sent it. It’s owed — on the books — once a second person approves it.'}
-      actions={
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => save.mutate('draft')} loading={save.isPending && save.variables === 'draft'} disabled={!formReady(form) || save.isPending}>
-            Save draft
-          </Button>
-          <Button variant="secondary" onClick={() => save.mutate('another')} loading={save.isPending && save.variables === 'another'} disabled={!formReady(form) || save.isPending}>
-            Send & enter another
-          </Button>
-          <Button onClick={() => save.mutate('submit')} loading={save.isPending && save.variables === 'submit'} disabled={!formReady(form) || save.isPending}>
+    <div className="space-y-[var(--d-stack-lg)]">
+      <PageHeader
+        title="New bill"
+        subtitle={entered > 0 ? `${entered} sent for approval this sitting. Enter it as the vendor sent it.` : 'Enter it as the vendor sent it. It’s owed — on the books — once a second person approves it.'}
+        // On a phone the three buttons sat above the form with "Send for
+        // approval" cut off the edge; there they ride in the bar at the
+        // bottom, under the thumb, once the form is filled.
+        actions={
+          wide
+            ? [
+                { label: 'Send for approval', primary: true, onSelect: () => save.mutate('submit'), disabled: !ready, loading: busy('submit') },
+                { label: 'Send & enter another', onSelect: () => save.mutate('another'), disabled: !ready, loading: busy('another') },
+                { label: 'Save draft', onSelect: () => save.mutate('draft'), disabled: !ready, loading: busy('draft') },
+              ]
+            : undefined
+        }
+      />
+      <Card>
+        <CardContent className="space-y-5 p-4 sm:p-5">
+          <BillForm value={form} onChange={setForm} />
+          <FilePick key={entered} file={file} onFile={setFile} />
+        </CardContent>
+      </Card>
+      <StickyActionBar
+        label="Bill"
+        primary={
+          <Button onClick={() => save.mutate('submit')} loading={busy('submit')} disabled={!ready}>
             Send for approval
           </Button>
-        </div>
-      }
-      tabs={[
-        {
-          key: 'bill',
-          label: 'Bill',
-          content: (
-            <Card>
-              <CardContent className="space-y-5 p-5">
-                <BillForm value={form} onChange={setForm} />
-                <FilePick key={entered} file={file} onFile={setFile} />
-              </CardContent>
-            </Card>
-          ),
-        },
-      ]}
-    />
+        }
+        more={[
+          { label: 'Send & enter another', onSelect: () => save.mutate('another'), disabled: !ready },
+          { label: 'Save draft', onSelect: () => save.mutate('draft'), disabled: !ready },
+        ]}
+        note={formReady(form) ? undefined : 'Pick the vendor and enter an amount to send it.'}
+      />
+    </div>
   );
 }
 
@@ -260,7 +271,7 @@ function ExistingBill({ id }: { id: string }) {
     act.mutate(() =>
       decideApprovalRequest(bill.approval!.id, { decision, ...(reason ? { reason } : {}) }).then(() => {
         done(decision === 'APPROVE' ? `Approved — ${money(bill.total)} to ${bill.vendorName} is on the books.` : 'Rejected — it’s back to draft.');
-        if (thenNext) navigate(nextBill ? `/books/bills/${nextBill.id}` : '/books/bills?tab=approve');
+        if (thenNext) navigate(nextBill ? `/books/bills/${nextBill.id}` : '/books/bills?status=approve');
       }),
     );
   };
@@ -269,49 +280,54 @@ function ExistingBill({ id }: { id: string }) {
     if (reason) act.mutate(() => fn(reason).then(() => done(okMsg)));
   };
 
-  const actions = write ? (
-    <div className="flex flex-wrap gap-2">
-      {bill.status === 'DRAFT' && !editing && (
-        <>
-          <Button variant="secondary" onClick={() => setEditing(fromBill(bill))}>
-            Edit
-          </Button>
-          <Button onClick={() => act.mutate(() => submitBill(bill.id).then(() => done('Sent for approval.')))} loading={act.isPending}>
-            Send for approval
-          </Button>
-        </>
-      )}
-      {bill.status === 'PENDING_APPROVAL' && (
-        <Button variant="secondary" onClick={() => act.mutate(() => withdrawBill(bill.id).then(() => done('Withdrawn — it’s a draft again.')))}>
-          Withdraw
-        </Button>
-      )}
-      {open && vendor && (
-        <Button onClick={() => setPaying(true)}>
-          Pay {money(bill.balance)}
-        </Button>
-      )}
-      {bill.status === 'APPROVED' && livePayments.length === 0 && (
-        <Button variant="ghost" onClick={() => withReason('Reopen this bill?', 'Its entry comes off the books and it goes back to draft — it needs approving again before it’s owed.', 'Reopen', (r) => reopenBill(bill.id, r), 'Reopened as a draft.')}>
-          Reopen to change
-        </Button>
-      )}
-      {bill.status !== 'VOID' && bill.status !== 'PAID' && livePayments.length === 0 && (
-        <Button variant="ghost" onClick={() => withReason(`Void the bill from ${bill.vendorName}?`, 'It stays on record, marked void, and is no longer owed.', 'Void bill', (r) => voidBill(bill.id, r), 'Voided.')}>
-          Void
-        </Button>
-      )}
-    </div>
-  ) : undefined;
+  const draft = bill.status === 'DRAFT' && !editing;
+  // One primary (Send, Approve in the panel, or Pay); Withdraw, Reopen and
+  // Void sit in More, each behind its own reason prompt.
+  const actions: PageAction[] = write
+    ? [
+        { label: 'Send for approval', primary: true, hidden: !draft, loading: act.isPending, onSelect: () => act.mutate(() => submitBill(bill.id).then(() => done('Sent for approval.'))) },
+        { label: 'Edit', hidden: !draft, onSelect: () => setEditing(fromBill(bill)) },
+        { label: `Pay ${money(bill.balance)}`, primary: true, hidden: !(open && vendor), onSelect: () => setPaying(true) },
+        {
+          label: 'Withdraw',
+          overflow: true,
+          hidden: bill.status !== 'PENDING_APPROVAL',
+          confirm: { title: 'Withdraw this bill?', description: 'It comes back to you as a draft and leaves the approval queue.', confirmLabel: 'Withdraw' },
+          onSelect: () => act.mutate(() => withdrawBill(bill.id).then(() => done('Withdrawn — it’s a draft again.'))),
+        },
+        {
+          label: 'Reopen to change',
+          destructive: true,
+          hidden: !(bill.status === 'APPROVED' && livePayments.length === 0),
+          onSelect: () => void withReason('Reopen this bill?', 'Its entry comes off the books and it goes back to draft — it needs approving again before it’s owed.', 'Reopen', (r) => reopenBill(bill.id, r), 'Reopened as a draft.'),
+        },
+        {
+          label: 'Void bill',
+          destructive: true,
+          hidden: !(bill.status !== 'VOID' && bill.status !== 'PAID' && livePayments.length === 0),
+          onSelect: () => void withReason(`Void the bill from ${bill.vendorName}?`, 'It stays on record, marked void, and is no longer owed.', 'Void bill', (r) => voidBill(bill.id, r), 'Voided.'),
+        },
+      ]
+    : [];
+  const terms = vendor ? (vendor.termsDays ? `Net ${vendor.termsDays}` : 'Due on receipt') : null;
+  const facts: PageFact[] = [
+    { label: 'Vendor', value: bill.vendorName, to: `/books/vendors/${bill.vendorId}` },
+    { label: 'Invoice date', value: fmtDate(bill.billDate) },
+    // The lateness is the status badge's to say; the fact is the date.
+    { label: 'Due', value: fmtDate(bill.dueDate) },
+    ...(terms ? [{ label: 'Terms', value: terms }] : []),
+    ...(open && bill.balance !== bill.total ? [{ label: 'Still owed', value: money(bill.balance) }] : []),
+  ];
 
   return (
     <>
       <RecordTemplate
-        breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Bills', to: '/books/bills' }, { label: bill.billNumber ? `Invoice ${bill.billNumber}` : 'Bill' }]}
         title={`${money(bill.total)} from ${bill.vendorName}`}
-        subtitle={`${bill.billNumber ? `Invoice ${bill.billNumber} · ` : ''}dated ${fmtDate(bill.billDate)} · ${dueWords(bill)}${bill.recurringName ? ` · made by “${bill.recurringName}”` : ''}`}
+        subtitle={[bill.billNumber ? `Invoice ${bill.billNumber}` : 'No invoice number', bill.recurringName ? `made by “${bill.recurringName}”` : null].filter(Boolean).join(' · ')}
         status={<BillStatusBadge bill={bill} />}
+        facts={facts}
         actions={actions}
+        aside={<Invoice bill={bill} canUpload={write} onUploaded={() => done('Invoice attached.')} />}
         summary={<ApprovalPanel bill={bill} onDecide={decide} busy={act.isPending} next={nextBill} />}
         activeTab={tab}
         onTabChange={setTab}
@@ -390,7 +406,6 @@ function ExistingBill({ id }: { id: string }) {
                 </Card>
               ),
           },
-          { key: 'invoice', label: 'Invoice', content: <Invoice bill={bill} canUpload={write} onUploaded={() => done('Invoice attached.')} /> },
         ]}
       />
       {paying && vendor && (
@@ -506,37 +521,44 @@ function Invoice({ bill, canUpload, onUploaded }: { bill: BooksBill; canUpload: 
   });
   const url = billAttachmentUrl(bill.id);
   const isPdf = (bill.attachmentName ?? '').toLowerCase().endsWith('.pdf');
+  // Beside the lines (the record's aside), so whoever approves sees the
+  // vendor's invoice next to what was entered — not on a third tab.
+  const picker = canUpload && (
+    <>
+      <input ref={ref} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="sr-only" aria-label="Invoice file" onChange={(e) => e.target.files?.[0] && up.mutate(e.target.files[0])} />
+      <Button size="sm" variant={bill.hasAttachment ? 'ghost' : 'secondary'} onClick={() => ref.current?.click()} loading={up.isPending}>
+        <FileUp className="h-4 w-4" aria-hidden="true" />
+        {bill.hasAttachment ? 'Replace' : 'Attach the invoice'}
+      </Button>
+    </>
+  );
   return (
-    <div className="space-y-3">
-      {canUpload && (
-        <div className="flex justify-end">
-          <input ref={ref} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="sr-only" aria-label="Invoice file" onChange={(e) => e.target.files?.[0] && up.mutate(e.target.files[0])} />
-          <Button variant="secondary" onClick={() => ref.current?.click()} loading={up.isPending}>
-            <FileUp className="h-4 w-4" aria-hidden="true" />
-            {bill.hasAttachment ? 'Replace the invoice' : 'Attach the invoice'}
-          </Button>
-        </div>
-      )}
+    <section aria-label="The vendor’s invoice">
       {bill.hasAttachment ? (
         <Card>
           <CardContent className="space-y-2 p-3">
-            <p className="flex items-center justify-between gap-3 text-sm">
-              <span className="truncate text-ink">{bill.attachmentName}</span>
-              <a href={`${url}?download=1`} className="text-gold hover:underline">
-                Download
-              </a>
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate font-medium text-ink" title={bill.attachmentName ?? undefined}>
+                {bill.attachmentName}
+              </span>
+              <span className="flex items-center gap-1">
+                <a href={`${url}?download=1`} className="text-gold hover:underline">
+                  Download
+                </a>
+                {picker}
+              </span>
+            </div>
             {isPdf ? (
-              <iframe title={`Invoice ${bill.billNumber ?? ''}`} src={url} className="h-[70vh] w-full rounded-md border border-line bg-surface" />
+              <iframe title={`Invoice ${bill.billNumber ?? ''}`} src={url} className="h-[60vh] w-full rounded-md border border-line bg-surface" />
             ) : (
-              <img src={url} alt={`Invoice ${bill.billNumber ?? ''} from ${bill.vendorName}`} className="max-h-[70vh] w-auto rounded-md border border-line" />
+              <img src={url} alt={`Invoice ${bill.billNumber ?? ''} from ${bill.vendorName}`} className="max-h-[60vh] w-full rounded-md border border-line object-contain" />
             )}
           </CardContent>
         </Card>
       ) : (
-        <EmptyState icon={Paperclip} title="No invoice attached" description="Keep the vendor’s invoice with the bill — auditors ask for it." />
+        <EmptyState icon={Paperclip} title="No invoice attached" description="Keep the vendor’s invoice with the bill — auditors ask for it." action={picker || undefined} />
       )}
-    </div>
+    </section>
   );
 }
 

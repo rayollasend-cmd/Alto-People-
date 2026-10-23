@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AtSign, ChevronLeft, ShieldCheck, ShieldX } from 'lucide-react';
+import { AtSign, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError } from '@/lib/api';
 import { confirmEmailChange } from '@/lib/settingsApi';
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
+import { LinkProblem } from '@/components/LinkProblem';
 
 /**
  * Public — completes the two-step email change. The token comes from the
@@ -21,6 +22,9 @@ export function ConfirmEmailChange() {
   const { token = '' } = useParams<{ token: string }>();
   const [state, setState] = useState<'pending' | 'done' | 'error'>('pending');
   const [error, setError] = useState<string | null>(null);
+  // 'link': the link itself can't be used (expired, used, cut off) — the next
+  // step is the same either way: sign in and ask again from Settings.
+  const [problem, setProblem] = useState<'link' | 'taken' | 'other'>('other');
   // The effect would otherwise fire twice under React 18 strict mode and
   // burn the token on the first call, surfacing an "expired" error to the
   // user even though the change actually succeeded.
@@ -31,7 +35,7 @@ export function ConfirmEmailChange() {
     ranRef.current = true;
     if (!token) {
       setState('error');
-      setError('No confirmation token in the link.');
+      setProblem('link');
       return;
     }
     confirmEmailChange({ token })
@@ -41,13 +45,9 @@ export function ConfirmEmailChange() {
         if (err instanceof NetworkError) {
           setError('Network error — check your connection and try again.');
         } else if (err instanceof ApiError && err.code === 'invalid_token') {
-          setError(
-            'This confirmation link is invalid or expired. Request a new email change from /settings.',
-          );
+          setProblem('link');
         } else if (err instanceof ApiError && err.code === 'email_in_use') {
-          setError(
-            'That email was claimed by another account before you could confirm. Pick a different one in /settings.',
-          );
+          setProblem('taken');
         } else if (err instanceof ApiError) {
           setError(err.message);
         } else {
@@ -59,6 +59,7 @@ export function ConfirmEmailChange() {
   return (
     <AuthShell>
 
+      {state !== 'error' && (
       <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
         {state === 'pending' && (
           <>
@@ -86,20 +87,26 @@ export function ConfirmEmailChange() {
             </Button>
           </>
         )}
-        {state === 'error' && (
-          <>
-            <ShieldX className="mx-auto h-12 w-12 text-alert mb-4" />
-            <AuthCardTitle size="md">Couldn't confirm</AuthCardTitle>
-            <p className="text-silver text-sm mb-6">{error}</p>
-            <Button asChild variant="secondary" className="w-full">
-              <Link to="/login">
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Back to sign in
-              </Link>
-            </Button>
-          </>
-        )}
       </div>
+      )}
+      {state === 'error' && (
+        <LinkProblem
+          kind={problem === 'link' ? 'expired' : 'error'}
+          title={problem === 'link' ? 'This confirmation link can’t be used' : problem === 'taken' ? 'That email is taken' : 'Couldn’t confirm the change'}
+          reason={
+            problem === 'link'
+              ? 'It has expired or was already used. Sign in and request a new change in Settings.'
+              : problem === 'taken'
+                ? 'Another account claimed that email before you could confirm. Sign in and pick a different one in Settings.'
+                : error
+          }
+          action={
+            <Button asChild size="lg" className="w-full sm:w-auto">
+              <Link to="/login?next=/settings">Sign in</Link>
+            </Button>
+          }
+        />
+      )}
 
     </AuthShell>
   );

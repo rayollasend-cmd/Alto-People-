@@ -78,6 +78,8 @@ describe('<ProfileInfoTask>', () => {
     await user.type(screen.getByLabelText(/last name/i), 'Lopez');
     await user.type(screen.getByLabelText(/date of birth/i), '1998-03-14');
     await user.type(screen.getByLabelText(/phone/i), '+1-850-555-0142');
+    // Address line 1 is required now (payroll and the W-2 need the street).
+    await user.type(screen.getByLabelText(/address line 1/i), '218 Front Beach Dr');
     await user.type(screen.getByLabelText(/^city$/i), 'Tallahassee');
     await user.type(screen.getByLabelText(/^zip$/i), '32301');
 
@@ -93,6 +95,7 @@ describe('<ProfileInfoTask>', () => {
         // z.string().date() and a timestamp fails the whole submission.
         dob: '1998-03-14',
         phone: '+1-850-555-0142',
+        addressLine1: '218 Front Beach Dr',
         city: 'Tallahassee',
         zip: '32301',
         state: 'FL',

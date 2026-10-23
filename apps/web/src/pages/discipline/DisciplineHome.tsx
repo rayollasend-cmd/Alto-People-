@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Download, Gavel, Plus, ShieldOff } from 'lucide-react';
+import { Gavel, Plus, ShieldOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -9,6 +9,7 @@ import {
   getLadder,
   issueDisciplinaryAction,
   KIND_LABELS,
+  getDisciplineSummary,
   listDisciplinaryActions,
   rescindDisciplinaryAction,
   type DisciplinaryActionRow,
@@ -16,32 +17,29 @@ import {
   type DisciplineStatus,
 } from '@/lib/discipline118Api';
 import { useAuth, useTerm } from '@/lib/auth';
-import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
-import { StatusBadge, statusLabel } from '@/lib/status';
+import { StatusBadge } from '@/lib/status';
 import {
   AssociatePicker,
   type PickedAssociate,
   Badge,
   Button,
-  Card,
-  CardContent,
   Drawer,
   DrawerBody,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-  EmptyState,
-  ErrorBanner,
   FilterChip,
   Input,
-  SearchInput,
   Select,
-  SkeletonRows,
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { QueryError } from '@/components/ui/QueryError';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlFilters, useUrlParam } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 import { pickOne } from '@/lib/validationCopy';
@@ -72,245 +70,206 @@ const KIND_ORDER: DisciplineKind[] = [
   'TERMINATION',
 ];
 
+/** The log's view filter: everything in force (the default), one status, or all. */
+type ViewFilter = 'IN_FORCE' | DisciplineStatus | 'ALL';
+const VIEW_FILTERS: readonly ViewFilter[] = ['IN_FORCE', 'ACTIVE', 'ACKNOWLEDGED', 'RESCINDED', 'ALL'];
+const KIND_FILTERS: readonly (DisciplineKind | 'ALL')[] = ['ALL', ...KIND_ORDER];
+/** One meaning per word: the API's ACTIVE is an action the person hasn't acknowledged yet. */
+const STATUS_WORDS: Record<DisciplineStatus, string> = {
+  ACTIVE: 'Awaiting acknowledgment',
+  ACKNOWLEDGED: 'Acknowledged',
+  RESCINDED: 'Rescinded',
+};
+const VIEW_WORDS: Record<ViewFilter, string> = {
+  IN_FORCE: 'Active',
+  ALL: 'All',
+  ...STATUS_WORDS,
+};
+
 export function DisciplineHome() {
   const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
-  const [filter, setFilter] = useState<DisciplineStatus | 'ALL'>('ACTIVE');
-  const [kindFilter, setKindFilter] = useState<DisciplineKind | 'ALL'>('ALL');
-  const [search, setSearch] = useState('');
+  // The view and kind live in the URL (?status=, ?kind=), so a filtered log
+  // can be linked and Back keeps it.
+  const [filter, setFilter] = useUrlParam<ViewFilter>('status', 'IN_FORCE', VIEW_FILTERS);
+  const [kindFilter, setKindFilter] = useUrlParam<DisciplineKind | 'ALL'>('kind', 'ALL', KIND_FILTERS);
+  const { active: activeFilters, clear: clearFilters } = useUrlFilters(['status', 'kind']);
   const [showNew, setShowNew] = useState(false);
   const [openRow, setOpenRow] = useState<DisciplinaryActionRow | null>(null);
 
   const refreshQuery = useQuery({
     queryKey: ['DisciplineHome', 'rows', filter, kindFilter],
     queryFn: () => listDisciplinaryActions({
-      status: filter === 'ALL' ? undefined : filter,
+      status: filter === 'ALL' || filter === 'IN_FORCE' ? undefined : filter,
+      state: filter === 'IN_FORCE' ? 'in-force' : undefined,
       kind: kindFilter === 'ALL' ? undefined : kindFilter,
     }),
   });
+  const summaryQuery = useQuery({ queryKey: ['DisciplineHome', 'summary'], queryFn: getDisciplineSummary });
+  const summary = summaryQuery.data;
   const rows: DisciplinaryActionRow[] | null = refreshQuery.data?.actions ?? null;
-  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError
-            ? refreshQuery.error.message
-            : 'Failed to load disciplinary actions.' : null;
-  const refresh = () => void refreshQuery.refetch();
-
-  const visibleRows = useMemo(() => {
-    const all = rows ?? [];
-    const q = search.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter(
-      (a) =>
-        a.associateName.toLowerCase().includes(q) ||
-        a.associateEmail.toLowerCase().includes(q),
-    );
-  }, [rows, search]);
-
-  const exportCsv = () => {
-    downloadCsv(`disciplinary-actions-${ymdLocal()}.csv`, [
-      [
-        term('worker'),
-        'Email',
-        'Kind',
-        'Status',
-        'Incident date',
-        'Effective date',
-        'Suspension days',
-        'Description',
-        'Issued by',
-        'Acknowledged at',
-        'Rescinded at',
-      ],
-      ...visibleRows.map((a) => [
-        a.associateName,
-        a.associateEmail,
-        KIND_LABELS[a.kind],
-        statusLabel(a.status),
-        a.incidentDate,
-        a.effectiveDate,
-        a.suspensionDays ?? '',
-        a.description,
-        a.issuedByEmail ?? '',
-        a.acknowledgedAt ? fmtDateTime(a.acknowledgedAt) : '',
-        a.rescindedAt ? fmtDateTime(a.rescindedAt) : '',
-      ]),
-    ]);
+  const refresh = () => {
+    void refreshQuery.refetch();
+    void summaryQuery.refetch();
   };
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Disciplinary actions"
-        subtitle="Formal warning ladder. Verbal → written → final → suspension → termination."
-        breadcrumbs={[{ label: term('nav.compliance') }, { label: 'Disciplinary actions' }]}
+      title="Disciplinary actions"
+      subtitle="Formal warning ladder. Verbal → written → final → suspension → termination."
+      actions={canManage ? [{ label: 'Issue action', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1">
-          {(['ACTIVE', 'ACKNOWLEDGED', 'RESCINDED', 'ALL'] as const).map((s) => (
-            <FilterChip
-              key={s}
-              active={filter === s}
-              onClick={() => setFilter(s)}
-            >
-              {s === 'ALL' ? 'All' : statusLabel(s)}
-            </FilterChip>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <SearchInput
-            aria-label="Search by name"
-            className="h-8 w-52 text-xs"
-            placeholder="Search by name"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+      {summary && (
+        <MetricStrip label="Disciplinary actions at a glance" empty={summary.inForce === 0 && summary.issued90d === 0}>
+          <MetricCard
+            label="Active actions"
+            value={summary.inForce}
+            hint="Not rescinded"
+            onClick={() => {
+              clearFilters();
+            }}
+            selected={filter === 'IN_FORCE' && kindFilter === 'ALL'}
           />
-          <Select
-            size="sm"
-            aria-label="Filter by kind"
-            value={kindFilter}
-            onChange={(e) =>
-              setKindFilter(e.target.value as DisciplineKind | 'ALL')
-            }
-          >
-            <option value="ALL">All kinds</option>
-            {KIND_ORDER.map((k) => (
-              <option key={k} value={k}>
-                {KIND_LABELS[k]}
-              </option>
-            ))}
-          </Select>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={exportCsv}
-            disabled={visibleRows.length === 0}
-          >
-            <Download className="mr-2 h-4 w-4" /> Export CSV
-          </Button>
-          {canManage && (
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Issue action
-            </Button>
-          )}
-        </div>
-      </div>
+          <MetricCard
+            label="Awaiting acknowledgment"
+            value={summary.awaitingAck}
+            hint="Issued, not yet signed by the person"
+            tone={summary.awaitingAck > 0 ? 'warning' : 'default'}
+            onClick={() => {
+              setKindFilter('ALL');
+              setFilter('ACTIVE');
+            }}
+            selected={filter === 'ACTIVE' && kindFilter === 'ALL'}
+          />
+          <MetricCard
+            label="Final warnings"
+            value={summary.finalWarningPeople}
+            hint={summary.finalWarningPeople === 1 ? 'Person one step from termination' : 'People one step from termination'}
+            tone={summary.finalWarningPeople > 0 ? 'alert' : 'default'}
+            onClick={() => {
+              setFilter('IN_FORCE');
+              setKindFilter('FINAL_WARNING');
+            }}
+            selected={filter === 'IN_FORCE' && kindFilter === 'FINAL_WARNING'}
+          />
+          <MetricCard label="Issued in 90 days" value={summary.issued90d} hint="Every kind, any status" />
+        </MetricStrip>
+      )}
 
-      <Card>
-        <CardContent className="p-0">
-          {loadError ? (
-            <div className="p-6">
-              <ErrorBanner
-                action={
-                  <Button size="sm" variant="secondary" onClick={refresh}>
-                    Retry
-                  </Button>
-                }
+      {refreshQuery.error ? (
+        <QueryError what="disciplinary actions" query={refreshQuery} />
+      ) : (
+        <DataGrid<DisciplinaryActionRow>
+          id="discipline"
+          caption="Disciplinary actions"
+          noun={{ one: 'action', many: 'actions' }}
+          rows={rows}
+          loading={rows === null}
+          rowKey={(a) => a.id}
+          search={{ placeholder: 'Search by name' }}
+          urlKey="actions"
+          exportCsv={{ filename: `disciplinary-actions-${ymdLocal()}` }}
+          activeFilters={activeFilters}
+          onClearFilters={clearFilters}
+          filters={
+            <>
+              {VIEW_FILTERS.map((s) => (
+                <FilterChip key={s} active={filter === s} onClick={() => setFilter(s)}>
+                  {VIEW_WORDS[s]}
+                </FilterChip>
+              ))}
+              <Select
+                size="sm"
+                aria-label="Filter by kind"
+                value={kindFilter}
+                onChange={(e) => setKindFilter(e.target.value as DisciplineKind | 'ALL')}
               >
-                {loadError}
-              </ErrorBanner>
-            </div>
-          ) : rows === null ? (
-            <div className="p-6">
-              <SkeletonRows count={4} />
-            </div>
-          ) : visibleRows.length === 0 ? (
-            <EmptyState
-              icon={Gavel}
-              title="No disciplinary actions"
-              description={
-                filter === 'ACTIVE' &&
-                kindFilter === 'ALL' &&
-                !search.trim()
-                  ? 'No active actions.'
-                  : 'Nothing matches this filter.'
-              }
-            />
-          ) : (
-            <DataGrid<(typeof visibleRows)[number]>
-              id="discipline"
-              caption="Disciplinary actions"
-              rows={visibleRows}
-              rowKey={(a) => a.id}
-              search={false}
-              urlState={false}
-              exportCsv={{ filename: 'disciplinary-actions' }}
-              onRowClick={(a) => setOpenRow(a)}
-              rowActionLabel={(a) => `Open the ${KIND_LABELS[a.kind]} for ${a.associateName}`}
-              columns={[
-                {
-                  key: 'associate',
-                  header: term('worker'),
-                  accessor: (a) => a.associateName,
-                  sortable: true,
-                  primary: true,
-                  className: 'font-medium text-white',
-                },
-                {
-                  key: 'email',
-                  header: 'Email',
-                  accessor: (a) => a.associateEmail,
-                  sortable: true,
-                  cardMeta: true,
-                  className: 'text-xs text-silver',
-                },
-                {
-                  key: 'kind',
-                  header: 'Kind',
-                  accessor: (a) => KIND_LABELS[a.kind],
-                  sortable: true,
-                  cardMeta: true,
-                  cell: (a) => (
-                    <Badge variant={KIND_VARIANT[a.kind]}>
-                      {KIND_LABELS[a.kind]}
-                      {a.kind === 'SUSPENSION' && a.suspensionDays ? ` (${a.suspensionDays}d)` : ''}
-                    </Badge>
-                  ),
-                },
-                {
-                  key: 'incident',
-                  header: 'Incident',
-                  accessor: (a) => a.incidentDate,
-                  sortable: true,
-                  searchable: false,
-                  className: 'text-sm text-silver whitespace-nowrap',
-                  cell: (a) => fmtDate(parseYmd(a.incidentDate)),
-                },
-                {
-                  key: 'effective',
-                  header: 'Effective',
-                  accessor: (a) => a.effectiveDate,
-                  sortable: true,
-                  searchable: false,
-                  className: 'text-sm text-silver whitespace-nowrap',
-                  cell: (a) => fmtDate(parseYmd(a.effectiveDate)),
-                },
-                {
-                  key: 'status',
-                  header: 'Status',
-                  accessor: (a) => a.status,
-                  sortable: true,
-                  cell: (a) => <StatusBadge status={a.status} overrides={DISCIPLINE_STATUS_TONES} />,
-                },
-                {
-                  key: 'actions',
-                  header: 'Actions',
-                  accessor: () => null,
-                  searchable: false,
-                  csv: () => '',
-                  align: 'right',
-                  stopRowClick: true,
-                  cell: (a) => (
-                    <Button size="sm" variant="ghost" onClick={() => setOpenRow(a)}>
-                      View
-                    </Button>
-                  ),
-                },
-              ]}
-            />
-          )}
-        </CardContent>
-      </Card>
+                <option value="ALL">All kinds</option>
+                {KIND_ORDER.map((k) => (
+                  <option key={k} value={k}>
+                    {KIND_LABELS[k]}
+                  </option>
+                ))}
+              </Select>
+            </>
+          }
+          empty={{
+            icon: Gavel,
+            title: 'No disciplinary actions',
+            description: 'Warnings, suspensions and terminations you issue are logged here, with the person’s acknowledgment.',
+            action: canManage ? (
+              <Button size="sm" variant="outline" onClick={() => setShowNew(true)}>
+                <Plus className="mr-2 h-4 w-4" /> Issue action
+              </Button>
+            ) : undefined,
+          }}
+          onRowClick={(a) => setOpenRow(a)}
+          rowActionLabel={(a) => `Open the ${KIND_LABELS[a.kind]} for ${a.associateName}`}
+          columns={[
+            {
+              key: 'associate',
+              header: term('worker'),
+              accessor: (a) => `${a.associateName} ${a.associateEmail}`,
+              csv: (a) => a.associateName,
+              sortable: true,
+              primary: true,
+              className: 'font-medium text-white',
+              cell: (a) => a.associateName,
+            },
+            {
+              key: 'email',
+              header: 'Email',
+              accessor: (a) => a.associateEmail,
+              sortable: true,
+              defaultHidden: true,
+              className: 'text-xs text-silver',
+            },
+            {
+              key: 'kind',
+              header: 'Kind',
+              accessor: (a) => KIND_LABELS[a.kind],
+              sortable: true,
+              cardMeta: true,
+              cell: (a) => (
+                <Badge variant={KIND_VARIANT[a.kind]}>
+                  {KIND_LABELS[a.kind]}
+                  {a.kind === 'SUSPENSION' && a.suspensionDays ? ` (${a.suspensionDays}d)` : ''}
+                </Badge>
+              ),
+            },
+            {
+              key: 'incident',
+              header: 'Incident',
+              accessor: (a) => a.incidentDate,
+              sortable: true,
+              searchable: false,
+              className: 'text-sm text-silver whitespace-nowrap',
+              cell: (a) => fmtDate(parseYmd(a.incidentDate)),
+            },
+            {
+              key: 'effective',
+              header: 'Effective',
+              accessor: (a) => a.effectiveDate,
+              sortable: true,
+              searchable: false,
+              className: 'text-sm text-silver whitespace-nowrap',
+              cell: (a) => fmtDate(parseYmd(a.effectiveDate)),
+            },
+            {
+              key: 'status',
+              header: 'Status',
+              accessor: (a) => STATUS_WORDS[a.status],
+              sortable: true,
+              cardMeta: true,
+              cell: (a) => <StatusBadge status={a.status} overrides={DISCIPLINE_STATUS_TONES} label={STATUS_WORDS[a.status]} />,
+            },
+            { key: 'issuedBy', header: 'Issued by', accessor: (a) => a.issuedByEmail ?? '', sortable: true, defaultHidden: true, className: 'text-xs text-silver' },
+            { key: 'acknowledged', header: 'Acknowledged', accessor: (a) => a.acknowledgedAt ?? '', csv: (a) => (a.acknowledgedAt ? fmtDateTime(a.acknowledgedAt) : ''), sortable: true, searchable: false, defaultHidden: true, cell: (a) => (a.acknowledgedAt ? fmtDate(a.acknowledgedAt) : '—') },
+          ]}
+        />
+      )}
 
       {showNew && (
         <NewActionDrawer
@@ -629,6 +588,15 @@ function DetailDrawer({
               {fmtDateTime(row.acknowledgedAt)} —{' '}
               <span className="italic">{row.acknowledgedSig}</span>
             </div>
+          </div>
+        )}
+        {/* The employee's side, in their words (F500 G5). */}
+        {row.employeeResponse && (
+          <div className="space-y-1 pt-2 border-t border-navy-secondary" data-testid="discipline-employee-response">
+            <div className="text-xs uppercase tracking-wider text-silver">
+              Employee’s response{row.employeeRespondedAt ? ` · ${fmtDateTime(row.employeeRespondedAt)}` : ''}
+            </div>
+            <div className="text-sm text-ink whitespace-pre-wrap">{row.employeeResponse}</div>
           </div>
         )}
         {row.rescindedAt && (

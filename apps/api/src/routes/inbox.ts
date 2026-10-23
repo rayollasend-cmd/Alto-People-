@@ -29,6 +29,7 @@ import { countApprovalQueues, deciderOf } from './approvals.js';
 import { billTabWhere } from '../lib/books/payables/bills.js';
 import { companyWorkweek } from '../lib/timeAnomalies.js';
 import { localDateKey } from '../lib/timezone.js';
+import { utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
 import { countDecidableApprovals } from '../lib/proposalDecisions.js';
 import { countDecidable } from '../lib/approvalRequests.js';
 import { deciderFrom } from './approvalRequests.js';
@@ -47,7 +48,9 @@ import { payrollFundingNeedingYou } from '../lib/banking/funding.js';
 import { countMovesThisWeek, countUnassigned } from './paySchedules.js';
 import { i9ReverificationWhere, i9RetentionWhere } from '../lib/hiringCompliance.js';
 import { certificationRequired } from '../lib/leaveOfAbsence.js';
-import { coverageGapPath, coverageGapsForUser } from '../lib/coverageGaps.js';
+import { coverageGapLabel, coverageGapPath, coverageGapsForUser } from '../lib/coverageGaps.js';
+import { daysPastDue, portalScopeOf, serviceReportToReview, unpaidStatementsWhere, waitingCandidatesWhere } from '../lib/portalNeedsYou.js';
+import { portalCalendar } from '../lib/portalMetrics.js';
 import { overdueContractDuties, seesContractDuties } from '../lib/contractDuties.js';
 import { stuckWhere } from '../lib/applicationFilters.js';
 
@@ -89,7 +92,38 @@ interface SourceDef {
    *  May answer a description of its own, when the size is best told in money,
    *  a narrower link, when the work sits in one corner of the queue, and the
    *  soonest deadline among what it counted. */
-  count: (user: SessionUser) => Promise<number | { count: number; description?: string; path?: string; dueAt?: Date | string | null; progress?: { done: number; total: number } }>;
+  count: (user: SessionUser) => Promise<
+    | number
+    | {
+        count: number;
+        description?: string;
+        path?: string;
+        dueAt?: Date | string | null;
+        /** A calendar-day deadline ('YYYY-MM-DD' or a @db.Date value): shown as that day, never shifted by a zone. */
+        dueDate?: Date | string | null;
+        /** The items' names, shown when the queue holds three or fewer. */
+        preview?: string[];
+        /** Ranks above the queue's own band right now (a same-day staffing gap). */
+        urgency?: InboxUrgency;
+        progress?: { done: number; total: number };
+      }
+  >;
+}
+
+/** The earliest calendar day given, as 'YYYY-MM-DD' (a @db.Date reads as UTC midnight). */
+function soonestDay(...dates: Array<Date | string | null | undefined>): string | null {
+  const days = dates
+    .filter((d): d is Date | string => !!d)
+    .map((d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d.slice(0, 10)))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  return days[0] ?? null;
+}
+
+/** When a window that starts at `startMinute` (the store's clock) begins today, as an instant. */
+function windowStartToday(startMinute: number, timeZone: string): Date {
+  const midnight = utcInstantOfLocalMidnight(localDateKey(new Date(), timeZone), timeZone);
+  return new Date(midnight.getTime() + startMinute * 60_000);
 }
 
 /** The earliest of the dates given, as the ISO the contract carries; null when none. */
@@ -346,7 +380,7 @@ const SOURCES: SourceDef[] = [
         prisma.i9Verification.count({ where }),
         prisma.i9Verification.findFirst({ where, orderBy: { workAuthExpiresAt: 'asc' }, select: { workAuthExpiresAt: true } }),
       ]);
-      return { count, dueAt: first?.workAuthExpiresAt ?? null };
+      return { count, dueDate: soonestDay(first?.workAuthExpiresAt) };
     },
   },
   {
@@ -450,8 +484,9 @@ const SOURCES: SourceDef[] = [
     urgency: 'legal',
     label: 'Tax filings rejected',
     description: 'The agency rejected an e-filed form. Fix what it named and file again.',
-    // The Returns tab lists the rejected W-2 / 1099 forms first (the old /payroll/tax redirects there too).
-    path: '/payroll/taxes?tab=returns',
+    // Year-end › Forms lists the rejected W-2 / 1099 / 941 forms first (F500 G3: one home for the forms;
+    // the old /payroll/tax and /payroll/taxes?tab=returns links still work).
+    path: '/payroll/year-end?tab=forms',
     visible: (u) => can(u, 'process:payroll'),
     count: () => prisma.taxForm.count({ where: { tenantId: tenantIdForWrite(), efileStatus: 'REJECTED' } }),
   },
@@ -654,9 +689,16 @@ const SOURCES: SourceDef[] = [
       const d = await overdueContractDuties(prisma, u);
       return {
         count: d.count,
-        dueAt: d.oldestDue ? `${d.oldestDue}T00:00:00.000Z` : null,
-        // The due chip carries the oldest day (in words, on the page); the line names the duties (F500 SH-4).
-        description: d.count ? `${d.items.map((i) => i.label).slice(0, 2).join('; ')}${d.count > 2 ? `; and ${d.count - 2} more` : ''}.` : 'Every contract duty is confirmed for its period.',
+        // A calendar day: the chip shows it as that day in every zone (F500 G5).
+        dueDate: d.oldestDue,
+        // Named as what is owed ("Workers' comp certificate"), not as a status ("…insurance current").
+        preview: d.count <= 3 ? d.items.map((i) => i.deliverable) : undefined,
+        description:
+          d.count > 3
+            ? `${d.items.map((i) => i.deliverable).slice(0, 2).join('; ')}; and ${d.count - 2} more.`
+            : d.count
+              ? 'Confirm each on the compliance scorecard once it is filed.'
+              : 'Every contract duty is confirmed for its period.',
       };
     },
   },
@@ -748,7 +790,15 @@ const SOURCES: SourceDef[] = [
     visible: (u) => u.role === 'SHIFT_SUPERVISOR' || u.role === 'WORKFORCE_MANAGER' || u.role === 'OPERATIONS_MANAGER',
     count: async (u) => {
       const gaps = await coverageGapsForUser(prisma, u.id);
-      return { count: gaps.length, path: gaps.length > 0 ? coverageGapPath(gaps[0]!) : undefined };
+      // A same-day staffing gap outranks 34-day-old timesheets: the money band,
+      // due when its first window starts (F500 G5).
+      return {
+        count: gaps.length,
+        path: gaps.length > 0 ? coverageGapPath(gaps[0]!) : undefined,
+        urgency: 'money' as const,
+        dueAt: soonest(...gaps.map((g) => windowStartToday(g.window.startMinute, g.window.timezone))),
+        preview: gaps.length <= 3 ? gaps.map(coverageGapLabel) : undefined,
+      };
     },
   },
   {
@@ -860,6 +910,75 @@ const SOURCES: SourceDef[] = [
         },
       }),
   },
+  // A client account's own decisions (F500 G5) — the same list the store
+  // home's "Needs you" shows (lib/portalNeedsYou), scoped to the account's
+  // client and store. A region account (no client) has its command center.
+  {
+    key: 'portal-statements-past-due',
+    label: 'Statements past due',
+    description: 'Statements past their due date and not yet paid.',
+    path: '/#portal-statements',
+    module: 'clientPortal',
+    urgency: 'money',
+    visible: (u) => u.role === 'CLIENT_PORTAL' && !!u.clientId,
+    count: async (u) => {
+      const scope = await portalScopeOf(u);
+      if (!scope) return 0;
+      const cal = await portalCalendar(scope);
+      const today = cal.key(new Date());
+      const rows = await prisma.clientStatement.findMany({
+        where: unpaidStatementsWhere(scope.clientId),
+        select: { number: true, dueAt: true, snapshot: true },
+        orderBy: { dueAt: 'asc' },
+        take: CAP,
+      });
+      const late = rows.filter((r) => daysPastDue(r.dueAt, today) !== null);
+      if (late.length === 0) return 0;
+      // Money only where the account holds the whole statement: a client-wide
+      // account, or the one store of a one-store client.
+      const ownsTotals = !scope.locationId || (await prisma.site.count({ where: { clientId: scope.clientId, deletedAt: null } })) === 1;
+      const total = late.reduce((a, r) => a + Number((r.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount ?? 0), 0);
+      const oldest = Math.max(...late.map((r) => daysPastDue(r.dueAt, today) ?? 0));
+      const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(total);
+      const shortDay = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+      return {
+        count: late.length,
+        description: `${ownsTotals ? `${money} · ` : ''}oldest ${oldest} ${oldest === 1 ? 'day' : 'days'} past due.`,
+        // A calendar day (@db.Date): the chip shows that day in every zone.
+        dueDate: soonestDay(...late.map((r) => r.dueAt)),
+        // "No. 0004 · due Oct 7" — the statements themselves when there are few.
+        ...(late.length <= 3
+          ? { preview: late.map((r) => `${r.number !== null ? `No. ${String(r.number).padStart(4, '0')}` : 'Statement'}${r.dueAt ? ` · due ${shortDay(r.dueAt)}` : ''}`) }
+          : {}),
+      };
+    },
+  },
+  {
+    key: 'portal-service-report',
+    label: 'Service report to review',
+    description: 'Last week’s service report is ready — read it and mark it reviewed.',
+    path: '/#portal-needs-you',
+    module: 'clientPortal',
+    visible: (u) => u.role === 'CLIENT_PORTAL' && !!u.clientId,
+    count: async (u) => {
+      const scope = await portalScopeOf(u);
+      if (!scope) return 0;
+      const r = await serviceReportToReview(scope);
+      return r.hadShifts && !r.reviewed ? 1 : 0;
+    },
+  },
+  {
+    key: 'portal-candidates',
+    label: 'Candidates waiting for your answer',
+    description: 'People put forward for your team — approve, or pass and say why.',
+    path: '/portal/candidates',
+    module: 'clientPortal',
+    visible: (u) => u.role === 'CLIENT_PORTAL' && !!u.clientId,
+    count: async (u) => {
+      const scope = await portalScopeOf(u);
+      return scope ? prisma.candidateSubmittal.count({ where: waitingCandidatesWhere(scope) }) : 0;
+    },
+  },
   {
     key: 'my-notifications',
     label: 'Unread in your inbox',
@@ -915,7 +1034,7 @@ const SOURCES: SourceDef[] = [
         take: CAP,
       });
       const needing = rows.filter((r) => certificationRequired(r));
-      return { count: needing.length, dueAt: soonest(...needing.map((r) => r.certificationDueAt)) };
+      return { count: needing.length, dueDate: soonestDay(...needing.map((r) => r.certificationDueAt)) };
     },
   },
   {
@@ -1017,7 +1136,7 @@ const SOURCES: SourceDef[] = [
     urgency: 'legal',
     label: 'State tax tables to review',
     description: 'States where people work whose withholding was added but not yet reviewed with your tax adviser — payroll can’t finalize with them until it is.',
-    path: '/payroll/state-tax',
+    path: '/payroll/tax-tables?tab=state',
     visible: (u) => can(u, 'process:payroll'),
     count: (u) => stateTablesAwaitingReview(u),
   },
@@ -1026,7 +1145,7 @@ const SOURCES: SourceDef[] = [
     urgency: 'legal',
     label: 'Local taxes to review',
     description: 'Cities, counties and school districts your people live or work in whose rates haven’t been reviewed with your tax adviser — payroll can’t finalize with them until they are.',
-    path: '/payroll/tax-jurisdictions',
+    path: '/payroll/tax-tables?tab=local',
     visible: (u) => can(u, 'process:payroll'),
     count: (u) => localJurisdictionsAwaitingReview(u),
   },
@@ -1100,13 +1219,26 @@ const SOURCES: SourceDef[] = [
     count: (u) => prisma.bill.count({ where: { tenantId: tenantIdForWrite(), status: 'PENDING_APPROVAL', NOT: { createdById: u.id } } }),
   },
   {
-    key: 'books-bills-due',
-    label: 'Bills due this week',
-    description: 'Approved vendor bills due in the next seven days, or already overdue.',
-    path: '/books/bills?tab=due',
+    key: 'books-bills-late',
+    label: 'Late bills',
+    description: 'Approved vendor bills past their due date and not yet paid.',
+    path: '/books/bills?status=late',
     visible: (u) => can(u, 'manage:books'),
     urgency: 'money',
-    // billTabWhere('due') — the tab this opens lists exactly these.
+    // billTabWhere('late') — the list this opens shows exactly these.
+    count: async () => {
+      const rows = await prisma.bill.findMany({ where: { tenantId: tenantIdForWrite(), ...billTabWhere('late') }, select: { dueDate: true }, take: CAP });
+      return { count: rows.length, dueAt: soonest(...rows.map((r) => r.dueDate)) };
+    },
+  },
+  {
+    key: 'books-bills-due',
+    label: 'Bills due in the next 7 days',
+    description: 'Approved vendor bills due today or in the next seven days. Late ones are under Late bills.',
+    path: '/books/bills?status=due',
+    visible: (u) => can(u, 'manage:books'),
+    urgency: 'money',
+    // billTabWhere('due') — the list this opens shows exactly these.
     count: async () => {
       const rows = await prisma.bill.findMany({ where: { tenantId: tenantIdForWrite(), ...billTabWhere('due') }, select: { dueDate: true }, take: CAP });
       return { count: rows.length, dueAt: soonest(...rows.map((r) => r.dueDate)) };
@@ -1163,6 +1295,9 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
         let description = s.description;
         let path = s.path;
         let dueAt: string | null = null;
+        let dueDate: string | null = null;
+        let preview: string[] | undefined;
+        let urgency: InboxUrgency = s.urgency ?? 'routine';
         let progress: { done: number; total: number } | undefined;
         const t0 = performance.now();
         try {
@@ -1171,6 +1306,9 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
             description = got.description ?? description;
             path = got.path ?? path;
             dueAt = soonest(got.dueAt);
+            dueDate = soonestDay(got.dueDate);
+            preview = got.preview?.slice(0, 3);
+            if (got.urgency) urgency = got.urgency;
             progress = got.progress;
           }
           count = Math.min(CAP, Math.max(0, typeof got === 'number' ? got : got.count));
@@ -1186,8 +1324,11 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
           description,
           count,
           path,
-          urgency: s.urgency ?? 'routine',
+          urgency,
           dueAt: count > 0 ? dueAt : null,
+          ...(count > 0 && dueDate ? { dueDate } : {}),
+          // Names only when there are few enough to read at a glance.
+          ...(count > 0 && count <= 3 && preview && preview.length > 0 ? { preview } : {}),
           ...(count > 0 && progress ? { progress } : {}),
           ...(watches(s.key) ? { watching: true } : {}),
         };

@@ -16,6 +16,7 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
@@ -50,7 +51,6 @@ export function PaySchedulesPage() {
     <ListTemplate
       title="Pay schedules"
       subtitle={hasClients ? 'Who is paid when — by client, site, pay type or name — and anyone not on a schedule yet.' : 'Who is paid when — by site, department, pay type or name — and anyone not on a schedule yet.'}
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Pay schedules' }]}
       primaryAction={
         <Button asChild>
           <Link to="/payroll/schedules/new">
@@ -74,12 +74,32 @@ export function PaySchedulesPage() {
       }
       summary={
         list.data ? (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <MetricCard label="Schedules" value={String(active.length)} hint={schedules.length > active.length ? `${schedules.length - active.length} inactive` : 'all active'} />
-            <MetricCard label="People on a schedule" value={String(onSchedule)} hint={blocked ? `${blocked} won’t be paid correctly` : joining ? `${joining} joining from their next period` : onSchedule ? 'everyone ready' : 'no one yet'} accent={blocked > 0} />
-            <MetricCard label="Next payday" value={soonest ? shortDay(soonest.nextPeriod.payDate) : '—'} hint={soonest ? `${weekdayOf(soonest.nextPeriod.payDate)} · ${soonest.name}` : 'no schedules'} />
-            <MetricCard label="On no schedule" value={String(list.data.unassigned)} hint={list.data.unassigned ? 'can’t be paid by any run' : 'everyone is covered'} accent={list.data.unassigned > 0} />
-          </div>
+          // MetricStrip: two compact tiles a row on a phone, so the schedules start on the first screen (F500 G3).
+          <MetricStrip label="Pay schedules at a glance">
+            <MetricCard label="Schedules" value={String(active.length)} hint={schedules.length > active.length ? `${schedules.length - active.length} inactive` : undefined} />
+            <MetricCard
+              label="People on a schedule"
+              value={String(onSchedule)}
+              nothing={onSchedule === 0 ? 'No one on a schedule yet' : undefined}
+              hint={blocked ? `${blocked} won’t be paid correctly` : joining ? `${joining} joining from their next period` : undefined}
+              tone={blocked > 0 ? 'alert' : 'default'}
+            />
+            <MetricCard
+              label="Next payday"
+              value={soonest ? shortDay(soonest.nextPeriod.payDate) : '—'}
+              nothing={soonest ? undefined : 'No schedules yet'}
+              hint={soonest ? `${weekdayOf(soonest.nextPeriod.payDate)} · ${soonest.name}` : undefined}
+              href={soonest ? `/payroll/schedules/${soonest.id}` : undefined}
+            />
+            <MetricCard
+              label="On no schedule"
+              value={String(list.data.unassigned)}
+              nothing={list.data.unassigned === 0 ? 'Everyone is covered' : undefined}
+              hint={list.data.unassigned ? 'can’t be paid by any run' : undefined}
+              tone={list.data.unassigned > 0 ? 'warning' : 'default'}
+              href={list.data.unassigned > 0 ? '/payroll/schedules?view=unassigned' : undefined}
+            />
+          </MetricStrip>
         ) : list.isLoading ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (

@@ -64,11 +64,13 @@ export interface ShiftCoverageGaps {
   /** Named shift windows across every active client, and how many have a lead. */
   total: number;
   covered: number;
-  /** Only clients with something missing. */
+  /** Only clients with something missing (every client with named shifts when asked with `all`). */
   clients: Array<{
     clientId: string;
     clientName: string;
     uncovered: Array<{ locationId: string; locationName: string; label: string; startMinute: number; endMinute: number }>;
+    /** Every named shift at the client, with who leads it (empty = no lead). */
+    windows?: Array<{ locationId: string; locationName: string; label: string; startMinute: number; endMinute: number; leads: string[] }>;
     /** Supervisors at the client with no shift (user ids). */
     noShift: string[];
     /** Floor supervisors missing a shift or a shift supervisor. */
@@ -89,8 +91,8 @@ export interface ShiftCoverageGaps {
   }>;
 }
 
-export function getShiftCoverageGaps(): Promise<ShiftCoverageGaps> {
-  return apiFetch<ShiftCoverageGaps>('/admin/shift-windows/gaps');
+export function getShiftCoverageGaps(opts: { all?: boolean } = {}): Promise<ShiftCoverageGaps> {
+  return apiFetch<ShiftCoverageGaps>(`/admin/shift-windows/gaps${opts.all ? '?all=1' : ''}`);
 }
 
 /* ===== Floor team: floor supervisors and their shift supervisor ========== */

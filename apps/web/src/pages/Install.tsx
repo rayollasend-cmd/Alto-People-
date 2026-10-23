@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Apple, Smartphone, Share, MoreVertical, Plus, Download, ChevronRight, ShieldCheck } from 'lucide-react';
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import { QR_COLORS } from '@/lib/qrColors';
 
 type Platform = 'ios' | 'android' | 'desktop';
 
@@ -135,19 +136,48 @@ function AndroidInstructions() {
   );
 }
 
+/** The page's own address as a QR code, so a desktop visitor can open it on their phone. */
+function useQrDataUrl(value: string): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    // The app's QR encoder (the same one the badge and the wallet use), loaded only here.
+    void import('qrcode')
+      .then(({ default: QRCode }) => QRCode.toDataURL(value, { margin: 1, width: 200, errorCorrectionLevel: 'M', color: QR_COLORS }))
+      .then((u) => {
+        if (live) setUrl(u);
+      })
+      .catch(() => {
+        if (live) setUrl(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [value]);
+  return url;
+}
+
 function DesktopInstructions() {
+  // On a desktop nothing is "above": say what to do, and give the phone a way here (F500 G5).
+  const pageUrl = typeof window !== 'undefined' ? `${window.location.origin}/install` : '/install';
+  const qr = useQrDataUrl(pageUrl);
   return (
     <Section icon={Download} title="On a desktop browser">
-      <p className="text-silver text-sm mb-4">
-        You're on a desktop browser. The install instructions above are for
-        phones — open this page on your iPhone or Android phone to add the app
-        to your home screen.
-      </p>
-      <p className="text-silver text-sm">
-        On Chrome / Edge / Brave on desktop, you can also click the install
-        icon (a small monitor with a down arrow) in the address bar to install
-        Alto People as a desktop app.
-      </p>
+      <li className="flex list-none flex-col items-center gap-4 sm:flex-row sm:items-start">
+        <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-lg bg-white p-2" data-testid="install-qr">
+          {qr ? <img src={qr} alt={`QR code for ${pageUrl}`} className="h-full w-full" /> : null}
+        </div>
+        <div>
+          <p className="text-ink text-sm font-medium mb-1">Open this page on your phone to add the app.</p>
+          <p className="text-silver text-sm mb-3">
+            Point your phone’s camera at the code, or go to <span className="text-ink">{pageUrl.replace(/^https?:\/\//, '')}</span>.
+          </p>
+          <p className="text-silver text-xs">
+            On Chrome, Edge or Brave you can also install Alto People on this computer: click the install icon (a small
+            monitor with a down arrow) in the address bar.
+          </p>
+        </div>
+      </li>
     </Section>
   );
 }

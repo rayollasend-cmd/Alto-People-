@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Award, BadgeCheck, Copy, Download, GraduationCap, IdCard, QrCode, Share2, type LucideIcon } from 'lucide-react';
+import { Award, BadgeCheck, Copy, Download, Expand, GraduationCap, IdCard, QrCode, Share2, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { getMyWallet, shareMyWallet, type WalletItem } from '@/lib/walletApi';
+import { getMyWallet, getWorkerBadge, shareMyWallet, type WalletItem } from '@/lib/walletApi';
 import { createCredentialOffer, getMyCredentials, saveCredentialFile } from '@/lib/credentialsApi';
 import { calendarDay, fmtDate, fmtTime } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -16,6 +16,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { ListTemplate } from '@/components/templates';
 import { WorkerBadgeCard } from './WorkerBadgeCard';
 
@@ -74,6 +75,10 @@ export function MyWallet() {
   const qc = useQueryClient();
   const [shareOpen, setShareOpen] = useState(false);
   const [appOpen, setAppOpen] = useState(false);
+  // The badge is what a worker opens this page for: "Show badge" is the
+  // page's primary action (F500 G5). Same query the card reads.
+  const badgeQ = useQuery({ queryKey: ['me', 'wallet', 'badge'], queryFn: getWorkerBadge, retry: false });
+  const [badgeFull, setBadgeFull] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const items = q.data?.items ?? [];
   const signable = items.some((i) => i.kind !== 'document');
@@ -99,20 +104,32 @@ export function MyWallet() {
       subtitle={t('wallet.subtitle')}
       breadcrumbs={[{ label: t('wallet.crumb'), to: '/me' }, { label: t('wallet.title') }]}
       primaryAction={
-        <Button onClick={() => setShareOpen(true)} disabled={!q.data || items.length === 0}>
-          <Share2 className="mr-2 h-4 w-4" aria-hidden="true" />
-          {t('wallet.share')}
-        </Button>
-      }
-      secondaryActions={
-        <Button variant="outline" onClick={() => setAppOpen(true)} disabled={!q.data || !signable}>
-          <QrCode className="mr-2 h-4 w-4" aria-hidden="true" />
-          {t('wallet.addToApp')}
-        </Button>
+        badgeQ.data ? (
+          <Button onClick={() => setBadgeFull(true)} data-testid="wallet-show-badge">
+            <Expand className="mr-2 h-4 w-4" aria-hidden="true" />
+            {t('badge.show')}
+          </Button>
+        ) : undefined
       }
     >
       {/* The worker badge — kiosk QR / NFC and Apple / Google Wallet (WorkerBadgeCard). */}
-      <WorkerBadgeCard />
+      <WorkerBadgeCard fullOpen={badgeFull} onFullOpenChange={setBadgeFull} />
+      {/* The credentials and their two ways out, together: a link for an employer,
+          or W3C digital credentials. "Wallet" is only the Apple / Google pass above. */}
+      <div className="space-y-2">
+        <SectionTitle title={t('wallet.credTitle')} className="mb-0" />
+        {/* Its own row: beside the heading on a phone, the two buttons squeezed the title to nothing. */}
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={() => setShareOpen(true)} disabled={!q.data || items.length === 0}>
+            <Share2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
+            {t('wallet.share')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setAppOpen(true)} disabled={!q.data || !signable} data-testid="wallet-cred-share">
+            <QrCode className="mr-1.5 h-4 w-4" aria-hidden="true" />
+            {t('wallet.credShare')}
+          </Button>
+        </div>
+      </div>
       {q.isError ? (
         <ErrorBanner
           action={
@@ -258,8 +275,8 @@ function AddToAppDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('wallet.addToAppTitle')}</DialogTitle>
-          <DialogDescription>{t('wallet.addToAppBody')}</DialogDescription>
+          <DialogTitle>{t('wallet.credShareTitle')}</DialogTitle>
+          <DialogDescription>{t('wallet.credShareBody')}</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col items-center gap-3">
           {offer.isError ? (

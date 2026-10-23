@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useUrlParam } from '@/lib/useUrlState';
+import { ListTemplate } from '@/components/templates';
+import { RecruitingHubNav } from './RecruitingHubNav';
 import { Briefcase, ClipboardList, Copy, Download, Gift, Plus, Rss, Send, UserPlus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -55,13 +58,8 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  PageHeader,
   Select,
   SkeletonRows,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -77,9 +75,6 @@ type Tab = 'kits' | 'offers' | 'referrals' | 'postings';
 
 const TABS: readonly Tab[] = ['kits', 'offers', 'referrals', 'postings'];
 
-function isTab(v: string | null): v is Tab {
-  return v !== null && (TABS as readonly string[]).includes(v);
-}
 
 // ----- Shared bits -------------------------------------------------------
 
@@ -125,25 +120,26 @@ function useClients() {
   return { clients, error, reload };
 }
 
+/** Each tab is a page of the recruiting hub: its own title, words and primary action. */
+const TAB_META: Record<Tab, { title: string; subtitle: string; create: string; manageOnly: boolean }> = {
+  postings: { title: 'Job postings', subtitle: 'What candidates apply to: the openings, where they are posted, and how many are filled.', create: 'New posting', manageOnly: true },
+  offers: { title: 'Offers', subtitle: 'Offer letters from draft through approval, sent and signed.', create: 'New offer', manageOnly: true },
+  kits: { title: 'Interview kits', subtitle: 'The questions every panel asks for a role, so interviews compare.', create: 'New kit', manageOnly: true },
+  referrals: { title: 'Referrals', subtitle: 'People your team refers, and the bonuses they earn.', create: 'Refer someone', manageOnly: false },
+};
+
 export function RecruitingExtras() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:recruiting') : false;
 
-  // ?tab= lives in the URL (same pattern as RecruitingHome's ?stage=) so the
-  // candidate drawer's "Extend offer" handoff can land on the right tab.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get('tab');
-  const tab: Tab = isTab(tabParam) ? tabParam : 'kits';
-  const setTab = useCallback(
-    (v: Tab) =>
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (v === 'kits') next.delete('tab'); // default tab keeps the URL clean
-        else next.set('tab', v);
-        return next;
-      }),
-    [setSearchParams],
-  );
+  // ?tab= lives in the URL (notifications link /recruiting/extras?tab=offers)
+  // and each tab is a page of the recruiting hub (RecruitingHubNav).
+  const [tab] = useUrlParam<Tab>('tab', 'kits', TABS, { history: 'push' });
+  const [, setSearchParams] = useSearchParams();
+  // The header's primary action ("New posting", "New offer"…) changes with
+  // the tab; a bump opens that tab's drawer.
+  const [createTick, setCreateTick] = useState<{ tab: Tab; n: number }>({ tab, n: 0 });
+  const meta = TAB_META[tab];
 
   // ?new=1[&candidate=<id>] — pre-open the offer drawer, optionally seeded
   // with a candidate (from the drawer's "No offers extended." dead end).
@@ -173,54 +169,55 @@ export function RecruitingExtras() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const signal = (t: Tab) => (createTick.tab === t ? createTick.n : 0);
+
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Interviewing & offers"
-        subtitle="Interview kits, offer letters, employee referrals, and the public careers page."
-        breadcrumbs={[{ label: 'Recruiting' }, { label: 'Hiring tools' }]}
-      />
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList>
-          <TabsTrigger value="kits">
-            <ClipboardList className="mr-2 h-4 w-4" /> Interview kits
-          </TabsTrigger>
-          <TabsTrigger value="offers">
-            <Send className="mr-2 h-4 w-4" /> Offers
-          </TabsTrigger>
-          <TabsTrigger value="referrals">
-            <Gift className="mr-2 h-4 w-4" /> Referrals
-          </TabsTrigger>
-          <TabsTrigger value="postings">
-            <Briefcase className="mr-2 h-4 w-4" /> Job postings
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="kits"><KitsTab canManage={canManage} /></TabsContent>
-        <TabsContent value="offers">
-          <OffersTab
-            canManage={canManage}
-            seed={canManage ? offerSeed : null}
-            onSeedConsumed={() => setOfferSeed(null)}
-          />
-        </TabsContent>
-        <TabsContent value="referrals"><ReferralsTab canManage={canManage} /></TabsContent>
-        <TabsContent value="postings">
-          <PostingsTab
-            canManage={canManage}
-            seed={canManage ? postingSeed : null}
-            onSeedConsumed={() => setPostingSeed(null)}
-          />
-        </TabsContent>
-      </Tabs>
-    </div>
+    <ListTemplate
+      title={meta.title}
+      subtitle={meta.subtitle}
+      actions={
+        !meta.manageOnly || canManage
+          ? [{ key: 'create', label: meta.create, icon: Plus, primary: true, onSelect: () => setCreateTick((c) => ({ tab, n: c.tab === tab ? c.n + 1 : 1 })) }]
+          : undefined
+      }
+    >
+      <RecruitingHubNav current={tab} />
+      {tab === 'kits' && <KitsTab canManage={canManage} createSignal={signal('kits')} />}
+      {tab === 'offers' && (
+        <OffersTab
+          canManage={canManage}
+          seed={canManage ? offerSeed : null}
+          onSeedConsumed={() => setOfferSeed(null)}
+          createSignal={signal('offers')}
+        />
+      )}
+      {tab === 'referrals' && <ReferralsTab canManage={canManage} createSignal={signal('referrals')} />}
+      {tab === 'postings' && (
+        <PostingsTab
+          canManage={canManage}
+          seed={canManage ? postingSeed : null}
+          onSeedConsumed={() => setPostingSeed(null)}
+          createSignal={signal('postings')}
+        />
+      )}
+    </ListTemplate>
   );
+}
+
+/** Opens a tab's "new" drawer each time the header's primary action bumps the signal. */
+function useCreateSignal(signal: number | undefined, open: () => void) {
+  useEffect(() => {
+    if (signal) open();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signal]);
 }
 
 // ----- Kits -------------------------------------------------------------
 
-function KitsTab({ canManage }: { canManage: boolean }) {
+function KitsTab({ canManage, createSignal }: { canManage: boolean; createSignal?: number }) {
   const confirm = useConfirm();
   const [showNew, setShowNew] = useState(false);
+  useCreateSignal(createSignal, () => setShowNew(true));
   const [editTarget, setEditTarget] = useState<InterviewKit | null>(null);
 
   const kitsQuery = useQuery({ queryKey: ['recruiting', 'kits'], queryFn: () => listInterviewKits() });
@@ -240,13 +237,6 @@ function KitsTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New kit
-          </Button>
-        </div>
-      )}
       <Card>
         <CardContent className="p-0">
           {error ? (
@@ -511,14 +501,17 @@ function OffersTab({
   canManage,
   seed,
   onSeedConsumed,
+  createSignal,
 }: {
   canManage: boolean;
   /** Open the new-offer drawer on mount, pre-seeded with this candidate. */
   seed?: { candidateId: string | null } | null;
   onSeedConsumed?: () => void;
+  createSignal?: number;
 }) {
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
+  useCreateSignal(createSignal, () => setShowNew(true));
   const [seedCandidateId, setSeedCandidateId] = useState<string | null>(null);
   const { user, can } = useAuth();
   const prompt = usePrompt();
@@ -633,6 +626,8 @@ function OffersTab({
 
   return (
     <div className="space-y-4">
+      {/* No search or Export over an empty list. */}
+      {offers && offers.length > 0 && (
       <div className="flex flex-wrap items-center justify-end gap-2">
         <SearchInput
           wrapperClassName="w-full sm:w-64"
@@ -648,12 +643,8 @@ function OffersTab({
         >
           <Download className="mr-2 h-4 w-4" /> Export CSV
         </Button>
-        {canManage && (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New offer
-          </Button>
-        )}
       </div>
+      )}
       <Card>
         <CardContent className="p-0">
           {error ? (
@@ -805,8 +796,9 @@ function OffersTab({
 
 const REF_STATUSES: ReferralStatus[] = ['OPEN', 'INTERVIEWING', 'HIRED', 'REJECTED'];
 
-function ReferralsTab({ canManage }: { canManage: boolean }) {
+function ReferralsTab({ canManage, createSignal }: { canManage: boolean; createSignal?: number }) {
   const [showNew, setShowNew] = useState(false);
+  useCreateSignal(createSignal, () => setShowNew(true));
   const [convertingId, setConvertingId] = useState<string | null>(null);
 
   const referralsQuery = useQuery({ queryKey: ['recruiting', 'referrals'], queryFn: () => listReferrals() });
@@ -848,11 +840,6 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={() => setShowNew(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Refer someone
-        </Button>
-      </div>
       <Card>
         <CardContent className="p-0">
           {error ? (
@@ -1088,14 +1075,17 @@ function PostingsTab({
   canManage,
   seed = null,
   onSeedConsumed,
+  createSignal,
 }: {
   canManage: boolean;
   seed?: PostingSeed | null;
   onSeedConsumed?: () => void;
+  createSignal?: number;
 }) {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const [showNew, setShowNew] = useState(() => seed !== null);
+  useCreateSignal(createSignal, () => setShowNew(true));
   // Held for the drawer's lifetime; the parent's copy is dropped at once so
   // a tab switch or Back doesn't re-open it.
   const [drawerSeed] = useState<PostingSeed | null>(seed);
@@ -1174,13 +1164,6 @@ function PostingsTab({
 
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New posting
-          </Button>
-        </div>
-      )}
       <JobBoardsCard postings={postings} />
       <Card>
         <CardContent className="p-0">

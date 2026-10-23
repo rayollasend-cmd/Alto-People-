@@ -15,7 +15,7 @@ export function syncSentence(r: { pushed: { sent: number; conflicts: number; fai
   return `${t.charAt(0).toUpperCase()}${t.slice(1)}.`;
 }
 
-/** What a site record type is called. */
+/** What each kind of record here is called. */
 export const LOCAL_WORDS: Record<string, string> = {
   LedgerAccount: 'Account',
   Vendor: 'Vendor',

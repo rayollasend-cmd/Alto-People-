@@ -787,3 +787,80 @@ export async function emergencyBoard(
     escalateAt: escalateAt.toISOString(),
   };
 }
+
+/* ===== Readiness, in the quiet ============================================ */
+
+/**
+ * How ready the company is to declare, before anything happens (F500 G2:
+ * the quiet page was only a red button). Counted the way a declaration for
+ * every site would count right now (`associatesInScope`): people with an
+ * open placement or an assigned shift in the next two weeks.
+ *
+ *   reach      people a declaration would tell
+ *   withPhone  of them, with a phone number on file (the text goes there)
+ *   languages  the language each would be told in, most first
+ *   vans       in-service vans with a driver, and their seats; null when
+ *              the tenant doesn't run vans
+ *
+ * Inside the tenant and, for a client-bounded caller, that client's sites.
+ */
+export interface EmergencyReadiness {
+  reach: number;
+  withPhone: number;
+  languages: Array<{ lang: EmailLang; people: number }>;
+  vans: { ready: number; seats: number; inService: number } | null;
+}
+
+export async function emergencyReadiness(
+  db: Db,
+  opts: { tenantId: string; clientId?: string | null; now?: Date },
+): Promise<EmergencyReadiness> {
+  const now = opts.now ?? new Date();
+  const client = opts.clientId ?? null;
+  const [assignments, shifts] = await Promise.all([
+    db.associateAssignment.findMany({
+      where: { tenantId: opts.tenantId, endedAt: null, ...(client ? { location: { clientId: client } } : {}) },
+      select: { associateId: true },
+    }),
+    db.shift.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        assignedAssociateId: { not: null },
+        status: { notIn: ['DRAFT', 'CANCELLED'] },
+        endsAt: { gt: now },
+        startsAt: { lt: new Date(now.getTime() + SHIFT_LOOKAHEAD_MS) },
+        ...(client ? { clientId: client } : {}),
+      },
+      select: { assignedAssociateId: true },
+    }),
+  ]);
+  const ids = [...new Set([...assignments.map((a) => a.associateId), ...shifts.map((s) => s.assignedAssociateId!)])];
+  const [people, users] = ids.length
+    ? await Promise.all([
+        db.associate.findMany({ where: { tenantId: opts.tenantId, id: { in: ids } }, select: { id: true, phone: true } }),
+        db.user.findMany({ where: { associateId: { in: ids } }, select: { associateId: true, language: true } }),
+      ])
+    : [[], []];
+  const langOf = new Map(users.map((u) => [u.associateId!, toEmailLang(u.language)]));
+  const byLang = new Map<EmailLang, number>();
+  for (const p of people) {
+    const l = langOf.get(p.id) ?? 'en';
+    byLang.set(l, (byLang.get(l) ?? 0) + 1);
+  }
+  const transport = await moduleOn('transportation', opts.tenantId);
+  const vans = transport
+    ? await db.van.findMany({
+        where: { tenantId: opts.tenantId, isActive: true, outOfServiceAt: null },
+        select: { capacity: true, driverUserId: true },
+      })
+    : null;
+  const ready = vans ? vans.filter((v) => v.driverUserId) : [];
+  return {
+    reach: people.length,
+    withPhone: people.filter((p) => (p.phone ?? '').trim().length > 0).length,
+    languages: [...byLang.entries()]
+      .map(([lang, n]) => ({ lang, people: n }))
+      .sort((a, b) => b.people - a.people || a.lang.localeCompare(b.lang)),
+    vans: vans ? { ready: ready.length, seats: ready.reduce((s, v) => s + v.capacity, 0), inService: vans.length } : null,
+  };
+}

@@ -38,6 +38,11 @@ export const hrCases123Router = Router();
 /** Rows a case list draws per page. */
 const CASE_PAGE = 100;
 
+/** A case still being worked: the desk's "Open". */
+const OPEN_STATES = ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] as const;
+/** The window the summary's median first reply reads. */
+const FIRST_REPLY_DAYS = 90;
+
 function deskScope(role: Role): 'all' | 'payroll' | null {
   if (hasCapability(role, 'manage:onboarding')) return 'all';
   if (hasCapability(role, 'process:payroll')) return 'payroll';
@@ -226,6 +231,10 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   // ?sla=breached — the Inbox's deep link: open and past due.
   const sla = z.enum(['breached']).optional().parse(req.query.sla);
+  // ?state=open — every case still being worked (open, in progress, waiting
+  // on the associate): the desk's "Open" count. ?unassigned=true — nobody owns it yet.
+  const state = z.enum(['open']).optional().parse(req.query.state);
+  const unassigned = z.union([z.literal('true'), z.literal('false')]).optional().parse(req.query.unassigned);
 
   const page = z.coerce.number().int().min(0).max(10_000).default(0).parse(req.query.page);
   const where: Prisma.HrCaseWhereInput = {
@@ -239,6 +248,8 @@ hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
       assignedToMe === 'true' ? { assignedToId: req.user!.id } : {},
       associateId ? { associateId } : {},
       sla === 'breached' ? { status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } } : {},
+      state === 'open' ? { status: { in: [...OPEN_STATES] } } : {},
+      unassigned === 'true' ? { assignedToId: null } : {},
     ],
   };
   const [rows, total] = await Promise.all([
@@ -522,9 +533,10 @@ hrCases123Router.get('/hr-cases-summary', requireAuth, async (req, res) => {
   }
   const desk: Prisma.HrCaseWhereInput = { AND: [hrCaseReach(req.user!), scope === 'payroll' ? { category: 'PAYROLL' as const } : {}] };
   const now = new Date();
-  const [openTotal, byStatus, byPriority, byCategory, breached, atRisk] = await Promise.all([
+  const replySince = new Date(now.getTime() - FIRST_REPLY_DAYS * 86_400_000);
+  const [openTotal, byStatus, byPriority, byCategory, breached, atRisk, unassigned, recent] = await Promise.all([
     prisma.hrCase.count({
-      where: { ...desk, status: { in: ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] } },
+      where: { ...desk, status: { in: [...OPEN_STATES] } },
     }),
     prisma.hrCase.groupBy({ by: ['status'], where: { ...desk }, _count: { _all: true } }),
     prisma.hrCase.groupBy({
@@ -541,14 +553,45 @@ hrCases123Router.get('/hr-cases-summary', requireAuth, async (req, res) => {
     prisma.hrCase.count({
       where: { ...desk, status: { in: ['OPEN', 'IN_PROGRESS'] }, dueAt: { gte: now, lt: new Date(now.getTime() + 4 * 3_600_000) } },
     }),
+    // Still being worked and nobody owns it.
+    prisma.hrCase.count({ where: { ...desk, status: { in: [...OPEN_STATES] }, assignedToId: null } }),
+    // First reply: the desk's first comment the person can read (a staff
+    // author, not an internal note), on cases filed in the last 90 days.
+    prisma.hrCase.findMany({
+      take: 5000,
+      where: { ...desk, createdAt: { gte: replySince } },
+      select: {
+        createdAt: true,
+        comments: { where: { authorUserId: { not: null }, internalNote: false }, orderBy: { createdAt: 'asc' }, take: 1, select: { createdAt: true } },
+      },
+    }),
   ]);
+  const replyHours = recent
+    .filter((c) => c.comments.length > 0)
+    .map((c) => (c.comments[0]!.createdAt.getTime() - c.createdAt.getTime()) / 3_600_000)
+    .sort((a, b) => a - b);
+  const mid = Math.floor(replyHours.length / 2);
+  const medianHours = replyHours.length === 0 ? null : replyHours.length % 2 === 1 ? replyHours[mid]! : (replyHours[mid - 1]! + replyHours[mid]!) / 2;
   const status: Record<string, number> = {};
   const priority: Record<string, number> = {};
   const category: Record<string, number> = {};
   for (const r of byStatus) status[r.status] = r._count._all;
   for (const r of byPriority) priority[r.priority] = r._count._all;
   for (const r of byCategory) category[r.category] = r._count._all;
-  res.json({ openTotal, byStatus: status, byPriority: priority, byCategory: category, sla: { breached, atRisk } });
+  res.json({
+    openTotal,
+    unassigned,
+    byStatus: status,
+    byPriority: priority,
+    byCategory: category,
+    sla: { breached, atRisk },
+    firstReply: {
+      medianHours: medianHours === null ? null : Math.round(medianHours * 10) / 10,
+      replied: replyHours.length,
+      filed: recent.length,
+      days: FIRST_REPLY_DAYS,
+    },
+  });
 });
 
 // ----- SLA targets (tenant-editable) ----------------------------------------

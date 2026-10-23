@@ -142,6 +142,11 @@ describe('earned-wage access', () => {
     expect(desk.status).toBe(200);
     expect(desk.body.outstanding).toMatchObject({ count: 1, amount: 50 });
     expect(desk.body.advances[0].associate.name).toBe('Lena Osei');
+    // The desk's working numbers (F500 G3): drawn on this period, one person, nothing recovered or rolled over yet.
+    expect(desk.body.thisPeriod).toEqual({ count: 1, amount: 50 });
+    expect(desk.body.people).toBe(1);
+    expect(desk.body.lastRecovery).toBeNull();
+    expect(desk.body.rolledOver).toEqual({ count: 0, amount: 0 });
     const audit = await prisma.auditLog.findFirst({ where: { action: 'ewa.paid' } });
     expect(audit).not.toBeNull();
 
@@ -154,10 +159,26 @@ describe('earned-wage access', () => {
     expect(adv.status).toBe('RECOVERED');
     expect(adv.recoveredCents).toBe(5000);
     expect(adv.recoveredItemId).toBe(item.id);
+    // What the latest payroll took back.
+    const recovered = await fin.get('/payroll/earned-wage');
+    expect(recovered.body.lastRecovery).toMatchObject({ runId: created.body.id, amount: 50, advances: 1 });
+    expect(recovered.body.outstanding).toMatchObject({ count: 0, amount: 0 });
 
     // Finance can tune the policy.
     const settings = await fin.patch('/payroll/earned-wage/settings').send({ capPct: 40, fee: 1.5 });
     expect(settings.status).toBe(200);
     expect(settings.body).toMatchObject({ capPct: 40, fee: 1.5 });
+  });
+
+  it('counts advances whose pay period ended before the check could carry them (F500 G3)', async () => {
+    const { associate, finance } = await seed();
+    // A paid advance on a period that ended last month, $20 of its $50 (+$1 fee) recovered.
+    await prisma.earnedWageAdvance.create({
+      data: { associateId: associate.id, periodStart: new Date(Date.now() - 40 * DAY), periodEnd: new Date(Date.now() - 27 * DAY), amountCents: 5000, feeCents: 100, earnedNetCents: 20000, availableCents: 10000, status: 'PAID', recoveredCents: 2000 },
+    });
+    const fin = await loginAs(finance.email);
+    const desk = await fin.get('/payroll/earned-wage');
+    expect(desk.body.rolledOver).toEqual({ count: 1, amount: 31 });
+    expect(desk.body.thisPeriod).toEqual({ count: 0, amount: 0 });
   });
 });

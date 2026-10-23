@@ -193,7 +193,8 @@ describe('associates add their own skills', () => {
     vi.mocked(verifyAssociateSkill).mockResolvedValue(undefined as never);
     const user = userEvent.setup();
     renderAs('HR_ADMINISTRATOR', <SkillsHome />, '/skills');
-    await user.click(await screen.findByRole('tab', { name: /To verify \(1\)/ }));
+    // The tab carries its count as a badge (F500 G1).
+    await user.click(await screen.findByRole('tab', { name: /To verify\s*1/ }));
     const list = await screen.findByRole('list', { name: 'Skills to verify' });
     expect(within(list).getByText('Ana Lopez')).toBeInTheDocument();
     await user.click(within(list).getByRole('button', { name: 'Verify' }));

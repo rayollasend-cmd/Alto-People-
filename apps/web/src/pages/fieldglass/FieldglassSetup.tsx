@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, FileSpreadsheet, History as HistoryIcon, Pencil, X } from 'lucide-react';
+import { Check, History as HistoryIcon, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { FieldglassStatus } from '@alto-people/shared';
 import { ApiError, apiFetch } from '@/lib/api';
-import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import {
   Avatar,
@@ -18,6 +17,8 @@ import {
   FilterChip,
   Input,
   Label,
+  MetricCard,
+  MetricStrip,
   SearchInput,
   SegmentedControl,
   Select,
@@ -97,16 +98,6 @@ const matches = (haystack: Array<string | null | undefined>, search: string): bo
 /** "2026-09-18" → "09/18/2026", as Fieldglass writes dates. */
 const usDate = (ymd: string) => `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}/${ymd.slice(0, 4)}`;
 
-function Tile({ label, value, hint, tone }: { label: string; value: number | string; hint?: string; tone?: string }) {
-  return (
-    <div className="rounded-lg border border-navy-secondary bg-navy/60 px-3 py-2.5">
-      <div className="text-2xs font-semibold uppercase tracking-wider text-silver/70">{label}</div>
-      <div className={cn('mt-0.5 text-xl font-semibold tabular-nums text-white', tone)}>{value}</div>
-      {hint && <div className="truncate text-xs text-silver/80">{hint}</div>}
-    </div>
-  );
-}
-
 export function FieldglassSetup() {
   const q = useQuery({
     queryKey: ['finance', 'fieldglass', 'setup'],
@@ -130,7 +121,8 @@ export function FieldglassSetup() {
   // Filters live in the URL next to ?tab=.
   const search = params.get('q') ?? '';
   const client = params.get('client') ?? '';
-  const kind = (params.get('kind') as Kind | null) ?? 'all';
+  const kindParam = params.get('kind');
+  const kind: Kind = kindParam === 'add' || kindParam === 'transfer' || kindParam === 'close' ? kindParam : 'all';
   const from = params.get('from') ?? '';
   const to = params.get('to') ?? '';
   const missingOnly = params.get('missing') === '1';
@@ -165,17 +157,22 @@ export function FieldglassSetup() {
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [data]);
 
-  const queue = useMemo(
+  // The queue under every filter but the kind: what the three kind tiles
+  // count, so picking one tile never zeroes the other two.
+  const queueAnyKind = useMemo(
     () =>
       (data?.queue ?? []).filter((r) => {
-        if (kind !== 'all' && r.kind !== kind) return false;
         // A transfer sits between two clients; either side counts as that
         // client's work to do.
         if (client && r.clientName !== client && r.fromClientName !== client) return false;
         if (!inRange(queueDate(r), from, to)) return false;
         return matches([r.name, r.clientName, r.fromClientName, r.position, r.email, r.workerId], search);
       }),
-    [data, kind, client, from, to, search],
+    [data, client, from, to, search],
+  );
+  const queue = useMemo(
+    () => (kind === 'all' ? queueAnyKind : queueAnyKind.filter((r) => r.kind === kind)),
+    [queueAnyKind, kind],
   );
   const roster = useMemo(
     () =>
@@ -190,11 +187,11 @@ export function FieldglassSetup() {
 
   const counts = useMemo(() => {
     return {
-      add: queue.filter((r) => r.kind === 'add').length,
-      transfer: queue.filter((r) => r.kind === 'transfer').length,
-      close: queue.filter((r) => r.kind === 'close').length,
-      unbilled: queue.reduce((s, r) => s + (r.hoursUnbilled ?? 0), 0),
-      unbilledPeople: queue.filter((r) => (r.hoursUnbilled ?? 0) > 0).length,
+      add: queueAnyKind.filter((r) => r.kind === 'add').length,
+      transfer: queueAnyKind.filter((r) => r.kind === 'transfer').length,
+      close: queueAnyKind.filter((r) => r.kind === 'close').length,
+      unbilled: queueAnyKind.reduce((s, r) => s + (r.hoursUnbilled ?? 0), 0),
+      unbilledPeople: queueAnyKind.filter((r) => (r.hoursUnbilled ?? 0) > 0).length,
       active: roster.filter((r) => !r.separated).length,
       noWorkerId: roster.filter((r) => !r.separated && !r.workerId).length,
       // Totals behind the filter, for the "showing x of y" line.
@@ -202,21 +199,15 @@ export function FieldglassSetup() {
       allActive: (data?.roster ?? []).filter((r) => !r.separated).length,
       allMissing: (data?.roster ?? []).filter((r) => !r.separated && !r.workerId).length,
     };
-  }, [data, queue, roster]);
+  }, [data, queueAnyKind, roster]);
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Fieldglass setup"
         subtitle="Register new associates in Fieldglass, move transfers to their new client, close out separations — and keep every Worker ID on file."
-        secondaryActions={
-          <Button asChild variant="outline" size="sm">
-            <Link to="/time-attendance/timesheets">
-              <FileSpreadsheet className="h-3.5 w-3.5" />
-              Client hours
-            </Link>
-          </Button>
-        }
+        // A sibling page, so a link — not a button.
+        related={[{ label: 'Client hours', to: '/time-attendance/timesheets' }]}
     >
       {q.isError && <ErrorBanner>{q.error instanceof ApiError ? q.error.message : 'Couldn’t load Fieldglass setup.'}</ErrorBanner>}
       {q.isLoading || !data ? (
@@ -226,26 +217,59 @@ export function FieldglassSetup() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            <Tile label="To add" value={counts.add} hint={counts.add ? 'new in Fieldglass' : 'nobody waiting'} tone={counts.add ? 'text-gold' : 'text-silver'} />
-            <Tile label="Transfers" value={counts.transfer} hint="close old, open new" tone={counts.transfer ? 'text-warning' : 'text-silver'} />
-            <Tile label="To close" value={counts.close} hint="separated, still registered" tone={counts.close ? 'text-alert' : 'text-silver'} />
-            <Tile
+          {/* The three kinds of work ARE the filter: a tile shows its bucket
+              in To do (again to show all). One control, not tiles + chips. */}
+          <MetricStrip label="Fieldglass setup">
+            {(
+              [
+                ['add', 'To add', counts.add, counts.add ? 'new in Fieldglass' : 'nobody waiting', 'default'],
+                ['transfer', 'Transfers', counts.transfer, 'close old, open new', 'warning'],
+                ['close', 'To close', counts.close, 'separated, still registered', 'alert'],
+              ] as Array<[Exclude<Kind, 'all'>, string, number, string, 'default' | 'warning' | 'alert']>
+            ).map(([value, label, n, hint, tone]) => (
+              <MetricCard
+                key={value}
+                label={label}
+                value={n}
+                hint={hint}
+                tone={n ? tone : 'neutral'}
+                selected={tab === 'todo' && kind === value}
+                onClick={() =>
+                  setParams(
+                    (p) => {
+                      p.delete('tab');
+                      if (tab === 'todo' && kind === value) p.delete('kind');
+                      else p.set('kind', value);
+                      return p;
+                    },
+                    { replace: true },
+                  )
+                }
+              />
+            ))}
+            <MetricCard
               label="Can’t be billed yet"
               value={`${counts.unbilled.toFixed(1)}h`}
-              hint={counts.unbilledPeople ? `worked by ${counts.unbilledPeople} not in Fieldglass` : 'every worked hour is billable'}
-              tone={counts.unbilled > 0 ? 'text-alert' : 'text-silver'}
+              hint={counts.unbilledPeople ? `worked by ${counts.unbilledPeople} not in Fieldglass` : 'all billable'}
+              tone={counts.unbilled > 0 ? 'alert' : 'neutral'}
             />
-          </div>
+          </MetricStrip>
 
-          <FilterBar className="gap-x-3 gap-y-2">
-            <SearchInput
-              value={search}
-              onChange={(e) => setParam('q', e.target.value)}
-              placeholder="Name, client, Worker ID…"
-              aria-label="Search the Fieldglass desk"
-              wrapperClassName="min-w-[14rem] flex-1"
-            />
+          <FilterBar
+            className="gap-x-3 gap-y-2"
+            search={
+              <SearchInput
+                value={search}
+                onChange={(e) => setParam('q', e.target.value)}
+                placeholder="Name, client, Worker ID…"
+                aria-label="Search the Fieldglass desk"
+              />
+            }
+            // Below md the client, dates and Worker ID filter fold into one
+            // sheet; the search keeps the first row.
+            activeFilters={[client, from || to, missingOnly && tab === 'registered'].filter(Boolean).length}
+            onClearFilters={clearFilters}
+          >
             <div className="flex items-center gap-1.5">
               <Label htmlFor="fg-client" className="text-2xs uppercase tracking-wider text-silver/70">
                 Client
@@ -264,50 +288,40 @@ export function FieldglassSetup() {
                 ))}
               </Select>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Label htmlFor="fg-from" className="text-2xs uppercase tracking-wider text-silver/70">
+            {/* Label over a two-up row on a phone; one line from sm. Two date
+                inputs side by side with a label on the left was 15px wider
+                than a 390px screen. */}
+            <div
+              role="group"
+              aria-labelledby="fg-dates-label"
+              className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:flex-row sm:items-center sm:gap-1.5"
+            >
+              <span id="fg-dates-label" className="text-2xs font-semibold uppercase tracking-wider text-silver/70">
                 {tab === 'todo' ? 'Starts' : 'Last worked'}
-              </Label>
-              <Input
-                id="fg-from"
-                type="date"
-                value={from}
-                max={to || undefined}
-                onChange={(e) => setParam('from', e.target.value)}
-                className="h-9 w-[9.5rem]"
-                aria-label={tab === 'todo' ? 'Starts on or after' : 'Last worked on or after'}
-              />
-              <span className="text-xs text-silver/60">to</span>
-              <Input
-                id="fg-to"
-                type="date"
-                value={to}
-                min={from || undefined}
-                onChange={(e) => setParam('to', e.target.value)}
-                className="h-9 w-[9.5rem]"
-                aria-label={tab === 'todo' ? 'Starts on or before' : 'Last worked on or before'}
-              />
-            </div>
-            {tab === 'todo' ? (
-              <div className="flex items-center gap-1.5">
-                {(
-                  [
-                    ['all', 'All'],
-                    ['add', 'To add'],
-                    ['transfer', 'Transfers'],
-                    ['close', 'To close'],
-                  ] as Array<[Kind, string]>
-                ).map(([value, label]) => (
-                  <FilterChip
-                    key={value}
-                    active={kind === value}
-                    onClick={() => setParam('kind', value === 'all' ? '' : value)}
-                  >
-                    {label}
-                  </FilterChip>
-                ))}
+              </span>
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 sm:flex">
+                <Input
+                  id="fg-from"
+                  type="date"
+                  value={from}
+                  max={to || undefined}
+                  onChange={(e) => setParam('from', e.target.value)}
+                  className="h-9 w-full min-w-0 sm:w-[9.5rem]"
+                  aria-label={tab === 'todo' ? 'Starts on or after' : 'Last worked on or after'}
+                />
+                <span className="text-xs text-silver/60">to</span>
+                <Input
+                  id="fg-to"
+                  type="date"
+                  value={to}
+                  min={from || undefined}
+                  onChange={(e) => setParam('to', e.target.value)}
+                  className="h-9 w-full min-w-0 sm:w-[9.5rem]"
+                  aria-label={tab === 'todo' ? 'Starts on or before' : 'Last worked on or before'}
+                />
               </div>
-            ) : (
+            </div>
+            {tab === 'registered' && (
               <FilterChip active={missingOnly} onClick={() => setParam('missing', missingOnly ? '' : '1')}>
                 Missing a Worker ID ({counts.allMissing})
               </FilterChip>
@@ -324,8 +338,7 @@ export function FieldglassSetup() {
             <p className="-mt-2 text-xs text-silver/70" aria-live="polite">
               {tab === 'todo'
                 ? `Showing ${queue.length} of ${counts.allQueue} waiting on setup.`
-                : `Showing ${roster.length} of ${counts.allActive} registered.`}{' '}
-              The tiles above count what you are looking at.
+                : `Showing ${roster.length} of ${counts.allActive} registered.`}
             </p>
           )}
 

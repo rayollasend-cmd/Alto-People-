@@ -126,3 +126,21 @@ export const waiveEnrollment = (id: string) =>
 
 export const listExpiring = (days: number) =>
   apiFetch<{ expiring: ExpiringEnrollment[] }>(`/lms/expiring?days=${days}`);
+
+/** GET /lms/summary — the Learning desk's numbers (apps/api routes/lms94.ts). */
+export interface LmsSummary {
+  /** Completed training past its expiry, or re-flagged EXPIRED: renewal overdue. */
+  lapsed: number;
+  expiring30: number;
+  expiring14: number;
+  /** Assigned or in progress. */
+  open: number;
+  /** Of the open ones, assigned 30+ days ago. */
+  openStale: number;
+  assigned30: number;
+  completed30: number;
+  /** Percent of the last 30 days' assignments complete; null with none. */
+  completionRate30: number | null;
+}
+
+export const getLmsSummary = () => apiFetch<LmsSummary>('/lms/summary');

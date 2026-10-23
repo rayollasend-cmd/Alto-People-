@@ -93,7 +93,7 @@ const note = (id: string, body: string, over: Partial<ActivityNote> = {}): Activ
   ...over,
 });
 
-function renderRelay(initial = '/relay') {
+function renderRelay(initial = '/relay', role: 'FINANCE_ACCOUNTANT' | 'OPERATIONS_MANAGER' = 'FINANCE_ACCOUNTANT') {
   const calls: Array<{ path: string; method?: string; body?: unknown }> = [];
   vi.mocked(apiFetch).mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
     calls.push({ path, method: init?.method, body: init?.body });
@@ -110,15 +110,15 @@ function renderRelay(initial = '/relay') {
     if (path === '/work-notes/n2/decide') return { ok: true } as never;
     throw new Error(`unexpected ${path}`);
   });
-  const caps = ROLE_CAPABILITIES.FINANCE_ACCOUNTANT;
+  const caps = ROLE_CAPABILITIES[role];
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <AuthContext.Provider
         value={{
           isInitializing: false,
           isOffline: false,
-          user: { id: 'u-fin', email: 'fin@altohr.com', role: 'FINANCE_ACCOUNTANT', status: 'ACTIVE' as const, clientId: null, associateId: null },
-          role: 'FINANCE_ACCOUNTANT',
+          user: { id: 'u-fin', email: 'fin@altohr.com', role, status: 'ACTIVE' as const, clientId: null, associateId: null },
+          role,
           capabilities: new Set<Capability>(caps),
           signIn: vi.fn(),
           signOut: vi.fn(),
@@ -143,12 +143,14 @@ describe('the relay', () => {
     renderRelay();
     const finance = await screen.findByRole('button', { name: /Finance\s*your desk/ });
     expect(finance).toHaveAttribute('aria-pressed', 'true');
-    const batons = screen.getByRole('region', { name: /Batons/ });
+    const batons = screen.getByRole('region', { name: /Open hand-offs/ });
     expect(within(batons).getByText('Fieldglass adds')).toBeInTheDocument();
     expect(within(batons).queryByText('Timesheets awaiting approval')).not.toBeInTheDocument();
     // Lanes waiting on Finance only: Jay and Nia, not Leo (Workforce's).
     expect(screen.getByRole('button', { name: 'Open Jay Patel’s lane' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Leo Ramos’s lane' })).not.toBeInTheDocument();
+    // The desk lens is a filter you can see — and take off (F500 G2).
+    expect(screen.getByRole('button', { name: /Show every desk's lanes, not just Finance's/ })).toHaveTextContent('Finance’s lanes ✕');
 
     await userEvent.click(screen.getByRole('button', { name: 'All desks' }));
     expect(within(batons).getByText('Timesheets awaiting approval')).toBeInTheDocument();
@@ -166,7 +168,7 @@ describe('the relay', () => {
 
   it('the pipeline filters by stage', async () => {
     renderRelay('/relay?desk=ALL');
-    const fieldglass = await screen.findByRole('button', { name: /3\. Fieldglass/ });
+    const fieldglass = await screen.findByRole('button', { name: /3\. Registration/ });
     await userEvent.click(fieldglass);
     expect(fieldglass).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Open Nia Carter’s lane' })).toBeInTheDocument();
@@ -194,5 +196,14 @@ describe('the relay', () => {
     await waitFor(() =>
       expect(calls.find((c) => c.path === '/work-notes/n2/decide')).toMatchObject({ method: 'POST', body: { approve: true, note: 'Start confirmed with the buyer.' } }),
     );
+  });
+
+  it('opens on every desk for an Operations Manager, who has no desk of their own, and talks plainly (F500 G2)', async () => {
+    renderRelay('/relay', 'OPERATIONS_MANAGER');
+    expect(await screen.findByRole('button', { name: 'All desks' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('your desk')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Leo Ramos’s lane' })).toBeInTheDocument();
+    expect(screen.queryByText(/baton|ruling|bleeding|Silence means green|Monday pack/i)).not.toBeInTheDocument();
+    expect(screen.getByText('This week’s agenda')).toBeInTheDocument();
   });
 });

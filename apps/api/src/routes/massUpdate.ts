@@ -8,6 +8,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { assertSiteInScope, isInternallyScoped, scopeAssociates, scopeWhere } from '../lib/scope.js';
+import { profileMoveChanges } from '../lib/jobProfileMove.js';
 import type { SessionUser } from '../types/express.js';
 
 /**
@@ -15,8 +16,11 @@ import type { SessionUser } from '../types/express.js';
  *
  *   Filter people → preview exactly who changes and from what → apply as one
  *   batch, one audit row, and an undo that holds for 24 hours. Fields: site
- *   (the open assignment moves), department, manager, pay schedule. Each
- *   person's "before" is kept on the batch so undo restores it exactly.
+ *   (the open assignment moves), department, manager, pay schedule, cost
+ *   center and job profile. Each person's "before" is kept on the batch so
+ *   undo restores it exactly. A job profile that changes someone's overtime
+ *   exemption, comp class or tipped code is a promotion (a second person
+ *   decides it), so a batch that would do that for anyone is refused.
  *
  *   POST /people/mass-update/preview   { filter, changes } → the rows that would change
  *   POST /people/mass-update           { filter, changes } → { batchId, affected }
@@ -48,6 +52,8 @@ const ChangesSchema = z
     departmentId: z.string().uuid().nullable().optional(),
     managerId: z.string().uuid().nullable().optional(),
     payrollScheduleId: z.string().uuid().nullable().optional(),
+    costCenterId: z.string().uuid().nullable().optional(),
+    jobProfileId: z.string().uuid().nullable().optional(),
   })
   .refine((c) => Object.values(c).some((v) => v !== undefined), { message: 'Pick at least one field to change.' });
 
@@ -65,6 +71,11 @@ interface Before {
   managerName: string | null;
   payrollScheduleId: string | null;
   payrollScheduleName: string | null;
+  /** Older batches (before cost center and job profile could change) don't carry these. */
+  costCenterId?: string | null;
+  costCenterName?: string | null;
+  jobProfileId?: string | null;
+  jobProfileName?: string | null;
 }
 
 /** Who the filter names, inside the caller's tenant and reach (AND, so no filter can overwrite the scope). */
@@ -101,6 +112,10 @@ async function snapshot(f: Filter, user: SessionUser): Promise<Before[]> {
       manager: { select: { firstName: true, lastName: true } },
       payrollScheduleId: true,
       payrollSchedule: { select: { name: true } },
+      costCenterId: true,
+      costCenter: { select: { code: true, name: true } },
+      jobProfileId: true,
+      jobProfile: { select: { title: true } },
       assignments: { where: { endedAt: null }, take: 1, orderBy: { startedAt: 'desc' }, select: { locationId: true, location: { select: { name: true } } } },
     },
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
@@ -117,6 +132,10 @@ async function snapshot(f: Filter, user: SessionUser): Promise<Before[]> {
     managerName: a.manager ? `${a.manager.firstName} ${a.manager.lastName}`.trim() : null,
     payrollScheduleId: a.payrollScheduleId,
     payrollScheduleName: a.payrollSchedule?.name ?? null,
+    costCenterId: a.costCenterId,
+    costCenterName: a.costCenter ? `${a.costCenter.code} · ${a.costCenter.name}` : null,
+    jobProfileId: a.jobProfileId,
+    jobProfileName: a.jobProfile?.title ?? null,
   }));
 }
 
@@ -127,7 +146,7 @@ async function snapshot(f: Filter, user: SessionUser): Promise<Before[]> {
  */
 async function resolveChanges(c: Changes, user: SessionUser, movingIds: string[] = []) {
   const tenantId = tenantIdForWrite();
-  const out: { siteName?: string | null; departmentName?: string | null; managerName?: string | null; payrollScheduleName?: string | null } = {};
+  const out: { siteName?: string | null; departmentName?: string | null; managerName?: string | null; payrollScheduleName?: string | null; costCenterName?: string | null; jobProfileName?: string | null } = {};
   if (c.siteId !== undefined) {
     if (c.siteId === null) throw new HttpError(400, 'site_required', 'A site is required: people are moved, not unassigned, by a mass update.');
     const s = await prisma.site.findFirst({ where: { id: c.siteId, tenantId, deletedAt: null }, select: { name: true } });
@@ -173,7 +192,50 @@ async function resolveChanges(c: Changes, user: SessionUser, movingIds: string[]
       out.payrollScheduleName = p.name;
     }
   }
+  if (c.costCenterId !== undefined) {
+    if (c.costCenterId === null) out.costCenterName = null;
+    else {
+      const cc = await prisma.costCenter.findFirst({ where: { id: c.costCenterId, tenantId, deletedAt: null }, select: { code: true, name: true } });
+      if (!cc) throw new HttpError(404, 'cost_center_not_found', 'Cost center not found.');
+      out.costCenterName = `${cc.code} · ${cc.name}`;
+    }
+  }
+  if (c.jobProfileId !== undefined) {
+    if (c.jobProfileId === null) out.jobProfileName = null;
+    else {
+      const jp = await prisma.jobProfile.findFirst({ where: { id: c.jobProfileId, tenantId, deletedAt: null }, select: { title: true } });
+      if (!jp) throw new HttpError(404, 'job_profile_not_found', 'Job profile not found.');
+      out.jobProfileName = jp.title;
+    }
+  }
   return out;
+}
+
+/**
+ * A job profile move that changes overtime exemption, comp class or tipped
+ * code is a promotion, and a promotion already waiting sets the profile when
+ * it is decided: either way not a mass edit. Refused, naming who.
+ */
+async function assertProfileMovesAllowed(before: Before[], c: Changes): Promise<void> {
+  if (c.jobProfileId === undefined) return;
+  const moving = before.filter((b) => (b.jobProfileId ?? null) !== c.jobProfileId);
+  if (moving.length === 0) return;
+  const ids = [...new Set([c.jobProfileId, ...moving.map((b) => b.jobProfileId ?? null)].filter((x): x is string => !!x))];
+  const profiles = await prisma.jobProfile.findMany({ where: { id: { in: ids } }, select: { id: true, title: true, isExempt: true, wcClassCode: true, tippedOccupationCode: true } });
+  const byId = new Map(profiles.map((p) => [p.id, p]));
+  const to = c.jobProfileId ? byId.get(c.jobProfileId) ?? null : null;
+  const pending = new Set(
+    (await prisma.promotion.findMany({ where: { associateId: { in: moving.map((b) => b.associateId) }, status: 'PENDING' }, select: { associateId: true } })).map((p) => p.associateId),
+  );
+  const blocked = moving.filter((b) => pending.has(b.associateId) || profileMoveChanges(b.jobProfileId ? byId.get(b.jobProfileId) ?? null : null, to).length > 0);
+  if (blocked.length === 0) return;
+  const names = blocked.slice(0, 3).map((b) => b.name).join(', ') + (blocked.length > 3 ? ` and ${blocked.length - 3} more` : '');
+  throw new HttpError(
+    409,
+    'job_profile_needs_approval',
+    `${to ? `“${to.title}”` : 'Removing the job profile'} needs a promotion for ${names}: it changes their overtime exemption, comp class or tipped code, or a promotion is already waiting. Send those as promotions, or leave them out.`,
+    { blocked: blocked.map((b) => b.associateId) },
+  );
 }
 
 function changesFor(b: Before, c: Changes): Array<{ field: string; from: string | null; to: string | null }> {
@@ -182,6 +244,8 @@ function changesFor(b: Before, c: Changes): Array<{ field: string; from: string 
   if (c.departmentId !== undefined && c.departmentId !== b.departmentId) diffs.push({ field: 'department', from: b.departmentName, to: null });
   if (c.managerId !== undefined && c.managerId !== b.managerId) diffs.push({ field: 'manager', from: b.managerName, to: null });
   if (c.payrollScheduleId !== undefined && c.payrollScheduleId !== b.payrollScheduleId) diffs.push({ field: 'paySchedule', from: b.payrollScheduleName, to: null });
+  if (c.costCenterId !== undefined && c.costCenterId !== (b.costCenterId ?? null)) diffs.push({ field: 'costCenter', from: b.costCenterName ?? null, to: null });
+  if (c.jobProfileId !== undefined && c.jobProfileId !== (b.jobProfileId ?? null)) diffs.push({ field: 'jobProfile', from: b.jobProfileName ?? null, to: null });
   return diffs;
 }
 
@@ -191,8 +255,16 @@ massUpdateRouter.post('/people/mass-update/preview', MANAGE, async (req, res) =>
   const { filter, changes } = BodySchema.parse(req.body);
   const before = await snapshot(filter, req.user!);
   const names = await resolveChanges(changes, req.user!, before.map((b) => b.associateId));
-  const to = (field: string) =>
-    field === 'site' ? names.siteName ?? null : field === 'department' ? names.departmentName ?? null : field === 'manager' ? names.managerName ?? null : names.payrollScheduleName ?? null;
+  await assertProfileMovesAllowed(before, changes);
+  const NAMED: Record<string, string | null | undefined> = {
+    site: names.siteName,
+    department: names.departmentName,
+    manager: names.managerName,
+    paySchedule: names.payrollScheduleName,
+    costCenter: names.costCenterName,
+    jobProfile: names.jobProfileName,
+  };
+  const to = (field: string) => NAMED[field] ?? null;
   const rows = before
     .map((b) => ({ associateId: b.associateId, name: b.name, changes: changesFor(b, changes).map((d) => ({ ...d, to: to(d.field) })) }))
     .filter((r) => r.changes.length > 0);
@@ -205,6 +277,8 @@ async function applyOne(tx: Prisma.TransactionClient, b: Before, c: Changes, tod
   if (c.departmentId !== undefined && c.departmentId !== b.departmentId) data.departmentId = c.departmentId;
   if (c.managerId !== undefined && c.managerId !== b.managerId) data.managerId = c.managerId;
   if (c.payrollScheduleId !== undefined && c.payrollScheduleId !== b.payrollScheduleId) data.payrollScheduleId = c.payrollScheduleId;
+  if (c.costCenterId !== undefined && c.costCenterId !== (b.costCenterId ?? null)) data.costCenterId = c.costCenterId;
+  if (c.jobProfileId !== undefined && c.jobProfileId !== (b.jobProfileId ?? null)) data.jobProfileId = c.jobProfileId;
   if (Object.keys(data).length) await tx.associate.update({ where: { id: b.associateId }, data });
   if (c.siteId !== undefined && c.siteId !== null && c.siteId !== b.siteId) {
     await tx.associateAssignment.updateMany({ where: { associateId: b.associateId, endedAt: null }, data: { endedAt: today } });
@@ -218,6 +292,7 @@ massUpdateRouter.post('/people/mass-update', MANAGE, async (req, res) => {
   const before = (await snapshot(filter, req.user!)).filter((b) => changesFor(b, changes).length > 0);
   const names = await resolveChanges(changes, req.user!, before.map((b) => b.associateId));
   if (before.length === 0) throw new HttpError(400, 'nothing_to_change', 'No one matched with a different value.');
+  await assertProfileMovesAllowed(before, changes);
   if (changes.managerId && before.some((b) => b.associateId === changes.managerId)) {
     throw new HttpError(400, 'self_manager', 'A person cannot be made their own manager.');
   }
@@ -279,6 +354,8 @@ massUpdateRouter.post('/people/mass-update/:id/undo', MANAGE, async (req, res) =
       if (changes.departmentId !== undefined) data.departmentId = b.departmentId;
       if (changes.managerId !== undefined) data.managerId = b.managerId;
       if (changes.payrollScheduleId !== undefined) data.payrollScheduleId = b.payrollScheduleId;
+      if (changes.costCenterId !== undefined && b.costCenterId !== undefined) data.costCenterId = b.costCenterId;
+      if (changes.jobProfileId !== undefined && b.jobProfileId !== undefined) data.jobProfileId = b.jobProfileId;
       if (Object.keys(data).length) await tx.associate.update({ where: { id: b.associateId }, data });
       if (changes.siteId !== undefined && changes.siteId !== null && changes.siteId !== b.siteId) {
         await tx.associateAssignment.updateMany({ where: { associateId: b.associateId, endedAt: null, locationId: changes.siteId }, data: { endedAt: today } });

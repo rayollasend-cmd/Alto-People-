@@ -173,21 +173,25 @@ describe('AgentRecordPage', () => {
     expect(await screen.findByTestId('agent-profile')).toBeInTheDocument();
   });
 
-  it('puts Suspend in the actions, and counts proposals, capabilities and decisions on their tabs', async () => {
+  it('puts Suspend in "More" (never a red button beside Edit), and counts proposals, capabilities and decisions on their tabs', async () => {
+    const user = userEvent.setup();
     renderPage();
     await screen.findByTestId('agent-profile');
-    expect(screen.getByRole('button', { name: /Suspend/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Suspend/ })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /Proposals/ })).toHaveTextContent('(1)');
     expect(await screen.findByRole('tab', { name: /Capabilities & gates/ })).toHaveTextContent('(2)');
     expect(await screen.findByRole('tab', { name: /Decision record/ })).toHaveTextContent('(1)');
     expect(screen.queryByRole('tab', { name: /Requests/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(await screen.findByRole('menuitem', { name: /Suspend/ })).toBeInTheDocument();
   });
 
-  it('reads the trail in words, with the entity named and no raw code or id on screen', async () => {
-    const user = userEvent.setup();
+  it('reads the trail in words beside the tabs, with the entity named and no raw code or id on screen', async () => {
     renderPage();
     await screen.findByTestId('agent-profile');
-    await user.click(screen.getByRole('tab', { name: /Trail/ }));
+    // The activity trail is the record's aside now, not one of nine tabs (F500 G2).
+    expect(screen.queryByRole('tab', { name: /Trail/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
     expect(await screen.findByText('Credential issued')).toBeInTheDocument();
     expect(screen.getByText('Credential …ab12')).toBeInTheDocument();
     expect(screen.getByText('Asked for approval')).toBeInTheDocument();
@@ -210,5 +214,22 @@ describe('AgentRecordPage', () => {
     await screen.findByTestId('agent-profile');
     expect(screen.queryByRole('button', { name: /Edit/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Suspend/ })).not.toBeInTheDocument();
+  });
+
+  it('says an automatically registered agent in words, and hides empty tabs from a reader who can\'t fill them (F500 G2)', async () => {
+    vi.mocked(getAgent).mockResolvedValue({
+      ...detail,
+      notes: 'Registered by the boot sweep (Brief 1D-2). Owner defaulted to the first org admin; confirm.',
+      approvals: [],
+      spend: [],
+      credentials: [],
+    });
+    renderPage('EXECUTIVE_CHAIRMAN');
+    const profile = await screen.findByTestId('agent-profile');
+    expect(within(profile).getByText('Added automatically. Confirm the owner.')).toBeInTheDocument();
+    expect(screen.queryByText(/boot sweep/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Proposals/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Spend/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Credentials/ })).not.toBeInTheDocument();
   });
 });

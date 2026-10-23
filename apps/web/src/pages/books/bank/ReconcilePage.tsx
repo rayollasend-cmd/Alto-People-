@@ -176,7 +176,8 @@ function Reconciliation({ recId, feedId, manage }: { recId: string; feedId: stri
           )}
         </div>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* One pane under the other until there's room for both side by side. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Column
           title={card ? 'Charges' : 'Deposits and other credits'}
           lines={d.lines.filter((l) => l.amount > 0)}
@@ -193,13 +194,15 @@ function Reconciliation({ recId, feedId, manage }: { recId: string; feedId: stri
       <div
         role="status"
         aria-live="polite"
-        className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-navy-secondary bg-navy/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-lg sm:border"
+        aria-label="Statement balance against what’s ticked"
+        data-testid="reconcile-balance-bar"
+        className="sticky bottom-0 z-10 -mx-4 grid grid-cols-2 items-center gap-x-6 gap-y-1.5 border-t border-navy-secondary bg-navy/95 px-4 py-2.5 backdrop-blur sm:mx-0 sm:flex sm:flex-wrap sm:gap-y-2 sm:rounded-lg sm:border sm:py-3"
       >
         <Fact label="Statement balance" value={money(d.statementBalance)} />
         <Fact label="Beginning balance" value={money(d.beginningBalance)} />
         <Fact label="Cleared" value={money(d.clearedBalance)} />
         <Fact label="Difference" value={money(d.difference)} tone={zero ? 'good' : 'bad'} />
-        <div className="ml-auto flex items-center gap-2">
+        <div className="col-span-2 flex items-center justify-end gap-2 sm:ml-auto">
           {done ? (
             <span className="flex items-center gap-1.5 text-sm font-medium text-success">
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
@@ -223,7 +226,7 @@ function Fact({ label, value, tone }: { label: string; value: string; tone?: 'go
   return (
     <div>
       <p className="text-xs text-silver">{label}</p>
-      <p className={cn('text-lg font-semibold tabular-nums', tone === 'good' ? 'text-success' : tone === 'bad' ? 'text-warning' : 'text-ink')}>{value}</p>
+      <p className={cn('text-base font-semibold tabular-nums sm:text-lg', tone === 'good' ? 'text-success' : tone === 'bad' ? 'text-warning' : 'text-ink')}>{value}</p>
     </div>
   );
 }
@@ -233,9 +236,9 @@ function Column({ title, lines, disabled, onTick }: { title: string; lines: Bank
   const total = useMemo(() => ticked.reduce((s, l) => s + Math.round(l.amount * 100), 0) / 100, [ticked]);
   const allTicked = lines.length > 0 && ticked.length === lines.length;
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardContent className="p-0">
-        <div className="flex items-center gap-3 border-b border-navy-secondary px-4 py-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-navy-secondary px-4 py-3">
           <label className="flex cursor-pointer items-center gap-2">
             <input
               type="checkbox"
@@ -259,10 +262,13 @@ function Column({ title, lines, disabled, onTick }: { title: string; lines: Bank
               <li key={l.lineId}>
                 <label className={cn('flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-navy-secondary/30', l.cleared && 'bg-gold/[0.04]')}>
                   <input type="checkbox" className="h-4 w-4 shrink-0 accent-gold" checked={l.cleared} disabled={disabled} onChange={() => onTick([l.lineId], !l.cleared)} />
-                  <span className="w-20 shrink-0 text-xs tabular-nums text-silver">{fmtDate(l.date)}</span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink" title={l.memo ?? undefined}>
-                    {l.memo ?? `Entry #${l.entryNumber}`}
-                    <span className="ml-1.5 text-xs text-silver">#{l.entryNumber}</span>
+                  {/* Below sm the date sits over the memo, so the amount never leaves the screen. */}
+                  <span className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
+                    <span className="shrink-0 text-xs tabular-nums text-silver sm:w-20">{fmtDate(l.date)}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-ink" title={l.memo ?? undefined}>
+                      {l.memo ?? `Entry #${l.entryNumber}`}
+                      <span className="ml-1.5 text-xs text-silver">#{l.entryNumber}</span>
+                    </span>
                   </span>
                   <span className="shrink-0 text-sm tabular-nums text-ink">{money(Math.abs(l.amount))}</span>
                 </label>

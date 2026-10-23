@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRight, CalendarCheck, CheckCircle2, CircleAlert, FileSpreadsheet, Info, NotebookPen, Plus, RefreshCcw } from 'lucide-react';
 import type { BooksOverview } from '@alto-people/shared';
 import { useAuth, useTenant } from '@/lib/auth';
-import { getBooksOverview } from '@/lib/books/ledgerApi';
+import { getBooksOverview, listJournal } from '@/lib/books/ledgerApi';
 import { fmtDate, fmtDateTime, fmtMoney, fmtMoneyCompact, fmtMonthShortYear } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
@@ -14,11 +14,14 @@ import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer,
 import { ChartTooltipContent, LegendKey, PALETTE, TICK } from '@/components/ui/charts';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard, type MetricTrend } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
-import { Amount } from './ledger/ledgerKit';
+import { AGING_COLORS, AgingBar } from '@/pages/finance/financeCharts';
+import { Amount, PostHistoryButton, sourceLabel } from './ledger/ledgerKit';
+import { sinceMonthEndWords } from './close/closeKit';
 
 /**
  * The Books overview — the company's finances on one screen: the cash in
@@ -47,33 +50,19 @@ export function BooksHome() {
     <ListTemplate
       title="Books"
       subtitle="The company’s own finances: cash, what you’re owed and what you owe, profit, the close and the QuickBooks sync."
-      primaryAction={
-        manage ? (
-          <Button asChild>
-            <Link to="/books/journal/new">
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              Journal entry
-            </Link>
-          </Button>
-        ) : undefined
-      }
-      secondaryActions={
-        <Button asChild variant="secondary">
-          <Link to="/books/reports">
-            <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
-            Financial statements
-          </Link>
-        </Button>
-      }
+      actions={[
+        ...(manage ? [{ key: 'entry', label: 'Journal entry', icon: Plus, primary: true, to: '/books/journal/new' }] : []),
+        { key: 'statements', label: 'Financial statements', icon: FileSpreadsheet, to: '/books/reports' },
+      ]}
       summary={
         o ? (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MetricStrip label="The books at a glance">
             <MetricCard label="Cash" value={fmtMoney(o.cash.total)} hint={cashHint(o)} href="/books/bank" />
             {/* The same number as the aging card below (the open statements); when the ledger holds a different AR balance, the hint says so. */}
-            <MetricCard label={`${who.Many} owe`} value={fmtMoney(o.receivables.openOnStatements)} hint={receivablesHint(o)} accent={o.receivables.aging.over90 > 0 || Math.abs(o.receivables.openOnStatements - o.receivables.total) >= 0.01} href="/books/receivables" />
-            <MetricCard label="You owe" value={fmtMoney(o.payables.total)} hint={o.payables.overdue > 0 ? `${fmtMoney(o.payables.overdue)} past due` : `${fmtMoney(o.payables.dueIn7Days)} due this week`} accent={o.payables.overdue > 0} href="/books/bills" />
+            <MetricCard label={`${who.Many} owe`} value={fmtMoney(o.receivables.openOnStatements)} hint={receivablesHint(o)} tone={o.receivables.aging.over90 > 0 || Math.abs(o.receivables.openOnStatements - o.receivables.total) >= 0.01 ? 'warning' : 'default'} href="/books/receivables" />
+            <MetricCard label="You owe" value={fmtMoney(o.payables.total)} hint={o.payables.overdue > 0 ? `${fmtMoney(o.payables.overdue)} past due` : `${fmtMoney(o.payables.dueIn7Days)} due this week`} tone={o.payables.overdue > 0 ? 'alert' : 'default'} href="/books/bills" />
             <MetricCard label="Profit this month" value={fmtMoney(o.profit.month.netIncome)} hint={`${fmtMoney(o.profit.yearToDate.netIncome)} this year`} href="/books/reports" trend={profitTrend(o)} />
-          </div>
+          </MetricStrip>
         ) : q.isLoading ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[0, 1, 2, 3].map((i) => (
@@ -98,26 +87,60 @@ export function BooksHome() {
             <CashCard o={o} />
             <CloseCard o={o} />
             <QuickbooksCard o={o} />
-            <Card>
-              <CardContent className="space-y-2 p-4 text-sm">
-                <SectionTitle as="h3" title="Go to" />
-                {[
-                  { to: '/books/journal', label: 'Journal', icon: NotebookPen },
-                  { to: '/books/accounts', label: 'Chart of accounts', icon: FileSpreadsheet },
-                  { to: '/books/reports', label: 'Profit and loss, balance sheet, cash flow', icon: FileSpreadsheet },
-                ].map((l) => (
-                  <Link key={l.to} to={l.to} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-ink hover:bg-surface-raised">
-                    <l.icon className="h-4 w-4 text-ink-muted" aria-hidden="true" />
-                    <span className="flex-1">{l.label}</span>
-                    <ArrowRight className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
+            <RecentEntries />
           </div>
         </div>
       )}
     </ListTemplate>
+  );
+}
+
+/** The last few entries posted — where the Books' own pages are one sidebar click away, this is what changed. */
+function RecentEntries() {
+  const q = useQuery({ queryKey: ['books', 'journal', 'recent'], queryFn: () => listJournal({ limit: 5 }) });
+  const rows = q.data?.entries ?? [];
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <SectionTitle
+          as="h3"
+          title="Recent entries"
+          icon={NotebookPen}
+          trailing={
+            <Link to="/books/journal" className="text-sm text-accent hover:underline">
+              Journal
+            </Link>
+          }
+        />
+        {q.isLoading ? (
+          <Skeleton className="mt-3 h-24" />
+        ) : q.isError ? (
+          <p className="mt-2 text-sm text-ink-muted">Couldn’t load the journal.</p>
+        ) : rows.length === 0 ? (
+          <div className="mt-2 space-y-2">
+            <p className="text-sm text-ink-muted">Nothing has posted yet. Post history to bring payroll runs, statements and payments in.</p>
+            <PostHistoryButton size="sm" variant="secondary" />
+          </div>
+        ) : (
+          <ul className="mt-2 divide-y divide-line text-sm">
+            {rows.map((e) => (
+              <li key={e.id}>
+                <Link to={`/books/journal/${e.id}`} className="flex items-start justify-between gap-3 py-2 hover:text-accent">
+                  <span className="min-w-0">
+                    <span className="block break-words text-ink">{e.memo ?? `${sourceLabel(e.source)} entry`}</span>
+                    <span className="text-2xs text-ink-muted">
+                      #{e.number} · {fmtDate(e.date)}
+                      {e.status === 'VOID' ? ' · void' : ''}
+                    </span>
+                  </span>
+                  <Amount value={e.amount} className={e.status === 'VOID' ? 'line-through' : undefined} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -131,12 +154,14 @@ function NeedsYou({ items }: { items: BooksOverview['needsYou'] }) {
             {items.map((n) => {
               const Icon = n.tone === 'alert' ? CircleAlert : n.tone === 'warning' ? AlertTriangle : Info;
               return (
-                <li key={n.key}>
-                  <Link to={n.to} className="flex items-center gap-3 py-2.5 text-sm text-ink hover:text-accent">
+                <li key={n.key} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
+                  <Link to={n.to} className="flex min-w-0 flex-1 basis-60 items-center gap-3 text-sm text-ink hover:text-accent">
                     <Icon className={cn('h-4 w-4 shrink-0', n.tone === 'alert' ? 'text-alert' : n.tone === 'warning' ? 'text-warning' : 'text-info')} aria-hidden="true" />
                     <span className="flex-1">{n.label}</span>
                     <ArrowRight className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
                   </Link>
+                  {/* The books don't hold history yet: the fix is one press, here. */}
+                  {n.key === 'ar-unposted' && <PostHistoryButton size="sm" className="ml-7 sm:ml-0" />}
                 </li>
               );
             })}
@@ -236,12 +261,13 @@ function profitTrend(o: BooksOverview): MetricTrend | undefined {
   return { series, delta: series[series.length - 2]! - series[series.length - 3]!, deltaLabel: 'last month', format: (n) => fmtMoneyCompact(n), unit: 'month' };
 }
 
-const AGING: Array<{ key: keyof BooksOverview['receivables']['aging']; label: string; tone: string }> = [
-  { key: 'current', label: 'Not yet due', tone: 'bg-success/60' },
-  { key: 'days1to30', label: '1–30 days', tone: 'bg-warning/50' },
-  { key: 'days31to60', label: '31–60', tone: 'bg-warning/70' },
-  { key: 'days61to90', label: '61–90', tone: 'bg-alert/60' },
-  { key: 'over90', label: 'Over 90', tone: 'bg-alert' },
+/** The one aging palette (pages/finance/financeCharts) — 1–30 and 31–60 days read as two blocks, not one. */
+const AGING: Array<{ key: keyof BooksOverview['receivables']['aging']; label: string }> = [
+  { key: 'current', label: 'Not yet due' },
+  { key: 'days1to30', label: '1–30 days' },
+  { key: 'days31to60', label: '31–60' },
+  { key: 'days61to90', label: '61–90' },
+  { key: 'over90', label: 'Over 90' },
 ];
 
 function Receivables({ o }: { o: BooksOverview }) {
@@ -263,14 +289,14 @@ function Receivables({ o }: { o: BooksOverview }) {
         />
         {open > 0 && (
           <>
-            <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-surface-raised" role="img" aria-label="Receivables by age">
-              {AGING.map((a) => (r.aging[a.key] > 0 ? <span key={a.key} className={a.tone} style={{ width: `${(r.aging[a.key] / open) * 100}%` }} title={`${a.label}: ${fmtMoney(r.aging[a.key])}`} /> : null))}
+            <div className="mt-4" role="img" aria-label={`Receivables by age: ${AGING.filter((a) => r.aging[a.key] > 0).map((a) => `${a.label} ${fmtMoney(r.aging[a.key])}`).join(', ')}`}>
+              <AgingBar buckets={AGING.map((a) => ({ key: a.key, label: a.label, amount: r.aging[a.key] }))} />
             </div>
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-5">
               {AGING.map((a) => (
                 <div key={a.key}>
                   <dt className="flex items-center gap-1.5 text-2xs text-ink-muted">
-                    <span className={cn('h-2 w-2 rounded-sm', a.tone)} aria-hidden="true" />
+                    <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: AGING_COLORS[a.key] }} aria-hidden="true" />
                     {a.label}
                   </dt>
                   <dd className="tabular-nums text-ink">{fmtMoney(r.aging[a.key])}</dd>
@@ -280,11 +306,13 @@ function Receivables({ o }: { o: BooksOverview }) {
             {r.topClients.length > 0 && (
               <ul className="mt-4 divide-y divide-line text-sm">
                 {r.topClients.map((c) => (
-                  <li key={c.clientId} className="flex items-center justify-between gap-3 py-2">
-                    <Link to={`/clients/${c.clientId}?tab=statements`} className="min-w-0 truncate text-ink hover:text-accent">
-                      {c.name}
-                    </Link>
-                    <span className="text-2xs text-ink-muted">{c.oldestDueAt ? `oldest due ${fmtDate(c.oldestDueAt)}` : ''}</span>
+                  <li key={c.clientId} className="flex items-start justify-between gap-3 py-2">
+                    <span className="min-w-0">
+                      <Link to={`/clients/${c.clientId}?tab=statements`} className="break-words text-ink hover:text-accent">
+                        {c.name}
+                      </Link>
+                      {c.oldestDueAt && <span className="block text-2xs text-ink-muted">Oldest due {fmtDate(c.oldestDueAt)}</span>}
+                    </span>
                     <Amount value={c.open} />
                   </li>
                 ))}
@@ -344,10 +372,12 @@ function CloseCard({ o }: { o: BooksOverview }) {
         <SectionTitle as="h3" title="Month-end close" icon={CalendarCheck} />
         <div className="flex items-center justify-between gap-2 text-sm">
           <span className="text-ink">{month}</span>
-          <Badge variant={c.status === 'CLOSED' ? 'success' : 'pending'}>{c.status === 'CLOSED' ? 'Closed' : 'Open'}</Badge>
+          <Badge variant={c.status === 'CLOSED' ? 'success' : 'pending'}>{c.status === 'CLOSED' ? 'Closed' : 'Not closed'}</Badge>
         </div>
         <p className="text-xs text-ink-muted">
-          {c.status === 'CLOSED' && c.closedAt ? `Closed ${fmtDateTime(c.closedAt)}` : c.tasksTotal ? `${c.tasksDone} of ${c.tasksTotal} close steps done` : 'The close checklist hasn’t started.'}
+          {c.status === 'CLOSED' && c.closedAt
+            ? `Closed ${fmtDateTime(c.closedAt)}`
+            : [c.tasksTotal ? `${c.tasksDone} of ${c.tasksTotal} close steps done` : 'The close checklist hasn’t started.', sinceMonthEndWords(c.periodKey, o.asOf)].filter(Boolean).join(' · ')}
         </p>
         <Button asChild size="sm" variant="secondary">
           <Link to={`/books/close/${c.periodKey}`}>Open the close</Link>

@@ -15,7 +15,6 @@ import {
   type StateCoverage,
   type StateCoverageRow,
 } from '@/lib/taxcompApi';
-import { ListTemplate } from '@/components/templates';
 import { DeductionTreatmentCard } from './DeductionTreatmentCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -25,6 +24,8 @@ import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, Draw
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -52,15 +53,25 @@ const COVERAGE_TONE: Record<StateCoverage, 'success' | 'info' | 'pending' | 'def
 };
 
 type Filter = 'attention' | 'with-people' | 'all';
+const FILTERS: readonly Filter[] = ['attention', 'with-people', 'all'];
 
-export function StateTaxCoverage() {
+/**
+ * "Needs attention" is a state where someone works and payroll can't withhold yet. A state
+ * awaiting review with nobody in it isn't anyone's to-do (it listed 12 such states — F500 G3).
+ */
+export function needsAttention(s: Pick<StateCoverageRow, 'coverage' | 'people'>): boolean {
+  return s.people > 0 && (s.coverage === 'awaiting_review' || s.coverage === 'none');
+}
+
+/** Tax tables › State. (It was its own page, /payroll/state-tax — F500 G3: one home for tax reference.) */
+export function StateTaxTables() {
   const term = useTerm();
-  const [filter, setFilter] = useState<Filter>('attention');
+  const [filter, setFilter] = useUrlParam<Filter>('filter', 'attention', FILTERS);
   const [open, setOpen] = useState<StateCoverageRow | null>(null);
   const q = useQuery({ queryKey: ['payroll', 'state-tax', 'coverage'], queryFn: getStateCoverage });
   const rows = useMemo(() => {
     const all = q.data?.states ?? [];
-    if (filter === 'attention') return all.filter((s) => s.coverage === 'awaiting_review' || (s.coverage === 'none' && s.people > 0));
+    if (filter === 'attention') return all.filter(needsAttention);
     if (filter === 'with-people') return all.filter((s) => s.people > 0);
     return all;
   }, [q.data, filter]);
@@ -114,41 +125,36 @@ export function StateTaxCoverage() {
 
   const counts = q.data?.counts;
   return (
-    <ListTemplate
-      title="State tax coverage"
-      subtitle="Where payroll withholds state income tax and the state disability, paid-leave and unemployment contributions, and the states waiting on a review with your tax adviser before it can."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'State tax coverage' }]}
-      summary={
-        counts ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <MetricCard label="Covered" value={counts.verified} hint="states, including those with no income tax" />
-            <MetricCard label="Reviewed" value={counts.acknowledged} hint="added states your team signed off" />
-            <MetricCard label="Awaiting review" value={counts.awaitingReview} hint="added states not yet signed off" accent={counts.awaitingReview > 0} />
-            <MetricCard
-              label="Blocked from payroll"
-              value={counts.blockedPeople}
-              hint={counts.blockedPeople ? `${term('workers').toLowerCase()} in states payroll can’t withhold for yet` : 'nobody is blocked'}
-              accent={counts.blockedPeople > 0}
-            />
-          </div>
-        ) : (
-          <Skeleton className="h-24" />
-        )
-      }
-      filters={
-        <SegmentedControl
-          className="flex-wrap"
-          ariaLabel="Show"
-          value={filter}
-          onChange={setFilter}
-          options={[
-            { value: 'attention', label: 'Needs attention' },
-            { value: 'with-people', label: `Where ${term('workers').toLowerCase()} work` },
-            { value: 'all', label: 'Every state' },
-          ]}
-        />
-      }
-    >
+    <div className="space-y-[var(--d-stack)]">
+      {counts ? (
+        <MetricStrip label="State withholding at a glance">
+          <MetricCard label="Covered" value={counts.verified} hint="states, including those with no income tax" onClick={() => setFilter('all')} />
+          <MetricCard label="Reviewed" value={counts.acknowledged} hint="added states your team signed off" />
+          <MetricCard label="Awaiting review" value={counts.awaitingReview} hint="added states not yet signed off" tone={counts.awaitingReview > 0 ? 'warning' : 'default'} onClick={() => setFilter('all')} />
+          <MetricCard
+            label="Blocked from payroll"
+            value={counts.blockedPeople}
+            nothing={counts.blockedPeople === 0 ? 'Nobody is blocked' : undefined}
+            hint={`${term('workers').toLowerCase()} in states payroll can’t withhold for yet`}
+            tone={counts.blockedPeople > 0 ? 'alert' : 'default'}
+            onClick={() => setFilter('attention')}
+            selected={filter === 'attention'}
+          />
+        </MetricStrip>
+      ) : (
+        <Skeleton className="h-24" />
+      )}
+      <SegmentedControl
+        className="flex-wrap"
+        ariaLabel="Show"
+        value={filter}
+        onChange={setFilter}
+        options={[
+          { value: 'attention', label: 'Needs attention' },
+          { value: 'with-people', label: `Where ${term('workers').toLowerCase()} work` },
+          { value: 'all', label: 'Every state' },
+        ]}
+      />
       <DataGrid
         id="state-tax-coverage"
         caption="State withholding coverage"
@@ -165,12 +171,21 @@ export function StateTaxCoverage() {
         empty={{
           icon: ShieldCheck,
           title: filter === 'attention' ? 'Nothing needs attention' : 'No states here',
-          description: filter === 'attention' ? 'Every state where people work is covered or reviewed.' : 'Switch to Every state to see the whole list.',
+          description: filter === 'attention' ? `Every state where ${term('workers').toLowerCase()} work is covered or reviewed.` : 'Switch to Every state to see the whole list.',
         }}
       />
-      <DeductionTreatmentCard />
+      {/* Reference, not work: folded until someone asks. */}
+      <details className="group rounded-lg border border-line">
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-ink [&::-webkit-details-marker]:hidden">
+          How deductions are taxed by state
+          <span className="ml-2 text-xs font-normal text-ink-muted group-open:hidden">Show</span>
+        </summary>
+        <div className="px-1 pb-1">
+          <DeductionTreatmentCard />
+        </div>
+      </details>
       <StateDrawer row={open} onClose={() => setOpen(null)} />
-    </ListTemplate>
+    </div>
   );
 }
 

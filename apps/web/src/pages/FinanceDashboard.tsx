@@ -34,7 +34,8 @@ import { usePersistentState } from '@/lib/usePersistentState';
 import { Card, CardContent } from '@/components/ui/Card';
 import { useClockParts } from '@/components/ClockStrip';
 import { HomeMeta } from '@/components/home/HomeMeta';
-import { CountUpValue } from '@/components/ui/MetricCard';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { NextFundingCard } from '@/pages/payrollBanking/FundingCard';
@@ -162,7 +163,8 @@ export function FinanceDashboard() {
     <HomeTemplate
       title={greeting}
       topbarTitle={t('fin.title')}
-      subtitle={t('fin.subtitle')}
+      // The subtitle is a motto; on a phone the first screen goes to the day.
+      subtitle={<span className="hidden sm:inline">{t('fin.subtitle')}</span>}
       meta={
         <HomeMeta
           items={[
@@ -184,59 +186,52 @@ export function FinanceDashboard() {
       {/* ---- Payroll funding: the next run's money, when payroll runs on our own ACH ---- */}
       <NextFundingCard />
 
-      {/* ---- The four numbers that matter (two across until xl: the
-          template's main column is two thirds wide beside Hugo) ---------- */}
-      <div className={cn('grid grid-cols-2 gap-3', receivablesOn ? 'xl:grid-cols-4' : 'xl:grid-cols-3')}>
-        <FinKpi
-          to="/labor-costs"
+      {/* ---- The four numbers that matter: one tile kit (MetricStrip:
+          two across on a phone, four from lg, no orphan) ------------- */}
+      <MetricStrip label={t('fin.title')}>
+        <MetricCard
+          href="/labor-costs"
           label={t('fin.kpiRevenue')}
           value={lastWeek ? fmtMoney(lastWeek.revenue) : '—'}
           icon={DollarSign}
           hint={lastWeek ? t('fin.kpiRevenueHint', { hours: fmtHours(lastWeek.hours - lastWeek.unpricedHours) }) : undefined}
-          stagger={1}
         />
-        <FinKpi
-          to="/labor-costs"
+        <MetricCard
+          href="/labor-costs"
           label={t('fin.kpiMargin')}
           value={lastWeek?.marginPct != null ? `${Math.round(lastWeek.marginPct * 100)}%` : '—'}
-          hot={lastWeek?.marginPct != null && lastWeek.marginPct < 0.1}
-          hotTone={lastWeek?.marginPct != null && lastWeek.marginPct < 0 ? 'alert' : 'warning'}
+          tone={lastWeek?.marginPct != null && lastWeek.marginPct < 0 ? 'alert' : lastWeek?.marginPct != null && lastWeek.marginPct < 0.1 ? 'warning' : 'default'}
           icon={BarChart3}
           hint={lastWeek ? t('fin.kpiMarginHint', { amount: fmtMoney(lastWeek.margin) }) : undefined}
-          stagger={2}
         />
-        <FinKpi
-          to={data.billing ? `/time-attendance/timesheets?week=${data.billing.weekStart}` : '/time-attendance/timesheets'}
+        <MetricCard
+          href={data.billing ? `/time-attendance/timesheets?week=${data.billing.weekStart}` : '/time-attendance/timesheets'}
           label={t('fin.kpiRisk')}
           value={fmtMoney(atRisk)}
-          hot={atRisk > 0}
-          hotTone="alert"
+          tone={atRisk > 0 ? 'alert' : 'default'}
           icon={ShieldAlert}
           hint={atRisk > 0 ? t('fin.kpiRiskHint') : t('fin.kpiRiskClean')}
-          stagger={3}
         />
         {receivablesOn && (
-        <FinKpi
-          to="/clients/statements?status=UNPAID"
-          label={t('fin.kpiAr')}
-          value={fmtMoney(data.receivables.outstandingTotal)}
-          hot={pastDue > 0}
-          hotTone="alert"
-          icon={Scale}
-          hint={
-            data.receivables.outstandingCount > 0
-              ? [
-                  t('fin.arLine', { count: data.receivables.outstandingCount }),
-                  data.receivables.oldestDays !== null && t('fin.arOldest', { days: data.receivables.oldestDays }),
-                ]
-                  .filter(Boolean)
-                  .join(' · ')
-              : t('fin.arClean')
-          }
-          stagger={4}
-        />
+          <MetricCard
+            href="/clients/statements?status=UNPAID"
+            label={t('fin.kpiAr')}
+            value={fmtMoney(data.receivables.outstandingTotal)}
+            tone={pastDue > 0 ? 'alert' : 'default'}
+            icon={Scale}
+            hint={
+              data.receivables.outstandingCount > 0
+                ? [
+                    t('fin.arLine', { count: data.receivables.outstandingCount }),
+                    data.receivables.oldestDays !== null && t('fin.arOldest', { days: data.receivables.oldestDays }),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : t('fin.arClean')
+            }
+          />
         )}
-      </div>
+      </MetricStrip>
 
       {/* ---- Getting paid: last week in Fieldglass, and the margin ----- */}
       {/* items-start: a long Billing card no longer stretches the margin card beside it (finance walk 14). */}
@@ -299,7 +294,7 @@ export function FinanceDashboard() {
                   to="/fieldglass"
                   className="mt-2 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright"
                 >
-                  {(data.fieldglassQueueTotal ?? 0) - data.fieldglassQueue.length} more on Fieldglass setup
+                  {t('fin.fgMore', { count: (data.fieldglassQueueTotal ?? 0) - data.fieldglassQueue.length })}
                   <ArrowRight className="h-3 w-3" aria-hidden="true" />
                 </Link>
               )}
@@ -388,7 +383,7 @@ export function FinanceDashboard() {
         {/* The payroll case desk — PAYROLL-category HR cases routed to
             Finance; the pill is the "assigned to you" count. */}
         <Link
-          to="/hr-cases?tab=queue&category=PAYROLL&assigned=me"
+          to="/hr-cases?tab=queue&category=PAYROLL&mine=1"
           className="group flex min-h-12 items-center gap-2 rounded-md border border-navy-secondary bg-navy px-3 py-3 text-sm text-white transition-colors hover:border-gold/50 hover:bg-navy/80 active:border-gold/50 active:bg-navy-secondary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           <Inbox
@@ -415,60 +410,5 @@ export function FinanceDashboard() {
         </Link>
       </div>
     </HomeTemplate>
-  );
-}
-
-/** Gold-accent KPI tile — the AdminDashboard canon: 2px gold left rail,
- *  display-face numeral counting up, quiet hint. `hot` warms the numeral. */
-function FinKpi({
-  to,
-  label,
-  value,
-  hint,
-  icon: Icon,
-  hot = false,
-  hotTone = 'warning',
-  stagger,
-}: {
-  to: string;
-  label: string;
-  value: string;
-  hint?: string;
-  icon: typeof ClockAlert;
-  hot?: boolean;
-  hotTone?: 'warning' | 'alert';
-  stagger: number;
-}) {
-  return (
-    <Link to={to} className="group block" style={enterStagger(stagger)}>
-      <Card
-        interactive
-        className="h-full animate-enter border-l-2 border-l-gold/40 transition-colors group-hover:border-l-gold"
-      >
-        <CardContent>
-          <div className="flex items-center justify-between">
-            <div className="text-2xs font-medium uppercase tracking-[0.14em] text-silver/70">
-              {label}
-            </div>
-            <Icon className="h-3.5 w-3.5 text-gold/70" aria-hidden="true" />
-          </div>
-          <div
-            className={cn(
-              'mt-3 font-display text-3xl leading-none tabular-nums',
-              hot
-                ? hotTone === 'alert'
-                  ? 'text-alert'
-                  : 'text-warning'
-                : 'text-gold-bright',
-            )}
-          >
-            <CountUpValue value={value} />
-          </div>
-          {hint && (
-            <div className="mt-2 truncate text-xs text-silver">{hint}</div>
-          )}
-        </CardContent>
-      </Card>
-    </Link>
   );
 }

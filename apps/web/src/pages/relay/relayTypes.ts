@@ -146,7 +146,7 @@ export const DESK_RING: Record<Desk, string> = { HR: 'ring-sky/60', FINANCE: 'ri
 export const STAGE_LABELS: Record<StageKey, string> = {
   approved: 'Approved',
   scheduled: 'Scheduled',
-  fieldglass: 'Fieldglass',
+  fieldglass: 'Registration',
   firstShift: 'First shift',
   hoursApproved: 'Hours approved',
   paycheck: 'First paycheck',

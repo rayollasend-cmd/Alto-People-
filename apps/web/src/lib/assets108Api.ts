@@ -38,8 +38,20 @@ export interface Asset {
     associateId: string;
     associateName: string;
     assignedAt: string;
+    /** The holder has left (a separation is recorded). Absent on an older API. */
+    holderLeft?: boolean;
   } | null;
   createdAt: string;
+}
+
+/** Counts over everything in the caller's reach (not the page's filters). */
+export interface AssetSummary {
+  assigned: number;
+  available: number;
+  inRepair: number;
+  lost: number;
+  /** Kit still out with someone who has left — the recovery list. */
+  heldByLeavers: number;
 }
 
 export interface AssetAssignment {
@@ -65,7 +77,7 @@ export const listAssets = (params?: {
   if (params?.kind) q.set('kind', params.kind);
   if (params?.locationId) q.set('locationId', params.locationId);
   const suffix = q.toString() ? `?${q.toString()}` : '';
-  return apiFetch<{ assets: Asset[] }>(`/assets${suffix}`);
+  return apiFetch<{ assets: Asset[]; summary?: AssetSummary; truncated?: boolean }>(`/assets${suffix}`);
 };
 
 export interface AssetInput {

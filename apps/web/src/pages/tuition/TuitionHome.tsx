@@ -5,6 +5,7 @@ import { safeHref } from '@alto-people/shared';
 import { GraduationCap, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { useUrlParam } from '@/lib/useUrlState';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
@@ -21,7 +22,7 @@ import {
   type TuitionStatus,
   type TuitionSummary,
 } from '@/lib/tuition127Api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge, statusLabel } from '@/lib/status';
 import {
@@ -82,17 +83,23 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
+const TUITION_TABS = ['mine', 'queue'] as const;
+const TUITION_STATUSES = ['SUBMITTED', 'APPROVED', 'REJECTED', 'PAID', 'ALL'] as const;
+
 export function TuitionHome() {
   const { user } = useAuth();
+  // The tenant's word for the people who file requests (a hotel says "team member").
+  const workerWord = useTerm()('worker');
   const canProcessPayroll = user
     ? hasCapability(user.role, 'process:payroll')
     : false;
   const confirm = useConfirm();
-  const [tab, setTab] = useState<'mine' | 'queue'>('mine');
+  // Approvers land on the queue; the view and the queue's status filter
+  // live in the URL (?tab=mine, ?status=APPROVED) so Back and a link keep them.
+  const [tabParam, setTab] = useUrlParam<'mine' | 'queue'>('tab', canProcessPayroll ? 'queue' : 'mine', TUITION_TABS, { history: 'push' });
+  const tab = canProcessPayroll ? tabParam : 'mine';
 
-  const [statusFilter, setStatusFilter] = useState<TuitionStatus | 'ALL'>(
-    'SUBMITTED',
-  );
+  const [statusFilter, setStatusFilter] = useUrlParam<TuitionStatus | 'ALL'>('status', 'SUBMITTED', TUITION_STATUSES);
   const [queueSearch, setQueueSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -179,7 +186,7 @@ export function TuitionHome() {
   const exportQueueCsv = () => {
     downloadCsv(`tuition-queue-${ymdLocal()}.csv`, [
       [
-        'Associate',
+        workerWord,
         'Email',
         'School',
         'Program',
@@ -216,7 +223,7 @@ export function TuitionHome() {
       !(await confirm({
         title: `Approve ${ids.length} request${ids.length === 1 ? '' : 's'}?`,
         description:
-          'Each selected request will be approved and the associate notified.',
+          `Each selected request will be approved and the ${workerWord.toLowerCase()} notified.`,
         confirmLabel: 'Approve all',
       }))
     )
@@ -248,21 +255,26 @@ export function TuitionHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Tuition reimbursement"
-        subtitle="Submit course expenses for reimbursement. After grades land, attach them to your request."
-        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Tuition' }]}
+        subtitle={canProcessPayroll ? 'Course expenses to approve and pay out, and your own requests.' : 'Submit course expenses for reimbursement. After grades land, attach them to your request.'}
     >
 
       <div className="flex items-center justify-between">
-        <SegmentedControl<'mine' | 'queue'>
-          ariaLabel="Tuition view"
-          value={tab}
-          onChange={setTab}
-          options={tabOptions}
-        />
+        {/* One view is no switch: only approvers have two. */}
+        {tabOptions.length > 1 ? (
+          <SegmentedControl<'mine' | 'queue'>
+            ariaLabel="Tuition view"
+            value={tab}
+            onChange={setTab}
+            options={tabOptions}
+          />
+        ) : (
+          <span />
+        )}
         <div className="flex gap-2">
           {canProcessPayroll && tab === 'queue' && (
             <Select
               size="sm"
+              aria-label="Filter by status"
               value={statusFilter}
               onChange={(e) =>
                 setStatusFilter(e.target.value as TuitionStatus | 'ALL')
@@ -375,10 +387,10 @@ export function TuitionHome() {
             <SearchInput
               className="h-8"
               wrapperClassName="w-64 max-w-full"
-              placeholder="Search associate or school…"
+              placeholder={`Search ${workerWord.toLowerCase()} or school…`}
               value={queueSearch}
               onChange={(e) => setQueueSearch(e.target.value)}
-              aria-label="Search queue by associate or school"
+              aria-label={`Search the queue by ${workerWord.toLowerCase()} or school`}
             />
             <Button
               size="sm"
@@ -409,8 +421,8 @@ export function TuitionHome() {
               ) : queue.length === 0 ? (
                 <EmptyState
                   icon={GraduationCap}
-                  title="Queue is empty"
-                  description="Nothing pending."
+                  title="Nothing to review"
+                  description="Course expense requests people send land here for approval and payout."
                 />
               ) : filteredQueue.length === 0 ? (
                 <EmptyState
@@ -433,7 +445,7 @@ export function TuitionHome() {
                   columns={[
                     {
                       key: 'associate',
-                      header: 'Associate',
+                      header: workerWord,
                       accessor: (r) => r.associateName,
                       sortable: true,
                       primary: true,

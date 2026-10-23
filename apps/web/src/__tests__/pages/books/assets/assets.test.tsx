@@ -17,7 +17,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/lib/books/closeApi', () => api);
 
 import { FixedAssetsPage } from '@/pages/books/assets/FixedAssetsPage';
-import { FixedAssetDetailPage } from '@/pages/books/assets/FixedAssetDetailPage';
+import { FixedAssetDetailPage, linkedRecord } from '@/pages/books/assets/FixedAssetDetailPage';
 
 /** Fixed assets: the register with what's due, a van added from the fleet, the schedule, and disposal. */
 
@@ -126,7 +126,10 @@ describe('FixedAssetDetailPage', () => {
     );
     await screen.findByRole('heading', { name: 'Ford Transit — Van 7' });
     expect(screen.getByText('Posted late')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Dispose/ }));
+    // Dispose is destructive: it sits in More, not beside Edit.
+    expect(screen.queryByRole('button', { name: /^Dispose/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: /More/ }));
+    await user.click(await screen.findByRole('menuitem', { name: /Dispose/ }));
     const dialog = await screen.findByRole('dialog');
     await user.type(within(dialog).getByLabelText(/Proceeds/), '35000');
     await waitFor(() => expect(within(dialog).getByRole('option', { name: '1000 Operating checking' })).toBeInTheDocument());
@@ -136,3 +139,63 @@ describe('FixedAssetDetailPage', () => {
     await waitFor(() => expect(api.disposeFixedAsset).toHaveBeenCalledWith('fa1', expect.objectContaining({ proceeds: 35000, proceedsAccountId: 'cash' })));
   });
 });
+
+describe('fixed assets — F500', () => {
+  it('no $0 tiles over an empty register; the empty state offers “Add asset”', async () => {
+    api.listFixedAssets.mockResolvedValue({ assets: [], totals: { cost: 0, accumulated: 0, netBookValue: 0, monthly: 0 }, suggestions: [] });
+    renderAs('FINANCE_ACCOUNTANT', <FixedAssetsPage />, '/books/assets');
+    expect(await screen.findByText('No fixed assets on the register')).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Fixed assets at a glance' })).toBeNull();
+    expect(screen.queryByText('$0.00')).toBeNull();
+    expect(screen.getAllByRole('button', { name: /Add asset/ }).length).toBeGreaterThan(0);
+  });
+
+  it('with assets, the strip shows the register’s totals exactly', async () => {
+    api.listFixedAssets.mockResolvedValue(list);
+    renderAs('FINANCE_ACCOUNTANT', <FixedAssetsPage />, '/books/assets');
+    const strip = await screen.findByRole('group', { name: 'Fixed assets at a glance' });
+    await waitFor(() => expect(within(strip).getByText('Book value').parentElement).toHaveTextContent('$34,500.00'));
+    expect(within(strip).getByText('Depreciation this month').parentElement).toHaveTextContent('1 month due, not posted');
+  });
+
+  const atAsset = (role: 'FINANCE_ACCOUNTANT' | 'HR_ADMINISTRATOR') =>
+    renderAs(
+      role,
+      <Routes>
+        <Route path="/books/assets/:id" element={<FixedAssetDetailPage />} />
+      </Routes>,
+      '/books/assets/fa1',
+    );
+
+  it('the van links to the fleet for someone who can open it, and reads as text for someone who can’t', async () => {
+    api.getFixedAsset.mockResolvedValue({ asset: detail() });
+    const { unmount } = atAsset('HR_ADMINISTRATOR');
+    expect(await screen.findByRole('link', { name: 'Van 7 · ALT 107' })).toHaveAttribute('href', '/transport?tab=vans');
+    unmount();
+    atAsset('FINANCE_ACCOUNTANT');
+    await screen.findByRole('heading', { name: 'Ford Transit — Van 7' });
+    expect(screen.getByText('Van 7 · ALT 107')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Van 7 · ALT 107' })).toBeNull();
+  });
+
+  it('linkedRecord: a van goes to the fleet, equipment to Assets, nothing without the access', () => {
+    const yes = () => true;
+    const no = () => false;
+    expect(linkedRecord({ vanId: 'v7', assetId: null }, yes)).toBe('/transport?tab=vans');
+    expect(linkedRecord({ vanId: null, assetId: 'eq1' }, yes)).toBe('/assets');
+    expect(linkedRecord({ vanId: 'v7', assetId: null }, no)).toBeNull();
+    expect(linkedRecord({ vanId: null, assetId: null }, yes)).toBeNull();
+  });
+
+  it('on a phone the schedule is one line a month with the book value on it', async () => {
+    api.getFixedAsset.mockResolvedValue({ asset: detail() });
+    atAsset('FINANCE_ACCOUNTANT');
+    const lines = await screen.findByRole('list', { name: 'Depreciation schedule' });
+    const items = within(lines).getAllByRole('listitem');
+    expect(items).toHaveLength(3);
+    expect(items[2]).toHaveTextContent('$34,500.00');
+    expect(items[2]).toHaveTextContent('book value');
+    expect(items[1]).toHaveTextContent('posted late');
+  });
+});
+

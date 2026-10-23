@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Clock, Download, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Clock, Copy, Download, ShieldQuestion } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -32,7 +32,10 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
-import { useAuth, useTerm } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
@@ -66,6 +69,10 @@ const STATUS_LABELS: Record<ReportStatus, string> = {
 // Same namespace pattern as TeamHome: one wildcard for `['hotline']` so
 // every mutation can invalidate the queue + summary + open detail in
 // one go without enumerating sub-keys.
+/** The queue's views: one status, every status, or the overdue ones (any open status). */
+type QueueFilter = ReportStatus | 'ALL' | 'OVERDUE';
+const QUEUE_FILTERS: readonly QueueFilter[] = ['RECEIVED', 'TRIAGING', 'INVESTIGATING', 'RESOLVED', 'CLOSED', 'ALL', 'OVERDUE'];
+
 export const hotlineKeys = {
   all: ['hotline'] as const,
   queue: (status: ReportStatus | 'ALL') =>
@@ -75,21 +82,22 @@ export const hotlineKeys = {
 };
 
 export function HotlineAdmin() {
-  const term = useTerm();
-  const [statusFilter, setStatusFilter] = useState<ReportStatus | 'ALL'>(
-    'RECEIVED',
-  );
+  // The view lives in the URL (?status=), so the tiles and the select are
+  // one filter and a link keeps it.
+  const [statusFilter, setStatusFilter] = useUrlParam<QueueFilter>('status', 'RECEIVED', QUEUE_FILTERS);
   const [categoryFilter, setCategoryFilter] = useState<ReportCategory | 'ALL'>(
     'ALL',
   );
   const [q, setQ] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  // Overdue is any open report past its SLA: read every status, keep those.
+  const serverStatus: ReportStatus | 'ALL' = statusFilter === 'OVERDUE' ? 'ALL' : statusFilter;
 
   const queueQ = useQuery({
-    queryKey: hotlineKeys.queue(statusFilter),
+    queryKey: hotlineKeys.queue(serverStatus),
     queryFn: async () => {
       const res = await listReportQueue(
-        statusFilter === 'ALL' ? undefined : statusFilter,
+        serverStatus === 'ALL' ? undefined : serverStatus,
       );
       return res.reports;
     },
@@ -108,6 +116,7 @@ export function HotlineAdmin() {
     if (allRows === null) return null;
     const term = q.trim().toLowerCase();
     return allRows.filter((r) => {
+      if (statusFilter === 'OVERDUE' && !r.sla.isOverdue) return false;
       if (categoryFilter !== 'ALL' && r.category !== categoryFilter) {
         return false;
       }
@@ -117,7 +126,30 @@ export function HotlineAdmin() {
         r.subject.toLowerCase().includes(term)
       );
     });
-  }, [allRows, q, categoryFilter]);
+  }, [allRows, q, categoryFilter, statusFilter]);
+
+  const neverUsed = summary !== null && (summary.totalCount ?? summary.newCount + summary.triagingCount + summary.investigatingCount + summary.resolvedCount) === 0;
+  const filtersOn = statusFilter !== 'RECEIVED' || categoryFilter !== 'ALL' || q.trim() !== '';
+  const reportingLink = `${window.location.origin}/hotline`;
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(reportingLink);
+      toast.success('Reporting link copied.');
+    } catch {
+      toast.error(`Couldn't copy. The link is ${reportingLink}`);
+    }
+  };
+  /** A tile is the status filter it counts; clicking the applied one goes back to New. */
+  const tile = (label: string, value: number, status: QueueFilter, tone: 'alert' | 'warning' | 'neutral') => (
+    <MetricCard
+      label={label}
+      value={String(value)}
+      // Colour only a number that needs someone: a 0 is never red.
+      tone={value > 0 ? tone : 'neutral'}
+      onClick={() => setStatusFilter(statusFilter === status && status !== 'RECEIVED' ? 'RECEIVED' : status)}
+      selected={statusFilter === status}
+    />
+  );
 
   const exportCsv = () => {
     if (!rows || rows.length === 0) return;
@@ -152,36 +184,21 @@ export function HotlineAdmin() {
     <ListTemplate
         title="Hotline reports"
         subtitle="Anonymous reports filed via the public reporting page. Reporters see only your visible replies — internal notes stay HR-only."
-        breadcrumbs={[{ label: term('nav.compliance') }, { label: 'Hotline reports' }]}
+        // The empty state carries the link while nothing has been filed.
+        actions={[{ key: 'copy', label: 'Copy reporting link', icon: Copy, hidden: neverUsed, onSelect: () => void copyLink() }]}
     >
 
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <SummaryCard
-            label="Overdue"
-            value={summary.overdueCount}
-            tone="destructive"
-            icon={AlertTriangle}
-          />
-          <SummaryCard label="New" value={summary.newCount} tone="destructive" />
-          <SummaryCard
-            label="Triaging"
-            value={summary.triagingCount}
-            tone="pending"
-          />
-          <SummaryCard
-            label="Investigating"
-            value={summary.investigatingCount}
-            tone="accent"
-          />
-          <SummaryCard
-            label="Resolved"
-            value={summary.resolvedCount}
-            tone="success"
-          />
-        </div>
+      {summary && !neverUsed && (
+        <MetricStrip label="Reports by status">
+          {tile('Overdue', summary.overdueCount, 'OVERDUE', 'alert')}
+          {tile('New', summary.newCount, 'RECEIVED', 'alert')}
+          {tile('Triaging', summary.triagingCount, 'TRIAGING', 'warning')}
+          {tile('Investigating', summary.investigatingCount, 'INVESTIGATING', 'neutral')}
+          {tile('Resolved', summary.resolvedCount, 'RESOLVED', 'neutral')}
+        </MetricStrip>
       )}
 
+      {!neverUsed && (
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput
           wrapperClassName="flex-1 min-w-48"
@@ -210,10 +227,11 @@ export function HotlineAdmin() {
           aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) =>
-            setStatusFilter(e.target.value as ReportStatus | 'ALL')
+            setStatusFilter(e.target.value as QueueFilter)
           }
         >
           <option value="ALL">All statuses</option>
+          <option value="OVERDUE">Overdue</option>
           <option value="RECEIVED">New</option>
           <option value="TRIAGING">Triaging</option>
           <option value="INVESTIGATING">Investigating</option>
@@ -229,6 +247,7 @@ export function HotlineAdmin() {
           <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
         </Button>
       </div>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -254,11 +273,39 @@ export function HotlineAdmin() {
             <div className="p-6">
               <SkeletonRows count={4} />
             </div>
+          ) : rows.length === 0 && neverUsed ? (
+            // Never used is not "nothing matches": say what the hotline is
+            // and hand HR the link to share.
+            <EmptyState
+              icon={ShieldQuestion}
+              title="No reports filed yet"
+              description="Anyone can report harassment, safety or ethics concerns anonymously from the public reporting page. Share the link so people know where it is."
+              action={
+                <Button onClick={() => void copyLink()}>
+                  <Copy className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                  Copy the reporting link
+                </Button>
+              }
+            />
           ) : rows.length === 0 ? (
             <EmptyState
               icon={ShieldQuestion}
-              title="No reports"
-              description="Nothing matches this filter."
+              title={filtersOn ? 'Nothing matches these filters' : 'No new reports'}
+              description={filtersOn ? undefined : 'Every report has been picked up.'}
+              action={
+                filtersOn ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setStatusFilter('RECEIVED');
+                      setCategoryFilter('ALL');
+                      setQ('');
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ) : undefined
+              }
             />
           ) : (
             <DataGrid<(typeof rows)[number]>
@@ -328,41 +375,6 @@ export function HotlineAdmin() {
         />
       )}
     </ListTemplate>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  tone,
-  icon: Icon,
-}: {
-  label: string;
-  value: number;
-  tone: 'destructive' | 'pending' | 'accent' | 'success';
-  icon?: typeof AlertTriangle;
-}) {
-  const color = {
-    destructive: 'text-alert',
-    pending: 'text-warning',
-    accent: 'text-gold',
-    success: 'text-success',
-  }[tone];
-  return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="flex items-center justify-between">
-          {/* Canonical KPI label spec. */}
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-            {label}
-          </div>
-          {Icon && <Icon className={`h-3.5 w-3.5 ${color}`} />}
-        </div>
-        <div className={`text-xl font-semibold mt-1 tabular-nums ${color}`}>
-          {value}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 

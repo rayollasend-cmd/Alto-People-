@@ -248,6 +248,10 @@ describe('new-hire reporting per state', () => {
     expect(list.body.reports[0]).toMatchObject({ state: 'ME', deadlineDays: 7, confirmDeadlineWithState: true, status: 'DUE' });
     // The employer has no EIN or address yet.
     expect(list.body.reports[0].blockedBy).toEqual(expect.arrayContaining(['Employer EIN missing']));
+    // The same gaps, split: the person has an SSN and an address, so nothing of theirs is missing;
+    // the employer's EIN and address are, and the page says that once for the employer (F500 G3).
+    expect(list.body.reports[0].missing).toEqual({ person: [], employer: ['ein', 'address'] });
+    expect(list.body.reports[0].employer).toMatchObject({ id: expect.any(String), name: expect.any(String) });
     await prisma.employerOrganization.updateMany({ data: { ein: '12-3456789', addressLine1: '1 Main', city: 'Portland', state: 'ME', zip: '04101' } });
 
     const inbox = await h.get('/me/inbox');

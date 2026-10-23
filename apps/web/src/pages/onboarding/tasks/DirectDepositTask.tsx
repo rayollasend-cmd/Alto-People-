@@ -120,7 +120,7 @@ export function DirectDepositTask() {
   };
 
   return (
-    <TaskShell title={t('ob.dd.title')} backTo={backTo}>
+    <TaskShell title={t('ob.dd.title')} backTo={backTo} kind="DIRECT_DEPOSIT">
       <p className="text-silver text-sm mb-5">{t('ob.dd.intro')}</p>
 
       {onFile && !replaceMethod && (

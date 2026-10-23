@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { CalendarHeart, Download, ShieldCheck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -99,6 +100,13 @@ export function MyLeave() {
           ))}
         </ul>
       )}
+      {/* Protected leave and everyday time off are two pages; each points to the other. */}
+      <p className="text-sm text-silver" data-testid="time-off-pointer">
+        {t('myLeave.timeOffPointer')}{' '}
+        <Link to="/time-off" className="text-gold underline-offset-2 hover:underline">
+          {t('myLeave.timeOffPointerLink')}
+        </Link>
+      </p>
       {asking && <AskDialog onClose={() => setAsking(false)} />}
     </ListTemplate>
   );

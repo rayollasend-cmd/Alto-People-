@@ -1,7 +1,5 @@
-import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { Button } from '@/components/ui/Button';
 import { ListTemplate } from '@/components/templates';
 import { AssociateDocumentsView } from './AssociateDocumentsView';
 import { AdminDocumentsView } from './AdminDocumentsView';
@@ -20,14 +18,11 @@ export function DocumentsHome() {
         title="Verification letters"
         subtitle="Proof of employment and income people asked for. Approving freezes the facts into the letter; declining sends your reason."
         breadcrumbs={[{ label: 'Documents', to: '/documents' }, { label: 'Verification letters' }]}
-        secondaryActions={
-          <Button asChild variant="outline">
-            <Link to="/documents">
-              <ArrowLeft className="h-4 w-4" />
-              Document vault
-            </Link>
-          </Button>
-        }
+        // A sibling of the vault, linked — not a back button beside the crumb.
+        related={[
+          { label: 'Document vault', to: '/documents' },
+          { label: 'Document templates', to: '/templates' },
+        ]}
       >
         <LettersQueue canManage={can('manage:documents')} />
       </ListTemplate>

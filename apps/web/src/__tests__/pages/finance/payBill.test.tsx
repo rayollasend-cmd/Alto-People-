@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
@@ -85,13 +85,50 @@ describe('pay and bill desk', () => {
 
   it('adjustments: a rebill waiting on review shows what it corrects, with the decision for Finance only', async () => {
     renderAs('FINANCE_ACCOUNTANT', <PayBillPage />, '/finance/pay-bill?tab=adjustments');
-    expect((await screen.findAllByText(/Corrects #1042/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/Corrects No\. 1042/)).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'Rebill' }).length).toBeGreaterThan(0);
   });
 
   it('an executive reads the adjustments without the decision buttons', async () => {
     renderAs('EXECUTIVE_CHAIRMAN', <PayBillPage />, '/finance/pay-bill?tab=adjustments');
-    expect((await screen.findAllByText(/Corrects #1042/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/Corrects No\. 1042/)).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: 'Rebill' })).toBeNull();
+  });
+
+  it('billed-not-paid hours are named by statement above the numbers — never “Billed $0.00” with no word why (F500 P1)', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (url: string) => {
+      if (url.startsWith('/pay-bill/periods')) return { periods: [{ periodStart: '2026-09-05', periodEnd: '2026-09-18', runs: 1 }] } as never;
+      if (url.startsWith('/pay-bill/reconciliation'))
+        return {
+          ...report,
+          totals: { ...report.totals, billed: 0, margin: 0, marginPct: null },
+          hours: { ...report.hours, billed: 0 },
+          billedNotPaid: [
+            { associateId: 'a1', associateName: 'Rosa Diaz', clientId: 'c1', clientName: 'Coastal', weekStart: '2026-09-06', hours: 96, statementId: 's4', statementNumber: 4 },
+            { associateId: 'a2', associateName: 'Sam Ortiz', clientId: 'c1', clientName: 'Coastal', weekStart: '2026-09-06', hours: 40, statementId: 's4', statementNumber: 4 },
+          ],
+          billedNotPaidHours: 136,
+        } as never;
+      throw new Error(`unexpected ${url}`);
+    });
+    renderAs('FINANCE_ACCOUNTANT', <PayBillPage />, '/finance/pay-bill');
+    const banner = await screen.findByRole('status');
+    expect(banner).toHaveTextContent('136.00 hours billed on No. 0004 with no paycheck.');
+    expect(within(banner).getByRole('link', { name: 'No. 0004' })).toHaveAttribute('href', '/clients/statements?statement=s4');
+    // The tiles say what they count.
+    expect(screen.getByText('Billed against paychecks')).toBeInTheDocument();
+    expect(screen.getByText('Margin on paychecks')).toBeInTheDocument();
+    expect(screen.getByText('Paid and on a final statement')).toBeInTheDocument();
+    // The grids carry titles, and the statement links to itself.
+    expect(screen.getByText('Billed, not paid · 136.00h')).toBeInTheDocument();
+    const grid = screen.getByRole('table', { name: /Billed, not paid/ });
+    expect(within(grid).getAllByRole('link', { name: 'No. 0004' })[0]).toHaveAttribute('href', '/clients/statements?statement=s4');
+  });
+
+  it('the pay period is in the URL', async () => {
+    renderAs('FINANCE_ACCOUNTANT', <PayBillPage />, '/finance/pay-bill?period=2026-08-22:2026-09-04');
+    await screen.findByText('Billable pay on no statement');
+    expect(vi.mocked(apiFetch).mock.calls.some(([u]) => String(u).includes('periodStart=2026-08-22') && String(u).includes('periodEnd=2026-09-04'))).toBe(true);
+    expect((screen.getByLabelText('Pay period') as HTMLSelectElement).value).toBe('2026-08-22:2026-09-04');
   });
 });

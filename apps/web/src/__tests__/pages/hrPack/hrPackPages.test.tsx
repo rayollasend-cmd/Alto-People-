@@ -118,7 +118,11 @@ describe('document retention', () => {
     await userEvent.type(screen.getByLabelText('Years to keep Government ID'), '2');
     await userEvent.click(screen.getByRole('button', { name: 'Save policies' }));
     await waitFor(() => expect(updateRetentionPolicies).toHaveBeenCalledWith([{ kind: 'ID', retainYearsAfterSeparation: 2 }]));
-    expect(screen.getByText('0 files would be purged.')).toBeInTheDocument();
+    // F500 G4: an empty preview says so once, not "0 files" + "0 rows" + "Nothing here yet".
+    expect(screen.getByText('Nothing would be purged today')).toBeInTheDocument();
+    expect(screen.queryByText('0 files would be purged.')).not.toBeInTheDocument();
+    // A blank policy reads "Forever" in its box; no second "kept forever" beside it.
+    expect(screen.queryByText('kept forever')).not.toBeInTheDocument();
   });
 });
 

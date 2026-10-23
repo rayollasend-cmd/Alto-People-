@@ -33,6 +33,7 @@ import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.
 import { isElevation } from '../lib/accessChanges.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { ensureWorkerForAssociate } from '../lib/workers.js';
+import { inviteStaffAccount } from '../lib/staffInvite.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -61,14 +62,23 @@ const STATUS_FILTER = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);
 
 usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, res) => {
   const role = ROLE_FILTER.optional().parse(req.query.role);
-  const status = STATUS_FILTER.optional().parse(req.query.status);
+  // One status, or several comma-separated ("ACTIVE,INVITED": the accounts
+  // that can or soon will sign in — the list's default view).
+  const statuses = z
+    .string()
+    .max(40)
+    .optional()
+    .transform((v) => (v ? [...new Set(v.split(',').map((s) => s.trim()).filter(Boolean))] : []))
+    .pipe(z.array(STATUS_FILTER))
+    .parse(req.query.status);
   const q = z.string().min(1).max(200).optional().parse(req.query.q);
 
-  const where = {
+  // Everything but the status filter: the base the per-status counts are
+  // taken over, so the chips say how many each status would show.
+  const base = {
     deletedAt: null,
     tenantId: tenantIdForWrite(),
     ...(role ? { role } : {}),
-    ...(status ? { status } : {}),
     ...(q
       ? {
           OR: [
@@ -85,7 +95,37 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
         }
       : {}),
   };
-  const total = await prisma.user.count({ where });
+  // A held invite (lib/staffInvite) is stored DISABLED so nothing can sign
+  // in with it, but to an administrator it is an invite: it lists and
+  // counts with the invited accounts until it is approved or rejected.
+  const heldInvites = (
+    await prisma.approvalRequest.findMany({
+      where: { tenantId: tenantIdForWrite(), kind: 'ROLE_CHANGE', status: 'PENDING', subjectType: 'User' },
+      select: { subjectId: true, proposed: true },
+    })
+  )
+    .filter((p) => (p.proposed as { invite?: boolean } | null)?.invite === true)
+    .map((p) => p.subjectId);
+  const wantsInvited = statuses.includes('INVITED');
+  const wantsDisabled = statuses.includes('DISABLED');
+  const statusWhere = !statuses.length
+    ? {}
+    : wantsInvited && !wantsDisabled && heldInvites.length
+      ? { OR: [{ status: { in: statuses } }, { id: { in: heldInvites } }] }
+      : wantsDisabled && !wantsInvited && heldInvites.length
+        ? { status: { in: statuses }, id: { notIn: heldInvites } }
+        : { status: { in: statuses } };
+  // AND, not a spread: the search already uses OR.
+  const where = { AND: [base, statusWhere] };
+  const [total, byStatus, heldInBase] = await Promise.all([
+    prisma.user.count({ where }),
+    prisma.user.groupBy({ by: ['status'], where: base, _count: { _all: true } }),
+    heldInvites.length ? prisma.user.count({ where: { AND: [base, { status: 'DISABLED' as const, id: { in: heldInvites } }] } }) : Promise.resolve(0),
+  ]);
+  const counts: Record<'ACTIVE' | 'INVITED' | 'DISABLED', number> = { ACTIVE: 0, INVITED: 0, DISABLED: 0 };
+  for (const g of byStatus) counts[g.status] = g._count._all;
+  counts.INVITED += heldInBase;
+  counts.DISABLED -= heldInBase;
   const rows = await prisma.user.findMany({
     where,
     select: {
@@ -147,6 +187,15 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
     orderBy: [{ createdAt: 'desc' }],
     take: 500,
   });
+  // An access change waiting on a second administrator — a role elevation,
+  // or a whole invite held until someone approves it (POST /admin/users/invite).
+  const pending = rows.length
+    ? await prisma.approvalRequest.findMany({
+        where: { tenantId: tenantIdForWrite(), kind: 'ROLE_CHANGE', status: 'PENDING', subjectId: { in: rows.map((r) => r.id) } },
+        select: { id: true, subjectId: true, proposed: true },
+      })
+    : [];
+  const pendingBy = new Map(pending.map((p) => [p.subjectId, p]));
 
   res.json({
     users: rows.map((u) => ({
@@ -175,6 +224,12 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       scopeRegionIds: u.scopeRegionIds,
       breakGlass: u.breakGlass,
       mfaEnabled: u.mfaEnabledAt !== null,
+      pendingAccess: (() => {
+        const p = pendingBy.get(u.id);
+        if (!p) return null;
+        const proposed = (p.proposed ?? {}) as { role?: Role; invite?: boolean };
+        return { approvalId: p.id, role: proposed.role ?? null, invite: proposed.invite === true };
+      })(),
       shiftWindows: u.supervisorShiftWindows.map((w) => ({
         locationId: w.locationId,
         locationName: w.location.name,
@@ -209,7 +264,34 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
     // True row count before the 500 cap — the UI (and the billing seat
     // count) must never present a capped page length as the total.
     total,
+    // Per status over the same role and search, ignoring the status filter.
+    counts,
   });
+});
+
+/**
+ * POST /admin/users/invite — an account for someone on staff, from Users &
+ * access (lib/staffInvite). Associates come through Onboarding and client
+ * logins through the client's page; both are refused here with where to go.
+ * 201 with the account and the email outcome, or 202 when the invite waits
+ * for a second administrator (Settings › Approval rules).
+ */
+usersRouter.post('/admin/users/invite', requireCapability('manage:org'), async (req, res) => {
+  const input = z
+    .object({
+      email: z.string().trim().max(254).regex(/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/, 'Enter a bare email address.'),
+      name: z.string().trim().max(120).optional(),
+      role: ROLE_FILTER,
+      clientId: z.string().uuid().nullable().optional(),
+    })
+    .strict()
+    .parse(req.body);
+  const r = await inviteStaffAccount({ ...input, actor: req.user! });
+  if (r.pending) {
+    res.status(202).json({ ...pendingResponse(r.pending), user: r.user });
+    return;
+  }
+  res.status(201).json({ user: r.user, emailFailed: r.emailFailed, expiresAt: r.expiresAt });
 });
 
 /**

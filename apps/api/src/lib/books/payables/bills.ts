@@ -320,8 +320,13 @@ export function billTabWhere(tab: string | undefined, now: Date = new Date()): P
       return { status: 'PENDING_APPROVAL' };
     case 'unpaid':
       return { status: { in: ['APPROVED', 'PARTIALLY_PAID'] } };
+    // Due in the next 7 days, today included — a bill already late is in
+    // 'late', never in both (the page's "Due in the next 7 days" tile and
+    // its "Late" tile used to count the same late bill twice).
     case 'due':
-      return { status: { in: ['APPROVED', 'PARTIALLY_PAID'] }, dueDate: { lte: new Date(today.getTime() + 7 * 86_400_000) } };
+      return { status: { in: ['APPROVED', 'PARTIALLY_PAID'] }, dueDate: { gte: today, lte: new Date(today.getTime() + 7 * 86_400_000) } };
+    case 'late':
+      return { status: { in: ['APPROVED', 'PARTIALLY_PAID'] }, dueDate: { lt: today } };
     case 'paid':
       return { status: 'PAID' };
     case 'draft':

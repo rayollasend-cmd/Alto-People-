@@ -71,6 +71,8 @@ export interface CandidatePortal {
   expiresAt: string;
   /** Whether they answered the voluntary EEO form — never the answers. */
   eeoAnswered?: boolean;
+  /** The recruiter to ask — name, work email, phone (F500 G5). Absent from an older server. */
+  recruiter?: { name: string | null; email: string; phone: string | null } | null;
   interviews: Array<{
     id: string;
     scheduledFor: string;

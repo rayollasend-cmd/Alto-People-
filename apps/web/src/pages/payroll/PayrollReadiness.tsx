@@ -28,10 +28,10 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
+import { QueryError } from '@/components/ui/QueryError';
 import { toast } from '@/components/ui/Toaster';
 
 /**
@@ -58,24 +58,17 @@ export function PayrollReadiness() {
     queryFn: () => getPayrollReadiness(),
   });
   const data: PayrollReadinessResponse | null = dataQuery.data ? dataQuery.data : null;
-  const error = dataQuery.error ? dataQuery.error instanceof ApiError ? dataQuery.error.message : 'Failed to load.' : null;
+  const error = dataQuery.isError;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Payroll readiness"
-        subtitle="Every active associate, with the five data points payroll needs. Fix any red flags before creating a run."
-        breadcrumbs={[{ label: 'Payroll' }, { label: 'Readiness' }]}
+        subtitle="Everyone a payroll run would pay, with the five things a paycheck needs. Fix what’s missing before running payroll."
         secondaryActions={<CensusExportDialog />}
     >
 
-      {error && (
-        <Card>
-          <CardContent className="py-4">
-            <ErrorBanner>{error}</ErrorBanner>
-          </CardContent>
-        </Card>
-      )}
+      {dataQuery.isError && <QueryError what="payroll readiness" query={dataQuery} />}
 
       {!data && !error && (
         <Card>
@@ -105,8 +98,8 @@ export function PayrollReadiness() {
             <Card>
               <CardContent className="py-6">
                 <EmptyState
-                  title="No active associates"
-                  description="Once associates are added and not soft-deleted, they appear here."
+                  title="No one for payroll to pay yet"
+                  description="People appear here once they’re hired or placed and a run would pay them."
                 />
               </CardContent>
             </Card>
@@ -230,7 +223,7 @@ export function PayrollReadiness() {
                     },
                     {
                       key: 'user',
-                      header: 'User',
+                      header: 'Sign-in',
                       accessor: (row) => (row.flags.userLinked ? 'Yes' : 'No'),
                       sortable: true,
                       searchable: false,
@@ -264,7 +257,7 @@ const MISSING_CHIPS: Array<{ flag: ReadinessFlagKey; label: string }> = [
   { flag: 'taxStateSet', label: 'Tax state' },
   { flag: 'payoutMethodOnFile', label: 'Pay account' },
   { flag: 'payScheduleAssigned', label: 'Schedule' },
-  { flag: 'userLinked', label: 'No sign-in' },
+  { flag: 'userLinked', label: 'Sign-in' },
 ];
 
 /** "Requested Oct 21" when payroll asked this person for the item and it is still missing. */

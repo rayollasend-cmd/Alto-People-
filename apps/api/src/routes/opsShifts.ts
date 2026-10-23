@@ -9,7 +9,8 @@ import { UPLOAD_MAX_BYTES, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
-import { effectiveClientIdFilter } from '../lib/scope.js';
+import { effectiveClientIdFilter, scopeShifts, scopeWhere } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
@@ -863,6 +864,163 @@ opsRouter.get('/open-options', RUN, async (req, res, next) => {
         }))
         .sort((a, b) => a.position.localeCompare(b.position)),
       departments: OPS_DEPARTMENTS,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /ops/shift-preview?clientId= — what the supervisor's shift will need,
+ * before they clock in (F500 G2: "My shift" was a lone Clock-in card).
+ *
+ *   myShift   their own next scheduled shift today (or the one running now)
+ *   handover  undecided notes the last shifts left for this store (36h)
+ *   sops      the SOPs on the shift windows they lead, with item counts
+ *   crew      who is scheduled today at their store, by start time
+ *
+ * Every read is inside the caller's client and tenant.
+ */
+opsRouter.get('/shift-preview', RUN, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const clientId = resolveClientId(req, req.query.clientId?.toString());
+    const now = new Date();
+    const dateKey = orgDateKey(now);
+    const dayStart = utcInstantOfLocalMidnight(dateKey, orgTimeZone());
+    const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+    const tenant = { tenantId: tenantIdForWrite() };
+
+    const myShift = user.associateId
+      ? await prisma.shift.findFirst({
+          where: scopeWhere<Prisma.ShiftWhereInput>(tenant, scopeShifts(user), {
+            clientId,
+            assignedAssociateId: user.associateId,
+            status: { notIn: ['CANCELLED', 'DRAFT'] },
+            endsAt: { gt: now },
+            startsAt: { lt: dayEnd },
+          }),
+          orderBy: { startsAt: 'asc' },
+          select: {
+            startsAt: true,
+            endsAt: true,
+            position: true,
+            locationId: true,
+            location: true,
+            locationRel: { select: { name: true } },
+          },
+        })
+      : null;
+    const locationId = myShift?.locationId ?? user.locationId ?? null;
+
+    const led = await prisma.supervisorShiftWindow.findMany({
+      where: { userId: user.id, location: { clientId } },
+      select: { locationId: true, label: true },
+    });
+    const sopRows = await prisma.storeShiftSop.findMany({
+      where: led.length
+        ? { OR: led.map((w) => ({ locationId: w.locationId, label: w.label })) }
+        : locationId
+          ? { locationId }
+          : { id: { in: [] } },
+      select: {
+        label: true,
+        location: { select: { name: true } },
+        template: {
+          select: {
+            id: true,
+            name: true,
+            department: true,
+            active: true,
+            retiredAt: true,
+            _count: { select: { tasks: true } },
+          },
+        },
+      },
+      orderBy: [{ label: 'asc' }],
+    });
+
+    const [handover, crew] = await Promise.all([
+      prisma.opsHandoverItem.findMany({
+        where: {
+          status: 'PENDING',
+          fromShift: {
+            clientId,
+            ...(locationId ? { locationId } : {}),
+            status: 'CLOSED',
+            closedAt: { gte: new Date(now.getTime() - UNREAD_HANDOVER_WINDOW_MS) },
+          },
+        },
+        orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+        take: 5,
+        select: {
+          id: true,
+          kind: true,
+          body: true,
+          priority: true,
+          createdAt: true,
+          fromShift: { select: { department: true, period: true, closedAt: true } },
+        },
+      }),
+      prisma.shift.findMany({
+        where: scopeWhere<Prisma.ShiftWhereInput>(tenant, scopeShifts(user), {
+          clientId,
+          ...(locationId ? { locationId } : {}),
+          status: { in: ['ASSIGNED', 'COMPLETED'] },
+          assignedAssociateId: { not: null },
+          startsAt: { gte: dayStart, lt: dayEnd },
+        }),
+        orderBy: [{ startsAt: 'asc' }],
+        take: 40,
+        select: {
+          id: true,
+          startsAt: true,
+          endsAt: true,
+          position: true,
+          assignedAssociate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+    ]);
+
+    res.json({
+      dateKey,
+      timezone: orgTimeZone(),
+      myShift: myShift
+        ? {
+            startsAt: myShift.startsAt.toISOString(),
+            endsAt: myShift.endsAt.toISOString(),
+            position: myShift.position,
+            store: myShift.locationRel?.name ?? myShift.location ?? null,
+          }
+        : null,
+      handover: handover.map((h) => ({
+        id: h.id,
+        kind: h.kind,
+        body: h.body,
+        priority: h.priority,
+        at: h.createdAt.toISOString(),
+        department: h.fromShift.department,
+        period: h.fromShift.period,
+      })),
+      sops: sopRows
+        .filter((r) => r.template.active && !r.template.retiredAt)
+        .map((r) => ({
+          templateId: r.template.id,
+          name: r.template.name,
+          department: r.template.department,
+          window: r.label,
+          store: r.location.name,
+          items: r.template._count.tasks,
+        })),
+      crew: crew.map((c) => ({
+        id: c.id,
+        name: c.assignedAssociate
+          ? `${c.assignedAssociate.firstName} ${c.assignedAssociate.lastName}`
+          : null,
+        position: c.position,
+        startsAt: c.startsAt.toISOString(),
+        endsAt: c.endsAt.toISOString(),
+      })),
     });
   } catch (err) {
     next(err);
@@ -2292,6 +2450,34 @@ opsRouter.get('/board', BOARD, async (req, res, next) => {
     ]);
     const live = active.filter((s) => !neverClosed(s, now));
     const stale = active.filter((s) => neverClosed(s, now));
+    // A quiet board says when it stops being quiet: the next scheduled
+    // shift in the next 24h, inside the caller's reach and the board's
+    // store/client filter (F500 G2: "Nothing running · next shift opens 2 PM").
+    const boardClientId = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const boardLocationId = req.query.locationId?.toString();
+    const upcoming =
+      live.length === 0
+        ? await prisma.shift.findFirst({
+            where: scopeWhere<Prisma.ShiftWhereInput>(
+              { tenantId: tenantIdForWrite() },
+              scopeShifts(req.user!),
+              {
+                startsAt: { gt: now, lte: new Date(now.getTime() + 24 * 3_600_000) },
+                status: { notIn: ['CANCELLED', 'DRAFT'] },
+              },
+              boardClientId ? { clientId: boardClientId } : null,
+              boardLocationId ? { locationId: boardLocationId } : null,
+            ),
+            orderBy: { startsAt: 'asc' },
+            select: {
+              startsAt: true,
+              position: true,
+              location: true,
+              client: { select: { name: true } },
+              locationRel: { select: { name: true } },
+            },
+          })
+        : null;
     const activeWithCounts = await Promise.all(
       live.map(async (s) => ({
         ...shiftHeader(s),
@@ -2307,6 +2493,13 @@ opsRouter.get('/board', BOARD, async (req, res, next) => {
       timezone: orgTimeZone(),
       generatedAt: new Date().toISOString(),
       active: activeWithCounts,
+      nextShift: upcoming
+        ? {
+            startsAt: upcoming.startsAt.toISOString(),
+            position: upcoming.position,
+            store: upcoming.locationRel?.name ?? upcoming.location ?? upcoming.client?.name ?? null,
+          }
+        : null,
       // Past their end by 6h+ and never submitted: not live, an exception.
       neverClosed: await Promise.all(
         stale.map(async (s) => ({

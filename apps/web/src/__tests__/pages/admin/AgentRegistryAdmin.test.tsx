@@ -376,7 +376,7 @@ describe('AgentRegistryAdmin', () => {
     expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument();
   });
 
-  it('groups the cards by family in the taxonomy’s order, names the owner as a person, and names missing built-ins', async () => {
+  it('flows the cards in one grid in the taxonomy’s order (family on each card, no vendor or model), names the owner as a person, and names missing built-ins', async () => {
     vi.mocked(listAgents).mockResolvedValue({
       ...registry,
       agents: [
@@ -387,14 +387,22 @@ describe('AgentRegistryAdmin', () => {
       builtInMissingAgents: [{ key: 'compliance-agent', name: 'Compliance agent' }],
     });
     renderPage();
-    await screen.findByRole('heading', { name: /Agents for the Workforce/ });
-    const headings = screen.getAllByRole('heading', { level: 3 });
-    const titles = headings.map((h) => h.textContent ?? '');
-    expect(titles.findIndex((t) => t.includes('Agents for the Workforce'))).toBeLessThan(titles.findIndex((t) => t.includes('Agents for IT and Developers')));
+    // One grid (F500 G2): a family of one no longer leaves two thirds of a row empty.
+    const grid = await screen.findByRole('list', { name: 'Agents' });
+    const cards = within(grid).getAllByRole('listitem');
+    expect(cards).toHaveLength(2);
+    expect(screen.queryByRole('heading', { name: /Agents for the Workforce/ })).not.toBeInTheDocument();
+    // Workforce comes before Deployment, and each card names its family and owner — never the vendor or model.
+    expect(cards[0]).toHaveTextContent(/Workforce/);
+    expect(cards[0]).toHaveTextContent(/Owner.*Jo Park/);
+    expect(cards[1]).toHaveTextContent(/Deployment/);
+    expect(screen.queryByText(/Model not set/)).not.toBeInTheDocument();
     // The owner is a person with a record; placeholders never read as words.
-    expect(screen.getByRole('link', { name: /Jo Park/ })).toHaveAttribute('href', '/people/assoc-jo');
-    expect(screen.getByText(/Model not set/)).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /Jo Park/ })[0]).toHaveAttribute('href', '/people/assoc-jo');
     expect(screen.queryByText(/unconfirmed/)).not.toBeInTheDocument();
+    // No second chat box under the registry: the assistant has his header seat.
+    expect(screen.queryByText(/What the agents are doing/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/MCP/)).not.toBeInTheDocument();
     expect(screen.getByText('Not yet active')).toBeInTheDocument();
     // Built-ins by name, never by key.
     const banner = screen.getByTestId('built-in-missing');

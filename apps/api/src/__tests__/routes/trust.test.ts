@@ -28,6 +28,21 @@ describe('the Trust Center', () => {
     expect(res.status).toBe(200);
     expect(res.body.controls.total).toBeGreaterThan(5);
     expect(res.body.controls.items[0]).toMatchObject({ id: expect.any(String), title: expect.any(String), status: expect.any(String) });
+    // F500 G4: every control says what it means in one plain line, and the
+    // technical line names no script path or rollout step.
+    for (const c of res.body.controls.items as Array<{ plain?: string; how?: string; title: string }>) {
+      expect(c.plain?.length ?? 0).toBeGreaterThan(10);
+      // F500 G5: an anonymous reader never gets the technical line, and the
+      // title is the customer-language one ("Encrypted connections to the database").
+      expect(c.how).toBeUndefined();
+      expect(c.title).not.toMatch(/HMAC|MFA has its own/);
+    }
+    expect(JSON.stringify(res.body)).not.toMatch(/scripts\/|--persist|pg_stat_ssl|npm audit|Brief \d/);
+    // The five areas a security review reads by, one status each.
+    const areas = res.body.areas as Array<{ key: string; label: string; status: string; controls: Array<{ title: string; summary: string }> }>;
+    expect(areas.map((a) => a.label)).toEqual(['Data protection', 'Access', 'Availability', 'Change management', 'Monitoring and audit']);
+    expect(areas.reduce((n, a) => n + a.controls.length, 0)).toBe(res.body.controls.total);
+    for (const a of areas) expect(['passing', 'attention', 'in-progress']).toContain(a.status);
     expect(res.body.securityContactSet).toBe(true);
     expect(res.body.subProcessors.length).toBeGreaterThan(3);
     expect(res.body.commitments.length).toBeGreaterThan(3);
@@ -47,6 +62,8 @@ describe('the Trust Center', () => {
     expect(res.body.tenant.retentionYears).toBe(7);
     expect(res.body.tenant.siem).toBe('OFF');
     expect(res.body.tenant.agents.registered).toBeGreaterThanOrEqual(0);
+    // Signed in, the controls keep their owners' titles and how each is checked.
+    expect((res.body.controls.items as Array<{ how?: string }>).every((c) => typeof c.how === 'string' && c.how.length > 0)).toBe(true);
 
     const { user: exec } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
     expect((await (await loginAs(agent(), exec.email)).get('/trust')).status).toBe(200);

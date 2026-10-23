@@ -17,7 +17,6 @@ import {
 } from '@/lib/financialChangesApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardContent } from '@/components/ui/Card';
 import { DataGrid } from '@/components/ui/DataGrid';
 import {
   Dialog,
@@ -27,13 +26,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
+import { QueryError } from '@/components/ui/QueryError';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { useUrlParam } from '@/lib/useUrlState';
 import { toast } from '@/components/ui/Toaster';
 
 /** How the actor was signed in when they made the change, in plain words. */
@@ -69,14 +68,19 @@ function sentenceCase(code: string): string {
  * phone number that was on file BEFORE the change.
  */
 
-const FILTERS: Array<{ value: FinancialChangeFilter; label: string }> = [
-  { value: 'OPEN', label: 'Needs Finance (pending + held)' },
-  { value: 'HELD', label: 'Held' },
-  { value: 'PENDING', label: 'Pending verification' },
-  { value: 'VERIFIED', label: 'Verified' },
-  { value: 'REJECTED', label: 'Rejected' },
-  { value: 'ALL', label: 'Everything (90 days)' },
-];
+const FILTER_VALUES: readonly FinancialChangeFilter[] = ['OPEN', 'PENDING', 'HELD', 'VERIFIED', 'REJECTED', 'ALL'];
+
+/** The filter chips, with the counts that matter on the ones that wait on Finance. */
+export function financialChangeFilters(counts: { pending: number; held: number }): Array<{ value: FinancialChangeFilter; label: string; count?: number }> {
+  return [
+    { value: 'OPEN', label: 'Waiting on Finance', count: counts.pending + counts.held },
+    { value: 'PENDING', label: 'Needs verification', count: counts.pending },
+    { value: 'HELD', label: 'Held', count: counts.held },
+    { value: 'VERIFIED', label: 'Verified' },
+    { value: 'REJECTED', label: 'Rejected' },
+    { value: 'ALL', label: 'Last 90 days' },
+  ];
+}
 
 function statusBadge(row: FinancialChangeRow) {
   switch (row.status) {
@@ -93,7 +97,8 @@ function statusBadge(row: FinancialChangeRow) {
 
 export function FinancialChangesQueue() {
   const [params, setParams] = useSearchParams();
-  const [filter, setFilter] = useState<FinancialChangeFilter>('OPEN');
+  // The filter is in the URL (?filter=HELD), so a link and Back keep it.
+  const [filter, setFilter] = useUrlParam<FinancialChangeFilter>('filter', 'OPEN', FILTER_VALUES);
   const [openId, setOpenId] = useState<string | null>(params.get('id'));
   const qc = useQueryClient();
 
@@ -104,7 +109,6 @@ export function FinancialChangesQueue() {
   });
   const rows = query.data?.rows ?? [];
   const counts = query.data?.counts ?? { pending: 0, held: 0 };
-  const error = query.error ? (query.error instanceof ApiError ? query.error.message : 'Failed to load.') : null;
 
   // A deep link from an alert opens the change directly.
   useEffect(() => {
@@ -123,60 +127,48 @@ export function FinancialChangesQueue() {
   const refresh = () => void qc.invalidateQueries({ queryKey: ['FinancialChangesQueue'] });
 
   return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    // Design system §4.2: the List template; the trail comes from the nav (Payroll › Financial changes).
     <ListTemplate
         title="Financial changes"
         subtitle="Every bank, pay card, W-4, name, SSN and address change, the moment it is made. A new pay account is not paid until Finance verifies it by phone."
-        breadcrumbs={[{ label: 'Payroll' }, { label: 'Financial changes' }]}
-        secondaryActions={
-          <div className="flex items-center gap-2">
-            <Badge variant={counts.held > 0 ? 'destructive' : 'default'}>{counts.held} held</Badge>
-            <Badge variant={counts.pending > 0 ? 'pending' : 'default'}>{counts.pending} pending</Badge>
-          </div>
-        }
     >
-
-      {error && (
-        <Card>
-          <CardContent className="py-4">
-            <ErrorBanner>{error}</ErrorBanner>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardContent className="space-y-4 py-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <Field label="Show" className="min-w-[260px]">
-              {(p) => (
-                <Select value={filter} onChange={(e) => setFilter(e.target.value as FinancialChangeFilter)} {...p}>
-                  {FILTERS.map((f) => (
-                    <option key={f.value} value={f.value}>
-                      {f.label}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-            <p className="text-xs text-silver">
-              Verification means calling the associate on the phone number that was on file before the change,
-              never one that was just added. Full account numbers and SSNs never appear here or in email.
-            </p>
-          </div>
-
-          {query.isPending ? (
-            <Skeleton className="h-40" />
-          ) : rows.length === 0 ? (
-            <EmptyState title="Nothing here." description="New changes appear the moment they are made." />
-          ) : (
+      <p className="text-sm text-ink-muted">
+        Verification means calling the person on the phone number that was on file before the change, never one that was just added. Full
+        account numbers and SSNs never appear here or in email.
+      </p>
+      {query.isError ? (
+        <QueryError what="the financial changes" query={query} />
+      ) : (
             <DataGrid<FinancialChangeRow>
               id="financial-changes"
               caption="Financial changes"
-              rows={rows}
+              noun={{ one: 'change', many: 'changes' }}
+              rows={query.isPending ? null : rows}
+              loading={query.isPending}
               rowKey={(row) => row.id}
-              search={{ placeholder: 'Associate, change, who…' }}
-              urlState={false}
+              search={{ placeholder: 'Person, change, who…' }}
+              urlKey="changes"
               onRowClick={(row) => setOpenId(row.id)}
+              filters={
+                // Counts on the chips, not as badges in the header (F500 G3).
+                <SegmentedControl<FinancialChangeFilter>
+                  ariaLabel="Show"
+                  value={filter}
+                  onChange={setFilter}
+                  options={financialChangeFilters(counts)}
+                />
+              }
+              activeFilters={filter === 'OPEN' ? 0 : 1}
+              onClearFilters={() => setFilter('OPEN')}
+              empty={
+                filter === 'OPEN'
+                  ? {
+                      icon: Landmark,
+                      title: 'No changes waiting on Finance',
+                      description: 'Bank, W-4, name, SSN and address changes land here the moment they’re made.',
+                    }
+                  : { icon: Landmark, title: 'No changes here', description: 'Nothing in this view in the last 90 days.' }
+              }
               columns={[
                 {
                   key: 'associate',
@@ -184,12 +176,12 @@ export function FinancialChangesQueue() {
                   accessor: (row) => row.associate.name,
                   sortable: true,
                   primary: true,
-                  className: 'font-medium text-white',
+                  className: 'font-medium text-ink',
                   cell: (row) => (
                     <>
                       {row.highRisk && <ShieldAlert className="mr-1 inline h-3.5 w-3.5 text-alert" aria-label="High risk" />}
                       {row.associate.name}
-                      <div className="text-xs text-silver">{row.kindLabel}</div>
+                      <div className="text-xs text-ink-muted">{row.kindLabel}</div>
                     </>
                   ),
                 },
@@ -199,8 +191,8 @@ export function FinancialChangesQueue() {
                   accessor: (row) => `${row.oldSummary ?? 'none'} → ${row.newSummary ?? 'none'}`,
                   cell: (row) => (
                     <div className="text-xs">
-                      <div className="text-silver line-through">{row.oldSummary ?? 'none on file'}</div>
-                      <div className="text-white">{row.newSummary ?? 'none on file'}</div>
+                      <div className="text-ink-muted line-through">{row.oldSummary ?? 'none on file'}</div>
+                      <div className="text-ink">{row.newSummary ?? 'none on file'}</div>
                     </div>
                   ),
                 },
@@ -213,7 +205,7 @@ export function FinancialChangesQueue() {
                   cell: (row) => (
                     <div className="text-xs">
                       <div>{row.actor?.name ?? 'System'}</div>
-                      <div className="text-silver">
+                      <div className="text-ink-muted">
                         {row.onBehalf ? 'On behalf · ' : ''}
                         {authStrengthLabel(row.authStrength)}
                       </div>
@@ -235,7 +227,7 @@ export function FinancialChangesQueue() {
                   sortable: true,
                   cell: (row) =>
                     row.riskLabels.length === 0 ? (
-                      <span className="text-xs text-silver">none</span>
+                      <span className="text-xs text-ink-muted">none</span>
                     ) : (
                       <ul className="space-y-0.5 text-xs text-warning">
                         {row.riskLabels.map((l) => (
@@ -254,9 +246,7 @@ export function FinancialChangesQueue() {
                 },
               ]}
             />
-          )}
-        </CardContent>
-      </Card>
+      )}
 
       <ChangeDialog
         change={selected}
@@ -334,16 +324,16 @@ function ChangeDialog({
         </DialogHeader>
 
         <dl className="grid grid-cols-[120px_1fr] gap-y-2 text-sm">
-          <dt className="text-silver">Before</dt>
-          <dd className="text-white">{change.oldSummary ?? 'none on file'}</dd>
-          <dt className="text-silver">After</dt>
-          <dd className="text-white">{change.newSummary ?? 'none on file'}</dd>
-          <dt className="text-silver">By</dt>
+          <dt className="text-ink-muted">Before</dt>
+          <dd className="text-ink">{change.oldSummary ?? 'none on file'}</dd>
+          <dt className="text-ink-muted">After</dt>
+          <dd className="text-ink">{change.newSummary ?? 'none on file'}</dd>
+          <dt className="text-ink-muted">By</dt>
           <dd>
             {change.actor?.name ?? 'System'}
-            {change.actor?.role ? <span className="text-silver"> · {roleLabel(change.actor.role as Role)}</span> : null}
+            {change.actor?.role ? <span className="text-ink-muted"> · {roleLabel(change.actor.role as Role)}</span> : null}
           </dd>
-          <dt className="text-silver">Sign-in</dt>
+          <dt className="text-ink-muted">Sign-in</dt>
           <dd>
             {change.authStrength === 'MFA' || change.authStrength === 'PASSKEY' ? (
               <Badge variant="success">{authStrengthLabel(change.authStrength)}</Badge>
@@ -351,15 +341,15 @@ function ChangeDialog({
               <Badge variant="pending">{authStrengthLabel(change.authStrength)}</Badge>
             )}
           </dd>
-          <dt className="text-silver">Device</dt>
-          <dd className="break-all text-xs text-silver">
+          <dt className="text-ink-muted">Device</dt>
+          <dd className="break-all text-xs text-ink-muted">
             {change.ip ?? 'unknown IP'}
             {change.userAgent ? ` · ${change.userAgent}` : ''}
           </dd>
-          <dt className="text-silver">Risk</dt>
+          <dt className="text-ink-muted">Risk</dt>
           <dd>
             {change.riskLabels.length === 0 ? (
-              <span className="text-silver">none</span>
+              <span className="text-ink-muted">none</span>
             ) : (
               <ul className="space-y-0.5 text-warning">
                 {change.riskLabels.map((l) => (
@@ -368,11 +358,11 @@ function ChangeDialog({
               </ul>
             )}
           </dd>
-          <dt className="text-silver">Status</dt>
+          <dt className="text-ink-muted">Status</dt>
           <dd className="flex items-center gap-2">
             {statusBadge(change)}
             {change.verifiedBy && (
-              <span className="text-xs text-silver">
+              <span className="text-xs text-ink-muted">
                 by {change.verifiedBy.name} · {fmtDateTime(change.verifiedAt)}
                 {change.verifiedVia ? ` · ${verifiedViaLabel(change.verifiedVia)}` : ''}
               </span>
@@ -380,12 +370,12 @@ function ChangeDialog({
           </dd>
           {change.verificationNote && (
             <>
-              <dt className="text-silver">Note</dt>
+              <dt className="text-ink-muted">Note</dt>
               <dd className="text-xs">{change.verificationNote}</dd>
             </>
           )}
-          <dt className="text-silver">Told</dt>
-          <dd className="text-xs text-silver">
+          <dt className="text-ink-muted">Told</dt>
+          <dd className="text-xs text-ink-muted">
             Finance {change.financeNotifiedAt ? fmtDateTime(change.financeNotifiedAt) : 'not yet'} · associate{' '}
             {change.associateNotifiedAt ? fmtDateTime(change.associateNotifiedAt) : 'not yet'}
             {change.priorContactNotifiedAt ? ` · previous email ${fmtDateTime(change.priorContactNotifiedAt)}` : ''}
@@ -396,11 +386,11 @@ function ChangeDialog({
           <div className="flex items-start gap-2 rounded-md border border-gold/40 bg-gold/[0.07] p-3 text-xs">
             <PhoneCall className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
             <div>
-              <div className="font-medium text-white">
+              <div className="font-medium text-ink">
                 Call the associate on the number that was on file before this change
                 {change.verifyPhoneLast4 ? ` (ending ${change.verifyPhoneLast4})` : ''}.
               </div>
-              <div className="mt-0.5 text-silver">
+              <div className="mt-0.5 text-ink-muted">
                 Never a number that was just added. Confirm the change in their own words before verifying.
                 {gatesPay ? ' Until then payroll pays the previous verified account or holds the pay, per your setting.' : ''}
               </div>
@@ -422,7 +412,7 @@ function ChangeDialog({
             <Field label="Note (optional)">
               {(p) => <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} {...p} />}
             </Field>
-            <label className="flex cursor-pointer items-start gap-2 text-xs text-silver">
+            <label className="flex cursor-pointer items-start gap-2 text-xs text-ink-muted">
               <input
                 type="checkbox"
                 checked={reached}

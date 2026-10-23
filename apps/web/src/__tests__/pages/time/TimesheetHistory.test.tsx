@@ -11,12 +11,13 @@ vi.mock('@/lib/api', async (orig) => ({
 }));
 
 // The tenant's modules: Fieldglass is a client's vendor system, so a tenant with no clients (clientPortal off) never sees it.
-const tenantState = vi.hoisted(() => ({ clientPortal: true }));
+const tenantState = vi.hoisted(() => ({ clientPortal: true, viewOrg: true }));
 vi.mock('@/lib/auth', async (orig) => {
   const real = await orig<typeof import('@/lib/auth')>();
   return {
     ...real,
     useTenant: () => ({ ...real.DEFAULT_TENANT, moduleOn: (m: string) => (m === 'clientPortal' ? tenantState.clientPortal : true) }),
+    useAuth: () => ({ user: null, can: (cap: string) => (cap === 'view:org' ? tenantState.viewOrg : true) }),
   };
 });
 
@@ -161,16 +162,19 @@ function renderPage(history: TimesheetHistoryResponse = HISTORY) {
 beforeEach(() => {
   vi.mocked(apiFetch).mockReset();
   tenantState.clientPortal = true;
+  tenantState.viewOrg = true;
 });
 
 describe('a tenant with no clients', () => {
   it('sees the hours and the pay periods, and nothing about Fieldglass', async () => {
     tenantState.clientPortal = false;
     renderPage();
-    expect(await screen.findByRole('heading', { name: 'Ann Lee' })).toBeInTheDocument();
+    expect(await screen.findByTestId('timesheet-person')).toHaveTextContent('Ann Lee');
     expect(screen.getAllByRole('heading', { level: 2, name: /Pay period/ })).toHaveLength(2);
     expect(screen.queryByText(/Fieldglass/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Copy Worker ID: WKR1' })).not.toBeInTheDocument();
+    // "Last, First" is Fieldglass's way of writing a name: not shown at all here.
+    expect(screen.queryByText('Lee, Ann')).not.toBeInTheDocument();
     expect(screen.queryByText('WALTTS2 · rev 1')).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Fieldglass' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Week ending 09/11/2026 at Walmart Destin' }));
@@ -183,11 +187,17 @@ describe('a tenant with no clients', () => {
 describe('an associate’s timesheet history', () => {
   it('who they are to Fieldglass, the totals, and every pay period with its weeks', async () => {
     renderPage();
-    expect(await screen.findByRole('heading', { name: 'Ann Lee' })).toBeInTheDocument();
+    expect(await screen.findByTestId('timesheet-person')).toHaveTextContent('Ann Lee');
     expect(screen.getByRole('button', { name: 'Copy Worker ID: WKR1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy Security ID: 0302LE321' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Copy First clock-in: 08/24/2026 10:04 PM' })).toBeInTheDocument();
-    expect(screen.getAllByText('22.00', { selector: 'div' })).toHaveLength(2); // this year, and all time
+    // Copy buttons only on what goes into Fieldglass; the dates are read.
+    expect(screen.queryByRole('button', { name: /Copy First clock-in/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Copy Last worked/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Aug 24, 2026, 10:04 PM')).toBeInTheDocument();
+    // This year, and all time — each with its unit.
+    const hourValues = document.querySelectorAll('[data-metric-value][title="22.00"]');
+    expect(hourValues).toHaveLength(2);
+    hourValues.forEach((v) => expect(v).toHaveTextContent(/h$/));
     expect(screen.getByText('$280.00', { selector: 'div' })).toBeInTheDocument();
 
     const periods = screen.getAllByRole('heading', { level: 2, name: /Pay period/ });
@@ -207,7 +217,7 @@ describe('an associate’s timesheet history', () => {
 
   it('“Needs a look” keeps only the weeks with something to fix', async () => {
     renderPage();
-    await screen.findByRole('heading', { name: 'Ann Lee' });
+    await screen.findByTestId('timesheet-person');
     await userEvent.click(screen.getByRole('radio', { name: 'Needs a look (2)' }));
     await waitFor(() => expect(screen.queryByText('WALTTS1')).not.toBeInTheDocument());
     expect(screen.getByText('WALTTS2 · rev 1')).toBeInTheDocument();
@@ -215,7 +225,7 @@ describe('an associate’s timesheet history', () => {
 
   it('a week opened: its days, the buyer’s reason, “Mark resubmitted”, and a note that saves', async () => {
     const calls = renderPage();
-    await screen.findByRole('heading', { name: 'Ann Lee' });
+    await screen.findByTestId('timesheet-person');
     await userEvent.click(screen.getByRole('button', { name: 'Week ending 09/11/2026 at Walmart Destin' }));
     expect(await screen.findByText(/The buyer rejected it/)).toHaveTextContent('“Missing Sunday”');
     expect(screen.getByText('10:00 PM → 6:30 AM')).toBeInTheDocument();
@@ -248,9 +258,56 @@ describe('an associate’s timesheet history', () => {
       totals: { ...HISTORY.totals, money: null },
       periods: HISTORY.periods.map((p) => ({ ...p, amount: null, weeks: p.weeks.map((w) => ({ ...w, amount: null })) })),
     });
-    await screen.findByRole('heading', { name: 'Ann Lee' });
+    await screen.findByTestId('timesheet-person');
     expect(screen.queryByText(/\$/)).not.toBeInTheDocument();
     expect(screen.queryByText('Security ID')).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Amount' })).not.toBeInTheDocument();
+  });
+});
+
+describe('one person, one name, under People', () => {
+  it('the page is their Timesheets, under People › their name; Fieldglass’s "Last, First" only in its copy field', async () => {
+    renderPage();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Timesheets' })).toBeInTheDocument();
+    expect(screen.getByTestId('timesheet-person')).toHaveTextContent(/^Ann Lee$/);
+    expect(screen.getByRole('link', { name: 'People' })).toHaveAttribute('href', '/people');
+    expect(screen.getByRole('link', { name: 'Ann Lee' })).toHaveAttribute('href', '/people/a1');
+    expect(screen.queryByRole('link', { name: 'Client hours' })).not.toBeInTheDocument();
+    // The only "Lee, Ann" on the page is the Worker copy field.
+    expect(screen.getByRole('button', { name: 'Copy Worker: Lee, Ann' })).toBeInTheDocument();
+    expect(screen.getAllByText('Lee, Ann')).toHaveLength(1);
+  });
+
+  it('a viewer who can’t open People keeps the way back to Client hours', async () => {
+    tenantState.viewOrg = false;
+    renderPage();
+    await screen.findByRole('heading', { level: 1, name: 'Timesheets' });
+    expect(screen.getByRole('link', { name: 'Client hours' })).toHaveAttribute('href', '/time-attendance/timesheets');
+    expect(screen.queryByRole('link', { name: 'People' })).not.toBeInTheDocument();
+  });
+
+  it('hours not approved yet carry their unit', async () => {
+    renderPage({ ...HISTORY, totals: { ...HISTORY.totals, pendingHours: 0.57 } });
+    await screen.findByRole('heading', { level: 1, name: 'Timesheets' });
+    const pending = document.querySelector('[data-metric-value][title="0.57"]');
+    expect(pending).not.toBeNull();
+    await waitFor(() => expect(pending).toHaveTextContent('0.57h'), { timeout: 3000 });
+  });
+});
+
+describe('Hours by week', () => {
+  it('is drawn from three weeks on — one or two weeks are an empty plot the tables already say', async () => {
+    // Two weeks: no chart.
+    renderPage({ ...HISTORY, periods: [HISTORY.periods[1]!] });
+    await screen.findByRole('heading', { level: 1, name: 'Timesheets' });
+    expect(screen.queryByRole('heading', { name: 'Hours by week' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Week ending 09\/11\/2026 · 6\.00h/ })).not.toBeInTheDocument();
+  });
+
+  it('three weeks: the chart, its first and last week in one date format', async () => {
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Hours by week' })).toBeInTheDocument();
+    expect(screen.getByText('Sep 4, 2026')).toBeInTheDocument();
+    expect(screen.getByText('Sep 18, 2026')).toBeInTheDocument();
   });
 });

@@ -145,6 +145,7 @@ describe('GET /me/inbox — the associate’s tasks', () => {
     const cert = byKey.get('my-leave-certification')!;
     expect(cert.count).toBe(1);
     expect(cert.path).toBe('/leave');
-    expect(cert.dueAt && dayKey(new Date(cert.dueAt))).toBe(dayKey(due));
+    // A calendar day (dueDate), so it never reads a day early west of UTC.
+    expect(cert.dueDate).toBe(dayKey(due));
   });
 });

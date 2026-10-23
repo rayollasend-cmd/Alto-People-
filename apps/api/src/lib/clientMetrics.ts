@@ -8,6 +8,7 @@ import { splitByPerson } from './laborRules/hours.js';
 import { loadPayContext, type PayContext } from './laborRules/payContext.js';
 import { isEngineDoubleTime, overtimeRateOf, premiumCost } from './payBillLink.js';
 import { tenantIdForWrite } from './tenant.js';
+import { orgDateKey } from './timeAnomalies.js';
 import { companyWorkweek, dateKeyInZone, startOfWeekInZone, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 
 /**
@@ -136,7 +137,8 @@ export function healthFor(s: HealthSignals): { health: ClientHealth; reasons: st
   }
 
   if (s.contractEndDate) {
-    const today = ymd(new Date(s.now.getTime()));
+    // The company's calendar, as the overview and Performance tab count it.
+    const today = orgDateKey(s.now);
     const days = Math.round((Date.parse(`${s.contractEndDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY_MS);
     if (days < 0) risk.push(`Contract ended ${fmtDay(s.contractEndDate)}`);
     else if (days <= 30) risk.push(days === 0 ? 'Contract ends today' : `Contract ends in ${plural(days, 'day')} (${fmtDay(s.contractEndDate)})`);
@@ -441,7 +443,9 @@ async function moneyByClient(ids: string[], range: { from: Date; to: Date }, now
 
   const agingCents = new Map<string, Record<keyof ClientMoneyMetrics['aging'], number>>();
   const pastDue = new Map<string, NonNullable<HealthSignals['pastDue']>>();
-  const asOf = ymd(now);
+  // Statements age on the company's calendar (as /performance and the overview
+  // do): a UTC day read one day later after 5 PM Pacific.
+  const asOf = orgDateKey(now);
   for (const b of open) {
     if (b.open <= 0) continue;
     const days = daysPastDue(dueOnFor(b) ?? b.periodEnd, asOf);

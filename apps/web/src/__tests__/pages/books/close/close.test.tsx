@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router-dom';
@@ -101,7 +101,7 @@ describe('ClosePage', () => {
     expect(await screen.findByText('August 2026')).toBeInTheDocument();
     expect(screen.getAllByText('Ready to sign off').length).toBeGreaterThan(0);
     expect(screen.getByText('Owen Owner')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Close September 2026/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Close September 2026/ })).toHaveAttribute('href', '/books/close/2026-09');
   });
 });
 
@@ -188,5 +188,74 @@ describe('ClosePeriodPage', () => {
     await user.click(screen.getByRole('tab', { name: /Payroll liabilities/ }));
     expect(await screen.findByText('Federal income tax withheld')).toBeInTheDocument();
     expect(screen.getByText('$4,120.50')).toBeInTheDocument();
+  });
+});
+
+describe('the close, read at a glance (F500 2026-10-22)', () => {
+  const realMatchMedia = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+    vi.useRealTimers();
+  });
+  const months: CloseListResponse = {
+    nextToClose: '2026-09',
+    months: [
+      { periodKey: '2026-10', label: 'October 2026', status: 'OPEN', tasksTotal: 10, tasksDone: 3, preparedByName: null, signedOffByName: null, closedAt: null, reopenedAt: null, ended: false, pendingReopen: false },
+      { periodKey: '2026-09', label: 'September 2026', status: 'OPEN', tasksTotal: 10, tasksDone: 6, preparedByName: null, signedOffByName: null, closedAt: null, reopenedAt: null, ended: true, pendingReopen: false },
+      { periodKey: '2026-08', label: 'August 2026', status: 'CLOSED', tasksTotal: 10, tasksDone: 10, preparedByName: 'Fin Ance', signedOffByName: 'Owen Owner', closedAt: '2026-09-05T15:00:00.000Z', reopenedAt: null, ended: true, pendingReopen: false },
+    ],
+  };
+
+  it('an ended month that isn’t closed says "Not closed" and how long it has waited', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-22T12:00:00'));
+    api.listCloseMonths.mockResolvedValue(months);
+    renderAs('FINANCE_ACCOUNTANT', <ClosePage />, '/books/close');
+    expect(await screen.findByText('August 2026')).toBeInTheDocument();
+    expect(screen.getAllByText('Not closed').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Open')).toBeNull();
+    expect(screen.getAllByText('22 days since month end').length).toBeGreaterThan(0);
+    // October is still running: no "days since".
+    expect(screen.getByText('In progress')).toBeInTheDocument();
+    // The next-to-close tile opens it.
+    expect(screen.getByRole('link', { name: /Next to close/ })).toHaveAttribute('href', '/books/close/2026-09');
+  });
+
+  it('a phone card shows only what’s there — no row of empty "—" fields', async () => {
+    window.matchMedia = ((query: string) => ({ matches: false, media: query, onchange: null, addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false })) as unknown as typeof window.matchMedia;
+    api.listCloseMonths.mockResolvedValue(months);
+    renderAs('FINANCE_ACCOUNTANT', <ClosePage />, '/books/close');
+    expect(await screen.findByText('Prepared by Fin Ance · signed off by Owen Owner · closed Sep 5, 2026')).toBeInTheDocument();
+    expect(screen.queryByText('Prepared by')).toBeNull();
+    expect(screen.queryByText('Signed off by')).toBeNull();
+  });
+
+  it('one month: steps done, days since month end and what blocks it, and why it can’t close yet in words', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-22T12:00:00'));
+    api.getCloseMonth.mockResolvedValue(detail());
+    atMonth();
+    expect(await screen.findByRole('heading', { name: 'September 2026 close' })).toBeInTheDocument();
+    expect(screen.getByText('0 of 2')).toBeInTheDocument();
+    expect(screen.getByText('22 days')).toBeInTheDocument();
+    // One listed item on the bank step, and the hand step itself: two things block it.
+    const blocking = screen.getByRole('button', { name: /Blocking the close/ });
+    expect(blocking).toHaveTextContent('2');
+    expect(blocking).toHaveTextContent('Across 2 open steps');
+    expect(screen.getByTestId('close-why')).toHaveTextContent('Not ready to close yet: 2 steps are still open.');
+    // Names aren't tiles: an empty "Prepared by" isn't shown at all.
+    expect(screen.queryByText('Prepared by')).toBeNull();
+  });
+
+  it('a closed month shows who prepared and signed it as facts, and how long the close took', async () => {
+    api.getCloseMonth.mockResolvedValue(
+      detail({ status: 'CLOSED', tasksDone: 2, preparedByName: 'Fin Ance', signedOffByName: 'Owen Owner', closedAt: '2026-10-06T15:00:00.000Z', tasks: detail().tasks.map((t) => ({ ...t, status: 'DONE' as const, items: [] })), can: { edit: false, ready: false, unready: false, signOff: false, reopen: true, why: null } }),
+    );
+    atMonth();
+    const facts = await screen.findByTestId('page-facts');
+    expect(facts).toHaveTextContent('Prepared byFin Ance');
+    expect(facts).toHaveTextContent('Signed off byOwen Owner');
+    expect(screen.getByText('6 days')).toBeInTheDocument();
+    expect(screen.getByText('Time to close')).toBeInTheDocument();
   });
 });

@@ -136,7 +136,7 @@ export async function clientNeedsYou(input: NeedsYouInput, db: Db = defaultPrism
   // Overdue statements (money).
   if (input.canSeeMoney) {
     const late = balances
-      .map((b) => ({ ...b, days: daysPastDue(dueOnFor({ dueAt: b.dueAt, finalizedAt: b.finalizedAt, periodEnd: b.periodEnd }), now) }))
+      .map((b) => ({ ...b, days: daysPastDue(dueOnFor({ dueAt: b.dueAt, finalizedAt: b.finalizedAt, periodEnd: b.periodEnd }), orgDateKey(now)) }))
       .filter((b) => b.open > 0 && b.days > 0)
       .sort((a, b) => b.days - a.days);
     if (late.length > 0) {

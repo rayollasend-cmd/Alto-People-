@@ -7,6 +7,7 @@ import { DEFAULT_TIMEZONE } from '../../lib/timezone.js';
 import { dateKeyInZone } from '../../lib/timeAnomalies.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { agent, loginAs } from '../../../test/http.js';
+import { orgWeekStartOf } from '../../routes/transportOps.js';
 
 /**
  * The series behind the charts: the vans' weeks (riders, on-time pickups,
@@ -88,6 +89,36 @@ describe('the vans, week by week', () => {
     expect(prev.onTimePct).toBe(66.7);
     // Two hours at the default rate ($15) plus $40 of fuel.
     expect(prev.costCents).toBe(3000 + 4000);
+  });
+
+  it('weeks run Saturday to Friday, the org week, and a quiet stretch names the last day anyone rode (F500 G2)', async () => {
+    // The helper: Fri Oct 23 2026 belongs to the week of Sat Oct 17; Sat Oct 24 starts the next.
+    expect(orgWeekStartOf('2026-10-23')).toBe('2026-10-17');
+    expect(orgWeekStartOf('2026-10-24')).toBe('2026-10-24');
+    expect(orgWeekStartOf('2026-10-19')).toBe('2026-10-17');
+
+    const s = await transportSeed();
+    const thisWeek = orgWeekStartOf(today());
+    const prevSat = daysBefore(thisWeek, 7);
+    const prevFri = daysBefore(thisWeek, 1);
+    const twoBackFri = daysBefore(thisWeek, 8);
+    await s.ride(s.people[0]!.id, prevSat, { status: 'COMPLETED' });
+    await s.ride(s.people[1]!.id, prevFri, { status: 'COMPLETED' });
+    await s.ride(s.people[2]!.id, twoBackFri, { status: 'COMPLETED' });
+
+    const res = await s.hr.get('/transport/trends?weeks=4');
+    expect(res.status).toBe(200);
+    expect(res.body.weekStartsOn).toBe('SATURDAY');
+    const weeks = res.body.weeks as Array<{ start: string; riders: number; partial: boolean }>;
+    // Every week starts on a Saturday.
+    for (const w of weeks) expect(new Date(`${w.start}T12:00:00Z`).getUTCDay()).toBe(6);
+    expect(weeks.map((w) => w.start).slice(-3)).toEqual([daysBefore(thisWeek, 14), prevSat, thisWeek]);
+    const [twoBack, prev, current] = weeks.slice(-3);
+    // Saturday and Friday ride in the same week; the Friday before falls in the week before it.
+    expect(prev!.riders).toBe(2);
+    expect(twoBack!.riders).toBe(1);
+    expect(current!.riders).toBe(0);
+    expect(res.body.lastRideDate).toBe(prevFri);
   });
 
   it('needs view:transport', async () => {

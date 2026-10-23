@@ -18,8 +18,8 @@ import {
   Users as UsersIcon,
   X,
   XCircle,
+  FilePlus2,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import type {
   DocumentKind,
@@ -66,6 +66,9 @@ import {
   DrawerTitle,
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { RequestDocumentDialog } from './RequestDocumentDialog';
 import { QueryError } from '@/components/ui/QueryError';
 import { Eye, EyeOff, FolderInput, LayoutGrid, Rows3 } from 'lucide-react';
 import { REJECT_PRESETS, RejectDocumentDialog } from '@/components/RejectDocumentDialog';
@@ -93,7 +96,7 @@ import { useSelection } from '@/lib/useSelection';
 // UPLOADED (needs review) and EXPIRED (needs a renewal request). REJECTED is
 // deliberately excluded: the ball is in the associate's court until they
 // re-upload.
-type DocFilter = DocumentStatus | 'ALL' | 'ACTION_NEEDED';
+type DocFilter = DocumentStatus | 'ALL' | 'ACTION_NEEDED' | 'EXPIRING_30';
 
 const ACTION_NEEDED_STATUSES: DocumentStatus[] = ['UPLOADED', 'EXPIRED'];
 
@@ -122,6 +125,7 @@ const STATUS_FILTERS: Array<{ value: DocFilter; label: string }> = [
   { value: 'VERIFIED', label: 'Verified' },
   { value: 'REJECTED', label: 'Rejected' },
   { value: 'EXPIRED', label: 'Expired' },
+  { value: 'EXPIRING_30', label: 'Expiring in 30 days' },
   { value: 'ALL', label: 'All' },
 ];
 
@@ -280,6 +284,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     (v): v is DocFilter => STATUS_FILTERS.some((f) => f.value === v),
   );
   const [kindFilter, setKindFilter] = useState<DocumentKind | 'ALL'>('ALL');
+  const [requestOpen, setRequestOpen] = useState(false);
   // Server-filtered slice — only populated when the active filter needs a
   // server-side query (a specific status or kind). The client-expressible
   // Which page of the queue. Reset whenever the slice changes — page 4 of
@@ -370,7 +375,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     () => ({
       ...(filter === 'ACTION_NEEDED'
         ? { status: [...ACTION_NEEDED_STATUSES] as DocumentStatus[] }
-        : filter === 'ALL'
+        : filter === 'EXPIRING_30'
+          ? { expiringWithin: 30 }
+          : filter === 'ALL'
           ? {}
           : { status: filter as DocumentStatus }),
       ...(kindFilter === 'ALL' ? {} : { kind: kindFilter }),
@@ -440,6 +447,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     verified: s?.verified ?? 0,
     rejected: s?.rejected ?? 0,
     expired: s?.expired ?? 0,
+    expiring30: s?.expiring30 ?? 0,
     oldestUploadedDays: s?.oldestPendingAt
       ? Math.floor((now - new Date(s.oldestPendingAt).getTime()) / ONE_DAY_MS)
       : null,
@@ -770,59 +778,57 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             ? 'Verify or reject uploaded documents.'
             : 'Read-only view of associate documents.'
         }
-        secondaryActions={
-          // Mail-merge letter templates generate the documents that land in
-          // this vault; the /templates route is gated on view:hr-admin.
-          can('view:hr-admin') ? (
-            <>
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/documents?tab=letters">Verification letters</Link>
-              </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/templates">Document templates</Link>
-              </Button>
-            </>
-          ) : undefined
+        actions={canManage ? [{ label: 'Request document', icon: FilePlus2, primary: true, onSelect: () => setRequestOpen(true) }] : undefined}
+        // Sibling pages, not buttons: the letters people asked for, and the
+        // mail-merge templates that generate the documents in this vault
+        // (both gated on view:hr-admin).
+        related={
+          can('view:hr-admin')
+            ? [
+                { label: 'Verification letters', to: '/documents?tab=letters' },
+                { label: 'Document templates', to: '/templates' },
+              ]
+            : undefined
         }
     >
 
-      {/* KPI strip */}
+      {/* The vault in numbers — each tile is the queue's filter (F500 G1). */}
       {canManage && stats.total > 0 && (
-        <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
-          <Kpi
-            label="Awaiting review"
-            value={String(stats.uploaded)}
-            tone={stats.uploaded > 0 ? 'text-warning' : 'text-silver'}
-          />
-          <Kpi
-            label="Verified"
-            value={String(stats.verified)}
-            tone="text-success"
-          />
-          <Kpi
-            label="Rejected"
-            value={String(stats.rejected)}
-            tone={stats.rejected > 0 ? 'text-alert' : 'text-silver'}
-          />
-          <Kpi
-            label="Expired"
-            value={String(stats.expired)}
-            tone={stats.expired > 0 ? 'text-alert' : 'text-silver'}
+        <MetricStrip label="Documents at a glance" className="mb-5">
+          <MetricCard
+            label="Action needed"
+            value={stats.uploaded + stats.expired}
+            hint={`${stats.uploaded.toLocaleString('en-US')} to review · ${stats.expired.toLocaleString('en-US')} expired`}
+            tone={stats.uploaded + stats.expired > 0 ? 'warning' : 'default'}
             onClick={() => {
-              // Land on the queue's EXPIRED slice — the chips (and the
-              // status filter) only exist in the queue view.
               setView('queue');
-              setFilter('EXPIRED');
+              setFilter('ACTION_NEEDED');
             }}
+            selected={view === 'queue' && filter === 'ACTION_NEEDED'}
           />
-          {stats.oldestUploadedDays !== null && stats.oldestUploadedDays >= 3 && (
-            <Kpi
-              label="Oldest pending"
-              value={`${stats.oldestUploadedDays}d`}
-              tone="text-alert"
-            />
-          )}
-        </div>
+          <MetricCard
+            label="Awaiting review"
+            value={stats.uploaded}
+            hint={stats.oldestUploadedDays !== null ? `Oldest waiting ${stats.oldestUploadedDays}d` : 'Nothing waiting'}
+            tone={stats.oldestUploadedDays !== null && stats.oldestUploadedDays >= 3 ? 'alert' : 'default'}
+            onClick={() => {
+              setView('queue');
+              setFilter('UPLOADED');
+            }}
+            selected={view === 'queue' && filter === 'UPLOADED'}
+          />
+          <MetricCard
+            label="Expiring in 30 days"
+            value={stats.expiring30}
+            hint="Verified or in review — chase the renewal"
+            tone={stats.expiring30 > 0 ? 'warning' : 'default'}
+            onClick={() => {
+              setView('queue');
+              setFilter('EXPIRING_30');
+            }}
+            selected={view === 'queue' && filter === 'EXPIRING_30'}
+          />
+        </MetricStrip>
       )}
 
       {/* SLA banner — fires when something has been waiting >3 days. */}
@@ -850,7 +856,8 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         </div>
       )}
 
-      {/* Filter row */}
+      {/* Filter row — not over an empty vault (nothing to filter). */}
+      {!(statsQuery.data && stats.total === 0 && !search) && (
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <ViewToggle
           value={view}
@@ -922,7 +929,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                           ? stats.rejected
                           : f.value === 'EXPIRED'
                             ? stats.expired
-                            : 0;
+                            : f.value === 'EXPIRING_30'
+                              ? stats.expiring30
+                              : 0;
               const active = filter === f.value;
               return (
                 <FilterChip
@@ -952,6 +961,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               : ''}
         </span>
       </div>
+      )}
 
       {/* Every failure now offers a way out. These were three bare
           banners with no retry — a page reload was the only recovery. */}
@@ -975,31 +985,53 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       )}
 
       {view === 'queue' && visibleDocs && visibleDocs.length === 0 && (
-        <EmptyState
-          icon={FileText}
-          title={
-            search
-              ? 'No documents match this search'
-              : filter === 'UPLOADED'
-                ? 'Inbox zero'
-                : 'No documents in this view'
-          }
-          description={
-            search
-              ? 'Clear the search to see the full list.'
-              : filter === 'UPLOADED'
-                ? "You're caught up — nothing's waiting for review."
-                : 'Switch the filter to see other states.'
-          }
-          action={
-            search ? (
-              <Button variant="secondary" onClick={() => setSearch('')}>
-                Clear search
-              </Button>
-            ) : undefined
-          }
-        />
+        // An empty vault says so — "switch the filter" was wrong when every
+        // chip, All included, read 0.
+        statsQuery.data && stats.total === 0 && !search ? (
+          <EmptyState
+            icon={FileText}
+            title="No documents yet"
+            description="Uploads from onboarding and from associates land here for review."
+            action={
+              canManage ? (
+                <Button onClick={() => setRequestOpen(true)}>
+                  <FilePlus2 className="h-4 w-4" />
+                  Request a document
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={FileText}
+            title={
+              search
+                ? 'No documents match this search'
+                : filter === 'UPLOADED'
+                  ? 'Nothing waiting for review'
+                  : filter === 'EXPIRING_30'
+                    ? 'Nothing expiring in the next 30 days'
+                    : 'No documents in this view'
+            }
+            description={
+              search
+                ? 'Clear the search to see the full list.'
+                : filter === 'UPLOADED'
+                  ? "You're caught up."
+                  : 'Pick another filter above to see other documents.'
+            }
+            action={
+              search ? (
+                <Button variant="secondary" onClick={() => setSearch('')}>
+                  Clear search
+                </Button>
+              ) : undefined
+            }
+          />
+        )
       )}
+
+      <RequestDocumentDialog open={requestOpen} onOpenChange={setRequestOpen} />
 
       {view === 'queue' && visibleDocs && visibleDocs.length > 0 && (() => {
         // THE QUEUE IS FLAT UNLESS YOU ASK FOR PEOPLE.
@@ -1988,39 +2020,3 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     </ListTemplate>
   );
 }
-
-function Kpi({
-  label,
-  value,
-  tone = 'text-white',
-  onClick,
-}: {
-  label: string;
-  value: string;
-  tone?: string;
-  /** When set, the stat renders as a button that jumps to its filtered list. */
-  onClick?: () => void;
-}) {
-  const body = (
-    <>
-      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-        {label}
-      </div>
-      <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
-    </>
-  );
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        title={`Show ${label.toLowerCase()} documents`}
-        className="min-w-[6rem] rounded-md text-left transition-opacity hover:opacity-75"
-      >
-        {body}
-      </button>
-    );
-  }
-  return <div className="min-w-[6rem]">{body}</div>;
-}
-

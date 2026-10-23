@@ -141,17 +141,33 @@ probation116Router.post('/probations', MANAGE, async (req, res) => {
 
 // ----- List + filter -------------------------------------------------------
 
+/** The summary's windows, as list filters: the same dates the tiles count. */
+function probationWindow(window: 'ending14' | 'overdue' | 'passed90' | 'failed90', now = new Date()): Prisma.ProbationPeriodWhereInput {
+  const today = new Date(now);
+  today.setUTCHours(0, 0, 0, 0);
+  const cutoff14 = new Date(today);
+  cutoff14.setUTCDate(cutoff14.getUTCDate() + 14);
+  const cutoff90Back = new Date(today);
+  cutoff90Back.setUTCDate(cutoff90Back.getUTCDate() - 90);
+  if (window === 'ending14') return { status: 'ACTIVE', endDate: { gte: today, lte: cutoff14 } };
+  if (window === 'overdue') return { status: 'ACTIVE', endDate: { lt: today } };
+  if (window === 'passed90') return { status: 'PASSED', decidedAt: { gte: cutoff90Back } };
+  return { status: 'FAILED', decidedAt: { gte: cutoff90Back } };
+}
+
 probation116Router.get('/probations', VIEW, async (req, res) => {
   const status = z
     .enum(['ACTIVE', 'PASSED', 'EXTENDED', 'FAILED'])
     .optional()
     .parse(req.query.status);
+  // ?window=ending14 | overdue | passed90 | failed90 — the rows behind the summary's tiles.
+  const window = z.enum(['ending14', 'overdue', 'passed90', 'failed90']).optional().parse(req.query.window);
   const page = z.coerce.number().int().min(0).max(10_000).default(0).parse(req.query.page);
-  const where = { AND: [reachOf(req.user!), status ? { status } : {}] };
+  const where = { AND: [reachOf(req.user!), status ? { status } : {}, window ? probationWindow(window) : {}] };
   // Open probations read soonest end first (the ones about to need a
   // decision); decided ones (and "All") newest first — never just the
   // oldest hundred.
-  const open = status === 'ACTIVE' || status === 'EXTENDED';
+  const open = status === 'ACTIVE' || status === 'EXTENDED' || window === 'ending14' || window === 'overdue';
   const [rows, total] = await Promise.all([
     prisma.probationPeriod.findMany({
     take: LIST_PAGE,

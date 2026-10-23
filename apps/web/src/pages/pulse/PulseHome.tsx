@@ -8,6 +8,7 @@ import {
   createPulseSurvey,
   deletePulseSurvey,
   getPulseResults,
+  getPulseSummary,
   listMyOpenSurveys,
   listPulseSurveys,
   submitPulseResponse,
@@ -50,6 +51,9 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 
@@ -74,41 +78,95 @@ function bucketLabel(scale: PulseScale, key: string): string {
 }
 
 type Tab = 'me' | 'admin';
+const TABS: readonly Tab[] = ['me', 'admin'];
 
 export function PulseHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   // Executives read survey results (anonymized aggregates) without the
-  // create/close/delete controls. They also have no associate record, so
-  // "For me" is empty — land them on results directly.
+  // create/close/delete controls.
   const canReadAdmin =
     canManage || (user ? hasCapability(user.role, 'view:executive') : false);
-  const [tab, setTab] = useState<Tab>(
-    user?.role === 'EXECUTIVE_CHAIRMAN' ? 'admin' : 'me',
-  );
+  // Whoever runs or reads the surveys lands on the results; the tab lives
+  // in the URL (?tab=me) so Back and a shared link keep it.
+  const [tabParam, setTab] = useUrlParam<Tab>('tab', canReadAdmin ? 'admin' : 'me', TABS, { history: 'push' });
+  const tab: Tab = canReadAdmin ? tabParam : 'me';
+  // Open surveys waiting on this person, as a count on their tab.
+  const mineQuery = useQuery({ queryKey: ['pulse', 'mine'], queryFn: () => listMyOpenSurveys(), enabled: canReadAdmin && Boolean(user?.associateId) });
+  const waiting = mineQuery.data?.surveys.length ?? 0;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Pulse"
-        subtitle="One-question check-ins. Anonymous — only the score and comment are stored, never the responder."
-        breadcrumbs={[{ label: 'Pulse' }]}
+      title="Pulse"
+      subtitle="One-question check-ins. Anonymous — only the score and comment are stored, never the responder."
     >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList>
-          <TabsTrigger value="me">For me</TabsTrigger>
-          {canReadAdmin && (
-            <TabsTrigger value="admin">{canManage ? 'Admin' : 'Results'}</TabsTrigger>
-          )}
-        </TabsList>
-        <TabsContent value="me"><MyPulseTab /></TabsContent>
-        {canReadAdmin && (
+      {canReadAdmin ? (
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+          <TabsList>
+            <TabsTrigger value="admin">{canManage ? 'Surveys' : 'Results'}</TabsTrigger>
+            <TabsTrigger value="me">
+              For me
+              {waiting > 0 && (
+                <Badge variant="accent" className="ml-1">
+                  {waiting}
+                </Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="me"><MyPulseTab /></TabsContent>
           <TabsContent value="admin">
             <AdminPulseTab canManage={canManage} />
           </TabsContent>
-        )}
-      </Tabs>
+        </Tabs>
+      ) : (
+        // One tab is no tab: an associate sees their surveys straight away.
+        <MyPulseTab />
+      )}
     </ListTemplate>
+  );
+}
+
+/** "4.2 / 5" or "72% yes" — a survey's score on its own scale. */
+function fmtScore(scale: PulseScale, score: number | null): string {
+  if (score === null) return '—';
+  return scale === 'SCORE_1_5' ? `${score.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} / 5` : `${score}% yes`;
+}
+
+/** The latest survey's score, response rate and trend — what the admin tab opens on. */
+function PulseSummaryStrip({ filter, onFilter }: { filter: 'all' | 'open' | 'closed'; onFilter: (f: 'all' | 'open' | 'closed') => void }) {
+  const q = useQuery({ queryKey: ['pulse', 'summary'], queryFn: getPulseSummary });
+  const d = q.data;
+  if (!d) return null;
+  const latest = d.latest;
+  if (!latest) {
+    return <p className="text-sm text-ink-muted">No surveys yet. Send one to see the score, the response rate and the trend here.</p>;
+  }
+  const scores = d.trend.map((x) => x.score).filter((x): x is number => x !== null);
+  const delta = latest.score !== null && latest.previousScore !== null ? Math.round((latest.score - latest.previousScore) * 10) / 10 : null;
+  return (
+    <MetricStrip label="Latest pulse">
+      <MetricCard
+        label="Latest score"
+        value={fmtScore(latest.scale, latest.score)}
+        hint={latest.question}
+        nothing={latest.score === null ? 'No answers yet' : undefined}
+        trend={scores.length >= 2 && delta !== null ? { series: scores, delta, deltaLabel: 'vs the survey before', unit: 'survey', format: (n) => (latest.scale === 'SCORE_1_5' ? n.toFixed(1) : `${n} pts`) } : undefined}
+      />
+      <MetricCard
+        label="Response rate"
+        value={latest.responseRate === null ? '—' : `${latest.responseRate}%`}
+        hint={`${latest.responses.toLocaleString('en-US')} of ${latest.audience.toLocaleString('en-US')} ${latest.audience === 1 ? 'person' : 'people'} it went to${latest.isOpen ? ' · still open' : ''}`}
+        nothing={latest.responseRate === null ? 'No one in its audience has a login' : undefined}
+      />
+      <MetricCard
+        label="Open now"
+        value={d.openNow}
+        hint={d.openNow === 1 ? 'Survey taking answers' : 'Surveys taking answers'}
+        onClick={() => onFilter(filter === 'open' ? 'all' : 'open')}
+        selected={filter === 'open'}
+      />
+    </MetricStrip>
   );
 }
 
@@ -276,6 +334,8 @@ function RespondCard({
   );
 }
 
+const PULSE_FILTERS = ['all', 'open', 'closed'] as const;
+
 function AdminPulseTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [showNew, setShowNew] = useState(false);
@@ -283,7 +343,7 @@ function AdminPulseTab({ canManage }: { canManage: boolean }) {
   const [deleteTarget, setDeleteTarget] = useState<PulseSurveyAdmin | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [closingId, setClosingId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'open' | 'closed'>('all');
+  const [filter, setFilter] = useUrlParam<'all' | 'open' | 'closed'>('state', 'all', PULSE_FILTERS);
 
   const surveysQuery = useQuery({ queryKey: ['pulse', 'surveys'], queryFn: () => listPulseSurveys() });
   const rows: PulseSurveyAdmin[] | null = surveysQuery.data?.surveys ?? null;
@@ -322,9 +382,10 @@ function AdminPulseTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-4">
+      <PulseSummaryStrip filter={filter} onFilter={setFilter} />
       <div className="flex items-center justify-between">
         <div className="flex flex-wrap gap-1.5">
-          {(['all', 'open', 'closed'] as const).map((f) => (
+          {PULSE_FILTERS.map((f) => (
             <FilterChip
               key={f}
               active={filter === f}

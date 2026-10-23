@@ -10,7 +10,7 @@ vi.mock('@/lib/performanceApi', () => ({
   calibrateReview: (...a: unknown[]) => calibrateReview(...a),
 }));
 
-import { ReviewCalibration } from '@/pages/performance/ReviewCalibration';
+import { quarterRange, ReviewCalibration } from '@/pages/performance/ReviewCalibration';
 
 const review = (over: Record<string, unknown>) => ({
   id: 'r1',
@@ -57,5 +57,31 @@ describe('<ReviewCalibration>', () => {
     await userEvent.type(screen.getByLabelText(/why/i), 'In line with peers.');
     await userEvent.click(save);
     await waitFor(() => expect(calibrateReview).toHaveBeenCalledWith('r1', { rating: 4, note: 'In line with peers.' }));
+  });
+
+  it('picks the period with quarter presets — last quarter by default, this quarter or custom dates (F500 G1)', async () => {
+    renderAs('HR_ADMINISTRATOR', <ReviewCalibration />, '/performance/calibration');
+    await screen.findByText('Rates above everyone');
+    const last = quarterRange(1);
+    expect(getCalibration).toHaveBeenLastCalledWith(last);
+    expect(screen.queryByLabelText('From')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'This quarter' }));
+    await waitFor(() => expect(getCalibration).toHaveBeenLastCalledWith(quarterRange(0)));
+    await userEvent.click(screen.getByRole('radio', { name: 'Custom' }));
+    expect(screen.getByLabelText('From')).toHaveValue(last.from);
+    // Siblings are links, not a bare "All reviews".
+    expect(screen.getByRole('link', { name: 'Reviews' })).toHaveAttribute('href', '/performance');
+  });
+
+  it('reads the period from the URL', async () => {
+    renderAs('HR_ADMINISTRATOR', <ReviewCalibration />, '/performance/calibration?period=custom&from=2026-01-01&to=2026-03-31');
+    await screen.findByText('Rates above everyone');
+    expect(getCalibration).toHaveBeenLastCalledWith({ from: '2026-01-01', to: '2026-03-31' });
+  });
+
+  it('works out the quarters on the calendar', () => {
+    expect(quarterRange(0, new Date(2026, 9, 22))).toEqual({ from: '2026-10-01', to: '2026-12-31' });
+    expect(quarterRange(1, new Date(2026, 9, 22))).toEqual({ from: '2026-07-01', to: '2026-09-30' });
+    expect(quarterRange(1, new Date(2026, 1, 3))).toEqual({ from: '2025-10-01', to: '2025-12-31' });
   });
 });

@@ -48,8 +48,8 @@ export function AgenciesTab({ registrations }: { registrations: RegistrationNeed
       {registrations.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Register in a new state</CardTitle>
-            <CardDescription>Each one needs an account before payroll can pay it. Enter the account number when the agency assigns it.</CardDescription>
+            <CardTitle>Tax accounts to set up</CardTitle>
+            <CardDescription>The federal and state accounts payroll needs and doesn’t have yet; the go-live checklist reads the same list. Enter the account number when the agency assigns it.</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="divide-y divide-navy-secondary">
@@ -363,10 +363,11 @@ function AccountDialog({ initial, onClose }: { initial: Partial<AgencyAccount>; 
   );
 }
 
-function RebuildDialog({ onClose }: { onClose: () => void }) {
+/** Post the taxes of payrolls paid in a date range (the overview opens it from its "hasn't posted" alert, from the oldest such payday). */
+export function RebuildDialog({ onClose, initialFrom }: { onClose: () => void; initialFrom?: string | null }) {
   const qc = useQueryClient();
   const year = localToday().slice(0, 4);
-  const [from, setFrom] = useState(`${year}-01-01`);
+  const [from, setFrom] = useState(initialFrom ?? `${year}-01-01`);
   const [to, setTo] = useState(localToday());
   const run = useMutation({
     mutationFn: () => rebuildLiabilities(from, to),

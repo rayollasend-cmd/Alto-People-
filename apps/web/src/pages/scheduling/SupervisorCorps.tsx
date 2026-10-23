@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
@@ -58,20 +59,18 @@ export function SupervisorCorps() {
       topbarTitle={`${term('site')} leads`}
       subtitle={`Who leads which ${term('site').toLowerCase()} and shift. Place a supervisor here; roles and access stay with HR.`}
       filters={
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Show">
-          {(
-            [
-              ['all', 'Everyone'],
-              ['unplaced', unplaced > 0 ? `Not placed (${unplaced})` : 'Not placed'],
-              ['SHIFT_SUPERVISOR', 'Shift supervisors'],
-              ['FLOOR_SUPERVISOR', 'Floor supervisors'],
-            ] as const
-          ).map(([key, label]) => (
-            <Button key={key} size="sm" variant={filter === key ? 'secondary' : 'outline'} onClick={() => setFilter(key)} aria-pressed={filter === key}>
-              {label}
-            </Button>
-          ))}
-        </div>
+        // One filter look across the app (the kit's pills).
+        <SegmentedControl
+          ariaLabel="Show"
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: 'all', label: 'Everyone' },
+            { value: 'unplaced', label: unplaced > 0 ? `Not placed (${unplaced})` : 'Not placed' },
+            { value: 'SHIFT_SUPERVISOR', label: 'Shift supervisors' },
+            { value: 'FLOOR_SUPERVISOR', label: 'Floor supervisors' },
+          ]}
+        />
       }
     >
       {q.isError ? (
@@ -85,7 +84,16 @@ export function SupervisorCorps() {
           {byClient.map(([key, group]) => (
             <Card key={key} className={key === 'none' ? 'border-warning/40' : undefined}>
               <CardContent>
-                <SectionTitle icon={Store} title={group.name} trailing={<span className="text-xs tabular-nums text-ink-muted">{group.rows.length}</span>} />
+                <SectionTitle
+                  icon={Store}
+                  title={group.name}
+                  trailing={
+                    // Said, not a bare number: how many supervisors sit here.
+                    <span className="text-xs tabular-nums text-ink-muted" data-testid="corps-count">
+                      {key === 'none' ? `${group.rows.length} not placed` : `${group.rows.length} placed`}
+                    </span>
+                  }
+                />
                 <ul className="divide-y divide-navy-secondary/60">
                   {group.rows.map((s) => (
                     <li key={s.userId} className="flex items-center gap-3 py-2.5">
@@ -113,7 +121,8 @@ export function SupervisorCorps() {
               </CardContent>
             </Card>
           ))}
-          <ShiftLeadsCard hideWhenClear onChanged={() => void q.refetch()} />
+          {/* Every shift with its lead's name, or "No lead" — not only the gaps. */}
+          <ShiftLeadsCard showLed onChanged={() => void q.refetch()} />
         </div>
       )}
       {editing && <PlaceDialog supervisor={editing} onClose={() => setEditing(null)} />}

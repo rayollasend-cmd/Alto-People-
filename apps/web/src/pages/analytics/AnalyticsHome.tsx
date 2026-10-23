@@ -1,25 +1,21 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense } from 'react';
 import { useTenant, useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import {
   Activity,
-  AlertTriangle,
   Building2,
   Calendar,
   ClipboardList,
   DollarSign,
   Download,
-  RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
 import type { DashboardKPIs, KpiTrend } from '@alto-people/shared';
 import { PALETTE } from '@/components/ui/charts/palette';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
-import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
 import { fmtMoney, ymdLocal } from '@/lib/format';
-import { Button } from '@/components/ui/Button';
+import { urlNumber, useUrlState, type UrlCodec } from '@/lib/useUrlState';
 import {
   Card,
   CardContent,
@@ -27,6 +23,12 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import type { DonutDatum } from '@/components/ui/DonutChart';
+import { MetricCard, type MetricDelta, type TrendGood } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { QueryError } from '@/components/ui/QueryError';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { ListTemplate } from '@/components/templates';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 // Recharts is ~290 KB. Defer it so the page paints first and the chart
 // streams in after — most users see the metric cards above the chart
@@ -34,15 +36,6 @@ import type { DonutDatum } from '@/components/ui/DonutChart';
 const DonutChart = lazy(() =>
   import('@/components/ui/DonutChart').then((m) => ({ default: m.DonutChart })),
 );
-const RetentionSection = lazy(() =>
-  import('./RetentionSection').then((m) => ({ default: m.RetentionSection })),
-);
-import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { MetricCard, type MetricTrend, type TrendGood } from '@/components/ui/MetricCard';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { ListTemplate } from '@/components/templates';
-import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
  * Brand-aligned color per application status. Drives the donut chart and
@@ -83,27 +76,35 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const WINDOW_PRESETS = [7, 30, 60, 90] as const;
-type WindowDays = (typeof WINDOW_PRESETS)[number];
+/** ?days= is one of the presets; anything else reads as the default 30. */
+const WINDOW_CODEC: UrlCodec<number> = {
+  parse: (raw) => {
+    const n = urlNumber({ integer: true }).parse(raw);
+    return n !== undefined && (WINDOW_PRESETS as readonly number[]).includes(n) ? n : undefined;
+  },
+  serialize: (n) => String(n),
+};
 
 /**
  * Phase 38 — dedicated reports view. Same data as the dashboard's KPI
  * tiles, presented denser, with CSV export, a window selector for the
  * time-bounded metrics, and drill-in links from each KPI to its source
- * page.
+ * page. Retention, hiring cohorts and turnover by store live on People
+ * analytics (one home, one definition — F500 G4); this page links there.
  */
 export function AnalyticsHome() {
   const term = useTerm();
   const hasClients = useTenant().moduleOn('clientPortal');
   const workers = term('workers');
-  const [days, setDays] = useState<WindowDays>(30);
-  const [reloadTick, setReloadTick] = useState(0);
+  // The window lives in the URL (?days=7): Back, a reload and a shared link keep it.
+  const [days, setDays] = useUrlState<number>('days', 30, WINDOW_CODEC);
 
   const kpisQuery = useQuery({
-    queryKey: ['AnalyticsHome', 'kpis', days, reloadTick],
+    queryKey: ['AnalyticsHome', 'kpis', days],
     queryFn: () => getDashboardKPIs(days),
   });
   const kpis: DashboardKPIs | null = kpisQuery.data ?? null;
-  const error = kpisQuery.error ? kpisQuery.error instanceof ApiError ? kpisQuery.error.message : 'Could not load KPIs.' : null;
+  const activeDays = kpis?.activeWindowDays ?? 14;
 
   const exportCsv = () => {
     if (!kpis) return;
@@ -113,7 +114,7 @@ export function AnalyticsHome() {
       ['Metric', 'Value'],
       ['Window (days)', kpis.windowDays],
       ...(kpis.onTheBooks !== undefined ? [['On the books', kpis.onTheBooks] as [string, number]] : []),
-      [`Working (${kpis.activeWindowDays ?? 14} days)`, kpis.activeAssociates],
+      [`Working (${activeDays} days)`, kpis.activeAssociates],
       [`${workers} clocked in`, kpis.associatesClockedIn],
       [`Open shifts (next ${kpis.windowDays}d)`, kpis.openShiftsNext30d],
       ['Pending onboarding applications', kpis.pendingOnboardingApplications],
@@ -130,218 +131,165 @@ export function AnalyticsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Analytics"
-        subtitle={hasClients ? 'Live operational and financial KPIs across all clients.' : 'Live operational and financial KPIs across the organization.'}
-        primaryAction={
-          <Button onClick={exportCsv} variant="secondary" disabled={!kpis}>
-            <Download className="h-4 w-4" />
-            Export CSV
-          </Button>
-        }
+      title="Analytics"
+      subtitle={hasClients ? 'Live operational and financial KPIs across all clients.' : 'Live operational and financial KPIs across the organization.'}
+      actions={[{ label: 'Export CSV', icon: Download, onSelect: exportCsv, disabled: !kpis }]}
+      related={[{ label: 'People analytics: retention, cohorts and turnover', to: '/reports/people' }]}
+      filters={
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+          <span className="text-silver">Window</span>
+          <SegmentedControl
+            ariaLabel="Reporting window"
+            value={days}
+            onChange={(d) => setDays(d)}
+            options={WINDOW_PRESETS.map((d) => ({ value: d, label: `${d}d` }))}
+          />
+          <span className="basis-full text-xs text-silver/80 sm:basis-auto">
+            Applies to shifts and pay. Headcount and backlogs are as of now.
+          </span>
+        </div>
+      }
     >
-
-      <div className="flex items-center gap-2 mb-6 text-sm">
-        <span className="text-silver">Window:</span>
-        <SegmentedControl
-          ariaLabel="Reporting window"
-          value={days}
-          onChange={(d) => setDays(d as WindowDays)}
-          options={WINDOW_PRESETS.map((d) => ({ value: d, label: `${d}d` }))}
-        />
-        <span className="text-xs text-silver/70 ml-2">
-          (Affects scheduling & payroll metrics. Headcount, backlogs, and
-          status counts are point-in-time.)
-        </span>
-      </div>
-
-      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
-
-      {error && !kpis ? (
-        // Hard-error empty state: the section skeletons would otherwise
-        // spin forever with no path forward. Pair with the banner above
-        // (which carries the upstream message) and give a one-click retry.
-        <Card>
-          <CardContent className="py-6">
-            <EmptyState
-              icon={AlertTriangle}
-              title="Couldn't load analytics"
-              description="The KPI service returned an error. Try again — if it persists, check audit / status."
-              action={
-                <Button variant="ghost" onClick={() => setReloadTick((t) => t + 1)}>
-                  <RefreshCw className="h-4 w-4" />
-                  Try again
-                </Button>
-              }
-            />
-          </CardContent>
-        </Card>
+      {kpisQuery.isError && !kpis ? (
+        <QueryError what="analytics" query={kpisQuery} />
       ) : (
         <>
-      <Section
-        title="Workforce"
-        icon={Building2}
-        description="Headcount and live presence."
-      >
-        {kpis ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {/* The two named numbers every page shows (apps/api/src/lib/peopleStatus.ts):
-                "On the books" and "Working", each with its definition. The weekly
-                hires series is not either number's trend, so neither tile carries it. */}
-            {kpis.onTheBooks !== undefined && (
-              <Stat
-                label="On the books"
-                value={kpis.onTheBooks.toString()}
-                hint="Hired and not separated"
-                link="/people"
-              />
+          <Section title="Workforce" icon={Building2} description="Headcount and live presence.">
+            {kpis ? (
+              <MetricStrip label="Workforce">
+                {/* The two named numbers every page shows (apps/api/src/lib/peopleStatus.ts):
+                    "On the books" and "Working", each with its definition. */}
+                {kpis.onTheBooks !== undefined && (
+                  <MetricCard label="On the books" value={kpis.onTheBooks.toString()} hint="Hired and not separated" href="/people" />
+                )}
+                <MetricCard
+                  label={`Working (${activeDays} days)`}
+                  value={kpis.activeAssociates.toString()}
+                  hint={`Placed, and worked in the last ${activeDays} days or has a shift ahead`}
+                  href="/people?workStatus=ACTIVE"
+                />
+                <MetricCard
+                  label="Clocked in right now"
+                  value={kpis.associatesClockedIn.toString()}
+                  hint={
+                    kpis.activeAssociates > 0
+                      ? `${Math.round((kpis.associatesClockedIn / kpis.activeAssociates) * 100)}% of those working`
+                      : undefined
+                  }
+                  href="/time-attendance"
+                />
+                {kpis.trends?.hoursWorked && (
+                  <MetricCard
+                    label="Hours worked · last week"
+                    value={fmtHours(lastComplete(kpis.trends.hoursWorked))}
+                    hint={`${fmtHours(kpis.trends.hoursWorked.series.at(-1) ?? 0)} so far this week`}
+                    href="/time-attendance"
+                    delta={weekly(kpis.trends.hoursWorked, 'vs the week before', 'neutral', fmtHours)}
+                  />
+                )}
+              </MetricStrip>
+            ) : (
+              <SkeletonGrid count={4} />
             )}
-            <Stat
-              label={`Working (${kpis.activeWindowDays ?? 14} days)`}
-              value={kpis.activeAssociates.toString()}
-              hint={`Placed, and worked in the last ${kpis.activeWindowDays ?? 14} days or has a shift ahead`}
-              link="/people?workStatus=ACTIVE"
-            />
-            <Stat
-              label="Clocked in right now"
-              value={kpis.associatesClockedIn.toString()}
-              hint={
-                kpis.activeAssociates > 0
-                  ? `${Math.round((kpis.associatesClockedIn / kpis.activeAssociates) * 100)}% of those working`
-                  : undefined
-              }
-              link="/time-attendance"
-            />
-            {kpis.trends?.hoursWorked && (
-              <Stat
-                label="Hours worked · last week"
-                value={fmtHours(lastComplete(kpis.trends.hoursWorked))}
-                hint={`${fmtHours(kpis.trends.hoursWorked.series.at(-1) ?? 0)} so far this week`}
-                link="/time-attendance"
-                trend={weekly(kpis.trends.hoursWorked, 'vs the week before', fmtHours)}
-                good="neutral"
-              />
-            )}
-          </div>
-        ) : (
-          <SkeletonGrid />
-        )}
-      </Section>
+          </Section>
 
-      <Section title="Scheduling" icon={Calendar} description="Shifts ahead.">
-        {kpis ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Stat
-              label={`Open shifts (next ${kpis.windowDays}d)`}
-              value={kpis.openShiftsNext30d.toString()}
-              hint={`Shifts without an assigned ${term('worker').toLowerCase()}`}
-              link="/scheduling"
-            />
-            {kpis.trends?.shiftsScheduled && (
-              <Stat
-                label="Shifts scheduled · last week"
-                value={lastComplete(kpis.trends.shiftsScheduled).toLocaleString()}
-                hint={`${(kpis.trends.shiftsScheduled.series.at(-1) ?? 0).toLocaleString()} on this week's schedule`}
-                link="/scheduling"
-                trend={weekly(kpis.trends.shiftsScheduled, 'vs the week before')}
-                good="neutral"
-              />
+          <Section title="Scheduling" icon={Calendar} description="Shifts ahead.">
+            {kpis ? (
+              <MetricStrip label="Scheduling">
+                <MetricCard
+                  label={`Open shifts (next ${kpis.windowDays}d)`}
+                  value={kpis.openShiftsNext30d.toString()}
+                  hint={`Shifts without an assigned ${term('worker').toLowerCase()}`}
+                  href="/scheduling"
+                />
+                {kpis.trends?.shiftsScheduled && (
+                  <MetricCard
+                    label="Shifts scheduled · last week"
+                    value={lastComplete(kpis.trends.shiftsScheduled).toLocaleString()}
+                    hint={`${(kpis.trends.shiftsScheduled.series.at(-1) ?? 0).toLocaleString()} on this week's schedule`}
+                    href="/scheduling"
+                    delta={weekly(kpis.trends.shiftsScheduled, 'vs the week before', 'neutral')}
+                  />
+                )}
+              </MetricStrip>
+            ) : (
+              <SkeletonGrid count={2} />
             )}
-          </div>
-        ) : (
-          <SkeletonGrid count={1} />
-        )}
-      </Section>
+          </Section>
 
-      <Section
-        title="Payroll"
-        icon={DollarSign}
-        description="Money in, money out."
-      >
-        {kpis ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Stat
-              label={`Net paid (last ${kpis.windowDays}d)`}
-              value={fmtMoney(kpis.netPaidLast30d)}
-              hint="Net pay on every disbursed paystub"
-              link="/payroll"
-            />
-            <Stat
-              label="Net pending disbursement"
-              value={fmtMoney(kpis.netPendingDisbursement)}
-              hint="On draft and finalized runs"
-              link="/payroll"
-            />
-          </div>
-        ) : (
-          <SkeletonGrid />
-        )}
-      </Section>
-
-      <Section
-        title="Onboarding & compliance"
-        icon={ShieldCheck}
-        description="What needs HR's attention."
-      >
-        {kpis ? (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-              <Stat
-                label="Pending applications"
-                value={kpis.pendingOnboardingApplications.toString()}
-                accent={kpis.pendingOnboardingApplications > 0}
-                link="/onboarding"
-                trend={weekly(kpis.trends?.applications, 'new vs last wk')}
-              />
-              <Stat
-                label="I-9 Section 2 backlog"
-                value={kpis.pendingI9Section2.toString()}
-                accent={kpis.pendingI9Section2 > 0}
-                link="/compliance"
-              />
-              <Stat
-                label="Documents to review"
-                value={kpis.pendingDocumentReviews.toString()}
-                accent={kpis.pendingDocumentReviews > 0}
-                link="/documents"
-              />
-            </div>
-            {Object.keys(kpis.applicationStatusCounts).length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <ClipboardList className="h-4 w-4 text-silver/80" />
-                    Application status breakdown
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Suspense fallback={<Skeleton className="h-64" />}>
-                    <DonutChart
-                      centerSublabel="Applications"
-                      data={buildStatusBreakdown(kpis.applicationStatusCounts)}
-                    />
-                  </Suspense>
-                </CardContent>
-              </Card>
+          <Section title="Payroll" icon={DollarSign} description="Money in, money out.">
+            {kpis ? (
+              <MetricStrip label="Payroll">
+                <MetricCard
+                  label={`Net paid (last ${kpis.windowDays}d)`}
+                  value={fmtMoney(kpis.netPaidLast30d)}
+                  hint="Net pay on every disbursed paystub"
+                  href="/payroll"
+                />
+                <MetricCard
+                  label="Net pending disbursement"
+                  value={fmtMoney(kpis.netPendingDisbursement)}
+                  hint="On draft and finalized runs"
+                  href="/payroll"
+                />
+              </MetricStrip>
+            ) : (
+              <SkeletonGrid count={2} />
             )}
-          </>
-        ) : (
-          // Three KPI tiles + the donut placeholder — without the
-          // chart skeleton the page height jumps ~280px when data
-          // lands and the donut renders.
-          <>
-            <SkeletonGrid count={3} />
-            <Skeleton className="h-64 mt-4 rounded-lg" />
-          </>
-        )}
-      </Section>
+          </Section>
+
+          <Section title="Onboarding & compliance" icon={ShieldCheck} description="What needs HR's attention.">
+            {kpis ? (
+              <>
+                <MetricStrip label="Onboarding and compliance" className="mb-4">
+                  <MetricCard
+                    label="Pending applications"
+                    value={kpis.pendingOnboardingApplications.toString()}
+                    tone={kpis.pendingOnboardingApplications > 0 ? 'warning' : 'default'}
+                    href="/onboarding"
+                    delta={weekly(kpis.trends?.applications, 'new vs the week before', 'neutral')}
+                  />
+                  <MetricCard
+                    label="I-9 Section 2 backlog"
+                    value={kpis.pendingI9Section2.toString()}
+                    tone={kpis.pendingI9Section2 > 0 ? 'warning' : 'default'}
+                    href="/compliance"
+                  />
+                  <MetricCard
+                    label="Documents to review"
+                    value={kpis.pendingDocumentReviews.toString()}
+                    tone={kpis.pendingDocumentReviews > 0 ? 'warning' : 'default'}
+                    href="/documents"
+                  />
+                </MetricStrip>
+                {Object.keys(kpis.applicationStatusCounts).length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <ClipboardList className="h-4 w-4 text-silver/80" />
+                        Application status breakdown
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Suspense fallback={<Skeleton className="h-64" />}>
+                        <DonutChart centerSublabel="Applications" data={buildStatusBreakdown(kpis.applicationStatusCounts)} />
+                      </Suspense>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            ) : (
+              // Three KPI tiles + the donut placeholder — without the
+              // chart skeleton the page height jumps ~280px when data
+              // lands and the donut renders.
+              <>
+                <SkeletonGrid count={3} />
+                <Skeleton className="h-64 mt-4 rounded-lg" />
+              </>
+            )}
+          </Section>
         </>
       )}
-
-      {/* Retention (turnover, cohorts, by store). Lazy — it carries the
-          recharts line chart, same deferral rationale as the donut. */}
-      <Suspense fallback={<Skeleton className="mt-8 h-48" />}>
-        <RetentionSection />
-      </Suspense>
 
       <p className="text-xs text-silver/70 mt-8">
         <Activity className="h-3 w-3 inline mr-1 -mt-0.5" />
@@ -371,31 +319,6 @@ function Section({ title, icon: Icon, description, children }: SectionProps) {
   );
 }
 
-interface StatProps {
-  label: string;
-  value: string;
-  hint?: string;
-  accent?: boolean;
-  link?: string;
-  trend?: MetricTrend;
-  /** Which direction is good news for the trend; default up. */
-  good?: TrendGood;
-}
-
-function Stat({ label, value, hint, accent, link, trend, good }: StatProps) {
-  return (
-    <MetricCard
-      label={label}
-      value={value}
-      hint={hint}
-      accent={accent}
-      trend={trend}
-      trendGood={good}
-      wrap={link ? (card) => <Link to={link}>{card}</Link> : undefined}
-    />
-  );
-}
-
 const fmtHours = (n: number) => `${Math.round(n).toLocaleString()}h`;
 
 /** The last complete week (the final bucket is the week in progress). */
@@ -403,10 +326,18 @@ function lastComplete(t: KpiTrend): number {
   return t.series[t.series.length - 2] ?? 0;
 }
 
-/** The API's weekly series as a tile trend, when it sent one. */
-function weekly(t: KpiTrend | undefined, deltaLabel: string, format?: (n: number) => string): MetricTrend | undefined {
-  // The final bucket is this week so far — drawn hollow, kept out of the summary.
-  return t && t.series.length >= 2 ? { ...t, deltaLabel, format, lastIsPartial: true } : undefined;
+/**
+ * The API's weekly series as a change in words ("↑ 3 vs the week before"):
+ * the last complete week against the one before. No sparkline: eight
+ * undated points told no one which weeks they were (F500 G4).
+ */
+function weekly(
+  t: KpiTrend | undefined,
+  label: string,
+  good: TrendGood,
+  format?: (n: number) => string,
+): MetricDelta | undefined {
+  return t && t.series.length >= 3 ? { value: t.delta, label, good, format } : undefined;
 }
 
 /**
@@ -415,41 +346,28 @@ function weekly(t: KpiTrend | undefined, deltaLabel: string, format?: (n: number
  * unrecognized statuses get appended after with a fallback color/label
  * so a future enum addition still renders.
  */
-function buildStatusBreakdown(
-  counts: Record<string, number>,
-): DonutDatum[] {
+function buildStatusBreakdown(counts: Record<string, number>): DonutDatum[] {
   const out: DonutDatum[] = [];
   const seen = new Set<string>();
   for (const status of STATUS_ORDER) {
     const value = counts[status] ?? 0;
     if (value > 0) {
-      out.push({
-        name: STATUS_LABELS[status] ?? status,
-        value,
-        color: STATUS_COLORS[status],
-      });
+      out.push({ name: STATUS_LABELS[status] ?? status, value, color: STATUS_COLORS[status] });
       seen.add(status);
     }
   }
   for (const [status, value] of Object.entries(counts)) {
     if (seen.has(status) || value <= 0) continue;
-    out.push({
-      name: STATUS_LABELS[status] ?? sentenceCase(status),
-      value,
-    });
+    out.push({ name: STATUS_LABELS[status] ?? sentenceCase(status), value });
   }
   return out;
 }
 
 function SkeletonGrid({ count = 2 }: { count?: number }) {
-  // Tailwind JIT can't see template-string class names, so a literal
-  // `sm:grid-cols-${n}` is unsafe — depending on whether the matching
-  // class happened to be emitted elsewhere, the grid silently falls back
-  // to one column. Map the count to a known static class instead.
-  const cols =
-    count >= 3 ? 'sm:grid-cols-3' : count === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-1';
+  // The same columns MetricStrip lays tiles in: two a row on a phone, up to four from lg.
+  const cols = count >= 4 ? 'lg:grid-cols-4' : count === 3 ? 'lg:grid-cols-3' : '';
   return (
-    <div className={`grid grid-cols-1 ${cols} gap-3`}>
+    <div className={`grid grid-cols-2 ${cols} gap-2 sm:gap-3`}>
       {Array.from({ length: count }).map((_, i) => (
         <Card key={i}>
           <CardContent>

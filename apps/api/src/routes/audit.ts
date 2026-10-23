@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AuditSearchEntry, AuditSearchResponse } from '@alto-people/shared';
-import { csvCell as sharedCsvCell } from '@alto-people/shared';
+import { AUDIT_CATEGORIES, AUDIT_CATEGORY_DEFS, AUDIT_SYSTEM_ENTITY, AUDIT_SYSTEM_PREFIX, csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -10,6 +10,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { recordCriticalAudit } from '../lib/audit.js';
 import { MIN_RETENTION_YEARS, retentionYearsFor, verifyAuditChain } from '../lib/auditChain.js';
 import { createAuditSink } from '../lib/auditSink.js';
+import { fmtDateSpan } from '../lib/floorLeads.js';
 
 export const auditRouter = Router();
 
@@ -27,27 +28,117 @@ const FilterSchema = z.object({
   since: z.string().datetime().optional(),
   /** ISO datetime — exclusive upper bound. Drives cursor pagination. */
   before: z.string().datetime().optional(),
-  /** Free-text fragment — `action` LIKE %q%. Case-insensitive. */
+  /** Free-text fragment — the action, the record's id or the actor's email contains it. Case-insensitive. */
   q: z.string().trim().min(1).max(80).optional(),
+  /** One of the reviewer's categories (shared auditLog.ts): Sign-ins, Data changes, Exports… */
+  category: z.enum(AUDIT_CATEGORIES).optional(),
+  /** "1": leave out the API's own request trail (http.* on HttpRequest). */
+  hideSystem: z.enum(['1', '0', 'true', 'false']).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
 });
 
 type Filters = z.infer<typeof FilterSchema>;
 
-function buildWhere(f: Filters) {
+function buildWhere(f: Filters): Prisma.AuditLogWhereInput {
   // Brief 2-3 step 1: the viewer and the CSV read only the caller's tenant (explicit while TENANCY_MODE observes).
-  const where: Record<string, unknown> = { tenantId: tenantIdForWrite() };
+  const where: Prisma.AuditLogWhereInput = { tenantId: tenantIdForWrite() };
+  const and: Prisma.AuditLogWhereInput[] = [];
   if (f.action) where.action = f.action;
   if (f.entityType) where.entityType = f.entityType;
   if (f.entityId) where.entityId = f.entityId;
   if (f.actorUserId) where.actorUserId = f.actorUserId;
   if (f.clientId) where.clientId = f.clientId;
-  if (f.q) where.action = { contains: f.q, mode: 'insensitive' };
-  const createdAt: Record<string, Date> = {};
+  if (f.q) {
+    // One search box (F500 G4): the event, the record's id or email, or who did it.
+    and.push({
+      OR: [
+        { action: { contains: f.q, mode: 'insensitive' } },
+        { entityId: { contains: f.q, mode: 'insensitive' } },
+        { actorUser: { email: { contains: f.q, mode: 'insensitive' } } },
+      ],
+    });
+  }
+  if (f.category) {
+    const def = AUDIT_CATEGORY_DEFS[f.category];
+    const or: Prisma.AuditLogWhereInput[] = def.prefixes.map((p) => ({ action: { startsWith: p } }));
+    if (def.contains) or.push({ action: { contains: def.contains } });
+    and.push({ OR: or });
+  }
+  if (f.hideSystem === '1' || f.hideSystem === 'true') {
+    and.push({ NOT: { action: { startsWith: AUDIT_SYSTEM_PREFIX } } }, { NOT: { entityType: AUDIT_SYSTEM_ENTITY } });
+  }
+  const createdAt: Prisma.DateTimeFilter = {};
   if (f.since) createdAt.gte = new Date(f.since);
   if (f.before) createdAt.lt = new Date(f.before);
   if (Object.keys(createdAt).length > 0) where.createdAt = createdAt;
+  if (and.length) where.AND = and;
   return where;
+}
+
+type LabelledRow = { entityType: string; entityId: string; metadata: unknown };
+
+/**
+ * The records' names, so a row reads "Maria Lopez", not "5f4d1dea-c053…"
+ * (F500 G4). One lookup per entity type on the page, each inside the
+ * caller's tenant — a row can only ever be named from its own tenant's
+ * records, and an id that doesn't resolve stays unnamed.
+ */
+async function entityLabels(rows: LabelledRow[], tenantId: string): Promise<Map<string, { label: string; href: string | null }>> {
+  const out = new Map<string, { label: string; href: string | null }>();
+  const key = (t: string, id: string) => `${t}:${id}`;
+  const idsOf = (type: string) => [...new Set(rows.filter((r) => r.entityType === type && UUID.test(r.entityId)).map((r) => r.entityId))];
+  const personName = (a: { firstName: string; lastName: string } | null | undefined) => (a ? `${a.firstName} ${a.lastName}`.trim() : '');
+
+  const users = idsOf('User');
+  const associates = idsOf('Associate');
+  const applications = idsOf('Application');
+  const clients = idsOf('Client');
+  const locations = [...new Set([...idsOf('Location'), ...idsOf('Site')])];
+  const orgUnits = idsOf('OrgUnit');
+  const prospects = idsOf('ClientProspect');
+  const runs = idsOf('PayrollRun');
+  const [u, a, ap, c, l, o, pr, rn] = await Promise.all([
+    users.length ? prisma.user.findMany({ where: { id: { in: users }, tenantId }, select: { id: true, email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } }) : [],
+    associates.length ? prisma.associate.findMany({ where: { id: { in: associates }, tenantId }, select: { id: true, firstName: true, lastName: true } }) : [],
+    applications.length ? prisma.application.findMany({ where: { id: { in: applications }, tenantId }, select: { id: true, associate: { select: { firstName: true, lastName: true } } } }) : [],
+    clients.length ? prisma.client.findMany({ where: { id: { in: clients }, tenantId }, select: { id: true, name: true } }) : [],
+    locations.length ? prisma.site.findMany({ where: { id: { in: locations }, tenantId }, select: { id: true, name: true } }) : [],
+    orgUnits.length ? prisma.orgUnit.findMany({ where: { id: { in: orgUnits }, tenantId }, select: { id: true, name: true } }) : [],
+    prospects.length ? prisma.clientProspect.findMany({ where: { id: { in: prospects }, tenantId }, select: { id: true, name: true } }) : [],
+    runs.length ? prisma.payrollRun.findMany({ where: { id: { in: runs }, tenantId }, select: { id: true, periodStart: true, periodEnd: true } }) : [],
+  ]);
+  for (const x of u) out.set(key('User', x.id), { label: x.displayName?.trim() || personName(x.associate) || x.email, href: null });
+  for (const x of a) out.set(key('Associate', x.id), { label: personName(x), href: `/people/${x.id}` });
+  for (const x of ap) out.set(key('Application', x.id), { label: personName(x.associate) ? `${personName(x.associate)}'s onboarding` : 'Onboarding', href: `/onboarding/applications/${x.id}` });
+  for (const x of c) out.set(key('Client', x.id), { label: x.name, href: `/clients/${x.id}` });
+  for (const x of l) {
+    out.set(key('Location', x.id), { label: x.name, href: null });
+    out.set(key('Site', x.id), { label: x.name, href: null });
+  }
+  for (const x of o) out.set(key('OrgUnit', x.id), { label: x.name, href: null });
+  for (const x of pr) out.set(key('ClientProspect', x.id), { label: x.name, href: null });
+  for (const x of rn) out.set(key('PayrollRun', x.id), { label: `Payroll run · ${fmtDateSpan(x.periodStart.toISOString().slice(0, 10), x.periodEnd.toISOString().slice(0, 10))}`, href: `/payroll/runs/${x.id}/review` });
+  // The organization itself (an operator opening it, a profile change): only ever the caller's own.
+  if (rows.some((r) => r.entityType === 'Tenant' && r.entityId === tenantId)) {
+    const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
+    if (t) out.set(key('Tenant', tenantId), { label: t.name, href: '/admin/organization' });
+  }
+  // The API's own request rows are keyed by the route: "POST /auth/login".
+  for (const r of rows) {
+    if (r.entityType !== AUDIT_SYSTEM_ENTITY) continue;
+    const m = (r.metadata ?? {}) as { method?: unknown };
+    out.set(key(r.entityType, r.entityId), { label: `${typeof m.method === 'string' ? `${m.method} ` : ''}${r.entityId}`, href: null });
+  }
+  return out;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const ACTOR_SELECT = { email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } as const;
+function actorNameOf(u: { email: string; displayName: string | null; associate: { firstName: string; lastName: string } | null } | null): string | null {
+  if (!u) return null;
+  const fromAssociate = u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : '';
+  return u.displayName?.trim() || fromAssociate || u.email;
 }
 
 function parseFilters(req: import('express').Request): Filters {
@@ -72,26 +163,60 @@ auditRouter.get('/logs', async (req, res, next) => {
       where: buildWhere(f),
       orderBy: { createdAt: 'desc' },
       take,
-      include: { actorUser: { select: { email: true } } },
+      include: { actorUser: { select: ACTOR_SELECT } },
     });
+    const labels = await entityLabels(rows, tenantIdForWrite());
 
-    const entries: AuditSearchEntry[] = rows.map((r) => ({
-      id: r.id,
-      action: r.action,
-      actorUserId: r.actorUserId,
-      actorEmail: r.actorUser?.email ?? null,
-      entityType: r.entityType,
-      entityId: r.entityId,
-      clientId: r.clientId,
-      metadata: (r.metadata as Record<string, unknown> | null) ?? null,
-      createdAt: r.createdAt.toISOString(),
-    }));
+    const entries: AuditSearchEntry[] = rows.map((r) => {
+      const named = labels.get(`${r.entityType}:${r.entityId}`) ?? null;
+      return {
+        id: r.id,
+        action: r.action,
+        actorUserId: r.actorUserId,
+        actorEmail: r.actorUser?.email ?? null,
+        actorName: actorNameOf(r.actorUser),
+        entityType: r.entityType,
+        entityId: r.entityId,
+        entityLabel: named?.label ?? null,
+        entityHref: named?.href ?? null,
+        clientId: r.clientId,
+        metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+        createdAt: r.createdAt.toISOString(),
+      };
+    });
 
     const nextBefore =
       rows.length === take ? rows[rows.length - 1]!.createdAt.toISOString() : null;
 
     const body: AuditSearchResponse = { entries, nextBefore };
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /audit/actors?q= — the people-picker behind the Actor filter (F500
+ * G4): this tenant's accounts whose name or email matches, so a reviewer
+ * picks "Maria Lopez" instead of pasting a user id. view:audit (the
+ * router's gate); never another tenant's accounts.
+ */
+auditRouter.get('/actors', async (req, res, next) => {
+  try {
+    const { q, id } = z.object({ q: z.string().trim().max(80).optional(), id: z.string().uuid().optional() }).parse(req.query);
+    const tenantId = tenantIdForWrite();
+    const where: Prisma.UserWhereInput = { tenantId };
+    if (id) where.id = id;
+    else if (q) {
+      where.OR = [
+        { email: { contains: q, mode: 'insensitive' } },
+        { displayName: { contains: q, mode: 'insensitive' } },
+        { associate: { firstName: { contains: q, mode: 'insensitive' } } },
+        { associate: { lastName: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+    const users = await prisma.user.findMany({ where, select: { id: true, ...ACTOR_SELECT }, orderBy: { email: 'asc' }, take: 10 });
+    res.json({ actors: users.map((u) => ({ id: u.id, email: u.email, name: actorNameOf(u) ?? u.email })) });
   } catch (err) {
     next(err);
   }

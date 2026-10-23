@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { shareToken } from '../../lib/transportSafety.js';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
@@ -192,9 +193,12 @@ describe('the safety toolkit', () => {
     expect(JSON.stringify(track.body)).not.toContain('Ana');
     expect(JSON.stringify(track.body)).not.toContain('Gulf Blvd');
     expect((await anon.get('/transport/track/not-a-token')).status).toBe(404);
-    // A closed run keeps the page honest: status only.
+    // A real link past its six hours is gone (410), not "not valid" (F500 G5).
+    const old = shareToken(f.run.id, new Date(Date.now() - 7 * 3_600_000));
+    expect((await anon.get(`/transport/track/${old.token}`)).status).toBe(410);
+    // A closed run keeps the page honest: the link no longer shares it.
     await prisma.rideRun.update({ where: { id: f.run.id }, data: { status: 'CANCELLED' } });
-    expect((await anon.get(`/transport/track/${share.body.token}`)).status).toBe(404);
+    expect((await anon.get(`/transport/track/${share.body.token}`)).status).toBe(410);
   });
 });
 

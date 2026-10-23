@@ -1,118 +1,149 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Lock, MoreHorizontal, Pencil, Plus, Power, Scale, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Pencil, Plus, Power, Scale, Trash2 } from 'lucide-react';
 import { LEDGER_ACCOUNT_TYPES, LEDGER_SUBTYPES, LEDGER_SUBTYPE_LABELS, LEDGER_TYPE_LABELS, type LedgerAccountRow, type LedgerAccountType } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { createLedgerAccount, deleteLedgerAccount, getOpeningBalances, postOpeningBalances, updateLedgerAccount } from '@/lib/books/ledgerApi';
 import { ymdLocal } from '@/lib/format';
+import { urlBoolean, useUrlParam, useUrlState } from '@/lib/useUrlState';
+import { useDesktopTable } from '@/lib/useViewport';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardContent } from '@/components/ui/Card';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { QueryError } from '@/components/ui/QueryError';
-import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Select } from '@/components/ui/Select';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import { Amount, useLedgerAccounts } from './ledgerKit';
 
 /**
  * The chart of accounts: every account the books keep, grouped as the
- * statements group them, with today's balance. Finance adds, renames,
- * nests and turns accounts off; an account with entries keeps its type,
- * and the ones the automatic posting uses can't be deleted.
+ * statements group them, with today's balance and what moved through it
+ * this year — searchable, filterable by type, and exportable. Finance
+ * adds, renames, nests and turns accounts off; an account with entries
+ * keeps its type, and the ones the automatic posting uses can't be
+ * deleted (the row's menu simply doesn't offer it).
  */
+
+const TYPE_FILTERS = ['all', ...LEDGER_ACCOUNT_TYPES] as const;
+const TYPE_ORDER = new Map<string, number>(LEDGER_ACCOUNT_TYPES.map((t, i) => [t, i]));
+const byTypeThenCode = (a: LedgerAccountRow, b: LedgerAccountRow) =>
+  (TYPE_ORDER.get(a.type) ?? 9) - (TYPE_ORDER.get(b.type) ?? 9) || a.code.localeCompare(b.code, undefined, { numeric: true });
+
 export function AccountsPage() {
   const { can } = useAuth();
+  const navigate = useNavigate();
   const manage = can('manage:books');
+  const desktop = useDesktopTable();
   const q = useLedgerAccounts();
-  const [showInactive, setShowInactive] = useState(false);
+  const [type, setType] = useUrlParam('type', 'all', TYPE_FILTERS);
+  const [showInactive, setShowInactive] = useUrlState('inactive', false, urlBoolean);
   const [editing, setEditing] = useState<LedgerAccountRow | 'new' | null>(null);
   const [opening, setOpening] = useState(false);
-  const accounts = q.data?.accounts ?? [];
-  const visible = accounts.filter((a) => showInactive || a.isActive);
+  const accounts = useMemo(() => q.data?.accounts ?? [], [q.data]);
   const inactive = accounts.filter((a) => !a.isActive).length;
+  const rows = useMemo(
+    () => accounts.filter((a) => (showInactive || a.isActive) && (type === 'all' || a.type === type)).sort(byTypeThenCode),
+    [accounts, showInactive, type],
+  );
+  const activeFilters = (type !== 'all' ? 1 : 0) + (showInactive ? 1 : 0);
+
+  const columns: GridColumn<LedgerAccountRow>[] = [
+    { key: 'code', header: 'Code', accessor: (a) => a.code, sortable: true, width: '6rem', className: 'tabular-nums', cardMeta: true },
+    {
+      key: 'name',
+      header: 'Name',
+      accessor: (a) => a.name,
+      primary: true,
+      sortable: true,
+      // The name wraps on its own line — never "Op…" — and a sub-account sits in under its parent.
+      cell: (a) => (
+        <span className={cn('inline-flex flex-wrap items-center gap-1.5 break-words text-ink', a.parentId && 'pl-4', !a.isActive && 'opacity-60')}>
+          {a.name}
+          {!a.isActive && (
+            <Badge size="sm" variant="outline">
+              Off
+            </Badge>
+          )}
+        </span>
+      ),
+    },
+    { key: 'type', header: 'Type', accessor: (a) => LEDGER_SUBTYPE_LABELS[a.subtype] ?? a.subtype, sortable: true, cardMeta: true },
+    { key: 'balance', header: 'Balance', accessor: (a) => a.balance, sortable: true, align: 'right', cell: (a) => <Amount value={a.balance} />, csv: (a) => a.balance.toFixed(2) },
+    { key: 'activityYtd', header: 'Activity YTD', accessor: (a) => a.activityYtd, sortable: true, align: 'right', cell: (a) => <Amount value={a.activityYtd} blankZero />, csv: (a) => a.activityYtd.toFixed(2) },
+    // The row menu (edit, turn off, delete) is a desk task: a phone card reads the account and opens it, without a second row of chrome under every card.
+    ...(manage && desktop
+      ? [{ key: 'actions', header: '', accessor: () => '', searchable: false, stopRowClick: true, width: '3rem', csv: () => null, cell: (a: LedgerAccountRow) => <AccountMenu account={a} onEdit={() => setEditing(a)} /> } satisfies GridColumn<LedgerAccountRow>]
+      : []),
+  ];
 
   return (
     <ListTemplate
       title="Chart of accounts"
-      subtitle="The accounts the books keep, grouped as the statements read them, with today’s balances."
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Chart of accounts' }]}
-      primaryAction={
-        manage ? (
-          <Button onClick={() => setEditing('new')}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New account
-          </Button>
-        ) : undefined
-      }
-      secondaryActions={
-        manage ? (
-          <Button variant="secondary" onClick={() => setOpening(true)}>
-            <Scale className="h-4 w-4" aria-hidden="true" />
-            Opening balances
-          </Button>
-        ) : undefined
-      }
-      filters={
-        inactive > 0 ? (
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-muted">
-            <input type="checkbox" className="h-4 w-4 accent-gold" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
-            Show {inactive} turned-off {inactive === 1 ? 'account' : 'accounts'}
-          </label>
-        ) : undefined
+      subtitle="The accounts the books keep, grouped as the statements read them, with today’s balances and this year’s activity."
+      actions={
+        manage
+          ? [
+              { key: 'new', label: 'New account', icon: Plus, primary: true, onSelect: () => setEditing('new') },
+              { key: 'opening', label: 'Opening balances', icon: Scale, onSelect: () => setOpening(true) },
+            ]
+          : undefined
       }
     >
       {q.isError ? (
         <QueryError what="the chart of accounts" query={q} />
-      ) : !q.data ? (
-        <Skeleton className="h-96" />
       ) : (
-        <div className="space-y-[var(--d-stack)]">
-          {LEDGER_ACCOUNT_TYPES.map((t) => {
-            const list = visible.filter((a) => a.type === t);
-            if (list.length === 0) return null;
-            const total = list.filter((a) => a.isActive).reduce((s, a) => s + a.balance, 0);
-            return (
-              <Card key={t}>
-                <CardContent className="p-4">
-                  <SectionTitle as="h3" title={LEDGER_TYPE_LABELS[t]} trailing={<Amount value={total} strong />} />
-                  <ul className="mt-2 divide-y divide-line">
-                    {list.map((a) => (
-                      <li key={a.id} className={cn('flex items-center gap-3 py-2 text-sm', !a.isActive && 'opacity-60', a.parentId && 'pl-6')}>
-                        <span className="w-14 shrink-0 tabular-nums text-ink-muted">{a.code}</span>
-                        <Link to={`/books/accounts/${a.id}`} className="min-w-0 flex-1 truncate text-ink hover:text-accent">
-                          {a.name}
-                        </Link>
-                        <span className="hidden text-2xs text-ink-muted md:inline">{LEDGER_SUBTYPE_LABELS[a.subtype] ?? a.subtype}</span>
-                        {a.systemKey && (
-                          <span title="The automatic posting uses this account" className="text-ink-muted">
-                            <Lock className="h-3.5 w-3.5" aria-label="Used by automatic posting" />
-                          </span>
-                        )}
-                        {!a.isActive && (
-                          <Badge size="sm" variant="outline">
-                            Off
-                          </Badge>
-                        )}
-                        <Amount value={a.balance} className="w-32 text-right" />
-                        {manage && <AccountMenu account={a} onEdit={() => setEditing(a)} />}
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+        <DataGrid
+          id="books-accounts"
+          caption="Chart of accounts"
+          noun={{ one: 'account', many: 'accounts' }}
+          rows={q.data ? rows : null}
+          loading={q.isLoading}
+          columns={columns}
+          rowKey={(a) => a.id}
+          search={{ placeholder: 'Search code or name' }}
+          exportCsv={{ filename: 'chart-of-accounts' }}
+          onRowClick={(a) => navigate(`/books/accounts/${a.id}`)}
+          rowActionLabel={(a) => `Open ${a.code} ${a.name}`}
+          groupBy={{
+            key: (a) => a.type,
+            header: (k, list) => (
+              <span className="flex items-center justify-between gap-3">
+                <span>{LEDGER_TYPE_LABELS[k as LedgerAccountType] ?? k}</span>
+                <Amount value={list.filter((a) => a.isActive).reduce((s, a) => s + a.balance, 0)} strong />
+              </span>
+            ),
+          }}
+          filters={
+            <>
+              <Select size="sm" aria-label="Account type" value={type} onChange={(e) => setType(e.target.value as (typeof TYPE_FILTERS)[number])} className="w-auto">
+                <option value="all">All types</option>
+                {LEDGER_ACCOUNT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {LEDGER_TYPE_LABELS[t]}
+                  </option>
+                ))}
+              </Select>
+              {inactive > 0 && (
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-muted">
+                  <input type="checkbox" className="h-4 w-4 accent-gold" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
+                  Show {inactive} turned-off {inactive === 1 ? 'account' : 'accounts'}
+                </label>
+              )}
+            </>
+          }
+          activeFilters={activeFilters}
+          filterKeys={['type', 'inactive']}
+          empty={{ title: 'No accounts yet', description: 'The chart is set up the first time the books open.' }}
+        />
       )}
       {editing && <AccountDialog account={editing === 'new' ? null : editing} accounts={accounts} onClose={() => setEditing(null)} />}
       {opening && <OpeningBalancesDialog accounts={accounts} onClose={() => setOpening(false)} />}

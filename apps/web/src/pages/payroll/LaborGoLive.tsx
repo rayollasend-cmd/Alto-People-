@@ -5,13 +5,11 @@ import { toast } from 'sonner';
 import { Landmark, Scale } from 'lucide-react';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
-import { backToShadow, getChangeReport, getLaborActivations, goLive, type ChangeReportPerson, type LaborActivation, type LaborJurisdiction } from '@/lib/laborLiveApi';
+import { fmtDate, fmtDateOnlyRange, fmtMoney, parseYmd } from '@/lib/format';
+import { backToShadow, getChangeReport, getLaborActivations, getLaborLastRun, goLive, type ChangeReportPerson, type LaborActivation, type LaborJurisdiction, type LaborLastRun } from '@/lib/laborLiveApi';
 import {
   Badge,
   Button,
-  Card,
-  CardContent,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -37,10 +35,11 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { QueryError } from '@/components/ui/QueryError';
 
 /**
- * Labor rules, state by state: shadow, waiting on a second person, or live.
- * Going live shows what the last runs would have paid under the state's rules,
- * records counsel's sign-off and the attestation, and goes to a second person.
- * Back to shadow is one click with a reason.
+ * Labor rules, state by state: testing (not paying yet), waiting on a second
+ * person, or live. Each state's row leads with what its rules would have paid
+ * on the last run. Going live shows what the last runs would have paid under
+ * the state's rules, records counsel's sign-off and the attestation, and goes
+ * to a second person. Turning it off is one click with a reason.
  */
 
 const RULE_LABEL: Record<'OVERTIME' | 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS' | 'SPREAD_OF_HOURS' | 'SPLIT_SHIFT', string> = {
@@ -54,101 +53,178 @@ const RULE_LABEL: Record<'OVERTIME' | 'MEAL' | 'REST' | 'REST_BETWEEN_SHIFTS' | 
 
 const signedMoney = (n: number) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${fmtMoney(Math.abs(n))}`;
 
-function StatusLine({ j }: { j: LaborJurisdiction }) {
+/** Only what isn't already in the Status column: who asked, who approved, and counsel. */
+function StatusDetail({ j }: { j: LaborJurisdiction }) {
   const a = j.current;
-  if (!a) return <p className="text-sm text-ink-muted">Paid by federal rules. {j.label}’s rules run in shadow beside each pay run.</p>;
+  if (!a) return null;
   if (a.status === 'PENDING')
     return (
-      <p className="text-sm text-ink-muted">
-        Waiting on a second person{a.requestedBy ? ` — asked by ${a.requestedBy}` : ''}. Counsel: {a.counselName}, {a.counselFirm}.
+      <p className="mt-1 text-xs text-ink-muted">
+        {a.requestedBy ? `Asked by ${a.requestedBy}. ` : ''}Counsel: {a.counselName}, {a.counselFirm}.
       </p>
     );
   return (
-    <p className="text-sm text-ink-muted">
-      Paying by {j.label}’s rules since {a.activatedAt ? fmtDate(a.activatedAt) : 'today'}
+    <p className="mt-1 text-xs text-ink-muted">
+      Since {a.activatedAt ? fmtDate(a.activatedAt) : 'today'}
       {a.activatedBy ? `, approved by ${a.activatedBy}` : ''}. Counsel: {a.counselName}, {a.counselFirm} (signed {fmtDate(parseYmd(a.counselSignedOn))}).
     </p>
   );
 }
 
+export const laborStatusLabel = (a: LaborActivation | null) => (!a ? 'Testing (not paying yet)' : a.status === 'PENDING' ? 'Waiting on approval' : 'Live');
+
 function statusBadge(a: LaborActivation | null) {
-  if (!a) return <Badge variant="outline">In shadow</Badge>;
-  if (a.status === 'PENDING') return <Badge variant="pending">Waiting on approval</Badge>;
-  return <Badge variant="success">Live</Badge>;
+  if (!a) return <Badge variant="outline">{laborStatusLabel(a)}</Badge>;
+  if (a.status === 'PENDING') return <Badge variant="pending">{laborStatusLabel(a)}</Badge>;
+  return <Badge variant="success">{laborStatusLabel(a)}</Badge>;
 }
+
+const sitesText = (n: number) => (n === 0 ? 'No sites yet' : `${n} site${n === 1 ? '' : 's'}`);
+
+/** "Would have paid $120.00 more" — the number a state's row leads with. */
+export function lastRunSentence(r: LaborLastRun | undefined, live: boolean): string {
+  if (!r) return 'No finished run to test yet';
+  if (r.replayed === 0) return 'Nobody here was on the last run';
+  const d = r.amountDifference;
+  if (Math.abs(d) < 0.005) return live ? 'No change last run' : 'Would have paid the same';
+  const more = d > 0 ? 'more' : 'less';
+  if (live) return d > 0 ? `Its rules added ${fmtMoney(d)} last run` : `Its rules paid ${fmtMoney(-d)} less last run`;
+  return `Would have paid ${fmtMoney(Math.abs(d))} ${more}`;
+}
+
+type StateRow = LaborJurisdiction & { last?: LaborLastRun };
 
 export function LaborGoLiveTab() {
   const { can } = useAuth();
-  const term = useTerm();
   const canManage = can('manage:org');
   const q = useQuery({ queryKey: ['labor-rules', 'activations'], queryFn: getLaborActivations });
+  // The replay is slower than the list; the grid shows first and the column fills in.
+  const last = useQuery({ queryKey: ['labor-rules', 'last-run'], queryFn: getLaborLastRun });
   const [reviewing, setReviewing] = useState<LaborJurisdiction | null>(null);
   const [ending, setEnding] = useState<LaborActivation | null>(null);
+  const rows = useMemo<StateRow[] | undefined>(() => {
+    if (!q.data) return undefined;
+    const byState = new Map((last.data?.states ?? []).map((r) => [r.jurisdiction, r]));
+    // Where people work first: a state with no sites is listed, quietly, after them.
+    return [...q.data.jurisdictions]
+      .sort((a, b) => Number(b.sites.length > 0 || !!b.current) - Number(a.sites.length > 0 || !!a.current) || a.label.localeCompare(b.label))
+      .map((j) => ({ ...j, last: byState.get(j.jurisdiction) }));
+  }, [q.data, last.data]);
 
   if (q.isError) return <QueryError what="the go-live status" query={q} />;
-  if (!q.data) return <SkeletonRows count={4} />;
+  if (!q.data || !rows) return <SkeletonRows count={4} />;
   const live = q.data.jurisdictions.filter((j) => j.current?.status === 'LIVE').length;
 
   return (
     <div className="space-y-4">
       <SectionTitle
         title="Paying by state rules"
-        description={`${live === 0 ? 'No state pays by its own rules yet' : `${live} state${live === 1 ? '' : 's'} pay${live === 1 ? 's' : ''} by its own rules`}. A state goes live with counsel’s sign-off and a second person; going back to shadow is immediate.`}
+        description={`${live === 0 ? 'No state pays by its own rules yet' : `${live} state${live === 1 ? '' : 's'} pay${live === 1 ? 's' : ''} by its own rules`}. Until a state goes live, its rules are tested beside each pay run and pay follows federal rules. Going live takes counsel’s sign-off and a second person; turning it off is immediate.`}
       />
-      <ul className="space-y-3" aria-label="States with a rule pack">
-        {/* Where people work first: a state with no stores is listed, quietly, after them. */}
-        {[...q.data.jurisdictions].sort((a, b) => Number(b.sites.length > 0 || !!b.current) - Number(a.sites.length > 0 || !!a.current) || a.label.localeCompare(b.label)).map((j) => {
-          const siteLive = j.sites.filter((s) => s.activation?.status === 'LIVE');
-          return (
-            <li key={j.jurisdiction}>
-              <Card>
-                <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Landmark className="h-4 w-4 text-ink-muted" aria-hidden="true" />
-                      <h3 className="text-base font-semibold text-ink">{j.label}</h3>
-                      {statusBadge(j.current)}
-                      <span className="text-xs text-ink-muted">
-                        {j.sites.length === 0 ? `No ${term('label.stores').toLowerCase()} here yet` : `${j.sites.length} ${j.sites.length === 1 ? term('label.store').toLowerCase() : term('label.stores').toLowerCase()}`}
-                      </span>
-                    </div>
-                    <StatusLine j={j} />
-                    {siteLive.length > 0 && !j.current && (
-                      <p className="text-xs text-ink-muted">
-                        Live on its own: {siteLive.map((s) => s.name).join(', ')}.
-                      </p>
-                    )}
-                  </div>
-                  {canManage && (
-                    <div className="flex shrink-0 flex-wrap gap-2">
-                      {!j.current && (
-                        <Button size="sm" variant={j.sites.length > 0 ? 'primary' : 'outline'} onClick={() => setReviewing(j)}>
-                          Review and go live
-                        </Button>
-                      )}
-                      {j.current?.status === 'PENDING' && (
-                        <Button asChild size="sm" variant="outline">
-                          <Link to="/approvals?tab=requests">Open the approval</Link>
-                        </Button>
-                      )}
-                      {j.current && (
-                        <Button size="sm" variant="ghost" onClick={() => setEnding(j.current)}>
-                          {j.current.status === 'PENDING' ? 'Withdraw' : 'Back to shadow'}
-                        </Button>
-                      )}
-                      {siteLive.map((s) => (
-                        <Button key={s.id} size="sm" variant="ghost" onClick={() => setEnding(s.activation)}>
-                          {s.name}: back to shadow
-                        </Button>
-                      ))}
-                    </div>
+      <DataGrid<StateRow>
+        id="labor-go-live-states"
+        caption="States with a rule pack"
+        rows={rows}
+        rowKey={(j) => j.jurisdiction}
+        urlState={false}
+        search={false}
+        noun={{ one: 'state', many: 'states' }}
+        columns={[
+          {
+            key: 'state',
+            header: 'State',
+            accessor: (j) => j.label,
+            sortable: true,
+            primary: true,
+            cell: (j) => {
+              const siteLive = j.sites.filter((s) => s.activation?.status === 'LIVE');
+              return (
+                <div className="min-w-0">
+                  <span className="font-medium text-ink">{j.label}</span>
+                  {siteLive.length > 0 && !j.current && <p className="mt-1 text-xs text-ink-muted">Live on its own: {siteLive.map((s) => s.name).join(', ')}.</p>}
+                </div>
+              );
+            },
+          },
+          {
+            key: 'status',
+            header: 'Status',
+            accessor: (j) => laborStatusLabel(j.current),
+            sortable: true,
+            cell: (j) => (
+              <div className="min-w-0">
+                {statusBadge(j.current)}
+                <StatusDetail j={j} />
+              </div>
+            ),
+          },
+          { key: 'sites', header: 'Sites', accessor: (j) => j.sites.length, sortable: true, cardMeta: true, cell: (j) => sitesText(j.sites.length) },
+          {
+            key: 'last',
+            header: 'Last test run',
+            accessor: (j) => j.last?.amountDifference ?? null,
+            csv: (j) => j.last?.amountDifference ?? '',
+            sortable: true,
+            cell: (j) =>
+              j.sites.length === 0 ? (
+                <span className="text-ink-muted">—</span>
+              ) : last.isError ? (
+                <span className="text-ink-muted">Couldn’t replay</span>
+              ) : !last.data ? (
+                <span className="text-ink-muted">Checking…</span>
+              ) : (
+                <div className="min-w-0" data-testid={`labor-last-${j.jurisdiction}`}>
+                  <span className={j.last && Math.abs(j.last.amountDifference) >= 0.005 ? 'font-medium text-ink' : 'text-ink-muted'}>{lastRunSentence(j.last, j.current?.status === 'LIVE')}</span>
+                  {j.last && (
+                    <p className="mt-0.5 text-xs text-ink-muted">
+                      {fmtDateOnlyRange(j.last.periodStart, j.last.periodEnd)}
+                      {j.last.people > 0 ? ` · ${j.last.people} ${j.last.people === 1 ? 'person' : 'people'}` : ''}
+                    </p>
                   )}
-                </CardContent>
-              </Card>
-            </li>
-          );
-        })}
-      </ul>
+                </div>
+              ),
+          },
+          ...(canManage
+            ? [
+                {
+                  key: 'go',
+                  header: 'Go-live',
+                  accessor: () => null,
+                  csv: () => '',
+                  searchable: false,
+                  stopRowClick: true,
+                  cell: (j: StateRow) => {
+                    const siteLive = j.sites.filter((s) => s.activation?.status === 'LIVE');
+                    return (
+                      <div className="flex flex-wrap gap-2">
+                        {!j.current && (
+                          <Button size="sm" variant={j.sites.length > 0 ? 'primary' : 'outline'} onClick={() => setReviewing(j)}>
+                            Review and go live
+                          </Button>
+                        )}
+                        {j.current?.status === 'PENDING' && (
+                          <Button asChild size="sm" variant="outline">
+                            <Link to="/approvals?tab=requests">Open the approval</Link>
+                          </Button>
+                        )}
+                        {j.current && (
+                          <Button size="sm" variant="ghost" onClick={() => setEnding(j.current)}>
+                            {j.current.status === 'PENDING' ? 'Withdraw' : 'Stop paying by these rules'}
+                          </Button>
+                        )}
+                        {siteLive.map((s) => (
+                          <Button key={s.id} size="sm" variant="ghost" onClick={() => setEnding(s.activation)}>
+                            {s.name}: stop
+                          </Button>
+                        ))}
+                      </div>
+                    );
+                  },
+                },
+              ]
+            : []),
+        ]}
+      />
       {reviewing && <GoLiveDrawer j={reviewing} attestation={q.data.attestation} onClose={() => setReviewing(null)} />}
       <EndDialog activation={ending} onClose={() => setEnding(null)} />
     </div>
@@ -298,7 +374,7 @@ function EndDialog({ activation, onClose }: { activation: LaborActivation | null
   const end = useMutation({
     mutationFn: () => backToShadow(activation!.id, reason.trim()),
     onSuccess: () => {
-      toast.success(activation?.status === 'PENDING' ? 'Withdrawn.' : 'Back to shadow. The next pay run uses federal rules here.');
+      toast.success(activation?.status === 'PENDING' ? 'Withdrawn.' : 'Turned off. The next pay run uses federal rules here.');
       setReason('');
       void qc.invalidateQueries({ queryKey: ['labor-rules'] });
       onClose();
@@ -309,7 +385,7 @@ function EndDialog({ activation, onClose }: { activation: LaborActivation | null
     <Dialog open={!!activation} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{activation?.status === 'PENDING' ? 'Withdraw this go-live?' : 'Go back to shadow?'}</DialogTitle>
+          <DialogTitle>{activation?.status === 'PENDING' ? 'Withdraw this go-live?' : 'Stop paying by these rules?'}</DialogTitle>
           <DialogDescription>
             {activation?.status === 'PENDING'
               ? 'The approval request is cancelled.'
@@ -324,7 +400,7 @@ function EndDialog({ activation, onClose }: { activation: LaborActivation | null
             Keep it
           </Button>
           <Button variant="destructive" onClick={() => end.mutate()} disabled={reason.trim().length < 3} loading={end.isPending}>
-            {activation?.status === 'PENDING' ? 'Withdraw' : 'Back to shadow'}
+            {activation?.status === 'PENDING' ? 'Withdraw' : 'Stop paying by these rules'}
           </Button>
         </DialogFooter>
       </DialogContent>

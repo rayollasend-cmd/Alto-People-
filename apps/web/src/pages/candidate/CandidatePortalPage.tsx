@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ContactLine, LinkProblem, type LinkContact } from '@/components/LinkProblem';
 import { enumWords, known } from '@/lib/known';
 
 /**
@@ -117,11 +118,14 @@ export function CandidatePortalPage() {
   const q = useQuery({
     queryKey: ['candidate-portal', token],
     queryFn: () => getCandidatePortal(token),
-    retry: (n, err) => !(err instanceof ApiError && err.status === 404) && n < 2,
+    retry: (n, err) => !(err instanceof ApiError && (err.status === 404 || err.status === 410)) && n < 2,
   });
   const data = q.data ?? null;
-  const gone = q.error instanceof ApiError && q.error.status === 404;
-  const loadError = q.error && !gone ? (q.error instanceof ApiError ? q.error.message : 'Could not load your page.') : null;
+  // 410: a real link past its thirty days (the API names who to ask); 404: not a link we issued.
+  const expired = q.error instanceof ApiError && q.error.status === 410;
+  const invalid = q.error instanceof ApiError && q.error.status === 404;
+  const expiredContact = expired ? ((q.error as ApiError).details as { recruiter?: LinkContact | null } | undefined)?.recruiter ?? null : null;
+  const loadError = q.error && !expired && !invalid ? (q.error instanceof ApiError ? q.error.message : 'Could not load your page.') : null;
   const confirm = useMutation({
     mutationFn: (id: string) => confirmPortalInterview(token, id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['candidate-portal', token] }),
@@ -133,11 +137,23 @@ export function CandidatePortalPage() {
 
   return (
     <Shell>
-      {gone ? (
-        <div role="status" className="rounded-xl border border-line bg-surface-raised p-6">
-          <div className="text-lg font-medium">This link has expired</div>
-          <p className="mt-2 text-sm text-ink-muted">Links work for thirty days. Ask your recruiter for a new one and it will reach you by email or text.</p>
-        </div>
+      {expired ? (
+        <LinkProblem
+          kind="expired"
+          title="This link has expired"
+          reason={
+            expiredContact?.name
+              ? `Links work for thirty days. Ask ${expiredContact.name} for a new one — it reaches you by email or text.`
+              : 'Links work for thirty days. Ask your recruiter for a new one — it reaches you by email or text.'
+          }
+          contact={expiredContact}
+        />
+      ) : invalid ? (
+        <LinkProblem
+          kind="invalid"
+          title="This link isn’t valid"
+          reason="It may have been cut off or replaced by a newer link. Open the latest email or text we sent you."
+        />
       ) : loadError ? (
         <ErrorBanner>{loadError}</ErrorBanner>
       ) : !data ? (
@@ -221,8 +237,10 @@ export function CandidatePortalPage() {
           {/* Voluntary EEO self-identification (audit 2026-10-21 #14). */}
           <EeoSelfIdCard answered={!!data.eeoAnswered} onSubmit={(input) => submitPortalEeo(token, input)} />
 
+          {/* A named person to ask, not "the email your recruiter sent" (F500 G5). */}
+          <ContactLine label="Questions? Your recruiter:" contact={data.recruiter} />
           <p className="text-center text-xs text-ink-muted">
-            This link is yours alone and works until {fmtDate(data.expiresAt)}. Questions? Reply to the email your recruiter sent.
+            This link is yours alone and works until {fmtDate(data.expiresAt)}.{data.recruiter ? '' : ' Questions? Reply to the email we sent you.'}
           </p>
         </div>
       )}

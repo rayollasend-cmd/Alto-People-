@@ -88,7 +88,7 @@ export function DesignSystemPage() {
     <div className="space-y-8" data-template="list">
       <PageHeader
         title="Design system"
-        subtitle="The written standard the product follows, rendered from the live tokens so it cannot drift. docs/design-system.md is the same text."
+        subtitle="The written standard the product follows, rendered from the live tokens so it cannot drift."
         breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Design system' }]}
         secondaryActions={<Badge variant="outline">Theme: {theme}</Badge>}
       />

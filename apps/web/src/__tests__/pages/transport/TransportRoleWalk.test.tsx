@@ -423,14 +423,15 @@ describe('walk 11 — the header on a phone', () => {
     window.matchMedia = original;
   });
 
-  it('keeps four tabs and a More menu, a Today/Tomorrow control, and the attention list as one line', async () => {
+  it('keeps the four daily tabs and Setup (no More menu), a Today/Tomorrow control, and the attention list as one line', async () => {
     window.matchMedia = ((query: string) => ({ ...original(query), matches: false })) as typeof window.matchMedia;
     routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
     renderAs('TRANSPORTATION_DIRECTOR');
     expect(await screen.findByRole('button', { name: /need you/ })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull();
-    expect(screen.getAllByRole('tab')).toHaveLength(4);
-    expect(screen.getByRole('button', { name: 'More tabs' })).toBeInTheDocument();
+    // F500 G2: the day's four tabs, then one Setup tab for the fleet, drivers, stops, fares and charges.
+    expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual(['Today', 'Live map', 'Rides', 'Issues', 'Setup']);
+    expect(screen.queryByRole('button', { name: 'More tabs' })).toBeNull();
     expect(screen.getByRole('radiogroup', { name: 'Jump to' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /need you/ }));
     expect(screen.getByRole('region', { name: 'Needs attention' })).toBeInTheDocument();

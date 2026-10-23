@@ -112,4 +112,7 @@ export interface ControlRoomSiteOption {
   name: string;
   clientName: string | null;
   timezone: string;
+  /** People on an assigned shift there right now — the page opens on the
+   *  busiest site when the viewer has none of their own (F500 G2). */
+  onShiftNow?: number;
 }

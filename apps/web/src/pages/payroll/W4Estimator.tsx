@@ -27,9 +27,11 @@ import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
  * The W-4 estimator: "am I withholding the right amount?" Starts from the
- * worker's own paychecks this year, asks about another job, children and
- * other income, shows the refund or balance due as things stand and with
- * the W-4 it suggests, and submits that W-4 through the usual W-4 flow.
+ * worker's own paychecks this year and asks four questions (filing status,
+ * pay per check, checks left, children); another job, other dependents,
+ * other income and deductions wait behind "More about your situation". It
+ * shows the refund or balance due as things stand and with the W-4 it
+ * suggests, and submits that W-4 through the usual W-4 flow.
  */
 
 const FS: FilingStatus[] = ['SINGLE', 'MARRIED_FILING_JOINTLY', 'HEAD_OF_HOUSEHOLD'];
@@ -53,6 +55,8 @@ export function W4Estimator() {
   const noRecord = ctx.error instanceof ApiError && ctx.error.code === 'no_associate_record';
   const [form, setForm] = useState<Form | null>(null);
   const [result, setResult] = useState<W4EstimateResult | null>(null);
+  // Opens by itself when the W-4 on file already has other income or deductions, so they're not hidden.
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
     if (!ctx.data || form) return;
@@ -70,6 +74,7 @@ export function W4Estimator() {
       childrenUnder17: '',
       otherDependents: '',
     });
+    if ((c.current?.otherIncome ?? 0) > 0 || (c.current?.deductions ?? 0) > 0) setMoreOpen(true);
   }, [ctx.data, form]);
 
   const estimate = useMutation({
@@ -169,14 +174,28 @@ export function W4Estimator() {
                 </div>
                 <Money label={t('w4est.payPerPeriod')} value={form.payPerPeriod} onChange={set('payPerPeriod')} />
                 <Count label={t('w4est.periodsRemaining')} value={form.periodsRemaining} onChange={set('periodsRemaining')} />
-                <Money label={t('w4est.ytdWages')} value={form.ytdWages} onChange={set('ytdWages')} />
-                <Money label={t('w4est.ytdWithheld')} value={form.ytdFederalWithheld} onChange={set('ytdFederalWithheld')} />
-                <Money label={t('w4est.otherJobs')} value={form.otherJobsAnnual} onChange={set('otherJobsAnnual')} />
-                <Money label={t('w4est.otherJobsWithheld')} value={form.otherJobsWithheldAnnual} onChange={set('otherJobsWithheldAnnual')} />
                 <Count label={t('w4est.children')} value={form.childrenUnder17} onChange={set('childrenUnder17')} />
-                <Count label={t('w4est.otherDependents')} value={form.otherDependents} onChange={set('otherDependents')} />
-                <Money label={t('w4est.otherIncome')} value={form.otherIncome} onChange={set('otherIncome')} />
-                <Money label={t('w4est.deductions')} value={form.deductionsAboveStandard} onChange={set('deductionsAboveStandard')} />
+                {(ctx.data.ytdWages > 0 || ctx.data.ytdFederalWithheld > 0) && (
+                  <p className="text-sm text-ink-muted sm:col-span-2" data-testid="w4est-so-far">
+                    {t('w4est.soFar', { paid: fmtMoney(num(form.ytdWages)), withheld: fmtMoney(num(form.ytdFederalWithheld)) })}
+                  </p>
+                )}
+                {/* Four questions first; the rest only matters for some people, and the paid and withheld totals are already filled in from paychecks. */}
+                <details className="group sm:col-span-2" open={moreOpen} onToggle={(e) => setMoreOpen((e.currentTarget as HTMLDetailsElement).open)}>
+                  <summary className="cursor-pointer list-none py-1 text-sm font-medium text-accent underline underline-offset-2 coarse:min-h-11 [&::-webkit-details-marker]:hidden">
+                    {t('w4est.more')}
+                  </summary>
+                  <p className="mt-1 text-xs text-ink-muted">{t('w4est.moreHint')}</p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Money label={t('w4est.otherJobs')} value={form.otherJobsAnnual} onChange={set('otherJobsAnnual')} />
+                    <Money label={t('w4est.otherJobsWithheld')} value={form.otherJobsWithheldAnnual} onChange={set('otherJobsWithheldAnnual')} />
+                    <Count label={t('w4est.otherDependents')} value={form.otherDependents} onChange={set('otherDependents')} />
+                    <Money label={t('w4est.otherIncome')} value={form.otherIncome} onChange={set('otherIncome')} />
+                    <Money label={t('w4est.deductions')} value={form.deductionsAboveStandard} onChange={set('deductionsAboveStandard')} />
+                    <Money label={t('w4est.ytdWages')} value={form.ytdWages} onChange={set('ytdWages')} />
+                    <Money label={t('w4est.ytdWithheld')} value={form.ytdFederalWithheld} onChange={set('ytdFederalWithheld')} />
+                  </div>
+                </details>
                 <div className="sm:col-span-2">
                   <Button type="submit" className="w-full sm:w-auto" loading={estimate.isPending} disabled={!valid || estimate.isPending}>
                     {t('w4est.estimate')}
@@ -247,7 +266,7 @@ function Outcome({ label, p }: { label: string; p: W4Projection }) {
   const { t } = useI18n();
   const even = Math.abs(p.refund) < 1;
   return (
-    <div className="rounded-md border border-navy-secondary p-3">
+    <div className="rounded-md border border-line p-3">
       <div className="text-xs text-ink-muted">{label}</div>
       <div className={cn('mt-1 text-lg font-semibold tabular-nums', even ? 'text-success' : p.refund > 0 ? 'text-ink' : 'text-warning')}>
         {even ? t('w4est.onTrack') : p.refund > 0 ? t('w4est.refund', { amount: fmtMoney(p.refund) }) : t('w4est.owe', { amount: fmtMoney(-p.refund) })}

@@ -29,6 +29,10 @@ const base: TrustSummaryPublic = {
   commitments: [{ title: 'A person is accountable', body: 'Every agent has an owner.' }],
   securityContactSet: true,
   soc2: { stage: 'observation', controlsPassing: 12, controlsCurrent: 16, controlsTotal: 16, lastEvidenceAt: '2026-10-21T01:00:00.000Z', observationSince: '2026-09-01', reportIssuedOn: null },
+  areas: [
+    { key: 'data-protection', label: 'Data protection', status: 'attention', lastCheckedAt: '2026-10-21T01:00:00.000Z', controls: [{ id: 'tls-database', title: 'Encrypted connections to the database', summary: 'The app talks to its database over an encrypted connection.', criteria: ['CC6.7'] }] },
+    { key: 'availability', label: 'Availability', status: 'passing', lastCheckedAt: null, controls: [{ id: 'database-backup', title: 'Nightly encrypted backups', summary: 'The database is backed up, encrypted, every night.', criteria: ['A1.2'] }] },
+  ],
 };
 
 function renderPage() {
@@ -49,16 +53,31 @@ describe('the public Trust Center', () => {
     expect(screen.getByText('Observation period: every control is collecting evidence')).toBeInTheDocument();
     const now = screen.getByText('Now').closest('li');
     expect(now).toHaveTextContent('Observation period');
-    // F500 SH-4: the block leads with "passing", the hero's and Compliance evidence's number.
-    expect(screen.getByText('12 / 16')).toBeInTheDocument();
+    // F500 G5: no per-control pass count for an anonymous reader; the observation date stays.
+    expect(screen.queryByText('12 / 16')).not.toBeInTheDocument();
     expect(screen.getByText('2026-09-01')).toBeInTheDocument();
+  });
+
+  it('leads with what is monitored and reads by area in plain words — no "3 / 16 passing", no "Failed", no script names (F500 G5)', async () => {
+    vi.mocked(getTrustPublic).mockResolvedValue(base);
+    renderPage();
+    expect(await screen.findByTestId('trust-lead')).toHaveTextContent(/^16 controls monitored daily · SOC 2: observation period · last checked/);
+    const areas = screen.getAllByTestId('trust-area');
+    expect(areas.map((a) => a.querySelector('h3')!.textContent)).toEqual(['Data protection', 'Availability']);
+    expect(areas[0]).toHaveTextContent('Being addressed');
+    expect(areas[0]).toHaveTextContent('Encrypted connections to the database');
+    expect(areas[1]).toHaveTextContent('All checks passing');
+    expect(screen.queryByText(/Controls passing/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Failed$/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Probes the certificate.')).not.toBeInTheDocument();
   });
 
   it('takes a request for a report and says where the link will go', async () => {
     vi.mocked(getTrustPublic).mockResolvedValue({ ...base, soc2: { ...base.soc2, stage: 'preparing', observationSince: null, controlsCurrent: 11 } });
     renderPage();
     expect(await screen.findByText('Reports and questionnaires')).toBeInTheDocument();
-    expect(screen.getByText(/Not yet: every control must have current evidence first/)).toBeInTheDocument();
+    // No "Not yet: …" line for a date that isn't there (F500 G5).
+    expect(screen.queryByText(/Not yet: every control must have current evidence first/)).not.toBeInTheDocument();
     const button = screen.getByRole('button', { name: 'Request the document' });
     expect(button).toBeDisabled();
     await userEvent.type(screen.getByLabelText(/Your name/), 'Priya Natarajan');

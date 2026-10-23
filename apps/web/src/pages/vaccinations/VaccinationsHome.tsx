@@ -40,6 +40,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
@@ -91,6 +92,8 @@ export function VaccinationsHome() {
   });
   const coverage: CoverageReport | null = refreshSummaries2Query.isError ? null : (refreshSummaries2Query.data ?? null);
   const coverageFailed = refreshSummaries2Query.isError;
+  // A tile per kind someone Working actually has on file.
+  const coveredKinds = coverage ? (Object.keys(KIND_LABELS) as VaccinationKind[]).filter((k) => (coverage.coverage[k]?.count ?? 0) > 0) : [];
   const refreshSummaries = () => void Promise.all([refreshSummariesQuery.refetch(), refreshSummaries2Query.refetch()]);
   const refresh = () => {
     refreshRecords();
@@ -102,40 +105,39 @@ export function VaccinationsHome() {
     <ListTemplate
         title="Vaccinations & medical"
         subtitle="Proof of vaccination and TB tests, for the sites and contracts that require them."
-        breadcrumbs={[{ label: 'Compliance' }, { label: 'Vaccinations' }]}
+        actions={canManage ? [{ label: 'Record vaccination', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
 
       {/* Reserve the strip while loading; note failure instead of quietly
           vanishing (an absent row read as "no coverage data exists"). */}
-      {!coverage && !coverageFailed && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-          {Array.from({ length: 7 }).map((_, i) => (
-            <Skeleton key={i} className="h-[76px] rounded-lg" />
-          ))}
-        </div>
-      )}
+      {!coverage && !coverageFailed && <Skeleton className="h-[76px] rounded-lg" />}
       {coverageFailed && !coverage && (
         <p className="text-xs text-silver/70">
           Couldn&apos;t load coverage — the records below are unaffected.
         </p>
       )}
-      {coverage && (
-        <div className="space-y-2">
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-            Coverage across {coverage.totalAssociates} associates
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-            {(Object.keys(KIND_LABELS) as VaccinationKind[]).map((k) => (
+      {coverage &&
+        (coverage.totalAssociates === 0 ? (
+          // Coverage is a share of the people Working; with none, seven "0%" tiles said nothing.
+          <p className="text-sm text-silver" data-testid="coverage-line">
+            Coverage is measured over the people Working, and no one counts as Working right now.
+          </p>
+        ) : coveredKinds.length === 0 ? (
+          <p className="text-sm text-silver" data-testid="coverage-line">
+            No vaccination or TB test records yet for the {coverage.totalAssociates.toLocaleString('en-US')} people Working.
+          </p>
+        ) : (
+          <MetricStrip label={`Coverage across ${coverage.totalAssociates.toLocaleString('en-US')} people Working`}>
+            {coveredKinds.map((k) => (
               <MetricCard
                 key={k}
                 label={KIND_LABELS[k]}
                 value={`${coverage.coverage[k].pct}%`}
-                hint={`${coverage.coverage[k].count} associates`}
+                hint={`${coverage.coverage[k].count.toLocaleString('en-US')} of ${coverage.totalAssociates.toLocaleString('en-US')} Working`}
               />
             ))}
-          </div>
-        </div>
-      )}
+          </MetricStrip>
+        ))}
 
       <div className="flex items-center justify-between">
         <SegmentedControl
@@ -176,9 +178,6 @@ export function VaccinationsHome() {
                 </option>
               ))}
             </Select>
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Record
-            </Button>
           </div>
         )}
       </div>
@@ -205,8 +204,15 @@ export function VaccinationsHome() {
             ) : records.length === 0 ? (
               <EmptyState
                 icon={Syringe}
-                title="No records"
-                description="Add the first vaccination or TB test record."
+                title="No vaccination records yet"
+                description="Proof of vaccination and TB tests you record for people show here, with when each expires."
+                action={
+                  canManage ? (
+                    <Button size="sm" variant="outline" onClick={() => setShowNew(true)}>
+                      <Plus className="mr-2 h-4 w-4" /> Record vaccination
+                    </Button>
+                  ) : undefined
+                }
               />
             ) : (
               <DataGrid<(typeof records)[number]>

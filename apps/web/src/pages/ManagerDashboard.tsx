@@ -30,7 +30,7 @@ import { fmtDate, fmtDayShort, fmtRelativeDate, fmtShiftSpanTz, ymdLocal } from 
 import { HomeMeta } from '@/components/home/HomeMeta';
 import { useNeedsYouCount } from '@/lib/meDecisions';
 import { useConfirm } from '@/lib/confirm';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import {
   bulkApproveTeamTimesheets,
   getTeamDashboard,
@@ -51,6 +51,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { CrewSignalsCard } from '@/components/home/CrewSignalsCard';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -144,6 +145,10 @@ export function ManagerDashboard() {
   const greetingName = greetingNameOf(user, '') || nameFromEmail(user?.email);
   const { t } = useI18n();
 
+  // No one reports to this manager yet: the page leads with that, once,
+  // instead of a page of zeros with the reason as its last card (F500 G5).
+  const noTeam = summary !== null && summary.directReports === 0;
+
   // Index of associateId → active time entry (so we can mark "on the
   // clock" badges in the team list).
   const activeByReport = useMemo(() => {
@@ -164,12 +169,14 @@ export function ManagerDashboard() {
           </>
         }
         topbarTitle="Home"
+        // "You and your 6 people today" — nothing when there is no team yet
+        // (the setup card says that, once).
         subtitle={
           summary && summary.directReports > 0
             ? summary.directReports === 1
               ? t('managerHome.oneReport')
               : t('managerHome.nReports', { n: summary.directReports })
-            : t('managerHome.teamScoped')
+            : undefined
         }
         meta={<HomeMeta items={[<LiveNow key="today" render={(now) => fmtDayShort(now)} />]} />}
         banners={error ? <ErrorBanner>{error}</ErrorBanner> : undefined}
@@ -178,39 +185,79 @@ export function ManagerDashboard() {
         // the decision queue as the hero and "Needs your approval" under the
         // plan card — with a vanity "Direct reports" count leading the tiles.
         hero={
-          <NeedsYou
-            title={t('home.needsYou')}
-            pendingTimesheets={pendingTimesheets}
-            pendingPto={pendingPto}
-            error={approvalsError}
-            onRetry={retryApprovals}
-          />
+          <div className="space-y-[var(--d-stack-lg)]">
+            {noTeam && <NoTeamYet />}
+            <NeedsYou
+              title={t('home.needsYou')}
+              pendingTimesheets={pendingTimesheets}
+              pendingPto={pendingPto}
+              error={approvalsError}
+              onRetry={retryApprovals}
+              noTeam={noTeam}
+            />
+          </div>
         }
         assistant={<HugoSeat />}
       >
-        {home && home.suggestions.length > 0 && <Suggestions items={home.suggestions} />}
-        <CrewSignalsCard />
-        <TeamSnapshot
-          summary={summary}
-          activeCount={activeByReport.size}
-          activeError={Boolean(activeQuery.error)}
-          onRetryActive={() => void activeQuery.refetch()}
-          dueCount={dueCount}
-          outToday={home ? home.today.out.length : null}
-        />
-        <TodayOnYourTeam home={home} error={Boolean(homeQuery.error)} onRetry={() => void homeQuery.refetch()} />
-        {/* Hours per person this week against 40 — who's heading into overtime. */}
-        <TeamHoursCard />
-        <DueOnYourTeam home={home} />
+        {!noTeam && (
+          <>
+            {home && home.suggestions.length > 0 && <Suggestions items={home.suggestions} />}
+            {/* The crew's signals are the team's (the API scopes a manager's to their reports). */}
+            <CrewSignalsCard />
+            <TeamSnapshot
+              summary={summary}
+              activeCount={activeByReport.size}
+              activeError={Boolean(activeQuery.error)}
+              onRetryActive={() => void activeQuery.refetch()}
+              dueCount={dueCount}
+              home={home}
+            />
+            <TodayOnYourTeam home={home} error={Boolean(homeQuery.error)} onRetry={() => void homeQuery.refetch()} />
+            {/* Hours per person this week against 40 — who's heading into overtime. */}
+            <TeamHoursCard />
+            <DueOnYourTeam home={home} />
+          </>
+        )}
         <MyPlanCard />
-        <TeamRoster
-          reports={reports}
-          activeByReport={activeByReport}
-          pendingPto={pendingPto}
-          approvedPto={approvedPto}
-        />
+        {!noTeam && (
+          <TeamRoster
+            reports={reports}
+            activeByReport={activeByReport}
+            pendingPto={pendingPto}
+            approvedPto={approvedPto}
+          />
+        )}
       </HomeTemplate>
     </>
+  );
+}
+
+/* ========================= No team yet (setup) =========================== */
+
+/** The one honest state for a manager nobody reports to yet: what it means and where to go. */
+function NoTeamYet() {
+  const { t } = useI18n();
+  const term = useTerm();
+  return (
+    <Card data-testid="manager-no-team">
+      <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
+          <Users className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="font-medium text-ink">{t('managerHome.noTeamTitle')}</div>
+          <p className="mt-1 text-sm text-ink-muted">{t('managerHome.noTeamBody', { manager: term('manager').toLowerCase() })}</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button asChild size="sm">
+            <Link to="/team">{t('managerHome.openMyTeam')}</Link>
+          </Button>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/messages">{t('managerHome.messageHr')}</Link>
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -229,12 +276,15 @@ function NeedsYou({
   pendingPto,
   error,
   onRetry,
+  noTeam = false,
 }: {
   title: string;
   pendingTimesheets: TeamTimeEntry[] | null;
   pendingPto: TeamTimeOffRequest[] | null;
   error: boolean;
   onRetry: () => void;
+  /** No one reports to this person yet: there is no team to call "clear". */
+  noTeam?: boolean;
 }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -334,7 +384,9 @@ function NeedsYou({
       {/* The role's own decisions first. While approvals are waiting, its
           empty line stays out of the way; with none, it is the only voice. */}
       {/* These decisions are the company's, not this team's — said so. */}
-      <RoleDecisionQueue title={null} hideWhenEmpty={total > 0 || loading || error} scopeLabel="Company-wide" />
+      {/* Its own "nothing needs you" line never shows: the section has ONE
+          all-clear (below), not two stacked banners saying the same. */}
+      <RoleDecisionQueue title={null} hideWhenEmpty scopeLabel="Company-wide" />
       {error ? (
         <QueryErrorCard label={t('managerHome.queuesError')} onRetry={onRetry} />
       ) : loading ? (
@@ -349,6 +401,14 @@ function NeedsYou({
             </Card>
           ))}
         </div>
+      ) : total === 0 && noTeam ? (
+        companyWaiting > 0 ? (
+          <p className="text-sm text-ink-muted">
+            <Link to="/inbox" className="text-accent underline underline-offset-2">
+              {t('managerHome.companyWaiting', { n: companyWaiting })}
+            </Link>
+          </p>
+        ) : null
       ) : total === 0 ? (
         <Card className="border-success/30 bg-success/5">
           <CardContent className="py-4 flex items-center gap-3">
@@ -516,7 +576,7 @@ function TeamSnapshot({
   activeError,
   onRetryActive,
   dueCount,
-  outToday,
+  home,
 }: {
   summary: TeamDashboard | null;
   activeCount: number;
@@ -524,63 +584,55 @@ function TeamSnapshot({
   onRetryActive: () => void;
   /** Reviews, 1:1s, probations, checkpoints and expiries due on the team; null while loading. */
   dueCount: number | null;
-  outToday: number | null;
+  home: TeamHome | null;
 }) {
   const { t } = useI18n();
-  const toTeam = (card: React.ReactElement) => (
-    <Link
-      to="/team"
-      className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-    >
-      {card}
-    </Link>
-  );
+  // A tile with something behind it scrolls to its section below; it never
+  // repeats that section's sentence (they used to say "Everyone is in." twice).
+  const jumpTo = (id: string) => () => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const scheduled = home ? home.today.shifts.length : null;
+  const out = home ? home.today.out.length : null;
   return (
     <section aria-label={t('managerHome.teamSnapshot')} className="space-y-3">
       <SectionTitle icon={Activity} title={t('managerHome.teamSnapshot')} />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {summary ? (
-          <>
-            {activeError ? (
-              <QueryErrorCard
-                label={t('managerHome.onClockError')}
-                onRetry={onRetryActive}
-              />
-            ) : (
-              <MetricCard
-                label={t('managerHome.onClockNow')}
-                value={activeCount}
-                hint={
-                  summary.directReports > 0
-                    ? t('managerHome.xOfY', { a: activeCount, b: summary.directReports })
-                    : undefined
-                }
-                wrap={toTeam}
-              />
-            )}
-            {/* The queues are counted once, in Needs you above; these two
-                tiles are what the queues cannot say. */}
-            <MetricCard
-              label="Due on your team"
-              value={dueCount ?? '—'}
-              accent={(dueCount ?? 0) > 0}
-              hint={dueCount === 0 ? 'Nothing due this month.' : 'Reviews, 1:1s, probations and expiries.'}
-            />
-            <MetricCard
-              label="Out today"
-              value={outToday ?? '—'}
-              hint={outToday === 0 ? 'Everyone is in.' : 'On approved leave.'}
-              wrap={toTeam}
-            />
-            <MetricCard
-              label={t('managerHome.directReports')}
-              value={summary.directReports}
-              hint={summary.directReports === 0 ? t('managerHome.noReports') : undefined}
-              wrap={toTeam}
-            />
-          </>
+      {summary ? (
+        activeError ? (
+          <QueryErrorCard label={t('managerHome.onClockError')} onRetry={onRetryActive} />
         ) : (
-          Array.from({ length: 4 }).map((_, i) => (
+          <MetricStrip label={t('managerHome.teamSnapshot')}>
+            <MetricCard
+              label={t('managerHome.onClockNow')}
+              value={activeCount}
+              hint={t('managerHome.ofTeam', { n: summary.directReports })}
+              href="/team"
+            />
+            <MetricCard
+              label={t('managerHome.scheduledToday')}
+              value={scheduled ?? '—'}
+              nothing={scheduled === 0 ? t('managerHome.nobodyScheduled') : undefined}
+              hint={t('managerHome.scheduledHint')}
+              onClick={scheduled ? jumpTo('team-today') : undefined}
+            />
+            <MetricCard
+              label={t('managerHome.outToday')}
+              value={out ?? '—'}
+              nothing={out === 0 ? t('managerHome.everyoneIn') : undefined}
+              hint={t('managerHome.onLeave')}
+              onClick={out ? jumpTo('team-today') : undefined}
+            />
+            <MetricCard
+              label={t('managerHome.dueThisMonth')}
+              value={dueCount ?? '—'}
+              tone={(dueCount ?? 0) > 0 ? 'warning' : 'default'}
+              nothing={dueCount === 0 ? t('managerHome.nothingDue') : undefined}
+              hint={t('managerHome.dueHint')}
+              onClick={dueCount ? jumpTo('team-due') : undefined}
+            />
+          </MetricStrip>
+        )
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4" aria-busy="true">
+          {Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}>
               <CardContent>
                 <Skeleton className="h-3 w-20 mb-3" />
@@ -588,9 +640,9 @@ function TeamSnapshot({
                 <Skeleton className="h-3 w-1/3" />
               </CardContent>
             </Card>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -690,7 +742,7 @@ function TeamRoster({
                         className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                       >
                         <Avatar
-                          src={associatePhotoUrl(r.id)}
+                          src={personPhotoUrl({ photoUrl: r.photoUrl, associateId: r.id })}
                           name={`${r.firstName} ${r.lastName}`}
                           email={r.email}
                           size="sm"
@@ -826,10 +878,16 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
     );
   }
   const today = home?.today;
+  // Nothing scheduled, nobody out, nothing to celebrate: the snapshot's tiles
+  // already said so — no second set of "nothing" cards.
+  if (today && today.shifts.length === 0 && today.out.length === 0 && today.celebrations.length === 0) return null;
+  const show = (n: number | undefined) => !today || (n ?? 0) > 0;
+  const cards = today ? [today.shifts.length, today.out.length, today.celebrations.length].filter((n) => n > 0).length : 3;
   return (
-    <section aria-label="Today on your team" className="space-y-3">
+    <section id="team-today" aria-label="Today on your team" className="scroll-mt-20 space-y-3">
       <SectionTitle icon={CalendarCheck} title="Today on your team" />
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <div className={cn('grid grid-cols-1 gap-3', cards >= 3 ? 'md:grid-cols-3' : cards === 2 ? 'md:grid-cols-2' : '')}>
+        {show(today?.shifts.length) && (
         <Card>
           <CardContent>
             <div className="text-xs2 uppercase tracking-wider text-ink-muted">Shifts today</div>
@@ -852,6 +910,8 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
             )}
           </CardContent>
         </Card>
+        )}
+        {show(today?.out.length) && (
         <Card>
           <CardContent>
             <div className="text-xs2 uppercase tracking-wider text-ink-muted">Out today</div>
@@ -874,6 +934,8 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
             )}
           </CardContent>
         </Card>
+        )}
+        {show(today?.celebrations.length) && (
         <Card>
           <CardContent>
             <div className="text-xs2 uppercase tracking-wider text-ink-muted">Celebrations</div>
@@ -894,6 +956,7 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
             )}
           </CardContent>
         </Card>
+        )}
       </div>
     </section>
   );
@@ -922,25 +985,16 @@ function DueOnYourTeam({ home }: { home: TeamHome | null }) {
         },
       ].filter((g) => g.rows.length > 0)
     : [];
+  // All clear is the snapshot's "Nothing due this month" — not a second green banner.
+  if (due && groups.length === 0) return null;
   return (
-    <section aria-label="Due on your team" className="space-y-3">
+    <section id="team-due" aria-label="Due on your team" className="scroll-mt-20 space-y-3">
       <SectionTitle icon={Clock} title="Due on your team" />
       {!due ? (
         <Card>
           <CardContent>
             <Skeleton className="mb-2 h-3 w-1/3" />
             <Skeleton className="h-3 w-2/3" />
-          </CardContent>
-        </Card>
-      ) : groups.length === 0 ? (
-        <Card className="border-success/30 bg-success/5">
-          <CardContent className="flex items-center gap-3 py-4">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-success/15 text-success">
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            </div>
-            <div className="text-sm text-ink-muted">
-              <span className="font-medium text-ink">All clear</span> — no reviews, 1:1s, probations or expiries due on your team this month.
-            </div>
           </CardContent>
         </Card>
       ) : (

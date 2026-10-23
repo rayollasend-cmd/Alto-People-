@@ -15,7 +15,6 @@ import {
   MapPin,
   MapPinOff,
   MessageSquare,
-  MoreHorizontal,
   Phone,
   Plus,
   Send,
@@ -91,7 +90,6 @@ import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap'
 import { DispatchMap } from '@/components/transport/DispatchMap';
 import { RiderDrawer } from '@/components/transport/RiderDrawer';
 import { VanDayTimeline, firstFreeVan, timelineBars } from '@/components/transport/VanDayTimeline';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { Avatar } from '@/components/ui/Avatar';
 import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
 import { Badge } from '@/components/ui/Badge';
@@ -139,6 +137,13 @@ import {
 
 const TABS = ['today', 'live', 'rides', 'issues', 'vans', 'drivers', 'stops', 'charges', 'settings'] as const;
 type Tab = (typeof TABS)[number];
+/** The day's work, one tab each (F500 G2: nine tabs mixed the day with setup). */
+const DAILY_TABS = ['today', 'live', 'rides', 'issues'] as const;
+/** Set up once, visited rarely: one "Setup" tab, a section each. Their
+ *  ?tab= values (vans, drivers, stops, settings, charges) still open them. */
+const SETUP_TABS = ['vans', 'drivers', 'stops', 'settings', 'charges'] as const;
+type SetupTab = (typeof SETUP_TABS)[number];
+const isSetupTab = (t: string): t is SetupTab => (SETUP_TABS as readonly string[]).includes(t);
 const TAB_LABEL: Record<Tab, string> = {
   today: 'Today',
   live: 'Live map',
@@ -249,8 +254,6 @@ function PickBox({
   );
 }
 
-/** Below `sm` the tab strip keeps the first four; the rest sit behind "More". */
-const TABS_ON_PHONE = 4;
 
 export function TransportHome() {
   const { can } = useAuth();
@@ -272,6 +275,11 @@ export function TransportHome() {
     else next.set('tab', v);
     setParams(next, { replace: true });
   };
+  // "Setup" reopens the section last looked at this visit (Fleet first).
+  const [lastSetup, setLastSetup] = useState<SetupTab>(() => (isSetupTab(tab) ? tab : 'vans'));
+  useEffect(() => {
+    if (isSetupTab(tab)) setLastSetup(tab);
+  }, [tab]);
   // The board's day lives in the URL (/transport?date=YYYY-MM-DD) so a link
   // from anywhere opens the right day, and Back returns to it.
   const urlDate = params.get('date');
@@ -304,7 +312,7 @@ export function TransportHome() {
         title="Transportation"
         topbarTitle="Transportation"
         subtitle="The Alto vans — bookings, dispatch, drivers, and everything that comes up."
-        secondaryActions={<SoundToggle onLabel="Sounds on — tap to mute" offLabel="Sounds off — tap to turn on" />}
+        secondaryActions={<SoundToggle onLabel="Sounds on — tap to mute" offLabel="Sounds off — tap to turn on" text={{ on: 'Sounds on', off: 'Sounds off' }} />}
         primaryAction={
           tab === 'today' ? (
             // Transport walk 11: on a phone the day controls are one row —
@@ -319,7 +327,7 @@ export function TransportHome() {
                 aria-label="Day"
                 value={date}
                 onChange={(e) => e.target.value && setDate(e.target.value)}
-                className={wide ? 'w-40' : 'min-w-0 flex-1'}
+                className={wide ? 'w-40' : 'min-w-[9.5rem] flex-1'}
               />
               <Button variant="ghost" size="icon-sm" aria-label="Next day" onClick={() => setDate(shiftDay(date, 1))}>
                 <ChevronRight className="h-4 w-4" />
@@ -350,9 +358,9 @@ export function TransportHome() {
           ) : undefined
         }
     >
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={isSetupTab(tab) ? 'setup' : tab} onValueChange={(v) => setTab(v === 'setup' ? lastSetup : v)}>
         <TabsList className="mb-4">
-          {(wide ? TABS : TABS.slice(0, TABS_ON_PHONE)).map((k) => (
+          {DAILY_TABS.map((k) => (
             <TabsTrigger key={k} value={k}>
               {TAB_LABEL[k]}
               {k === 'issues' && openIssues > 0 && (
@@ -360,25 +368,7 @@ export function TransportHome() {
               )}
             </TabsTrigger>
           ))}
-          {!wide && (
-            // Transport walk 11: the tabs past the fourth as a menu, not a
-            // strip that runs off the screen with nothing to say so.
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant={TABS.indexOf(tab) >= TABS_ON_PHONE ? 'primary' : 'ghost'} size="sm" aria-label="More tabs">
-                  <MoreHorizontal className="h-4 w-4" />
-                  {TABS.indexOf(tab) >= TABS_ON_PHONE ? TAB_LABEL[tab] : 'More'}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {TABS.slice(TABS_ON_PHONE).map((k) => (
-                  <DropdownMenuItem key={k} onSelect={() => setTab(k)}>
-                    {TAB_LABEL[k]}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          <TabsTrigger value="setup">Setup</TabsTrigger>
         </TabsList>
         <TabsContent value="today">
           {board.isLoading ? (
@@ -412,23 +402,25 @@ export function TransportHome() {
             <FeedbackSection />
           </div>
         </TabsContent>
-        <TabsContent value="vans">
-          <FleetTab manage={manage} drivers={board.data?.drivers ?? []} />
-        </TabsContent>
-        <TabsContent value="drivers">
-          <DriversTab manage={manage} />
-        </TabsContent>
-        <TabsContent value="stops">
-          <StopsTab manage={manage} />
-        </TabsContent>
-        <TabsContent value="charges">
-          <div className="space-y-8">
-            <ChargesTab onRider={setRider} />
-            <CostsSection />
+        <TabsContent value="setup">
+          <div className="space-y-4">
+            <SegmentedControl
+              ariaLabel="Setup section"
+              value={isSetupTab(tab) ? tab : lastSetup}
+              onChange={(v) => setTab(v)}
+              options={SETUP_TABS.map((k) => ({ value: k, label: TAB_LABEL[k] }))}
+            />
+            {tab === 'vans' && <FleetTab manage={manage} drivers={board.data?.drivers ?? []} />}
+            {tab === 'drivers' && <DriversTab manage={manage} />}
+            {tab === 'stops' && <StopsTab manage={manage} />}
+            {tab === 'charges' && (
+              <div className="space-y-8">
+                <ChargesTab onRider={setRider} />
+                <CostsSection />
+              </div>
+            )}
+            {tab === 'settings' && <SettingsTab manage={manage} />}
           </div>
-        </TabsContent>
-        <TabsContent value="settings">
-          <SettingsTab manage={manage} />
         </TabsContent>
       </Tabs>
       <RiderDrawer associateId={riderId} manage={manage} onClose={() => setRider(null)} onIssues={() => { setRider(null); setTab('issues'); }} />
@@ -644,16 +636,16 @@ function NeedsAttention({ items, compact = false }: { items: Attention[]; compac
 }
 
 function KpiStrip({ k }: { k: TransportBoard['kpis'] }) {
+  // "Needs a van" is the section header's own count below (it was a tile too — F500 G5).
   const tiles: Array<{ label: string; value: string | number; warn?: boolean }> = [
     { label: 'Booked', value: k.booked },
-    { label: 'Needs a van', value: k.needsVan, warn: k.needsVan > 0 },
     { label: 'Vans out', value: `${k.vansOut}/${k.runs}` },
     { label: 'On board', value: k.onBoard },
     { label: 'Done', value: k.completed },
     { label: 'No-shows', value: k.noShows, warn: k.noShows > 0 },
   ];
   return (
-    <div className="grid grid-cols-3 gap-2 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 [&>div:last-child]:col-span-2 sm:[&>div:last-child]:col-span-1" data-testid="transport-kpis">
       {tiles.map((x) => (
         <div key={x.label} className="rounded-lg border border-navy-secondary bg-navy px-3 py-2.5">
           <div className="text-2xs font-medium uppercase tracking-wider text-silver">{x.label}</div>
@@ -992,7 +984,7 @@ function TodayBoard({
             )}
           </div>
           {groups.length === 0 ? (
-            <EmptyState icon={Bus} title="Everyone has a van" description="New bookings for this day land here." />
+            <p className="rounded-lg border border-line px-4 py-3 text-sm text-silver" data-testid="needs-van-none">Everyone has a van — new bookings for this day land here.</p>
           ) : (
             <div className="space-y-3">
               {groups.map((g) => {
@@ -1087,7 +1079,7 @@ function TodayBoard({
             Runs <span className="text-white">{liveRuns.length}</span>
           </h2>
           {liveRuns.length === 0 ? (
-            <EmptyState icon={Bus} title="No runs yet" description="Plan runs, or pick bookings on the left and dispatch them onto a van." />
+            <p className="rounded-lg border border-line px-4 py-3 text-sm text-silver" data-testid="runs-none">No runs yet — plan runs, or pick bookings and dispatch them onto a van.</p>
           ) : (
             <div className="space-y-3">
               {liveRuns.map((run) => (

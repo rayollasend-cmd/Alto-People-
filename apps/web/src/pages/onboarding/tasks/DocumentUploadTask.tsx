@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Camera, CheckCircle2, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
@@ -15,7 +15,7 @@ import { finishDocumentUpload } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { TaskShell, Field, useNextTask } from './ProfileInfoTask';
+import { ContinueLabel, TaskFooter, TaskShell, Field, fmtLimit, taskButtonCls, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
 import { isImagePick } from '@/lib/loadImageFile';
@@ -244,7 +244,7 @@ export function DocumentUploadTask() {
     setReplaceTarget(null);
     if (!file) return;
     if (file.size > MAX_BYTES) {
-      setError(t('ob.docs.tooLarge', { max: fmtSize(MAX_BYTES) }));
+      setError(t('ob.docs.tooLarge', { max: fmtLimit(MAX_BYTES) }));
       return;
     }
     if (isImagePick(file)) {
@@ -310,9 +310,9 @@ export function DocumentUploadTask() {
   };
 
   return (
-    <TaskShell title={t('ob.docs.title')} backTo={backTo}>
+    <TaskShell title={t('ob.docs.title')} backTo={backTo} kind="DOCUMENT_UPLOAD">
       <p className="text-silver text-sm mb-4">
-        {t('ob.docs.intro', { max: fmtSize(MAX_BYTES) })}
+        {t('ob.docs.intro', { max: fmtLimit(MAX_BYTES) })}
       </p>
 
       {/* Federal requirement meter — the associate sees what's still
@@ -567,27 +567,29 @@ export function DocumentUploadTask() {
           </div>
         )}
 
-        <div className="flex items-center gap-3 pt-2">
+        {/* Cancel left, the one action right — the order of every task. */}
+        <TaskFooter backTo={backTo} cancelLabel={t('ob.docs.cancel')}>
           <Button
             type="button"
             onClick={onFinish}
             loading={finishing}
             disabled={!canSubmit || finishing}
+            className={taskButtonCls}
           >
-            {finishing
-              ? t('ob.docs.submitting')
-              : canSubmit
-                ? next
-                  ? t('ob.docs.submitContinue', { label: next.label })
-                  : t('ob.docs.submitDone')
-                : hasAtLeastOne
-                  ? t('ob.docs.stillNeeded')
-                  : t('ob.docs.uploadAtLeastOne')}
+            {finishing ? (
+              t('ob.docs.submitting')
+            ) : canSubmit ? (
+              <ContinueLabel
+                label={next ? t('ob.docs.submitAndContinue') : t('ob.docs.submitDone')}
+                next={next}
+              />
+            ) : hasAtLeastOne ? (
+              t('ob.docs.stillNeeded')
+            ) : (
+              t('ob.docs.uploadAtLeastOne')
+            )}
           </Button>
-          <Link to={backTo} className="text-sm text-silver hover:text-white">
-            {t('ob.docs.cancel')}
-          </Link>
-        </div>
+        </TaskFooter>
       </div>
       <ConfirmDialog
         open={deleteTarget !== null}

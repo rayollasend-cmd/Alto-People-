@@ -25,7 +25,7 @@ import {
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtDateTz, fmtMoneyCompact, fmtShiftTz, fmtTime } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtMoneyCompact, fmtShiftTz, fmtTime, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -37,7 +37,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SectionTitle } from '@/components/ui/SectionTitle';
-import { AttendanceTrendTiles } from '@/components/attendance/AttendanceTrendTiles';
+import { AttendanceTrendTiles, useAttendanceTrends } from '@/components/attendance/AttendanceTrendTiles';
 import { AttendanceHeatmapCard } from '@/components/attendance/AttendanceHeatmapCard';
 
 /**
@@ -125,6 +125,11 @@ interface WorkforceOverview {
       name: string;
       clientName: string | null;
       approvedAt: string | null;
+      /** The approved position and store (from the application). Absent from an older server. */
+      position?: string | null;
+      storeName?: string | null;
+      /** The earliest open shift they could fill: same client, same position when named. */
+      earliestOpen?: { shiftId: string; startsAt: string; position: string; storeName: string | null; timezone: string } | null;
     }>;
   };
   rebalance: Array<{
@@ -187,6 +192,9 @@ export function WorkforceDashboard() {
     staleTime: 5 * 60_000,
   });
   const data = query.data;
+  // The fill target the trend tiles already read (one definition, from the API).
+  const trends = useAttendanceTrends();
+  const fillTarget = trends.data?.fillTargetPct ?? 95;
   const supsByClient = new Map<string, SupervisorRow[]>();
   for (const s of supsQuery.data?.supervisors ?? []) {
     if (!s.clientId) continue;
@@ -236,7 +244,9 @@ export function WorkforceDashboard() {
 
   // Ways in (§4.1): the six doors.
   const doors = (
-    <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-7 md:gap-3">
+    // The seven doors: labels wrap, never cut ("Schedulin…"); one row of seven at xl,
+    // and the odd seventh spans its row on a phone instead of sitting alone.
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3 xl:grid-cols-7 [&>a:last-child:nth-child(odd)]:col-span-2 md:[&>a:last-child:nth-child(odd)]:col-span-1">
       {(
         [
           ['/scheduling', 'wf.goScheduling', CalendarDays],
@@ -257,7 +267,7 @@ export function WorkforceDashboard() {
             className="h-4 w-4 text-silver transition-colors group-hover:text-gold"
             aria-hidden="true"
           />
-          <span className="flex-1 truncate">{t(key)}</span>
+          <span className="min-w-0 flex-1 break-words leading-tight">{t(key)}</span>
           <ArrowRight
             className="h-3.5 w-3.5 text-silver/70 transition-colors group-hover:text-gold"
             aria-hidden="true"
@@ -288,6 +298,13 @@ export function WorkforceDashboard() {
     {
       value: data.week.fillRatePct !== null ? `${data.week.fillRatePct}%` : '—',
       label: t('wf.instrFill'),
+      // Below the fill target is never plain white next to "all green" (18% vs 95%).
+      tone:
+        data.week.fillRatePct === null || data.week.fillRatePct >= fillTarget
+          ? 'plain'
+          : data.week.fillRatePct < fillTarget - 20
+            ? 'alert'
+            : 'warning',
       to: '/scheduling',
     },
     {
@@ -316,7 +333,8 @@ export function WorkforceDashboard() {
     <HomeTemplate
       title={greeting}
       topbarTitle={t('wf.title')}
-      subtitle={t('wf.subtitle')}
+      // A motto; on a phone the first screen goes to the floor.
+      subtitle={<span className="hidden sm:inline">{t('wf.subtitle')}</span>}
       meta={
         <HomeMeta
           items={[
@@ -352,7 +370,7 @@ export function WorkforceDashboard() {
                 aria-hidden="true"
                 className="hidden h-12 w-px bg-navy-secondary sm:block"
               />
-              <div className="grid flex-1 grid-cols-3 gap-x-6 gap-y-3 sm:grid-cols-6">
+              <div className="grid min-w-0 flex-1 basis-full grid-cols-3 gap-x-4 gap-y-3 sm:basis-0 sm:gap-x-6 xl:grid-cols-6">
                 {instruments.map((ins) => (
                   <Link key={ins.label} to={ins.to} className="group min-w-0">
                     <div
@@ -367,7 +385,7 @@ export function WorkforceDashboard() {
                     >
                       {ins.value}
                     </div>
-                    <div className="mt-0.5 truncate text-xs text-silver/70">
+                    <div className="mt-0.5 line-clamp-2 text-xs text-silver/70">
                       {ins.label}
                     </div>
                   </Link>
@@ -390,14 +408,17 @@ export function WorkforceDashboard() {
               {t('wf.board')}
             </h2>
             <span
+              data-testid="board-status"
               className={cn(
                 'text-xs tabular-nums',
-                data.needsAttention > 0 ? 'text-alert' : 'text-success',
+                data.needsAttention > 0 ? 'text-alert' : data.today.stores.length === 0 ? 'text-silver' : 'text-success',
               )}
             >
               {data.needsAttention > 0
                 ? t('wf.needsYou', { count: data.needsAttention })
-                : t('wf.allGreenBoard')}
+                : data.today.stores.length === 0
+                  ? t('wf.noShiftsToday')
+                  : t('wf.allGreenBoard')}
             </span>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -577,24 +598,38 @@ export function WorkforceDashboard() {
               ) : (
                 <ul className="mt-2 divide-y divide-navy-secondary/60">
                   {data.readyToSchedule.rows.map((r) => (
-                    <li
-                      key={r.associateId}
-                      className="flex items-center gap-2 py-2 text-xs"
-                    >
-                      <Link
-                        to={`/people?associateId=${r.associateId}&return=${encodeURIComponent('/')}`}
-                        className="min-w-0 flex-1 truncate font-medium text-white hover:text-gold-bright"
-                      >
-                        {r.name}
-                      </Link>
-                      {r.clientName && (
-                        <span className="truncate text-silver/60">{r.clientName}</span>
+                    <li key={r.associateId} className="py-2 text-xs" data-testid="ready-row">
+                      <div className="flex items-baseline gap-2">
+                        <Link
+                          to={`/people?associateId=${r.associateId}&return=${encodeURIComponent('/')}`}
+                          className="min-w-0 flex-1 truncate text-sm font-medium text-white hover:text-gold-bright"
+                        >
+                          {r.name}
+                        </Link>
+                        {r.approvedAt && (
+                          <span className="shrink-0 tabular-nums text-silver/60">
+                            {t('wf.readyApproved', { date: fmtDateTz(r.approvedAt, null) })}
+                          </span>
+                        )}
+                      </div>
+                      {(r.position || r.storeName || r.clientName) && (
+                        <div className="mt-0.5 text-silver">
+                          {[r.position, r.storeName ?? r.clientName].filter(Boolean).join(' · ')}
+                        </div>
                       )}
-                      {r.approvedAt && (
-                        <span className="shrink-0 tabular-nums text-silver/40">
-                          {t('wf.readyApproved', { date: fmtDate(r.approvedAt) })}
-                        </span>
-                      )}
+                      {r.earliestOpen ? (
+                        <Link
+                          to={`/scheduling?shift=${r.earliestOpen.shiftId}`}
+                          className="mt-0.5 inline-block text-gold underline underline-offset-2 hover:text-gold-bright"
+                        >
+                          {t('wf.readyFirstOpen', {
+                            when: `${fmtWeekdayTz(r.earliestOpen.startsAt, r.earliestOpen.timezone)} ${fmtDateTz(r.earliestOpen.startsAt, r.earliestOpen.timezone)}, ${fmtTimeTz(r.earliestOpen.startsAt, r.earliestOpen.timezone)}`,
+                            where: r.earliestOpen.storeName ?? r.earliestOpen.position,
+                          })}
+                        </Link>
+                      ) : r.earliestOpen === null ? (
+                        <div className="mt-0.5 text-silver/60">{t('wf.readyNoOpen')}</div>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

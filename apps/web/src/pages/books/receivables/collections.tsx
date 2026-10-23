@@ -283,6 +283,9 @@ export function DsoTrendChart() {
   const months = q.data?.months ?? [];
   if (!q.data) return null;
   const paid = months.filter((m) => m.days !== null);
+  // Two points make a line floating on the axis, not a trend: draw it from
+  // three months with payments; until then the "Days to collect" tile says it.
+  if (paid.length < 3) return null;
   const summary = paid.length
     ? `Days to collect over the last ${months.length} months: ${paid.map((m) => `${m.label} ${m.days}`).join(', ')}.`
     : 'No statements were paid in the last six months.';

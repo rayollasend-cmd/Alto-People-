@@ -71,9 +71,12 @@ describe('ConnectionsSection', () => {
     renderSection(false);
     const list = await screen.findByRole('list', { name: 'HR and VMS connections' });
     expect(list.querySelectorAll('li')).toHaveLength(3);
-    expect(screen.getByText('Sandbox')).toBeInTheDocument();
+    // One vocabulary (F500 G4): Working · Needs attention · Failing; sandbox and paused are said beside it.
+    expect(screen.getByText('Working')).toBeInTheDocument();
+    expect(screen.getByText('Failing')).toBeInTheDocument();
     expect(screen.getByText('Needs attention')).toBeInTheDocument();
-    expect(screen.getByText('Paused')).toBeInTheDocument();
+    expect(screen.getByText(/SAP Fieldglass · Sandbox/)).toBeInTheDocument();
+    expect(screen.getByText(/· Paused ·/)).toBeInTheDocument();
     expect(screen.getByText('3 rejected')).toBeInTheDocument();
     expect(screen.getByText(/SAP Fieldglass/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /ADP payroll/ })).toHaveAttribute('href', '/integrations/connections/c2');

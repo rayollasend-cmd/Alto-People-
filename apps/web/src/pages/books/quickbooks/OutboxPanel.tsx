@@ -71,7 +71,7 @@ export function OutboxPanel({ manage }: { manage: boolean }) {
     },
   ];
 
-  if (rows && rows.length === 0) return <EmptyState icon={Inbox} title="Nothing waiting" description="Every change on the site is in QuickBooks." />;
+  if (rows && rows.length === 0) return <EmptyState icon={Inbox} title="Nothing waiting" description="Every change made here is in QuickBooks." />;
   return (
     <div className="space-y-3">
       {manage && failed > 0 && (

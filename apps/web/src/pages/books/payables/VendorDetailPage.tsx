@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Landmark, Plus, ShieldAlert } from 'lucide-react';
+import { Plus, ShieldAlert } from 'lucide-react';
 import type { BooksBill, BooksBillPayment, BooksVendor, BooksVendorInput, BooksVendorPaymentMethod } from '@alto-people/shared';
 import { usePrompt } from '@/lib/confirm';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { createVendor, getVendor, PAYABLES_KEY, updateVendor, voidBillPayment } from '@/lib/books/payablesApi';
 import { RecordTemplate } from '@/components/templates';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -25,6 +27,9 @@ import { BillStatusBadge, METHOD_LABEL, PayBillsDialog, dueWords, errText, inval
  * the last four digits ever show; changing the bank on file waits for a
  * second person — the classic way a vendor-payment fraud starts.
  */
+/** "paid by ACH", "paid by check": the acronym keeps its capitals. */
+const methodWords = (m: BooksVendorPaymentMethod): string => (m === 'ACH' ? 'ACH' : m === 'OTHER' ? 'another way' : METHOD_LABEL[m].toLowerCase());
+
 export function VendorDetailPage() {
   const { id = '' } = useParams<{ id: string }>();
   if (id === 'new') return <NewVendor />;
@@ -174,7 +179,6 @@ function NewVendor() {
   });
   return (
     <RecordTemplate
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Vendors', to: '/books/vendors' }, { label: 'New vendor' }]}
       title="New vendor"
       subtitle="Their tax ID and bank details are encrypted; only the last four digits are ever shown."
       actions={
@@ -190,7 +194,6 @@ function NewVendor() {
 function ExistingVendor({ id }: { id: string }) {
   const qc = useQueryClient();
   const prompt = usePrompt();
-  const navigate = useNavigate();
   const write = useBooksWrite();
   const q = useQuery({ queryKey: [...PAYABLES_KEY, 'vendor', id], queryFn: () => getVendor(id) });
   const [tab, setTab] = useState('bills');
@@ -256,46 +259,43 @@ function ExistingVendor({ id }: { id: string }) {
     },
   ];
 
+  // The newest payment that wasn't voided.
+  const lastPaid = payments.filter((p) => p.status !== 'VOID').sort((a, b) => b.paidOn.localeCompare(a.paidOn))[0] ?? null;
   return (
     <>
       <RecordTemplate
-        breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Vendors', to: '/books/vendors' }, { label: vendor.name }]}
         title={vendor.name}
-        subtitle={[vendor.termsDays ? `Net ${vendor.termsDays}` : 'Due on receipt', `paid by ${METHOD_LABEL[vendor.paymentMethod].toLowerCase()}${vendor.hasBank ? ` to ••• ${vendor.accountLast4}` : ''}`, vendor.is1099 ? '1099 vendor' : null].filter(Boolean).join(' · ')}
+        subtitle={[vendor.termsDays ? `Net ${vendor.termsDays}` : 'Due on receipt', `paid by ${methodWords(vendor.paymentMethod)}${vendor.hasBank ? ` to ••• ${vendor.accountLast4}` : ''}`, vendor.is1099 ? '1099 vendor' : null].filter(Boolean).join(' · ')}
         status={vendor.isActive ? <Badge variant="success">Active</Badge> : <Badge>Inactive</Badge>}
-        actions={
-          write ? (
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => navigate(`/books/bills/new?vendorId=${vendor.id}`)}>
-                <Plus className="h-4 w-4" aria-hidden="true" />
-                New bill
-              </Button>
-              {open.length > 0 && <Button onClick={() => setPaying(true)}>Pay {money(vendor.balance)}</Button>}
-            </div>
-          ) : undefined
-        }
+        actions={[
+          { label: `Pay ${money(vendor.balance)}`, primary: true, hidden: !write || open.length === 0, onSelect: () => setPaying(true) },
+          { label: 'New bill', icon: Plus, hidden: !write, to: `/books/bills/new?vendorId=${vendor.id}` },
+        ]}
         summary={
-          vendor.pendingBankChange ? (
-            <Card className="border-warning/40">
-              <CardContent className="flex items-start gap-3 p-4 text-sm">
-                <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
-                <div>
-                  <p className="font-medium text-ink">New bank account waiting for approval</p>
-                  <p className="text-ink-muted">
-                    {vendor.pendingBankChange.requestedByName ?? 'Someone'} asked {fmtDateTime(vendor.pendingBankChange.requestedAt)} to pay {vendor.name} at the account ending {vendor.pendingBankChange.accountLast4}. Until a second person approves it, payments still go to ••• {vendor.accountLast4 ?? '—'}. Call the vendor on a number you already had before approving.{' '}
-                    <Link to={`/approvals?tab=requests&approval=${vendor.pendingBankChange.approvalId}`} className="text-gold hover:underline">
-                      Open the request
-                    </Link>
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <p className="flex items-center gap-2 text-sm text-ink-muted">
-              <Landmark className="h-4 w-4" aria-hidden="true" />
-              {vendor.balance ? `${money(vendor.balance)} owed on ${open.length} ${open.length === 1 ? 'bill' : 'bills'}.` : 'Nothing owed right now.'}
-            </p>
-          )
+          <div className="space-y-3">
+            {vendor.pendingBankChange && (
+              <Card className="border-warning/40">
+                <CardContent className="flex items-start gap-3 p-4 text-sm">
+                  <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
+                  <div>
+                    <p className="font-medium text-ink">New bank account waiting for approval</p>
+                    <p className="text-ink-muted">
+                      {vendor.pendingBankChange.requestedByName ?? 'Someone'} asked {fmtDateTime(vendor.pendingBankChange.requestedAt)} to pay {vendor.name} at the account ending {vendor.pendingBankChange.accountLast4}. Until a second person approves it, payments still go to ••• {vendor.accountLast4 ?? '—'}. Call the vendor on a number you already had before approving.{' '}
+                      <Link to={`/approvals?tab=requests&approval=${vendor.pendingBankChange.approvalId}`} className="text-gold hover:underline">
+                        Open the request
+                      </Link>
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            <MetricStrip label={`${vendor.name} at a glance`} empty={bills.length === 0 && payments.length === 0}>
+              <MetricCard label="Owed now" value={money(vendor.balance)} hint={`${open.length} open ${open.length === 1 ? 'bill' : 'bills'}`} nothing={vendor.balance ? undefined : 'Nothing owed'} onClick={() => setTab('bills')} />
+              <MetricCard label="Paid this year" value={money(vendor.paidThisYear)} nothing={vendor.paidThisYear ? undefined : 'Nothing paid this year'} onClick={() => setTab('payments')} />
+              <MetricCard label="Last payment" value={lastPaid ? money(lastPaid.amount) : '—'} hint={lastPaid ? fmtDate(lastPaid.paidOn) : undefined} nothing={lastPaid ? undefined : 'Never paid'} tone="neutral" onClick={() => setTab('payments')} />
+              <MetricCard label="Open bills" value={open.length} nothing={open.length ? undefined : 'No open bills'} tone="neutral" onClick={() => setTab('bills')} />
+            </MetricStrip>
+          </div>
         }
         activeTab={tab}
         onTabChange={setTab}

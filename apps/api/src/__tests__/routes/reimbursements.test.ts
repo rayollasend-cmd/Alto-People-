@@ -451,3 +451,91 @@ describe('Reimbursement two-step approval — Gap 10', () => {
     expect(Number(row.amount)).toBeCloseTo(47.3 * 0.67, 2);
   });
 });
+
+describe('the settling desk (F500 G6)', () => {
+  /** A report taken to `to`, with one receipted line of `amount`. */
+  async function report(f: ReimbursementSeed, title: string, amount: number, to: 'DRAFT' | 'SUBMITTED' | 'MANAGER_APPROVED', receipt = true) {
+    const id = (await f.associateAgent.post('/reimbursements').send({ title })).body.id as string;
+    await f.associateAgent.post(`/reimbursements/${id}/lines`).send({ kind: 'RECEIPT', description: title, incurredOn: '2026-10-05', amount, ...(receipt ? { receiptUrl: 'https://example.test/r.png' } : {}) });
+    if (to === 'DRAFT') return id;
+    await f.associateAgent.post(`/reimbursements/${id}/submit`).send({});
+    if (to === 'SUBMITTED') return id;
+    expect((await f.managerAgent.post(`/reimbursements/${id}/manager-approve`).send({})).status).toBe(200);
+    return id;
+  }
+
+  it('summary: to approve, ready to settle, queued for payroll and paid this month — exact dollars', async () => {
+    const f = await seedFlow();
+    await report(f, 'Draft only', 5, 'DRAFT');
+    await report(f, 'Waiting on manager', 40.25, 'SUBMITTED');
+    await report(f, 'Ready A', 100.1, 'MANAGER_APPROVED');
+    await report(f, 'Ready B', 19.9, 'MANAGER_APPROVED');
+    const queued = await report(f, 'Queued', 60, 'MANAGER_APPROVED');
+    expect((await f.financeAgent.post(`/reimbursements/${queued}/settle`).send({})).status).toBe(200);
+    // Paid this month, and one paid last year that doesn't count.
+    const paidNow = await report(f, 'Paid now', 12.5, 'MANAGER_APPROVED');
+    const paidOld = await report(f, 'Paid old', 999, 'MANAGER_APPROVED');
+    // Both settled, then paid by a paycheck (the table's own checks: a paid
+    // report was settled and names the paycheck that paid it).
+    for (const id of [paidNow, paidOld]) expect((await f.financeAgent.post(`/reimbursements/${id}/settle`).send({})).status).toBe(200);
+    const run = await prisma.payrollRun.create({ data: { periodStart: new Date('2026-09-26'), periodEnd: new Date('2026-10-09'), status: 'FINALIZED' } });
+    const item = await prisma.payrollItem.create({ data: { payrollRunId: run.id, associateId: f.associateId, hoursWorked: 0, hourlyRate: 20, grossPay: 0, federalWithholding: 0, netPay: 0 } });
+    await prisma.reimbursement.update({ where: { id: paidNow }, data: { status: 'PAID', paidAt: new Date(), payrollItemId: item.id } });
+    await prisma.reimbursement.update({ where: { id: paidOld }, data: { status: 'PAID', paidAt: new Date('2025-01-15T12:00:00Z'), payrollItemId: item.id } });
+    const r = await f.financeAgent.get('/reimbursements/summary');
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({
+      toApprove: { count: 1, amount: 40.25 },
+      readyToSettle: { count: 2, amount: 120 },
+      queuedForPayroll: { count: 1, amount: 60 },
+      paidThisMonth: { count: 1, amount: 12.5 },
+    });
+    // An associate's summary is their own reports only (here: the same person).
+    expect((await f.associateAgent.get('/reimbursements/summary')).body.readyToSettle).toEqual({ count: 2, amount: 120 });
+  });
+
+  it('settle-bulk settles each approved report once and skips the rest with why', async () => {
+    const f = await seedFlow();
+    const a = await report(f, 'Ready A', 100, 'MANAGER_APPROVED');
+    const b = await report(f, 'Ready B', 25.5, 'MANAGER_APPROVED');
+    const noReceipt = await report(f, 'No receipt', 30, 'MANAGER_APPROVED', false);
+    const notYet = await report(f, 'Waiting on manager', 40, 'SUBMITTED');
+    const r = await f.financeAgent.post('/reimbursements/settle-bulk').send({ ids: [a, b, noReceipt, notYet, a] });
+    expect(r.status).toBe(200);
+    expect(r.body.settled.map((x: { id: string }) => x.id).sort()).toEqual([a, b].sort());
+    expect(r.body.amount).toBe(125.5);
+    expect(r.body.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: noReceipt, code: 'receipts_required' }),
+        expect.objectContaining({ id: notYet, code: 'invalid_state' }),
+      ]),
+    );
+    for (const id of [a, b]) expect((await prisma.reimbursement.findUniqueOrThrow({ where: { id } })).status).toBe('SETTLED');
+    expect((await prisma.reimbursement.findUniqueOrThrow({ where: { id: noReceipt } })).status).toBe('MANAGER_APPROVED');
+    // One audit event per settled report, like a single settle.
+    expect(await prisma.auditLog.count({ where: { action: 'reimbursement.settled' } })).toBe(2);
+    // A manager can't settle in bulk either.
+    expect((await f.managerAgent.post('/reimbursements/settle-bulk').send({ ids: [noReceipt] })).status).toBe(403);
+  });
+
+  it('a finance account narrowed to one store can neither see nor settle another store’s reports', async () => {
+    const f = await seedFlow();
+    const ready = await report(f, 'Ready', 50, 'MANAGER_APPROVED');
+    // Jordan works at Harbor; the finance account is bound to Coastal's store.
+    const coastal = await createClient('Coastal Resort');
+    const harbor = await createClient('Harbor Grill');
+    const coastalSite = await prisma.site.findFirstOrThrow({ where: { clientId: coastal.id } });
+    const harborSite = await prisma.site.findFirstOrThrow({ where: { clientId: harbor.id } });
+    await prisma.associateAssignment.create({ data: { associateId: f.associateId, locationId: harborSite.id, startedAt: new Date('2025-01-02') } });
+    const { user: narrow } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    await prisma.user.update({ where: { id: narrow.id }, data: { scopeSiteIds: [coastalSite.id] } });
+    const n = await loginAs(narrow.email);
+    expect((await n.get('/reimbursements')).body.reimbursements).toEqual([]);
+    expect((await n.get('/reimbursements/summary')).body.readyToSettle).toEqual({ count: 0, amount: 0 });
+    const bulk = await n.post('/reimbursements/settle-bulk').send({ ids: [ready] });
+    expect(bulk.body.settled).toEqual([]);
+    expect(bulk.body.skipped[0]).toMatchObject({ id: ready, code: 'not_found' });
+    expect((await n.post(`/reimbursements/${ready}/settle`).send({})).status).toBe(404);
+    expect((await prisma.reimbursement.findUniqueOrThrow({ where: { id: ready } })).status).toBe('MANAGER_APPROVED');
+  });
+});

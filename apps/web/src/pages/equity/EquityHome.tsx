@@ -1,11 +1,12 @@
 import { useState } from 'react';
+import { useUrlParam } from '@/lib/useUrlState';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { useQuery } from '@tanstack/react-query';
-import { Coins, Download, Plus } from 'lucide-react';
+import { Coins, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
 import { statusTone } from '@/lib/status';
@@ -35,11 +36,9 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-  EmptyState,
   ErrorBanner,
   Input,
   MetricCard,
-  SearchInput,
   SegmentedControl,
   type SegmentedControlOption,
   Select,
@@ -109,30 +108,32 @@ const STATUS_LABELS: Record<EquityGrantStatus, string> = {
   EXPIRED: 'Expired',
 };
 
+type View = 'mine' | 'all';
+const STATUS_FILTERS: Array<EquityGrantStatus | 'ALL'> = ['ALL', 'PROPOSED', 'GRANTED', 'CANCELLED', 'EXERCISED', 'EXPIRED'];
+
 export function EquityHome() {
   const { user } = useAuth();
   const canManageComp = user ? hasCapability(user.role, 'manage:comp') : false;
-  const [tab, setTab] = useState<'mine' | 'admin'>('mine');
-
-  const [statusFilter, setStatusFilter] = useState<EquityGrantStatus | 'ALL'>(
-    'GRANTED',
-  );
-  const [search, setSearch] = useState('');
+  // Whoever issues grants opens on all of them; everyone else has only their own.
+  // The view and the status filter are in the URL.
+  const [urlView, setView] = useUrlParam<View>('view', canManageComp ? 'all' : 'mine', ['mine', 'all'], { history: 'push' });
+  const tab: View = canManageComp ? urlView : 'mine';
+  const [statusFilter, setStatusFilter] = useUrlParam<EquityGrantStatus | 'ALL'>('status', 'ALL', STATUS_FILTERS);
   const [showNew, setShowNew] = useState(false);
   const [openMine, setOpenMine] = useState<MyEquityGrant | null>(null);
   const [openAdminId, setOpenAdminId] = useState<string | null>(null);
 
   const refreshAQuery = useQuery({
-    queryKey: ['EquityHome', 'mine', tab, statusFilter],
+    queryKey: ['EquityHome', 'mine'],
     queryFn: () => listMyEquity(),
-    enabled: (tab === 'mine'),
+    enabled: tab === 'mine',
   });
   const mine: MyEquityGrant[] | null = refreshAQuery.data?.grants ?? null;
   const mineError = refreshAQuery.error ? refreshAQuery.error instanceof ApiError ? refreshAQuery.error.message : 'Could not load your grants.' : null;
   const refreshBQuery = useQuery({
-    queryKey: ['EquityHome', 'admin', tab, statusFilter],
+    queryKey: ['EquityHome', 'admin', statusFilter],
     queryFn: () => listEquityGrants(statusFilter === 'ALL' ? undefined : statusFilter),
-    enabled: !(tab === 'mine'),
+    enabled: tab === 'all',
   });
   const admin: EquityGrant[] | null = refreshBQuery.data?.grants ?? null;
   const adminError = refreshBQuery.error ? refreshBQuery.error instanceof ApiError ? refreshBQuery.error.message : 'Could not load grants.' : null;
@@ -152,23 +153,9 @@ export function EquityHome() {
     : null;
   const refreshSummary = () => void summaryQuery.refetch();
 
-  const q = search.trim().toLowerCase();
-  const filteredAdmin = (admin ?? []).filter(
-    (g) =>
-      q === '' ||
-      (g.associateName ?? '').toLowerCase().includes(q) ||
-      (g.associateEmail ?? '').toLowerCase().includes(q),
-  );
-
-  // The admin segment only exists for comp managers; building the option
-  // list up front keeps the conditional out of the JSX and the generic
-  // parameter explicit (inference would otherwise narrow to 'mine').
-  const tabOptions: SegmentedControlOption<'mine' | 'admin'>[] = [
-    { value: 'mine', label: 'My grants' },
-  ];
-  if (canManageComp) {
-    tabOptions.push({
-      value: 'admin',
+  const tabOptions: SegmentedControlOption<View>[] = [
+    {
+      value: 'all',
       label: (
         <>
           All grants
@@ -179,82 +166,31 @@ export function EquityHome() {
           )}
         </>
       ),
-    });
-  }
-
-  const exportCsv = () => {
-    // Cap-table extract of what's currently on screen (filter + search).
-    downloadCsv(`equity-grants-${ymdLocal()}.csv`, [
-      ['Associate', 'Kind', 'Shares', 'Strike', 'Vest start', 'Status'],
-      ...filteredAdmin.map((g) => [
-        g.associateName ?? '',
-        GRANT_TYPE_LABELS[g.grantType],
-        g.totalShares,
-        g.strikePrice ? `${g.currency} ${g.strikePrice}` : '',
-        g.vestingStartDate,
-        STATUS_LABELS[g.status],
-      ]),
-    ]);
-  };
+    },
+    { value: 'mine', label: 'My grants' },
+  ];
+  const noGrantsYet = !!summary && summary.proposedCount === 0 && summary.activeRecipients === 0 && summary.sharesGranted === 0;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Equity"
         subtitle="Stock and option grants. Vesting tranches generated at grant time — cliff plus monthly until fully vested."
-        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Equity' }]}
+        actions={[{ label: 'New grant', icon: Plus, primary: true, hidden: !canManageComp, onSelect: () => setShowNew(true) }]}
+        // A one-option switch says nothing: it shows only to those with two views.
+        filters={canManageComp ? <SegmentedControl<View> ariaLabel="Grant view" value={tab} onChange={setView} options={tabOptions} /> : undefined}
+        summary={
+          tab === 'all' && summary ? (
+            <MetricStrip label="Equity at a glance" empty={noGrantsYet}>
+              <MetricCard label="Proposed" value={summary.proposedCount} tone={summary.proposedCount ? 'warning' : 'default'} hint={summary.proposedCount ? 'Waiting to be granted' : undefined} onClick={() => setStatusFilter(statusFilter === 'PROPOSED' ? 'ALL' : 'PROPOSED')} selected={statusFilter === 'PROPOSED'} nothing={summary.proposedCount ? undefined : 'Nothing proposed'} />
+              <MetricCard label="Active recipients" value={summary.activeRecipients} tone="neutral" onClick={() => setStatusFilter(statusFilter === 'GRANTED' ? 'ALL' : 'GRANTED')} selected={statusFilter === 'GRANTED'} />
+              <MetricCard label="Shares granted" value={summary.sharesGranted.toLocaleString()} tone="neutral" />
+              <MetricCard label="Shares vested" value={summary.sharesVested.toLocaleString()} tone="good" />
+            </MetricStrip>
+          ) : undefined
+        }
     >
-
-      <div className="flex items-center justify-between">
-        <SegmentedControl<'mine' | 'admin'>
-          ariaLabel="Grant view"
-          value={tab}
-          onChange={setTab}
-          options={tabOptions}
-        />
-        <div className="flex gap-2 flex-wrap justify-end">
-          {canManageComp && tab === 'admin' && (
-            <>
-              <SearchInput
-                className="h-8 w-52 text-sm"
-                placeholder="Search associate…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                aria-label="Search grants by associate"
-              />
-              <Select
-                size="sm"
-                value={statusFilter}
-                onChange={(e) =>
-                  setStatusFilter(e.target.value as EquityGrantStatus | 'ALL')
-                }
-              >
-                <option value="ALL">All statuses</option>
-                <option value="PROPOSED">Proposed</option>
-                <option value="GRANTED">Granted</option>
-                <option value="CANCELLED">Cancelled</option>
-                <option value="EXERCISED">Exercised</option>
-                <option value="EXPIRED">Expired</option>
-              </Select>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={exportCsv}
-                disabled={filteredAdmin.length === 0}
-              >
-                <Download className="mr-2 h-4 w-4" /> Export CSV
-              </Button>
-            </>
-          )}
-          {canManageComp && (
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> New grant
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {tab === 'admin' && summaryError && (
+      {tab === 'all' && summaryError && (
         <ErrorBanner
           action={
             <Button size="sm" variant="secondary" onClick={refreshSummary}>
@@ -266,132 +202,90 @@ export function EquityHome() {
         </ErrorBanner>
       )}
 
-      {tab === 'admin' && summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <MetricCard label="Proposed" value={summary.proposedCount} />
-          <MetricCard
-            label="Active recipients"
-            value={summary.activeRecipients}
-          />
-          <MetricCard
-            label="Shares granted"
-            value={summary.sharesGranted.toLocaleString()}
-          />
-          <MetricCard
-            label="Shares vested"
-            value={summary.sharesVested.toLocaleString()}
-          />
-        </div>
-      )}
-
       {tab === 'mine' ? (
-        <Card>
-          <CardContent className="p-0">
-            {mineError !== null ? (
-              <LoadError message={mineError} onRetry={refresh} />
-            ) : mine === null ? (
-              <div className="p-6">
-                <SkeletonRows count={3} />
-              </div>
-            ) : mine.length === 0 ? (
-              <EmptyState
-                icon={Coins}
-                title="No equity grants"
-                description="Once HR issues you a grant, you'll see it here."
-              />
-            ) : (
-              <DataGrid<NonNullable<typeof mine>[number]>
-                id="equity-mine"
-                caption="My equity grants"
-                rows={mine}
-                rowKey={(g) => g.id}
-                search={false}
-                urlState={false}
-                exportCsv={false}
-                onRowClick={(g) => setOpenMine(g)}
-                rowActionLabel={(g) => `Open ${GRANT_TYPE_LABELS[g.grantType]} grant from ${fmtYmd(g.grantDate)}`}
-                columns={[
-                  { key: 'type', header: 'Type', accessor: (g) => GRANT_TYPE_LABELS[g.grantType], sortable: true, primary: true, className: 'font-medium text-white' },
-                  { key: 'total', header: 'Total', accessor: (g) => g.totalShares, sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums', cell: (g) => g.totalShares.toLocaleString() },
-                  { key: 'vested', header: 'Vested', accessor: (g) => g.vestedShares, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm text-success tabular-nums', cell: (g) => g.vestedShares.toLocaleString() },
-                  { key: 'unvested', header: 'Unvested', accessor: (g) => g.unvestedShares, sortable: true, searchable: false, align: 'right', className: 'text-sm text-silver tabular-nums', cell: (g) => g.unvestedShares.toLocaleString() },
-                  { key: 'strike', header: 'Strike', accessor: (g) => g.strikePrice, csv: (g) => fmtStrike(g.strikePrice, g.currency), sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums', cell: (g) => fmtStrike(g.strikePrice, g.currency) },
-                  { key: 'grantDate', header: 'Grant date', accessor: (g) => g.grantDate, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver', cell: (g) => fmtYmd(g.grantDate) },
-                ]}
-              />
-            )}
-          </CardContent>
-        </Card>
+        mineError !== null ? (
+          <LoadError message={mineError} onRetry={refresh} />
+        ) : (
+          <DataGrid<MyEquityGrant>
+            id="equity-mine"
+            caption="My equity grants"
+            rows={mine ?? undefined}
+            loading={mine === null}
+            rowKey={(g) => g.id}
+            search={false}
+            urlState={false}
+            exportCsv={false}
+            onRowClick={(g) => setOpenMine(g)}
+            rowActionLabel={(g) => `Open ${GRANT_TYPE_LABELS[g.grantType]} grant from ${fmtYmd(g.grantDate)}`}
+            empty={{ icon: Coins, title: 'No equity grants', description: 'A stock or option grant made to you shows here, with its vesting.' }}
+            columns={[
+              { key: 'type', header: 'Type', accessor: (g) => GRANT_TYPE_LABELS[g.grantType], sortable: true, primary: true, className: 'font-medium text-white' },
+              { key: 'total', header: 'Total', accessor: (g) => g.totalShares, sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums', cell: (g) => g.totalShares.toLocaleString() },
+              { key: 'vested', header: 'Vested', accessor: (g) => g.vestedShares, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm text-success tabular-nums', cell: (g) => g.vestedShares.toLocaleString() },
+              { key: 'unvested', header: 'Unvested', accessor: (g) => g.unvestedShares, sortable: true, searchable: false, align: 'right', className: 'text-sm text-silver tabular-nums', cell: (g) => g.unvestedShares.toLocaleString() },
+              { key: 'strike', header: 'Strike', accessor: (g) => g.strikePrice, csv: (g) => fmtStrike(g.strikePrice, g.currency), sortable: true, searchable: false, align: 'right', className: 'text-sm tabular-nums', cell: (g) => fmtStrike(g.strikePrice, g.currency) },
+              { key: 'grantDate', header: 'Grant date', accessor: (g) => g.grantDate, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver', cell: (g) => fmtYmd(g.grantDate) },
+            ]}
+          />
+        )
+      ) : adminError !== null ? (
+        <LoadError message={adminError} onRetry={refresh} />
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            {adminError !== null ? (
-              <LoadError message={adminError} onRetry={refresh} />
-            ) : admin === null ? (
-              <div className="p-6">
-                <SkeletonRows count={4} />
-              </div>
-            ) : filteredAdmin.length === 0 ? (
-              <EmptyState
-                icon={Coins}
-                title="No grants"
-                description={
-                  admin.length > 0
-                    ? 'No grants match your search.'
-                    : statusFilter !== 'ALL'
-                      ? 'Nothing matches this status filter.'
-                      : 'No equity grants have been created yet.'
-                }
-                action={
-                  admin.length > 0 ? (
-                    <Button size="sm" variant="secondary" onClick={() => setSearch('')}>
-                      Clear search
-                    </Button>
-                  ) : statusFilter !== 'ALL' ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => setStatusFilter('ALL')}
-                    >
-                      Clear filter
-                    </Button>
-                  ) : undefined
-                }
-              />
-            ) : (
-              <DataGrid<(typeof filteredAdmin)[number]>
-                id="equity-grants"
-                caption="Equity grants"
-                rows={filteredAdmin}
-                rowKey={(g) => g.id}
-                search={false}
-                urlState={false}
-                exportCsv={{ filename: 'equity-grants' }}
-                onRowClick={(g) => setOpenAdminId(g.id)}
-                rowActionLabel={(g) => `Open grant for ${g.associateName ?? 'associate'}`}
-                columns={[
-                  {
-                    key: 'associate',
-                    header: 'Associate',
-                    accessor: (g) => g.associateName,
-                    sortable: true,
-                    primary: true,
-                    cell: (g) => (
-                      <>
-                        <div className="font-medium text-white">{g.associateName ?? '—'}</div>
-                        <div className="text-xs text-silver">{g.associateEmail ?? ''}</div>
-                      </>
-                    ),
-                  },
-                  { key: 'type', header: 'Type', accessor: (g) => GRANT_TYPE_LABELS[g.grantType], sortable: true, cardMeta: true, className: 'text-sm' },
-                  { key: 'shares', header: 'Shares', accessor: (g) => g.totalShares, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm tabular-nums', cell: (g) => g.totalShares.toLocaleString() },
-                  { key: 'status', header: 'Status', accessor: (g) => STATUS_LABELS[g.status], sortable: true, cell: (g) => <Badge variant={statusTone(g.status, { overrides: EQUITY_STATUS_TONES })}>{STATUS_LABELS[g.status]}</Badge> },
-                  { key: 'grantDate', header: 'Grant date', accessor: (g) => g.grantDate, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver', cell: (g) => fmtYmd(g.grantDate) },
-                ]}
-              />
-            )}
-          </CardContent>
-        </Card>
+        <DataGrid<EquityGrant>
+          id="equity-grants"
+          caption="Equity grants"
+          noun={{ one: 'grant', many: 'grants' }}
+          rows={admin ?? undefined}
+          loading={admin === null}
+          rowKey={(g) => g.id}
+          search={{ placeholder: 'Search by person…' }}
+          urlState={false}
+          exportCsv={{ filename: 'equity-grants' }}
+          filters={
+            <Select size="sm" aria-label="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as EquityGrantStatus | 'ALL')}>
+              <option value="ALL">All statuses</option>
+              {STATUS_FILTERS.filter((x) => x !== 'ALL').map((x) => (
+                <option key={x} value={x}>
+                  {STATUS_LABELS[x as EquityGrantStatus]}
+                </option>
+              ))}
+            </Select>
+          }
+          activeFilters={statusFilter === 'ALL' ? 0 : 1}
+          onClearFilters={() => setStatusFilter('ALL')}
+          onRowClick={(g) => setOpenAdminId(g.id)}
+          rowActionLabel={(g) => `Open grant for ${g.associateName ?? 'associate'}`}
+          empty={{
+            icon: Coins,
+            title: 'No equity grants yet',
+            description: 'A grant you make lands here as proposed, then granted with its vesting schedule.',
+            action: canManageComp ? (
+              <Button size="sm" onClick={() => setShowNew(true)}>
+                <Plus className="mr-1 h-4 w-4" /> New grant
+              </Button>
+            ) : undefined,
+          }}
+          columns={[
+            {
+              key: 'associate',
+              header: 'Associate',
+              accessor: (g) => `${g.associateName ?? ''} ${g.associateEmail ?? ''}`,
+              csv: (g) => g.associateName ?? '',
+              sortable: true,
+              primary: true,
+              cell: (g) => (
+                <>
+                  <div className="font-medium text-white">{g.associateName ?? '—'}</div>
+                  <div className="text-xs text-silver">{g.associateEmail ?? ''}</div>
+                </>
+              ),
+            },
+            { key: 'type', header: 'Type', accessor: (g) => GRANT_TYPE_LABELS[g.grantType], sortable: true, cardMeta: true, className: 'text-sm' },
+            { key: 'shares', header: 'Shares', accessor: (g) => g.totalShares, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'text-sm tabular-nums', cell: (g) => g.totalShares.toLocaleString() },
+            { key: 'status', header: 'Status', accessor: (g) => STATUS_LABELS[g.status], sortable: true, cell: (g) => <Badge variant={statusTone(g.status, { overrides: EQUITY_STATUS_TONES })}>{STATUS_LABELS[g.status]}</Badge> },
+            { key: 'grantDate', header: 'Grant date', accessor: (g) => g.grantDate, sortable: true, searchable: false, cardMeta: true, className: 'text-xs text-silver', cell: (g) => fmtYmd(g.grantDate) },
+          ]}
+        />
       )}
 
       {showNew && canManageComp && (

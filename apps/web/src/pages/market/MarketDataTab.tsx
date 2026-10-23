@@ -13,6 +13,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -55,16 +56,21 @@ export function MarketDataTab() {
   const d = q.data;
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Pairs with figures" value={d.pairs ? `${d.covered} of ${d.pairs}` : '—'} hint="Metro × occupation in use" accent={d.pairs > 0 && d.covered < d.pairs} />
+      {/* The source is said once, in full, under the numbers — not a "SOURCE BLS" tile. */}
+      <MetricStrip label="Wage data at a glance">
+        <MetricCard label="Pairs with figures" value={d.pairs ? `${d.covered} of ${d.pairs}` : '—'} hint="Metro × occupation in use" tone={d.pairs > 0 && d.covered < d.pairs ? 'warning' : 'default'} />
         <MetricCard label="Survey year" value={d.latestYear ?? '—'} hint="Published once a year, each spring" />
         <MetricCard
           label="Last fetched"
           value={d.lastFetchedAt ? fmtDate(d.lastFetchedAt) : 'Never'}
           hint={`${d.lastFetchedAt ? `At ${fmtTime(d.lastFetchedAt)} · ` : ''}refreshes every ${Math.round(d.refreshEveryHours / 24)} days`}
         />
-        <MetricCard label="Source" value={d.sources.includes('OEWS_IMPORT') ? 'Imported table' : 'BLS'} hint={d.apiKeyConfigured ? 'Public API, with a key' : 'Public API, no key'} />
-      </div>
+      </MetricStrip>
+      <p className="text-sm text-ink-muted">
+        {d.sources.includes('OEWS_IMPORT')
+          ? 'From a table imported from the U.S. Bureau of Labor Statistics’ Occupational Employment and Wage Statistics.'
+          : `From the U.S. Bureau of Labor Statistics’ Occupational Employment and Wage Statistics, through its public API${d.apiKeyConfigured ? ' with a registration key' : ''}.`}
+      </p>
 
       {d.pairs === 0 ? (
         <Card>
@@ -77,7 +83,7 @@ export function MarketDataTab() {
           <CardContent className="space-y-4 p-4 md:p-5">
             <SectionTitle
               icon={RefreshCw}
-              title="Fetch from the Bureau of Labor Statistics"
+              title="Fetch new figures"
               description="Occupational Employment and Wage Statistics: hourly wages at the 10th, 25th, 50th, 75th and 90th percentile, by metro area."
               trailing={
                 canManage ? (

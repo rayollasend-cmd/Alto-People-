@@ -393,10 +393,10 @@ export async function reverseEntry(db: Db, id: string, input: { date: string; me
  * balances — the one number the Books overview, the cash forecast and the
  * bill run read (finance walk 2, 8).
  */
-export async function cashOnHand(db: Db, through: string): Promise<{ total: number; accounts: number }> {
+export async function cashOnHand(db: Db, through: string): Promise<{ total: number; accounts: number; postedAccounts: number }> {
   const tenantId = tenantIdForWrite();
   const accounts = await db.ledgerAccount.findMany({ where: { tenantId, isActive: true, subtype: { in: ['BANK', 'CREDIT_CARD'] } }, select: { id: true, subtype: true } });
-  if (accounts.length === 0) return { total: 0, accounts: 0 };
+  if (accounts.length === 0) return { total: 0, accounts: 0, postedAccounts: 0 };
   const rows = await db.journalLine.groupBy({
     by: ['accountId'],
     where: { tenantId, accountId: { in: accounts.map((a) => a.id) }, entry: { status: 'POSTED', entryDate: { lte: dateOnly(through) } } },
@@ -405,7 +405,9 @@ export async function cashOnHand(db: Db, through: string): Promise<{ total: numb
   const net = new Map(rows.map((r) => [r.accountId, toCents(r._sum.debit) - toCents(r._sum.credit)]));
   // A bank account is debit-normal (cash in = debit); a card's balance is what is owed, so it counts against cash.
   const total = accounts.reduce((s, a) => s + (net.get(a.id) ?? 0), 0);
-  return { total: fromCents(total), accounts: accounts.length };
+  // postedAccounts: how many of them hold any posted line — 0 means the
+  // books have accounts but no balance on file, not a real $0.00.
+  return { total: fromCents(total), accounts: accounts.length, postedAccounts: rows.length };
 }
 
 export async function accountBalance(db: Db, accountId: string, through: string): Promise<number> {

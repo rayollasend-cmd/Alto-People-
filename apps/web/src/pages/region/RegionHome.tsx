@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUpDown, Building2, Inbox, MessageSquare, Search, Store } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, Building2, Download, FileText, Inbox, MessageSquare, Search, Store } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtRelativeDate, fmtTime, parseYmd, zonedMinutesOfDay } from '@/lib/format';
@@ -18,6 +18,13 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { CoverageCurve, DetailsTable, ReliabilityChart, RingMeter, StatTile, StoreBarChart } from '@/pages/portal/portalCharts';
 import { hourLabel } from '@/pages/portal/coverage';
 import { PushPrompt } from '@/components/PushPrompt';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import type { PageAction } from '@/components/ui/PageHeader';
+import { ServiceReportDialog } from '@/pages/portal/ServiceReportDialog';
+import { downloadCsv } from '@/lib/csv';
+import { ymdLocal } from '@/lib/format';
+import { useUrlParam } from '@/lib/useUrlState';
 
 /**
  * The region command center — the market manager's page. Reads the way a
@@ -51,6 +58,9 @@ export function RegionHome() {
   const previewId = searchParams.get('regionId');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortKey>('rank');
+  const [reportOpen, setReportOpen] = useState(false);
+  // Cards for a handful of stores; the table is the working view past six.
+  const VIEWS = ['cards', 'table'] as const;
 
   const enabled = isRegion || (canPreview && !!previewId);
   const query = useQuery({
@@ -61,6 +71,7 @@ export function RegionHome() {
     refetchOnWindowFocus: true,
   });
   const data = query.data;
+  const [view, setView] = useUrlParam<'cards' | 'table'>('view', (data?.stores.length ?? 0) > 6 ? 'table' : 'cards', VIEWS);
 
   const stores = useMemo(() => {
     const all = [...(data?.stores ?? [])];
@@ -132,14 +143,46 @@ export function RegionHome() {
     label: w.current ? t('portal.relNowShort') : fmtDate(parseYmd(w.start)).replace(/,.*$/, ''),
   }));
 
+  // The store furthest below contract leads (the list is ranked that way).
+  const worst = data.stores[0] ?? null;
+  const headerActions: PageAction[] = [
+    {
+      key: 'report',
+      label: t('portal.svcReport'),
+      icon: FileText,
+      primary: true,
+      onSelect: () => setReportOpen(true),
+      hint: t('portal.svcReportHint'),
+      hidden: data.stores.length === 0,
+    },
+    { key: 'messages', label: t('msg.title'), icon: MessageSquare, to: '/messages', hidden: data.preview },
+  ];
+  const exportCsv = () =>
+    downloadCsv(`${data.region.name.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-stores-${ymdLocal()}.csv`, [
+      [t('region.colStore'), t('region.colGrade'), t('portal.chartShowed'), t('region.colFloor'), t('portal.chartContracted'), t('region.colToday'), t('region.colTomorrow'), t('region.colRequests'), t('region.colLeads')],
+      ...stores.map((s) => [
+        s.name,
+        s.reliability.grade ?? '',
+        s.reliability.score ?? '',
+        s.now.onFloor,
+        s.now.target ?? '',
+        `${s.today.present}/${s.today.expected}`,
+        s.tomorrow.expected,
+        s.requests.open,
+        `${s.leads.onFloor}/${s.leads.total}`,
+      ]),
+    ]);
+
   /** The one line each tile says — its alarm, or that it is covered. */
   const storeStatus = (s: StoreSnapshot): { tone: Tone; text: string } => {
     // Each line names its "short": below the contract, or scheduled and not in.
     const shortText = (n: number, basis: 'contract' | 'schedule' | undefined) =>
       basis === 'schedule' ? t('region.tileMissingScheduled', { count: n }) : t('region.tileBelowContract', { count: n });
-    if (s.alert) return { tone: 'bad', text: t('region.tileMissingScheduled', { count: s.now.missingFromSchedule ?? s.now.short }) };
-    // Below contract outranks a late request: it is the store's service right now.
+    // Below contract outranks everything: it is the store's service right
+    // now, the line the hero counts ("1 store below contract"). Then people
+    // scheduled and past the grace period, then the day's gaps, then late replies.
     if (s.now.short > 0 && s.now.shortBasis === 'contract') return { tone: 'bad', text: shortText(s.now.short, s.now.shortBasis) };
+    if (s.alert) return { tone: 'bad', text: t('region.tileMissingScheduled', { count: s.now.missingFromSchedule ?? s.now.short }) };
     if (s.today.open > 0) return { tone: 'bad', text: t('region.attnOpenToday', { count: s.today.open }) };
     if (s.requests.overdue > 0) return { tone: 'bad', text: t('region.attnOverdue', { count: s.requests.overdue }) };
     if (s.now.short > 0) return { tone: 'warn', text: shortText(s.now.short, s.now.shortBasis) };
@@ -170,16 +213,7 @@ export function RegionHome() {
             </span>
           </span>
         }
-        actions={
-          !data.preview ? (
-            <Button size="sm" asChild>
-              <Link to="/messages">
-                <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                {t('msg.title')}
-              </Link>
-            </Button>
-          ) : undefined
-        }
+        actions={headerActions}
         hero={
       <Card
         className={cn(
@@ -214,7 +248,7 @@ export function RegionHome() {
                 {tot.target === null
                   ? t('region.heroNoTargets')
                   : short
-                    ? t('region.heroShort', { missing: tot.target - tot.onFloor, stores: tot.shortNow })
+                    ? t('region.heroShort', { missing: tot.target - tot.onFloor, count: tot.shortNow })
                     : t('region.heroMet')}
               </p>
               <dl className="mt-4 grid grid-cols-3 gap-3 text-center">
@@ -267,189 +301,42 @@ export function RegionHome() {
         banners={isRegion ? <PushPrompt /> : undefined}
         assistant={<HugoSeat />}
       >
+      <ServiceReportDialog
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        scope={new URLSearchParams(data.preview && worst ? { clientId: worst.clientId } : {})}
+        stores={data.stores.map((st) => ({ id: st.id, name: st.name, clientId: st.clientId }))}
+        initialStoreId={worst?.id ?? null}
+      />
       {/* ---- The store rail: one tile per store, each carrying its own alarm ---- */}
       <section aria-labelledby="region-stores">
-        <div className="flex items-baseline justify-between gap-3 px-0.5">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-0.5">
           <h2 id="region-stores" className="text-sm font-medium text-white">
             {t('region.storesRail')}
           </h2>
-          <span className="text-xs text-silver/60">{t('region.storesRailHint')}</span>
-        </div>
-        {data.stores.length === 0 ? (
-          <Card className="mt-2">
-            <CardContent>
-              <EmptyState icon={Store} title={t('region.noStores')} description={t('region.noStoresHint')} />
-            </CardContent>
-          </Card>
-        ) : (
-          <ul
-            className={cn(
-              'mt-2 grid grid-cols-2 gap-3 md:grid-cols-3',
-              data.stores.length >= 5 ? 'xl:grid-cols-5' : data.stores.length === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3',
-            )}
-          >
-            {data.stores.map((s) => {
-              const st = storeStatus(s);
-              const pct = s.now.target ? Math.min(100, Math.round((s.now.onFloor / s.now.target) * 100)) : null;
-              return (
-                <li key={s.id} className="min-w-0">
-                  <Link
-                    to={storeHref(s)}
-                    className={cn(
-                      'block h-full rounded-xl border bg-navy-surface p-4 transition-colors hover:border-gold/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold',
-                      st.tone === 'bad' ? 'border-alert/40 bg-gradient-to-b from-alert/[0.08] to-transparent' : 'border-navy-secondary',
-                    )}
-                    aria-label={`${s.name} · ${s.now.onFloor}${s.now.target !== null ? ` / ${s.now.target}` : ''} · ${st.text}`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="min-w-0 truncate text-sm font-medium text-white">{s.name}</span>
-                      <span
-                        className={cn('shrink-0 text-base font-bold leading-none', s.reliability.grade ? GRADE_STYLE[s.reliability.grade] : 'text-silver/40')}
-                        title={s.reliability.score !== null ? `${s.reliability.score}%` : undefined}
-                      >
-                        {s.reliability.grade ?? '—'}
-                      </span>
-                    </div>
-                    <div className="mt-3 flex items-center gap-3">
-                      <RingMeter percent={pct} tone={TONE_RING[st.tone]} size={64} label={t('region.colFloor')}>
-                        <span className={cn('text-lg font-bold leading-none tabular-nums', s.now.short > 0 ? 'text-warning' : 'text-white')}>
-                          {s.now.onFloor}
-                        </span>
-                      </RingMeter>
-                      <div className="min-w-0">
-                        <div className="text-2xs uppercase tracking-wider text-silver/60">{t('region.colFloor')}</div>
-                        <div className="text-sm tabular-nums text-white">
-                          {s.now.onFloor}
-                          {s.now.target !== null && <span className="text-silver/50"> / {s.now.target}</span>}
-                        </div>
-                        <div className="mt-1 text-2xs text-silver/60 tabular-nums">
-                          {t('region.tileToday', { present: s.today.present, expected: s.today.expected })}
-                        </div>
-                      </div>
-                    </div>
-                    <p className={cn('mt-3 flex items-center gap-1.5 text-xs', TONE_TEXT[st.tone])}>
-                      {st.tone === 'bad' && <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
-                      <span className="truncate">{st.text}</span>
-                    </p>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      {/* ---- KPI strip: the numbers that go upward ------------------------------ */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <StatTile
-          label={t('region.kpiGrade')}
-          value={tot.score === null ? '—' : `${tot.score}%`}
-          delta={tot.gradeCounts.F > 0 ? t('region.kpiGradeF', { count: tot.gradeCounts.F }) : t('region.kpiGradeA', { count: tot.gradeCounts.A })}
-          deltaTone={tot.gradeCounts.F > 0 ? 'bad' : 'good'}
-          meter={tot.score !== null ? { percent: tot.score, tone: tot.score >= 88 ? 'good' : tot.score >= 70 ? 'primary' : 'bad' } : null}
-          sub={t('region.kpiGradeSub', { a: tot.gradeCounts.A, b: tot.gradeCounts.B, f: tot.gradeCounts.F })}
-        />
-        <StatTile
-          label={t('region.kpiShort')}
-          value={tot.shortNow}
-          unit={t('region.kpiShortUnit', { total: tot.stores })}
-          deltaTone={tot.shortNow > 0 ? 'bad' : 'good'}
-          sub={tot.alerts > 0 ? t('region.kpiShortAlerts', { count: tot.alerts }) : tot.shortNow > 0 ? t('region.kpiBelowContractSub', { count: tot.shortNow }) : t('region.kpiFloorOk')}
-        />
-        <StatTile
-          label={t('region.kpiOpen')}
-          value={tot.openToday}
-          unit={t('region.kpiOpenUnit')}
-          deltaTone={tot.openToday > 0 ? 'bad' : 'good'}
-          sub={t('region.kpiOpenSub', { open: tot.openTomorrow, unconfirmed: tot.unconfirmedTomorrow })}
-        />
-        <StatTile
-          label={t('region.kpiRequests')}
-          value={tot.openRequests}
-          delta={tot.overdueRequests > 0 ? t('region.kpiRequestsOverdue', { count: tot.overdueRequests }) : null}
-          deltaTone="bad"
-          sub={t('region.kpiRequestsSub')}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-        {/* ---- Stores side by side (delivered vs contracted, 4 weeks) ------- */}
-        <Card className="xl:col-span-7">
-          <CardContent>
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-medium text-white">{t('region.storesChart')}</h2>
-              <span className="text-xs text-silver/60">{t('region.storesChartSub')}</span>
-            </div>
-            <div className="mt-3">
-              <StoreBarChart
-                rows={data.stores.map((s) => ({ id: s.id, name: s.name, value: s.reliability.score }))}
-                labels={{ value: t('portal.chartShowed'), target: t('portal.chartTarget'), heading: (n) => n }}
+          {data.stores.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Cards for a handful of stores; the table is the working view of a 10–40 store region. */}
+              <SegmentedControl
+                ariaLabel={t('region.viewLabel')}
+                options={[
+                  { value: 'cards', label: t('region.viewCards') },
+                  { value: 'table', label: t('region.viewTable') },
+                ]}
+                value={view}
+                onChange={(v) => setView(v)}
               />
+              {view === 'table' && (
+                <Button size="sm" variant="ghost" onClick={exportCsv}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  {t('region.exportCsv')}
+                </Button>
+              )}
             </div>
-            <DetailsTable
-              label={t('portal.details')}
-              columns={[t('region.colStore'), t('region.colGrade'), t('portal.chartShowed')]}
-              rows={data.stores.map((s) => [s.name, s.reliability.grade ?? '—', s.reliability.score === null ? '—' : `${s.reliability.score}%`])}
-            />
-          </CardContent>
-        </Card>
-
-        {/* ---- Region trend ---------------------------------------------------- */}
-        <Card className="xl:col-span-5">
-          <CardContent>
-            <h2 className="text-sm font-medium text-white">{t('region.trend')}</h2>
-            <div className="mt-3">
-              <ReliabilityChart weeks={relWeeks} labels={{ fill: t('portal.chartShowed'), target: t('portal.chartTarget'), heading: (l) => l }} />
-            </div>
-            <DetailsTable
-              label={t('portal.details')}
-              columns={[t('portal.chartWeek'), t('portal.chartShowed')]}
-              rows={data.weeks.map((w) => [fmtDate(parseYmd(w.start)), w.reliabilityPct === null ? '—' : `${w.reliabilityPct}%`])}
-            />
-          </CardContent>
-        </Card>
-
-        {/* ---- Open with Alto --------------------------------------------------- */}
-        <Card className="xl:col-span-12">
-          <CardContent>
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-                <Inbox className="h-4 w-4 text-gold" aria-hidden="true" />
-                {t('region.openRequests')}
-              </h2>
-              <span className="text-xs text-silver/60 tabular-nums">{data.requests.length}</span>
-            </div>
-            {data.requests.length === 0 ? (
-              <p className="mt-3 text-sm text-silver/60">{t('region.openRequestsNone')}</p>
-            ) : (
-              <ul className="mt-3 divide-y divide-navy-secondary/60">
-                {data.requests.slice(0, 12).map((r) => (
-                  <li key={r.id} className="flex flex-wrap items-center gap-2 py-2">
-                    <span className="min-w-0 flex-1 truncate text-sm text-white">{r.subject}</span>
-                    <Badge variant="outline">{r.storeName}</Badge>
-                    <Badge variant={r.overdue ? 'destructive' : r.status === 'IN_PROGRESS' ? 'accent' : 'pending'}>
-                      {r.overdue ? t('portal.reqOverdue') : r.status === 'IN_PROGRESS' ? t('portal.reqInProgress') : t('portal.reqReceived')}
-                    </Badge>
-                    <span className="w-full text-2xs text-silver/50 sm:w-auto">
-                      {fmtRelativeDate(r.createdAt)}
-                      {r.owner ? ` · ${r.owner}` : ''}
-                      {r.about ? ` · ${t('portal.reqAbout', { name: r.about })}` : ''}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ---- Every number, every store — behind Details ------------------------- */}
-      {data.stores.length > 0 && (
-        <details className="group print:hidden">
-          <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-2xs uppercase tracking-wider text-silver/60 hover:text-silver coarse:min-h-11">
-            {t('region.tableDetails')}
-          </summary>
-          <Card className="mt-2">
+          )}
+        </div>
+        {data.stores.length > 0 && view === 'table' ? (
+          <Card className="mt-2" data-testid="region-table">
             <CardContent>
               <label className="relative block w-full sm:w-64">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-silver/50" aria-hidden="true" />
@@ -525,8 +412,180 @@ export function RegionHome() {
               </div>
             </CardContent>
           </Card>
-        </details>
-      )}
+        ) : data.stores.length === 0 ? (
+          <Card className="mt-2">
+            <CardContent>
+              <EmptyState icon={Store} title={t('region.noStores')} description={t('region.noStoresHint')} />
+            </CardContent>
+          </Card>
+        ) : (
+          <ul
+            className={cn(
+              'mt-2 grid grid-cols-2 gap-3 md:grid-cols-3',
+              data.stores.length >= 5 ? 'xl:grid-cols-5' : data.stores.length === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3',
+            )}
+          >
+            {data.stores.map((s) => {
+              const st = storeStatus(s);
+              const pct = s.now.target ? Math.min(100, Math.round((s.now.onFloor / s.now.target) * 100)) : null;
+              return (
+                <li key={s.id} className="min-w-0">
+                  <Link
+                    to={storeHref(s)}
+                    className={cn(
+                      'block h-full rounded-xl border bg-navy-surface p-4 transition-colors hover:border-gold/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold',
+                      st.tone === 'bad' ? 'border-alert/40 bg-gradient-to-b from-alert/[0.08] to-transparent' : 'border-navy-secondary',
+                    )}
+                    aria-label={`${s.name} · ${s.now.onFloor}${s.now.target !== null ? ` / ${s.now.target}` : ''} · ${st.text}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 truncate text-sm font-medium text-white">{s.name}</span>
+                      <span
+                        className={cn('shrink-0 text-base font-bold leading-none', s.reliability.grade ? GRADE_STYLE[s.reliability.grade] : 'text-silver/40')}
+                        title={s.reliability.score !== null ? `${s.reliability.score}%` : undefined}
+                      >
+                        {s.reliability.grade ?? '—'}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex items-center gap-3">
+                      <RingMeter percent={pct} tone={TONE_RING[st.tone]} size={64} label={t('region.ringOfContract')}>
+                        <span className={cn('text-base font-bold leading-none tabular-nums', s.now.short > 0 ? 'text-warning' : 'text-white')}>
+                          {pct !== null ? `${pct}%` : '—'}
+                        </span>
+                      </RingMeter>
+                      <div className="min-w-0">
+                        <div className="text-2xs uppercase tracking-wider text-silver/60">{t('region.colFloor')}</div>
+                        <div className="text-sm tabular-nums text-white">
+                          {s.now.onFloor}
+                          {s.now.target !== null && <span className="text-silver/50"> / {s.now.target}</span>}
+                        </div>
+                        <div className="mt-1 text-2xs text-silver/60 tabular-nums">
+                          {t('region.tileToday', { present: s.today.present, expected: s.today.expected })}
+                        </div>
+                      </div>
+                    </div>
+                    <p className={cn('mt-3 flex items-center gap-1.5 text-xs', TONE_TEXT[st.tone])}>
+                      {st.tone === 'bad' && <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                      <span className="line-clamp-2">{st.text}</span>
+                    </p>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* ---- KPI strip: the numbers that go upward ------------------------------ */}
+      <MetricStrip label={t('region.title')}>
+        <StatTile
+          label={t('region.kpiGrade')}
+          value={tot.score === null ? '—' : `${tot.score}%`}
+          delta={tot.gradeCounts.F > 0 ? t('region.kpiGradeF', { count: tot.gradeCounts.F }) : t('region.kpiGradeA', { count: tot.gradeCounts.A })}
+          deltaTone={tot.gradeCounts.F > 0 ? 'bad' : 'good'}
+          meter={tot.score !== null ? { percent: tot.score, tone: tot.score >= 88 ? 'good' : tot.score >= 70 ? 'primary' : 'bad' } : null}
+          sub={t('region.kpiGradeSub', { a: tot.gradeCounts.A, b: tot.gradeCounts.B, f: tot.gradeCounts.F })}
+        />
+        <StatTile
+          label={t('region.kpiShort')}
+          value={tot.shortNow}
+          unit={t('region.kpiShortUnit', { total: tot.stores })}
+          deltaTone={tot.shortNow > 0 ? 'bad' : 'good'}
+          sub={tot.shortNow > 0 ? t('region.kpiBelowContractSub', { count: tot.shortNow }) : tot.alerts > 0 ? t('region.kpiShortAlerts', { count: tot.alerts }) : t('region.kpiFloorOk')}
+        />
+        <StatTile
+          label={t('region.kpiOpen')}
+          value={tot.openToday}
+          unit={t('region.kpiOpenUnit')}
+          deltaTone={tot.openToday > 0 ? 'bad' : 'good'}
+          sub={t('region.kpiOpenSub', { open: tot.openTomorrow, unconfirmed: tot.unconfirmedTomorrow })}
+        />
+        <StatTile
+          label={t('region.kpiRequests')}
+          value={tot.openRequests}
+          delta={tot.overdueRequests > 0 ? t('region.kpiRequestsOverdue', { count: tot.overdueRequests }) : null}
+          deltaTone="bad"
+          sub={t('region.kpiRequestsSub')}
+        />
+      </MetricStrip>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        {/* ---- Stores side by side (delivered vs contracted, 4 weeks) ------- */}
+        <Card className="xl:col-span-7">
+          <CardContent>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-medium text-white">{t('region.storesChart')}</h2>
+              <span className="text-xs text-silver/60">{t('region.storesChartSub')}</span>
+            </div>
+            <div className="mt-3">
+              <StoreBarChart
+                rows={data.stores.map((s) => ({ id: s.id, name: s.name, value: s.reliability.score }))}
+                labels={{ value: t('portal.chartShowed'), target: t('portal.chartTarget'), heading: (n) => n }}
+              />
+            </div>
+            <DetailsTable
+              label={t('portal.details')}
+              columns={[t('region.colStore'), t('region.colGrade'), t('portal.chartShowed')]}
+              rows={data.stores.map((s) => [s.name, s.reliability.grade ?? '—', s.reliability.score === null ? '—' : `${s.reliability.score}%`])}
+            />
+          </CardContent>
+        </Card>
+
+        {/* ---- Region trend ---------------------------------------------------- */}
+        <Card className="xl:col-span-5">
+          <CardContent>
+            <h2 className="text-sm font-medium text-white">{t('region.trend')}</h2>
+            <div className="mt-3">
+              <ReliabilityChart weeks={relWeeks} labels={{ fill: t('portal.chartShowed'), target: t('portal.chartTarget'), heading: (l) => l }} />
+            </div>
+            <DetailsTable
+              label={t('portal.details')}
+              columns={[t('portal.chartWeek'), t('portal.chartShowed')]}
+              rows={data.weeks.map((w) => [fmtDate(parseYmd(w.start)), w.reliabilityPct === null ? '—' : `${w.reliabilityPct}%`])}
+            />
+          </CardContent>
+        </Card>
+
+        {/* ---- Open with Alto --------------------------------------------------- */}
+        <Card className="xl:col-span-12">
+          <CardContent>
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                <Inbox className="h-4 w-4 text-gold" aria-hidden="true" />
+                {t('region.openRequests')}
+              </h2>
+              <span className="text-xs text-silver/60 tabular-nums">{data.requests.length}</span>
+            </div>
+            {data.requests.length === 0 ? (
+              <p className="mt-3 text-sm text-silver/60">{t('region.openRequestsNone')}</p>
+            ) : (
+              <ul className="mt-3 divide-y divide-navy-secondary/60">
+                {data.requests.slice(0, 12).map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center gap-2 py-2">
+                    {/* The subject on its own line (it shrank to one letter beside the badges on a phone). */}
+                    <span className="line-clamp-2 w-full break-words text-sm text-white sm:w-auto sm:min-w-0 sm:flex-1">{r.subject}</span>
+                    <Badge variant="outline">{r.storeName}</Badge>
+                    <Badge variant={r.status === 'IN_PROGRESS' ? 'accent' : 'pending'}>
+                      {r.status === 'IN_PROGRESS' ? t('portal.reqInProgress') : t('portal.reqReceived')}
+                    </Badge>
+                    {r.overdue && r.dueAt && (
+                      <span className="text-xs font-medium tabular-nums text-alert">
+                        {t('portal.reqReplyOverdue', { count: Math.max(1, Math.floor((Date.now() - Date.parse(r.dueAt)) / 86_400_000)) })}
+                      </span>
+                    )}
+                    <span className="w-full text-2xs text-silver/50 sm:w-auto">
+                      {fmtRelativeDate(r.createdAt)}
+                      {r.owner ? ` · ${r.owner}` : ''}
+                      {r.about ? ` · ${t('portal.reqAbout', { name: r.about })}` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
     </HomeTemplate>
   );
 }

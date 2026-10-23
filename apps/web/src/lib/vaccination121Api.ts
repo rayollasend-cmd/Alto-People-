@@ -45,7 +45,7 @@ export interface CoverageReport {
 
 export const KIND_LABELS: Record<VaccinationKind, string> = {
   COVID19: 'COVID-19',
-  INFLUENZA_FLU: 'Influenza (flu)',
+  INFLUENZA_FLU: 'Flu',
   HEPATITIS_B: 'Hepatitis B',
   TDAP: 'Tdap',
   MMR: 'MMR',

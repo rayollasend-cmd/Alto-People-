@@ -68,11 +68,14 @@ interface ShiftListFilters {
   to?: string;
   /** One shift by id (still scoped to what the caller may see). */
   id?: string;
+  /** false = not over yet, true = already over (with OPEN: "Open" vs "Went unfilled"). */
+  ended?: boolean;
 }
 
 function qs(filters: ShiftListFilters): string {
   const p = new URLSearchParams();
   if (filters.status) p.set('status', filters.status);
+  if (filters.ended !== undefined) p.set('ended', String(filters.ended));
   if (filters.clientId) p.set('clientId', filters.clientId);
   if (filters.locationId) p.set('locationId', filters.locationId);
   if (filters.from) p.set('from', filters.from);
@@ -302,6 +305,8 @@ export function closeOutUnfilled(body: {
   locationId?: string;
   from?: string;
   to?: string;
+  /** One row's Close out: only these shifts (still only ended OPEN ones). */
+  shiftIds?: string[];
 }): Promise<{ closed: number; shiftIds: string[] }> {
   return apiFetch<{ closed: number; shiftIds: string[] }>('/scheduling/shifts/close-out-unfilled', {
     method: 'POST',
@@ -450,6 +455,11 @@ export function laborCosts(params: {
   if (params.clientId) p.set('clientId', params.clientId);
   if (params.locationId) p.set('locationId', params.locationId);
   return apiFetch<LaborCostReportResponse>(`/scheduling/labor-costs?${p.toString()}`);
+}
+
+/** The pay periods the labor-cost report opens on (newest first; YYYY-MM-DD, end inclusive). */
+export function laborCostPeriods(): Promise<{ periods: Array<{ start: string; end: string; current: boolean; hasRun: boolean }> }> {
+  return apiFetch('/scheduling/labor-costs/periods');
 }
 
 /** Every in-scope store with its current expected floor headcount. */

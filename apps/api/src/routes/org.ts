@@ -55,6 +55,7 @@ import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
+import { profileMoveChanges } from '../lib/jobProfileMove.js';
 
 export const orgRouter = Router();
 
@@ -720,6 +721,9 @@ orgRouter.put('/staff/:userId/reports-to', MANAGE, async (req: Request, res: Res
 orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
   const clientId =
     typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
+  // ?id= — one person's org fields (the org-assignment drawer a person's
+  // record opens); still inside the tenant and the caller's reach below.
+  const onlyId = typeof req.query.id === 'string' && /^[0-9a-f-]{36}$/i.test(req.query.id) ? req.query.id : undefined;
   // Former people (deactivated) only when asked for: ?former=1.
   const former = req.query.former === '1';
   const LIST_CAP = 1000;
@@ -734,6 +738,7 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
         // Where they work now (a transfer moves them), else the client
         // they applied to — lib/scope.atClient.
         clientId ? atClient(clientId) : {},
+        onlyId ? { id: onlyId } : {},
       ],
     },
     select: {
@@ -794,10 +799,7 @@ async function assertProfileMoveNeedsNoApproval(fromId: string | null, toId: str
   const rows = await prisma.jobProfile.findMany({ where: { id: { in: ids } }, select: { id: true, title: true, isExempt: true, wcClassCode: true, tippedOccupationCode: true } });
   const from = rows.find((r) => r.id === fromId) ?? null;
   const to = rows.find((r) => r.id === toId) ?? null;
-  const changes: string[] = [];
-  if ((from?.isExempt ?? false) !== (to?.isExempt ?? false)) changes.push('overtime exemption');
-  if (from?.wcClassCode && to?.wcClassCode && from.wcClassCode !== to.wcClassCode) changes.push("workers' comp class");
-  if ((from?.tippedOccupationCode ?? null) !== (to?.tippedOccupationCode ?? null)) changes.push('tipped occupation code');
+  const changes = profileMoveChanges(from, to);
   if (changes.length > 0) {
     throw new HttpError(
       409,

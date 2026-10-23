@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import {
   CalendarDays,
   ChevronLeft,
@@ -13,17 +13,21 @@ import {
   Users,
   FileText,
 } from 'lucide-react';
+import { LATE_GRACE_MINUTES } from '@alto-people/shared';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { regionOverview, type RegionOverview } from '@/lib/regionsApi';
+import { useUrlParam } from '@/lib/useUrlState';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtShiftRangeTz, fmtTime, fmtTimeTz, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtShiftRangeTz, fmtShiftTz, fmtTime, fmtTimeTz, parseYmd, phoneHref, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { QueryError } from '@/components/ui/QueryError';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { groupWaves, waveName, wavePresent, type Wave, type WaveName, type WaveRow } from './waves';
@@ -60,8 +64,13 @@ interface DayPayload {
   onFloorNow?: Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
   summary: { expected: number; worked: number; onFloor: number; missed: number; open: number };
   /** The store's named shift windows and who leads each. */
-  windowLeads?: Array<{ locationId: string; label: string; startMinute: number; endMinute: number; leads: string[] }>;
+  windowLeads?: Array<{ locationId: string; label: string; startMinute: number; endMinute: number; leads: string[]; targetCount?: number }>;
+  /** A day with no shifts: the next published one in the same scope (null: none). */
+  nextShift?: { startsAt: string; endsAt: string; position: string; timezone: string } | null;
 }
+
+type CrewView = 'list' | 'faces';
+const CREW_VIEWS: readonly CrewView[] = ['list', 'faces'];
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 const WAVE_KEY: Record<WaveName, MessageKey> = {
@@ -87,8 +96,22 @@ export function PortalToday() {
   const date = searchParams.get('date') ?? ymdLocal();
   const qs = `?${new URLSearchParams([...scope.entries(), ['date', date]]).toString()}`;
 
-  const enabled = isPortal || isFloorLead || (canPreview && !!previewId);
-  const homeTo = isFloorLead ? '/' : `/portal${scopeQs}`;
+  // A REGION account (the command center) has no store of its own: the day
+  // API answers 400 "Pick a store in your region" until one is named, so the
+  // page asks which store instead of a red banner Retry can't fix (F500 G2).
+  const isRegion = isPortal && !user?.clientId && !!user?.regionId;
+  const needsStore = isRegion && !searchParams.get('locationId');
+  const enabled = (isPortal && !needsStore) || isFloorLead || (canPreview && !!previewId);
+  const homeTo = isFloorLead ? '/' : isRegion ? '/region' : `/portal${scopeQs}`;
+  const regionStores = useQuery({
+    queryKey: ['region', 'overview', 'me'],
+    queryFn: () => regionOverview(null),
+    enabled: needsStore,
+    staleTime: 60_000,
+  });
+  // Names in rows at every width; the face wall is an optional compact mode.
+  const [crewView, setCrewView] = useUrlParam<CrewView>('view', 'list', CREW_VIEWS);
+  const faces = crewView === 'faces';
   const query = useQuery({
     queryKey: ['clientPortal', 'day', qs],
     queryFn: () => apiFetch<DayPayload>(`/client-portal/day${qs}`),
@@ -128,6 +151,19 @@ export function PortalToday() {
     return <EmptyState icon={Users} title={t('portal.todayNav')} description={t('portal.pickClient')} />;
   }
 
+  if (needsStore) {
+    return (
+      <ListTemplate
+        className="mx-auto max-w-5xl space-y-4"
+        title={t('portal.todayNav')}
+        topbarTitle={t('portal.todayNav')}
+        breadcrumbs={[{ label: t('region.title'), to: '/region' }, { label: t('portal.todayNav') }]}
+      >
+        <RegionStorePicker query={regionStores} />
+      </ListTemplate>
+    );
+  }
+
   const goDay = (next: string | null) => {
     const p = new URLSearchParams(searchParams);
     if (next === null) p.delete('date');
@@ -136,6 +172,19 @@ export function PortalToday() {
   };
   const isToday = date === ymdLocal();
   const isPast = date < ymdLocal();
+  // The store's contracted windows (from the day payload): what an empty day is short of.
+  const contracted = (data?.windowLeads ?? []).filter((w) => (w.targetCount ?? 0) > 0);
+  const contractTotal = contracted.reduce((n, w) => n + (w.targetCount ?? 0), 0);
+  const contractLine =
+    contracted.length === 0
+      ? null
+      : t(isPast ? 'portal.contractGapPast' : 'portal.contractGap', {
+          n: contractTotal,
+          windows:
+            contracted.length === 1
+              ? contracted[0]!.label
+              : contracted.map((w) => `${w.label} ${w.targetCount}`).join(', '),
+        });
   const dayLabel = isToday
     ? t('portal.todayNav')
     : date === shiftDays(ymdLocal(), -1)
@@ -157,91 +206,72 @@ export function PortalToday() {
         }
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
-        breadcrumbs={[{ label: isFloorLead ? t('floor.title') : t('portal.title'), to: homeTo }, { label: t('portal.todayNav') }]}
-        primaryAction={
-          <>
-            {/* The service report is the client's document — portal only. */}
-            {!isFloorLead && (
-              <>
-                <Button size="sm" variant="outline" className="print:hidden" onClick={() => setReportOpen(true)}>
-                  <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                  {t('portal.svcReport')}
-                </Button>
-                <ServiceReportDialog open={reportOpen} onClose={() => setReportOpen(false)} scope={scope} initial={{ kind: 'day', date }} />
-              </>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              className="hidden print:hidden sm:inline-flex"
-              disabled={!data || data.roster.length === 0}
-              onClick={() =>
-                data &&
-                downloadCsv(`day-${date}.csv`, [
-                  ['Date', 'Store', 'Shift start', 'Shift end', 'Name', 'Position', 'Lead', 'Status', 'Clock in', 'Clock out'],
-                  ...data.roster.map((r) => [
-                    data.date,
-                    r.locationName ?? data.store?.name ?? data.client.name,
-                    fmtTimeTz(r.startsAt, r.timezone),
-                    fmtTimeTz(r.endsAt, r.timezone),
-                    r.name ?? '',
-                    r.position,
-                    r.isLead ? 'yes' : '',
-                    r.state,
-                    r.clockInAt ? fmtTimeTz(r.clockInAt, r.timezone) : '',
-                    r.clockOutAt ? fmtTimeTz(r.clockOutAt, r.timezone) : '',
-                  ]),
-                ])
-              }
-            >
-              <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              CSV
-            </Button>
-            <Button size="sm" variant="outline" className="hidden print:hidden sm:inline-flex" onClick={() => window.print()}>
-              <Printer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.print')}
-            </Button>
-            {(!isFloorLead || can('view:scheduling')) && (
-              <Button size="sm" variant="outline" className="print:hidden" asChild>
-                <Link
-                  to={
-                    isFloorLead
-                      ? '/scheduling'
-                      : `/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`
-                  }
-                >
-                  <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                  {t('portal.openSchedule')}
-                </Link>
-              </Button>
-            )}
-          </>
-        }
+        breadcrumbs={[{ label: isFloorLead ? t('floor.title') : isRegion ? t('region.title') : t('portal.title'), to: homeTo }, { label: t('portal.todayNav') }]}
+        // One action list (PageHeader): on a phone everything sits behind one
+        // "More" sheet; the row of Service report, CSV, Print and Full schedule
+        // ran off a 390px screen (F500 G5).
+        actions={[
+          { key: 'report', label: t('portal.svcReport'), icon: FileText, onSelect: () => setReportOpen(true), hidden: isFloorLead },
+          {
+            key: 'schedule',
+            label: t('portal.openSchedule'),
+            icon: CalendarDays,
+            to: isFloorLead ? '/scheduling' : `/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`,
+            hidden: isFloorLead && !can('view:scheduling'),
+          },
+          {
+            key: 'csv',
+            label: 'CSV',
+            icon: Download,
+            disabled: !data || data.roster.length === 0,
+            onSelect: () =>
+              data &&
+              downloadCsv(`day-${date}.csv`, [
+                ['Date', 'Store', 'Shift start', 'Shift end', 'Name', 'Position', 'Lead', 'Status', 'Clock in', 'Clock out'],
+                ...data.roster.map((r) => [
+                  data.date,
+                  r.locationName ?? data.store?.name ?? data.client.name,
+                  fmtTimeTz(r.startsAt, r.timezone),
+                  fmtTimeTz(r.endsAt, r.timezone),
+                  r.name ?? '',
+                  r.position,
+                  r.isLead ? 'yes' : '',
+                  r.state,
+                  r.clockInAt ? fmtTimeTz(r.clockInAt, r.timezone) : '',
+                  r.clockOutAt ? fmtTimeTz(r.clockOutAt, r.timezone) : '',
+                ]),
+              ]),
+          },
+          { key: 'print', label: t('portal.print'), icon: Printer, onSelect: () => window.print() },
+        ]}
     >
+      {!isFloorLead && <ServiceReportDialog open={reportOpen} onClose={() => setReportOpen(false)} scope={scope} initial={{ kind: 'day', date }} />}
 
       {/* ---- Date control: one row, above everything it scopes ---------- */}
       <div className="sticky top-0 z-10 -mx-4 flex items-center gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0 print:hidden">
         <Button size="sm" variant="ghost" onClick={() => goDay(shiftDays(date, -1))} aria-label={t('portal.prevDay')}>
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </Button>
-        <div className="flex flex-1 flex-wrap items-center gap-1">
-          <Button size="sm" variant={isToday ? 'secondary' : 'ghost'} onClick={() => goDay(null)}>
+        {/* One row on a phone: Today and the date; Yesterday joins from sm (the date wrapped under them). */}
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <Button size="sm" variant={isToday ? 'secondary' : 'ghost'} onClick={() => goDay(null)} className="shrink-0">
             {t('portal.todayNav')}
           </Button>
           <Button
             size="sm"
             variant={date === shiftDays(ymdLocal(), -1) ? 'secondary' : 'ghost'}
             onClick={() => goDay(shiftDays(ymdLocal(), -1))}
+            className="hidden shrink-0 sm:inline-flex"
           >
             {t('portal.yesterday')}
           </Button>
-          <label className="ml-1 flex items-center gap-1.5 text-xs text-silver/70">
+          <label className="ml-1 flex min-w-0 flex-1 items-center gap-1.5 text-xs text-silver/70 sm:flex-none">
             <span className="sr-only">{t('portal.pickDate')}</span>
             <input
               type="date"
               value={date}
               onChange={(e) => e.target.value && goDay(e.target.value)}
-              className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-11 coarse:text-base"
+              className="h-8 w-full min-w-0 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-11 coarse:text-base sm:w-auto"
               aria-label={t('portal.pickDate')}
             />
           </label>
@@ -258,15 +288,9 @@ export function PortalToday() {
       </div>
 
       {query.isError ? (
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {t('portal.loadFailed')}
-        </ErrorBanner>
+        // The failure decides the words: a rule the request broke reads the
+        // API's own sentence, not "Couldn't load your store view" (F500 G2).
+        <QueryError what={t('portal.todayWhat')} query={query} />
       ) : !data ? (
         <div className="space-y-3">
           <Skeleton className="h-40" />
@@ -274,22 +298,78 @@ export function PortalToday() {
         </div>
       ) : (
         <>
-          {myWindows.length > 0 && (
-            <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} className="print:hidden" />
+          {(myWindows.length > 0 || waves.length > 0) && (
+            <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
+              {myWindows.length > 0 ? <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} /> : <span />}
+              {waves.length > 0 && (
+                <SegmentedControl
+                  className="hidden sm:inline-flex"
+                  ariaLabel={t('portal.viewAria')}
+                  value={crewView}
+                  onChange={setCrewView}
+                  options={[
+                    { value: 'list', label: t('portal.viewList') },
+                    { value: 'faces', label: t('portal.viewFaces') },
+                  ]}
+                />
+              )}
+            </div>
           )}
           {waves.length === 0 ? (
-            <Card>
-              <CardContent className="text-sm text-silver/60">
-                {mine ? t('focus.nothingToday') : isPast ? t('portal.noShiftsThatDay') : t('portal.noShiftsToday')}
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={CalendarDays}
+              title={mine ? t('focus.nothingToday') : isPast ? t('portal.noShiftsThatDay') : t('portal.noShiftsToday')}
+              description={
+                <>
+                  {/* The contract the empty day is short of: "Nothing scheduled against your contracted 8 (Morning)". */}
+                  {contractLine && (
+                    <span className="block text-warning" data-testid="today-contract-gap">
+                      {contractLine}
+                    </span>
+                  )}
+                  {data.nextShift === undefined
+                    ? null
+                    : data.nextShift
+                      ? t('portal.nextShiftAt', {
+                          when: fmtShiftTz(data.nextShift.startsAt, data.nextShift.timezone),
+                          position: data.nextShift.position,
+                        })
+                      : t('portal.noNextShift')}
+                </>
+              }
+              action={
+                <div className="flex flex-wrap justify-center gap-2 print:hidden">
+                  {isPortal && (
+                    <Button size="sm" asChild>
+                      <Link
+                        to={`/portal/requests?${new URLSearchParams([
+                          ...scope.entries(),
+                          ['new', 'STAFFING'],
+                          ['subject', t('portal.coverageFor', { date: fmtDate(parseYmd(date)) })],
+                        ]).toString()}`}
+                      >
+                        {t('portal.requestStaff')}
+                      </Link>
+                    </Button>
+                  )}
+                  {(!isFloorLead || can('view:scheduling')) && (
+                    <Button size="sm" variant="outline" asChild>
+                      <Link to={isFloorLead ? '/scheduling' : `/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`}>
+                        {t('portal.openSchedule')}
+                      </Link>
+                    </Button>
+                  )}
+                </div>
+              }
+            />
           ) : (
             <>
-              <DaySummary data={data} rows={focusRows} windows={mine ? myWindows : null} waves={waves.length} isToday={isToday} isPast={isPast} />
+              <DaySummary data={data} rows={focusRows} windows={mine ? myWindows : null} waves={waves.length} isToday={isToday} isPast={isPast} faces={faces} />
               {waves.map((w) => (
                 <WaveCard
                   key={w.key}
                   wave={w}
+                  faces={faces}
                   multiStore={multiStore}
                   focused={focusWave === w.startsAt}
                   window={waveWindow(w, data.windowLeads ?? [])}
@@ -301,7 +381,7 @@ export function PortalToday() {
               ))}
             </>
           )}
-          {isToday && <OffScheduleCard data={data} windows={mine ? myWindows : null} />}
+          {isToday && <OffScheduleCard data={data} windows={mine ? myWindows : null} faces={faces} />}
         </>
       )}
     </ListTemplate>
@@ -316,6 +396,7 @@ function DaySummary({
   waves,
   isToday,
   isPast,
+  faces = false,
 }: {
   data: DayPayload;
   rows: WaveRow[];
@@ -323,9 +404,11 @@ function DaySummary({
   waves: number;
   isToday: boolean;
   isPast: boolean;
+  faces?: boolean;
 }) {
   const { t } = useI18n();
   const sum = windows ? summarize(rows) : data.summary;
+  const record = isPast ? dayRecord(rows) : null;
   const onNow = data.onFloorNow
     ? (windows ? crewOnFloor(data.onFloorNow, data.roster, windows) : data.onFloorNow).length
     : sum.onFloor;
@@ -341,7 +424,16 @@ function DaySummary({
               open: sum.open,
             })
           : t('portal.daySummaryFuture', { expected: sum.expected, open: sum.open })}
-      <span className="hidden text-silver/50 sm:inline"> · {t('portal.faceHint')}</span>
+      {/* A past day also says the hours and the late arrivals (counts, never names). */}
+      {record && record.scheduledMin > 0 && (
+        <>
+          {' · '}
+          {t('portal.dayHours', { worked: hoursOf(record.workedMin), scheduled: hoursOf(record.scheduledMin) })}
+          {' · '}
+          {t('portal.dayLate', { count: record.late, n: record.late })}
+        </>
+      )}
+      {faces && <span className="hidden text-silver/50 sm:inline"> · {t('portal.faceHint')}</span>}
     </p>
   );
 }
@@ -353,6 +445,65 @@ function lateSpan(minutes: number): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/**
+ * A past day's record from the roster: hours scheduled (every staffed
+ * shift), hours worked (each completed punch), and how many punched in
+ * more than the grace period after their start.
+ */
+export function dayRecord(rows: WaveRow[]): { scheduledMin: number; workedMin: number; late: number } {
+  let scheduledMin = 0;
+  let workedMin = 0;
+  let late = 0;
+  for (const r of rows) {
+    if (r.state === 'open') continue;
+    scheduledMin += Math.max(0, (Date.parse(r.endsAt) - Date.parse(r.startsAt)) / 60_000);
+    if (r.clockInAt && r.clockOutAt) workedMin += Math.max(0, (Date.parse(r.clockOutAt) - Date.parse(r.clockInAt)) / 60_000);
+    if (r.clockInAt && Date.parse(r.clockInAt) - Date.parse(r.startsAt) > LATE_GRACE_MINUTES * 60_000) late += 1;
+  }
+  return { scheduledMin, workedMin, late };
+}
+
+/** 450 → "7.5", 480 → "8". */
+function hoursOf(minutes: number): string {
+  const h = Math.round((minutes / 60) * 10) / 10;
+  return Number.isInteger(h) ? String(h) : h.toFixed(1);
+}
+
+/** A region account picks the store whose day to read. */
+function RegionStorePicker({ query }: { query: UseQueryResult<RegionOverview> }) {
+  const { t } = useI18n();
+  if (query.isError) return <QueryError what={t('portal.todayWhat')} query={query} />;
+  if (!query.data) return <Skeleton className="h-40" />;
+  const stores = query.data.stores;
+  return (
+    <Card>
+      <CardContent>
+        <SectionTitle size="sm" title={t('portal.pickStoreTitle')} description={stores.length ? t('portal.pickStoreHint') : undefined} />
+        {stores.length === 0 ? (
+          <p className="mt-2 text-sm text-silver/70">{t('portal.pickStoreNone')}</p>
+        ) : (
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2" data-testid="region-store-picker">
+            {stores.map((st) => (
+              <li key={st.id}>
+                <Link
+                  to={`/today?locationId=${encodeURIComponent(st.id)}`}
+                  className="flex items-center justify-between gap-3 rounded-md border border-navy-secondary px-3 py-2.5 hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-ink">{st.name}</span>
+                    <span className="block truncate text-xs text-silver/70">{st.clientName}</span>
+                  </span>
+                  <span className="shrink-0 text-xs tabular-nums text-silver">{t('portal.storeOnFloor', { n: st.now.onFloor })}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 /** The store shift window a wave starts in — its name and its leads. */
@@ -372,10 +523,13 @@ function waveWindow(w: Wave, windows: WindowLead[]): WindowLead | null {
 function OffScheduleCard({
   data,
   windows = null,
+  faces = false,
 }: {
   data: DayPayload;
   /** My shift: only the walk-ins who clocked in for it. */
   windows?: Parameters<typeof clockInInWindows>[1] | null;
+  /** The optional face wall; rows (name · clocked in at · position) otherwise. */
+  faces?: boolean;
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
@@ -399,6 +553,24 @@ function OffScheduleCard({
           title={t('portal.offSchedule')}
           trailing={<span className="text-sm font-semibold tabular-nums text-ink">{people.length}</span>}
         />
+        {!faces && (
+          <ul className="mt-2 grid grid-cols-1 lg:grid-cols-2 lg:gap-x-6" data-testid="off-schedule-rows">
+            {people.map((e) => (
+              <li key={e.associateId} className="flex items-center gap-3 border-b border-navy-secondary/40 py-2">
+                <Avatar src={photoUrl(e.associateId)} name={e.name} email="" size="sm" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-ink">{e.name}</div>
+                  <div className="truncate text-xs">
+                    <span className="text-success">{t('portal.rowIn', { time: fmtTimeTz(e.clockInAt, tz) })}</span>
+                    {e.position && <span className="text-ink-muted"> · {e.position}</span>}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {faces && (
+        <>
         <ul className="mt-3 flex flex-wrap gap-2" role="list">
           {people.map((e) => {
             const isSel = selected === e.associateId;
@@ -435,6 +607,8 @@ function OffScheduleCard({
         >
           {picked ? caption(picked) : ''}
         </div>
+        </>
+        )}
       </CardContent>
     </Card>
   );
@@ -446,6 +620,7 @@ type FaceTone = 'on-floor' | 'worked' | 'missing' | 'upcoming';
 
 function WaveCard({
   wave: w,
+  faces = false,
   multiStore,
   focused = false,
   window: win = null,
@@ -453,6 +628,8 @@ function WaveCard({
   floorLead = false,
 }: {
   wave: Wave;
+  /** The face wall from sm (an optional compact mode); rows at every width otherwise. */
+  faces?: boolean;
   multiStore: boolean;
   focused?: boolean;
   /** The store's name for this shift and who leads it, when it has one. */
@@ -469,7 +646,9 @@ function WaveCard({
   const range = fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone);
   const present = wavePresent(w);
   const short = w.phase === 'live' && w.clockedIn.length < w.expected;
-  const missedSome = w.phase === 'finished' && present < w.expected;
+  // A finished wave with a slot nobody filled says so on its line ("Worked · 0 of 0" hid it).
+  const unfilledAfter = w.phase === 'finished' ? w.open.length : 0;
+  const missedSome = w.phase === 'finished' && (present < w.expected || unfilledAfter > 0);
   const pct = w.expected > 0 ? Math.round((present / w.expected) * 100) : 0;
   const headline =
     w.phase === 'finished'
@@ -511,9 +690,10 @@ function WaveCard({
     return `${who}${where} · ${when}`;
   };
 
-  // A phone reads names, not faces (role walk floor 20): one row per
-  // person with what they're doing now and a call/text button, so finding
-  // who is missing is a glance, not a tap per face.
+  // Names, not faces (role walk floor 20; F500 G2 at every width): one row
+  // per person with what they're doing now and a call/text button, so
+  // finding who is missing is a glance, not a tap per face. Two columns on
+  // a wide screen; the face wall is the optional compact mode.
   const rowStatus = (r: WaveRow): { text: string; tone: 'good' | 'bad' | 'muted' } => {
     if (r.state === 'on-floor' && r.clockInAt) return { text: t('portal.rowIn', { time: fmtTimeTz(r.clockInAt, r.timezone) }), tone: 'good' };
     if (r.state === 'worked' && r.clockInAt)
@@ -532,11 +712,16 @@ function WaveCard({
   };
   const phoneRows = groups.flatMap((g) => g.rows);
   const phoneList = (
-    <ul className="divide-y divide-navy-secondary/60 sm:hidden" aria-label={t('portal.rosterAria')} data-testid="roster-rows">
+    <ul
+      className={cn('grid grid-cols-1 lg:grid-cols-2 lg:gap-x-6', faces && 'sm:hidden')}
+      aria-label={t('portal.rosterAria')}
+      data-testid="roster-rows"
+    >
       {phoneRows.map((r) => {
         const st = rowStatus(r);
+        const tel = phoneHref(r.phone);
         return (
-          <li key={r.shiftId} className="flex items-center gap-3 py-2">
+          <li key={r.shiftId} className="flex items-center gap-3 border-b border-navy-secondary/40 py-2">
             <Avatar src={r.associateId ? photoUrl(r.associateId) : null} name={r.name ?? ''} email="" size="sm" />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium text-ink">
@@ -551,7 +736,7 @@ function WaveCard({
             {canReach && r.phone && (
               <>
                 <a
-                  href={`tel:${r.phone}`}
+                  href={tel ?? `tel:${r.phone}`}
                   className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-navy-secondary text-silver active:bg-navy-secondary/50"
                   aria-label={t('portal.callX', { name: r.name ?? '' })}
                 >
@@ -566,6 +751,15 @@ function WaveCard({
                 </a>
               </>
             )}
+            {canReach && r.messageUserId && (
+              <Link
+                to={`/messages?to=${r.messageUserId}`}
+                className="hidden h-11 w-11 shrink-0 place-items-center rounded-full border border-navy-secondary text-silver hover:text-ink sm:grid"
+                aria-label={`${t('portal.message')} · ${r.name ?? ''}`}
+              >
+                <MessageSquare className="h-4 w-4" aria-hidden="true" />
+              </Link>
+            )}
           </li>
         );
       })}
@@ -575,6 +769,7 @@ function WaveCard({
   const body = (
     <div className="space-y-4">
       {phoneList}
+      {faces && (
       <div className="hidden space-y-4 sm:block">
       {groups.map((g) => (
         <div key={g.key}>
@@ -646,6 +841,7 @@ function WaveCard({
         </div>
       ))}
       </div>
+      )}
       {w.open.length > 0 && (
         <div>
           <div className="mb-2 flex items-baseline gap-2 text-2xs uppercase tracking-wider text-silver/60">
@@ -686,7 +882,7 @@ function WaveCard({
       >
         {selected ? caption(selected) : ''}
       </div>
-      {canReach && selected?.associateId && (
+      {faces && canReach && selected?.associateId && (
         <div className="hidden flex-wrap gap-2 sm:flex" data-testid="face-reach">
           {selected.phone && (
             <Button size="sm" variant="outline" asChild>
@@ -763,6 +959,11 @@ function WaveCard({
           >
             {headline}
           </span>
+          {unfilledAfter > 0 && (
+            <span className="text-sm font-semibold tabular-nums text-alert" data-testid="wave-unfilled">
+              {t('portal.waveUnfilled', { count: unfilledAfter })}
+            </span>
+          )}
         </span>
       }
     />

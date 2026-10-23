@@ -1,5 +1,5 @@
 import { FileSignature, PiggyBank, ScrollText, UserPlus } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useUrlParam } from '@/lib/useUrlState';
 import { NewHireReportsTab, PayNoticesTab, PaystubRulesTab, RothCatchUpTab } from './PayComplianceTabs';
 import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
@@ -17,21 +17,14 @@ type Tab = 'newhire' | 'notices' | 'roth' | 'paystubs';
 const TABS: Tab[] = ['newhire', 'notices', 'roth', 'paystubs'];
 
 export function PayrollCompliance() {
-  // ?tab= deep links from the Inbox (pay notices, new-hire reports).
-  const [params, setParams] = useSearchParams();
-  const fromUrl = params.get('tab') as Tab | null;
-  const tab: Tab = fromUrl && TABS.includes(fromUrl) ? fromUrl : 'newhire';
-  const setTab = (t: Tab) => setParams((p) => {
-    const next = new URLSearchParams(p);
-    next.set('tab', t);
-    return next;
-  }, { replace: true });
+  // ?tab= deep links from the Inbox (pay notices, new-hire reports); a tab is a place, so Back returns to it.
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'newhire', TABS, { history: 'push' });
   return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    // Design system §4.2: the List template. The trail comes from the nav (Compliance › Payroll compliance),
+    // the one parent the sidebar files this page under.
     <ListTemplate
         title="Payroll compliance"
-        subtitle="New-hire reports, state pay notices and the 2026 retirement and paystub rules. Tax deposits are on Payroll taxes; garnishment payments on the garnishment desk."
-        breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Compliance' }]}
+        subtitle="New-hire reports, state pay notices, and the 2026 retirement and paystub rules."
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>

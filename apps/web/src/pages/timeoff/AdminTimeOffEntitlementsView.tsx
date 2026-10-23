@@ -153,8 +153,8 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
             <CardDescription>
               Vacation, PTO, and similar lump sums granted at the policy
               anchor each year. Carryover cap applies excess balance forward;
-              anything beyond is forfeited. Sick time uses the per-worked-hour
-              accrual model and isn't shown here.
+              anything beyond is forfeited. Sick time builds up as people
+              work; see it on each person's record.
             </CardDescription>
           </div>
           <div className="flex shrink-0 gap-2">

@@ -61,6 +61,15 @@ describe('/candidate/:token', () => {
     await waitFor(() => expect(confirmPortalInterview).toHaveBeenCalledWith('tok-1', 'iv1'));
   });
 
+  it('names the recruiter to ask, not "the email your recruiter sent" (F500 G5)', async () => {
+    vi.mocked(getCandidatePortal).mockResolvedValue({ ...PORTAL, recruiter: { name: 'Rosa Recruiter', email: 'rosa@altohr.com', phone: '+18505550199' } });
+    renderAt();
+    const line = await screen.findByTestId('contact-line');
+    expect(line).toHaveTextContent('Rosa Recruiter');
+    expect(line.querySelector('a[href="mailto:rosa@altohr.com"]')).not.toBeNull();
+    expect(screen.queryByText(/Reply to the email your recruiter sent/)).not.toBeInTheDocument();
+  });
+
   it('uploads a document asked for', async () => {
     vi.mocked(getCandidatePortal).mockResolvedValue(PORTAL);
     vi.mocked(uploadPortalDocument).mockResolvedValue({ ok: true, status: 'UPLOADED', fileName: 'licence.png' });
@@ -72,9 +81,20 @@ describe('/candidate/:token', () => {
     await waitFor(() => expect(uploadPortalDocument).toHaveBeenCalledWith('tok-1', 'd1', file));
   });
 
-  it('an expired link says how to get a new one', async () => {
-    vi.mocked(getCandidatePortal).mockRejectedValue(new ApiError(404, 'link_expired', 'expired'));
+  it('an expired link says how to get a new one — and from whom (410, F500 G5)', async () => {
+    vi.mocked(getCandidatePortal).mockRejectedValue(
+      new ApiError(410, 'link_expired', 'expired', { recruiter: { name: 'Rosa Recruiter', email: 'rosa@altohr.com', phone: null } }),
+    );
     renderAt();
     expect(await screen.findByText('This link has expired')).toBeInTheDocument();
+    expect(screen.getByText(/Ask Rosa Recruiter for a new one/)).toBeInTheDocument();
+    expect(screen.getByTestId('link-problem-contact')).toHaveTextContent('rosa@altohr.com');
+  });
+
+  it('a link we never issued is "not valid", not "expired" (404)', async () => {
+    vi.mocked(getCandidatePortal).mockRejectedValue(new ApiError(404, 'not_found', 'This link is not valid.'));
+    renderAt();
+    expect(await screen.findByText('This link isn’t valid')).toBeInTheDocument();
+    expect(screen.queryByText('This link has expired')).not.toBeInTheDocument();
   });
 });

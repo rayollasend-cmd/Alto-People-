@@ -51,11 +51,38 @@ export function EmployersAdmin() {
               Default
             </Badge>
           )}
+          {/* What the tax forms can't print without (F500 G4): said on the row, before year end. */}
+          {!r.ein && (
+            <Badge variant="pending" size="sm">
+              Missing EIN: W-2s can’t be filed
+            </Badge>
+          )}
+          {!address(r) && (
+            <Badge variant="pending" size="sm">
+              No address
+            </Badge>
+          )}
         </div>
       ),
     },
     { key: 'kind', header: 'Kind', accessor: (r) => kindLabel(r), sortable: true, cardMeta: true, className: 'text-xs' },
-    { key: 'ein', header: 'EIN', accessor: (r) => maskEin(r.ein), className: 'tabular-nums text-xs' },
+    {
+      key: 'ein',
+      header: 'EIN',
+      accessor: (r) => maskEin(r.ein),
+      className: 'tabular-nums text-xs',
+      stopRowClick: true,
+      cell: (r) =>
+        r.ein ? (
+          maskEin(r.ein)
+        ) : canManage ? (
+          <Button size="xs" variant="outline" onClick={() => setEditing(r)}>
+            Add EIN
+          </Button>
+        ) : (
+          <span className="text-warning">Missing</span>
+        ),
+    },
     { key: 'address', header: 'Address', accessor: (r) => address(r) || '—', className: 'text-xs text-silver' },
     ...(moduleOn('clientPortal') ? [{ key: 'client', header: clientNoun, accessor: (r: EmployerRow) => r.clientName ?? '—', className: 'text-xs' } satisfies GridColumn<EmployerRow>] : []),
     { key: 'employments', header: 'People employed', accessor: (r) => r.employments, align: 'right', sortable: true, className: 'tabular-nums' },
@@ -66,15 +93,7 @@ export function EmployersAdmin() {
       <PageHeader
         title="Employers of record"
         subtitle="Who legally employs each person. The W-2 or 1099 employer and the pay statement's company block come from here."
-        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: 'Employers of record' }]}
-        primaryAction={
-          canManage ? (
-            <Button size="sm" onClick={() => setEditing('new')}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Add employer of record
-            </Button>
-          ) : undefined
-        }
+        actions={[{ label: 'Add employer of record', icon: Plus, primary: true, onSelect: () => setEditing('new'), hidden: !canManage }]}
       />
       {query.isError ? <QueryError what="the employers of record" query={query} /> : null}
       <DataGrid<EmployerRow>
@@ -91,9 +110,6 @@ export function EmployersAdmin() {
         rowActionLabel={(r) => `Edit ${r.legalName}`}
         empty={{ icon: Briefcase, title: 'No employers on file', description: 'The organization’s own row is written when the first tax form is prepared.' }}
       />
-      <p className="text-xs text-silver">
-        The W-2/1099 employer and the pay statement’s company block come from here{moduleOn('clientPortal') ? `, never from a ${clientNoun.toLowerCase()} record` : ''}.
-      </p>
       {editing && <EmployerDialog employer={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
     </div>
   );

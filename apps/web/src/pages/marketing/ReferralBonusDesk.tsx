@@ -8,7 +8,8 @@ import { useAuth } from '@/lib/auth';
 import { attachBonusPayout, decideBonusPayout, listBonusPayouts, type BonusPayout } from '@/lib/marketingApi';
 import { fmtDate, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { DeskTemplate, useDeskItem } from '@/components/templates';
+import { DeskTemplate, ListTemplate, useDeskItem } from '@/components/templates';
+import type { PageFact } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -33,6 +34,11 @@ const STATUS: Record<BonusPayout['status'], { label: string; variant: 'pending' 
 export function ReferralBonusDesk() {
   const { can } = useAuth();
   const finance = can('process:payroll');
+  // The trail goes to a page this person can open: Finance (no view:marketing)
+  // reaches the desk from Pay & finance, not from a Marketing page it can't see.
+  const breadcrumbs = can('view:marketing')
+    ? [{ label: 'Marketing', to: '/marketing' }, { label: 'Referral bonuses' }]
+    : [{ label: 'Pay & finance', to: '/payroll' }, { label: 'Referral bonuses' }];
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ['marketing', 'bonus-payouts'], queryFn: () => listBonusPayouts() });
   // The open bonus is in the URL (?bonus=), so a refresh or a shared link
@@ -63,6 +69,15 @@ export function ReferralBonusDesk() {
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not attach.'),
   });
   const toDecide = payouts?.filter((p) => p.status === 'PROPOSED').length ?? 0;
+  // This calendar year's approvals: what the desk has put through.
+  const year = new Date().getFullYear();
+  const approvedThisYear = (payouts ?? []).filter((p) => p.status === 'APPROVED' && p.decidedAt && new Date(p.decidedAt).getFullYear() === year);
+  const facts: PageFact[] | undefined = payouts
+    ? [
+        { label: 'To decide', value: String(toDecide) },
+        { label: `Approved in ${year}`, value: `${fmtMoney(approvedThisYear.reduce((sum, p) => sum + p.amount, 0))} · ${approvedThisYear.length} bonus${approvedThisYear.length === 1 ? '' : 'es'}` },
+      ]
+    : undefined;
 
   const queue = q.isError ? (
     <QueryError what="bonuses" query={q} />
@@ -177,13 +192,28 @@ export function ReferralBonusDesk() {
     <EmptyState title="Pick a bonus" description="Choose one on the left to decide it." className="py-12" />
   );
 
+  // Nothing proposed yet: one empty state with the year's totals, not a list
+  // pane beside a "Pick a bonus" pane with nothing to pick (F500 G4).
+  if (payouts !== null && payouts.length === 0 && !q.isError) {
+    return (
+      <ListTemplate title="Referral bonuses" topbarTitle="Referral bonuses" subtitle="Marketing proposes, Finance approves onto a payroll run." breadcrumbs={breadcrumbs} facts={facts}>
+        <EmptyState
+          icon={Gift}
+          title="No referral bonus proposed yet"
+          description="Marketing proposes a bonus when a referred hire sticks; it shows here for Finance to approve onto a payroll run."
+          className="rounded-lg border border-dashed border-line py-10"
+        />
+      </ListTemplate>
+    );
+  }
+
   return (
     <DeskTemplate
       title="Referral bonuses"
       topbarTitle="Referral bonuses"
       subtitle="Marketing proposes, Finance approves onto a payroll run."
-      breadcrumbs={[{ label: 'Marketing', to: '/marketing' }, { label: 'Referral bonuses' }]}
-      counts={toDecide > 0 ? <Badge variant="pending">{toDecide} to decide</Badge> : undefined}
+      breadcrumbs={breadcrumbs}
+      facts={facts}
       queue={queue}
       item={item}
       // On a phone the list is the screen until a bonus is picked; on a wide

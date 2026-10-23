@@ -217,5 +217,22 @@ describe('the candidate reads and signs it', () => {
 
   it('a made-up link is a 404', async () => {
     expect((await request(app()).get('/offer-letters/not-a-real-token')).status).toBe(404);
+    expect((await request(app()).get('/offer-letters/not-a-real-token/letter.pdf')).status).toBe(404);
+  });
+
+  it('names the recruiter who sent it, and gives a copy of the letter to keep before deciding (F500 G5)', async () => {
+    const { rec, token } = await sentOffer();
+    await prisma.associate.create({ data: { firstName: 'Rosa', lastName: 'Recruiter', email: `rosa.${Date.now()}@example.com`, phone: '+18505550199' } }).then((asc) =>
+      prisma.user.update({ where: { id: rec.id }, data: { associateId: asc.id } }),
+    );
+    const view = await request(app()).get(`/offer-letters/${token}`);
+    expect(view.body.recruiter).toEqual({ name: 'Rosa Recruiter', email: rec.email, phone: '+18505550199' });
+    const pdf = await request(app()).get(`/offer-letters/${token}/letter.pdf`).buffer(true);
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers['content-type']).toBe('application/pdf');
+    expect(pdf.headers['content-disposition']).toMatch(/^attachment; filename="offer-letter-cashier\.pdf"$/);
+    expect(pdf.body.subarray(0, 4).toString()).toBe('%PDF');
+    // Reading the copy does not use the link up.
+    expect((await request(app()).get(`/offer-letters/${token}`)).status).toBe(200);
   });
 });

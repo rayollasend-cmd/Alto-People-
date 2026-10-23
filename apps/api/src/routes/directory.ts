@@ -4,14 +4,17 @@ import type { Prisma } from '@prisma/client';
 import {
   DirectoryEntrySchema,
   DirectoryListResponseSchema,
+  PersonOverviewSchema,
   WORK_STATUSES,
   WorkStatusCountsSchema,
+  can,
   directoryStatusOf,
   type DirectoryEntry,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { peopleStandings, workStatusCounts } from '../lib/peopleStatus.js';
-import { atClient, scopeAssociates, scopeWhere } from '../lib/scope.js';
+import { atClient, scopeAssociates, scopeDocuments, scopeShifts, scopeTimeEntries, scopeWhere } from '../lib/scope.js';
+import { scheduleMembershipFor } from '../lib/payScheduleMembership.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { computePercent } from '../lib/checklist.js';
@@ -135,14 +138,74 @@ const DIRECTORY_SELECT = {
 
 type DirectoryRow = Prisma.AssociateGetPayload<{ select: typeof DIRECTORY_SELECT }>;
 
+const DAY_MS = 86_400_000;
+
+/** Net minutes of one clock-in, breaks taken out; an open one counts to `now`. */
+function netMinutesOf(e: { clockInAt: Date; clockOutAt: Date | null; breaks: Array<{ startedAt: Date; endedAt: Date | null }> }, now: Date): number {
+  const end = Math.min((e.clockOutAt ?? now).getTime(), now.getTime());
+  let ms = Math.max(0, end - e.clockInAt.getTime());
+  for (const b of e.breaks) {
+    const bEnd = Math.min((b.endedAt ?? new Date(end)).getTime(), end);
+    ms -= Math.max(0, bEnd - b.startedAt.getTime());
+  }
+  return Math.max(0, Math.floor(ms / 60_000));
+}
+
+/**
+ * The time behind "Last shift" and "Hours (14 days)": per person, their
+ * latest clock-in and the net minutes of the clock-ins that started in the
+ * active window. Rejected punches don't count (the active definition reads
+ * the same), and only time the caller may see counts — a store-bound
+ * account reads the hours worked at its stores, not someone's shifts at a
+ * store outside its reach (lib/scope.scopeTimeEntries).
+ */
+async function recentWork(
+  user: SessionUser,
+  ids: string[],
+  windowDays: number,
+  now: Date,
+): Promise<Map<string, { lastWorkedAt: Date | null; minutes: number; entries: number }>> {
+  const out = new Map<string, { lastWorkedAt: Date | null; minutes: number; entries: number }>();
+  if (ids.length === 0) return out;
+  for (const id of ids) out.set(id, { lastWorkedAt: null, minutes: 0, entries: 0 });
+  const since = new Date(now.getTime() - windowDays * DAY_MS);
+  const base = { associateId: { in: ids }, tenantId: tenantIdForWrite(), status: { not: 'REJECTED' as const }, clockInAt: { lte: now } };
+  const [latest, recent] = await Promise.all([
+    prisma.timeEntry.groupBy({
+      by: ['associateId'],
+      where: scopeWhere<Prisma.TimeEntryWhereInput>(base, scopeTimeEntries(user)),
+      _max: { clockInAt: true },
+    }),
+    prisma.timeEntry.findMany({
+      where: scopeWhere<Prisma.TimeEntryWhereInput>({ ...base, clockInAt: { gte: since, lte: now } }, scopeTimeEntries(user)),
+      select: { associateId: true, clockInAt: true, clockOutAt: true, breaks: { select: { startedAt: true, endedAt: true } } },
+    }),
+  ]);
+  for (const l of latest) {
+    const cur = out.get(l.associateId);
+    if (cur) cur.lastWorkedAt = l._max.clockInAt ?? null;
+  }
+  for (const e of recent) {
+    const cur = out.get(e.associateId);
+    if (!cur) continue;
+    cur.minutes += netMinutesOf(e, now);
+    cur.entries += 1;
+  }
+  return out;
+}
+
 /** Rows → directory entries, with the live pay rate batch-fetched once. */
-async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[]> {
+async function buildEntries(user: SessionUser, associates: DirectoryRow[], now: Date = new Date()): Promise<DirectoryEntry[]> {
   // The one status per person (lib/peopleStatus), asked about this page's rows only.
-  const standings = await peopleStandings({ tenantId: tenantIdForWrite(), associateIds: associates.map((a) => a.id) });
-  // One open compensation row per associate ⇒ batch-fetch and index.
+  const standings = await peopleStandings({ tenantId: tenantIdForWrite(), associateIds: associates.map((a) => a.id) }, now);
   const ids = associates.map((a) => a.id);
+  // Pay is read by those who may read pay (view:comp — the Pay tab's own
+  // gate); everyone else gets the fields left out, not a fake "no rate".
+  const seesPay = can(user, 'view:comp');
+  const work = await recentWork(user, ids, standings.windowDays, now);
+  // One open compensation row per associate ⇒ batch-fetch and index.
   const liveComp =
-    ids.length === 0
+    ids.length === 0 || !seesPay
       ? []
       : await prisma.compensationRecord.findMany({
           take: 500,
@@ -222,9 +285,15 @@ async function buildEntries(associates: DirectoryRow[]): Promise<DirectoryEntry[
       startDate: workplaceApp?.startDate
         ? workplaceApp.startDate.toISOString().slice(0, 10)
         : null,
-      payAmount: comp ? comp.amount.toString() : null,
-      payType: comp?.payType ?? null,
-      payCurrency: comp?.currency ?? null,
+      ...(seesPay
+        ? {
+            payAmount: comp ? comp.amount.toString() : null,
+            payType: comp?.payType ?? null,
+            payCurrency: comp?.currency ?? null,
+          }
+        : {}),
+      lastWorkedAt: work.get(a.id)?.lastWorkedAt?.toISOString() ?? null,
+      recentMinutes: work.get(a.id)?.minutes ?? 0,
       managerId: a.managerId,
       managerName: a.manager
         ? `${a.manager.firstName} ${a.manager.lastName}`.trim()
@@ -331,7 +400,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
     });
 
-    const entries = await buildEntries(associates);
+    const entries = await buildEntries(req.user!, associates);
 
     // Apply status filters after derivation since status is computed.
     const filtered = entries.filter(
@@ -379,8 +448,120 @@ directoryRouter.get('/directory/:id', VIEW, async (req, res, next) => {
         })
       : null;
     if (!row) throw new HttpError(404, 'not_found', 'No one in the directory has that id.');
-    const [entry] = await buildEntries([row]);
+    const [entry] = await buildEntries(req.user!, [row]);
     res.json(DirectoryEntrySchema.parse(entry));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /directory/:id/overview — what a person's record opens on (F500
+ * fix-up): their hours in the active window, last and next shift, time
+ * waiting for approval, no-shows in 30 days, documents running out and
+ * their pay schedule.
+ *
+ * The person is looked up in the caller's tenant and reach (as the by-id
+ * read); each number reads only what the caller may see (their time,
+ * shifts and documents through the same scope helpers the lists use). A
+ * section the caller may not read is left out, never zeroed.
+ */
+directoryRouter.get('/directory/:id/overview', VIEW, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) throw new HttpError(404, 'not_found', 'No one in the directory has that id.');
+    await assertSameTenant('associate', id.data);
+    const tenantId = tenantIdForWrite();
+    const person = await prisma.associate.findFirst({
+      where: scopeWhere<Prisma.AssociateWhereInput>({ id: id.data, deletedAt: null, tenantId }, scopeAssociates(user)),
+      select: { id: true },
+    });
+    if (!person) throw new HttpError(404, 'not_found', 'No one in the directory has that id.');
+
+    const now = new Date();
+    const windowDays = (await peopleStandings({ tenantId, associateIds: [person.id] }, now)).windowDays;
+    const in30 = new Date(now.getTime() + 30 * DAY_MS);
+    const ago30 = new Date(now.getTime() - 30 * DAY_MS);
+    const seesDocuments = can(user, 'view:documents');
+    const seesSchedule = can(user, 'view:comp') || can(user, 'process:payroll');
+
+    const [work, awaitingReview, nextShift, noShows, dated, membership] = await Promise.all([
+      recentWork(user, [person.id], windowDays, now),
+      prisma.timeEntry.count({
+        where: scopeWhere<Prisma.TimeEntryWhereInput>({ associateId: person.id, tenantId, status: 'COMPLETED' }, scopeTimeEntries(user)),
+      }),
+      prisma.shift.findFirst({
+        where: scopeWhere<Prisma.ShiftWhereInput>(
+          { assignedAssociateId: person.id, tenantId, status: 'ASSIGNED', startsAt: { gte: now } },
+          scopeShifts(user),
+        ),
+        orderBy: { startsAt: 'asc' },
+        select: { id: true, startsAt: true, endsAt: true, position: true, locationRel: { select: { name: true, timezone: true } } },
+      }),
+      prisma.attendanceEvent.count({
+        where: { associateId: person.id, tenantId, kind: 'NO_CALL_NO_SHOW', excusedAt: null, occurredOn: { gte: new Date(ago30.toISOString().slice(0, 10)) } },
+      }),
+      // Their documents that carry an expiry date, newest first: per kind,
+      // the newest one is the one that counts (a renewed ID replaces the
+      // expired one; the old file isn't "expired" any more).
+      seesDocuments
+        ? prisma.documentRecord.findMany({
+            where: scopeWhere<Prisma.DocumentRecordWhereInput>(
+              { associateId: person.id, tenantId, deletedAt: null, status: { not: 'REJECTED' }, expiresAt: { not: null } },
+              scopeDocuments(user),
+            ),
+            orderBy: { createdAt: 'desc' },
+            select: { kind: true, expiresAt: true },
+            take: 200,
+          })
+        : Promise.resolve([]),
+      seesSchedule ? scheduleMembershipFor(prisma, [person.id]) : Promise.resolve(null),
+    ]);
+
+    let expiringSoon = 0;
+    let expired = 0;
+    const seenKinds = new Set<string>();
+    for (const d of dated) {
+      if (seenKinds.has(d.kind)) continue;
+      seenKinds.add(d.kind);
+      if (!d.expiresAt) continue;
+      if (d.expiresAt < now) expired += 1;
+      else if (d.expiresAt < in30) expiringSoon += 1;
+    }
+
+    let pay: { scheduleId: string | null; scheduleName: string | null } | undefined;
+    if (seesSchedule) {
+      const scheduleId = membership?.get(person.id)?.scheduleId ?? null;
+      const schedule = scheduleId ? await prisma.payrollSchedule.findFirst({ where: { id: scheduleId, tenantId }, select: { name: true } }) : null;
+      pay = { scheduleId: schedule ? scheduleId : null, scheduleName: schedule?.name ?? null };
+    }
+
+    const w = work.get(person.id)!;
+    res.json(
+      PersonOverviewSchema.parse({
+        windowDays,
+        work: {
+          minutes: w.minutes,
+          entries: w.entries,
+          awaitingReview,
+          lastWorkedAt: w.lastWorkedAt?.toISOString() ?? null,
+          nextShift: nextShift
+            ? {
+                id: nextShift.id,
+                startsAt: nextShift.startsAt.toISOString(),
+                endsAt: nextShift.endsAt.toISOString(),
+                position: nextShift.position,
+                locationName: nextShift.locationRel?.name ?? null,
+                timezone: nextShift.locationRel?.timezone ?? null,
+              }
+            : null,
+          noShows30d: noShows,
+        },
+        ...(seesDocuments ? { documents: { expiringSoon, expired } } : {}),
+        ...(pay ? { pay } : {}),
+      }),
+    );
   } catch (err) {
     next(err);
   }

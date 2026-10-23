@@ -124,14 +124,14 @@ function DeskScoreboard({
               <span className="mt-2 flex items-baseline gap-1.5">
                 <span className={cn('text-2xl font-semibold tabular-nums', late ? 'text-alert' : batons.length ? 'text-white' : 'text-success')}>{batons.length}</span>
                 <span className="text-xs text-silver">
-                  {batons.length === 1 ? 'baton open' : 'batons open'}
+                  {batons.length === 1 ? 'open hand-off' : 'open hand-offs'}
                   {late > 0 && <span className="font-medium text-alert"> · {late} late</span>}
                 </span>
               </span>
               <span className="mt-1 block text-xs text-silver/80">
                 {lanes.length} {lanes.length === 1 ? 'new hire waits' : 'new hires wait'} on them
                 {stalled > 0 && <span className="text-alert"> · {stalled} stalled</span>}
-                {owed > 0 && <span className="text-warning"> · {owed} ruling{owed === 1 ? '' : 's'} owed</span>}
+                {owed > 0 && <span className="text-warning"> · {owed} decision{owed === 1 ? '' : 's'} owed</span>}
               </span>
             </button>
           );
@@ -157,7 +157,9 @@ export function RelayBoard() {
   const requests = useQuery({ queryKey: ['relay', 'client-requests'], queryFn: relayApi.requests, refetchInterval: 60_000, enabled: hasClients });
   const data = board.data;
 
-  const myDesk = data?.me?.desk ?? deskOf(user?.role);
+  // An Operations Manager oversees every desk: HR is not "their desk", so
+  // the board opens on all desks for them (F500 G2).
+  const myDesk = user?.role === 'OPERATIONS_MANAGER' ? null : (data?.me?.desk ?? deskOf(user?.role));
   const lensParam = params.get('desk');
   const lens: Lens = lensParam === 'ALL' || (lensParam && (DESKS as string[]).includes(lensParam)) ? (lensParam as Lens) : (myDesk ?? 'ALL');
   const setLens = (l: Lens) =>
@@ -316,6 +318,7 @@ export function RelayBoard() {
             meId={meId}
             onOpenLane={(id) => openLane(id)}
             onChanged={refreshAll}
+            onClearLens={() => setLens('ALL')}
           />
           <WavesSection cohorts={data.cohorts} canManage={can('manage:recruiting')} onChanged={refreshAll} />
         </div>

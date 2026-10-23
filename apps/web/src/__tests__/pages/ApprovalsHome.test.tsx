@@ -32,6 +32,7 @@ vi.mock('@/lib/timeApi', () => ({
   countAdminTimeEntries: vi.fn(),
   // TIME's inline panel (pages/time/PendingTimesheetsPanel) on the Timesheets queue.
   listAdminTimeEntries: vi.fn(async () => ({ entries: [] })),
+  listPayPeriods: vi.fn(async () => ({ periods: [] })),
   approveTimeEntry: vi.fn(),
   rejectTimeEntry: vi.fn(),
   bulkApproveTimeEntries: vi.fn(),
@@ -242,7 +243,8 @@ describe('<ApprovalsHome> agent proposals', () => {
     renderPage('SHIFT_SUPERVISOR', `/approvals?tab=proposals&proposal=${proposalFixture.id}`);
     // The queue tile with its count…
     expect(await screen.findByText('Suggested by an agent')).toBeInTheDocument();
-    expect(await screen.findByText('1 decision waiting.')).toBeInTheDocument();
+    // Timesheets count as decisions too; the header says how many wait (F500).
+    expect(await screen.findByText('1 waiting.')).toBeInTheDocument();
     // …and the open item: the card with the proposal, the evidence and the decision.
     expect(await screen.findByRole('heading', { name: /Assign Tess Free to Housekeeper/ })).toBeInTheDocument();
     expect(screen.getByText(/Tess Free is placed at The Grand Hotel/)).toBeInTheDocument();
@@ -253,16 +255,18 @@ describe('<ApprovalsHome> agent proposals', () => {
 });
 
 describe('<ApprovalsHome>', () => {
-  it('with every queue empty: one clear state, and every queue folded under All clear — no wall of zero tiles', async () => {
+  it('with every queue empty: one clear state; the role’s own queues stay rows, the rest fold behind "N queues clear"', async () => {
     renderPage();
     expect(screen.getByText('Approvals')).toBeInTheDocument();
     expect(await screen.findByText('Nothing waiting on you')).toBeInTheDocument();
     const clear = await screen.findByTestId('approvals-clear');
-    const chips = within(within(clear).getByRole('list', { name: 'Queues with nothing waiting' })).getAllByRole('button');
-    // Walk-ins hide when the kiosk queue is not this person's; the rest fold.
-    expect(chips.map((c) => c.textContent)).toEqual(
-      expect.arrayContaining(['Time off0', 'Swaps0', 'Pickups0', 'Timesheets0', 'Unconfirmed shifts (48h)0']),
-    );
+    // HR's own queues (pay & access, time off, agent suggestions, timesheets) are rows at zero…
+    expect(screen.getByRole('button', { name: /Time off.*Nothing pending.*0/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Timesheets.*Nothing pending.*0/ })).toBeInTheDocument();
+    // …the floor's queues fold behind one line.
+    expect(within(clear).getByText('4 queues clear')).toBeInTheDocument();
+    const chips = within(within(clear).getByRole('list', { name: 'Queues with nothing waiting' })).getAllByRole('button', { hidden: true });
+    expect(chips.map((c) => c.textContent)).toEqual(['Walk-ins0', 'Swaps0', 'Pickups0', 'Unconfirmed shifts (48h)0']);
     // No tile pressed for an empty queue, and no bell while everyone has confirmed.
     expect(screen.queryByRole('button', { name: /Unconfirmed shifts \(48h\).*Next 48 hours/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /^Swaps/ })).not.toBeInTheDocument();
@@ -275,11 +279,11 @@ describe('<ApprovalsHome>', () => {
     const tile = await screen.findByRole('button', { name: /Timesheets.*Approve the clean ones in one tap.*3/ });
     // The only queue with work is first and open on the desk.
     expect(tile).toHaveAttribute('aria-pressed', 'true');
-    const full = await screen.findByRole('link', { name: /Open the full queue/ });
-    expect(full.getAttribute('href')).toMatch(/^\/time-attendance\?tab=queue&status=COMPLETED&from=2026-09-1[78]&to=\d{4}-\d{2}-\d{2}$/);
-    // Timesheets left the All clear row.
-    const chips = within(screen.getByTestId('approvals-clear')).getAllByRole('button').map((c) => c.textContent);
-    expect(chips).not.toContain('Timesheets0');
+    // One link to the full queue — the panel's own (the header no longer repeats it).
+    expect(screen.queryByRole('link', { name: /Open the full queue/ })).not.toBeInTheDocument();
+    expect(screen.getByText('3 waiting · 3 timesheets.')).toBeInTheDocument();
+    // Cover my approvals is the header's action now.
+    expect(screen.getByTestId('cover-approvals')).toHaveTextContent('Cover my approvals');
   });
 
   it('a supervisor’s unconfirmed shifts are counted, with the bell only when someone is unconfirmed', async () => {
@@ -295,7 +299,7 @@ describe('<ApprovalsHome>', () => {
     } as unknown as Awaited<ReturnType<typeof listOpenShiftClaims>>);
     renderPage();
     expect(await screen.findByRole('heading', { name: /Open-shift pickups/ })).toBeInTheDocument();
-    expect(await screen.findByText(/1 decision waiting/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 waiting/)).toBeInTheDocument();
     expect(screen.getByText(/Today · /)).toBeInTheDocument();
     // An org-wide approver sees which client the shift belongs to…
     expect(screen.getByText(/Coastal Resort Holdings · Today/)).toBeInTheDocument();

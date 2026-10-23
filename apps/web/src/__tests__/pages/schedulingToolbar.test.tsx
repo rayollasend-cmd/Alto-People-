@@ -65,6 +65,25 @@ describe('<SchedulingToolbar>', () => {
     expect(onPublish).toHaveBeenCalled();
   });
 
+  it('"Edit filters" sits outside the chips scroller, so it never clips', () => {
+    render(
+      <SchedulingToolbar
+        view="week"
+        onView={vi.fn()}
+        periodLabel="Saturday, Oct 17 – Friday, Oct 23"
+        chips={[{ key: 'client', label: 'Coastal Resort Holdings' }]}
+        onOpenFilters={vi.fn()}
+        canManage
+        openToFill={0}
+        draftsToPublish={0}
+      />,
+    );
+    const btn = screen.getByRole('button', { name: 'Edit filters' });
+    expect(btn.parentElement).toBe(screen.getByTestId('scheduling-toolbar'));
+    expect(btn.className).toMatch(/whitespace-nowrap/);
+    expect(btn.className).toMatch(/shrink-0/);
+  });
+
   it('kpiLine reads as one line, with upcoming and unfilled apart, and the forecast beside the hours', () => {
     expect(kpiLine(kpis, null)).toBe('18% filled · 4 open · 5 unfilled · 77h · $1.1k');
     expect(kpiLine(kpis, 66)).toBe('18% filled · 4 open · 5 unfilled · 77h scheduled · 66h forecast · $1.1k');

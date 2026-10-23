@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Wallet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useTenant, useTerm } from '@/lib/auth';
-import { useClients } from '@/lib/useClients';
+import { useStoreScope } from '@/lib/storeScope';
 import { fmtMoney } from '@/lib/format';
 import { getHeadcountPlan, type PlanDepartment, type PlanPosition } from '@/lib/positionsApi';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Select } from '@/components/ui/Select';
@@ -36,8 +37,8 @@ function varianceCell(v: number | null) {
 function OfficeSeats() {
   const term = useTerm();
   const tenant = useTenant();
-  const { clients } = useClients({ enabled: tenant.modules.clientPortal });
-  const [clientId, setClientId] = useState('');
+  // The client is the topbar's scope (lib/storeScope), shown inline here too.
+  const { clientId, setClientId, clients } = useStoreScope();
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const plan = useQuery({ queryKey: ['positions', 'plan', clientId, year], queryFn: () => getHeadcountPlan({ clientId: clientId || undefined, year }) });
   const d = plan.data;
@@ -90,12 +91,12 @@ function OfficeSeats() {
           })}
         </Select>
       </div>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <MetricStrip label="Office seats at a glance">
         <MetricCard label="Budgeted" value={d ? fmtMoney(d.totals.budget) : '—'} hint={d ? `${d.totals.positions - d.totals.unbudgeted} of ${d.totals.positions} seats carry a budget` : undefined} />
         <MetricCard label="Projected cost" value={d ? fmtMoney(d.totals.projected) : '—'} hint="Current pay, annualized" />
         <MetricCard label={`Paid ${year} to date`} value={d ? fmtMoney(d.totals.paidYearToDate) : '—'} hint="Gross on finalized runs" />
         <MetricCard label="Variance" value={d ? varianceCell(d.totals.variance) : '—'} accent={Boolean(d && d.totals.variance < 0)} hint={d && d.totals.unbudgeted > 0 ? `${d.totals.unbudgeted} seats have no budget yet` : 'Budget minus projected'} />
-      </div>
+      </MetricStrip>
       {error && <QueryError what="the headcount plan" query={plan} />}
       <section className="space-y-3">
         <SectionTitle as="h2" icon={Wallet} title="By department" />

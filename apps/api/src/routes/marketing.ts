@@ -352,7 +352,9 @@ marketingRouter.post('/marketing/campaigns/:id/announce', requireAuth, MANAGE, a
       subject: `Announcement to review: ${c.name}`,
       body: `Marketing drafted an announcement for the ${c.name} referral campaign. Review the wording and the audience, then send it.`,
       category: 'broadcast.review',
-      linkUrl: `/directory?tab=broadcasts&broadcast=${draft.id}`,
+      // Broadcasts live under Notifications › Sends & broadcasts (the old
+      // /directory?tab=broadcasts link still redirects there).
+      linkUrl: `/communications?tab=sends&view=broadcasts&broadcast=${draft.id}`,
     }).catch(() => undefined);
   }
   res.status(201).json({ broadcastId: draft.id, notified: senders.length });

@@ -3,7 +3,8 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 type Db = PrismaClient | Prisma.TransactionClient;
 
 export interface Osha300aSummary {
-  clientId: string;
+  /** Null = every client (the company-wide summary). */
+  clientId: string | null;
   year: number;
   totalCases: number;
   fatalities: number;
@@ -15,16 +16,27 @@ export interface Osha300aSummary {
 }
 
 /**
- * OSHA Form 300A annual summary aggregates for one client and calendar
- * year: the counts employers post by Feb 1 covering the prior year. One
- * copy for the 300A route and the Compliance agent's incident.loop.
+ * OSHA Form 300A annual summary aggregates for one client (or, with a null
+ * client, every client of the tenant) and calendar year: the counts
+ * employers post by Feb 1 covering the prior year. One copy for the 300A
+ * route and the Compliance agent's incident.loop.
  */
-export async function osha300aSummary(db: Db, clientId: string, year: number): Promise<Osha300aSummary> {
+export async function osha300aSummary(
+  db: Db,
+  clientId: string | null,
+  year: number,
+  tenantId?: string,
+): Promise<Osha300aSummary> {
   const start = new Date(`${year}-01-01T00:00:00Z`);
   const end = new Date(`${year + 1}-01-01T00:00:00Z`);
   const rows = await db.oshaIncident.findMany({
-    take: 500,
-    where: { clientId, occurredAt: { gte: start, lt: end }, isRecordable: true },
+    take: 5_000,
+    where: {
+      ...(clientId ? { clientId } : {}),
+      ...(tenantId ? { tenantId } : {}),
+      occurredAt: { gte: start, lt: end },
+      isRecordable: true,
+    },
     select: { severity: true, daysAway: true, daysRestricted: true },
   });
   return {

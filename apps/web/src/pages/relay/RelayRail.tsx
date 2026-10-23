@@ -29,10 +29,10 @@ export function MondayPack({ agenda, lens }: { agenda: AgendaItem[]; lens: Desk 
   const items = agenda.filter((a) => lens === 'ALL' || a.desk === null || a.desk === lens);
   return (
     <section aria-labelledby="relay-monday">
-      <SectionHead icon={ClipboardList} title="The Monday pack" meta="ranked by what’s bleeding" id="relay-monday" />
+      <SectionHead icon={ClipboardList} title="This week’s agenda" meta="most urgent first" id="relay-monday" />
       <Card className="p-4">
         {items.length === 0 ? (
-          <EmptyState size="sm" icon={CheckCircle2} title="Nothing on the agenda." description="Silence means green." />
+          <EmptyState size="sm" icon={CheckCircle2} title="Nothing on the agenda this week." />
         ) : (
           <ul className="space-y-2.5">
             {items.map((a, i) => (
@@ -94,7 +94,7 @@ export function DecisionsPanel({
       setNote('');
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not record the ruling.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not record the decision.');
     } finally {
       setBusy(false);
     }
@@ -109,7 +109,7 @@ export function DecisionsPanel({
         ) : rows.length === 0 ? (
           <p className="flex items-center gap-2 px-4 py-3 text-sm text-success">
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            No rulings owed{lens === 'ALL' ? '' : ` by ${DESK_LABELS[lens]}`}.
+            No decisions owed{lens === 'ALL' ? '' : ` by ${DESK_LABELS[lens]}`}.
           </p>
         ) : (
           <ul className="divide-y divide-navy-secondary/60">

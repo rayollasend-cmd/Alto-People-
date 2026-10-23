@@ -12,6 +12,7 @@ import {
   CalendarOff,
   Check,
   ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   DoorOpen,
   Store,
@@ -19,7 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { TIMESHEET_QUEUE_WINDOW_DAYS, timesheetQueuePath, type TimeOffRequest } from '@alto-people/shared';
+import { type TimeOffRequest } from '@alto-people/shared';
 import {
   approveAdminRequest,
   bulkDecideRequests,
@@ -43,7 +44,7 @@ import {
 } from '@/lib/timeApi';
 import type { ClockInRequestRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtRelativeDayTz, fmtShiftTz, fmtTime, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtRelativeDayTz, fmtShiftTz, fmtTime, parseYmd } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { usePrompt } from '@/lib/confirm';
 import { useClientBounded } from '@/lib/useClientBounded';
@@ -204,6 +205,25 @@ const QUEUE_TEXT: Record<QueueKey, { label: MessageKey; busy: MessageKey; idle: 
   timesheets: { label: 'appr.q.timesheets', busy: 'appr.q.timesheetsBusy', idle: 'appr.q.idle' },
   unconfirmed: { label: 'appr.q.unconfirmed', busy: 'appr.q.unconfirmedBusy', idle: 'appr.q.unconfirmedIdle' },
 };
+/**
+ * The queues each role works, shown as rows even when they're at zero — the
+ * floor queues (walk-ins, swaps, pickups, unconfirmed) are a supervisor's,
+ * pay & access changes are finance's and HR's. Everyone else's zeros fold
+ * behind "N queues clear". A role not named here works every queue.
+ */
+const PRIMARY_QUEUES: Partial<Record<string, readonly QueueKey[]>> = {
+  SHIFT_SUPERVISOR: ['walk-ins', 'swaps', 'pickups', 'time-off', 'timesheets', 'unconfirmed'],
+  FLOOR_SUPERVISOR: ['walk-ins', 'unconfirmed'],
+  OPERATIONS_MANAGER: ['walk-ins', 'swaps', 'pickups', 'unconfirmed', 'timesheets'],
+  WORKFORCE_MANAGER: ['walk-ins', 'swaps', 'pickups', 'unconfirmed', 'timesheets'],
+  MANAGER: ['time-off', 'timesheets', 'swaps', 'pickups'],
+  FINANCE_ACCOUNTANT: ['requests', 'timesheets'],
+  HR_ADMINISTRATOR: ['requests', 'time-off', 'proposals', 'timesheets'],
+};
+export function primaryQueuesFor(role: string | null | undefined): readonly QueueKey[] {
+  return (role && PRIMARY_QUEUES[role]) || QUEUE_KEYS;
+}
+
 export function queueFromParams(p: URLSearchParams): QueueKey | null {
   if (p.get('request')) return 'time-off';
   if (p.get('walkin')) return 'walk-ins';
@@ -216,7 +236,7 @@ export function queueFromParams(p: URLSearchParams): QueueKey | null {
 
 export function ApprovalsHome() {
   const queryClient = useQueryClient();
-  const { can } = useAuth();
+  const { can, role } = useAuth();
   const { t } = useI18n();
   // The tenant's full approval record (Settings & trust → Audit) is for the audit desk, admins and Finance.
   const canReadRecord = can('view:audit') || can('manage:org') || can('process:payroll');
@@ -274,14 +294,8 @@ export function ApprovalsHome() {
 
   const timesheetCount = timesheetQuery.data?.count ?? null;
   const timesheetFailed = timesheetQuery.isError;
-  // The full queue opens on the rows the count counted: the oldest pending
-  // day through today (shared timesheetQueuePath — one link everywhere).
-  const today = ymdLocal();
-  const windowStart = ymdLocal(new Date(Date.now() - TIMESHEET_QUEUE_WINDOW_DAYS * 86_400_000));
-  const oldestPending = timesheetQuery.data?.oldestPendingAt ? ymdLocal(new Date(timesheetQuery.data.oldestPendingAt)) : null;
-  const timesheetLink = timesheetCount
-    ? timesheetQueuePath({ from: oldestPending ?? windowStart, to: today })
-    : '/time-attendance?tab=queue';
+  // The full queue's one link is the timesheets panel's own (it opens on
+  // the rows the count counted, shared timesheetQueuePath).
   const timeOff = timeOffQ.data ?? null;
   const timeOffError = timeOffQ.isError
     ? timeOffQ.error instanceof Error
@@ -314,13 +328,16 @@ export function ApprovalsHome() {
     .sort()[0];
   const clear = loaded && decisions === 0 && !anyError;
 
+  // Timesheets are decisions too (approve or reject each): the header used to
+  // say "No decisions waiting — 6 timesheets to review" over a page whose only
+  // work was those 6 decisions.
+  const sheets = timesheetCount ?? 0;
+  const waiting = decisions + sheets;
   const subtitle = !loaded
     ? t('appr.subtitle')
-    : decisions === 0
-      ? timesheetCount
-        ? t(timesheetCount === 1 ? 'appr.subNoDecisionsOneSheet' : 'appr.subNoDecisionsSheets', { n: timesheetCount })
-        : t('appr.subNothing')
-      : `${t(decisions === 1 ? 'appr.subOneDecision' : 'appr.subDecisions', { n: decisions })}${
+    : waiting === 0
+      ? t('appr.subNothing')
+      : `${t('appr.subWaiting', { count: waiting })}${sheets > 0 ? ` · ${t('appr.subSheets', { count: sheets })}` : ''}${
           oldestWalkIn ? ` — ${t('appr.subKiosk', { since: waitingSince(oldestWalkIn).replace('waiting ', '') })}` : ''
         }.`;
 
@@ -400,12 +417,16 @@ export function ApprovalsHome() {
   // count nobody knows is not "clear"); the zeros fold into one row of
   // chips under "All clear" (role walk HR 16, floor 7) — still named, still
   // a tap away, no longer a wall of tiles above the one queue with work.
+  const primary = primaryQueuesFor(role);
   const withWork = queues.filter((q) => typeof q.value === 'number' && q.value > 0);
   const unknown = queues.filter((q) => q.value === null || q.value === undefined);
-  const quiet = queues.filter((q) => q.value === 0);
+  // This role's own queues stay rows at zero (their state is news); the
+  // others' zeros fold behind one "N queues clear" line, as on the Inbox.
+  const primaryZero = queues.filter((q) => q.value === 0 && primary.includes(q.key));
+  const quiet = queues.filter((q) => q.value === 0 && !primary.includes(q.key));
   const queue = (
     <div className="space-y-3 animate-enter">
-      {[...withWork, ...unknown].map((q) =>
+      {[...withWork, ...unknown, ...primaryZero].map((q) =>
         q.key === 'timesheets' && timesheetFailed ? (
           <div key={q.key} className="rounded-lg border border-alert/40 bg-surface px-4 py-3">
             <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">{q.label}</div>
@@ -433,11 +454,12 @@ export function ApprovalsHome() {
         ),
       )}
       {quiet.length > 0 && (
-        <section aria-labelledby="approvals-clear" data-testid="approvals-clear">
-          <h2 id="approvals-clear" className="mb-1.5 mt-1 text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">
-            {t('appr.allClear')}
-          </h2>
-          <ul className="flex flex-wrap gap-1.5" aria-label={t('appr.allClearAria')}>
+        <details className="group" data-testid="approvals-clear">
+          <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1.5 text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted hover:text-ink coarse:min-h-11 [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
+            {t('appr.queuesClear', { count: quiet.length })}
+          </summary>
+          <ul className="mt-1.5 flex flex-wrap gap-1.5" aria-label={t('appr.allClearAria')}>
             {quiet.map((q) => (
               <li key={q.key}>
                 <button
@@ -455,7 +477,7 @@ export function ApprovalsHome() {
               </li>
             ))}
           </ul>
-        </section>
+        </details>
       )}
     </div>
   );
@@ -474,17 +496,9 @@ export function ApprovalsHome() {
         {/* TIME's panel: the clean ones approve in one tap, the flagged ones
             listed with their reason (pages/time/PendingTimesheetsPanel). */}
         <PendingTimesheetsPanel />
-        <Link to={timesheetLink} className="inline-flex items-center gap-1 text-sm text-accent underline underline-offset-2">
-          {t('appr.openFullQueue')}
-        </Link>
       </div>
     ) : key === 'requests' ? (
       <div className="space-y-3">
-        <div className="flex justify-end">
-          <Button size="sm" variant="outline" onClick={() => setCoverOpen(true)}>
-            Cover my approvals
-          </Button>
-        </div>
         <ApprovalRequestList
           requests={requests.data}
           loading={requests.isLoading}
@@ -580,17 +594,14 @@ export function ApprovalsHome() {
                 void timesheetQuery.refetch();
               }}
             />
+            <Button size="sm" variant="outline" onClick={() => setCoverOpen(true)} data-testid="cover-approvals">
+              {t('appr.cover')}
+            </Button>
             {canReadRecord && (
-              <Button size="sm" variant="outline" asChild>
+              <Button size="sm" variant="ghost" asChild>
                 <Link to="/audit/approvals">{t('appr.allRequests')}</Link>
               </Button>
             )}
-            <Button size="sm" variant="outline" asChild>
-              <Link to={timesheetLink}>
-                <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                {t('appr.q.timesheets')}
-              </Link>
-            </Button>
           </>
         }
         queue={queue}

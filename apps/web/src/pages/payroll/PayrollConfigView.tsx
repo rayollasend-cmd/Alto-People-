@@ -1,130 +1,74 @@
 import { useQuery } from '@tanstack/react-query';
-import { ShieldAlert } from 'lucide-react';
+import { Info } from 'lucide-react';
 import type { PayrollConfig, PayrollConfigBracket } from '@alto-people/shared';
 import { getPayrollConfig } from '@/lib/payrollApi';
-import { ApiError } from '@/lib/api';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/Card';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
+import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
-
-import { fmtDateTime, fmtMoney, fmtPercent } from '@/lib/format';
-import { ListTemplate } from '@/components/templates';
+import { fmtDate, fmtMoney, fmtPercent } from '@/lib/format';
 
 const fmtPct = (rate: number) => fmtPercent(rate, { fromFraction: true, decimals: 2 });
 
 /**
- * Read-only view of the payroll_config row driving the federal withholding
- * engine right now. Lets HR sanity-check what's loaded without reading
- * migration SQL. Edits go through a database migration — yearly federal
- * tables come from IRS Pub 15-T, so this UI is intentionally display-only.
+ * Tax tables › Federal: the federal tables payroll withholds by this year —
+ * the Social Security wage base, the extra Medicare threshold and the
+ * income tax brackets — read-only, because Alto updates them each January
+ * from IRS Publication 15-T. (It was its own page, "Payroll tax config",
+ * at /payroll/config, with a footer about database migrations — F500 G3.)
  */
-export function PayrollConfigView() {
+export function FederalTaxTables() {
+  const q = useQuery({ queryKey: ['PayrollConfigView', 'config'], queryFn: () => getPayrollConfig() });
+  const config: PayrollConfig | null = q.data ?? null;
 
-  const configQuery = useQuery({
-    queryKey: ['PayrollConfigView', 'config'],
-    queryFn: () => getPayrollConfig(),
-  });
-  const config: PayrollConfig | null = configQuery.data ?? null;
-  const error = configQuery.error ? configQuery.error instanceof ApiError ? configQuery.error.message : 'Could not load payroll config.' : null;
-
+  if (q.isError) return <QueryError what="the federal tax tables" query={q} />;
+  if (!config) return <ConfigSkeleton />;
   return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
-    <ListTemplate
-        title="Payroll tax config"
-        subtitle="Reference data driving the federal withholding engine. Read-only."
-    >
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{`Wage limits for ${config.year}`}</CardTitle>
+          <CardDescription>From the IRS (Publication 15-T) and the Social Security Administration.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <dt className="text-xs text-ink-muted">Social Security wage base</dt>
+              <dd className="text-2xl tabular-nums text-ink">{fmtMoney(config.ssWageBase)}</dd>
+              <p className="mt-1 text-xs text-ink-muted">Pay above this in a year has no 6.2% Social Security tax withheld.</p>
+            </div>
+            <div>
+              <dt className="text-xs text-ink-muted">Extra Medicare threshold</dt>
+              <dd className="text-2xl tabular-nums text-ink">{fmtMoney(config.medicareSurchargeThreshold)}</dd>
+              <p className="mt-1 text-xs text-ink-muted">An extra 0.9% Medicare is withheld on pay above this in a year.</p>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
 
-      {error && (
-        <ErrorBanner className="mb-4">
-          <span className="font-medium">{error}</span>
-          {' '}
-          <span className="text-silver/80">
-            Insert a payroll_config row for the current year via migration.
-          </span>
-        </ErrorBanner>
-      )}
+      <BracketCard title="Single or married filing separately" data={config.fedBracketsSingle} />
+      <BracketCard title="Married filing jointly" data={config.fedBracketsMfj} />
+      <BracketCard title="Head of household" data={config.fedBracketsHoh} />
 
-      {!config && !error && <ConfigSkeleton />}
-
-      {config && (
-        <>
-          <Card className="mb-4">
-            <CardHeader>
-              <CardTitle className="text-base">Wage caps & thresholds</CardTitle>
-              <CardDescription>
-                Federal payroll tax constants for tax year {config.year}. Source: IRS Pub 15-T,
-                SSA wage-base announcement.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <dt className="text-xs text-silver">Social Security wage base</dt>
-                  <dd className="text-2xl text-white">{fmtMoney(config.ssWageBase)}</dd>
-                  <p className="text-xs text-silver/70 mt-1">
-                    Wages above this in YTD are not subject to the 6.2% Social Security tax.
-                  </p>
-                </div>
-                <div>
-                  <dt className="text-xs text-silver">Medicare surcharge threshold</dt>
-                  <dd className="text-2xl text-white">
-                    {fmtMoney(config.medicareSurchargeThreshold)}
-                  </dd>
-                  <p className="text-xs text-silver/70 mt-1">
-                    Additional 0.9% Medicare withholding applies above this YTD threshold.
-                  </p>
-                </div>
-              </dl>
-            </CardContent>
-          </Card>
-
-          <BracketCard
-            title="Federal — Single / Married Filing Separately"
-            data={config.fedBracketsSingle}
-          />
-          <BracketCard
-            title="Federal — Married Filing Jointly"
-            data={config.fedBracketsMfj}
-          />
-          <BracketCard
-            title="Federal — Head of Household"
-            data={config.fedBracketsHoh}
-          />
-
-          <p className="text-xs text-silver/70 mt-6 flex items-start gap-2">
-            <ShieldAlert className="h-3 w-3 mt-0.5 flex-shrink-0" />
-            <span>
-              Last updated {fmtDateTime(config.updatedAt)}. Edits go through a database
-              migration — see <code className="text-silver">prisma/migrations/*_add_payroll_config</code>.
-            </span>
-          </p>
-        </>
-      )}
-    </ListTemplate>
+      <p className="flex items-start gap-2 text-xs text-ink-muted">
+        <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+        <span>{`Updated each January from the IRS tables. Last updated ${fmtDate(config.updatedAt)}.`}</span>
+      </p>
+    </div>
   );
 }
 
 function BracketCard({ title, data }: { title: string; data: PayrollConfigBracket[] }) {
   return (
-    <Card className="mb-4">
+    <Card>
       <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
-        <CardDescription>
-          Annual percentage method. The engine annualizes per-cycle gross, picks the row, divides
-          back per period.
-        </CardDescription>
+        <CardTitle className="text-base">{`Federal income tax: ${title}`}</CardTitle>
+        <CardDescription>A yearly table: each paycheck is scaled to a year, the tax is read from the row it falls in, then divided back across the year’s paychecks.</CardDescription>
       </CardHeader>
       <CardContent>
         <DataGrid<PayrollConfigBracket>
           id={`tax-brackets-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
-          caption={title}
+          caption={`Federal income tax: ${title}`}
           rows={data}
           rowKey={(row) => String(row.over)}
           search={false}
@@ -132,9 +76,9 @@ function BracketCard({ title, data }: { title: string; data: PayrollConfigBracke
           exportCsv={false}
           columnChooser={false}
           columns={[
-            { key: 'over', header: 'Over', accessor: (row) => row.over, csv: (row) => fmtMoney(row.over), sortable: true, searchable: false, primary: true, className: 'tabular-nums', cell: (row) => fmtMoney(row.over) },
-            { key: 'flat', header: 'Flat', accessor: (row) => row.flat, csv: (row) => fmtMoney(row.flat), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (row) => fmtMoney(row.flat) },
-            { key: 'rate', header: 'Marginal rate', accessor: (row) => row.rate, csv: (row) => fmtPct(row.rate), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (row) => fmtPct(row.rate) },
+            { key: 'over', header: 'Yearly pay over', accessor: (row) => row.over, csv: (row) => fmtMoney(row.over), sortable: true, searchable: false, primary: true, className: 'tabular-nums', cell: (row) => fmtMoney(row.over) },
+            { key: 'flat', header: 'Tax on the amount below', accessor: (row) => row.flat, csv: (row) => fmtMoney(row.flat), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (row) => fmtMoney(row.flat) },
+            { key: 'rate', header: 'Plus, on the rest', accessor: (row) => row.rate, csv: (row) => fmtPct(row.rate), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (row) => fmtPct(row.rate) },
           ]}
         />
       </CardContent>
@@ -144,19 +88,19 @@ function BracketCard({ title, data }: { title: string; data: PayrollConfigBracke
 
 function ConfigSkeleton() {
   return (
-    <>
-      <Card className="mb-4">
+    <div className="space-y-4" aria-busy="true">
+      <Card>
         <CardContent>
-          <Skeleton className="h-3 w-1/3 mb-3" />
-          <Skeleton className="h-8 w-1/2 mb-2" />
+          <Skeleton className="mb-3 h-3 w-1/3" />
+          <Skeleton className="mb-2 h-8 w-1/2" />
           <Skeleton className="h-3 w-2/3" />
         </CardContent>
       </Card>
-      <Card className="mb-4">
+      <Card>
         <CardContent>
           <Skeleton className="h-32" />
         </CardContent>
       </Card>
-    </>
+    </div>
   );
 }

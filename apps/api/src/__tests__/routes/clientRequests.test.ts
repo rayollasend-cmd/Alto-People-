@@ -309,7 +309,8 @@ describe('client requests', () => {
     });
     expect(bells).toHaveLength(1);
     expect(bells[0]!.subject).toBe('Dana picked up your request: Great work on Thursday');
-    expect(bells[0]!.linkUrl).toBe('/portal/requests');
+    // The bell lands on this request, opened (F500 G5).
+    expect(bells[0]!.linkUrl).toBe(`/portal/requests?id=${id}`);
     expect(
       (
         await staff.patch(`/client-requests/${id}`).send({
@@ -326,6 +327,7 @@ describe('client requests', () => {
     expect(bells).toHaveLength(2);
     expect(bells[1]!.subject).toBe('Reply from Alto: Great work on Thursday');
     expect(bells[1]!.body).toContain('Passed to Maria and her lead');
+    expect(bells[1]!.linkUrl).toBe(`/portal/requests?id=${id}`);
     expect(JSON.stringify(bells)).not.toContain(hr.email);
   });
 });

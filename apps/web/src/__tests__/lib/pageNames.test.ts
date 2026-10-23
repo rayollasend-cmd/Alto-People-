@@ -179,10 +179,16 @@ describe('one name per page', () => {
   });
 
   it('reads the pages it claims to (the check is not silently empty)', () => {
+    // A page reads as named when it either writes its own crumbs (checked
+    // above) or leaves them to the nav trail (lib/navTrail builds them from
+    // the sidebar's own labels, so they agree by construction). The F500
+    // fix-up (2026-10-22) moved most pages onto the trail.
+    const NAV_TRAIL = /<(PageHeader|ListTemplate|RecordTemplate|DeskTemplate|SettingsTemplate)\b/;
     let read = 0;
     for (const m of MODULES) {
       const comp = componentFileFor(m.path);
-      if (comp && headerFile(comp)) read += 1;
+      if (!comp) continue;
+      if (headerFile(comp) || NAV_TRAIL.test(readFileSync(comp, 'utf8'))) read += 1;
     }
     expect(read).toBeGreaterThan(60);
   });

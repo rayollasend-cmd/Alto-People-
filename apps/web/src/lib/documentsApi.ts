@@ -27,9 +27,12 @@ export function listAdminDocuments(
     sort?: DocumentSort;
     page?: number;
     pageSize?: number;
+    /** Still good today, expiring within this many days (the vault's renewal tile). */
+    expiringWithin?: number;
   } = {},
 ): Promise<DocumentListResponse> {
   const p = new URLSearchParams();
+  if (filters.expiringWithin) p.set('expiringWithin', String(filters.expiringWithin));
   if (filters.status) {
     p.set('status', Array.isArray(filters.status) ? filters.status.join(',') : filters.status);
   }
@@ -264,4 +267,9 @@ export function reclassifyDocument(
     method: 'POST',
     body: { kind },
   });
+}
+
+/** Ask someone for a document they haven't uploaded: a notice linking to their documents page. */
+export function requestDocument(input: { associateId: string; kind: DocumentKind; note?: string | null }): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>('/documents/admin/request', { method: 'POST', body: input });
 }

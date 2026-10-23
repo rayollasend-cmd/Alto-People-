@@ -1,8 +1,8 @@
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getAttendanceTrends, type AttendanceTrendsResponse, type AttendanceWeek } from '@/lib/attendanceInsightsApi';
 import { Card, CardContent } from '@/components/ui/Card';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { weekLabel } from './weekLabel';
@@ -60,37 +60,45 @@ export function AttendanceTrendTiles({ siteId, className }: { siteId?: string; c
   const since = last ? `Week of ${weekLabel(last.weekStart)}` : undefined;
 
   const fillSeries = data.weeks.map((w) => w.fillRatePct).filter((v): v is number => v !== null);
-  const fillDelta = last?.fillRatePct != null && prior?.fillRatePct != null ? last.fillRatePct - prior.fillRatePct : 0;
+  // Last week had no shifts: the tile says this week so far instead of "—"
+  // over a sparkline that plainly has values (F500 workforce home).
+  const fillThisWeek = last?.fillRatePct == null && current?.fillRatePct != null;
+  const fillWeek = fillThisWeek ? current : last;
+  const fillBefore = fillWeek
+    ? [...data.weeks].reverse().find((w) => w.weekStart < fillWeek.weekStart && w.fillRatePct != null)?.fillRatePct ?? null
+    : null;
+  const fillDelta = fillWeek?.fillRatePct != null && fillBefore != null ? fillWeek.fillRatePct - fillBefore : 0;
   const count = (key: CountKey) => ({
     series: data.weeks.map((w) => w[key]),
     delta: last && prior ? last[key] - prior[key] : 0,
     deltaLabel: 'vs wk before',
   });
-  const wrap = (to: string) => (card: React.ReactElement) => (
-    <Link to={to} className="block h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:h-full">
-      {card}
-    </Link>
-  );
 
   return (
     <div className={className}>
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <MetricStrip label="Attendance, last eight weeks">
         <MetricCard
-          label="Fill rate · last week"
-          value={last?.fillRatePct != null ? `${last.fillRatePct}%` : '—'}
-          accent={last?.fillRatePct != null && last.fillRatePct < data.fillTargetPct}
-          trend={fillSeries.length >= 2 ? { series: fillSeries, delta: fillDelta, deltaLabel: 'pts' } : undefined}
-          hint={current?.fillRatePct != null ? `This week so far: ${current.fillRatePct}% · target ${data.fillTargetPct}%` : `Target ${data.fillTargetPct}%`}
-          wrap={wrap('/scheduling')}
+          label={fillThisWeek ? 'Fill rate · this week' : 'Fill rate · last week'}
+          value={fillWeek?.fillRatePct != null ? `${fillWeek.fillRatePct}%` : '—'}
+          tone={fillWeek?.fillRatePct != null && fillWeek.fillRatePct < data.fillTargetPct ? 'warning' : 'default'}
+          trend={fillSeries.length >= 2 ? { series: fillSeries, delta: fillDelta, deltaLabel: 'pts', lastIsPartial: fillThisWeek } : undefined}
+          hint={
+            fillThisWeek
+              ? `So far · target ${data.fillTargetPct}%`
+              : current?.fillRatePct != null
+                ? `This week so far: ${current.fillRatePct}% · target ${data.fillTargetPct}%`
+                : `Target ${data.fillTargetPct}%`
+          }
+          href="/scheduling"
         />
         <MetricCard
           label="No-call no-shows"
           value={last ? last.noCallNoShows : '—'}
-          accent={(last?.noCallNoShows ?? 0) > 0}
+          tone={(last?.noCallNoShows ?? 0) > 0 ? 'warning' : 'default'}
           trend={count('noCallNoShows')}
           deltaPositiveIsGood={false}
           hint={since}
-          wrap={wrap('/call-outs')}
+          href="/call-outs"
         />
         <MetricCard
           label="Call-outs"
@@ -98,7 +106,7 @@ export function AttendanceTrendTiles({ siteId, className }: { siteId?: string; c
           trend={count('callOuts')}
           deltaPositiveIsGood={false}
           hint={since}
-          wrap={wrap('/call-outs')}
+          href="/call-outs"
         />
         <MetricCard
           label="Late arrivals"
@@ -106,9 +114,9 @@ export function AttendanceTrendTiles({ siteId, className }: { siteId?: string; c
           trend={count('lates')}
           deltaPositiveIsGood={false}
           hint={current ? `${current.lates} so far this week` : since}
-          wrap={wrap('/time-attendance')}
+          href="/time-attendance"
         />
-      </div>
+      </MetricStrip>
     </div>
   );
 }

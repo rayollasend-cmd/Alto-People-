@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarRange, Download, FileText, Plane, Plus, Users } from 'lucide-react';
+import { BellRing, CalendarRange, Download, FileText, Plane, Plus, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   PROGRAM_ALERT_LABELS,
@@ -49,6 +49,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -66,8 +67,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
  * client. Settings: the lead times the alerts fire on.
  */
 
-type Tab = 'participants' | 'sponsors' | 'calendar' | 'settings';
-const TABS: readonly Tab[] = ['participants', 'sponsors', 'calendar', 'settings'];
+type Tab = 'participants' | 'sponsors' | 'calendar';
+const TABS: readonly Tab[] = ['participants', 'sponsors', 'calendar'];
 
 const STATUS_BADGE: Record<ProgramSummary['status'], { variant: 'success' | 'pending' | 'destructive' | 'info' | 'outline'; label: string }> = {
   UPCOMING: { variant: 'info', label: 'Upcoming' },
@@ -93,6 +94,8 @@ export function ProgramsHome() {
   const canManage = can('manage:compliance');
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get('tab');
+  // ?tab=settings (the old Alert settings tab) opens the settings dialog.
+  const [settingsOpen, setSettingsOpen] = useState(requested === 'settings');
   const tab: Tab = TABS.includes(requested as Tab) ? (requested as Tab) : 'participants';
   const setTab = (next: Tab) => {
     const params = new URLSearchParams(searchParams);
@@ -100,27 +103,29 @@ export function ProgramsHome() {
     else params.set('tab', next);
     setSearchParams(params);
   };
+  // The header's "Add program" opens the dialog over whichever tab is open.
+  const [creating, setCreating] = useState<PickedAssociate | null | 'blank'>(null);
+  const sponsors = useQuery({ queryKey: ['programs', 'sponsors'], queryFn: listSponsors });
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Programs"
         subtitle="J-1 and H-2B participants, their sponsors, the dates that fire alerts, and the season's transition calendar."
-        secondaryActions={
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/compliance?tab=j1">J-1 compliance tab</Link>
-          </Button>
-        }
+        actions={[
+          { key: 'add', label: 'Add program', icon: Plus, primary: true, hidden: !canManage, onSelect: () => setCreating('blank') },
+          // How early each alert fires: settings, not a tab of the work.
+          { key: 'alerts', label: 'Alert settings', icon: BellRing, onSelect: () => setSettingsOpen(true) },
+        ]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="participants">Participants</TabsTrigger>
           <TabsTrigger value="sponsors">Sponsors</TabsTrigger>
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
-          <TabsTrigger value="settings">Alert settings</TabsTrigger>
         </TabsList>
         <TabsContent value="participants">
-          <ParticipantsTab canManage={canManage} />
+          <ParticipantsTab canManage={canManage} onCreate={setCreating} />
         </TabsContent>
         <TabsContent value="sponsors">
           <SponsorsTab canManage={canManage} />
@@ -128,24 +133,55 @@ export function ProgramsHome() {
         <TabsContent value="calendar">
           <CalendarTab />
         </TabsContent>
-        <TabsContent value="settings">
-          <SettingsTab canManage={canManage} />
-        </TabsContent>
       </Tabs>
+      {creating && (
+        <ProgramDialog
+          mode="create"
+          preselected={creating === 'blank' ? null : creating}
+          sponsors={sponsors.data?.sponsors ?? []}
+          onClose={() => setCreating(null)}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsDialog
+          canManage={canManage}
+          onClose={() => {
+            setSettingsOpen(false);
+            if (requested === 'settings') {
+              const params = new URLSearchParams(searchParams);
+              params.delete('tab');
+              setSearchParams(params, { replace: true });
+            }
+          }}
+        />
+      )}
     </ListTemplate>
   );
 }
 
 /* ------------------------------------------------------------ participants */
 
-function ParticipantsTab({ canManage }: { canManage: boolean }) {
+function ParticipantsTab({
+  canManage,
+  onCreate,
+}: {
+  canManage: boolean;
+  /** Open the add dialog (blank, or for one person from a deep link). */
+  onCreate: (who: PickedAssociate | 'blank') => void;
+}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [type, setType] = useState<ProgramType | ''>('');
   const [sponsorId, setSponsorId] = useState('');
   const [clientId, setClientId] = useState('');
   const [history, setHistory] = useState(false);
   const [editing, setEditing] = useState<ProgramSummary | null>(null);
-  const [creating, setCreating] = useState<PickedAssociate | null | 'blank'>(null);
+  const filtered = !!(type || sponsorId || clientId || history);
+  const clearFilters = () => {
+    setType('');
+    setSponsorId('');
+    setClientId('');
+    setHistory(false);
+  };
 
   const filters: ProgramFilters = {
     type: type || undefined,
@@ -181,9 +217,9 @@ function ParticipantsTab({ canManage }: { canManage: boolean }) {
   useEffect(() => {
     if (!pendingAssociateId || !deepLinkProgram.data) return;
     if (deepLinkProgram.data.program) setEditing(deepLinkProgram.data.program);
-    else setCreating({ id: pendingAssociateId, name: 'Selected associate' });
+    else onCreate({ id: pendingAssociateId, name: 'Selected associate' });
     setPendingAssociateId(null);
-  }, [pendingAssociateId, deepLinkProgram.data]);
+  }, [pendingAssociateId, deepLinkProgram.data, onCreate]);
 
   const rows = useMemo(() => programs.data?.programs ?? [], [programs.data]);
   const stats = useMemo(() => {
@@ -198,14 +234,38 @@ function ParticipantsTab({ canManage }: { canManage: boolean }) {
 
   if (programs.isError) return <QueryError what="programs" query={programs} />;
 
+  // Nothing on record at all: the empty state is the page — what these
+  // records are and how to start one — not four zeros over filters.
+  if (!programs.isLoading && rows.length === 0 && !filtered) {
+    return (
+      <Card>
+        <CardContent className="p-0">
+          <EmptyState
+            icon={Plane}
+            title="No programs on record"
+            description="A program record follows one person through one visa season: a J-1 participant's DS-2019, sponsor and SEVIS dates, or an H-2B worker's petition and the one client it was certified for. Alto fires an alert before each date."
+            action={
+              canManage ? (
+                <Button onClick={() => onCreate('blank')}>
+                  <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                  Add program
+                </Button>
+              ) : undefined
+            }
+          />
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <MetricStrip label="Programs at a glance">
         <MetricCard label="Active programs" value={programs.isLoading ? '—' : String(stats.active)} hint="Running or in grace today" />
-        <MetricCard label="Ending in 30 days" value={programs.isLoading ? '—' : String(stats.ending30)} hint="Program end within a month" accent={stats.ending30 > 0} />
-        <MetricCard label="Alerts firing" value={programs.isLoading ? '—' : String(stats.alerts)} hint="Dates inside their lead time" accent={stats.alerts > 0} />
+        <MetricCard label="Ending in 30 days" value={programs.isLoading ? '—' : String(stats.ending30)} hint="Program end within a month" tone={stats.ending30 > 0 ? 'warning' : 'neutral'} />
+        <MetricCard label="Alerts firing" value={programs.isLoading ? '—' : String(stats.alerts)} hint="Dates inside their lead time" tone={stats.alerts > 0 ? 'warning' : 'neutral'} />
         <MetricCard label="H-2B on petition" value={programs.isLoading ? '—' : String(stats.h2b)} hint="Scheduling limited to one client" />
-      </div>
+      </MetricStrip>
 
       <Card>
         <CardHeader>
@@ -217,12 +277,6 @@ function ParticipantsTab({ canManage }: { canManage: boolean }) {
               </CardTitle>
               <CardDescription>One record per season per person. The most urgent date leads each row.</CardDescription>
             </div>
-            {canManage && (
-              <Button onClick={() => setCreating('blank')}>
-                <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-                Add program
-              </Button>
-            )}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <Select aria-label="Program type" size="sm" value={type} onChange={(e) => setType(e.target.value as ProgramType | '')}>
@@ -258,7 +312,15 @@ function ParticipantsTab({ canManage }: { canManage: boolean }) {
           {programs.isLoading ? (
             <Skeleton className="h-64" />
           ) : rows.length === 0 ? (
-            <EmptyState icon={Plane} title="No programs on record" description="Add a J-1 or H-2B program, or widen the filters." />
+            <EmptyState
+              icon={Plane}
+              title="Nothing matches these filters"
+              action={
+                <Button variant="secondary" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              }
+            />
           ) : (
             <DataGrid<ProgramSummary>
               id="programs-participants"
@@ -301,14 +363,6 @@ function ParticipantsTab({ canManage }: { canManage: boolean }) {
         </CardContent>
       </Card>
 
-      {creating && (
-        <ProgramDialog
-          mode="create"
-          preselected={creating === 'blank' ? null : creating}
-          sponsors={sponsors.data?.sponsors ?? []}
-          onClose={() => setCreating(null)}
-        />
-      )}
       {editing && <ProgramDialog mode="edit" program={editing} sponsors={sponsors.data?.sponsors ?? []} canManage={canManage} onClose={() => setEditing(null)} />}
     </div>
   );
@@ -1002,7 +1056,13 @@ function CalendarTab() {
             </CardTitle>
             <CardDescription>Arrivals, program ends and departures by month, site and channel. Counts and dates only — the PDF can go to a client.</CardDescription>
           </div>
-          <Button disabled={!ok} onClick={() => window.open(transitionCalendarPdfUrl(query), '_blank', 'noopener')}>
+          {/* A secondary button, and only live when the window holds
+              something: a gold PDF of "nothing in this window" helps nobody. */}
+          <Button
+            variant="secondary"
+            disabled={!ok || !cal.data || cal.data.cells.length === 0}
+            onClick={() => window.open(transitionCalendarPdfUrl(query), '_blank', 'noopener')}
+          >
             <Download className="mr-1.5 h-4 w-4" aria-hidden="true" />
             Download PDF
           </Button>
@@ -1107,53 +1167,139 @@ const SETTING_FIELDS: Array<{ key: keyof ProgramAlertSettings; label: string; hi
   { key: 'petitionEndDays', label: 'H-2B petition end', hint: 'Days before the petition validity ends.' },
 ];
 
-const parseDays = (s: string) =>
-  [...new Set(s.split(/[,\s]+/).map((x) => Number(x)).filter((n) => Number.isInteger(n) && n >= 0 && n <= 365))].sort((a, b) => b - a);
+/** Lead times, most days first, each a whole number of days 0–365. */
+export const sortLeads = (days: number[]) => [...new Set(days.filter((n) => Number.isInteger(n) && n >= 0 && n <= 365))].sort((a, b) => b - a);
 
-function SettingsTab({ canManage }: { canManage: boolean }) {
+/** One lead-time list as chips: × to drop a lead, a number box to add one. */
+function LeadChips({
+  label,
+  hint,
+  days,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  days: number[];
+  disabled: boolean;
+  onChange: (days: number[]) => void;
+}) {
+  const [next, setNext] = useState('');
+  const id = `lead-${label.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
+  const add = () => {
+    const n = Number(next);
+    if (next.trim() === '' || !Number.isInteger(n) || n < 0 || n > 365) return;
+    onChange(sortLeads([...days, n]));
+    setNext('');
+  };
+  return (
+    <fieldset className="space-y-1.5">
+      <legend className="text-sm text-ink">{label}</legend>
+      <p className="text-xs text-silver">{hint}</p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {days.length === 0 && <span className="text-xs text-silver">No alerts</span>}
+        {days.map((d) => (
+          <span key={d} className="inline-flex items-center gap-1 rounded-full border border-navy-secondary bg-navy-secondary/40 py-0.5 pl-2.5 pr-1 text-xs text-ink">
+            {d === 0 ? 'On the day' : `${d} ${d === 1 ? 'day' : 'days'}`}
+            {!disabled && (
+              <button
+                type="button"
+                className="grid h-5 w-5 place-items-center rounded-full text-silver hover:bg-navy-secondary hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                aria-label={`Remove ${d === 0 ? 'on the day' : `${d} days`} from ${label}`}
+                onClick={() => onChange(days.filter((x) => x !== d))}
+              >
+                <X className="h-3 w-3" aria-hidden="true" />
+              </button>
+            )}
+          </span>
+        ))}
+        {!disabled && (
+          <span className="inline-flex items-center gap-1">
+            <label htmlFor={id} className="sr-only">
+              Add a lead time to {label}, in days
+            </label>
+            <Input
+              id={id}
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={365}
+              value={next}
+              placeholder="Days"
+              className="h-8 w-20 text-base sm:text-sm"
+              onChange={(e) => setNext(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  add();
+                }
+              }}
+            />
+            <Button type="button" size="sm" variant="ghost" onClick={add} disabled={next.trim() === ''}>
+              Add
+            </Button>
+          </span>
+        )}
+      </div>
+    </fieldset>
+  );
+}
+
+/** How many days before each date an alert fires — a dialog from the header, not a tab of the work. */
+function SettingsDialog({ canManage, onClose }: { canManage: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ['programs', 'alert-settings'], queryFn: getAlertSettings });
-  const [draft, setDraft] = useState<Record<keyof ProgramAlertSettings, string> | null>(null);
-  const current = draft ?? (settings.data ? (Object.fromEntries(SETTING_FIELDS.map((f) => [f.key, settings.data![f.key].join(', ')])) as Record<keyof ProgramAlertSettings, string>) : null);
+  const [draft, setDraft] = useState<ProgramAlertSettings | null>(null);
+  const current = draft ?? settings.data ?? null;
   const save = useMutation({
-    mutationFn: () =>
-      saveAlertSettings(Object.fromEntries(SETTING_FIELDS.map((f) => [f.key, parseDays(current![f.key])])) as unknown as ProgramAlertSettings),
+    mutationFn: () => saveAlertSettings(Object.fromEntries(SETTING_FIELDS.map((f) => [f.key, sortLeads(current![f.key])])) as unknown as ProgramAlertSettings),
     onSuccess: async () => {
       toast.success('Lead times saved.');
       setDraft(null);
       await qc.invalidateQueries({ queryKey: ['programs'] });
+      onClose();
     },
     onError: (err: unknown) => toast.error(errMsg(err, 'Could not save.')),
   });
-  if (settings.isError) return <QueryError what="alert settings" query={settings} />;
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Alert lead times</CardTitle>
-        <CardDescription>
-          How many days before each date an alert fires, as a comma-separated list. The smallest lead marks the alert urgent. Alerts show on the
-          associate record, the dashboards, and the Monday digest.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!current ? (
+    <Dialog open onOpenChange={(o) => !o && !save.isPending && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Alert lead times</DialogTitle>
+          <DialogDescription>
+            How many days before each date an alert fires. The smallest lead marks the alert urgent. Alerts show on the associate record, the dashboards and the Monday digest.
+          </DialogDescription>
+        </DialogHeader>
+        {settings.isError ? (
+          <QueryError what="alert settings" query={settings} />
+        ) : !current ? (
           <Skeleton className="h-40" />
         ) : (
-          <fieldset disabled={!canManage} className="space-y-3">
+          <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
             {SETTING_FIELDS.map((f) => (
-              <Field key={f.key} label={f.label} hint={f.hint}>
-                <Input value={current[f.key]} onChange={(e) => setDraft({ ...current, [f.key]: e.target.value })} placeholder="60, 30, 14, 7" className="max-w-xs" />
-              </Field>
+              <LeadChips
+                key={f.key}
+                label={f.label}
+                hint={f.hint}
+                days={current[f.key]}
+                disabled={!canManage}
+                onChange={(days) => setDraft({ ...current, [f.key]: days })}
+              />
             ))}
-            {canManage && (
-              <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!draft}>
-                Save lead times
-              </Button>
-            )}
-          </fieldset>
+          </div>
         )}
-      </CardContent>
-    </Card>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={save.isPending}>
+            {canManage ? 'Cancel' : 'Close'}
+          </Button>
+          {canManage && (
+            <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!draft}>
+              Save lead times
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -6,9 +6,30 @@ import type {
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
-export function listReviews(filters: { status?: PerformanceReviewStatus } = {}): Promise<PerformanceReviewListResponse> {
-  const qs = filters.status ? `?status=${filters.status}` : '';
+/** One status, or several ("needs action" = DRAFT + SUBMITTED). */
+export function listReviews(filters: { status?: PerformanceReviewStatus | PerformanceReviewStatus[] } = {}): Promise<PerformanceReviewListResponse> {
+  const status = Array.isArray(filters.status) ? filters.status.join(',') : filters.status;
+  const qs = status ? `?status=${status}` : '';
   return apiFetch<PerformanceReviewListResponse>(`/performance/reviews${qs}`);
+}
+
+/** GET /performance/reviews/summary — the cycle at a glance (apps/api routes/performance.ts). */
+export interface ReviewsSummary {
+  drafts: number;
+  awaitingAck: number;
+  acknowledged: number;
+  doneThisQuarter: number;
+  /** "YYYY-MM-DD", the first day of the current calendar quarter. */
+  quarterStart: string;
+  /** People whose review fell due before today (a year after their last review's period end, or their hire date). */
+  overdue: number;
+  /** People whose review falls due between today and the month's end. */
+  dueThisMonth: number;
+  due: Array<{ associateId: string; name: string; lastPeriodEnd: string | null; dueOn: string; overdue: boolean }>;
+}
+
+export function getReviewsSummary(): Promise<ReviewsSummary> {
+  return apiFetch<ReviewsSummary>('/performance/reviews/summary');
 }
 
 export function listMyReviews(): Promise<PerformanceReviewListResponse> {

@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { Scale } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange } from '@/lib/format';
+import { urlDay, useUrlParam, useUrlState } from '@/lib/useUrlState';
 import { calibrateReview, getCalibration, type CalibrationReview, type CalibrationReviewer } from '@/lib/performanceApi';
 import { ListTemplate } from '@/components/templates';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -25,7 +25,9 @@ import {
   FilterChip,
   Input,
   MetricCard,
+  MetricStrip,
   SectionTitle,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Textarea,
@@ -41,14 +43,22 @@ import { cn } from '@/lib/cn';
  * beside it on the record.
  */
 
-/** The last completed calendar quarter, as YYYY-MM-DD. */
-function lastQuarter(now = new Date()): { from: string; to: string } {
-  const q = Math.floor(now.getMonth() / 3) * 3;
-  const start = new Date(now.getFullYear(), q - 3, 1);
-  const end = new Date(now.getFullYear(), q, 0);
-  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return { from: ymd(start), to: ymd(end) };
+const ymdOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** A calendar quarter, as YYYY-MM-DD: `back` 0 is this quarter, 1 the last completed one. */
+export function quarterRange(back: 0 | 1, now = new Date()): { from: string; to: string } {
+  const q = Math.floor(now.getMonth() / 3) * 3 - back * 3;
+  return { from: ymdOf(new Date(now.getFullYear(), q, 1)), to: ymdOf(new Date(now.getFullYear(), q + 3, 0)) };
 }
+
+/** The period picker: the two quarters people calibrate, or any dates. */
+const PERIODS = ['last', 'this', 'custom'] as const;
+type Period = (typeof PERIODS)[number];
+const PERIOD_OPTIONS: Array<{ value: Period; label: string }> = [
+  { value: 'this', label: 'This quarter' },
+  { value: 'last', label: 'Last quarter' },
+  { value: 'custom', label: 'Custom' },
+];
 
 const LEAN_LABEL: Record<'generous' | 'strict', string> = {
   generous: 'Rates above everyone',
@@ -80,7 +90,15 @@ export function ReviewCalibration() {
   const { user } = useAuth();
   const term = useTerm();
   const qc = useQueryClient();
-  const [range, setRange] = useState(lastQuarter);
+  // The period lives in the URL (?period=this, or custom ?from=&to=), so a link shares it.
+  const [period, setPeriod] = useUrlParam<Period>('period', 'last', PERIODS);
+  const [fromParam, setFrom] = useUrlState<string>('from', '', urlDay);
+  const [toParam, setTo] = useUrlState<string>('to', '', urlDay);
+  const range = useMemo(() => {
+    if (period !== 'custom') return quarterRange(period === 'this' ? 0 : 1);
+    const last = quarterRange(1);
+    return { from: fromParam || last.from, to: toParam || last.to };
+  }, [period, fromParam, toParam]);
   const [reviewer, setReviewer] = useState<string>('');
   const [onlyDrafts, setOnlyDrafts] = useState(true);
   const [moving, setMoving] = useState<CalibrationReview | null>(null);
@@ -100,16 +118,23 @@ export function ReviewCalibration() {
     <ListTemplate
       title="Review calibration"
       subtitle="Every reviewer's ratings side by side, before reviews are shared."
-      breadcrumbs={[{ label: 'Workforce' }, { label: 'Performance', to: '/performance' }, { label: 'Calibration' }]}
-      secondaryActions={
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/performance">All reviews</Link>
-        </Button>
-      }
+      related={[
+        { label: 'Reviews', to: '/performance' },
+        { label: 'Goals, 1:1s & feedback', to: '/performance/extras' },
+      ]}
       filters={
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="From">{(p) => <Input type="date" size="sm" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} {...p} />}</Field>
-          <Field label="To">{(p) => <Input type="date" size="sm" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} {...p} />}</Field>
+          <SegmentedControl ariaLabel="Period" options={PERIOD_OPTIONS} value={period} onChange={setPeriod} />
+          {period === 'custom' ? (
+            <>
+              <Field label="From">{(p) => <Input type="date" size="sm" value={range.from} onChange={(e) => setFrom(e.target.value)} {...p} />}</Field>
+              <Field label="To">{(p) => <Input type="date" size="sm" value={range.to} onChange={(e) => setTo(e.target.value)} {...p} />}</Field>
+            </>
+          ) : (
+            <span className="pb-1.5 text-sm tabular-nums text-ink-muted" data-testid="calibration-period">
+              {fmtDateOnlyRange(range.from, range.to)}
+            </span>
+          )}
         </div>
       }
     >
@@ -125,12 +150,12 @@ export function ReviewCalibration() {
         </Card>
       ) : (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MetricStrip label="Calibration at a glance">
             <MetricCard label="Reviews" value={data.data.total} hint={`${data.data.reviewers.length} reviewers`} />
             <MetricCard label="Average rating" value={data.data.mean === null ? '—' : data.data.mean.toFixed(2)} hint="Out of 5" />
             <MetricCard label="Reviewers far from the average" value={leaning} hint="0.75 or more away, 3+ reviews" />
             <MetricCard label="Ratings moved" value={moved} hint="In calibration, with a reason" />
-          </div>
+          </MetricStrip>
 
           <section aria-labelledby="cal-spread">
             <SectionTitle id="cal-spread" title="How ratings spread" />

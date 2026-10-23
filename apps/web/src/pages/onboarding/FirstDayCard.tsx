@@ -19,6 +19,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
 
 /**
  * "First day" (role walk HR 11): everything that has to be true before a
@@ -37,7 +38,8 @@ function Line({ done, label, children }: { done: boolean; label: string; childre
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 first:pt-0 last:pb-0">
       <Icon className={cn('h-4 w-4 shrink-0', done ? 'text-success' : 'text-ink-muted')} aria-hidden="true" />
       <span className="w-36 shrink-0 text-sm text-ink-muted">{label}</span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm text-ink">{children}</div>
+      {/* At least a date field wide: on a phone the value wraps under its label instead of running off the card. */}
+      <div className="flex min-w-[11rem] flex-1 flex-wrap items-center gap-2 text-sm text-ink">{children}</div>
     </li>
   );
 }
@@ -50,16 +52,21 @@ export interface FirstDayCardProps {
   status: string;
   /** The pay schedule the hire lands on, when the rules choose one. */
   payScheduleName: string | null;
+  /** Known to be on no schedule (the read answered, and nothing covers them):
+   *  the line becomes the place to choose one — the application page's only
+   *  "no pay schedule" warning (F500 G1). */
+  payScheduleUncovered?: boolean;
   /** Inside the approval celebration: no card frame. */
   bare?: boolean;
 }
 
-export function FirstDayCard({ applicationId, associateId, clientId, status, payScheduleName, bare = false }: FirstDayCardProps) {
+export function FirstDayCard({ applicationId, associateId, clientId, status, payScheduleName, payScheduleUncovered = false, bare = false }: FirstDayCardProps) {
   const qc = useQueryClient();
   const key = ['application', applicationId, 'first-day'];
   const q = useQuery({ queryKey: key, queryFn: () => getFirstDay(applicationId) });
   const [saving, setSaving] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
+  const [changingSchedule, setChangingSchedule] = useState(false);
   const fd = q.data;
   const approved = status === 'APPROVED';
 
@@ -160,8 +167,26 @@ export function FirstDayCard({ applicationId, associateId, clientId, status, pay
           </div>
         </Line>
         <Line done={!!payScheduleName} label="Pay schedule">
-          {payScheduleName ?? <span className="text-ink-muted">None covers this hire — choose one at approval.</span>}
+          {payScheduleName ? (
+            <>
+              <span>{payScheduleName}</span>
+              {!bare && (
+                <Button size="sm" variant="ghost" onClick={() => setChangingSchedule((v) => !v)} aria-expanded={changingSchedule}>
+                  {changingSchedule ? 'Done' : 'Details'}
+                </Button>
+              )}
+            </>
+          ) : payScheduleUncovered && !bare ? (
+            <PayScheduleAssignment associateId={associateId} variant={approved ? 'record' : 'hire'} className="w-full" />
+          ) : (
+            <span className="text-ink-muted">None covers this hire — choose one at approval.</span>
+          )}
         </Line>
+        {changingSchedule && payScheduleName && !bare && (
+          <li className="py-2">
+            <PayScheduleAssignment associateId={associateId} variant={approved ? 'record' : 'hire'} />
+          </li>
+        )}
         <Line done={numberOk} label="Clock-in number">
           {numberOk ? (
             <>

@@ -918,7 +918,9 @@ describe('<RecruitingHome> taking it back', () => {
     } as never);
     vi.mocked(restoreCandidate).mockClear();
     const user = renderHome();
-    await user.click(await screen.findByRole('button', { name: /recently removed/i }));
+    // Recently removed lives in the header's More menu (F500 G1), not beside the primary.
+    await user.click(await screen.findByRole('button', { name: /more actions/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /recently removed/i }));
 
     const dialog = within(await screen.findByRole('dialog', { name: 'Recently removed' }));
     expect(await dialog.findByText(/Tess Test/)).toBeInTheDocument();

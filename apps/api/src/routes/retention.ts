@@ -134,14 +134,23 @@ retentionRouter.get('/retention/summary', VIEW, async (req, res) => {
   });
 });
 
+// A line manager's "crew" is their team — the people who report to them —
+// not everyone their capabilities could reach (company-wide for MANAGER): a
+// manager with no reports read "2 at some risk" about strangers (F500 G5).
+const NO_ASSOCIATE = '00000000-0000-0000-0000-000000000000';
 retentionRouter.get('/retention/crew', VIEW, async (req, res) => {
   const user = req.user!;
-  const where = { AND: [{ tenantId: tenantIdForWrite() }, { associate: scopeActiveAssociates(user) }] };
+  const team = user.role === 'MANAGER';
+  const associate: Prisma.AssociateWhereInput = team
+    ? { AND: [scopeActiveAssociates(user), { managerId: user.associateId ?? NO_ASSOCIATE }] }
+    : scopeActiveAssociates(user);
+  const where = { AND: [{ tenantId: tenantIdForWrite() }, { associate }] };
   const [high, medium] = await Promise.all([
     prisma.flightRisk.count({ where: { AND: [...where.AND, { band: 'HIGH' as const }] } }),
     prisma.flightRisk.count({ where: { AND: [...where.AND, { band: 'MEDIUM' as const }] } }),
   ]);
-  res.json({ high, medium });
+  // `scope` says whose crew the counts are: the manager's team, or the caller's reach.
+  res.json({ high, medium, scope: team ? 'team' : 'reach' });
 });
 
 const PlayBody = z.object({

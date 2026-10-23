@@ -39,6 +39,9 @@ export interface AdminUser {
   /** Access pack: may sign in with password + two-step while SSO is required. */
   breakGlass?: boolean;
   mfaEnabled?: boolean;
+  /** An access change waiting on a second administrator: a role elevation,
+   *  or a whole invite held until it is approved (`invite`). */
+  pendingAccess?: { approvalId: string; role: Role | null; invite: boolean } | null;
   /** SHIFT_SUPERVISOR: the store shift windows they lead ("their shift"). */
   shiftWindows?: Array<{ locationId: string; locationName: string; label: string }>;
   /** A floor supervisor's shift supervisor (null when unassigned or the
@@ -55,7 +58,8 @@ export interface AdminUser {
 
 export interface ListUsersFilters {
   role?: Role;
-  status?: UserStatus;
+  /** One status, or several ("ACTIVE + INVITED", the list's default view). */
+  status?: UserStatus | UserStatus[];
   q?: string;
 }
 
@@ -64,6 +68,8 @@ export interface ListUsersResponse {
   /** Total matching rows server-side — may exceed users.length when the
    *  list is capped, so callers can render "Showing N of M". */
   total: number;
+  /** Per status over the same role and search, whatever the status filter (the chips). */
+  counts?: Record<UserStatus, number>;
 }
 
 export function listAdminUsers(
@@ -71,7 +77,8 @@ export function listAdminUsers(
 ): Promise<ListUsersResponse> {
   const params = new URLSearchParams();
   if (filters.role) params.set('role', filters.role);
-  if (filters.status) params.set('status', filters.status);
+  const statuses = Array.isArray(filters.status) ? filters.status : filters.status ? [filters.status] : [];
+  if (statuses.length) params.set('status', statuses.join(','));
   if (filters.q) params.set('q', filters.q);
   const qs = params.toString();
   return apiFetch<ListUsersResponse>(
@@ -246,4 +253,21 @@ export function createPersonRecord(
   body: { firstName: string; lastName: string },
 ): Promise<{ associateId: string; created: boolean }> {
   return apiFetch(`/admin/users/${id}/person-record`, { method: 'POST', body });
+}
+
+export interface InviteUserInput {
+  email: string;
+  name?: string;
+  role: Role;
+  clientId?: string | null;
+}
+
+/** 201: the account and whether the email went; 202: held for a second administrator. */
+export type InviteUserResult =
+  | { pending?: undefined; user: { id: string; email: string; status: UserStatus; role: Role }; emailFailed: string | null; expiresAt: string | null }
+  | { pending: true; approvalId: string; title: string; user: { id: string; email: string } };
+
+/** Users & access → Invite user: an account for someone on staff (not an associate, not a client login). */
+export function inviteUser(body: InviteUserInput): Promise<InviteUserResult> {
+  return apiFetch<InviteUserResult>('/admin/users/invite', { method: 'POST', body });
 }

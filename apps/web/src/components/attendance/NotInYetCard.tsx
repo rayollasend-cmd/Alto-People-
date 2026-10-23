@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, CheckCircle2, Flag, MessageSquareText, Phone, UserX } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Clock, Flag, MessageSquareText, Phone, UserX } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { getLateNow, type LateNowPerson } from '@/lib/attendanceInsightsApi';
@@ -66,9 +66,12 @@ export function NotInYetCard({
   siteId,
   filter,
   canCover = false,
+  quiet,
   className,
 }: {
   siteId?: string;
+  /** What to say when nobody is listed and nobody is due yet ("Swing starts 2:00 PM — nobody due yet"), instead of "Everyone's in". */
+  quiet?: { title: string; description?: string };
   /** Narrow to the people in view (the supervisor's own shift). */
   filter?: (p: LateNowPerson) => boolean;
   /** Offer "find cover" (the caller runs the schedule). */
@@ -150,7 +153,11 @@ export function NotInYetCard({
           }
         />
         {people.length === 0 ? (
-          <EmptyState size="sm" icon={CheckCircle2} title={t('notIn.allInTitle')} description={t('notIn.allInDesc')} />
+          quiet ? (
+            <EmptyState size="sm" icon={Clock} title={quiet.title} description={quiet.description} />
+          ) : (
+            <EmptyState size="sm" icon={CheckCircle2} title={t('notIn.allInTitle')} description={t('notIn.allInDesc')} />
+          )
         ) : (
           <ul className="divide-y divide-line" aria-label={t('notIn.listAria')}>
             {people.map((p) => (

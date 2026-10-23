@@ -177,7 +177,9 @@ describe('editing the structure from the field chart', () => {
     const user = userEvent.setup();
     renderAsAdmin(<OrgChart />, '/org/chart?view=field');
     await screen.findByTestId('org-canvas');
-    await user.click(screen.getByRole('button', { name: 'Region' }));
+    // The header's actions (a phone-width render: they sit behind More).
+    await user.click(screen.getByRole('button', { name: 'More actions' }));
+    await user.click(await screen.findByRole('button', { name: 'Add region' }));
     const dialog = await screen.findByRole('dialog', { name: 'Add a region' });
     await user.type(within(dialog).getByLabelText(/Name/), 'Gulf Coast');
     await user.click(within(dialog).getByRole('button', { name: 'Add region' }));
@@ -187,7 +189,8 @@ describe('editing the structure from the field chart', () => {
   it('only people who manage the org get the editing controls', async () => {
     renderAs('FINANCE_ACCOUNTANT', <OrgChart />, '/org/chart?view=field&layout=list');
     await screen.findByRole('tree', { name: 'Field org chart' });
-    expect(screen.queryByRole('button', { name: 'Region' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add region' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add store/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Details for/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Move .* to a region/ })).toBeNull();
   });
@@ -199,7 +202,8 @@ describe('editing the structure from the field chart', () => {
     const hotel = { id: 'hotel', ...defaultTenantProfile('DIRECT_EMPLOYER') };
     renderAsAdmin(<OrgChart />, '/org/chart?view=field', hotel);
     await screen.findByTestId('org-canvas');
-    await user.click(screen.getByRole('button', { name: 'Property' }));
+    await user.click(screen.getByRole('button', { name: 'More actions' }));
+    await user.click(await screen.findByRole('button', { name: 'Add property' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByText(/client/i)).toBeNull();
     await user.type(within(dialog).getByLabelText(/Name/), 'The Grand');

@@ -17,7 +17,7 @@ vi.mock('@/lib/agentsApi', () => ({ resumeAllAgents: vi.fn(), suspendAllAgents: 
 vi.mock('@/pages/admin/AgentRegistryAdmin', () => ({ SuspendAllDialog: () => null }));
 
 import { getControlRoom, listControlRoomSites } from '@/lib/controlRoomApi';
-import { ControlRoomPage } from '@/pages/controlRoom/ControlRoomPage';
+import { ControlRoomPage, pickDefaultSite } from '@/pages/controlRoom/ControlRoomPage';
 
 const room: ControlRoomResponse = {
   site: { id: 's1', name: 'Front Beach 218', timezone: 'America/Chicago', clientName: 'Coastal Resort Holdings' },
@@ -43,10 +43,10 @@ const room: ControlRoomResponse = {
   roboticsOn: true,
 };
 
-function renderPage() {
+function renderPage(entry = '/control-room?site=s1') {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <MemoryRouter initialEntries={['/control-room?site=s1']}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/control-room" element={<ControlRoomPage />} />
         </Routes>
@@ -92,5 +92,65 @@ describe('<ControlRoomPage> (Brief 3-3)', () => {
     vi.mocked(getControlRoom).mockRejectedValue(new Error('offline'));
     renderPage();
     expect(await screen.findByRole('button', { name: /Retry|Try again/i })).toBeInTheDocument();
+  });
+
+  it('opens on the busiest floor when the viewer has no site of their own (F500 G2)', async () => {
+    try {
+      localStorage.removeItem('alto.controlRoom.site');
+    } catch {
+      /* no storage */
+    }
+    vi.mocked(listControlRoomSites).mockResolvedValue({
+      sites: [
+        { id: 's0', name: 'Demo Store', clientName: 'Seaside', timezone: 'America/Chicago', onShiftNow: 0 },
+        { id: 's1', name: 'Front Beach 218', clientName: 'Coastal Resort Holdings', timezone: 'America/Chicago', onShiftNow: 6 },
+      ],
+    });
+    vi.mocked(getControlRoom).mockResolvedValue(room);
+    renderPage('/control-room');
+    expect((await screen.findAllByText('Dana Reyes')).length).toBeGreaterThan(0);
+    expect(vi.mocked(getControlRoom)).toHaveBeenLastCalledWith('s1');
+    // The header's everyday actions: Open tasks (this site) and Refresh.
+    expect(screen.getByRole('link', { name: /Open tasks/ })).toHaveAttribute('href', '/tasks?site=s1');
+    expect(screen.getByRole('button', { name: /Refresh/ })).toBeInTheDocument();
+  });
+
+  it('a quiet floor reads in one line, and only floor agents are listed', async () => {
+    vi.mocked(listControlRoomSites).mockResolvedValue({ sites: [{ id: 's1', name: 'Front Beach 218', clientName: null, timezone: 'America/Chicago' }] });
+    vi.mocked(getControlRoom).mockResolvedValue({
+      ...room,
+      strip: { onFloor: 0, expectedNow: 0, robotsRunning: 0, robotsOnShift: 0, exceptions: 0, waiting: 0 },
+      people: [],
+      exceptions: [],
+      waiting: [],
+      agents: [
+        ...room.agents,
+        { id: 'ag2', name: 'Claude Code deployment workflow', family: 'deployment', capability: 'Build and deploy', status: 'ACTIVE', lastActiveAt: null, pendingApprovals: 0 },
+        { id: 'ag3', name: 'Payroll agent', family: 'payroll', capability: 'Fix exceptions', status: 'ONBOARDING', lastActiveAt: null, pendingApprovals: 0 },
+      ],
+    } as ControlRoomResponse);
+    renderPage();
+    expect(await screen.findByTestId('control-room-all-clear')).toHaveTextContent('No exceptions · Nothing waiting for a person');
+    expect(screen.getByText('Nobody is scheduled at this site right now.')).toBeInTheDocument();
+    expect(screen.getByText('No one on shift now')).toBeInTheDocument();
+    expect(screen.getByText('Agents on the floor (1)')).toBeInTheDocument();
+    expect(screen.getByText('Workforce agent')).toBeInTheDocument();
+    expect(screen.queryByText('Claude Code deployment workflow')).not.toBeInTheDocument();
+    expect(screen.getByText(/2 more agents work off the floor/)).toBeInTheDocument();
+  });
+});
+
+describe('pickDefaultSite', () => {
+  const sites = [
+    { id: 'a', onShiftNow: 0 },
+    { id: 'b', onShiftNow: 4 },
+    { id: 'c', onShiftNow: 9 },
+  ];
+  it('own site, then the last pick, then the busiest, then the first', () => {
+    expect(pickDefaultSite(sites, 'a', 'b')).toBe('a');
+    expect(pickDefaultSite(sites, 'gone', 'b')).toBe('b');
+    expect(pickDefaultSite(sites, null, null)).toBe('c');
+    expect(pickDefaultSite([{ id: 'x' }, { id: 'y' }], null, null)).toBe('x');
+    expect(pickDefaultSite([], null, null)).toBe('');
   });
 });

@@ -34,6 +34,20 @@ export interface LaborJurisdiction {
 
 export const getLaborActivations = () => apiFetch<{ attestation: string; jurisdictions: LaborJurisdiction[] }>('/labor-rules/activations');
 
+/** The last finalized run replayed under each worked state's rules: totals only. */
+export interface LaborLastRun {
+  jurisdiction: string;
+  periodStart: string;
+  periodEnd: string;
+  /** People whose hours here were replayed; 0 = nobody here was on that run. */
+  replayed: number;
+  /** Of those, how many would have been paid differently. */
+  people: number;
+  amountDifference: number;
+}
+
+export const getLaborLastRun = () => apiFetch<{ states: LaborLastRun[] }>('/labor-rules/last-run');
+
 export interface ChangeReportPerson {
   associateId: string;
   name: string;

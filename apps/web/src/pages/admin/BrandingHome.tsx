@@ -1,507 +1,249 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ClipboardCheck, ImagePlus, Landmark, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ImagePlus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ASSISTANT_NAME_PROMPT,
   ASSISTANT_PLATFORM_NAME,
   HEX_COLOR_REGEX,
-  MFA_REQUIREMENT_VALUES,
   ORG_LOGO_ALLOWED_TYPES,
   ORG_LOGO_MAX_BYTES,
   PRODUCT_NAME,
-  UNVERIFIED_PAYOUT_POLICY_LABELS,
-  type MfaRequirement,
   type OrgBranding,
-  type UnverifiedPayoutPolicy,
-  SUPPORTED_TIMEZONES,
 } from '@alto-people/shared';
-import { ApiError } from '@/lib/api';
-import { useAuth, useTenant, useTerm } from '@/lib/auth';
-import { Select } from '@/components/ui/Select';
+import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDateTime, fmtTimeZone } from '@/lib/format';
+import { errorText } from '@/lib/errorText';
+import { fmtDateTime } from '@/lib/format';
 import { DEFAULT_BRAND_PRIMARY } from '@/lib/brandDefaults';
-import {
-  deleteOrgLogo,
-  getOrgBranding,
-  patchOrgBranding,
-  uploadOrgLogo,
-} from '@/lib/brandingApi';
+import { deleteOrgLogo, getOrgBranding, patchOrgBranding, uploadOrgLogo } from '@/lib/brandingApi';
+import { ORG_SETTINGS_KEY } from '@/lib/orgSettingsKey';
 import { Button } from '@/components/ui/Button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { Input, Textarea } from '@/components/ui/Input';
+import { Input } from '@/components/ui/Input';
 import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { SettingsSection } from '@/components/templates';
+import { SettingsSaveBar } from '@/pages/settings/SettingsSaveBar';
 
-const MFA_REQUIREMENT_LABELS: Record<MfaRequirement, string> = {
-  OFF: 'Off',
-  ADMINS: 'Admins',
-  ALL: 'Everyone',
-};
+const EMAIL = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/;
+
+interface Identity {
+  orgName: string;
+  assistantName: string;
+  senderName: string;
+  supportEmail: string;
+  primaryColor: string;
+}
+
+function identityOf(b: OrgBranding): Identity {
+  return {
+    orgName: b.orgName,
+    assistantName: b.assistantName ?? ASSISTANT_PLATFORM_NAME,
+    senderName: b.senderName ?? '',
+    supportEmail: b.supportEmail ?? '',
+    primaryColor: b.primaryColor ?? '',
+  };
+}
 
 /**
- * HR-only org branding admin. Lets the org overlay its name, sender display
- * name, support email, primary brand colour, and logo onto every outbound
- * transactional email. Saved values cache for 5 minutes server-side, but
- * the API also refreshes the cache on every PATCH so changes appear in the
- * very next email rendered.
+ * Branding (F500 G4): how the organization looks and signs its email — the
+ * name, the assistant's name, the sender, the support address, the colour
+ * and the logo. Nothing else.
+ *
+ * Settings that used to be misfiled here have their own homes, and the
+ * Settings search finds them by name: two-step sign-in on Sign-in; the
+ * finance mailbox, unverified-bank policy, remit-to and cash floor on
+ * Finance; the second-person rules on Approval rules; the workweek and the
+ * company time zone on Organization.
  */
 export function BrandingHome() {
-  const term = useTerm();
-  const hasClients = useTenant().moduleOn('clientPortal');
+  const { can, refreshUser } = useAuth();
+  const canManage = can('manage:org');
   const confirm = useConfirm();
-  // The assistant's name rides with the session (useTenant); a save refreshes it so every screen renames at once.
-  const { refreshUser } = useAuth();
-  const [branding, setBranding] = useState<OrgBranding | null>(null);
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ORG_SETTINGS_KEY, queryFn: () => getOrgBranding() });
+  const branding = q.data ?? null;
+  const saved = useMemo(() => (branding ? identityOf(branding) : null), [branding]);
+  const [draft, setDraft] = useState<Identity | null>(null);
+  useEffect(() => setDraft(saved), [saved]);
+  const [touched, setTouched] = useState({ supportEmail: false, primaryColor: false });
   const [saving, setSaving] = useState(false);
-
-  const [orgName, setOrgName] = useState('');
-  const [assistantName, setAssistantName] = useState(ASSISTANT_PLATFORM_NAME);
-  const [weekStartsOn, setWeekStartsOn] = useState(6);
-  const [timezone, setTimezone] = useState('America/New_York');
-  const [senderName, setSenderName] = useState('');
-  const [supportEmail, setSupportEmail] = useState('');
-  const [supportEmailTouched, setSupportEmailTouched] = useState(false);
-  const [primaryColor, setPrimaryColor] = useState('');
-  const [primaryColorTouched, setPrimaryColorTouched] = useState(false);
-  const [mfaRequirement, setMfaRequirement] = useState<MfaRequirement>('OFF');
-  const [mfaSaving, setMfaSaving] = useState(false);
-  const [financeMailbox, setFinanceMailbox] = useState('');
-  const [unverifiedPayoutPolicy, setUnverifiedPayoutPolicy] = useState<UnverifiedPayoutPolicy>('PREVIOUS_VERIFIED');
-  const [financeSaving, setFinanceSaving] = useState(false);
-  // Finance walk / audit #17: the remit-to printed on invoices and statements, and the cash floor the forecast draws.
-  const [remit, setRemit] = useState({ name: '', address: '', instructions: '', cashMinimum: '' });
-  // Approval engine (2026-10): the maker-checker switches.
-  const [approvals, setApprovals] = useState({ payChangeApprovalPct: 10, payChangeAlwaysApprove: false, billRateApproval: true, separationSecondPerson: true, selfServiceApproval: false, roleChangeApproval: true, requisitionApproval: true, payrollReviewRequired: true });
-  const [approvalsSaving, setApprovalsSaving] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
   const [logoBust, setLogoBust] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const set = <K extends keyof Identity>(k: K, v: Identity[K]) => setDraft((d) => d && { ...d, [k]: v });
 
-  const loadQuery = useQuery({
-    queryKey: ['BrandingHome', 'branding'],
-    queryFn: () => getOrgBranding(),
-  });
-  const error = loadQuery.error ? loadQuery.error instanceof ApiError ? loadQuery.error.message : 'Could not load branding.' : null;
-  const loading = loadQuery.isPending;
-  useEffect(() => {
-    const b = loadQuery.data;
-    if (b === undefined) return;
-    setBranding(b);
-    setOrgName(b.orgName);
-    setAssistantName(b.assistantName ?? ASSISTANT_PLATFORM_NAME);
-    setWeekStartsOn(b.weekStartsOn ?? 6);
-    setTimezone(b.timezone ?? 'America/New_York');
-    setSenderName(b.senderName ?? '');
-    setSupportEmail(b.supportEmail ?? '');
-    setSupportEmailTouched(false);
-    setPrimaryColor(b.primaryColor ?? '');
-    setPrimaryColorTouched(false);
-    setMfaRequirement(b.mfaRequirement);
-    setFinanceMailbox(b.financeMailbox ?? '');
-    setUnverifiedPayoutPolicy(b.unverifiedPayoutPolicy);
-    setRemit({ name: b.remitToName ?? '', address: b.remitToAddress ?? '', instructions: b.remitToInstructions ?? '', cashMinimum: b.cashMinimum === null || b.cashMinimum === undefined ? '' : String(b.cashMinimum) });
-    setApprovals({
-      payChangeApprovalPct: b.payChangeApprovalPct,
-      payChangeAlwaysApprove: b.payChangeAlwaysApprove,
-      billRateApproval: b.billRateApproval,
-      separationSecondPerson: b.separationSecondPerson,
-      selfServiceApproval: b.selfServiceApproval,
-      roleChangeApproval: b.roleChangeApproval,
-      requisitionApproval: b.requisitionApproval,
-      payrollReviewRequired: b.payrollReviewRequired,
-    });
-    setLogoBust((n) => n + 1);
-  }, [loadQuery.data]);
-  const load = async () => {
-    await loadQuery.refetch();
-  };
-
-
-  const colorValid = primaryColor === '' || HEX_COLOR_REGEX.test(primaryColor);
-  const emailValid =
-    supportEmail === '' || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(supportEmail);
-
-  const financeMailboxValid =
-    financeMailbox.trim() === '' || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(financeMailbox.trim());
-  const cashMinimumValue = remit.cashMinimum.trim() === '' ? null : Number(remit.cashMinimum);
-  const cashMinimumValid = cashMinimumValue === null || (Number.isFinite(cashMinimumValue) && cashMinimumValue >= 0);
-  const financeDirty =
-    (branding?.financeMailbox ?? '') !== financeMailbox.trim() ||
-    (branding?.unverifiedPayoutPolicy ?? 'PREVIOUS_VERIFIED') !== unverifiedPayoutPolicy ||
-    (branding?.remitToName ?? '') !== remit.name.trim() ||
-    (branding?.remitToAddress ?? '') !== remit.address.trim() ||
-    (branding?.remitToInstructions ?? '') !== remit.instructions.trim() ||
-    (branding?.cashMinimum ?? null) !== cashMinimumValue;
-  const onSaveFinance = async () => {
-    if (!financeMailboxValid) {
-      toast.error('Finance mailbox must be a bare address like finance@example.com.');
-      return;
-    }
-    if (!cashMinimumValid) {
-      toast.error('The cash floor is an amount of zero or more.');
-      return;
-    }
-    setFinanceSaving(true);
-    try {
-      const updated = await patchOrgBranding({
-        financeMailbox: financeMailbox.trim() === '' ? null : financeMailbox.trim(),
-        unverifiedPayoutPolicy,
-        remitToName: remit.name.trim() || null,
-        remitToAddress: remit.address.trim() || null,
-        remitToInstructions: remit.instructions.trim() || null,
-        cashMinimum: cashMinimumValue,
-      });
-      setBranding(updated);
-      toast.success('Finance settings saved.');
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
-    } finally {
-      setFinanceSaving(false);
-    }
-  };
-
-  const approvalsDirty =
-    !!branding &&
-    (branding.payChangeApprovalPct !== approvals.payChangeApprovalPct ||
-      branding.payChangeAlwaysApprove !== approvals.payChangeAlwaysApprove ||
-      branding.billRateApproval !== approvals.billRateApproval ||
-      branding.separationSecondPerson !== approvals.separationSecondPerson ||
-      branding.selfServiceApproval !== approvals.selfServiceApproval ||
-      branding.roleChangeApproval !== approvals.roleChangeApproval ||
-      branding.requisitionApproval !== approvals.requisitionApproval ||
-      branding.payrollReviewRequired !== approvals.payrollReviewRequired);
-  const onSaveApprovals = async () => {
-    setApprovalsSaving(true);
-    try {
-      const updated = await patchOrgBranding(approvals);
-      setBranding(updated);
-      toast.success('Approval rules saved.');
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
-    } finally {
-      setApprovalsSaving(false);
-    }
-  };
+  const colorValid = !draft || draft.primaryColor === '' || HEX_COLOR_REGEX.test(draft.primaryColor);
+  const emailValid = !draft || draft.supportEmail === '' || EMAIL.test(draft.supportEmail);
+  const nameValid = !draft || draft.orgName.trim() !== '';
+  const dirty = saved && draft ? (Object.keys(saved) as Array<keyof Identity>).filter((k) => saved[k].trim() !== draft[k].trim()).length : 0;
 
   const onSave = async () => {
-    if (!orgName.trim()) {
-      toast.error('Enter your organization\'s name.');
-      return;
-    }
-    if (!colorValid) {
-      toast.error('Primary colour must be a #RRGGBB hex value.');
-      return;
-    }
-    if (!emailValid) {
-      toast.error('Support email must be a bare address like info@example.com.');
-      return;
-    }
+    if (!draft) return;
+    if (!nameValid) return void toast.error("Enter your organization's name.");
+    if (!colorValid) return void toast.error('The colour is a #RRGGBB hex value.');
+    if (!emailValid) return void toast.error('The support email is a bare address like info@example.com.');
     setSaving(true);
     try {
       const updated = await patchOrgBranding({
-        orgName: orgName.trim(),
-        assistantName: assistantName.trim() || ASSISTANT_PLATFORM_NAME,
-        weekStartsOn,
-        timezone,
-        senderName: senderName.trim() === '' ? null : senderName.trim(),
-        supportEmail: supportEmail.trim() === '' ? null : supportEmail.trim(),
-        primaryColor: primaryColor.trim() === '' ? null : primaryColor.trim(),
+        orgName: draft.orgName.trim(),
+        assistantName: draft.assistantName.trim() || ASSISTANT_PLATFORM_NAME,
+        senderName: draft.senderName.trim() || null,
+        supportEmail: draft.supportEmail.trim() || null,
+        primaryColor: draft.primaryColor.trim() || null,
       });
-      setBranding(updated);
+      qc.setQueryData(ORG_SETTINGS_KEY, updated);
       toast.success('Branding saved.');
       // The assistant's name reaches every screen through the session.
       if (updated.assistantName !== branding?.assistantName) void refreshUser();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
+      toast.error(errorText(err, 'Save failed.'));
     } finally {
       setSaving(false);
     }
   };
 
   const onUpload = async (file: File) => {
-    if (file.size > ORG_LOGO_MAX_BYTES) {
-      toast.error(`Logo must be ≤ ${Math.round(ORG_LOGO_MAX_BYTES / 1024)} KB.`);
-      return;
-    }
-    if (!ORG_LOGO_ALLOWED_TYPES.includes(file.type as never)) {
-      toast.error(`Logo must be one of ${ORG_LOGO_ALLOWED_TYPES.join(', ')}.`);
-      return;
-    }
-    setSaving(true);
+    if (file.size > ORG_LOGO_MAX_BYTES) return void toast.error(`The logo is at most ${Math.round(ORG_LOGO_MAX_BYTES / 1024)} KB.`);
+    if (!ORG_LOGO_ALLOWED_TYPES.includes(file.type as never)) return void toast.error('The logo is a PNG, JPEG, WebP or SVG file.');
+    setLogoBusy(true);
     try {
       const updated = await uploadOrgLogo(file);
-      setBranding(updated);
+      qc.setQueryData(ORG_SETTINGS_KEY, updated);
       setLogoBust((n) => n + 1);
       toast.success('Logo uploaded.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Upload failed.');
     } finally {
-      setSaving(false);
+      setLogoBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
   const onRemoveLogo = async () => {
     // The logo heads every outbound email — deleting it deserves a pause.
-    if (
-      !(await confirm({
-        title: 'Remove the org logo?',
-        description: 'Emails and letterheads fall back to the default header until a new logo is uploaded.',
-        destructive: true,
-      }))
-    ) {
-      return;
-    }
-    setSaving(true);
+    if (!(await confirm({ title: 'Remove the logo?', description: 'Emails and letterheads use the default header until a new logo is uploaded.', destructive: true }))) return;
+    setLogoBusy(true);
     try {
       await deleteOrgLogo();
-      await load();
+      await q.refetch();
       toast.success('Logo removed.');
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Remove failed.');
+      toast.error(errorText(err, 'Remove failed.'));
     } finally {
-      setSaving(false);
+      setLogoBusy(false);
     }
   };
 
-  const onChangeMfaRequirement = async (next: MfaRequirement) => {
-    if (next === mfaRequirement || mfaSaving) return;
-    const prev = mfaRequirement;
-    setMfaRequirement(next); // optimistic — reverted on failure
-    setMfaSaving(true);
-    try {
-      const updated = await patchOrgBranding({ mfaRequirement: next });
-      setBranding(updated);
-      toast.success(
-        next === 'OFF'
-          ? 'Two-step sign-in is now optional for everyone.'
-          : `Two-step sign-in is now required for ${next === 'ALL' ? 'everyone' : 'admin roles'}.`,
-      );
-    } catch (err) {
-      setMfaRequirement(prev);
-      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
-    } finally {
-      setMfaSaving(false);
-    }
-  };
-
-  const logoUrl = branding?.logoUrl
-    ? `/api${branding.logoUrl}${branding.logoUrl.includes('?') ? '&' : '?'}c=${logoBust}`
-    : null;
+  const logoUrl = branding?.logoUrl ? `/api${branding.logoUrl}${branding.logoUrl.includes('?') ? '&' : '?'}c=${logoBust}` : null;
+  const off = !canManage || saving;
 
   return (
-    <div>
+    <div className="space-y-5">
       <PageHeader
         title="Branding"
-        subtitle={
-          <>
-            Org-wide overrides for the name, sender display, support email, primary colour, and logo shown on every outbound email. The business model, the
-            modules and the words live on the{' '}
-            <Link to="/admin/organization" className="text-gold underline underline-offset-2">
-              Organization profile
-            </Link>
-            .
-          </>
-        }
-        breadcrumbs={[
-          { label: 'Settings & trust', to: '/admin' },
-          { label: 'Branding' },
+        subtitle="The name, sender, support address, colour and logo on every email, and what your team calls the assistant."
+        related={[
+          { label: 'Organization', to: '/admin/organization' },
+          { label: 'Communications', to: '/admin/communications' },
         ]}
-        secondaryActions={
-          <Button variant="outline" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className="h-4 w-4 mr-1.5" />
-            Reload
-          </Button>
-        }
       />
+      <p className="text-sm text-ink-muted">
+        Looking for something that used to be here? Two-step sign-in is on{' '}
+        <Link to="/admin/sign-in" className="text-accent underline-offset-2 hover:underline">
+          Sign-in
+        </Link>
+        , the finance mailbox and remit-to on{' '}
+        <Link to="/admin/finance" className="text-accent underline-offset-2 hover:underline">
+          Finance
+        </Link>
+        , second-person rules on{' '}
+        <Link to="/admin/approvals" className="text-accent underline-offset-2 hover:underline">
+          Approval rules
+        </Link>
+        , and the workweek and time zone on{' '}
+        <Link to="/admin/organization" className="text-accent underline-offset-2 hover:underline">
+          Organization
+        </Link>
+        .
+      </p>
 
-      {loading ? (
+      {q.isError ? (
+        <QueryError what="branding" query={q} />
+      ) : !draft ? (
         <div className="space-y-3">
           <Skeleton className="h-32 w-full" />
           <Skeleton className="h-48 w-full" />
         </div>
-      ) : error ? (
-        <div className="space-y-3">
-          <ErrorBanner>{error}</ErrorBanner>
-          <Button size="sm" variant="secondary" onClick={() => void load()}>
-            Retry
-          </Button>
-        </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Identity</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Field
-                label="Organisation name"
-                hint="Shown in the email header bar (uppercased) and signature block. Maxes out at 120 characters."
-              >
-                {(p) => (
-                  <Input
-                    value={orgName}
-                    onChange={(e) => setOrgName(e.target.value)}
-                    maxLength={120}
-                    placeholder="Your organization's name"
-                    {...p}
-                  />
-                )}
-              </Field>
-              <Field
-                label={ASSISTANT_NAME_PROMPT}
-                hint={`I'm the AI assistant in ${PRODUCT_NAME}. This is the name your team sees on WhatsApp and in every message I send; I always say I'm an AI assistant and who answers for me.`}
-              >
-                {(p) => (
-                  <Input
-                    value={assistantName}
-                    onChange={(e) => setAssistantName(e.target.value)}
-                    maxLength={60}
-                    placeholder={ASSISTANT_PLATFORM_NAME}
-                    {...p}
-                  />
-                )}
-              </Field>
-              <Field
-                label="Workweek starts on"
-                hint="The company week for overtime, digests and every weekly number. Each site keeps its own time zone on its location record; the week turns at midnight in that zone."
-              >
-                {(p) => (
-                  <Select value={weekStartsOn} onChange={(e) => setWeekStartsOn(Number(e.target.value))} {...p}>
-                    {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => (
-                      <option key={d} value={i}>
-                        {d}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-              <Field label="Company time zone" hint="Where the company week turns. Sites in Central time keep their own zone on the location record.">
-                {(p) => (
-                  <Select value={timezone} onChange={(e) => setTimezone(e.target.value)} {...p}>
-                    {SUPPORTED_TIMEZONES.map((tz) => (
-                      <option key={tz} value={tz}>
-                        {fmtTimeZone(tz)}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-              <Field
-                label="Sender display name"
-                hint={
-                  <>
-                    Overlaid as the display name on the From: header (e.g.
-                    &ldquo;Acme HR &lt;hr@example.com&gt;&rdquo;). Leave blank
-                    to use the raw RESEND_FROM env value.
-                  </>
-                }
-              >
-                {(p) => (
-                  <Input
-                    value={senderName}
-                    onChange={(e) => setSenderName(e.target.value)}
-                    maxLength={120}
-                    placeholder="Your organization's name"
-                    {...p}
-                  />
-                )}
-              </Field>
-              <Field
-                label="Support email"
-                hint={
-                  <>
-                    Address shown in the email signature footer. Replaces the
-                    default <code>hr@altohr.com</code>.
-                  </>
-                }
-                error={
-                  supportEmailTouched && !emailValid
-                    ? 'Enter a valid email address.'
-                    : undefined
-                }
-              >
-                {(p) => (
-                  <Input
-                    type="email"
-                    value={supportEmail}
-                    onChange={(e) => setSupportEmail(e.target.value)}
-                    onBlur={() => setSupportEmailTouched(true)}
-                    maxLength={254}
-                    placeholder="info@altohr.com"
-                    {...p}
-                  />
-                )}
-              </Field>
-              <Field
-                label="Primary colour"
-                hint={
-                  <>
-                    Hex format only (<code>#RRGGBB</code>). Used for the email
-                    header band and CTA button background.
-                  </>
-                }
-                error={
-                  primaryColorTouched && !colorValid
-                    ? `Use a hex value like ${DEFAULT_BRAND_PRIMARY}.`
-                    : undefined
-                }
-              >
-                {(p) => (
-                  <div className="flex items-center gap-2">
+        <>
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] [&>*]:min-w-0">
+            <SettingsSection title="Identity">
+              <div className="space-y-4">
+                <Field label="Organization name" hint="In the email header and the signature. Up to 120 characters." error={!nameValid ? "Enter your organization's name." : undefined}>
+                  {(p) => <Input {...p} value={draft.orgName} onChange={(e) => set('orgName', e.target.value)} maxLength={120} placeholder="Your organization's name" disabled={off} />}
+                </Field>
+                <Field
+                  label={ASSISTANT_NAME_PROMPT}
+                  hint={`I'm the AI assistant in ${PRODUCT_NAME}. This is the name your team sees on WhatsApp and in every message I send; I always say I'm an AI assistant and who answers for me.`}
+                >
+                  {(p) => <Input {...p} value={draft.assistantName} onChange={(e) => set('assistantName', e.target.value)} maxLength={60} placeholder={ASSISTANT_PLATFORM_NAME} disabled={off} />}
+                </Field>
+                <Field label="Sender name" hint="The name on the From line, like “Acme HR”. Leave blank to use the default sender.">
+                  {(p) => <Input {...p} value={draft.senderName} onChange={(e) => set('senderName', e.target.value)} maxLength={120} placeholder="Your organization's name" disabled={off} />}
+                </Field>
+                <Field
+                  label="Support email"
+                  hint="The address in every email's signature."
+                  error={touched.supportEmail && !emailValid ? 'Enter a valid email address.' : undefined}
+                >
+                  {(p) => (
                     <Input
-                      value={primaryColor}
-                      onChange={(e) => setPrimaryColor(e.target.value)}
-                      onBlur={() => setPrimaryColorTouched(true)}
-                      placeholder={DEFAULT_BRAND_PRIMARY}
-                      maxLength={7}
-                      className="font-mono"
                       {...p}
+                      type="email"
+                      value={draft.supportEmail}
+                      onChange={(e) => set('supportEmail', e.target.value)}
+                      onBlur={() => setTouched((t) => ({ ...t, supportEmail: true }))}
+                      maxLength={254}
+                      placeholder="hr@example.com"
+                      disabled={off}
                     />
-                    <div
-                      className="h-9 w-9 rounded border border-navy-secondary"
-                      style={{
-                        background:
-                          colorValid && primaryColor !== '' ? primaryColor : DEFAULT_BRAND_PRIMARY,
-                      }}
-                      aria-hidden
-                    />
-                  </div>
-                )}
-              </Field>
-              <div className="pt-2">
-                <Button onClick={() => void onSave()} disabled={saving}>
-                  {saving ? 'Saving…' : 'Save changes'}
-                </Button>
+                  )}
+                </Field>
+                <Field
+                  label="Primary colour"
+                  hint="The email header band and its button. A hex value: #RRGGBB."
+                  error={touched.primaryColor && !colorValid ? `Use a hex value like ${DEFAULT_BRAND_PRIMARY}.` : undefined}
+                >
+                  {(p) => (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        {...p}
+                        value={draft.primaryColor}
+                        onChange={(e) => set('primaryColor', e.target.value)}
+                        onBlur={() => setTouched((t) => ({ ...t, primaryColor: true }))}
+                        placeholder={DEFAULT_BRAND_PRIMARY}
+                        maxLength={7}
+                        className="max-w-[10rem] font-mono"
+                        disabled={off}
+                      />
+                      <div
+                        className="h-9 w-9 shrink-0 rounded border border-line"
+                        style={{ background: colorValid && draft.primaryColor !== '' ? draft.primaryColor : DEFAULT_BRAND_PRIMARY }}
+                        aria-hidden
+                      />
+                    </div>
+                  )}
+                </Field>
               </div>
-            </CardContent>
-          </Card>
+            </SettingsSection>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Logo</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-silver/80 text-sm">
-                Embedded inline in HTML emails as a data: URI so it renders
-                even when the recipient blocks remote images. PNG, JPEG,
-                WebP, or SVG; up to {Math.round(ORG_LOGO_MAX_BYTES / 1024)} KB.
-              </p>
-              <div className="bg-navy-secondary/40 rounded-lg p-6 flex items-center justify-center min-h-[140px] border border-navy-secondary">
-                {logoUrl ? (
-                  <img
-                    src={logoUrl}
-                    alt="Current logo"
-                    className="max-h-24 max-w-full"
-                  />
-                ) : (
-                  <div className="text-silver/70 text-sm">No logo on file.</div>
-                )}
+            <SettingsSection title="Logo" description={`PNG, JPEG, WebP or SVG, up to ${Math.round(ORG_LOGO_MAX_BYTES / 1024)} KB. It shows even when the reader blocks images.`}>
+              <div className="flex min-h-[140px] items-center justify-center rounded-lg border border-line bg-surface-raised/40 p-6">
+                {logoUrl ? <img src={logoUrl} alt="Current logo" className="max-h-24 max-w-full" /> : <div className="text-sm text-ink-muted">No logo on file.</div>}
               </div>
               <input
                 ref={fileInputRef}
@@ -513,191 +255,25 @@ export function BrandingHome() {
                   if (f) void onUpload(f);
                 }}
               />
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={saving}
-                >
-                  <ImagePlus className="h-4 w-4 mr-1.5" />
-                  {logoUrl ? 'Replace' : 'Upload'}
-                </Button>
-                {logoUrl && (
-                  <Button
-                    variant="outline"
-                    onClick={() => void onRemoveLogo()}
-                    disabled={saving}
-                  >
-                    <Trash2 className="h-4 w-4 mr-1.5" />
-                    Remove
+              {canManage && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={logoBusy}>
+                    <ImagePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                    {logoUrl ? 'Replace' : 'Upload'}
                   </Button>
-                )}
-              </div>
-              {branding?.logoUpdatedAt && (
-                <p className="text-silver/70 text-xs">
-                  Last updated {fmtDateTime(branding.logoUpdatedAt)}
-                </p>
+                  {logoUrl && (
+                    <Button variant="outline" onClick={() => void onRemoveLogo()} disabled={logoBusy}>
+                      <Trash2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                      Remove
+                    </Button>
+                  )}
+                </div>
               )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Landmark className="h-4 w-4 text-gold" />
-                Finance
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Field
-                label="Finance mailbox"
-                hint="Every financial-change alert (bank, pay card, W-4, name, SSN, address) and every payroll packet download is also emailed here, so an alert never depends on one person's inbox."
-              >
-                {(p) => (
-                  <Input
-                    type="email"
-                    value={financeMailbox}
-                    onChange={(e) => setFinanceMailbox(e.target.value)}
-                    placeholder="finance@altohr.com"
-                    {...p}
-                  />
-                )}
-              </Field>
-              <Field
-                label="Unverified bank change at the payroll cutoff"
-                hint="A new pay account is not used until Finance verifies it by phone. If that has not happened by the cutoff, payroll either pays the previous verified account or holds that person's pay. A high-risk change is always held."
-              >
-                {() => (
-                  <SegmentedControl<UnverifiedPayoutPolicy>
-                    options={(['PREVIOUS_VERIFIED', 'HOLD'] as const).map((v) => ({
-                      value: v,
-                      label: UNVERIFIED_PAYOUT_POLICY_LABELS[v],
-                    }))}
-                    value={unverifiedPayoutPolicy}
-                    onChange={setUnverifiedPayoutPolicy}
-                    ariaLabel="Unverified bank change policy"
-                  />
-                )}
-              </Field>
-              <Field label="Remit to — pay to the order of" hint="Printed on every invoice and statement, and on the stub returned with a check. Empty = the employer of record’s legal name.">
-                {(p) => <Input value={remit.name} maxLength={255} placeholder="Your company LLC" onChange={(e) => setRemit((r) => ({ ...r, name: e.target.value }))} {...p} />}
-              </Field>
-              <Field label="Remit-to address" hint="One line per row: where checks go. Empty = the employer of record’s address.">
-                {(p) => (
-                  <Textarea rows={3} maxLength={500} value={remit.address} placeholder={'PO Box 12\nSpringfield, IL 62701'} onChange={(e) => setRemit((r) => ({ ...r, address: e.target.value }))} {...p} />
-                )}
-              </Field>
-              <Field label="How to pay" hint="Printed under “How to pay” on each invoice — the bank and routing for ACH, for example.">
-                {(p) => <Input value={remit.instructions} maxLength={500} placeholder="ACH to Gulf Bank, routing 011000015, account ending 4410" onChange={(e) => setRemit((r) => ({ ...r, instructions: e.target.value }))} {...p} />}
-              </Field>
-              <Field label="Cash floor" hint="The cash forecast shades the band under this amount and says when the balance dips below it. Empty = no floor.">
-                {(p) => <Input type="number" inputMode="decimal" min="0" step="100" className="w-48" value={remit.cashMinimum} placeholder="25000" onChange={(e) => setRemit((r) => ({ ...r, cashMinimum: e.target.value }))} {...p} />}
-              </Field>
-              <div>
-                <Button onClick={() => void onSaveFinance()} loading={financeSaving} disabled={!financeDirty}>
-                  Save Finance settings
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ClipboardCheck className="h-4 w-4 text-gold" />
-                Second person
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-sm text-silver">
-                Which changes take a second person before they land. The person who asks never decides; where no second person exists, the change lands and the audit says so.
-              </p>
-              <Field label="Pay-rate changes" hint="A change this far from the current rate, in percent, goes to a second person. 0 sends every change.">
-                {(p) => (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Input
-                      {...p}
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      max={100}
-                      className="w-24"
-                      value={approvals.payChangeApprovalPct}
-                      onChange={(e) => setApprovals((a) => ({ ...a, payChangeApprovalPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) }))}
-                      disabled={approvals.payChangeAlwaysApprove}
-                    />
-                    <span className="text-sm text-silver">%</span>
-                    <label className="flex items-center gap-2 text-sm text-silver">
-                      <input type="checkbox" checked={approvals.payChangeAlwaysApprove} onChange={(e) => setApprovals((a) => ({ ...a, payChangeAlwaysApprove: e.target.checked }))} />
-                      Every change
-                    </label>
-                  </div>
-                )}
-              </Field>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {(
-                  [
-                    ['payrollReviewRequired', 'Paying a payroll run', 'Someone reads the review report and signs off before money moves.'],
-                    ['billRateApproval', 'Bill-rate changes', 'A dated rate card, approved by Finance.'],
-                    ['separationSecondPerson', 'Completing a separation', 'Access ends only when a second person says so.'],
-                    ['roleChangeApproval', 'Granting more access', 'A role elevation waits for a second administrator.'],
-                    ['requisitionApproval', 'Opening a seat', 'A requisition carries its budget to a second person.'],
-                    ['selfServiceApproval', 'Self-service address and dependents', 'Off by default — a person changes their own record at once.'],
-                  ] as const
-                ).map(([key, label, hint]) => (
-                  <label key={key} className="flex items-start gap-2 rounded-md border border-navy-secondary px-3 py-2 text-sm">
-                    <input type="checkbox" className="mt-1" checked={approvals[key]} onChange={(e) => setApprovals((a) => ({ ...a, [key]: e.target.checked }))} aria-label={label} />
-                    <span>
-                      <span className="block text-ink">{label}</span>
-                      <span className="block text-xs2 text-silver">{hint}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <div>
-                <Button onClick={() => void onSaveApprovals()} loading={approvalsSaving} disabled={!approvalsDirty}>
-                  Save approval rules
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-gold" />
-                Security
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Field
-                label="Require two-step sign-in"
-                hint={
-                  <>
-                    Users covered by the policy must set up an authenticator
-                    app before a password sign-in completes. &ldquo;Admins&rdquo;
-                    covers every role that can manage other people&rsquo;s data
-                    (including finance and shift supervisors); {term('workers').toLowerCase()}
-                    {hasClients ? ' and client portal accounts are' : ' are'} exempt. Passkey sign-ins already
-                    count as strong authentication and are never blocked.
-                  </>
-                }
-              >
-                {() => (
-                  <SegmentedControl<MfaRequirement>
-                    options={MFA_REQUIREMENT_VALUES.map((v) => ({
-                      value: v,
-                      label: MFA_REQUIREMENT_LABELS[v],
-                    }))}
-                    value={mfaRequirement}
-                    onChange={(v) => void onChangeMfaRequirement(v)}
-                    ariaLabel="Require two-step sign-in"
-                  />
-                )}
-              </Field>
-            </CardContent>
-          </Card>
-        </div>
+              {branding?.logoUpdatedAt && <p className="mt-2 text-xs text-ink-muted">Last updated {fmtDateTime(branding.logoUpdatedAt)}</p>}
+            </SettingsSection>
+          </div>
+          {canManage && <SettingsSaveBar dirty={dirty} saving={saving} disabled={!nameValid || !colorValid || !emailValid} onSave={() => void onSave()} onDiscard={() => setDraft(saved)} note="The logo saves on upload." />}
+        </>
       )}
     </div>
   );

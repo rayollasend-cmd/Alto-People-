@@ -145,8 +145,10 @@ walletRouter.get('/wallet/public/:token', async (req, res, next) => {
       const d = jwt.verify(req.params.token, env.JWT_SECRET, { algorithms: ['HS256'], audience: AUD });
       if (typeof d === 'string' || !d.sub) throw new Error('bad');
       decoded = d;
-    } catch {
-      throw new HttpError(404, 'link_expired', 'This link has expired or is not valid.');
+    } catch (err) {
+      // A real link past its days is 410; anything else (a typo, a forged token) is 404 (F500 G5).
+      if (err instanceof jwt.TokenExpiredError) throw new HttpError(410, 'link_expired', 'This shared link has expired.');
+      throw new HttpError(404, 'not_found', 'This link is not valid.');
     }
     const wallet = await walletFor(decoded.sub!);
     res.setHeader('Cache-Control', 'no-store');

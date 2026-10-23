@@ -69,6 +69,16 @@ export function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const { slug = null } = useParams<{ slug?: string }>();
+  // /login/<slug>: the organization this sign-in address belongs to — its
+  // name and logo over the form (F500 G5), or a plain "not recognised".
+  const orgQ = useQuery({
+    queryKey: ['auth', 'org', slug],
+    queryFn: () => apiFetch<{ org: { name: string; slug: string; logoUrl: string | null } }>(`/auth/org/${encodeURIComponent(slug!)}`),
+    enabled: !!slug,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const org = orgQ.data?.org ?? null;
   const [email, setEmail] = useState(DEFAULT_DEV_EMAIL);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -275,6 +285,20 @@ export function Login() {
   const expectedCodeLength = useRecovery ? 11 : 6;
   const canSubmitMfa = code.trim().length === expectedCodeLength && !submitting;
 
+  if (slug && orgQ.isError) {
+    return (
+      <AuthShell>
+        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in" data-testid="login-org-unknown">
+          <AuthCardTitle size="md">{t('login.orgUnknownTitle')}</AuthCardTitle>
+          <p className="text-silver text-sm">{t('login.orgUnknownBody')}</p>
+          <Link to="/login" className="mt-4 inline-block text-sm text-gold underline underline-offset-2 hover:text-gold-bright">
+            {t('login.orgUnknownLink')}
+          </Link>
+        </div>
+      </AuthShell>
+    );
+  }
+
   return (
     // The one signed-out lockup (logo, wordmark, card, footer) — the same on
     // every signed-out page.
@@ -286,7 +310,14 @@ export function Login() {
           className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
           noValidate
         >
-          <AuthCardTitle size="sm">{t('login.title')}</AuthCardTitle>
+          {org ? (
+            <div className="mb-1 flex items-center gap-3" data-testid="login-org">
+              {org.logoUrl && <img src={`/api${org.logoUrl}`} alt="" className="h-10 w-10 shrink-0 rounded-md bg-white/5 object-contain" />}
+              <AuthCardTitle size="sm" className="mb-0">{t('login.titleOrg', { org: org.name })}</AuthCardTitle>
+            </div>
+          ) : (
+            <AuthCardTitle size="sm">{t('login.title')}</AuthCardTitle>
+          )}
           <p className="text-silver text-sm mb-6">
             {t('login.subtitle')}
           </p>

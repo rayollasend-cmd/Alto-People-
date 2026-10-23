@@ -13,6 +13,10 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { useUrlParam } from '@/lib/useUrlState';
+import { RulesSection } from './bankRules';
 import { QueryError } from '@/components/ui/QueryError';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { AddAccountDialog, ConnectBankButton, money } from './bankKit';
@@ -33,13 +37,14 @@ export function BankPage() {
   const review = active.reduce((n, a) => n + a.forReview, 0);
   const cash = active.filter((a) => a.subtype === 'BANK').reduce((n, a) => n + a.booksBalance, 0);
   const owed = active.filter((a) => a.subtype === 'CREDIT_CARD').reduce((n, a) => n + a.booksBalance, 0);
-  const stale = active.filter((a) => !a.lastReconciled || daysSince(a.lastReconciled.statementEndDate) > 45).length;
+  const stale = active.filter(needsReconciling).length;
+  // The company-wide rules live here, beside the accounts they apply to (?view=rules).
+  const [view, setView] = useUrlParam<View>('view', 'accounts', VIEWS, { history: 'push' });
 
   return (
     <ListTemplate
       title="Bank and cards"
       subtitle="Bank and card activity matched to the books, categorized by rule, and reconciled to each statement."
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Bank and cards' }]}
       primaryAction={
         manage ? (
           <div className="flex flex-wrap gap-2">
@@ -52,17 +57,29 @@ export function BankPage() {
         ) : undefined
       }
       summary={
-        accounts.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <MetricCard label="Cash in the books" value={money(cash)} hint={fmtCount(active.filter((a) => a.subtype === 'BANK').length, 'bank account')} />
-            <MetricCard label="Owed on cards" value={money(owed)} hint={fmtCount(active.filter((a) => a.subtype === 'CREDIT_CARD').length, 'card')} />
-            <MetricCard label="Waiting for review" value={String(review)} hint={review ? 'Transactions to match or categorize' : 'All caught up'} accent={review > 0} />
-            <MetricCard label="Need reconciling" value={String(stale)} hint="Not reconciled in the last month" accent={stale > 0} />
-          </div>
-        ) : null
+        <MetricStrip label="Bank and cards at a glance" empty={!q.isSuccess || accounts.length === 0}>
+          <MetricCard label="Cash in the books" value={money(cash)} hint={fmtCount(active.filter((a) => a.subtype === 'BANK').length, 'bank account')} tone="neutral" />
+          <MetricCard label="Owed on cards" value={money(owed)} hint={fmtCount(active.filter((a) => a.subtype === 'CREDIT_CARD').length, 'card')} tone="neutral" />
+          <MetricCard label="Waiting for review" value={review} hint={review ? 'Transactions to match or categorize' : undefined} tone={review > 0 ? 'warning' : 'default'} nothing={review ? undefined : 'All caught up'} />
+          <MetricCard
+            label="Need reconciling"
+            value={stale}
+            hint={stale ? `${stale === 1 ? 'Its last statement was' : 'Their last statements were'} reconciled over ${STALE_DAYS} days ago, or never` : undefined}
+            tone={stale > 0 ? 'warning' : 'default'}
+            nothing={stale ? undefined : `All reconciled in the last ${STALE_DAYS} days`}
+          />
+        </MetricStrip>
       }
     >
-      {q.isPending ? (
+      <Tabs value={view} onValueChange={(v) => setView(v as View)}>
+        <TabsList>
+          <TabsTrigger value="accounts">Accounts{accounts.length ? ` (${accounts.length})` : ''}</TabsTrigger>
+          <TabsTrigger value="rules">Rules</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {view === 'rules' ? (
+        <RulesSection manage={manage} />
+      ) : q.isPending ? (
         <SkeletonRows count={3} rowHeight="h-40" />
       ) : q.isError ? (
         <QueryError what="the bank accounts" query={q} />
@@ -94,8 +111,18 @@ export function BankPage() {
   );
 }
 
+type View = 'accounts' | 'rules';
+const VIEWS: View[] = ['accounts', 'rules'];
+
+/** A statement reconciled longer ago than this — or never — needs reconciling. */
+export const STALE_DAYS = 45;
+
 function daysSince(ymd: string): number {
   return Math.floor((Date.now() - new Date(`${ymd}T12:00:00Z`).getTime()) / 86_400_000);
+}
+
+export function needsReconciling(a: Pick<BankFeedAccountView, 'lastReconciled'>): boolean {
+  return !a.lastReconciled || daysSince(a.lastReconciled.statementEndDate) > STALE_DAYS;
 }
 
 function AccountCard({ a }: { a: BankFeedAccountView }) {
@@ -111,10 +138,11 @@ function AccountCard({ a }: { a: BankFeedAccountView }) {
               <Icon className="h-5 w-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-ink">{a.name}</p>
-              <p className="truncate text-xs text-silver">
-                {[a.institution, a.mask ? `··${a.mask}` : null, `${a.ledgerCode} ${a.ledgerName}`].filter(Boolean).join(' · ')}
+              <p className="break-words font-medium text-ink">{a.name}</p>
+              <p className="break-words text-xs text-silver">
+                {[a.institution, a.mask ? `··${a.mask}` : null].filter(Boolean).join(' ') || (card ? 'Credit card' : 'Bank account')}
               </p>
+              <p className="break-words text-xs text-silver">In the books as {a.ledgerCode} {a.ledgerName}</p>
             </div>
             {a.feed === 'PLAID' ? (
               <Badge size="sm" variant={a.lastError ? 'destructive' : 'info'}>

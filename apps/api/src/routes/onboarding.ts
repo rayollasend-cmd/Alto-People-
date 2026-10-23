@@ -144,7 +144,8 @@ import { scopeAssociates } from '../lib/scope.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 import { queueScheduleRecompute } from '../lib/payScheduleTriggers.js';
-import { isStuck, lastActivityOf, stuckWhere } from '../lib/applicationFilters.js';
+import { callerToday, isStuck, lastActivityOf, startingSoonUnfinishedWhere, startingSoonWhere, stuckWhere } from '../lib/applicationFilters.js';
+import { applicationOwners } from '../lib/applicationOwners.js';
 
 export const onboardingRouter = Router();
 
@@ -625,6 +626,14 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       // — the chip, the banner, the rows' "idle" and the Inbox's count are one
       // rule. IDLE_DRAFTS is its older name (links and saved filters keep working).
       statusWhere = stuckWhere();
+    } else if (status === 'STARTING_SOON') {
+      // The "Starting in 7 days" tile: the seven days from the caller's own
+      // today (?today=YYYY-MM-DD; a start date is a calendar date).
+      statusWhere = startingSoonWhere(callerToday(req.query.today));
+    } else if (status === 'BOUNCED') {
+      // The "Email bounced" tile: in flight, and the latest invite or nudge
+      // came back from the provider — the same set the stats count.
+      statusWhere = { id: { in: await bouncedApplicationIds(req.user!) } };
     } else if (status && status !== 'ALL') {
       statusWhere = {
         status: status as Prisma.ApplicationWhereInput['status'],
@@ -642,32 +651,38 @@ onboardingRouter.get('/applications', async (req, res, next) => {
     const invitedFrom = parseInstant(req.query.invitedFrom);
     const invitedTo = parseInstant(req.query.invitedTo);
 
+    // Composed with AND, never spread over the caller's reach: a spread
+    // `clientId` (a client account picking another client) or a status
+    // filter's own OR/AND would replace the scope's keys instead of
+    // narrowing them.
     const where: Prisma.ApplicationWhereInput = {
-      ...scopeApplications(req.user!),
-      tenantId: tenantIdForWrite(),
-      ...statusWhere,
-      ...(clientId ? { clientId } : {}),
-      ...(invitedFrom || invitedTo
-        ? {
-            invitedAt: {
-              ...(invitedFrom ? { gte: invitedFrom } : {}),
-              ...(invitedTo ? { lt: invitedTo } : {}),
-            },
-          }
-        : {}),
-      ...(q
-        ? {
-            associate: {
-              is: {
-                OR: [
-                  { firstName: { contains: q, mode: 'insensitive' } },
-                  { lastName: { contains: q, mode: 'insensitive' } },
-                  { email: { contains: q, mode: 'insensitive' } },
-                ],
+      AND: [
+        scopeApplications(req.user!),
+        { tenantId: tenantIdForWrite() },
+        statusWhere,
+        clientId ? { clientId } : {},
+        invitedFrom || invitedTo
+          ? {
+              invitedAt: {
+                ...(invitedFrom ? { gte: invitedFrom } : {}),
+                ...(invitedTo ? { lt: invitedTo } : {}),
               },
-            },
-          }
-        : {}),
+            }
+          : {},
+        q
+          ? {
+              associate: {
+                is: {
+                  OR: [
+                    { firstName: { contains: q, mode: 'insensitive' } },
+                    { lastName: { contains: q, mode: 'insensitive' } },
+                    { email: { contains: q, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            }
+          : {},
+      ],
     };
 
     // Pagination — defaults sized so most HR uses fit on one page (typical
@@ -700,6 +715,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
                   title: true,
                   order: true,
                   completedAt: true,
+                  kind: true,
                 },
               },
             },
@@ -709,9 +725,10 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       prisma.application.count({ where }),
     ]);
 
-    const deliveryByAssociate = await fetchLatestInviteDeliveryByAssociate(
-      rows.map((r) => r.associateId)
-    );
+    const [deliveryByAssociate, owners] = await Promise.all([
+      fetchLatestInviteDeliveryByAssociate(rows.map((r) => r.associateId)),
+      applicationOwners(rows.map((r) => r.id), tenantIdForWrite()),
+    ]);
 
     const listedAt = new Date();
     const applications: ApplicationSummary[] = rows.map((row) => {
@@ -751,6 +768,11 @@ onboardingRouter.get('/applications', async (req, res, next) => {
           photoS3Key: row.associate.photoS3Key,
           photoUpdatedAt: row.associate.photoUpdatedAt,
         }),
+        ownerName: owners.get(row.id) ?? null,
+        // The hire's own home names the next step and the count (F500 G5).
+        nextTask: blocked ? { kind: blocked.kind, title: blocked.title } : null,
+        tasksDone: tasks.filter((t) => t.status === 'DONE' || t.status === 'SKIPPED').length,
+        tasksTotal: tasks.length,
       };
     });
 
@@ -823,8 +845,9 @@ export function isStaleApplication(
 onboardingRouter.get('/applications/stats', async (req, res, next) => {
   try {
     const where: Prisma.ApplicationWhereInput = scopeApplications(req.user!);
+    const today = callerToday(req.query.today);
 
-    const [grouped, inFlightRows, idleDrafts] = await Promise.all([
+    const [grouped, inFlightRows, idleDrafts, startingSoon, startingSoonUnfinished] = await Promise.all([
       prisma.application.groupBy({
         by: ['status'],
         where,
@@ -833,6 +856,9 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       fetchInFlightApplications(req.user!),
       // The "Stuck" chip: the same rule as the tile, the banner and the Inbox.
       prisma.application.count({ where: { AND: [where, stuckWhere()] } }),
+      // "Starting in 7 days": the list's STARTING_SOON filter, counted.
+      prisma.application.count({ where: { AND: [where, startingSoonWhere(today)] } }),
+      prisma.application.count({ where: { AND: [where, startingSoonUnfinishedWhere(today)] } }),
     ]);
 
     // Seeded with EVERY status at 0. The contract types this as a total
@@ -902,16 +928,30 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       staleSamples: stale.slice(0, 3),
       bouncedSamples: bounced.slice(0, 3),
       idleDrafts,
+      startingSoon,
+      startingSoonUnfinished,
     });
   } catch (err) {
     next(err);
   }
 });
 
+/**
+ * The applications behind the "Email bounced" tile: in flight in the
+ * caller's reach, the latest invite or nudge FAILED at the provider. The
+ * same population and rule the stats count (`bounced`), so the tile and the
+ * list it opens agree.
+ */
+async function bouncedApplicationIds(user: Parameters<typeof scopeApplications>[0]): Promise<string[]> {
+  const rows = await fetchInFlightApplications(user);
+  const delivery = await fetchLatestInviteDeliveryByAssociate(rows.map((r) => r.associateId));
+  return rows.filter((r) => delivery.get(r.associateId)?.status === 'FAILED').map((r) => r.id);
+}
+
 onboardingRouter.get('/applications/:id', async (req, res, next) => {
   try {
     const row = await prisma.application.findFirst({
-      where: { ...scopeApplications(req.user!), id: req.params.id, tenantId: tenantIdForWrite() },
+      where: { AND: [scopeApplications(req.user!), { id: req.params.id, tenantId: tenantIdForWrite() }] },
       include: {
         associate: {
           select: {
@@ -919,6 +959,9 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
             lastName: true,
             employmentType: true,
             hireDate: true,
+            // The header's avatar: the real headshot or none (no guessed URL that 404s).
+            photoS3Key: true,
+            photoUpdatedAt: true,
           },
         },
         client: { select: { name: true } },
@@ -960,11 +1003,22 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       dueOffsetDays: t.dueOffsetDays,
     }));
 
-    const deliveryByAssociate = await fetchLatestInviteDeliveryByAssociate([
-      row.associateId,
+    const [deliveryByAssociate, owners] = await Promise.all([
+      fetchLatestInviteDeliveryByAssociate([row.associateId]),
+      applicationOwners([row.id], tenantIdForWrite()),
     ]);
+    const checklistTasks = row.checklist?.tasks ?? [];
 
     const detail: ApplicationDetail = {
+      // The header's facts: last movement (the stuck rule's clock) and who sent it.
+      lastActivityAt: lastActivityOf({ invitedAt: row.invitedAt, tasks: checklistTasks }).toISOString(),
+      stuck: isStuck({ status: row.status, invitedAt: row.invitedAt, tasks: checklistTasks }),
+      ownerName: owners.get(row.id) ?? null,
+      photoUrl: profilePhotoUrlFor({
+        id: row.associateId,
+        photoS3Key: row.associate.photoS3Key,
+        photoUpdatedAt: row.associate.photoUpdatedAt,
+      }),
       id: row.id,
       associateId: row.associateId,
       // A direct employer's application names no client; the contract still says string.
@@ -1716,7 +1770,26 @@ onboardingRouter.get('/templates', async (req, res, next) => {
       include: { tasks: { orderBy: { order: 'asc' } } },
       orderBy: [{ track: 'asc' }, { name: 'asc' }],
     });
-    const templates: OnboardingTemplate[] = rows.map(toTemplate);
+    // "In use": in-flight applications on the template's client and track,
+    // in the caller's reach. Application keeps no template id (only the
+    // resolved track), so a client's own template counts that client's
+    // applications on its track, and a global one counts the rest of the
+    // track — the clients with no template of their own for it. The same
+    // client-and-track proxy the delete guard uses.
+    const inFlight = await prisma.application.groupBy({
+      by: ['clientId', 'onboardingTrack'],
+      where: { AND: [scopeApplications(req.user!), { status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] } }] },
+      _count: { _all: true },
+    });
+    const ownTemplate = new Set(rows.filter((r) => r.clientId).map((r) => `${r.clientId}|${r.track}`));
+    const inUseOf = (t: { clientId: string | null; track: string }): number =>
+      inFlight
+        .filter((g) =>
+          g.onboardingTrack === t.track &&
+          (t.clientId ? g.clientId === t.clientId : !g.clientId || !ownTemplate.has(`${g.clientId}|${t.track}`)),
+        )
+        .reduce((n, g) => n + g._count._all, 0);
+    const templates: OnboardingTemplate[] = rows.map((r) => ({ ...toTemplate(r), inUse: inUseOf(r) }));
     const payload: TemplateListResponse = { templates };
     res.json(payload);
   } catch (err) {
@@ -1729,6 +1802,7 @@ function toTemplate(row: {
   clientId: string | null;
   track: OnboardingTemplate['track'];
   name: string;
+  updatedAt?: Date;
   tasks: Array<{
     id: string;
     kind: TemplateTask['kind'];
@@ -1743,6 +1817,7 @@ function toTemplate(row: {
     clientId: row.clientId,
     track: row.track,
     name: row.name,
+    ...(row.updatedAt ? { updatedAt: row.updatedAt.toISOString() } : {}),
     tasks: row.tasks.map(
       (t): TemplateTask => ({
         id: t.id,

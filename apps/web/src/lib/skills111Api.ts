@@ -121,3 +121,16 @@ export interface PendingSkillClaim {
   claimedAt: string;
 }
 export const listPendingSkillClaims = () => apiFetch<{ claims: PendingSkillClaim[] }>('/associate-skills/pending');
+
+/** GET /skills/overview — the page's first screen, counted over the active people in reach. */
+export interface SkillsOverview {
+  catalog: number;
+  peopleWithSkill: number;
+  peopleWithVerified: number;
+  /** Self-claims waiting on a verifier. */
+  toVerify: number;
+  /** The five skills most people hold. */
+  top: { id: string; name: string; category: string | null; people: number; verified: number }[];
+}
+
+export const getSkillsOverview = () => apiFetch<SkillsOverview>('/skills/overview');

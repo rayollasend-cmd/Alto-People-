@@ -37,6 +37,7 @@ import { localDateKey, formatTimeInZone, DEFAULT_TIMEZONE } from './timezone.js'
 import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
 import { attachFieldglass } from './fieldglassDesk.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { laborSharesForEntries } from './entryLaborShares.js';
 
 /**
@@ -53,6 +54,12 @@ export interface TimesheetSourceEntry {
   clientId: string | null;
   /** Worksite label (location name) or client name — the Fieldglass Site. */
   site: string | null;
+  /** The store's own name in Alto (location name, else the client name) —
+   *  what the page shows; `site` stays the label Fieldglass knows. */
+  siteName?: string | null;
+  /** The associate's photo URL (null: none on file), so the list never
+   *  guesses one that 404s. */
+  photoUrl?: string | null;
   clockInAt: Date;
   clockOutAt: Date | null;
   /** APPROVED | COMPLETED | … — only APPROVED contributes hours. */
@@ -114,6 +121,8 @@ interface RowAccumulator {
   clientId: string | null;
   worker: string;
   site: string;
+  siteName: string | null | undefined;
+  photoUrl: string | null | undefined;
   minutes: number;
   hasPending: boolean;
 }
@@ -144,6 +153,8 @@ export function aggregateTimesheetRows(
         clientId: e.clientId,
         worker: `${e.lastName}, ${e.firstName}`.trim(),
         site: e.site ?? '—',
+        siteName: e.siteName,
+        photoUrl: e.photoUrl,
         minutes: 0,
         hasPending: false,
       };
@@ -177,6 +188,10 @@ export function aggregateTimesheetRows(
       clientId: g.clientId,
       worker: g.worker,
       site: g.site,
+      // Only when the source carried them (the pure aggregator's callers
+      // without a database leave them out).
+      ...(g.siteName !== undefined ? { siteName: g.siteName ?? g.site } : {}),
+      ...(g.photoUrl !== undefined ? { photoUrl: g.photoUrl } : {}),
       ...buckets,
       total: hours,
       status: g.hasPending ? 'PENDING' : 'READY',
@@ -239,7 +254,7 @@ export async function buildTimesheetWeek(
       clockInAt: true,
       clockOutAt: true,
       status: true,
-      associate: { select: { firstName: true, lastName: true } },
+      associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
       location: { select: { name: true, timezone: true } },
       shift: { select: { position: true } },
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
@@ -272,6 +287,8 @@ export async function buildTimesheetWeek(
       lastName: e.associate.lastName,
       clientId: e.clientId,
       site: client?.fieldglass ?? e.location?.name ?? client?.name ?? null,
+      siteName: e.location?.name ?? client?.name ?? null,
+      photoUrl: profilePhotoUrlFor({ id: e.associateId, ...e.associate }),
       clockInAt: e.clockInAt,
       clockOutAt: e.clockOutAt,
       status: e.status,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { disambiguateStores } from '@/lib/laborCostLabels';
 import { withReturn } from '@/lib/returnPath';
 import { termizeText } from '@/lib/modules';
@@ -15,33 +15,27 @@ import {
   RefreshCw,
   Scale,
   Search,
+  Target,
   Timer,
   Users,
 } from 'lucide-react';
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  LabelList,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip as ChartTooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import type {
   FloorNowResponse,
   OtOutlookResponse,
   LaborCostRow,
   StaffingTargetLocation,
 } from '@alto-people/shared';
-import { DonutChart } from '@/components/ui/DonutChart';
-import { PALETTE, Sparkline as KitSparkline, TICK as KIT_TICK } from '@/components/ui/charts';
+import { PALETTE, Sparkline as KitSparkline, StackedBarChart, TrendLineChart } from '@/components/ui/charts';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { FilterBar } from '@/components/ui/FilterBar';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import {
   floorNow,
   otOutlook,
   laborCosts,
+  laborCostPeriods,
   listStaffingTargets,
   setStaffingTarget,
   storeTrends,
@@ -57,13 +51,23 @@ import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
-import { dateTicks } from '@/components/ui/charts/axes';
+import { fmtDateOnly, fmtDateOnlyRange, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { urlDay, useUrlParam, useUrlState, useUrlWriter } from '@/lib/useUrlState';
 import { ymd } from './calendarDates';
 // Despite the legacy name, this is the ORG workweek start (Saturday).
 import { startOfWeekMonday } from './WeekCalendarView';
+import {
+  MAX_RANGE_DAYS,
+  addDaysYmd,
+  daysInRange,
+  everyDay,
+  localYmd,
+  presetRange,
+  resolveRange,
+  type RangePreset,
+} from './laborCostRange';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
 import {
@@ -91,239 +95,64 @@ import {
  * not silently $0 — the fix lives in Clients → Rate defaults.
  */
 
-const todayYmd = (): string => {
-  const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
-};
-
-const addDaysYmd = (ymd: string, days: number): string => {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const dt = new Date(y, m - 1, d + days);
-  const mm = String(dt.getMonth() + 1).padStart(2, '0');
-  const dd = String(dt.getDate()).padStart(2, '0');
-  return `${dt.getFullYear()}-${mm}-${dd}`;
-};
-
 // Delegates to the shared formatters — the private copies here had drifted
 // from fmtMoneyCompact's tiering ($24.4k here vs $24k elsewhere).
 const money = (v: number): string => fmtMoney(v);
 const moneyCompact = (v: number): string => fmtMoneyCompact(v);
 const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)}h`;
+const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
-/* ----- Chart tokens -------------------------------------------------------
- * Series colors ride the design-system CSS variables, so they follow the
- * light/dark theme at paint time with no re-render (same idiom as
- * DonutChart). Two categorical series, fixed assignment (never re-ordered):
- * Scheduled = gold, Worked = steel. Palette validated with the dataviz
- * six-check script against both surfaces: light (deep gold and blue on
- * white) passes all six; dark (soft gold and sky blue on navy) passes chroma, CVD
- * (ΔE 24), normal-vision (ΔE 26) and contrast — the brand tokens sit a
- * step above the generic dark lightness band on purpose (this navy is far
- * darker than a typical dark surface), and the legend + direct labels +
- * table views below carry identity beyond color everywhere.
+/* ----- Chart series --------------------------------------------------------
+ * The kit's palette in its fixed categorical order, so Scheduled / Worked /
+ * Billable read the same here as on every other chart: scheduled = gold,
+ * worked = steel, billable = the third hue.
  */
-// The kit's palette (components/ui/charts): its fixed categorical order,
-// so Scheduled/Worked/Billable read the same here as on every other chart.
-const SCHED_COLOR = PALETTE.primary;
-const WORKED_COLOR = PALETTE.secondary;
-const GRID_COLOR = PALETTE.grid;
-const TICK_COLOR = KIT_TICK.fill;
-const SURFACE_COLOR = PALETTE.surface;
-
 const SERIES = [
-  { key: 'scheduled', name: 'Scheduled', color: SCHED_COLOR },
-  { key: 'worked', name: 'Worked', color: WORKED_COLOR },
-] as const;
-
-// The trend adds the revenue side — the kit's third hue, in the same fixed order.
-const LINE_SERIES = [
-  ...SERIES,
-  { key: 'revenue', name: 'Billable', color: PALETTE.tertiary },
-] as const;
-
-/* Donut slices: the kit's first three hues + its "Other" token for the
- * folded tail. Never more hues — past three named slices the tail folds. */
-const SLICE_COLORS = [PALETTE.series[0], PALETTE.series[1], PALETTE.series[2]];
-const OTHER_SLICE_COLOR = PALETTE.other;
-
-function ChartLegend({
-  marks,
-  series = SERIES,
-}: {
-  marks: 'line' | 'bar';
-  series?: ReadonlyArray<{ key: string; name: string; color: string }>;
-}) {
-  return (
-    <div className="flex items-center gap-4 text-xs text-silver">
-      {series.map((s) => (
-        <span key={s.key} className="inline-flex items-center gap-1.5">
-          {marks === 'line' ? (
-            <span
-              aria-hidden="true"
-              className="inline-block h-0.5 w-4 rounded-full"
-              style={{ background: s.color }}
-            />
-          ) : (
-            <span
-              aria-hidden="true"
-              className="inline-block h-2.5 w-2.5 rounded-sm"
-              style={{ background: s.color }}
-            />
-          )}
-          {s.name}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/** One tooltip, every series at the hovered X — values lead, names follow. */
-function CostTooltip({
-  active,
-  payload,
-  label,
-  labelText,
-}: {
-  active?: boolean;
-  payload?: Array<{ dataKey?: string | number; value?: number | string; color?: string }>;
-  label?: string | number;
-  labelText?: (label: string) => string;
-}) {
-  if (!active || !payload || payload.length === 0) return null;
-  const heading = labelText ? labelText(String(label)) : String(label);
-  return (
-    <div className="rounded-md border border-navy-secondary bg-navy px-3 py-2 elev-2 text-xs">
-      <div className="mb-1 text-silver/80">{heading}</div>
-      {payload.map((p) => {
-        const s = LINE_SERIES.find((x) => x.key === p.dataKey);
-        return (
-          <div key={String(p.dataKey)} className="flex items-center gap-2 py-0.5">
-            <span
-              aria-hidden="true"
-              className="inline-block h-0.5 w-3.5 rounded-full"
-              style={{ background: s?.color ?? p.color }}
-            />
-            <span className="font-semibold tabular-nums text-white">
-              {money(Number(p.value ?? 0))}
-            </span>
-            <span className="text-silver/80">{s?.name ?? String(p.dataKey)}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+  { key: 'scheduled', name: 'Scheduled', color: PALETTE.primary },
+  { key: 'worked', name: 'Worked', color: PALETTE.secondary },
+];
+const LINE_SERIES = [...SERIES, { key: 'revenue', name: 'Billable', color: PALETTE.tertiary }];
 
 /** Small uppercase section label — the page's visual table of contents. */
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children, id }: { children: React.ReactNode; id?: string }) {
   return (
-    <div className="mb-2 text-2xs font-medium uppercase tracking-[0.18em] text-silver/60">
+    <div id={id} className="mb-2 scroll-mt-20 text-2xs font-medium uppercase tracking-[0.18em] text-silver/60">
       {children}
     </div>
   );
 }
 
-function StatTile({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  delta,
-  tone,
-}: {
-  icon: typeof DollarSign;
-  label: string;
-  value: string;
-  sub?: string;
-  /** Optional second line rendered in the tone color (e.g. a variance). */
-  delta?: string;
-  tone?: 'success' | 'alert' | 'warning';
-}) {
-  const toneText =
-    tone === 'success'
-      ? 'text-success'
-      : tone === 'alert'
-        ? 'text-alert'
-        : tone === 'warning'
-          ? 'text-warning'
-          : 'text-white';
-  return (
-    <div className="rounded-lg border border-navy-secondary bg-navy/60 px-4 py-3.5 transition-colors hover:border-silver/30">
-      <div className="flex items-center gap-1.5 text-2xs uppercase tracking-widest text-silver/70">
-        <Icon className="h-3.5 w-3.5 text-gold/80" aria-hidden="true" />
-        {label}
-      </div>
-      <div className={`mt-1.5 text-2xl font-semibold leading-none ${delta ? 'text-white' : toneText}`}>
-        {value}
-      </div>
-      {delta && (
-        <div className={`mt-1 text-xs font-medium tabular-nums ${toneText}`}>{delta}</div>
-      )}
-      {sub && <div className="mt-1 text-xs leading-snug text-silver/70">{sub}</div>}
-    </div>
-  );
-}
-
-/** Daily trend — three 2px lines, ringed markers, crosshair tooltip. */
+/**
+ * Daily trend — every day of the range on the axis (a day with nothing
+ * scheduled is a real $0, not a missing tick: the gap between Oct 2 and
+ * Oct 18 used to draw as one step), kit date ticks ("Sep 23"), and the
+ * table/CSV alternative from the frame. Lines, not bars: at 30–92 days
+ * three bars a day were too thin to draw on a phone.
+ */
 function CostTrendCard({
   data,
 }: {
   data: Array<{ date: string; scheduled: number; worked: number; revenue: number }>;
 }) {
+  const sum = (k: 'scheduled' | 'worked' | 'revenue') => data.reduce((s, d) => s + d[k], 0);
+  const first = data[0]?.date;
+  const last = data[data.length - 1]?.date;
   return (
-    <Card>
-      <CardContent>
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-medium text-white">
-            Daily labor cost vs billable value
-          </div>
-          <ChartLegend marks="line" series={LINE_SERIES} />
-        </div>
-        <div style={{ height: 240 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 4 }}>
-              <CartesianGrid stroke={GRID_COLOR} strokeWidth={1} vertical={false} />
-              <XAxis
-                dataKey="date"
-                tickFormatter={dateTicks('day')}
-                tick={{ fill: TICK_COLOR, fontSize: 10 }}
-                axisLine={{ stroke: GRID_COLOR }}
-                tickLine={false}
-              />
-              <YAxis
-                tickFormatter={(v: number) => moneyCompact(v)}
-                tick={{ fill: TICK_COLOR, fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-                width={52}
-              />
-              <ChartTooltip
-                cursor={{ stroke: GRID_COLOR, strokeWidth: 1 }}
-                content={<CostTooltip labelText={(l) => fmtDate(l)} />}
-              />
-              {LINE_SERIES.map((s) => (
-                <Line
-                  key={s.key}
-                  dataKey={s.key}
-                  name={s.name}
-                  stroke={s.color}
-                  strokeWidth={2}
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                  // ≥8px marker with a 2px surface ring, so dots stay
-                  // legible where the two lines cross.
-                  dot={{ r: 4, fill: s.color, stroke: SURFACE_COLOR, strokeWidth: 2 }}
-                  activeDot={{ r: 5, stroke: SURFACE_COLOR, strokeWidth: 2 }}
-                  isAnimationActive={false}
-                />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
+    <ChartFrame
+      title="Daily labor cost vs billable value"
+      summary={`${fmtDateOnlyRange(first, last)}: scheduled ${money(sum('scheduled'))}, worked ${money(sum('worked'))}, billable ${money(sum('revenue'))}.`}
+      columns={[
+        { key: 'date', label: 'Day', format: (v) => fmtDateOnly(String(v), { weekday: true, year: 'auto' }) },
+        { key: 'scheduled', label: 'Scheduled', numeric: true, format: (v) => money(Number(v)) },
+        { key: 'worked', label: 'Worked', numeric: true, format: (v) => money(Number(v)) },
+        { key: 'revenue', label: 'Billable', numeric: true, format: (v) => money(Number(v)) },
+      ]}
+      rows={data}
+      csvName="labor-cost-by-day"
+      height={260}
+    >
+      <TrendLineChart data={data} x="date" xDates="day" series={LINE_SERIES} format={moneyCompact} />
+    </ChartFrame>
   );
 }
 
@@ -335,73 +164,27 @@ function CostByGroupCard({
   title: string;
   data: Array<{ name: string; scheduled: number; worked: number }>;
 }) {
-  // Thin marks: 12px bars, 2px surface gap inside each pair, air between
-  // groups. Height grows with the rows so the axis band always fits.
-  const height = Math.max(120, data.length * 44 + 40);
+  const height = Math.max(140, data.length * 44 + 40) + 24;
+  const top = data[0];
   return (
-    <Card>
-      <CardContent>
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-medium text-white">{title}</div>
-          <ChartLegend marks="bar" />
-        </div>
-        <div style={{ height }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              layout="vertical"
-              data={data}
-              margin={{ top: 0, right: 56, bottom: 0, left: 8 }}
-              barGap={2}
-              barCategoryGap="28%"
-            >
-              <CartesianGrid stroke={GRID_COLOR} strokeWidth={1} horizontal={false} />
-              <XAxis
-                type="number"
-                tickFormatter={(v: number) => moneyCompact(v)}
-                tick={{ fill: TICK_COLOR, fontSize: 10 }}
-                axisLine={{ stroke: GRID_COLOR }}
-                tickLine={false}
-              />
-              <YAxis
-                type="category"
-                dataKey="name"
-                tick={{ fill: TICK_COLOR, fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-                width={130}
-              />
-              <ChartTooltip
-                cursor={{ fill: PALETTE.cursor }}
-                content={<CostTooltip />}
-              />
-              {SERIES.map((s) => (
-                <Bar
-                  key={s.key}
-                  dataKey={s.key}
-                  name={s.name}
-                  fill={s.color}
-                  barSize={12}
-                  // Rounded data-end (right, since bars grow rightward),
-                  // square at the baseline.
-                  radius={[0, 4, 4, 0]}
-                  isAnimationActive={false}
-                >
-                  <LabelList
-                    dataKey={s.key}
-                    position="right"
-                    formatter={(v) => {
-                      const n = Number(v);
-                      return Number.isFinite(n) && n > 0 ? moneyCompact(n) : '';
-                    }}
-                    style={{ fill: KIT_TICK.fill, fontSize: 10 }}
-                  />
-                </Bar>
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
+    <ChartFrame
+      title={title}
+      summary={
+        top
+          ? `${top.name} leads with ${money(top.scheduled)} scheduled and ${money(top.worked)} worked, of ${data.length} ${data.length === 1 ? 'group' : 'groups'}.`
+          : 'Nothing scheduled or worked.'
+      }
+      columns={[
+        { key: 'name', label: title.replace(/^Cost by /, '').replace(/^\w/, (c) => c.toUpperCase()) },
+        { key: 'scheduled', label: 'Scheduled', numeric: true, format: (v) => money(Number(v)) },
+        { key: 'worked', label: 'Worked', numeric: true, format: (v) => money(Number(v)) },
+      ]}
+      rows={data}
+      csvName={title.toLowerCase().replace(/\s+/g, '-')}
+      height={height}
+    >
+      <StackedBarChart data={data} x="name" series={SERIES} stacked={false} layout="horizontal" format={moneyCompact} />
+    </ChartFrame>
   );
 }
 
@@ -686,11 +469,7 @@ function OtOutlookTable({ rows }: { rows: OtOutlookResponse['rows'] }) {
   );
 }
 
-/**
- * Live floor board — clocked-in RIGHT NOW vs the expected headcount (the
- * shift window covering the store's local time, else the total floor
- * target). Polls every 60s while the page is open.
- */
+
 /**
  * Store benchmarks — each store's 4-week margin/hr trend (sparkline) and
  * where it sits against the org's own "speed of light": the best store's
@@ -707,11 +486,12 @@ interface StoreTrend {
   hours4w: number;
 }
 
+
 /** A store's margin per hour, week by week — the kit's sparkline (gaps stay gaps). */
-function Sparkline({ weeks }: { weeks: StoreTrend['weeks'] }) {
+function MarginSparkline({ weeks }: { weeks: StoreTrend['weeks'] }) {
   const vals = weeks.map((w) => w.marginPerHour);
   const present = vals.filter((v): v is number => v !== null);
-  if (present.length < 2) return <span className="text-2xs text-silver/40">—</span>;
+  if (present.length < 2) return <span className="w-24 text-2xs text-silver/40">—</span>;
   const lastUp = present[present.length - 1]! >= present[present.length - 2]!;
   return <KitSparkline series={vals} tone={lastUp ? 'good' : 'warn'} width={96} height={24} area={false} />;
 }
@@ -768,7 +548,7 @@ function StoreTrendsCard() {
                   <span className="w-40 min-w-0 shrink-0 truncate text-sm text-white">
                     {s.locationName}
                   </span>
-                  <Sparkline weeks={s.weeks} />
+                  <MarginSparkline weeks={s.weeks} />
                   <span
                     className={cn(
                       'w-20 shrink-0 text-right text-sm tabular-nums',
@@ -809,15 +589,26 @@ function StoreTrendsCard() {
   );
 }
 
-function FloorNowCard() {
+
+/**
+ * Live floor — ONE line under the range summary: who is clocked in right
+ * now against the expected headcount, and what that burns and bills per
+ * hour. It used to lead this historical report as a full card; the live
+ * picture is the Control room's, linked from the line, and the store
+ * ledger (with Broadcast to bench) is one click down. With nobody on the
+ * floor there is no rate to show — "No one on the floor", never a green
+ * "+$0.00/hr". Polls every 60s while the tab is visible.
+ */
+function LiveFloorLine() {
   const floorScope = useStoreScope();
   const floorClientId = floorScope.enabled ? floorScope.clientId : null;
   const [data, setData] = useState<FloorNowResponse | null>(null);
   const [failed, setFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  // Folded by default (a new key: the old card defaulted open).
   const [open, setOpen] = usePersistentState<boolean>(
-    'alto:laborcosts.floor.open.v1',
-    true,
+    'alto:laborcosts.floor.open.v2',
+    false,
     (v): v is boolean => typeof v === 'boolean',
   );
 
@@ -853,6 +644,7 @@ function FloorNowCard() {
 
   const { can } = useAuth();
   const canManage = can('manage:scheduling');
+  const canLive = can('view:time-live');
   const [showNominal, setShowNominal] = useState(false);
   const [broadcasting, setBroadcasting] = useState<string | null>(null);
   const broadcast = async (clientId: string) => {
@@ -877,9 +669,8 @@ function FloorNowCard() {
     }
   };
 
-  // Anomaly-first: mission control sorts by badness, not by alphabet.
-  // Short-staffed stores and negative-margin stores rise; clean stores
-  // fold into a single "nominal" strip below.
+  // Anomaly-first: short-staffed and negative-margin stores rise; clean
+  // stores fold into a single "nominal" strip below.
   const badnessOf = useCallback(
     (r: NonNullable<typeof data>['rows'][number]): number => {
       const short = r.expected !== null ? Math.max(0, r.expected - r.clockedIn) : 0;
@@ -902,8 +693,8 @@ function FloorNowCard() {
     };
   }, [data, badnessOf]);
 
-  // A failed board must SAY so — silently unmounting the page's headline
-  // surface reads as "nobody's working", which is worse than an error.
+  // A failed board must SAY so — silently dropping it reads as "nobody's
+  // working", which is worse than an error.
   if (failed && data === null) {
     return (
       <ErrorBanner
@@ -914,43 +705,26 @@ function FloorNowCard() {
           </Button>
         }
       >
-        Couldn&apos;t load the live floor board.
+        Couldn&apos;t load who is on the floor right now.
       </ErrorBanner>
     );
   }
-  // First load: reserve the card's rough height instead of popping in.
-  if (data === null) return <Skeleton className="h-40" />;
+  if (data === null) return <Skeleton className="h-11" />;
   if (data.rows.length === 0) return null;
 
-  // Company-wide totals for the hero strip, and per-client rollups that
-  // only render when a client actually spans multiple stores — with
-  // one-store clients (this org's shape) a rollup would just repeat the
-  // store row.
   const total = data.rows.reduce(
     (t, r) => ({
       clockedIn: t.clockedIn + r.clockedIn,
       expected: t.expected + (r.expected ?? 0),
-      hasExpected: t.hasExpected || r.expected !== null,
       loadedPerHour: t.loadedPerHour + (r.loadedPerHour ?? 0),
       billedPerHour: t.billedPerHour + (r.billedPerHour ?? 0),
-      loadedSoFar: t.loadedSoFar + (r.loadedSoFar ?? 0),
-      billedSoFar: t.billedSoFar + (r.billedSoFar ?? 0),
       otHeads: t.otHeads + (r.otHeads ?? 0),
       projectedOtHeads: t.projectedOtHeads + (r.projectedOtHeads ?? 0),
     }),
-    {
-      clockedIn: 0,
-      expected: 0,
-      hasExpected: false,
-      loadedPerHour: 0,
-      billedPerHour: 0,
-      loadedSoFar: 0,
-      billedSoFar: 0,
-      otHeads: 0,
-      projectedOtHeads: 0,
-    },
+    { clockedIn: 0, expected: 0, loadedPerHour: 0, billedPerHour: 0, otHeads: 0, projectedOtHeads: 0 },
   );
-  const totalMarginPerHour = total.billedPerHour - total.loadedPerHour;
+  const onFloor = total.clockedIn > 0;
+  const margin = total.billedPerHour - total.loadedPerHour;
   const storesPerClient = new Map<string, number>();
   for (const r of data.rows) {
     storesPerClient.set(r.clientId, (storesPerClient.get(r.clientId) ?? 0) + 1);
@@ -958,249 +732,166 @@ function FloorNowCard() {
   const anyMultiStoreClient = [...storesPerClient.values()].some((n) => n > 1);
 
   return (
-    <Card>
-      <CardContent>
-        <div className={cn('flex flex-wrap items-center justify-between gap-2', open && 'mb-3')}>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            className="flex min-w-0 items-center gap-2 text-left"
-          >
-            <ChevronDown
-              className={cn(
-                'h-4 w-4 shrink-0 text-silver/60 transition-transform',
-                !open && '-rotate-90',
-              )}
-            />
-            <span className="relative flex h-2 w-2" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
-            <span className="text-sm font-medium text-white">On the floor right now</span>
-            {/* Folded: the four hero numbers compress into one chip. */}
-            {!open && (
-              <span className="rounded-full bg-navy-secondary/60 px-2 py-0.5 text-2xs tabular-nums text-silver">
-                {total.hasExpected
-                  ? `${total.clockedIn}/${total.expected}`
-                  : total.clockedIn}{' '}
-                on floor ·{' '}
-                <span className={totalMarginPerHour >= 0 ? 'text-success' : 'text-alert'}>
-                  {totalMarginPerHour >= 0 ? '+' : '−'}
-                  {money(Math.abs(totalMarginPerHour))}/hr
-                </span>
+    <div className="rounded-lg border border-navy-secondary bg-navy/40" data-testid="live-floor">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-label={open ? 'Hide the stores' : 'Show the stores'}
+          className="flex shrink-0 items-center gap-2 text-left"
+        >
+          <ChevronDown
+            className={cn('h-4 w-4 shrink-0 text-silver/60 transition-transform', !open && '-rotate-90')}
+            aria-hidden="true"
+          />
+          <span className="relative flex h-2 w-2" aria-hidden="true">
+            {onFloor && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/60" />}
+            <span className={cn('relative inline-flex h-2 w-2 rounded-full', onFloor ? 'bg-success' : 'bg-silver/40')} />
+          </span>
+          <span className="font-medium text-white">Live now</span>
+        </button>
+        <span className="min-w-0 tabular-nums text-silver">
+          {onFloor ? (
+            <>
+              <span className="text-white">{total.clockedIn}</span>
+              {total.expected > 0 ? ` of ${total.expected}` : ''} on the floor
+              {' · '}burn {money(total.loadedPerHour)}/hr
+              {' · '}billing {money(total.billedPerHour)}/hr
+              {' · '}margin{' '}
+              <span className={margin >= 0 ? 'text-success' : 'text-alert'}>
+                {margin >= 0 ? '+' : '−'}
+                {money(Math.abs(margin))}/hr
               </span>
-            )}
-          </button>
-          <div
-            className="text-2xs text-silver/60"
-            title={
-              data.burden
-                ? `Loaded cost = wages × (1 + ${data.burden.percent}% burden)${data.burden.overheadPerHour > 0 ? ` + ${money(data.burden.overheadPerHour)}/hr overhead` : ''}. OT past 40h/week (all sites) at 1.5×.`
-                : undefined
-            }
+            </>
+          ) : (
+            <>
+              No one on the floor
+              {total.expected > 0 ? ` · ${total.expected} expected` : ''}
+            </>
+          )}
+        </span>
+        {total.otHeads > 0 && (
+          <span className="rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
+            {total.otHeads} in overtime
+          </span>
+        )}
+        {total.projectedOtHeads > 0 && (
+          <span
+            className="rounded border border-warning/40 px-1.5 py-0.5 text-2xs font-medium text-warning/80"
+            title="Will pass 40h this week if their remaining shifts run as scheduled — trim a shift to avoid 1.5× billing."
           >
-            clocked in vs expected · loaded cost vs billed · refreshes every minute
-          </div>
-        </div>
-        {open && (
-        <>
-
-        {/* Company hero strip — the four numbers an executive reads first. */}
-        <div className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-navy-secondary bg-navy-secondary/60 sm:grid-cols-4">
-          {[
-            {
-              label: 'On the floor',
-              value: total.hasExpected
-                ? `${total.clockedIn} / ${total.expected}`
-                : String(total.clockedIn),
-              extra:
-                total.otHeads > 0 || total.projectedOtHeads > 0 ? (
-                  <span className="align-middle">
-                    {total.otHeads > 0 && (
-                      <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
-                        {total.otHeads} OT
-                      </span>
-                    )}
-                    {total.projectedOtHeads > 0 && (
-                      <span
-                        className="ml-1.5 rounded border border-warning/40 px-1.5 py-0.5 text-2xs font-medium text-warning/80"
-                        title="Will pass 40h this week if their remaining shifts run as scheduled — trim a shift to avoid 1.5× billing."
-                      >
-                        {total.projectedOtHeads} OT risk
-                      </span>
-                    )}
-                  </span>
-                ) : null,
-              tone: 'text-white',
-            },
-            {
-              label: 'Burn rate',
-              value: `${money(total.loadedPerHour)}/hr`,
-              extra: null,
-              tone: 'text-white',
-            },
-            {
-              label: 'Billing rate',
-              value: `${money(total.billedPerHour)}/hr`,
-              extra: null,
-              tone: 'text-white',
-            },
-            {
-              label: 'Live margin',
-              value: `${totalMarginPerHour >= 0 ? '+' : '−'}${money(Math.abs(totalMarginPerHour))}/hr`,
-              extra: (
-                <div className="mt-0.5 text-2xs tabular-nums text-silver/60">
-                  so far {money(total.loadedSoFar)} · billed {money(total.billedSoFar)}
-                </div>
-              ),
-              tone: totalMarginPerHour >= 0 ? 'text-success' : 'text-alert',
-            },
-          ].map((s) => (
-            <div key={s.label} className="bg-navy px-4 py-3">
-              <div className="text-2xs uppercase tracking-widest text-silver/60">
-                {s.label}
-              </div>
-              <div className={`mt-1 text-xl font-semibold tabular-nums leading-none ${s.tone}`}>
-                {s.value}
-                {s.label === 'On the floor' ? s.extra : null}
-              </div>
-              {s.label !== 'On the floor' ? s.extra : null}
-            </div>
-          ))}
-        </div>
-
-        {/* Store ledger — one row per store; client subtotals only when a
-            client actually spans multiple stores. */}
-        <div className="overflow-x-auto">
+            {total.projectedOtHeads} at overtime risk
+          </span>
+        )}
+        {canLive && (
+          <Link to="/control-room" className="ml-auto shrink-0 text-xs text-gold hover:underline">
+            Control room →
+          </Link>
+        )}
+      </div>
+      {open && (
+        <div className="overflow-x-auto border-t border-navy-secondary px-4 pb-3 pt-2">
           <table className="w-full text-sm">
+            <caption className="sr-only">Stores on the floor right now</caption>
             <thead>
               <tr className="border-b border-navy-secondary text-2xs uppercase tracking-wider text-silver/60">
                 <th className="py-1.5 pr-3 text-left font-medium">Store</th>
-                <th className="py-1.5 px-3 text-left font-medium hidden md:table-cell">
-                  Window
-                </th>
+                <th className="py-1.5 px-3 text-left font-medium hidden md:table-cell">Window</th>
                 <th className="py-1.5 px-3 text-right font-medium">On floor</th>
-                <th className="py-1.5 px-3 text-right font-medium hidden sm:table-cell">
-                  Cost / hr
-                </th>
-                <th className="py-1.5 px-3 text-right font-medium hidden sm:table-cell">
-                  Billed / hr
-                </th>
+                <th className="py-1.5 px-3 text-right font-medium hidden sm:table-cell">Cost / hr</th>
+                <th className="py-1.5 px-3 text-right font-medium hidden sm:table-cell">Billed / hr</th>
                 <th className="py-1.5 px-3 text-right font-medium">Margin / hr</th>
-                <th className="py-1.5 pl-3 text-right font-medium hidden lg:table-cell">
-                  Shift so far
-                </th>
+                <th className="py-1.5 pl-3 text-right font-medium hidden lg:table-cell">Shift so far</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-navy-secondary/50">
               {[...anomalyRows, ...(showNominal ? nominalRows : [])].map((r) => {
-                  const over = r.expected !== null && r.clockedIn > r.expected;
-                  const under = r.expected !== null && r.clockedIn < r.expected;
-                  const margin = (r.billedPerHour ?? 0) - (r.loadedPerHour ?? 0);
-                  const negMargin = r.clockedIn > 0 && margin < 0;
-                  return (
-                    <tr
-                      key={r.locationId}
-                      className={cn(
-                        under && 'bg-warning/[0.045]',
-                        !under && (over || negMargin) && 'bg-alert/[0.04]',
+                const over = r.expected !== null && r.clockedIn > r.expected;
+                const under = r.expected !== null && r.clockedIn < r.expected;
+                const rowMargin = (r.billedPerHour ?? 0) - (r.loadedPerHour ?? 0);
+                const negMargin = r.clockedIn > 0 && rowMargin < 0;
+                return (
+                  <tr
+                    key={r.locationId}
+                    className={cn(under && 'bg-warning/[0.045]', !under && (over || negMargin) && 'bg-alert/[0.04]')}
+                  >
+                    <td className="py-2 pr-3">
+                      <div className="text-white">{r.locationName}</div>
+                      {anyMultiStoreClient && r.clientName !== r.locationName && (
+                        <div className="text-2xs text-silver/70">{r.clientName}</div>
                       )}
-                    >
-                      <td className="py-2 pr-3">
-                        <div className="text-white">{r.locationName}</div>
-                        {anyMultiStoreClient && r.clientName !== r.locationName && (
-                          <div className="text-2xs text-silver/70">{r.clientName}</div>
-                        )}
-                        {/* Act in place: a short floor gets its fix here. */}
-                        {under && canManage && (
-                          <button
-                            type="button"
-                            disabled={broadcasting !== null}
-                            onClick={() => void broadcast(r.clientId)}
-                            className="mt-0.5 text-2xs text-gold hover:text-gold-bright disabled:opacity-50"
-                          >
-                            {broadcasting === r.clientId
-                              ? 'Broadcasting…'
-                              : 'Broadcast to bench →'}
-                          </button>
-                        )}
-                      </td>
-                      <td className="py-2 px-3 hidden md:table-cell">
-                        {r.windowLabel ? (
-                          <span className="rounded bg-navy-secondary/50 px-1.5 py-0.5 text-2xs text-silver">
-                            {r.windowLabel}
-                          </span>
-                        ) : r.expected !== null ? (
-                          <span className="text-2xs text-silver/70">floor total</span>
-                        ) : (
-                          <span className="text-2xs text-silver/40">no target</span>
-                        )}
-                      </td>
-                      <td className="py-2 px-3 text-right tabular-nums">
-                        <span
-                          className={
-                            over
-                              ? 'font-semibold text-alert'
-                              : under
-                                ? 'font-semibold text-warning'
-                                : 'text-white'
-                          }
-                          title={
-                            over
-                              ? `${r.clockedIn - r.expected!} above the expected headcount`
-                              : under
-                                ? `${r.expected! - r.clockedIn} below the expected headcount`
-                                : undefined
-                          }
+                      {/* Act in place: a short floor gets its fix here. */}
+                      {under && canManage && (
+                        <button
+                          type="button"
+                          disabled={broadcasting !== null}
+                          onClick={() => void broadcast(r.clientId)}
+                          className="mt-0.5 text-2xs text-gold hover:text-gold-bright disabled:opacity-50"
                         >
-                          {r.clockedIn}
-                          <span className="text-silver/70">
-                            {' '}/ {r.expected !== null ? r.expected : '—'}
-                          </span>
+                          {broadcasting === r.clientId ? 'Broadcasting…' : 'Broadcast to bench →'}
+                        </button>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 hidden md:table-cell">
+                      {r.windowLabel ? (
+                        <span className="rounded bg-navy-secondary/50 px-1.5 py-0.5 text-2xs text-silver">
+                          {r.windowLabel}
                         </span>
-                        {(r.otHeads ?? 0) > 0 && (
-                          <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
-                            {r.otHeads} OT
-                          </span>
-                        )}
-                        {(r.projectedOtHeads ?? 0) > 0 && (
-                          <span
-                            className="ml-1.5 rounded border border-warning/40 px-1.5 py-0.5 text-2xs font-medium text-warning/80"
-                            title="Will pass 40h this week if remaining shifts run as scheduled."
-                          >
-                            {r.projectedOtHeads} OT risk
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 px-3 text-right tabular-nums text-silver hidden sm:table-cell">
-                        {r.clockedIn > 0 ? money(r.loadedPerHour ?? 0) : '—'}
-                      </td>
-                      <td className="py-2 px-3 text-right tabular-nums text-silver hidden sm:table-cell">
-                        {r.clockedIn > 0 ? money(r.billedPerHour ?? 0) : '—'}
-                      </td>
-                      <td
-                        className={`py-2 px-3 text-right tabular-nums font-medium ${
-                          r.clockedIn > 0
-                            ? margin >= 0
-                              ? 'text-success'
-                              : 'text-alert'
-                            : 'text-silver/40'
-                        }`}
+                      ) : r.expected !== null ? (
+                        <span className="text-2xs text-silver/70">floor total</span>
+                      ) : (
+                        <span className="text-2xs text-silver/40">no target</span>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-right tabular-nums">
+                      <span
+                        className={over ? 'font-semibold text-alert' : under ? 'font-semibold text-warning' : 'text-white'}
+                        title={
+                          over
+                            ? `${r.clockedIn - r.expected!} above the expected headcount`
+                            : under
+                              ? `${r.expected! - r.clockedIn} below the expected headcount`
+                              : undefined
+                        }
                       >
-                        {r.clockedIn > 0
-                          ? `${margin >= 0 ? '+' : '−'}${money(Math.abs(margin))}`
-                          : '—'}
-                      </td>
-                      <td className="py-2 pl-3 text-right tabular-nums text-2xs text-silver/60 hidden lg:table-cell">
-                        {r.clockedIn > 0
-                          ? `${money(r.loadedSoFar ?? 0)} · billed ${money(r.billedSoFar ?? 0)}`
-                          : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              {/* Clean stores fold into one calm green line. */}
+                        {r.clockedIn}
+                        <span className="text-silver/70"> / {r.expected !== null ? r.expected : '—'}</span>
+                      </span>
+                      {(r.otHeads ?? 0) > 0 && (
+                        <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
+                          {r.otHeads} OT
+                        </span>
+                      )}
+                      {(r.projectedOtHeads ?? 0) > 0 && (
+                        <span
+                          className="ml-1.5 rounded border border-warning/40 px-1.5 py-0.5 text-2xs font-medium text-warning/80"
+                          title="Will pass 40h this week if remaining shifts run as scheduled."
+                        >
+                          {r.projectedOtHeads} OT risk
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-right tabular-nums text-silver hidden sm:table-cell">
+                      {r.clockedIn > 0 ? money(r.loadedPerHour ?? 0) : '—'}
+                    </td>
+                    <td className="py-2 px-3 text-right tabular-nums text-silver hidden sm:table-cell">
+                      {r.clockedIn > 0 ? money(r.billedPerHour ?? 0) : '—'}
+                    </td>
+                    <td
+                      className={`py-2 px-3 text-right tabular-nums font-medium ${
+                        r.clockedIn > 0 ? (rowMargin >= 0 ? 'text-success' : 'text-alert') : 'text-silver/40'
+                      }`}
+                    >
+                      {r.clockedIn > 0 ? `${rowMargin >= 0 ? '+' : '−'}${money(Math.abs(rowMargin))}` : '—'}
+                    </td>
+                    <td className="py-2 pl-3 text-right tabular-nums text-2xs text-silver/60 hidden lg:table-cell">
+                      {r.clockedIn > 0 ? `${money(r.loadedSoFar ?? 0)} · billed ${money(r.billedSoFar ?? 0)}` : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* Clean stores fold into one calm line. */}
               {nominalRows.length > 0 && (
                 <tr>
                   <td colSpan={7} className="py-1.5">
@@ -1208,25 +899,26 @@ function FloorNowCard() {
                       type="button"
                       onClick={() => setShowNominal((v) => !v)}
                       aria-expanded={showNominal}
-                      className="flex w-full items-center gap-2 rounded-md border border-success/15 bg-success/[0.05] px-3 py-1.5 text-xs text-silver transition-colors hover:bg-success/[0.09]"
+                      className="flex w-full items-center gap-2 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-1.5 text-xs text-silver transition-colors hover:bg-navy-secondary/40"
                     >
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
-                      {nominalRows.length} store{nominalRows.length === 1 ? '' : 's'} nominal —
-                      staffed to target, positive margin
-                      <span className="ml-auto text-silver/60">
-                        {showNominal ? 'hide' : 'show'}
-                      </span>
+                      {nominalRows.length} store{nominalRows.length === 1 ? '' : 's'} staffed to target, nothing to act on
+                      <span className="ml-auto text-silver/60">{showNominal ? 'hide' : 'show'}</span>
                     </button>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+          {data.burden && (
+            <p className="mt-2 text-2xs text-silver/60">
+              Loaded cost = wages × (1 + {data.burden.percent}% burden)
+              {data.burden.overheadPerHour > 0 ? ` + ${money(data.burden.overheadPerHour)}/hr overhead` : ''}. Overtime past
+              40h a week (all sites) at 1.5×. Refreshes every minute.
+            </p>
+          )}
         </div>
-        </>
-        )}
-      </CardContent>
-    </Card>
+      )}
+    </div>
   );
 }
 
@@ -1295,7 +987,7 @@ function TargetRow({
   const [count, setCount] = useState(
     location.targetCount !== null ? String(location.targetCount) : '',
   );
-  const [from, setFrom] = useState(todayYmd());
+  const [from, setFrom] = useState(localYmd());
   const [busy, setBusy] = useState(false);
   const dirty = count !== (location.targetCount !== null ? String(location.targetCount) : '');
 
@@ -1552,15 +1244,17 @@ const DAY_COLUMNS: GridColumn<DayLine>[] = [
     header: 'Client',
     accessor: (l) => (l.w ? null : l.r.clientName),
     sortable: true,
-    primary: true,
+    cardMeta: true,
     className: 'text-white',
-    cell: (l) => (l.w ? '' : (l.r.clientName ?? '—')),
+    // A shift with no client is a data gap, said as one (it used to read as a client called "No client").
+    cell: (l) => (l.w ? '' : l.r.clientName ?? <span className="text-warning">No client set</span>),
   },
   {
     key: 'store',
     header: 'Store',
     accessor: (l) => (l.w ? l.w.label : l.r.locationName),
     sortable: true,
+    primary: true,
     className: 'text-silver',
     cell: (l) =>
       l.w ? (
@@ -1774,25 +1468,84 @@ const addRow = (t: Totals, r: LaborCostRow): void => {
   }
 };
 
+
 const NO_COST_ROWS: LaborCostRow[] = [];
+
+/** The daily-detail lens: every row, the rows over their floor target, or the rows with a data gap. */
+const FOCI = ['all', 'over', 'gaps'] as const;
+type Focus = (typeof FOCI)[number];
+
+const PRESET_LABEL: Record<RangePreset, string> = {
+  period: 'This period',
+  last: 'Last period',
+  '30d': '30 days',
+};
+
+const urlFlag = {
+  parse: (raw: string) => (raw === '1' ? true : raw === '0' ? false : undefined),
+  serialize: (v: boolean) => (v ? '1' : '0'),
+};
+
+/** A row the report can't price or place: no client (where clients exist) or a missing rate. */
+const hasGap = (r: LaborCostRow, hasClients: boolean) =>
+  (hasClients && !r.clientId) || r.scheduledNoRate > 0 || r.revenueNoRate > 0 || r.workedNoRate > 0;
+const overTarget = (r: LaborCostRow) => r.targetHeads !== null && r.scheduledHeads > r.targetHeads;
 
 export function LaborCostsHome() {
   const term = useTerm();
+  const { can } = useAuth();
   // A tenant with no clients has its own sites only: no client lens.
   const hasClients = useTenant().moduleOn('clientPortal');
-  const [from, setFrom] = useState(todayYmd);
-  const [toInclusive, setToInclusive] = useState(todayYmd);
-  // The last range's rows stay on screen while a new one loads (or while
-  // the picker is mid-edit and briefly inverted).
+  const today = localYmd();
+
+  // ---- The range: the current pay period to date unless the URL says otherwise.
+  const periodsQuery = useQuery({
+    queryKey: ['LaborCostsHome', 'periods'],
+    queryFn: () => laborCostPeriods(),
+    staleTime: 5 * 60_000,
+  });
+  // No pay schedule (or the read failed): the report still opens, on 30 days.
+  const periods = periodsQuery.data?.periods ?? (periodsQuery.isError ? [] : null);
+  const [fromParam] = useUrlState('from', '', urlDay);
+  const [toParam] = useUrlState('to', '', urlDay);
+  const writeUrl = useUrlWriter();
+  const range = periods ? resolveRange({ from: fromParam || null, to: toParam || null }, today, periods) : null;
+  const spanDays = range ? daysInRange(range.from, range.to) : 0;
+  const tooWide = spanDays > MAX_RANGE_DAYS;
+  const setRange = (from: string, to: string) => {
+    if (!periods || !range) return;
+    const [a, b] = from <= to ? [from, to] : [to, from];
+    const def = presetRange(range.defaultPreset, today, periods);
+    writeUrl((p) => {
+      if (def && def.from === a && def.to === b) {
+        p.delete('from');
+        p.delete('to');
+      } else {
+        p.set('from', a);
+        p.set('to', b);
+      }
+    });
+  };
+  const pickPreset = (preset: RangePreset) => {
+    if (!periods) return;
+    const r = presetRange(preset, today, periods);
+    if (r) setRange(r.from, r.to);
+  };
+  const presetOptions = (['period', 'last', '30d'] as const)
+    .filter((p) => periods !== null && presetRange(p, today, periods) !== null)
+    .map((p) => ({ value: p as RangePreset | 'custom', label: PRESET_LABEL[p] }));
+  if (range?.preset === 'custom') presetOptions.push({ value: 'custom', label: 'Custom' });
+
+  // The last range's rows stay on screen while a new one loads.
   const costsQuery = useQuery({
-    queryKey: ['LaborCostsHome', 'costs', from, toInclusive],
+    queryKey: ['LaborCostsHome', 'costs', range?.from ?? '', range?.to ?? ''],
     queryFn: () =>
-      // Server takes an exclusive upper bound; the picker is inclusive.
+      // Server takes an exclusive upper bound; the range is inclusive.
       laborCosts({
-        from: new Date(`${from}T00:00:00`).toISOString(),
-        to: new Date(`${addDaysYmd(toInclusive, 1)}T00:00:00`).toISOString(),
+        from: new Date(`${range!.from}T00:00:00`).toISOString(),
+        to: new Date(`${addDaysYmd(range!.to, 1)}T00:00:00`).toISOString(),
       }),
-    enabled: Boolean(from && toInclusive && toInclusive >= from),
+    enabled: Boolean(range) && !tooWide,
     placeholderData: keepPreviousData,
   });
   const rawRows: LaborCostRow[] | null = costsQuery.isError ? NO_COST_ROWS : costsQuery.data?.rows ?? null;
@@ -1810,29 +1563,33 @@ export function LaborCostsHome() {
   const load = async () => {
     await costsQuery.refetch();
   };
-  const [clientFilter, setClientFilter] = useState('');
-  const [locationFilter, setLocationFilter] = useState('');
+
+  // ---- Lenses, all in the URL so a link sends the same view.
+  const [clientFilter] = useUrlParam<string>('client', '');
+  const [locationFilter, setLocationFilter] = useUrlParam<string>('store', '');
+  const [focus, setFocus] = useUrlParam<Focus>('focus', 'all', FOCI);
+  const [showWindows, setShowWindows] = useUrlState('windows', false, urlFlag);
   const [targetsOpen, setTargetsOpen] = useState(false);
   // Follow the global Topbar store scope (one-way — this select is a local
   // lens, so it doesn't write back). Manual picks stand until the next
   // scope change.
   const boardScope = useStoreScope();
   const boardScopeClientId = boardScope.enabled ? boardScope.clientId : null;
+  const lastScope = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (boardScopeClientId === null) return;
-    setClientFilter((prev) => {
-      if (prev === boardScopeClientId) return prev;
-      setLocationFilter('');
-      return boardScopeClientId;
+    const first = lastScope.current === undefined;
+    if (lastScope.current === boardScopeClientId) return;
+    lastScope.current = boardScopeClientId;
+    // On arrival only a picked store scope applies (a link's own client
+    // stands); after that every scope change does, "all" included.
+    if (boardScopeClientId === null || (first && !boardScopeClientId)) return;
+    writeUrl((p) => {
+      if ((p.get('client') ?? '') === boardScopeClientId) return;
+      if (boardScopeClientId) p.set('client', boardScopeClientId);
+      else p.delete('client');
+      p.delete('store');
     });
-  }, [boardScopeClientId]);
-
-
-  const preset = (days: number) => {
-    const today = todayYmd();
-    setFrom(days === 0 ? today : addDaysYmd(today, -days + 1));
-    setToInclusive(today);
-  };
+  }, [boardScopeClientId, writeUrl]);
 
   // Filter options come from the loaded rows — no extra fetch, and bounded
   // roles automatically only see their own client.
@@ -1863,17 +1620,16 @@ export function LaborCostsHome() {
   );
 
   const byDay = useMemo(() => {
-    const days = new Map<string, { rows: LaborCostRow[]; totals: Totals }>();
+    const days = new Map<string, Totals>();
     for (const r of visible) {
       let d = days.get(r.date);
       if (!d) {
-        d = { rows: [], totals: emptyTotals() };
+        d = emptyTotals();
         days.set(r.date, d);
       }
-      d.rows.push(r);
-      addRow(d.totals, r);
+      addRow(d, r);
     }
-    return [...days.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    return days;
   }, [visible]);
 
   const grand = useMemo(() => {
@@ -1882,77 +1638,94 @@ export function LaborCostsHome() {
     return t;
   }, [visible]);
 
-  const trendData = useMemo(
-    () =>
-      byDay.map(([date, d]) => ({
+  // Every day of the range, so the axis is continuous: a day with nothing
+  // scheduled is a real $0 on the chart, not a skipped tick.
+  const trendData = useMemo(() => {
+    if (!range || tooWide) return [];
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    return everyDay(range.from, range.to).map((date) => {
+      const d = byDay.get(date);
+      return {
         date,
-        scheduled: Math.round(d.totals.scheduledCost * 100) / 100,
-        worked: Math.round(d.totals.workedCost * 100) / 100,
-        revenue: Math.round(d.totals.scheduledRevenue * 100) / 100,
-      })),
-    [byDay],
-  );
+        scheduled: r2(d?.scheduledCost ?? 0),
+        worked: r2(d?.workedCost ?? 0),
+        revenue: r2(d?.scheduledRevenue ?? 0),
+      };
+    });
+  }, [range, tooWide, byDay]);
 
-  // Client breakdown normally; store breakdown once a client is picked.
-  const groupDataAll = useMemo(() => {
+  // Client breakdown normally; store breakdown once a client is picked
+  // (and always for a tenant with no clients).
+  const byStore = Boolean(clientFilter) || !hasClients;
+  const groupData = useMemo(() => {
     const byKey = new Map<string, { name: string; scheduled: number; worked: number }>();
     for (const r of visible) {
-      const key = clientFilter ? r.locationId ?? 'none' : r.clientId ?? 'none';
-      const name = clientFilter
-        ? r.locationName ?? 'No store'
-        : r.clientName ?? 'No client';
+      const key = byStore ? r.locationId ?? 'none' : r.clientId ?? 'none';
+      const name = byStore
+        ? r.locationName ?? termizeText('No store', term)
+        : r.clientName ?? 'No client set';
       const g = byKey.get(key) ?? { name, scheduled: 0, worked: 0 };
       g.scheduled += r.scheduledCost;
       g.worked += r.workedCost;
       byKey.set(key, g);
     }
     const round2 = (v: number) => Math.round(v * 100) / 100;
-    return [...byKey.values()]
+    const all = [...byKey.values()]
       .map((g) => ({ ...g, scheduled: round2(g.scheduled), worked: round2(g.worked) }))
       .sort((a, b) => b.scheduled - a.scheduled || b.worked - a.worked);
-  }, [visible, clientFilter]);
-
-  // Bars: fold the tail past 8 rows into "Other" — never endless bars.
-  const groupData = useMemo(() => {
-    const round2 = (v: number) => Math.round(v * 100) / 100;
-    if (groupDataAll.length <= 8) return groupDataAll;
-    const head = groupDataAll.slice(0, 7);
-    const tail = groupDataAll.slice(7);
+    // Fold the tail past 8 rows into "Other" — never endless bars.
+    if (all.length <= 8) return all;
+    const tail = all.slice(7);
     return [
-      ...head,
+      ...all.slice(0, 7),
       {
         name: `Other (${tail.length})`,
         scheduled: round2(tail.reduce((s, g) => s + g.scheduled, 0)),
         worked: round2(tail.reduce((s, g) => s + g.worked, 0)),
       },
     ];
-  }, [groupDataAll]);
+  }, [visible, byStore, term]);
+
+  // ---- Data gaps: shifts the report can't place or price, named and linked.
+  const gaps = useMemo(() => {
+    let noClientShifts = 0;
+    let noClientCost = 0;
+    for (const r of visible) {
+      if (hasClients && !r.clientId) {
+        noClientShifts += r.scheduledShifts;
+        noClientCost += r.scheduledCost;
+      }
+    }
+    return {
+      noClientShifts,
+      noClientCost,
+      rows: visible.filter((r) => hasGap(r, hasClients)).length,
+    };
+  }, [visible, hasClients]);
+  const overRows = useMemo(() => visible.filter(overTarget).length, [visible]);
+  const anyTarget = visible.some((r) => r.targetHeads !== null);
+
+  const gridRows = useMemo(() => {
+    const list =
+      focus === 'over' ? visible.filter(overTarget) : focus === 'gaps' ? visible.filter((r) => hasGap(r, hasClients)) : visible;
+    // Newest day first; within a day, the costliest store first.
+    return [...list]
+      .sort((a, b) => b.date.localeCompare(a.date) || b.scheduledCost - a.scheduledCost)
+      .map((r) => ({ key: `${r.date}|${r.clientId}|${r.locationId}`, r }));
+  }, [visible, focus, hasClients]);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const showRows = (next: Focus) => {
+    setFocus((prev) => (prev === next ? 'all' : next));
+    requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
 
   const variance = grand.workedCost - grand.scheduledCost;
-
-  // Part-to-whole: where the scheduled spend goes. Top 3 slices in the
-  // fixed hue order; everything past them folds into a muted "Other".
-  const shareData = useMemo(() => {
-    const positive = groupDataAll.filter((g) => g.scheduled > 0);
-    if (positive.length < 2) return [];
-    const head = positive.slice(0, 3).map((g, i) => ({
-      name: g.name,
-      value: g.scheduled,
-      color: SLICE_COLORS[i],
-    }));
-    const tail = positive.slice(3);
-    if (tail.length > 0) {
-      head.push({
-        name: tail.length === 1 ? tail[0].name : `Other (${tail.length})`,
-        value: Math.round(tail.reduce((s, g) => s + g.scheduled, 0) * 100) / 100,
-        color: OTHER_SLICE_COLOR,
-      });
-    }
-    return head;
-  }, [groupDataAll]);
+  const unapprovedMinutes = grand.workedMinutes - grand.approvedMinutes;
+  const margin = grand.scheduledRevenue - grand.scheduledCost;
 
   const exportCsv = () => {
-    downloadCsv(`labor-costs-${from}-to-${toInclusive}.csv`, [
+    if (!range) return;
+    downloadCsv(`labor-costs-${range.from}-to-${range.to}.csv`, [
       [
         'Date', 'Client', 'Store', 'Shift window', 'Heads', 'Target heads', 'Overstaff cost',
         'Lead heads', 'Associate heads', 'Lead cost', 'Associate cost',
@@ -2022,320 +1795,368 @@ export function LaborCostsHome() {
     ]);
   };
 
-  const noRateTotal = grand.scheduledNoRate + grand.workedNoRate;
+  const rangeText = range ? fmtDateOnlyRange(range.from, range.to) : '';
+  const rangeWhat =
+    range?.preset === 'period' ? 'pay period to date' : range?.preset === 'last' ? 'last pay period' : range ? plural(spanDays, 'day', 'days') : '';
+  const anyActivity = grand.scheduledShifts > 0 || grand.workedPunches > 0;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Labor costs"
-        subtitle={hasClients ? termizeText('Scheduled vs worked labor spend, per client and store, day by day', term) : termizeText('Scheduled vs worked labor spend, per store, day by day', term)}
-    >
-
-      {/* Live operations — deliberately ABOVE the filter row: both cards
-          are "right now / this week", not scoped by the date range below.
-          Each collapses to a one-line summary and remembers its state. */}
-      <SectionLabel>Live operations</SectionLabel>
-      <div className="mb-6 space-y-3">
-        <FloorNowCard />
-        <OtOutlookCard />
-        <StoreTrendsCard />
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-end gap-x-3 gap-y-2 rounded-lg border border-navy-secondary bg-navy/40 px-3 py-2.5">
-        <div>
-          <label className="block text-2xs uppercase tracking-widest text-silver/70 mb-1">
+      title="Labor costs"
+      subtitle={
+        hasClients
+          ? termizeText('Scheduled vs worked labor spend, per client and store, day by day', term)
+          : termizeText('Scheduled vs worked labor spend, per store, day by day', term)
+      }
+      actions={[
+        { label: 'Export CSV', icon: Download, onSelect: exportCsv, disabled: visible.length === 0 },
+        { label: 'Floor targets', icon: Target, onSelect: () => setTargetsOpen(true), hint: termizeText('How many people each store should run', term), hidden: !can('manage:scheduling') },
+      ]}
+      filters={
+        <FilterBar
+          urlKey={['client', 'store']}
+          sheetDescription="Pick exact dates, or narrow the report to one client or store."
+          search={
+            presetOptions.length > 0 && range ? (
+              <SegmentedControl<RangePreset | 'custom'>
+                options={presetOptions}
+                value={range.preset}
+                onChange={(v) => v !== 'custom' && pickPreset(v)}
+                ariaLabel="Date range"
+              />
+            ) : (
+              <Skeleton className="h-8 w-64" />
+            )
+          }
+          count={
+            range ? (
+              <span>
+                <span className="text-white">{rangeText}</span> · {rangeWhat}
+              </span>
+            ) : null
+          }
+        >
+          <label className="flex items-center gap-1.5 text-xs text-silver">
             From
+            <Input
+              type="date"
+              aria-label="From date"
+              value={range?.from ?? ''}
+              max={range?.to}
+              onChange={(e) => range && e.target.value && setRange(e.target.value, range.to < e.target.value ? e.target.value : range.to)}
+              className="h-8 w-[9.5rem]"
+            />
           </label>
-          <Input
-            type="date"
-            aria-label="From date"
-            value={from}
-            max={toInclusive}
-            onChange={(e) => setFrom(e.target.value)}
-            className="h-9 w-40"
-          />
-        </div>
-        <div>
-          <label className="block text-2xs uppercase tracking-widest text-silver/70 mb-1">
+          <label className="flex items-center gap-1.5 text-xs text-silver">
             To
+            <Input
+              type="date"
+              aria-label="To date"
+              value={range?.to ?? ''}
+              min={range?.from}
+              onChange={(e) => range && e.target.value && setRange(range.from > e.target.value ? e.target.value : range.from, e.target.value)}
+              className="h-8 w-[9.5rem]"
+            />
           </label>
-          <Input
-            type="date"
-            aria-label="To date"
-            value={toInclusive}
-            min={from}
-            onChange={(e) => setToInclusive(e.target.value)}
-            className="h-9 w-40"
-          />
-        </div>
-        <div className="inline-flex overflow-hidden rounded-md border border-navy-secondary">
-          {(
-            [
-              { label: 'Today', days: 0 },
-              { label: '7 days', days: 7 },
-              { label: '30 days', days: 30 },
-            ] as const
-          ).map((p, i) => (
-            <button
-              key={p.label}
-              type="button"
-              onClick={() => preset(p.days)}
-              className={`h-9 px-3 text-xs text-silver transition-colors hover:bg-navy-secondary/60 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright ${
-                i > 0 ? 'border-l border-navy-secondary' : ''
-              }`}
+          {hasClients && (
+            <Select
+              value={clientFilter}
+              onChange={(e) =>
+                writeUrl((p) => {
+                  if (e.target.value) p.set('client', e.target.value);
+                  else p.delete('client');
+                  p.delete('store');
+                })
+              }
+              size="sm"
+              className="w-auto max-w-[16rem]"
+              aria-label="Filter by client"
             >
-              {p.label}
-            </button>
-          ))}
-        </div>
-{hasClients && (
-        <Select
-          value={clientFilter}
-          onChange={(e) => {
-            setClientFilter(e.target.value);
-            setLocationFilter('');
-          }}
-          size="sm"
-          className="w-auto"
-          aria-label="Filter by client"
-        >
-          <option value="">All clients</option>
-          {clientOptions.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
-          ))}
-        </Select>
-        )}
-        <Select
-          value={locationFilter}
-          onChange={(e) => setLocationFilter(e.target.value)}
-          size="sm"
-          className="w-auto"
-          aria-label={termizeText('Filter by store', term)}
-        >
-          <option value="">{termizeText('All stores', term)}</option>
-          {locationOptions.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
-          ))}
-        </Select>
-        <div className="ml-auto flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setTargetsOpen(true)}>
-            Floor targets
-          </Button>
-          <Button
+              <option value="">All clients</option>
+              {clientOptions.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </Select>
+          )}
+          <Select
+            value={locationFilter}
+            onChange={(e) => setLocationFilter(e.target.value)}
             size="sm"
-            variant="secondary"
-            onClick={exportCsv}
-            disabled={visible.length === 0}
+            className="w-auto max-w-[16rem]"
+            aria-label={termizeText('Filter by store', term)}
           >
-            <Download className="h-4 w-4" />
-            Export CSV
-          </Button>
-        </div>
-      </div>
-
-      {targetsOpen && (
-        <TargetsDrawer
-          onClose={() => setTargetsOpen(false)}
-          onChanged={() => void load()}
-        />
+            <option value="">{termizeText('All stores', term)}</option>
+            {locationOptions.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </Select>
+        </FilterBar>
+      }
+      drawer={targetsOpen && <TargetsDrawer onClose={() => setTargetsOpen(false)} onChanged={() => void load()} />}
+    >
+      {tooWide && (
+        <ErrorBanner severity="warning">
+          That range is {plural(spanDays, 'day', 'days')}. The report covers {MAX_RANGE_DAYS} days at most — shorten it.
+        </ErrorBanner>
       )}
-
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       {truncated && (
-        <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm text-silver">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-          The range has more activity than one report covers — totals are a
-          floor. Narrow the date range for exact numbers.
+        <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm text-silver">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          The range has more activity than one report covers — totals are a floor. Narrow the date range for exact numbers.
         </div>
       )}
 
-      {noRateTotal > 0 && (
-        <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm text-silver">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-          <span>
-            {grand.scheduledNoRate > 0 && (
-              <>
-                {grand.scheduledNoRate} shift{grand.scheduledNoRate === 1 ? '' : 's'}{' '}
-                in range {grand.scheduledNoRate === 1 ? 'has' : 'have'} no pay rate
-                and contribute $0 — set per-position defaults in{' '}
-                <Link to={withReturn('/clients', '/labor-costs')} className="text-gold hover:underline">
-                  Clients → Rate defaults
-                </Link>
-                .{' '}
-              </>
-            )}
-            {grand.workedNoRate > 0 && (
-              <>
-                {grand.workedNoRate} punch{grand.workedNoRate === 1 ? '' : 'es'} had
-                no snapshotted rate.
-              </>
-            )}
-          </span>
-        </div>
-      )}
-
-      {rows === null ? (
-        <SkeletonRows count={6} />
-      ) : visible.length === 0 ? (
-        <EmptyState
-          icon={DollarSign}
-          title="No labor activity in this range"
-          description="No shifts or punches match the selected dates and filters."
-        />
+      {rows === null || range === null ? (
+        tooWide ? null : <SkeletonRows count={6} />
       ) : (
         <div className="space-y-5">
-          {/* Headline numbers — the KPI row every reader scans first. */}
-          <section>
-            <SectionLabel>Range summary</SectionLabel>
-            <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
-              <StatTile
-                icon={CalendarClock}
-                label="Scheduled cost"
-                value={money(grand.scheduledCost)}
-                sub={`${hours(grand.scheduledMinutes)} · ${grand.scheduledShifts} shift${grand.scheduledShifts === 1 ? '' : 's'} · ${grand.leadHeads} lead / ${grand.associateHeads} associate head-days`}
-              />
-              <StatTile
-                icon={Timer}
-                label="Worked cost"
-                value={money(grand.workedCost)}
-                delta={
-                  grand.scheduledCost > 0
-                    ? `${variance >= 0 ? '+' : '−'}${money(Math.abs(variance))} vs scheduled (${((grand.workedCost / grand.scheduledCost) * 100).toFixed(0)}%)`
-                    : undefined
+          {/* Headline numbers. Honest when there's nothing to count: a tile
+              with no shifts or no punches says so in words, and only a
+              real variance over a real plan wears a colour. */}
+          <section aria-labelledby="labor-summary">
+            <SectionLabel id="labor-summary">Range summary · {rangeText}</SectionLabel>
+            {!anyActivity ? (
+              <EmptyState
+                icon={DollarSign}
+                title="No shifts or punches in this range"
+                description={
+                  range.preset === 'period'
+                    ? 'Nothing has been scheduled or worked yet this pay period. Try last period.'
+                    : 'Nothing was scheduled or worked on these dates for the selected filters.'
                 }
-                sub={`${hours(grand.workedMinutes)} · ${grand.workedPunches} punch${grand.workedPunches === 1 ? '' : 'es'} · ${hours(grand.approvedMinutes)} approved`}
-                // Over-plan spend is the alarming direction.
-                tone={variance > 0.005 ? 'alert' : variance < -0.005 ? 'success' : undefined}
-              />
-              <StatTile
-                icon={Hourglass}
-                label="Awaiting approval"
-                value={money(
-                  ((grand.workedMinutes - grand.approvedMinutes) / 60) *
-                    (fallbacks?.associateBillRate ?? 0),
-                )}
-                sub={
-                  grand.workedMinutes - grand.approvedMinutes > 0
-                    ? `${hours(grand.workedMinutes - grand.approvedMinutes)} worked but unapproved — unbillable until timesheets clear (est. at the SOW rate)`
-                    : 'every worked hour is approved — nothing unbillable'
-                }
-                // The billed-vs-worked gap: where margin leaks.
-                tone={grand.workedMinutes - grand.approvedMinutes > 0 ? 'warning' : 'success'}
-              />
-              <StatTile
-                icon={BadgeDollarSign}
-                label="Billable value"
-                value={money(grand.scheduledRevenue)}
-                sub={
-                  grand.revenueNoRate > 0
-                    ? `${grand.revenueNoRate} shift${grand.revenueNoRate === 1 ? '' : 's'} without a bill rate`
-                    : 'scheduled hours × contract bill rates'
+                action={
+                  range.preset === 'period' && presetRange('last', today, periods ?? []) ? (
+                    <Button size="sm" variant="outline" onClick={() => pickPreset('last')}>
+                      Show last period
+                    </Button>
+                  ) : undefined
                 }
               />
-              <StatTile
-                icon={Scale}
-                label="Margin"
-                value={`${grand.scheduledRevenue - grand.scheduledCost >= 0 ? '+' : '−'}${money(Math.abs(grand.scheduledRevenue - grand.scheduledCost))}`}
-                sub={
-                  grand.scheduledRevenue > 0
-                    ? `${(((grand.scheduledRevenue - grand.scheduledCost) / grand.scheduledRevenue) * 100).toFixed(0)}% of billable value`
-                    : 'set bill rates to see margin'
-                }
-                tone={
-                  grand.scheduledRevenue > 0
-                    ? grand.scheduledRevenue - grand.scheduledCost >= 0
-                      ? 'success'
-                      : 'alert'
-                    : undefined
-                }
-              />
-              <StatTile
-                icon={Users}
-                label="Overstaffing cost"
-                value={money(grand.overstaffCost)}
-                sub={
-                  grand.overstaffHeads > 0
-                    ? `${grand.overstaffHeads} head-day${grand.overstaffHeads === 1 ? '' : 's'} above the floor targets`
-                    : 'no days above the floor targets'
-                }
-                tone={grand.overstaffCost > 0.005 ? 'alert' : undefined}
-              />
-            </div>
+            ) : (
+              <MetricStrip label="Labor cost in this range">
+                <MetricCard
+                  icon={CalendarClock}
+                  label="Scheduled cost"
+                  value={money(grand.scheduledCost)}
+                  nothing={grand.scheduledShifts === 0 ? 'No shifts in range' : undefined}
+                  hint={`${hours(grand.scheduledMinutes)} · ${plural(grand.scheduledShifts, 'shift', 'shifts')} · ${grand.leadHeads} lead / ${grand.associateHeads} associate head-days`}
+                />
+                <MetricCard
+                  icon={Timer}
+                  label="Worked cost"
+                  value={money(grand.workedCost)}
+                  nothing={grand.workedPunches === 0 ? 'No punches in range' : undefined}
+                  deltaText={
+                    grand.workedPunches > 0 && grand.scheduledCost > 0
+                      ? {
+                          text: `${variance >= 0 ? '+' : '−'}${money(Math.abs(variance))} vs scheduled (${Math.round((grand.workedCost / grand.scheduledCost) * 100)}%)`,
+                          // Over plan is the alarming direction; under plan is a fact.
+                          tone: variance > 0.005 ? 'bad' : 'neutral',
+                        }
+                      : null
+                  }
+                  hint={`${hours(grand.workedMinutes)} · ${plural(grand.workedPunches, 'punch', 'punches')} · ${hours(grand.approvedMinutes)} approved`}
+                />
+                <MetricCard
+                  icon={Hourglass}
+                  label="Awaiting approval"
+                  value={
+                    fallbacks?.associateBillRate
+                      ? money((unapprovedMinutes / 60) * fallbacks.associateBillRate)
+                      : hours(unapprovedMinutes)
+                  }
+                  nothing={grand.workedPunches === 0 ? 'No punches in range' : undefined}
+                  tone={unapprovedMinutes > 0 ? 'warning' : 'good'}
+                  href={unapprovedMinutes > 0 && can('manage:time') ? '/time-attendance?tab=queue' : undefined}
+                  hint={
+                    unapprovedMinutes > 0
+                      ? `${hours(unapprovedMinutes)} worked but not approved — can't be billed until approved${fallbacks?.associateBillRate ? ' (est. at the SOW rate)' : ''}`
+                      : `All ${hours(grand.workedMinutes)} worked are approved`
+                  }
+                />
+                <MetricCard
+                  icon={BadgeDollarSign}
+                  label="Billable value"
+                  value={money(grand.scheduledRevenue)}
+                  nothing={grand.scheduledShifts === 0 ? 'No shifts in range' : undefined}
+                  hint={
+                    grand.revenueNoRate > 0
+                      ? `${plural(grand.revenueNoRate, 'shift', 'shifts')} without a bill rate`
+                      : 'Scheduled hours × contract bill rates'
+                  }
+                />
+                <MetricCard
+                  icon={Scale}
+                  label="Margin"
+                  value={`${margin >= 0 ? '+' : '−'}${money(Math.abs(margin))}`}
+                  nothing={
+                    grand.scheduledShifts === 0
+                      ? 'No shifts in range'
+                      : grand.scheduledRevenue === 0
+                        ? 'No bill rates set — no margin to show'
+                        : undefined
+                  }
+                  tone={margin >= 0 ? 'good' : 'alert'}
+                  hint={`${Math.round((margin / (grand.scheduledRevenue || 1)) * 100)}% of billable value`}
+                />
+                <MetricCard
+                  icon={Users}
+                  label="Overstaffing cost"
+                  value={money(grand.overstaffCost)}
+                  nothing={!anyTarget ? 'No floor targets set' : undefined}
+                  tone={grand.overstaffCost > 0.005 ? 'alert' : 'neutral'}
+                  hint={
+                    grand.overstaffHeads > 0
+                      ? `${plural(grand.overstaffHeads, 'head-day', 'head-days')} above the floor targets`
+                      : 'No days above the floor targets'
+                  }
+                  onClick={overRows > 0 ? () => showRows('over') : undefined}
+                  selected={overRows > 0 ? focus === 'over' : undefined}
+                />
+              </MetricStrip>
+            )}
           </section>
 
-          {/* Trend needs at least two days to be a trend. */}
-          {(trendData.length > 1 || groupData.length > 0) && (
-            <SectionLabel>Trends &amp; breakdown</SectionLabel>
+          {gaps.rows > 0 && (
+            <div className="flex flex-wrap items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm text-silver" role="status">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <span className="font-medium text-white">Some of this can&apos;t be priced or placed. </span>
+                {[
+                  gaps.noClientShifts > 0 &&
+                    `${plural(gaps.noClientShifts, 'shift has', 'shifts have')} no client (${money(gaps.noClientCost)} scheduled)`,
+                  grand.scheduledNoRate > 0 &&
+                    `${plural(grand.scheduledNoRate, 'shift has', 'shifts have')} no pay rate and count as $0`,
+                  grand.revenueNoRate > 0 && `${plural(grand.revenueNoRate, 'shift has', 'shifts have')} no bill rate`,
+                  grand.workedNoRate > 0 && `${plural(grand.workedNoRate, 'punch has', 'punches have')} no pay rate`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+                .{' '}
+                {(grand.scheduledNoRate > 0 || grand.revenueNoRate > 0) && (
+                  <>
+                    Rates are set in{' '}
+                    <Link to={withReturn('/clients', '/labor-costs')} className="text-gold hover:underline">
+                      Clients → Rate defaults
+                    </Link>
+                    .
+                  </>
+                )}
+              </span>
+              <Button size="xs" variant="outline" onClick={() => showRows('gaps')} aria-pressed={focus === 'gaps'}>
+                {focus === 'gaps' ? 'Show every row' : gaps.rows === 1 ? 'Show this row' : `Show these ${gaps.rows} rows`}
+              </Button>
+            </div>
           )}
-          {trendData.length > 1 && <CostTrendCard data={trendData} />}
-          <div className="grid gap-5 xl:grid-cols-2">
-            {groupData.length > 0 && (
-              <CostByGroupCard
-                title={clientFilter ? 'Cost by store' : 'Cost by client'}
-                data={groupData}
-              />
-            )}
-            {/* Part-to-whole share — only meaningful with 2+ groups. */}
-            {shareData.length >= 2 && (
-              <Card>
-                <CardContent>
-                  <div className="mb-2 text-sm font-medium text-white">
-                    {clientFilter
-                      ? 'Share of scheduled cost by store'
-                      : 'Share of scheduled cost by client'}
-                  </div>
-                  <DonutChart
-                    data={shareData}
-                    size={200}
-                    centerLabel={moneyCompact(grand.scheduledCost)}
-                    centerSublabel="scheduled"
-                    valueFormatter={moneyCompact}
-                  />
-                </CardContent>
-              </Card>
-            )}
+
+          {/* Right now — one line, then this week's overtime when there is any. */}
+          <div className="space-y-3">
+            <LiveFloorLine />
+            <OtOutlookCard />
           </div>
 
-          <SectionLabel>Daily detail</SectionLabel>
-          {byDay.map(([date, day]) => (
-            <Card key={date} className="overflow-hidden">
-              <CardContent className="p-0">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-navy-secondary bg-navy-secondary/30 px-4 py-2.5">
-                  <div className="text-sm font-medium text-white">{fmtDate(date)}</div>
-                  <div className="text-xs text-silver tabular-nums">
-                    Scheduled {hours(day.totals.scheduledMinutes)} ·{' '}
-                    <span className="text-white">{money(day.totals.scheduledCost)}</span>
-                    {'  ·  '}Worked {hours(day.totals.workedMinutes)} ·{' '}
-                    <span className="text-white">{money(day.totals.workedCost)}</span>
-                  </div>
-                </div>
-                <DataGrid<DayLine>
-                  id="labor-day"
-                  caption={`Labor on ${fmtDate(date)}`}
-                  rows={day.rows.map((r) => ({ key: `${r.date}|${r.clientId}|${r.locationId}`, r }))}
-                  columns={DAY_COLUMNS}
-                  rowKey={(l) => l.key}
-                  // Per-shift-window lines under each store — same columns,
-                  // each judged against that WINDOW's own target. They
-                  // travel with their store through sort and export.
-                  subRows={(l) =>
-                    l.w ? undefined : (l.r.windows ?? []).map((w) => ({ key: `${l.key}|${w.label}`, r: l.r, w }))
-                  }
-                  urlState={false}
-                  search={false}
-                  exportCsv={false}
-                  columnChooser={false}
-                  cards={false}
-                />
-              </CardContent>
-            </Card>
-          ))}
+          {anyActivity && (trendData.length > 1 || groupData.length > 0) && (
+            <div className="space-y-3">
+              <SectionLabel>Trends &amp; breakdown</SectionLabel>
+              {/* A trend needs at least two days. */}
+              {trendData.length > 1 && <CostTrendCard data={trendData} />}
+              {groupData.length > 0 && (
+                <CostByGroupCard title={byStore ? termizeText('Cost by store', term) : 'Cost by client'} data={groupData} />
+              )}
+            </div>
+          )}
 
+          {anyActivity && (
+            <section ref={detailRef} className="scroll-mt-20" aria-labelledby="labor-detail">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <div id="labor-detail" className="text-2xs font-medium uppercase tracking-[0.18em] text-silver/60">
+                  Daily detail
+                </div>
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  <SegmentedControl<Focus>
+                    ariaLabel="Which rows"
+                    value={focus}
+                    onChange={setFocus}
+                    options={[
+                      { value: 'all', label: 'Every row' },
+                      ...(overRows > 0 || focus === 'over' ? [{ value: 'over' as const, label: 'Over target', count: overRows }] : []),
+                      ...(gaps.rows > 0 || focus === 'gaps' ? [{ value: 'gaps' as const, label: 'Missing client or rate', count: gaps.rows }] : []),
+                    ]}
+                  />
+                  {visible.some((r) => (r.windows ?? []).length > 0) && (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      aria-pressed={showWindows}
+                      onClick={() => setShowWindows((v) => !v)}
+                      title="Each store's day split by its shift windows"
+                    >
+                      {showWindows ? 'Hide shift windows' : 'Show shift windows'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <DataGrid<DayLine>
+                id="labor-daily"
+                caption="Daily labor detail"
+                noun={{ one: termizeText('store day', term), many: termizeText('store days', term) }}
+                rows={gridRows}
+                columns={DAY_COLUMNS}
+                rowKey={(l) => l.key}
+                // A store's shift windows, judged against each window's own
+                // target — folded until asked for, and then only the windows
+                // that had anything in them.
+                subRows={
+                  showWindows
+                    ? (l) =>
+                        l.w
+                          ? undefined
+                          : (l.r.windows ?? [])
+                              .filter((w) => w.scheduledShifts > 0 || w.workedPunches > 0)
+                              .map((w) => ({ key: `${l.key}|${w.label}`, r: l.r, w }))
+                    : undefined
+                }
+                groupBy={{
+                  key: (l) => l.r.date,
+                  header: (date) => {
+                    const d = byDay.get(date);
+                    return (
+                      <span className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                        <span className="font-medium text-white">{fmtDateOnly(date, { weekday: true, year: 'auto' })}</span>
+                        {d && (
+                          <span className="text-xs font-normal tabular-nums text-silver">
+                            Scheduled {hours(d.scheduledMinutes)} · <span className="text-white">{money(d.scheduledCost)}</span>
+                            {' · '}Worked {hours(d.workedMinutes)} · <span className="text-white">{money(d.workedCost)}</span>
+                          </span>
+                        )}
+                      </span>
+                    );
+                  },
+                  collapsible: { defaultOpen: (_k, i) => i < 7 },
+                }}
+                urlKey="day"
+                search={false}
+                exportCsv={false}
+                activeFilters={focus === 'all' ? 0 : 1}
+                onClearFilters={() => setFocus('all')}
+                empty={{ icon: DollarSign, title: 'No labor activity on these dates' }}
+                footnote={
+                  gridRows.length > 0 ? 'The page’s Export CSV carries every column, shift windows included.' : undefined
+                }
+              />
+            </section>
+          )}
+
+          <StoreTrendsCard />
+
+          {anyActivity && (
           <div className="rounded-lg border border-navy-secondary/60 bg-navy/40 px-4 py-3">
             <div className="mb-1.5 text-2xs font-medium uppercase tracking-widest text-silver/60">
               How these numbers are calculated
@@ -2344,10 +2165,10 @@ export function LaborCostsHome() {
               <div>
                 <dt className="inline font-medium text-silver">Scheduled cost — </dt>
                 <dd className="inline">
-                  each shift at its own pay rate, else the client&rsquo;s
+                  each shift at its own pay rate, else the {hasClients ? <>client&rsquo;s </> : ''}
                   per-position default
                   {fallbacks?.associatePayRate
-                    ? `, else the company standards (${money(fallbacks.associatePayRate)}/hr associates${fallbacks.leadPayRate ? ` · ${money(fallbacks.leadPayRate)}/hr leads` : ''})`
+                    ? `, else the company standards (${money(fallbacks.associatePayRate)}/hr ${term('workers').toLowerCase()}${fallbacks.leadPayRate ? ` · ${money(fallbacks.leadPayRate)}/hr leads` : ''})`
                     : ''}
                   .
                 </dd>
@@ -2355,9 +2176,9 @@ export function LaborCostsHome() {
               <div>
                 <dt className="inline font-medium text-silver">Billable value — </dt>
                 <dd className="inline">
-                  the shift&rsquo;s bill rate, else the client&rsquo;s default
-                  {fallbacks?.associateBillRate && fallbacks?.leadBillRate
-                    ? `, else the SOW rates (${money(fallbacks.associateBillRate)}/hr associates · ${money(fallbacks.leadBillRate)}/hr leads)`
+                  {hasClients ? <>the shift&rsquo;s bill rate, else the client&rsquo;s default</> : 'each shift’s billing rate, else the position’s default'}
+                  {hasClients && fallbacks?.associateBillRate && fallbacks?.leadBillRate
+                    ? `, else the SOW rates (${money(fallbacks.associateBillRate)}/hr ${term('workers').toLowerCase()} · ${money(fallbacks.leadBillRate)}/hr leads)`
                     : ''}
                   .
                 </dd>
@@ -2376,11 +2197,12 @@ export function LaborCostsHome() {
                   <Link to="/scheduling" className="text-gold hover:underline">
                     Scheduling
                   </Link>
-                  ; defaults live in Clients&nbsp;→&nbsp;Rate defaults.
+                  {hasClients ? <>; defaults live in Clients&nbsp;→&nbsp;Rate defaults.</> : '.'}
                 </dd>
               </div>
             </dl>
           </div>
+          )}
         </div>
       )}
     </ListTemplate>

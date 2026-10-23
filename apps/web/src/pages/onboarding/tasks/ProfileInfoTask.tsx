@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ListChecks } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { usePageHero } from '@/lib/pageTitle';
 import { getApplication, getProfile, submitProfile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
+import { fmtSize } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Select } from '@/components/ui/Select';
 
 const STATES = [
@@ -186,7 +189,7 @@ export function ProfileInfoTask() {
   };
 
   return (
-    <TaskShell title={t('ob.profile.title')} backTo={backTo}>
+    <TaskShell title={t('ob.profile.title')} backTo={backTo} kind="PROFILE_INFO">
       {/* onInput bubbles from every field (inputs and the state select) —
           one listener marks the form user-dirty for the draft gate. */}
       <form
@@ -238,9 +241,17 @@ export function ProfileInfoTask() {
           </Field>
         </div>
 
-        <Field label={t('ob.profile.addr1')}>
+        {/* Required: a hire whose city, state and ZIP came prefilled saw an
+            empty line 1 with nothing saying it mattered — payroll and the
+            W-2 need the street. */}
+        <Field
+          label={t('ob.profile.addr1')}
+          required
+          hint={!addressLine1 && (city || zip) ? t('ob.profile.addr1Hint') : undefined}
+        >
           <input
             type="text"
+            required
             autoComplete="address-line1"
             value={addressLine1}
             onChange={(e) => setAddressLine1(e.target.value)}
@@ -327,7 +338,7 @@ const CHAINABLE_KINDS = new Set([
   'WOTC_SCREENING',
 ]);
 
-// Short names for the "Save & continue → …" button suffix.
+// Short names for the "Next: …" line under a task's continue button.
 function taskShortLabel(
   t: ReturnType<typeof useI18n>['t'],
   kind: string,
@@ -366,6 +377,21 @@ export interface NextTaskTarget {
 }
 
 /**
+ * The application a task page belongs to — one read, shared by the shell
+ * ("Step 3 of 8", "this step isn't part of your onboarding") and the
+ * "Save & continue" chaining below. Best-effort: when it can't be loaded
+ * the page still works, it just can't say where it sits.
+ */
+export function useTaskApplication() {
+  const { applicationId } = useParams<{ applicationId: string }>();
+  return useQuery({
+    queryKey: ['onboardingTask', 'application', applicationId ?? null],
+    queryFn: () => getApplication(applicationId!),
+    enabled: Boolean(applicationId),
+  });
+}
+
+/**
  * "Save & continue" chaining: the next incomplete real task after the one
  * currently open, so a successful submit can jump straight there instead of
  * round-tripping through the checklist (a tap + a page load per task, ×8).
@@ -376,40 +402,30 @@ export function useNextTask(currentKind: string): NextTaskTarget | null {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
   const { t } = useI18n();
-  const [next, setNext] = useState<NextTaskTarget | null>(null);
   const isAssociate = user?.role === 'ASSOCIATE';
+  const { data: detail } = useTaskApplication();
 
-  const nextQuery = useQuery({
-    queryKey: ['useNextTask', 'next', applicationId, isAssociate, currentKind, t],
-    queryFn: () => getApplication(applicationId!),
-    enabled: !(!applicationId || !isAssociate),
-  });
-  useEffect(() => {
-    const detail = nextQuery.data;
-    if (detail === undefined) return;
+  return useMemo(() => {
+    if (!isAssociate || !detail || !applicationId) return null;
     const candidates = detail.tasks.filter(
-      (t) =>
-        t.kind !== currentKind &&
-        t.status !== 'DONE' &&
-        t.status !== 'SKIPPED' &&
-        CHAINABLE_KINDS.has(t.kind)
+      (task) =>
+        task.kind !== currentKind &&
+        task.status !== 'DONE' &&
+        task.status !== 'SKIPPED' &&
+        CHAINABLE_KINDS.has(task.kind)
     );
-    const curIdx = detail.tasks.findIndex((t) => t.kind === currentKind);
+    const curIdx = detail.tasks.findIndex((task) => task.kind === currentKind);
     const target =
-    candidates.find((t) => detail.tasks.indexOf(t) > curIdx) ??
-    candidates[0] ??
-    null;
-    setNext(
-      target
-        ? {
-            route: `/onboarding/me/${applicationId}/tasks/${target.kind.toLowerCase()}`,
-            label: taskShortLabel(t, target.kind) ?? target.title,
-          }
-        : null
-    );
-  }, [nextQuery.data, applicationId, currentKind, t]);
-
-  return next;
+      candidates.find((task) => detail.tasks.indexOf(task) > curIdx) ??
+      candidates[0] ??
+      null;
+    return target
+      ? {
+          route: `/onboarding/me/${applicationId}/tasks/${target.kind.toLowerCase()}`,
+          label: taskShortLabel(t, target.kind) ?? target.title,
+        }
+      : null;
+  }, [isAssociate, detail, applicationId, currentKind, t]);
 }
 
 // Touch parity with ui/Input: explicit height (comfortable finger target,
@@ -426,6 +442,65 @@ export const inputCls =
 import { Field } from '@/components/ui/Field';
 export { Field };
 
+/** An upload limit the way people say it: "10 MB", not "10.00 MB". */
+export function fmtLimit(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return Number.isInteger(mb) ? `${mb} MB` : fmtSize(bytes);
+}
+
+/**
+ * The task's main button, sized for the footer: full width on a phone (it
+ * shrinks instead of running off a 390px screen — "Save payout method &
+ * continue → Policies" did), its natural width from md.
+ */
+export const taskButtonCls = 'w-full min-w-0 h-auto min-h-10 py-1.5 coarse:min-h-11 md:w-auto';
+
+/**
+ * A continue button's words: the verb on the first line, where it goes
+ * next as a quieter second line ("Save & continue" / "Next: Policies").
+ * One line, and nothing else, when nothing follows.
+ */
+export function ContinueLabel({ label, next }: { label: string; next?: NextTaskTarget | null }) {
+  const { t } = useI18n();
+  if (!next) return <span className="min-w-0 truncate">{label}</span>;
+  return (
+    <span className="flex min-w-0 flex-col items-center leading-tight md:items-start">
+      <span className="max-w-full truncate">{label}</span>
+      <span className="max-w-full truncate text-xs font-normal opacity-80">
+        {t('ob.shell.nextStep', { label: next.label })}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The bar every task ends with: Cancel on the left, the task's one action
+ * on the right — the order of every dialog footer in the app. Sticky on a
+ * phone ("Submit W-4" used to sit below ~3 screens of form, so people
+ * scrolled hunting for it); the negative margins let it span the
+ * TaskShell card edge to edge so its backdrop reads as a footer. md+
+ * keeps a plain inline row.
+ */
+export function TaskFooter({
+  backTo,
+  cancelLabel,
+  children,
+}: {
+  backTo: string;
+  cancelLabel?: string;
+  children: React.ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="sticky bottom-0 z-10 -mx-5 -mb-5 mt-2 flex items-center gap-3 border-t border-navy-secondary bg-navy/95 px-5 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:z-auto md:mx-0 md:mb-0 md:border-t-0 md:bg-transparent md:p-0 md:pt-2 md:backdrop-blur-none">
+      <Link to={backTo} className="inline-flex shrink-0 items-center text-sm text-silver hover:text-white coarse:min-h-11">
+        {cancelLabel ?? t('ob.shell.cancel')}
+      </Link>
+      <div className="flex min-w-0 flex-1 items-center gap-3 md:flex-none">{children}</div>
+    </div>
+  );
+}
+
 export function SubmitRow({
   submitting,
   backTo,
@@ -435,30 +510,21 @@ export function SubmitRow({
   submitting: boolean;
   backTo: string;
   label?: string;
-  /** When set, the button advertises the chained jump to the next task. */
+  /** When set, the button says "Save & continue" with "Next: …" under it. */
   next?: NextTaskTarget | null;
 }) {
   const { t } = useI18n();
   const effectiveLabel = label ?? t('ob.shell.save');
   return (
-    // Sticky on phones: "Submit W-4" used to sit below ~3 screens of form,
-    // so the user finished typing and then scrolled hunting for the button.
-    // The negative margins let the bar span the TaskShell card edge-to-edge
-    // so its backdrop reads as a footer, not a floating strip. md+ (roomy
-    // screens) keeps the plain inline row.
-    // Cancel-left / submit-right, matching every dialog footer in the app.
-    <div className="sticky bottom-0 z-10 -mx-5 -mb-5 mt-2 flex items-center gap-3 border-t border-navy-secondary bg-navy/95 px-5 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:z-auto md:mx-0 md:mb-0 md:border-t-0 md:bg-transparent md:p-0 md:pt-2 md:backdrop-blur-none">
-      <Link to={backTo} className="text-sm text-silver hover:text-white">
-        {t('ob.shell.cancel')}
-      </Link>
-      <Button type="submit" loading={submitting} disabled={submitting}>
-        {submitting
-          ? t('ob.shell.saving')
-          : next
-            ? t('ob.shell.saveContinue', { label: effectiveLabel, next: next.label })
-            : effectiveLabel}
+    <TaskFooter backTo={backTo}>
+      <Button type="submit" loading={submitting} disabled={submitting} className={taskButtonCls}>
+        {submitting ? (
+          t('ob.shell.saving')
+        ) : (
+          <ContinueLabel label={next ? t('ob.shell.saveAndContinue') : effectiveLabel} next={next} />
+        )}
       </Button>
-    </div>
+    </TaskFooter>
   );
 }
 
@@ -466,17 +532,28 @@ export function TaskShell({
   title,
   children,
   backTo,
+  kind,
 }: {
   title: string;
   children: React.ReactNode;
   backTo: string;
+  /** The task kind this page fills — gives "Step 3 of 8", and an honest
+   *  "not part of your onboarding" when the checklist has no such task. */
+  kind?: string;
 }) {
   const { t } = useI18n();
   // The task names itself in the top bar (it read "Alto …" on a phone) with
   // the checklist as its parent — which is also where the phone's Back goes.
   const heroRef = usePageHero(title, [{ label: t('ob.check.pageTitle'), to: backTo }, { label: title }]);
+  const tasks = useTaskApplication().data?.tasks;
+  const index = kind && tasks ? tasks.findIndex((task) => task.kind === kind) : -1;
+  // Only once the checklist is known: a page never hides while loading,
+  // and a checklist that can't be read never hides a task either.
+  const notOnChecklist = Boolean(kind && tasks && index === -1);
   return (
-    <div className="mx-auto">
+    // A form reads best at a form's width — at 1440 the fields stretched
+    // ~1,100px.
+    <div className="mx-auto max-w-2xl">
       {/* On a phone the top bar's Back already says "My onboarding". */}
       <Link
         to={backTo}
@@ -484,11 +561,29 @@ export function TaskShell({
       >
         {t('ob.shell.backToChecklist')}
       </Link>
+      {tasks && index >= 0 && (
+        <p className="mb-1 text-xs uppercase tracking-widest text-silver" data-testid="task-step">
+          {t('ob.shell.stepOf', { n: index + 1, total: tasks.length })}
+        </p>
+      )}
       <h1 ref={heroRef} className="font-display text-3xl md:text-4xl text-white mb-6">
         {title}
       </h1>
       <div className="bg-navy border border-navy-secondary rounded-lg p-5 md:p-6">
-        {children}
+        {notOnChecklist ? (
+          <EmptyState
+            icon={ListChecks}
+            title={t('ob.shell.notOnChecklistTitle')}
+            description={t('ob.shell.notOnChecklistBody')}
+            action={
+              <Button asChild>
+                <Link to={backTo}>{t('ob.shell.toChecklist')}</Link>
+              </Button>
+            }
+          />
+        ) : (
+          children
+        )}
       </div>
     </div>
   );

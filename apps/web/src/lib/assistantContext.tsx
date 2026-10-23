@@ -72,7 +72,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const me = useQuery({
     queryKey: ['hugo', 'me'],
     queryFn: getHugo,
-    enabled: Boolean(user),
+    // A client account has no assistant: don't ask (a refused GET /hugo on every page load — F500 G5).
+    enabled: Boolean(user) && user?.role !== 'CLIENT_PORTAL',
     staleTime: 5 * 60_000,
     retry: (count, err) => !(err instanceof ApiError && (err.status === 403 || err.status === 409)) && count < 1,
     // A 403/409 is the answer for this account; a page that mounts the pane

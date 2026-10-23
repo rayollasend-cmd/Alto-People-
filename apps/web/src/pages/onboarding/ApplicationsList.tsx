@@ -4,12 +4,10 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Ban,
-  BarChart3,
   ClipboardList,
   Download,
   FileUp,
   LayoutGrid,
-  LayoutTemplate,
   List,
   MailPlus,
   MailWarning,
@@ -58,8 +56,13 @@ import {
   DrawerTitle,
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { FilterChip } from '@/components/ui/FilterBar';
+import { QueryError } from '@/components/ui/QueryError';
+import { FilterBar, FilterChip } from '@/components/ui/FilterBar';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import type { PageAction } from '@/components/ui/PageHeader';
+import { useStoreScope } from '@/lib/storeScope';
+import { OnboardingSections } from './OnboardingSections';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
@@ -70,7 +73,7 @@ import { toast } from 'sonner';
 import { ApplicationDetailBody } from './ApplicationDetail';
 import { BulkApproveDialog } from './BulkApproveDialog';
 import { SavedViewsMenu } from '@/components/SavedViewsMenu';
-import { FilterSheet, filtersSummary } from '@/components/FilterSheet';
+import { FilterSheet } from '@/components/FilterSheet';
 import { useMediaQuery } from '@/lib/useViewport';
 import { BulkInviteDialog } from './BulkInviteDialog';
 import { CsvImportDialog } from './CsvImportDialog';
@@ -108,20 +111,25 @@ type StatusFilter =
   | 'TO_REVIEW'
   | 'STUCK'
   | 'IDLE_DRAFTS'
+  | 'STARTING_SOON'
+  | 'BOUNCED'
   | 'ARCHIVED'
   | 'ALL'
   | ApplicationStatus;
 
+// F500 G1: one row of chips, the lifecycle — the tiles above are the
+// attention slices (and filters too). "Submitted" and "In review" are both
+// "To review" (the Inbox's count); they still open from a link or a saved
+// view. One word per set: the working set is "In flight" on the chip and
+// on the tile alike.
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
-  { value: 'ACTIVE', label: 'Active' },
+  { value: 'ACTIVE', label: 'In flight' },
   // Submitted + in review: everything waiting on HR (the Inbox's count).
   { value: 'TO_REVIEW', label: 'To review' },
   { value: 'DRAFT', label: 'Draft' },
   // Nothing moved in 7 days — the one rule (apps/api/src/lib/applicationFilters.ts)
   // the banner, the tile, the rows' "idle" and the Inbox's "Onboarding stuck" share.
   { value: 'STUCK', label: 'Stuck' },
-  { value: 'SUBMITTED', label: 'Submitted' },
-  { value: 'IN_REVIEW', label: 'In review' },
   { value: 'ARCHIVED', label: 'Archived' },
 ];
 
@@ -191,6 +199,9 @@ const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
   'STUCK',
   // The chip's older name: saved filters and old links still open it.
   'IDLE_DRAFTS',
+  // The "Starting in 7 days" and "Email bounced" tiles.
+  'STARTING_SOON',
+  'BOUNCED',
   'ARCHIVED',
   'ALL',
   'DRAFT',
@@ -198,6 +209,8 @@ const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
   'IN_REVIEW',
   'APPROVED',
   'REJECTED',
+  // The analytics funnel links every status, cancelled included.
+  'CANCELLED',
 ];
 
 function isStatusFilter(v: unknown): v is StatusFilter {
@@ -327,8 +340,16 @@ export function ApplicationsList() {
     : storedStatus;
   // "Idle drafts" became "Stuck" (one rule): an old link or saved choice lands on the chip.
   const status: StatusFilter = rawStatus === 'IDLE_DRAFTS' ? 'STUCK' : rawStatus;
-  const clientId = searchParams.get('clientId') ?? '';
+  // The client filter follows the top bar's store scope (lib/storeScope):
+  // a link's own ?clientId= wins, otherwise the scope the person already
+  // picked up there; picking here moves the scope too, so the next module
+  // follows. Bounded accounts are pinned server-side either way.
+  const storeScope = useStoreScope();
+  const urlClientId = searchParams.get('clientId');
+  const clientId = urlClientId ?? (storeScope.enabled ? storeScope.clientId : '');
   const urlQ = searchParams.get('q') ?? '';
+  // The caller's own day: "Starting in 7 days" counts from it.
+  const today = ymdLocal();
   const [qInput, setQInput] = useState(urlQ);
 
   // Debounce search input → URL → server fetch.
@@ -356,7 +377,10 @@ export function ApplicationsList() {
 
   const setClientId = (id: string) => {
     const next = new URLSearchParams(searchParams);
-    if (!id) next.delete('clientId');
+    if (storeScope.enabled) {
+      storeScope.setClientId(id);
+      next.delete('clientId');
+    } else if (!id) next.delete('clientId');
     else next.set('clientId', id);
     setSearchParams(next, { replace: true });
   };
@@ -428,6 +452,8 @@ export function ApplicationsList() {
   // Below sm the filters fold behind one chip (components/FilterSheet).
   const wide = useMediaQuery('(min-width: 640px)');
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  // The row above the list the grid puts its count and Columns into.
+  const [listBar, setListBar] = useState<HTMLDivElement | null>(null);
 
   // Phase 72 — table / cards view toggle, persisted per-user.
   const [view, setView] = useViewMode<ApplicationsView>('applications', 'table', VIEW_OPTIONS);
@@ -455,6 +481,7 @@ export function ApplicationsList() {
     q: urlQ,
     clientId: clientId || undefined,
     ...invitedRange(invitedWindow),
+    ...(status === 'STARTING_SOON' ? { today } : {}),
     page,
     pageSize: PAGE_SIZE,
   };
@@ -464,12 +491,11 @@ export function ApplicationsList() {
   });
   const items: ApplicationSummary[] | null = refreshQuery.data?.applications ?? null;
   const filteredTotal = refreshQuery.data?.total ?? 0;
-  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
   const refresh = () => void refreshQuery.refetch();
 
   const refreshStatsQuery = useQuery({
-    queryKey: ['ApplicationsList', 'statsData'],
-    queryFn: () => getApplicationStats(),
+    queryKey: ['ApplicationsList', 'statsData', today],
+    queryFn: () => getApplicationStats(today),
   });
   const statsData: ApplicationStatsResponse | null = refreshStatsQuery.isError ? null : (refreshStatsQuery.data ? refreshStatsQuery.data : null);
   const refreshStats = () => void refreshStatsQuery.refetch();
@@ -547,6 +573,7 @@ export function ApplicationsList() {
           q: urlQ,
           clientId: clientId || undefined,
           ...invitedRange(invitedWindow),
+          ...(status === 'STARTING_SOON' ? { today } : {}),
           page: exportPage,
           pageSize: 200,
         });
@@ -567,6 +594,7 @@ export function ApplicationsList() {
           'Invited',
           'Start date',
           'Blocked on',
+          'Owner',
         ],
         ...all.map((a) => [
           a.associateName,
@@ -578,6 +606,7 @@ export function ApplicationsList() {
           a.invitedAt.slice(0, 10),
           a.startDate ?? '',
           a.blockedOnTitle ?? '',
+          a.ownerName ?? '',
         ]),
       ]);
     } catch {
@@ -774,106 +803,124 @@ export function ApplicationsList() {
     }
   };
 
+  const toReviewCount = (stats.byStatus.SUBMITTED ?? 0) + (stats.byStatus.IN_REVIEW ?? 0);
+  /** How many applications a chip would show — the stats endpoint's counts. */
+  const chipCount = (f: StatusFilter): number =>
+    f === 'ALL'
+      ? stats.total
+      : f === 'TO_REVIEW'
+        ? toReviewCount
+        : f === 'STUCK' || f === 'IDLE_DRAFTS'
+          ? (stats.idleDrafts ?? stats.stale)
+          : f === 'ACTIVE'
+            ? (stats.byStatus.DRAFT ?? 0) + toReviewCount
+            : f === 'ARCHIVED'
+              ? (stats.byStatus.APPROVED ?? 0) + (stats.byStatus.REJECTED ?? 0) + (stats.byStatus.CANCELLED ?? 0)
+              : f === 'STARTING_SOON'
+                ? (stats.startingSoon ?? 0)
+                : f === 'BOUNCED'
+                  ? stats.bounced
+                  : (stats.byStatus[f] ?? 0);
+  // Filters off their default — the phone chip's count and its Clear.
+  const activeFilterCount = (clientId ? 1 : 0) + (status !== 'ACTIVE' ? 1 : 0) + (invitedWindow !== 'ALL' ? 1 : 0);
+  const clearFilters = () => {
+    setInvitedWindow('ALL');
+    setClientId('');
+    setStatus('ACTIVE');
+  };
+
+  // One primary; Bulk invite beside it; Import and Export in More.
+  const headerActions: PageAction[] = canInvite
+    ? [
+        ...(canManage
+          ? [{ key: 'new', label: 'New application', icon: Plus, primary: true, onSelect: () => setOpenCreate(true) }]
+          : []),
+        { key: 'bulk', label: 'Bulk invite', icon: Users, primary: !canManage, onSelect: () => setOpenBulkInvite(true) },
+        { key: 'import', label: 'Import CSV', icon: FileUp, overflow: true, onSelect: () => setOpenCsvImport(true) },
+        {
+          key: 'export',
+          label: exporting ? 'Exporting…' : 'Export CSV',
+          icon: Download,
+          overflow: true,
+          disabled: exporting || filteredTotal === 0,
+          hint: 'Every application in the current filter, all pages',
+          onSelect: () => void exportCsv(),
+        },
+      ]
+    : [];
+
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    // F500 G1: one primary, one beside it, the rest in More; the sibling
+    // pages (Templates, Analytics) are the section strip under the title.
     <ListTemplate
         title="Onboarding"
         subtitle="Active applications and their checklist progress."
-        secondaryActions={
-          canInvite ? (
-            <>
-              {canManage && (
-                <>
-                  <Link to="/onboarding/analytics">
-                    <Button variant="ghost">
-                      <BarChart3 className="h-4 w-4" />
-                      Analytics
-                    </Button>
-                  </Link>
-                  <Link to="/onboarding/templates">
-                    <Button variant="ghost">
-                      <LayoutTemplate className="h-4 w-4" />
-                      Templates
-                    </Button>
-                  </Link>
-                </>
-              )}
-              <Button
-                variant="secondary"
-                onClick={exportCsv}
-                disabled={exporting || filteredTotal === 0}
-                title="Download the current filtered list as CSV (all pages)"
-              >
-                <Download className="h-4 w-4" />
-                {exporting ? 'Exporting…' : 'Export CSV'}
-              </Button>
-              <Button variant="secondary" onClick={() => setOpenCsvImport(true)}>
-                <FileUp className="h-4 w-4" />
-                Import CSV
-              </Button>
-              <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
-                <Users className="h-4 w-4" />
-                Bulk invite
-              </Button>
-            </>
-          ) : undefined
-        }
-        primaryAction={
-          canManage ? (
-            <Button onClick={() => setOpenCreate(true)}>
-              <Plus className="h-4 w-4" />
-              New application
-            </Button>
-          ) : undefined
-        }
+        actions={headerActions}
         summary={
               <>
-          {/* KPI strip — always visible (empty-zero state is fine). */}
+          <OnboardingSections />
+
+          {/* The attention slices, each the filter for the list below
+              (F500 G1): in flight, waiting on HR, stuck, starting this
+              week, bounced. Total, Approved and the average were dropped:
+              "Approved 17" was the archive, and an average says nothing to
+              act on. */}
           {canInvite && statsData && statsData.total > 0 && (
-            <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
-              <Kpi label="Total" value={String(stats.total)} />
-              <Kpi label="In flight" value={String(stats.inFlight)} />
-              <Kpi
-                label="Avg. complete"
-                value={`${stats.avgPercent}%`}
-                tone={
-                  stats.avgPercent >= 75
-                    ? 'text-success'
-                    : stats.avgPercent >= 50
-                      ? 'text-warning'
-                      : 'text-silver'
-                }
+            <MetricStrip label="Onboarding at a glance">
+              <MetricCard
+                label="In flight"
+                value={stats.inFlight}
+                hint="Invited, not yet decided"
+                onClick={() => setStatus('ACTIVE')}
+                selected={status === 'ACTIVE'}
               />
-              <Kpi
-                label={`Stuck > ${STALE_DAYS}d`}
-                value={String(stats.stale)}
-                tone={stats.stale > 0 ? 'text-alert' : 'text-success'}
-                // Same jump-off as the stale banner's "Review": most stuck
-                // applicants are invited-but-unfinished (SUBMITTED). Only wired
-                // when there's something to review.
-                active={stats.stale > 0 && status === 'SUBMITTED'}
-                onClick={
-                  stats.stale > 0 ? () => setStatus('SUBMITTED') : undefined
-                }
+              <MetricCard
+                label="To review"
+                value={toReviewCount}
+                hint={toReviewCount === 0 ? 'Nothing waiting on HR' : 'Submitted, waiting on HR'}
+                tone={toReviewCount > 0 ? 'warning' : 'default'}
+                onClick={() => setStatus('TO_REVIEW')}
+                selected={status === 'TO_REVIEW'}
               />
-              <Kpi
+              <MetricCard
+                label="Stuck"
+                value={stats.stale}
+                hint={`Nothing moved in ${STALE_DAYS} days`}
+                tone={stats.stale > 0 ? 'alert' : 'default'}
+                onClick={() => setStatus('STUCK')}
+                selected={status === 'STUCK'}
+              />
+              <MetricCard
+                label="Starting in 7 days"
+                value={stats.startingSoon ?? 0}
+                hint={
+                  (stats.startingSoonUnfinished ?? 0) > 0
+                    ? `${stats.startingSoonUnfinished} still unfinished`
+                    : (stats.startingSoon ?? 0) > 0
+                      ? 'All ready'
+                      : 'No starts this week'
+                }
+                tone={(stats.startingSoonUnfinished ?? 0) > 0 ? 'warning' : 'default'}
+                onClick={() => setStatus('STARTING_SOON')}
+                selected={status === 'STARTING_SOON'}
+              />
+              <MetricCard
                 label="Email bounced"
-                value={String(stats.bounced)}
-                tone={stats.bounced > 0 ? 'text-alert' : 'text-silver'}
+                value={stats.bounced}
+                hint={stats.bounced > 0 ? 'Fix the address and resend' : 'Every invite delivered'}
+                tone={stats.bounced > 0 ? 'alert' : 'default'}
+                onClick={() => setStatus('BOUNCED')}
+                selected={status === 'BOUNCED'}
               />
-              <Kpi
-                label="Approved"
-                value={String(stats.byStatus.APPROVED ?? 0)}
-                tone="text-success"
-              />
-            </div>
+            </MetricStrip>
           )}
 
           {/* Email-bounce banner — fires when at least one in-flight invite/nudge
               came back FAILED from the provider. Distinct from the stale banner
               (which is just "old"); a bounce is *actionable* (fix the email). */}
           {canInvite && stats.bounced > 0 && (
-            <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
+            <div className="flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
               <MailWarning className="h-4 w-4 text-alert mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-white">
@@ -906,14 +953,16 @@ export function ApplicationsList() {
             </div>
           )}
 
-          {/* Stale-application banner — only when there's something to nudge about. */}
+          {/* Stuck banner — who, how long since anything moved (the stuck
+              rule's own clock, not the invite), and the two ways out: see
+              them, or nudge them all. "Nudge all stale" used to sit in the
+              filter row. */}
           {canInvite && stats.stale > 0 && (
-            <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
+            <div className="flex flex-wrap items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
               <AlertTriangle className="h-4 w-4 text-alert mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-white">
-                  {stats.stale} application{stats.stale === 1 ? '' : 's'} stuck for more
-                  than {STALE_DAYS} days
+                  {stats.stale} application{stats.stale === 1 ? '' : 's'} stuck — nothing moved in {STALE_DAYS} days
                 </div>
                 <div className="text-silver text-xs mt-0.5">
                   {stats.staleSamples.map((a, i) => (
@@ -926,7 +975,7 @@ export function ApplicationsList() {
                         {a.associateName}
                       </Link>{' '}
                       <span className="text-silver/70 tabular-nums">
-                        ({daysSince(a.invitedAt, now)}d)
+                        ({daysSince(lastActivityIso(a), now)}d idle)
                       </span>
                     </span>
                   ))}
@@ -937,43 +986,67 @@ export function ApplicationsList() {
                   )}
                 </div>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setStatus('SUBMITTED')}
-                className="shrink-0"
-              >
-                Review
-              </Button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {status !== 'STUCK' && (
+                  <Button variant="ghost" size="sm" onClick={() => setStatus('STUCK')}>
+                    Show them
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onBulkNudge}
+                  loading={bulkNudging}
+                  title={`Send a personalized nudge to every applicant stuck for more than ${STALE_DAYS} days — across all pages, not just this one`}
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  Nudge all ({stats.stale})
+                </Button>
+              </div>
             </div>
           )}
 
               </>
         }
         filters={canInvite && (
-        <div className="mb-4 flex flex-wrap items-center gap-3">
-          {/* Phone: search gets its own row (basis-full) — sharing one with
-              the client picker left it three letters wide. */}
-          <div className="relative flex-1 basis-full sm:basis-0 sm:min-w-[200px] sm:max-w-xs">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-silver/70 pointer-events-none" />
-            <Input
-              type="search"
-              placeholder="Search by name or email…"
-              value={qInput}
-              onChange={(e) => setQInput(e.target.value)}
-              className="pl-8 pr-8"
-            />
-            {qInput && (
-              <button
-                type="button"
-                onClick={() => setQInput('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/70 hover:text-white"
-                aria-label="Clear search"
+        <FilterBar
+          search={
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-silver/70 pointer-events-none" />
+              <Input
+                type="search"
+                placeholder="Search by name or email…"
+                aria-label="Search applications"
+                value={qInput}
+                onChange={(e) => setQInput(e.target.value)}
+                className="pl-8 pr-8"
+              />
+              {qInput && (
+                <button
+                  type="button"
+                  onClick={() => setQInput('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/70 hover:text-white"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          }
+          actions={
+            canManage && readyRows.length > 0 ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setSelected((prev) => new Set([...prev, ...readyRows.map((a) => a.id)]))}
+                title="Add every application on this page that's waiting on review with all its tasks done — then approve them together"
               >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
+                <UserCheck className="h-4 w-4" />
+                Select ready ({readyRows.length})
+              </Button>
+            ) : undefined
+          }
+        >
           {/* Role walk HR 15: on a phone the filters sat a whole screen
               above the first row. Below sm they live behind one
               "Filters (n)" chip that opens a bottom sheet; search stays. */}
@@ -981,10 +1054,23 @@ export function ApplicationsList() {
             mobile={!wide}
             open={filterSheetOpen}
             onOpenChange={setFilterSheetOpen}
-            summary={filtersSummary((clientId ? 1 : 0) + (status !== 'ACTIVE' ? 1 : 0) + (invitedWindow !== 'ALL' ? 1 : 0))}
+            activeCount={activeFilterCount}
+            onClear={clearFilters}
             description="Narrow the applications, then close to see them."
             testId="onboarding-filter-chip"
           >
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by status">
+            {STATUS_FILTERS.map((f) => (
+              <FilterChip
+                key={f.value}
+                active={status === f.value}
+                onClick={() => setStatus(f.value)}
+                count={statsData ? chipCount(f.value) : undefined}
+              >
+                {f.label}
+              </FilterChip>
+            ))}
+          </div>
           {clientsOn && clients && clients.length > 1 && (
             <Select
               size="sm"
@@ -1001,104 +1087,22 @@ export function ApplicationsList() {
               ))}
             </Select>
           )}
-          <div className="flex flex-wrap gap-1.5">
-            {STATUS_FILTERS.map((f) => {
-              const count =
-                f.value === 'ALL'
-                  ? stats.total
-                  : f.value === 'TO_REVIEW'
-                    ? (stats.byStatus.SUBMITTED ?? 0) + (stats.byStatus.IN_REVIEW ?? 0)
-                  : f.value === 'STUCK' || f.value === 'IDLE_DRAFTS'
-                    ? (stats.idleDrafts ?? stats.stale)
-                  : f.value === 'ACTIVE'
-                    ? (stats.byStatus.DRAFT ?? 0) +
-                      (stats.byStatus.SUBMITTED ?? 0) +
-                      (stats.byStatus.IN_REVIEW ?? 0)
-                    : f.value === 'ARCHIVED'
-                      ? (stats.byStatus.APPROVED ?? 0) +
-                        (stats.byStatus.REJECTED ?? 0) +
-                        (stats.byStatus.CANCELLED ?? 0)
-                      : (stats.byStatus[f.value] ?? 0);
-              const active = status === f.value;
-              return (
-                <FilterChip
-                  key={f.value}
-                  active={active}
-                  onClick={() => setStatus(f.value)}
-                >
-                  {f.label}
-                  {statsData && (
-                    <span className="text-2xs tabular-nums text-silver/70">
-                      {count}
-                    </span>
-                  )}
-                </FilterChip>
-              );
-            })}
-          </div>
-          <div
-            className="flex flex-wrap items-center gap-1.5"
-            role="group"
+          <Select
+            size="sm"
             aria-label="Filter by invite date"
+            value={invitedWindow}
+            onChange={(e) => setInvitedWindow(isInvitedWindow(e.target.value) ? e.target.value : 'ALL')}
+            className="max-w-[11rem]"
           >
-            <span className="text-2xs uppercase tracking-widest text-silver/70">
-              Invited
-            </span>
             {INVITED_WINDOWS.map((w) => (
-              <FilterChip
-                key={w.value}
-                active={invitedWindow === w.value}
-                onClick={() => setInvitedWindow(w.value)}
-              >
-                {w.label}
-              </FilterChip>
+              <option key={w.value} value={w.value}>
+                {w.value === 'ALL' ? 'Invited any time' : `Invited ${w.label.toLowerCase()}`}
+              </option>
             ))}
-          </div>
-          <SavedViewsMenu
-            scope="onboarding.applications"
-            current={viewQuery}
-            activeId={savedViewId}
-            onApply={applySavedView}
-            allLabel="Default view"
-          />
+          </Select>
           </FilterSheet>
-          {canManage && readyRows.length > 0 && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setSelected((prev) => new Set([...prev, ...readyRows.map((a) => a.id)]))}
-              title="Add every application on this page that's waiting on review with all its tasks done — then approve them together"
-            >
-              <UserCheck className="h-4 w-4" />
-              Select ready on this page ({readyRows.length})
-            </Button>
-          )}
-          {stats.stale > 0 && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={onBulkNudge}
-              loading={bulkNudging}
-              title={`Send a personalized nudge to every applicant stuck for more than ${STALE_DAYS} days — across all pages, not just this one`}
-            >
-              <MessageCircle className="h-4 w-4" />
-              Nudge all stale ({stats.stale})
-            </Button>
-          )}
-          <span className="ml-auto text-2xs text-silver/80 tabular-nums">
-            {items ? `${items.length} shown` : ''}
-          </span>
-          <ViewToggle<ApplicationsView>
-            value={view}
-            onChange={setView}
-            options={[
-              { value: 'table', label: 'Table', icon: List },
-              { value: 'cards', label: 'Cards', icon: LayoutGrid },
-            ]}
-          />
-        </div>
+        </FilterBar>
       )}
-
         drawer={
 
           <Drawer
@@ -1137,9 +1141,9 @@ export function ApplicationsList() {
 
         }
       >
-      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
+      {refreshQuery.isError && <QueryError what="the applications" query={refreshQuery} />}
 
-      {!items && !error && (
+      {!items && !refreshQuery.isError && (
         <Card>
           <div className="p-2">
             <SkeletonRows count={5} rowHeight="h-14" />
@@ -1147,48 +1151,53 @@ export function ApplicationsList() {
         </Card>
       )}
 
-      {items && items.length === 0 && (
-        <EmptyState
-          icon={ClipboardList}
-          title={
-            urlQ || status !== 'ALL'
-              ? 'No applications match this filter'
-              : 'No active applications'
-          }
-          description={
-            urlQ || status !== 'ALL'
-              ? 'Clear the filter to see all applications.'
-              : canManage
-                ? `Click "New application" to invite the first ${term('worker').toLowerCase()}.`
-                : canInvite
-                  ? 'Click "Bulk invite" to send the first onboarding invitation.'
-                  : "When HR creates an onboarding application, it'll show up here with live checklist progress."
-          }
-          action={
-            urlQ || status !== 'ALL' ? (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setQInput('');
-                  setStatus('ALL');
-                }}
-              >
-                Clear filters
-              </Button>
-            ) : canManage ? (
-              <Button onClick={() => setOpenCreate(true)}>
-                <Plus className="h-4 w-4" />
-                New application
-              </Button>
-            ) : canInvite ? (
-              <Button onClick={() => setOpenBulkInvite(true)}>
-                <Users className="h-4 w-4" />
-                Bulk invite
-              </Button>
-            ) : undefined
-          }
-        />
-      )}
+      {items && items.length === 0 && (() => {
+        // The default view (in flight, no search, every client, any time)
+        // empty means nobody is mid-onboarding — say that, and offer the
+        // invite; a narrowed view empty offers the way back.
+        const narrowed = !!urlQ || status !== 'ACTIVE' || !!clientId || invitedWindow !== 'ALL';
+        const decided = chipCount('ARCHIVED');
+        return (
+          <EmptyState
+            icon={ClipboardList}
+            title={narrowed ? 'Nothing matches these filters' : stats.total > 0 ? 'Nobody is mid-onboarding' : 'No applications yet'}
+            description={
+              narrowed
+                ? 'Clear the filters to see every application in flight.'
+                : stats.total > 0
+                  ? `Every invite has been decided${decided > 0 ? ` — ${decided} in Archived` : ''}.${canManage ? ` Invite the next ${term('worker').toLowerCase()} with "New application".` : ''}`
+                  : canManage
+                    ? `Invite the first ${term('worker').toLowerCase()} with "New application".`
+                    : canInvite
+                      ? 'Send the first onboarding invitation with "Bulk invite".'
+                      : "When HR creates an onboarding application, it'll show up here with live checklist progress."
+            }
+            action={
+              narrowed ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setQInput('');
+                    clearFilters();
+                  }}
+                >
+                  Clear filters
+                </Button>
+              ) : canManage ? (
+                <Button onClick={() => setOpenCreate(true)}>
+                  <Plus className="h-4 w-4" />
+                  New application
+                </Button>
+              ) : canInvite ? (
+                <Button onClick={() => setOpenBulkInvite(true)}>
+                  <Users className="h-4 w-4" />
+                  Bulk invite
+                </Button>
+              ) : undefined
+            }
+          />
+        );
+      })()}
 
       <NewApplicationDialog
         open={openCreate}
@@ -1311,6 +1320,36 @@ export function ApplicationsList() {
         </div>
       )}
 
+      {/* The list's own line: saved views and the layout on the left, the
+          count and Columns on the right (the grid renders those into it) —
+          one line, not a second boxed toolbar (F500 G1). */}
+      {items && items.length > 0 && (
+        <div ref={setListBar} className="flex flex-wrap items-center gap-2" data-testid="applications-list-bar">
+          {canInvite && (
+            <SavedViewsMenu
+              scope="onboarding.applications"
+              current={viewQuery}
+              activeId={savedViewId}
+              onApply={applySavedView}
+              allLabel="Default view"
+            />
+          )}
+          <ViewToggle<ApplicationsView>
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'table', label: 'Table', icon: List },
+              { value: 'cards', label: 'Cards', icon: LayoutGrid },
+            ]}
+          />
+          {view === 'cards' && (
+            <span className="ml-auto text-xs tabular-nums text-ink-muted" aria-live="polite">
+              {filteredTotal === 1 ? '1 application' : `${filteredTotal.toLocaleString()} applications`}
+            </span>
+          )}
+        </div>
+      )}
+
       {items && items.length > 0 && view === 'table' && (
         <Card className="p-3">
           <DataGrid<(typeof items)[number]>
@@ -1320,7 +1359,12 @@ export function ApplicationsList() {
             rowKey={(a) => a.id}
             search={false}
             urlState={false}
-            exportCsv={{ filename: 'applications' }}
+            // Export lives in the header's More (every page of the filter);
+            // the count is the filter's real total, one count on screen.
+            exportCsv={false}
+            toolbar={{ into: listBar }}
+            noun={{ one: 'application', many: 'applications' }}
+            server={{ total: filteredTotal, offset: (page - 1) * PAGE_SIZE }}
             onRowClick={(a) => setDrawerTarget(a)}
             rowActionLabel={(a) => `Open ${a.associateName}`}
             selectable={canInvite ? { selectAllLabel: 'Select all visible', selection: { selected, onChange: setSelected } } : undefined}
@@ -1419,15 +1463,17 @@ export function ApplicationsList() {
                   );
                 },
               },
-              {
+              // Hidden while no row on the page has a start date — a column
+              // of dashes says nothing (F500 G1).
+              ...(items.some((a) => a.startDate) ? [{
                 key: 'start',
                 header: 'Start',
-                accessor: (a) => a.startDate,
+                accessor: (a: ApplicationSummary) => a.startDate,
                 sortable: true,
                 searchable: false,
                 cardMeta: true,
                 className: 'text-xs whitespace-nowrap',
-                cell: (a) => {
+                cell: (a: ApplicationSummary) => {
                   const risk = startRisk(a, now);
                   return (
                     <>
@@ -1445,6 +1491,16 @@ export function ApplicationsList() {
                     </>
                   );
                 },
+              }] : []),
+              {
+                // Who sent the invite (the application_created event); "—"
+                // for imports and rows from before it was recorded.
+                key: 'owner',
+                header: 'Owner',
+                accessor: (a) => a.ownerName ?? null,
+                sortable: true,
+                className: 'text-xs text-silver',
+                cell: (a) => (a.ownerName ? <span className="text-silver">{a.ownerName}</span> : <span className="text-silver/50">—</span>),
               },
               ...(canInvite
                 ? [
@@ -1770,47 +1826,6 @@ function ApplicationCard({
         </div>
       )}
     </div>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  tone = 'text-white',
-  onClick,
-  active,
-}: {
-  label: string;
-  value: string;
-  tone?: string;
-  onClick?: () => void;
-  active?: boolean;
-}) {
-  const body = (
-    <>
-      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-        {label}
-      </div>
-      <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
-    </>
-  );
-  if (!onClick) {
-    return <div className="min-w-[6rem]">{body}</div>;
-  }
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'min-w-[6rem] text-left rounded-md -mx-1.5 px-1.5 py-0.5 transition-colors',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-        active ? 'bg-gold/10 ring-1 ring-gold/40' : 'hover:bg-navy-secondary/50',
-      )}
-      title="Review stuck applications"
-    >
-      {body}
-    </button>
   );
 }
 

@@ -249,13 +249,16 @@ describe('readiness: one request to many people', () => {
       total: 3,
       readyCount: 0,
       missingCount: 3,
-      rows: [row(A, 'Ana', { w4OnFile: false }), row(B, 'Ben', { w4OnFile: false, payoutMethodOnFile: false }, { at: '2026-10-21T12:00:00Z', items: ['payout'] }), row(S, 'Cy', { payScheduleAssigned: false })],
+      rows: [row(A, 'Ana', { w4OnFile: false }), row(B, 'Ben', { w4OnFile: false, payoutMethodOnFile: false }, { at: '2026-10-21T12:00:00Z', items: ['payout'] }), row(S, 'Cy', { payScheduleAssigned: false, userLinked: false })],
     });
     desk.requestReadiness.mockResolvedValue({ requested: 2, skipped: [] });
     renderAs('FINANCE_ACCOUNTANT', <PayrollReadiness />);
     const chips = await screen.findByLabelText('What is missing, by column');
     expect(chips).toHaveTextContent('W-4 missing 2');
     expect(chips).toHaveTextContent('Pay account 1');
+    // One word over the column it filters: "Sign-in", not "No sign-in" over "User".
+    expect(chips).toHaveTextContent('Sign-in 1');
+    expect(chips).not.toHaveTextContent('No sign-in');
     expect(screen.getByText(/Requested Oct 21/)).toBeInTheDocument();
     await userEvent.click(within(chips).getByRole('button', { name: /W-4 missing 2/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Request from 2' }));

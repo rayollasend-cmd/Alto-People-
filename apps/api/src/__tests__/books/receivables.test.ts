@@ -132,3 +132,31 @@ describe('the routes', () => {
     expect((await rec.get('/books/receivables')).status).toBe(403);
   });
 });
+
+describe('GET /books/receivables/dso — the two numbers Receivables leads with', () => {
+  it('days to collect over the last 90 days and the cash collected this month, undone payments and older paid statements left out', async () => {
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const a = await loginAs(agent(), fin.email);
+    const client = await createClient('Coastal Resort');
+    const DAY = 86_400_000;
+    const now = Date.now();
+    const paidStatement = (n: number, finalizedDaysAgo: number, paidDaysAgo: number) =>
+      prisma.clientStatement.create({
+        data: { clientId: client.id, periodStart: new Date(Date.UTC(2026, 0, n * 7)), periodEnd: new Date(Date.UTC(2026, 0, n * 7 + 6)), status: 'FINAL', number: n, finalizedAt: new Date(now - finalizedDaysAgo * DAY), paidAt: new Date(now - paidDaysAgo * DAY), snapshot: { totals: { amount: 100 } } },
+      });
+    // Paid in the last 90 days: 30 and 20 days to collect → 25 on average.
+    await paidStatement(1, 40, 10);
+    await paidStatement(2, 60, 40);
+    // Paid 120 days ago: outside the window.
+    await paidStatement(3, 200, 120);
+    // Cash this month: two payments, one undone.
+    const cash = await accountByKey(prisma, 'CASH_OPERATING');
+    const today = new Date().toISOString().slice(0, 10);
+    await prisma.clientPayment.create({ data: { clientId: client.id, receivedOn: new Date(`${today}T00:00:00Z`), amount: 1250.5, method: 'ACH', depositAccountId: cash.id } });
+    await prisma.clientPayment.create({ data: { clientId: client.id, receivedOn: new Date(`${today}T00:00:00Z`), amount: 300, method: 'CHECK', depositAccountId: cash.id, voidedAt: new Date() } });
+    const r = await a.get('/books/receivables/dso?months=6');
+    expect(r.status).toBe(200);
+    expect(r.body.last90).toEqual({ days: 25, statements: 2 });
+    expect(r.body.collectedThisMonth).toEqual({ amount: 1250.5, payments: 1 });
+  });
+});

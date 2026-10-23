@@ -82,15 +82,27 @@ describe('<DirectDepositTask>', () => {
     // trailing asterisk; keep the anchor to avoid matching "Account type".
     expect(screen.getByLabelText(/^account number\*?$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/account type/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/branch card id/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/pay card id/i)).not.toBeInTheDocument();
   });
 
-  it('switching to Branch card hides bank fields and shows branchCardId', async () => {
+  // The option is "Pay card" (F500 2026-10-22): the vendor's name moved to
+  // the hint, and the routing hint says what it does, not "ABA checksum".
+  it('switching to Pay card hides bank fields and shows the card ID', async () => {
     const user = userEvent.setup();
     renderTask();
-    await user.click(screen.getByRole('tab', { name: /branch card/i }));
-    expect(screen.getByLabelText(/branch card id/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /pay card/i }));
+    expect(screen.getByLabelText(/pay card id/i)).toBeInTheDocument();
+    expect(screen.getByText(/branch pay card/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/routing number/i)).not.toBeInTheDocument();
+  });
+
+  it('explains the routing check in plain words', async () => {
+    const user = userEvent.setup();
+    renderTask();
+    expect(screen.getByText(/we check the number for typos/i)).toBeInTheDocument();
+    expect(screen.queryByText(/aba/i)).toBeNull();
+    await user.type(screen.getByLabelText(/routing number/i), '123456789');
+    expect(screen.getByText(/that number doesn't look right/i)).toBeInTheDocument();
   });
 
   it('submits a BANK_ACCOUNT payload', async () => {
@@ -119,8 +131,8 @@ describe('<DirectDepositTask>', () => {
   it('submits a BRANCH_CARD payload', async () => {
     const user = userEvent.setup();
     renderTask();
-    await user.click(screen.getByRole('tab', { name: /branch card/i }));
-    await user.type(screen.getByLabelText(/branch card id/i), 'BC-12345');
+    await user.click(screen.getByRole('tab', { name: /pay card/i }));
+    await user.type(screen.getByLabelText(/pay card id/i), 'BC-12345');
     await user.click(screen.getByRole('button', { name: /save payout method/i }));
 
     await waitFor(() => expect(submitDirectDeposit).toHaveBeenCalledTimes(1));

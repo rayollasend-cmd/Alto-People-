@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Download, FileSignature } from 'lucide-react';
 import { downloadMyW9, getMyW9, submitMyW9, type MyW9 as MyW9Data, type W9Submit } from '@/lib/certifiedPayrollApi';
 import { ListTemplate } from '@/components/templates';
@@ -45,7 +46,17 @@ export function MyW9() {
       ) : q.isLoading || !q.data ? (
         <SkeletonRows count={6} />
       ) : !q.data.required ? (
-        <EmptyState icon={FileSignature} title={t('w9.notNeeded.title')} description={t('w9.notNeeded.body')} />
+        <EmptyState
+          icon={FileSignature}
+          title={t('w9.notNeeded.title')}
+          description={t('w9.notNeeded.body')}
+          // Where the W-4 is (F500 G5): the Pay page's tax settings.
+          action={
+            <Button asChild variant="secondary" size="sm">
+              <Link to="/payroll">{t('w9.toW4')}</Link>
+            </Button>
+          }
+        />
       ) : q.data.status === 'SIGNED' && !editing ? (
         <SignedCard data={q.data} onEdit={() => setEditing(true)} />
       ) : (

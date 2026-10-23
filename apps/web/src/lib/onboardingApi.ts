@@ -52,6 +52,8 @@ export interface ListApplicationsFilters {
   /** Invited-date window (ISO instants, [from, to) — see the route). */
   invitedFrom?: string;
   invitedTo?: string;
+  /** The caller's local day (YYYY-MM-DD), for STARTING_SOON. */
+  today?: string;
   page?: number;
   pageSize?: number;
 }
@@ -65,6 +67,7 @@ export function listApplications(
   if (filters.clientId && filters.clientId.trim()) p.set('clientId', filters.clientId.trim());
   if (filters.invitedFrom) p.set('invitedFrom', filters.invitedFrom);
   if (filters.invitedTo) p.set('invitedTo', filters.invitedTo);
+  if (filters.today) p.set('today', filters.today);
   if (filters.page && filters.page > 1) p.set('page', String(filters.page));
   if (filters.pageSize) p.set('pageSize', String(filters.pageSize));
   const qs = p.toString();
@@ -76,8 +79,9 @@ export function listApplications(
 // Aggregated stats for the Onboarding sidebar tiles. Replaces the prior
 // pattern of fetching the entire (unfiltered) application list to count
 // statuses client-side.
-export function getApplicationStats(): Promise<ApplicationStatsResponse> {
-  return apiFetch<ApplicationStatsResponse>('/onboarding/applications/stats');
+export function getApplicationStats(today?: string): Promise<ApplicationStatsResponse> {
+  // `today` (the caller's local YYYY-MM-DD) anchors "Starting in 7 days".
+  return apiFetch<ApplicationStatsResponse>(`/onboarding/applications/stats${today ? `?today=${today}` : ''}`);
 }
 
 export interface CreateApplicationResponse {

@@ -8,7 +8,7 @@ import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { MassPayChange } from '@/components/payroll/MassPayChange';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
-import { listDepartments } from '@/lib/orgApi';
+import { listCostCenters, listDepartments, listJobProfiles } from '@/lib/orgApi';
 import { listPayrollSchedules } from '@/lib/payrollApi';
 import { useOrgSites } from '@/lib/useOrgSites';
 import { useClients } from '@/lib/useClients';
@@ -31,7 +31,7 @@ import { ListTemplate } from '@/components/templates';
  * and restores each person's "before".
  */
 
-const FIELD_LABEL: Record<string, string> = { site: 'Site', department: 'Department', manager: 'Manager', paySchedule: 'Pay schedule' };
+const FIELD_LABEL: Record<string, string> = { site: 'Site', department: 'Department', manager: 'Manager', paySchedule: 'Pay schedule', costCenter: 'Cost center', jobProfile: 'Job profile' };
 
 export function MassUpdate() {
   const term = useTerm();
@@ -67,11 +67,17 @@ export function MassUpdate() {
   const [newDepartmentId, setNewDepartmentId] = useState<string>('');
   const [newManager, setNewManager] = useState<PickedAssociate | null | 'clear'>(null);
   const [newScheduleId, setNewScheduleId] = useState<string>('');
+  const [newCostCenterId, setNewCostCenterId] = useState<string>('');
+  const [newJobProfileId, setNewJobProfileId] = useState<string>('');
 
   const sites = useOrgSites(true);
   const { clients } = useClients({ enabled: tenant.modules.clientPortal });
   const departments = useQuery({ queryKey: ['org', 'departments'], queryFn: () => listDepartments() });
   const schedules = useQuery({ queryKey: ['payroll', 'schedules'], queryFn: () => listPayrollSchedules() });
+  // Cost center and job profile: the bulk "assign org fields" that lived on
+  // Departments & job profiles › People now lives here, with the rest.
+  const costCenters = useQuery({ queryKey: ['org', 'cost-centers', 'all'], queryFn: () => listCostCenters() });
+  const jobProfiles = useQuery({ queryKey: ['org', 'job-profiles', 'all'], queryFn: () => listJobProfiles() });
   const batches = useQuery({ queryKey: ['people', 'mass-update', 'batches'], queryFn: listMassUpdateBatches });
 
   const filter: MassUpdateFilter = chosen
@@ -88,6 +94,8 @@ export function MassUpdate() {
     ...(newDepartmentId ? { departmentId: newDepartmentId === '__none__' ? null : newDepartmentId } : {}),
     ...(newManager === 'clear' ? { managerId: null } : newManager ? { managerId: newManager.id } : {}),
     ...(newScheduleId ? { payrollScheduleId: newScheduleId === '__none__' ? null : newScheduleId } : {}),
+    ...(newCostCenterId ? { costCenterId: newCostCenterId === '__none__' ? null : newCostCenterId } : {}),
+    ...(newJobProfileId ? { jobProfileId: newJobProfileId === '__none__' ? null : newJobProfileId } : {}),
   };
   const hasFilter = Object.keys(filter).length > 0;
   const hasChanges = Object.keys(changes).length > 0;
@@ -149,6 +157,8 @@ export function MassUpdate() {
       c.departmentName !== undefined ? `Department → ${c.departmentName ? String(c.departmentName) : 'none'}` : null,
       c.managerName !== undefined ? `Manager → ${c.managerName ? String(c.managerName) : 'none'}` : null,
       c.payrollScheduleName !== undefined ? `Pay schedule → ${c.payrollScheduleName ? String(c.payrollScheduleName) : 'none'}` : null,
+      c.costCenterName !== undefined ? `Cost center → ${c.costCenterName ? String(c.costCenterName) : 'none'}` : null,
+      c.jobProfileName !== undefined ? `Job profile → ${c.jobProfileName ? String(c.jobProfileName) : 'none'}` : null,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -156,7 +166,7 @@ export function MassUpdate() {
   return (
     <ListTemplate
       title="Mass update"
-      subtitle={`Move a group of ${term('workers').toLowerCase()} between ${term('sites').toLowerCase()}, departments, managers or pay schedules in one step, with one audit entry and a day to undo.`}
+      subtitle={`Move a group of ${term('workers').toLowerCase()} between ${term('sites').toLowerCase()}, departments, managers, pay schedules, cost centers or job profiles in one step, with one audit entry and a day to undo.`}
       breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Mass update' }]}
     >
       <Stepper steps={[{ label: 'Who and what' }, { label: 'Preview' }, { label: 'Done' }]} current={step + 1} />
@@ -224,6 +234,10 @@ export function MassUpdate() {
                 )}
               </Field>
               <Field label="Pay schedule">{(p) => <Select {...p} value={newScheduleId} onChange={(e) => setNewScheduleId(e.target.value)}><option value="">Leave as is</option><option value="__none__">Clear</option>{(schedules.data?.schedules ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
+              <Field label="Cost center">{(p) => <Select {...p} value={newCostCenterId} onChange={(e) => setNewCostCenterId(e.target.value)}><option value="">Leave as is</option><option value="__none__">Clear</option>{(costCenters.data?.costCenters ?? []).map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}</Select>}</Field>
+              <Field label="Job profile" hint="A move that changes overtime exemption, comp class or tipped code is a promotion — send it from the person's record.">
+                {(p) => <Select {...p} value={newJobProfileId} onChange={(e) => setNewJobProfileId(e.target.value)}><option value="">Leave as is</option><option value="__none__">Clear</option>{(jobProfiles.data?.jobProfiles ?? []).map((j) => <option key={j.id} value={j.id}>{j.code} · {j.title}</option>)}</Select>}
+              </Field>
               <div className="flex justify-end pt-2">
                 <Button onClick={() => preview.mutate()} loading={preview.isPending} disabled={!hasChanges || !hasFilter}>
                   Preview

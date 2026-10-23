@@ -38,6 +38,7 @@ import { isImagePick } from '@/lib/loadImageFile';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -133,13 +134,17 @@ export function AssociateDocumentsView() {
   const [busy, setBusy] = useState(false);
   const [errorLocal, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
+  // One way to upload (F500 G1): the header's Upload opens this sheet; there
+  // is no second form at the bottom of the page.
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
-  // Name of the file sitting in the (visually hidden) picker — the tap
-  // zone displays it so "did my file attach?" is never a mystery.
-  const [fileName, setFileName] = useState<string | null>(null);
+  // The file picked (or shared into Alto) — the tap zone shows its name so
+  // "did my file attach?" is never a mystery. Held here, not in the input,
+  // so a share can attach it before the sheet opens.
+  const [pickedFile, setPickedFile] = useState<File | null>(null);
+  const fileName = pickedFile?.name ?? null;
   // Document being replaced via the renew flow — drives the "Replacing:"
   // chip on the upload form so the intent stays visible.
   const [renewTarget, setRenewTarget] = useState<DocumentRecord | null>(null);
@@ -175,18 +180,10 @@ export function AssociateDocumentsView() {
           res.headers.get('x-shared-filename') ?? 'shared-document',
         );
         const file = new File([blob], name, { type: blob.type });
-        const input = fileRef.current;
-        if (input) {
-          const dt = new DataTransfer();
-          dt.items.add(file);
-          input.files = dt.files;
-          // Programmatic assignment fires no change event — mirror the
-          // name into the tap zone by hand.
-          setFileName(name);
-        }
+        setPickedFile(file);
         // Consume the stash — a share is one intake, never a resurface.
         for (const key of keys) await cache.delete(key);
-        formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setUploadOpen(true);
         toast.success(t('docs.sharedAttached', { name }));
         if (keys.length > 1) {
           toast(t('docs.sharedOnlyFirst', { count: keys.length }));
@@ -209,7 +206,7 @@ export function AssociateDocumentsView() {
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    const file = fileRef.current?.files?.[0];
+    const file = pickedFile;
     if (!file) {
       setError(t('docs.chooseFirst'));
       return;
@@ -231,8 +228,9 @@ export function AssociateDocumentsView() {
     try {
       await uploadMyDocument(file, kind);
       if (fileRef.current) fileRef.current.value = '';
-      setFileName(null);
+      setPickedFile(null);
       setRenewTarget(null);
+      setUploadOpen(false);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t('docs.uploadFailed'));
@@ -262,8 +260,8 @@ export function AssociateDocumentsView() {
   const startRenewal = (d: DocumentRecord) => {
     setKind(d.kind);
     setRenewTarget(d);
-    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    fileRef.current?.focus();
+    setError(null);
+    setUploadOpen(true);
   };
 
   // The Compliance agent's chase links here (agent families step 4):
@@ -279,7 +277,7 @@ export function AssociateDocumentsView() {
     if (target) startRenewal(target);
     else if (kindParam && (kindValues as readonly string[]).includes(kindParam)) {
       setKind(kindParam as DocumentKind);
-      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setUploadOpen(true);
     }
     const next = new URLSearchParams(params);
     next.delete('renew');
@@ -307,9 +305,10 @@ export function AssociateDocumentsView() {
     summary.rejected + summary.expired + summary.expiring > 0;
   const inReview = summary !== null && !needsAction && summary.pending > 0;
 
-  const scrollToUpload = () => {
-    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    fileRef.current?.focus();
+  const openUpload = () => {
+    setRenewTarget(null);
+    setError(null);
+    setUploadOpen(true);
   };
 
   return (
@@ -320,7 +319,7 @@ export function AssociateDocumentsView() {
         title={t('docs.title')}
         subtitle={t('docs.subtitle')}
         primaryAction={
-          <Button onClick={scrollToUpload}>
+          <Button onClick={openUpload}>
             <Upload className="h-4 w-4" />
             {t('docs.upload')}
           </Button>
@@ -425,6 +424,12 @@ export function AssociateDocumentsView() {
           icon={FileText}
           title={t('docs.emptyTitle')}
           description={t('docs.emptyDesc')}
+          action={
+            <Button onClick={openUpload}>
+              <Upload className="h-4 w-4" />
+              {t('docs.upload')}
+            </Button>
+          }
         />
       )}
       {docs && docs.length > 0 && (
@@ -549,15 +554,26 @@ export function AssociateDocumentsView() {
         </ul>
       )}
 
-      {/* The tool comes LAST — most visits are "check my status", not
-          "upload"; the header's Upload button and every renew/replace
-          CTA scroll down here. */}
-      <form
-        ref={formRef}
-        onSubmit={handleUpload}
-        className="bg-navy border border-navy-secondary rounded-lg p-5 mt-6 space-y-3"
+      {/* The upload sheet: the header's Upload, the empty state, every
+          renew/replace and a document shared into Alto all open it. */}
+      <Dialog
+        open={uploadOpen}
+        onOpenChange={(o) => {
+          setUploadOpen(o);
+          if (!o) {
+            setRenewTarget(null);
+            setPickedFile(null);
+          }
+        }}
       >
-        <h2 className="text-lg font-medium text-white">{t('docs.upload')}</h2>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('docs.upload')}</DialogTitle>
+          </DialogHeader>
+      <form
+        onSubmit={handleUpload}
+        className="space-y-3"
+      >
         {renewTarget && (
           <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-gold/40 bg-gold/10 px-3 py-1 text-xs text-gold">
             <RotateCw className="h-3 w-3 shrink-0" />
@@ -572,7 +588,7 @@ export function AssociateDocumentsView() {
             </button>
           </div>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <label className="block">
             <span className="block text-xs font-medium text-silver mb-1">
               {t('docs.kindLabel')}
@@ -610,7 +626,7 @@ export function AssociateDocumentsView() {
               type="file"
               accept="application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif"
               capture="environment"
-              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
+              onChange={(e) => setPickedFile(e.target.files?.[0] ?? null)}
               className="sr-only"
             />
             <span className="block text-xs text-silver/70 mt-1">
@@ -623,6 +639,8 @@ export function AssociateDocumentsView() {
           {busy ? t('docs.uploading') : t('docs.upload')}
         </Button>
       </form>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={deleteTarget !== null}

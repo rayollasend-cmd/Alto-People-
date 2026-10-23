@@ -24,6 +24,8 @@ vi.mock('@/lib/onboardingApi', () => ({
     `/api/onboarding/applications/${id}/compliance-packet`,
   getApplication: vi.fn(),
   getApplicationAudit: vi.fn(),
+  getFirstDay: vi.fn(),
+  patchFirstDay: vi.fn(),
   getApplicationPolicies: vi.fn(),
   getDirectDeposit: vi.fn(),
   getProfile: vi.fn(),
@@ -72,7 +74,7 @@ vi.mock('@/lib/auth', async () => {
   };
 });
 
-import { getApplication, getApplicationAudit, nextReviewApplication } from '@/lib/onboardingApi';
+import { getApplication, getApplicationAudit, getFirstDay, nextReviewApplication } from '@/lib/onboardingApi';
 import { getI9Status, listI9Documents } from '@/lib/i9Api';
 import { getAssociatePaySchedule } from '@/lib/payScheduleFlowApi';
 import { ApplicationDetailBody } from '@/pages/onboarding/ApplicationDetail';
@@ -148,5 +150,74 @@ describe('one-click approve and the hire’s pay schedule', () => {
     await user.click(approve);
     const dialog = await screen.findByRole('dialog', { name: 'Approve onboarding' });
     expect(within(dialog).getByText(/No pay schedule covers this hire — choose one/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * F500 G1 — the application page reads before it edits: each task counted
+ * once, the key facts under the name, the submission inside its own task,
+ * and the "no pay schedule" warning said once, in First day.
+ */
+describe('the application page (F500 G1)', () => {
+  const tasks = [
+    { id: 't1', kind: 'PROFILE_INFO', status: 'DONE', title: 'Profile', description: null, order: 0, documentId: null, completedAt: '2026-08-02T12:00:00.000Z' },
+    { id: 't2', kind: 'W4', status: 'SKIPPED', title: 'W-4', description: null, order: 1, documentId: null, completedAt: null },
+    { id: 't3', kind: 'POLICY_ACK', status: 'SKIPPED', title: 'Policies', description: null, order: 2, documentId: null, completedAt: null },
+    { id: 't4', kind: 'DIRECT_DEPOSIT', status: 'PENDING', title: 'Payout', description: null, order: 3, documentId: null, completedAt: null },
+  ] as ApplicationDetailType['tasks'];
+
+  beforeEach(() => {
+    vi.mocked(getApplication).mockResolvedValue({
+      ...detailFixture(),
+      status: 'DRAFT',
+      percentComplete: 75,
+      tasks,
+      lastActivityAt: '2026-08-02T12:00:00.000Z',
+      ownerName: 'Ana Recruiter',
+    });
+    vi.mocked(getAssociatePaySchedule).mockResolvedValue({ current: null, pending: null, ruleDefault: null, nextPayDate: null });
+    vi.mocked(getFirstDay).mockResolvedValue({
+      startDate: null,
+      store: null,
+      stores: [],
+      manager: null,
+      employeeNumber: { issued: false, clientId: null, validAtClient: false },
+      firstShift: null,
+      i9: { section1CompletedAt: null, section2CompletedAt: null, section2DueBy: null },
+    });
+  });
+
+  it('counts each task once and says how many are resolved', async () => {
+    renderBody();
+    expect(await screen.findByTestId('checklist-resolved')).toHaveTextContent('3 of 4 resolved');
+    // Done is done alone (it used to be done + skipped).
+    const chips = screen.getByTestId('checklist-resolved').parentElement!;
+    expect(within(chips).getByText('Done').nextSibling).toHaveTextContent('1');
+    expect(within(chips).getByText('Skipped').nextSibling).toHaveTextContent('2');
+  });
+
+  it('gives the facts under the name: invited, last activity, start, owner', async () => {
+    renderBody();
+    const facts = await screen.findByTestId('page-facts');
+    expect(within(facts).getByText('Invited')).toBeInTheDocument();
+    expect(within(facts).getByText('Last activity')).toBeInTheDocument();
+    expect(within(facts).getByText('Starts')).toBeInTheDocument();
+    expect(within(facts).getByText('Ana Recruiter')).toBeInTheDocument();
+  });
+
+  it('keeps Reject out of the row, offers Nudge, and has no separate "Submitted data" card', async () => {
+    renderBody();
+    const row = (await screen.findAllByTestId('page-actions'))[0]!;
+    expect(within(row).getByRole('button', { name: 'Nudge' })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: /Reject/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Submitted data')).not.toBeInTheDocument();
+    // The profile's submission opens inside the profile tile.
+    expect(screen.getByRole('button', { name: 'What they submitted' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('says "no pay schedule covers this hire" once', async () => {
+    renderBody();
+    await screen.findByTestId('checklist-resolved');
+    await waitFor(() => expect(screen.getAllByText(/No pay schedule covers this hire/)).toHaveLength(1));
   });
 });

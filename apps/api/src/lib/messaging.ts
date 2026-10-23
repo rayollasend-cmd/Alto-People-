@@ -1,6 +1,7 @@
 import type { PrismaClient, Role } from '@prisma/client';
 import { regionSiteIds } from './orgUnits.js';
 import { ROLE_LABELS } from '@alto-people/shared';
+import { personDisplayName } from './displayName.js';
 import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
 import { emitLiveEvent } from './liveEvents.js';
@@ -194,11 +195,14 @@ export function directoryWhere(from: Messenger, regionClients: string[] = [], pl
   return { ...base, role: { in: MESSAGING_ROLES } };
 }
 
+/** A person's name in the messenger — the shared rule (lib/displayName): never the email's local part. */
 export function displayName(u: {
   email: string;
+  role?: Role | string | null;
+  displayName?: string | null;
   associate?: { firstName: string; lastName: string } | null;
 }): string {
-  return u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : u.email.split('@')[0] ?? u.email;
+  return personDisplayName(u);
 }
 
 export function roleLabel(role: Role): string {
@@ -282,11 +286,12 @@ export async function ensureStoreChannels(
   });
   if (!client) return [];
   // One channel per store when the client has several; one for the
-  // client when it has a single site (or none on file).
+  // client when it has a single site (or none on file) — named by that
+  // store, not the client (F500 G5).
   const stores =
     client.locations.length > 1
       ? client.locations
-      : [{ id: null as string | null, name: client.name }];
+      : [{ id: null as string | null, name: client.locations[0]?.name ?? client.name }];
   const members = await prisma.user.findMany({
     where: {
       clientId: client.id,

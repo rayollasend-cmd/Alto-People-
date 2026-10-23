@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { ChevronDown, ChevronUp, Download, MapPinPlus, Network, Plus, Printer } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, MapPinPlus, Network, Plus, Printer, UserCog } from 'lucide-react';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { getOrgChart, getStoreCrew, searchFieldPeople, type OrgChartView, type OrgNode } from '@/lib/orgChartApi';
 import { useClients } from '@/lib/useClients';
@@ -21,7 +21,7 @@ import {
   SkeletonRows,
 } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
-import { ChartCanvas, ReportsToDialog, TreeList, type Painter, type StructureActions } from './OrgChartParts';
+import { BulkReportsToDialog, ChartCanvas, ReportsToDialog, TreeList, type Painter, type StructureActions } from './OrgChartParts';
 import { AddRegionDialog, AddSiteDialog, MoveToRegionDialog, StructureDrawer, storeRegion, useMoveStore } from './StructureEditor';
 import { regionIdOf } from '@/lib/structureApi';
 import {
@@ -72,6 +72,7 @@ export function OrgChart() {
   const [colourBy, setColourBy] = useState<ColourBy>('none');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<OrgNode | null>(null);
+  const [bulkLines, setBulkLines] = useState(false);
   const canEdit = can('manage:org') && view === 'company';
   // The field view is where the structure is edited: regions, stores, cost centers.
   const canStructure = can('manage:org') && view === 'field';
@@ -220,6 +221,9 @@ export function OrgChart() {
     return { people, seats, stores };
   }, [nodes]);
 
+  // The company chart with no reporting line at all: offer to set them.
+  const noLines = canEdit && view === 'company' && !!chart.data && nodes.length > 0 && !nodes.some((n) => n.parentId && (n.kind === 'person' || n.kind === 'staff'));
+
   const exportCsv = () => downloadCsv(`org-chart-${view}-${ymdLocal()}.csv`, chartCsv(index, roleLabel));
 
   return (
@@ -232,31 +236,18 @@ export function OrgChart() {
             ? `Every ${term('label.client').toLowerCase()}, ${term('label.store').toLowerCase()} and crew, with who leads them and today’s coverage.`
             : `Every ${term('label.store').toLowerCase()} and its crew, with who leads them and today’s coverage.`
       }
-      breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Org chart' }]}
-      secondaryActions={
-        <div className="flex flex-wrap items-center gap-2 print:hidden">
-          {canStructure && (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setAddingRegion(true)}>
-                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                Region
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setAddingSite({})}>
-                <MapPinPlus className="h-3.5 w-3.5" aria-hidden="true" />
-                {term('label.store')}
-              </Button>
-            </>
-          )}
-          <Button variant="ghost" size="sm" className="hidden md:inline-flex" onClick={() => window.print()} disabled={!nodes.length}>
-            <Printer className="h-3.5 w-3.5" aria-hidden="true" />
-            Print or save as PDF
-          </Button>
-          <Button variant="outline" size="sm" onClick={exportCsv} disabled={!nodes.length}>
-            <Download className="h-3.5 w-3.5" aria-hidden="true" />
-            CSV
-          </Button>
-        </div>
-      }
+      // Its own trail: the nav trail would put it under Departments & job
+      // profiles (/org is a path prefix), but the sidebar lists them side by side.
+      breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Org chart' }]}
+      actions={[
+        // The company chart is edited by its reporting lines; the field tree by its regions and stores.
+        // (While nobody has a manager the banner below offers it, so once.)
+        { key: 'lines', label: 'Set reporting lines', icon: UserCog, onSelect: () => setBulkLines(true), hidden: !canEdit || noLines },
+        { key: 'store', label: `Add ${term('label.store').toLowerCase()}`, icon: MapPinPlus, onSelect: () => setAddingSite({}), hidden: !canStructure },
+        { key: 'region', label: 'Add region', icon: Plus, onSelect: () => setAddingRegion(true), hidden: !canStructure },
+        { key: 'csv', label: 'Export CSV', icon: Download, onSelect: exportCsv, disabled: !nodes.length },
+        { key: 'print', label: 'Print or save as PDF', icon: Printer, onSelect: () => window.print(), disabled: !nodes.length, hidden: isPhone },
+      ]}
     >
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3 print:hidden">
@@ -348,12 +339,12 @@ export function OrgChart() {
             </>
           )}
           <label htmlFor="org-colour" className="sr-only">
-            Colour by
+            Color by
           </label>
           <Select id="org-colour" size="sm" value={colourBy} onChange={(e) => setColourBy(e.target.value as ColourBy)}>
-            <option value="none">No colour</option>
-            <option value="department">Colour by department</option>
-            {view === 'field' && hasClients && <option value="client">Colour by {term('label.client').toLowerCase()}</option>}
+            <option value="none">No color</option>
+            <option value="department">Color by department</option>
+            {view === 'field' && hasClients && <option value="client">Color by {term('label.client').toLowerCase()}</option>}
           </Select>
           <label className="flex items-center gap-2 text-sm text-ink coarse:min-h-11">
             <input type="checkbox" className="h-4 w-4 coarse:h-6 coarse:w-6" checked={former} onChange={(e) => setFormer(e.target.checked)} />
@@ -372,7 +363,7 @@ export function OrgChart() {
         </div>
 
         {colourBy !== 'none' && colour.legend.length > 0 && (
-          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted" aria-label="Colour key">
+          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted" aria-label="Color key">
             {colour.legend.map((l) => (
               <li key={l.key} className="flex items-center gap-1.5">
                 <span className={`h-2.5 w-2.5 rounded-full ${PALETTE[l.slot]!.swatch}`} aria-hidden="true" />
@@ -432,10 +423,17 @@ export function OrgChart() {
                   : `The arrow moves a ${term('label.store').toLowerCase()} to a region; the gear opens details. From the keyboard: M to move, I for details.`}
               </p>
             )}
-            {canEdit && view === 'company' && !nodes.some((n) => n.parentId && (n.kind === 'person' || n.kind === 'staff')) && (
-              <ErrorBanner severity="info">
-                Nobody on this chart has a manager recorded yet. Use “Reports to” on a card (the person-and-gear button) to build the reporting lines.
-              </ErrorBanner>
+            {noLines && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3 print:hidden">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-ink">Nobody has a manager on this chart yet</p>
+                  <p className="text-sm text-ink-muted">Everyone sits at the top. Pick a manager and the people who report to them, for many people at once.</p>
+                </div>
+                <Button size="sm" onClick={() => setBulkLines(true)}>
+                  <UserCog className="h-4 w-4" aria-hidden="true" />
+                  Set reporting lines
+                </Button>
+              </div>
             )}
             {layout === 'chart' ? (
               <ChartCanvas
@@ -468,6 +466,7 @@ export function OrgChart() {
         )}
       </div>
       <ReportsToDialog subject={editing} index={index} onClose={() => setEditing(null)} />
+      {canEdit && <BulkReportsToDialog open={bulkLines} index={index} roleLabel={roleLabel} onClose={() => setBulkLines(false)} />}
       {canStructure && (
         <>
           <StructureDrawer node={details} index={index} onClose={() => setDetails(null)} onAddSite={(d) => setAddingSite(d)} />

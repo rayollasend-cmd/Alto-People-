@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { I9Tab } from './I9Tab';
 import { EVerifyTab } from './EVerifyTab';
@@ -9,7 +9,7 @@ import { ComplianceScorecard } from './ComplianceScorecard';
 import { AuditPacketTab } from './AuditPacketTab';
 import { RequirementsTab } from './RequirementsTab';
 import { ListTemplate } from '@/components/templates';
-import { Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
 type Tab = 'scorecard' | 'i9' | 'everify' | 'background' | 'drugtests' | 'j1' | 'requirements' | 'audit';
 
@@ -57,13 +57,9 @@ export function ComplianceHome() {
     <ListTemplate
         title="Compliance"
         subtitle={`Track I-9, background-check${hasJ1 ? ', drug-test and J-1' : ' and drug-test'} obligations across every active ${term('worker').toLowerCase()}.`}
-        secondaryActions={
-          // Sibling compliance surface with its own route (not a ?tab=) —
-          // this header link is its only way in from the app shell.
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/compliance/osha">OSHA / WC / EEO-1</Link>
-          </Button>
-        }
+        // The injury log, WC codes and EEO-1 are their own page (and their
+        // own sidebar entry, Safety & EEO): a sibling link, not a button.
+        related={[{ label: 'Safety & EEO reporting', to: '/compliance/osha' }]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>

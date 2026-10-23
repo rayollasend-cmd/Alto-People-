@@ -17,6 +17,8 @@ export interface CoverageHeatStripDay {
   dayKey: string;
   dayStart: Date;
   label: string;
+  /** The row's label ("Sat 17"); the table keeps the full `label`. */
+  shortLabel?: string;
   coverage: HourlyCoverage;
 }
 
@@ -129,7 +131,9 @@ function DayCells({
 }) {
   return (
     <>
-      <div className="flex items-center pr-2 text-2xs text-silver/70">{day.label}</div>
+      <div className="flex items-center whitespace-nowrap pr-2 text-2xs text-silver/70" title={day.label}>
+        {day.shortLabel ?? day.label}
+      </div>
       {day.coverage.scheduled.map((n, h) => {
         const open = day.coverage.open[h];
         const short = Math.max(0, target - n);

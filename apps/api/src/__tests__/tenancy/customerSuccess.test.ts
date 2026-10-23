@@ -48,6 +48,12 @@ describe('support requests', () => {
     await flushPendingNotifications();
     const mine = await hotel.a.get('/support/mine');
     expect(mine.body.requests[0]).toMatchObject({ status: 'RESOLVED', reply: 'Re-issue the pairing code from Kiosk admin.' });
+    // F500 G4: the inbox keeps a resolved history and counts each tab.
+    const open = await platform.get('/support/inbox');
+    expect(open.body.requests).toEqual([]);
+    expect(open.body.counts).toEqual({ OPEN: 0, IN_PROGRESS: 0, RESOLVED: 1 });
+    const history = await platform.get('/support/inbox?status=RESOLVED');
+    expect(history.body.requests).toEqual([expect.objectContaining({ id: asked.body.id, status: 'RESOLVED', resolvedAt: expect.any(String) })]);
     expect(await prisma.notification.count({ where: { recipientUserId: hotel.user.id, channel: 'IN_APP', subject: 'Resolved: Kiosk will not pair' } })).toBe(1);
   });
 
@@ -55,6 +61,8 @@ describe('support requests', () => {
     const r = await agent().get('/support/config');
     expect(r.status).toBe(200);
     expect(r.body).toHaveProperty('statusPageUrl');
+    // F500 G5: the operator's published support line, for the public pages' "write to us".
+    expect(r.body.contact).toEqual({ email: expect.stringMatching(/@/), phone: expect.any(String), hours: expect.any(String) });
   });
 });
 

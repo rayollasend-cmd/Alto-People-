@@ -15,6 +15,7 @@ import {
   GraduationCap,
   HardHat,
   Info,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -45,6 +46,7 @@ import { FilterChip } from '@/components/ui/FilterBar';
 import { downloadCsv } from '@/lib/csv';
 import type {
   OshaIncidentSeverity,
+  ScorecardAction,
   ScorecardActionState,
   ScorecardExpiringItem,
   ScorecardHistoryPoint,
@@ -54,7 +56,9 @@ import type {
 } from '@alto-people/shared';
 import {
   OSHA_DART_TARGET,
+  OSHA_RATE_MIN_HOURS,
   OSHA_TRIR_TARGET,
+  oshaRateMeaningful,
   scorecardGrade,
   scorecardSeverityFromFailPct,
 } from '@alto-people/shared';
@@ -89,6 +93,7 @@ import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Sparkline } from '@/components/ui/charts/Sparkline';
+import { ACTIONS_PAGE, groupScorecardActions, type ActionEntry } from './scorecardActions';
 
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -294,6 +299,15 @@ function HeroStrip({
   const score = data?.score ?? null;
   const grade = score === null ? null : scorecardGrade(score);
   const weekDelta = history?.weekDelta ?? null;
+  // The snapshot the week's change is measured from (the API's rule: the
+  // closest one at least 6 days older than the latest), so the change
+  // reads "was 40 on Oct 15" instead of an undated "-23 wk".
+  const weekAnchor = useMemo(() => {
+    const points = history?.points ?? [];
+    if (weekDelta === null || points.length < 2) return null;
+    const latestMs = Date.parse(points[points.length - 1]!.day);
+    return [...points].reverse().find((p) => latestMs - Date.parse(p.day) >= 6 * 24 * 3600 * 1000) ?? null;
+  }, [history, weekDelta]);
 
   return (
     <Card className={cn('border', critical > 0 ? 'border-alert/60' : 'border-navy-secondary')}>
@@ -327,17 +341,18 @@ function HeroStrip({
                 </div>
                 <div className="text-2xs uppercase tracking-widest text-silver/80 mt-1">
                   Score · grade {grade}
-                  {weekDelta !== null && (
-                    <span
-                      className={cn(
-                        'ml-1.5 tabular-nums font-semibold',
-                        weekDelta > 0 ? 'text-success' : weekDelta < 0 ? 'text-alert' : 'text-silver',
-                      )}
-                    >
-                      {weekDelta > 0 ? '+' : ''}{weekDelta} wk
-                    </span>
-                  )}
                 </div>
+                {weekDelta !== null && weekAnchor && (
+                  <div
+                    className={cn(
+                      'text-2xs tabular-nums mt-0.5',
+                      weekDelta > 0 ? 'text-success' : weekDelta < 0 ? 'text-alert' : 'text-silver',
+                    )}
+                  >
+                    {weekDelta > 0 ? '+' : weekDelta < 0 ? '−' : '±'}
+                    {Math.abs(weekDelta)} · was {weekAnchor.score} on {fmtDate(parseYmd(weekAnchor.day))}
+                  </div>
+                )}
               </div>
               {history && history.points.length >= 2 && (
                 <ScoreSparkline points={history.points} />
@@ -393,14 +408,18 @@ function ScoreSparkline({ points }: { points: ScorecardHistoryPoint[] }) {
   if (points.length < 2) return null;
   const first = points[0]!;
   const latest = points[points.length - 1]!;
+  const label = `Score ${first.score} on ${fmtDate(parseYmd(first.day))}, ${latest.score} on ${fmtDate(parseYmd(latest.day))}`;
   return (
-    <Sparkline
-      series={points.map((p) => p.score)}
-      tone={latest.score >= first.score ? 'good' : 'bad'}
-      width={96}
-      height={30}
-      label={`Compliance score trend: ${first.score} on ${first.day} to ${latest.score} on ${latest.day}`}
-    />
+    // The dates live in the tooltip: a sparkline has no axis.
+    <span title={label} className="inline-flex">
+      <Sparkline
+        series={points.map((p) => p.score)}
+        tone={latest.score >= first.score ? 'good' : 'bad'}
+        width={96}
+        height={30}
+        label={`Compliance score trend: ${label}`}
+      />
+    </span>
   );
 }
 
@@ -571,17 +590,22 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
               {data.signals.map((s) => {
                 const total = data.activeAssociateCount;
                 const pct = total === 0 ? 100 : Math.round((s.completedCount / total) * 100);
+                // The clause and the list are two controls side by side: the
+                // row used to be a <button> holding the clause's <button>.
                 return (
-                  <button
+                  <div
                     key={s.key}
-                    type="button"
-                    onClick={() => setDrawerSignal(s)}
-                    className="group w-full flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-navy-secondary/40 text-left min-w-0"
+                    className="group w-full flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-navy-secondary/40 min-w-0"
                   >
                     <ClauseTooltip clause={s.contractClause}>
                       <span className="text-xs text-white truncate">{s.label}</span>
                     </ClauseTooltip>
-                    <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setDrawerSignal(s)}
+                      aria-label={`${s.label}: ${s.completedCount} of ${total}. See who is missing it`}
+                      className="flex flex-1 items-center justify-end gap-3 shrink-0 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                    >
                       {(s.overdueCount ?? 0) > 0 && (
                         <span className="inline-flex items-center gap-1 rounded bg-alert/15 px-1.5 py-0.5 text-2xs font-semibold text-alert">
                           <AlertTriangle className="h-3 w-3" />
@@ -596,8 +620,8 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
                       </span>
                       <PctBar pct={pct} severity={pctSeverity(pct)} className="w-16 sm:w-24" />
                       <ChevronRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-silver" />
-                    </div>
-                  </button>
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -753,12 +777,23 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
     [data],
   );
   const { attestingKey, quickAttest } = useQuickAttest(applyUpdated);
+  // The header speaks for the documents it counts: 0 / 0 / 0 under a red
+  // "Critical" read as a contradiction when the red came from the
+  // insurance attestations below. Those carry their own badge.
+  const documentSeverity: ScorecardSeverity = !data
+    ? 'ok'
+    : data.buckets.red.length > 0
+      ? 'critical'
+      : data.buckets.amber.length > 0
+        ? 'warn'
+        : 'ok';
+  const attestationSeverity = attestationsSeverity(signals);
 
   return (
     <TileShell
       icon={<Clock className="h-4 w-4" />}
       title="Expiring documents (next 90 days)"
-      severity={data?.severity ?? 'ok'}
+      severity={documentSeverity}
       loading={!data && !error}
       error={error}
       stale={stale}
@@ -843,8 +878,9 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
           )}
           {signals.length > 0 && (
             <div className="mt-3 pt-3 border-t border-navy-secondary">
-              <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1.5">
-                Insurance attestations
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-2xs uppercase tracking-widest text-silver/80">Insurance attestations</span>
+                <Badge variant={SEVERITY_BADGE[attestationSeverity].variant}>{SEVERITY_BADGE[attestationSeverity].label}</Badge>
               </div>
               <ul className="space-y-1.5">
                 {signals.map((s) => (
@@ -1699,49 +1735,51 @@ function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; client
           <div className="space-y-1.5">
             {data.signals.map((s) => {
               const pct = s.totalAssociates === 0 ? 100 : Math.round((s.completedCount / s.totalAssociates) * 100);
-              return (
-                <button
+              // The clause and the list are sibling controls (never a button
+              // inside a button); a signal with nothing to measure is text.
+              return s.status === 'live' ? (
+                <div
                   key={s.tag}
-                  type="button"
-                  disabled={s.status !== 'live'}
-                  onClick={() => s.status === 'live' && setDrawerSignal(s)}
-                  className={cn(
-                    'group w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-left min-w-0',
-                    s.status === 'live' ? 'hover:bg-navy-secondary/40' : 'opacity-70',
-                  )}
+                  className="group w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded min-w-0 hover:bg-navy-secondary/40"
                 >
-                  {/* A disabled row is not a control, so it carries no tooltip
-                      trigger inside it (a control inside a control). */}
-                  {s.status === 'live' ? (
-                    <ClauseTooltip clause={s.contractClause}>
-                      <span className="text-xs text-white truncate">{s.label}</span>
-                    </ClauseTooltip>
-                  ) : (
+                  <ClauseTooltip clause={s.contractClause}>
                     <span className="text-xs text-ink truncate">{s.label}</span>
-                  )}
-                  {s.status === 'live' ? (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs2 text-silver tabular-nums hidden sm:inline">
-                        {s.completedCount}/{s.totalAssociates} ({pct}%)
-                      </span>
-                      <span className="text-xs2 text-silver tabular-nums sm:hidden">
-                        {pct}%
-                      </span>
-                      <PctBar pct={pct} severity={pctSeverity(pct)} />
-                      <ChevronRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-silver" />
-                    </div>
-                  ) : (
-                    <Badge variant="outline">
-                      {s.status === 'no_course' ? 'Tag a course' : 'No enrollments'}
-                    </Badge>
-                  )}
-                </button>
+                  </ClauseTooltip>
+                  <button
+                    type="button"
+                    onClick={() => setDrawerSignal(s)}
+                    aria-label={`${s.label}: ${s.completedCount} of ${s.totalAssociates}. See who is missing it`}
+                    className="flex flex-1 items-center justify-end gap-2 shrink-0 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                  >
+                    <span className="text-xs2 text-silver tabular-nums hidden sm:inline">
+                      {s.completedCount}/{s.totalAssociates} ({pct}%)
+                    </span>
+                    <span className="text-xs2 text-silver tabular-nums sm:hidden">
+                      {pct}%
+                    </span>
+                    <PctBar pct={pct} severity={pctSeverity(pct)} />
+                    <ChevronRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-silver" />
+                  </button>
+                </div>
+              ) : (
+                <div key={s.tag} className="w-full flex items-center justify-between gap-2 px-2 py-1.5 min-w-0">
+                  <span className="text-xs text-ink truncate">{s.label}</span>
+                  <Badge variant="outline">
+                    {s.status === 'no_course' ? 'No course linked' : 'No enrollments'}
+                  </Badge>
+                </div>
               );
             })}
           </div>
-          <p className="text-2xs text-silver/80 mt-2">
-            "Tag a course" means no Learning course has the matching <span className="font-mono">complianceTag</span>. Set it from the Learning admin page to start tracking.
-          </p>
+          {data.signals.some((s) => s.status === 'no_course') && (
+            <p className="text-2xs text-silver/80 mt-2">
+              “No course linked” means no Learning course covers this training yet.{' '}
+              <Link to="/learning" className="text-gold underline underline-offset-2">
+                Link a course in Learning
+              </Link>{' '}
+              to start tracking it.
+            </p>
+          )}
 
           <Drawer open={drawerSignal !== null} onOpenChange={(o) => !o && setDrawerSignal(null)}>
             <DrawerHeader>
@@ -1822,6 +1860,13 @@ const SEVERITY_LABEL: Record<OshaIncidentSeverity, string> = {
   FATAL: 'Fatality',
 };
 
+const INCIDENT_STATUS_LABEL: Record<string, string> = {
+  REPORTED: 'Reported',
+  INVESTIGATING: 'Investigating',
+  ESCALATED: 'Escalated',
+  RESOLVED: 'Resolved',
+};
+
 function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
   const fetcher = useCallback(
     () => getScorecardSafety(clientId || undefined),
@@ -1886,6 +1931,21 @@ function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
             <div className="min-w-0">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 flex-1">
+                  {data.trir !== null && !oshaRateMeaningful(data.hoursWorkedYtd) ? (
+                    // One case on a few thousand hours reads as a TRIR in the
+                    // hundreds: below the threshold the rate is noise, so the
+                    // tile says so instead of printing it in red.
+                    <div className="col-span-2">
+                      <div className="text-sm font-semibold text-ink leading-tight">
+                        {data.recordableCountYtd} {data.recordableCountYtd === 1 ? 'recordable' : 'recordables'} · rates shown after{' '}
+                        {OSHA_RATE_MIN_HOURS.toLocaleString('en-US')} h
+                      </div>
+                      <div className="text-2xs text-silver/80">
+                        TRIR and DART need enough hours to mean something; {Math.round(data.hoursWorkedYtd).toLocaleString('en-US')} worked so far this year.
+                      </div>
+                    </div>
+                  ) : (
+                  <>
                   <SafetyStat
                     label={`TRIR (target ≤ ${OSHA_TRIR_TARGET})`}
                     value={data.trir === null ? '—' : String(data.trir)}
@@ -1908,6 +1968,8 @@ function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
                           : 'text-success'
                     }
                   />
+                  </>
+                  )}
                   <SafetyStat
                     label="Recordables YTD"
                     value={String(data.recordableCountYtd)}
@@ -1942,7 +2004,7 @@ function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
                   to="/compliance/osha"
                   className="text-2xs text-gold hover:underline"
                 >
-                  Full injury log (OSHA · WC · EEO-1) →
+                  Full injury log →
                 </Link>
               </div>
               {data.openIncidents.length === 0 ? (
@@ -1971,7 +2033,7 @@ function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
                               </span>
                             )}
                             <span className="ml-1.5 inline-flex rounded bg-navy-secondary px-1 py-px text-2xs text-silver align-middle">
-                              {inc.status.toLowerCase()}
+                              {INCIDENT_STATUS_LABEL[inc.status] ?? inc.status}
                             </span>
                           </div>
                           <div className="text-2xs text-silver/80 truncate">
@@ -2063,6 +2125,9 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
   const [filter, setFilter] = useState<ActionFilter>('all');
   const [sourceFilter, setSourceFilter] = useState('');
   const [mineOnly, setMineOnly] = useState(false);
+  const [shown, setShown] = useState(ACTIONS_PAGE);
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const [shownPeople, setShownPeople] = useState<Record<string, number>>({});
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
 
@@ -2070,30 +2135,56 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
   // the next refresh (server truth) supersedes it. DONE/SNOOZED rows stay
   // visible-but-dimmed until then so the click has a visible receipt.
   const [localStates, setLocalStates] = useState<Record<string, ScorecardActionState>>({});
-  const [busyActionId, setBusyActionId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Set<string>>(() => new Set());
 
   // A new dataset (scope change / refetch) resets the overlay — the server
   // list already reflects every persisted state.
   useEffect(() => {
     setLocalStates({});
   }, [data]);
+  // A new filter starts at the first page.
+  useEffect(() => {
+    setShown(ACTIONS_PAGE);
+  }, [filter, sourceFilter, mineOnly, clientId]);
 
-  const mutateState = async (
-    actionId: string,
-    patch: { status?: 'OPEN' | 'SNOOZED' | 'DONE'; assigneeUserId?: string | null; snoozedUntil?: string | null },
-    successMsg: string,
-  ) => {
-    setBusyActionId(actionId);
+  type Patch = { status?: 'OPEN' | 'SNOOZED' | 'DONE'; assigneeUserId?: string | null; snoozedUntil?: string | null };
+  /** One or many actions; the toast says how many landed. */
+  const mutateStates = async (ids: string[], patch: Patch, success: (n: number) => string) => {
+    setBusy((prev) => new Set([...prev, ...ids]));
+    let ok = 0;
+    let failure: string | null = null;
     try {
-      const r = await setScorecardActionState({ actionId, ...patch });
-      setLocalStates((prev) => ({ ...prev, [actionId]: r.state }));
-      toast.success(successMsg);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Update failed.');
+      // Ten at a time: a signal can hold 100 people.
+      for (let i = 0; i < ids.length; i += 10) {
+        const results = await Promise.allSettled(
+          ids.slice(i, i + 10).map((actionId) => setScorecardActionState({ actionId, ...patch })),
+        );
+        const landed: Record<string, ScorecardActionState> = {};
+        results.forEach((r, k) => {
+          if (r.status === 'fulfilled') {
+            ok += 1;
+            landed[ids[i + k]!] = r.value.state;
+          } else if (!failure) {
+            failure = r.reason instanceof ApiError ? r.reason.message : 'Update failed.';
+          }
+        });
+        setLocalStates((prev) => ({ ...prev, ...landed }));
+      }
     } finally {
-      setBusyActionId(null);
+      setBusy((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
     }
+    if (ok > 0) toast.success(success(ok));
+    if (failure) toast.error(failure);
   };
+  const snoozePatch = (): Patch => ({
+    status: 'SNOOZED',
+    snoozedUntil: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+  });
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
   const stateFor = (a: { id: string; state?: ScorecardActionState | null }) =>
     localStates[a.id] ?? a.state ?? null;
@@ -2108,6 +2199,8 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, filter, sourceFilter, mineOnly, localStates, user]);
+  const entries = useMemo(() => groupScorecardActions(filtered), [filtered]);
+  const visible = entries.slice(0, shown);
 
   const sourceCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -2151,6 +2244,181 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
     downloadCsv(`compliance-open-actions-${ymdLocal()}.csv`, rows);
   };
 
+  /** The ⋯ menu of one action: assign, snooze, done. Fix stays outside it. */
+  const rowMenu = (a: ScorecardAction, label: string) => {
+    const st = stateFor(a);
+    const resolved = st && (st.status === 'DONE' || st.status === 'SNOOZED');
+    if (!canManage || resolved) return null;
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="xs" variant="ghost" aria-label={`More for ${label}`} disabled={busy.has(a.id)}>
+            <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {!st?.assigneeUserId && user && (
+            <DropdownMenuItem onSelect={() => void mutateStates([a.id], { assigneeUserId: user.id }, () => 'Assigned to you.')}>
+              I've got it
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={() => void mutateStates([a.id], snoozePatch(), () => 'Snoozed for 7 days.')}>
+            Snooze 7 days
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void mutateStates([a.id], { status: 'DONE' }, () => 'Marked done.')}>
+            Mark done
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
+
+  const fixLink = (to: string | null, label: string) =>
+    to ? (
+      <Link
+        to={to}
+        className="inline-flex min-h-8 items-center gap-1 rounded px-1.5 text-xs2 text-gold hover:underline"
+        aria-label={`Fix: ${label}`}
+      >
+        Fix <ExternalLink className="h-3 w-3" aria-hidden="true" />
+      </Link>
+    ) : null;
+
+  const stateLine = (st: ScorecardActionState | null) =>
+    st && (st.assigneeEmail || st.status !== 'OPEN') ? (
+      <div className="text-2xs mt-0.5 flex items-center gap-1.5 flex-wrap">
+        {st.status === 'DONE' && (
+          <span className="inline-flex items-center gap-1 text-success">
+            <CheckCircle2 className="h-3 w-3" /> Done
+          </span>
+        )}
+        {st.status === 'SNOOZED' && st.snoozedUntil && (
+          <span className="inline-flex items-center gap-1 text-warning">
+            <Clock className="h-3 w-3" /> Snoozed until {fmtDate(st.snoozedUntil)}
+          </span>
+        )}
+        {st.assigneeEmail && <span className="text-silver">→ {st.assigneeEmail}</span>}
+      </div>
+    ) : null;
+
+  /** One action as a row: dot, what, then Fix and ⋯. Wraps under the text on a phone. */
+  const actionRow = (a: ScorecardAction, opts: { inGroup?: boolean } = {}) => {
+    const st = stateFor(a);
+    const resolvedLocally = st && (st.status === 'DONE' || st.status === 'SNOOZED');
+    const who = a.subject.associateName ?? a.title;
+    const title = opts.inGroup ? who : a.title;
+    const sub = opts.inGroup ? a.subject.clientName || null : a.contractClause;
+    return (
+      <li
+        key={a.id}
+        className={cn(
+          'flex flex-wrap items-start gap-x-3 gap-y-1 py-2',
+          opts.inGroup ? 'pl-8 pr-3' : 'px-3',
+          resolvedLocally && 'opacity-50',
+        )}
+      >
+        <div className="flex min-w-0 flex-1 basis-40 items-start gap-2">
+          {!opts.inGroup && <SeverityDot severity={a.severity} />}
+          <div className="min-w-0">
+            <div className="text-xs text-ink break-words">{title}</div>
+            {sub && <div className="text-2xs text-silver/80 break-words">{sub}</div>}
+            {stateLine(st)}
+          </div>
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {fixLink(a.link, title)}
+          {rowMenu(a, title)}
+        </div>
+      </li>
+    );
+  };
+
+  const groupRow = (g: Extract<ActionEntry, { kind: 'group' }>) => {
+    const isOpen = open.has(g.key);
+    const ids = g.actions
+      .filter((a) => {
+        const st = stateFor(a);
+        return !(st && (st.status === 'DONE' || st.status === 'SNOOZED'));
+      })
+      .map((a) => a.id);
+    const unassigned = g.actions.filter((a) => !stateFor(a)?.assigneeUserId).map((a) => a.id);
+    const people = g.actions.length;
+    const listId = `actions-${g.key.replace(/[^a-z0-9]+/gi, '-')}`;
+    const peopleShown = shownPeople[g.key] ?? ACTIONS_PAGE;
+    const setPeopleShown = (n: number) => setShownPeople((p) => ({ ...p, [g.key]: n }));
+    return (
+      <li key={g.key}>
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-1 px-3 py-2">
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 basis-40 items-start gap-2 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            aria-expanded={isOpen}
+            aria-controls={listId}
+            onClick={() =>
+              setOpen((prev) => {
+                const next = new Set(prev);
+                if (next.has(g.key)) next.delete(g.key);
+                else next.add(g.key);
+                return next;
+              })
+            }
+          >
+            <SeverityDot severity={g.severity} />
+            <span className="min-w-0">
+              <span className="block text-xs text-ink break-words">
+                {g.label} <span className="text-silver">· {plural(people, 'person', 'people')}</span>
+              </span>
+              <span className="block text-2xs text-silver/80 break-words">{g.actions[0]!.contractClause}</span>
+            </span>
+            <ChevronRight
+              className={cn('ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-silver transition-transform', isOpen && 'rotate-90')}
+              aria-hidden="true"
+            />
+          </button>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {fixLink(g.link, g.label)}
+            {canManage && ids.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="xs" variant="ghost" aria-label={`More for ${g.label}`} disabled={ids.some((id) => busy.has(id))}>
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {user && unassigned.length > 0 && (
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        void mutateStates(unassigned, { assigneeUserId: user.id }, (n) => `Assigned ${plural(n, 'action', 'actions')} to you.`)
+                      }
+                    >
+                      Assign all {unassigned.length} to me
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onSelect={() => void mutateStates(ids, snoozePatch(), (n) => `Snoozed ${plural(n, 'action', 'actions')} for 7 days.`)}
+                  >
+                    Snooze all {ids.length} for 7 days
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        </div>
+        {isOpen && (
+          <ul id={listId} className="divide-y divide-navy-secondary/60 border-t border-navy-secondary/60 bg-navy-secondary/10">
+            {g.actions.slice(0, peopleShown).map((a) => actionRow(a, { inGroup: true }))}
+            {people > peopleShown && (
+              <li className="py-2 pl-8 pr-3">
+                <Button size="xs" variant="ghost" onClick={() => setPeopleShown(people)}>
+                  Show all {people}
+                </Button>
+              </li>
+            )}
+          </ul>
+        )}
+      </li>
+    );
+  };
   return (
     <Card>
       <CardContent className="space-y-3">
@@ -2169,39 +2437,14 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
           </div>
           {data && data.actions.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
+              <FilterChip active={filter === 'all'} onClick={() => setFilter('all')} count={data.actions.length}>
                 All
-                <span className="tabular-nums font-semibold">
-                  {data.actions.length}
-                </span>
               </FilterChip>
-              <FilterChip
-                active={filter === 'critical'}
-                onClick={() => setFilter('critical')}
-              >
+              <FilterChip active={filter === 'critical'} onClick={() => setFilter('critical')} count={data.criticalCount}>
                 Critical
-                <span
-                  className={cn(
-                    'tabular-nums font-semibold',
-                    filter !== 'critical' && 'text-alert',
-                  )}
-                >
-                  {data.criticalCount}
-                </span>
               </FilterChip>
-              <FilterChip
-                active={filter === 'warn'}
-                onClick={() => setFilter('warn')}
-              >
+              <FilterChip active={filter === 'warn'} onClick={() => setFilter('warn')} count={data.warnCount}>
                 Warn
-                <span
-                  className={cn(
-                    'tabular-nums font-semibold',
-                    filter !== 'warn' && 'text-warning',
-                  )}
-                >
-                  {data.warnCount}
-                </span>
               </FilterChip>
               <Button
                 size="sm"
@@ -2229,9 +2472,9 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
                     key={src}
                     active={sourceFilter === src}
                     onClick={() => setSourceFilter(sourceFilter === src ? '' : src)}
+                    count={count}
                   >
                     {ACTION_SOURCE_LABEL[src] ?? src}
-                    <span className="tabular-nums font-semibold">{count}</span>
                   </FilterChip>
                 ))}
               </>
@@ -2260,111 +2503,25 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
           </div>
         )}
         {data && filtered.length > 0 && (
-          <ul className="divide-y divide-navy-secondary border border-navy-secondary rounded">
-            {filtered.map((a) => {
-              const st = stateFor(a);
-              const resolvedLocally = st && (st.status === 'DONE' || st.status === 'SNOOZED');
-              return (
-                <li
-                  key={a.id}
-                  className={cn(
-                    'px-3 py-2 flex items-center justify-between gap-2',
-                    resolvedLocally && 'opacity-50',
-                  )}
-                >
-                  <div className="flex items-start gap-2 min-w-0">
-                    <SeverityDot severity={a.severity} />
-                    <div className="min-w-0">
-                      <div className="text-xs text-white truncate">{a.title}</div>
-                      <div className="text-2xs text-silver/80 truncate">{a.contractClause}</div>
-                      {st && (st.assigneeEmail || st.status !== 'OPEN') && (
-                        <div className="text-2xs mt-0.5 flex items-center gap-1.5 flex-wrap">
-                          {st.status === 'DONE' && (
-                            <span className="inline-flex items-center gap-1 text-success">
-                              <CheckCircle2 className="h-3 w-3" /> Done
-                            </span>
-                          )}
-                          {st.status === 'SNOOZED' && st.snoozedUntil && (
-                            <span className="inline-flex items-center gap-1 text-warning">
-                              <Clock className="h-3 w-3" /> Snoozed until {fmtDate(st.snoozedUntil)}
-                            </span>
-                          )}
-                          {st.assigneeEmail && (
-                            <span className="text-silver">→ {st.assigneeEmail}</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {canManage && !resolvedLocally && (
-                      <>
-                        {!st?.assigneeUserId && user && (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            className="text-silver hover:text-white"
-                            disabled={busyActionId === a.id}
-                            onClick={() =>
-                              void mutateState(a.id, { assigneeUserId: user.id }, 'Assigned to you.')
-                            }
-                            title="Assign this action to yourself"
-                          >
-                            I've got it
-                          </Button>
-                        )}
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          className="text-silver hover:text-warning"
-                          disabled={busyActionId === a.id}
-                          onClick={() =>
-                            void mutateState(
-                              a.id,
-                              {
-                                status: 'SNOOZED',
-                                snoozedUntil: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
-                              },
-                              'Snoozed for 7 days.',
-                            )
-                          }
-                          title="Hide this action for 7 days"
-                        >
-                          Snooze 7d
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          className="text-silver hover:text-success"
-                          disabled={busyActionId === a.id}
-                          onClick={() =>
-                            void mutateState(a.id, { status: 'DONE' }, 'Marked done.')
-                          }
-                          title="Mark resolved — it disappears on the next refresh"
-                        >
-                          Done
-                        </Button>
-                      </>
-                    )}
-                    {a.link && (
-                      <Link
-                        to={a.link}
-                        className="text-xs2 text-gold hover:underline flex items-center gap-1 shrink-0"
-                      >
-                        Fix <ExternalLink className="h-3 w-3" />
-                      </Link>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-            {data.truncated && (
-              <li className="px-3 py-2 text-2xs text-silver/80">
-                Showing {data.actions.length} of {data.totalActionCount} open actions — narrow by
-                client or clear criticals to see the rest.
-              </li>
-            )}
-          </ul>
+          <>
+            <ul className="divide-y divide-navy-secondary border border-navy-secondary rounded" aria-label="Open actions">
+              {visible.map((e) => (e.kind === 'group' ? groupRow(e) : actionRow(e.action)))}
+            </ul>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-2xs text-silver/80">
+              <span>
+                {plural(filtered.length, 'action', 'actions')} in {plural(entries.length, 'row', 'rows')}
+                {entries.length > shown ? ` · showing ${shown}` : ''}
+                {data.truncated
+                  ? ` · the list holds ${data.actions.length} of ${data.totalActionCount}; narrow by client or clear criticals to see the rest`
+                  : ''}
+              </span>
+              {entries.length > shown && (
+                <Button size="xs" variant="outline" onClick={() => setShown((n) => n + ACTIONS_PAGE)}>
+                  Show {Math.min(ACTIONS_PAGE, entries.length - shown)} more
+                </Button>
+              )}
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
@@ -2494,6 +2651,14 @@ function ClauseTooltip({ clause, children }: { clause: string; children: React.R
       )}
     </span>
   );
+}
+
+/** The worst state among a block of attestations: overdue is critical,
+ *  coming due is a warning. */
+function attestationsSeverity(signals: ManualAttestationSignal[]): ScorecardSeverity {
+  if (signals.some((s) => s.status === 'overdue')) return 'critical';
+  if (signals.some((s) => s.status === 'due_soon')) return 'warn';
+  return 'ok';
 }
 
 const DOT_SEVERITY_LABEL: Record<ScorecardSeverity, string> = { critical: 'Critical', warn: 'Needs attention', ok: 'On track' };

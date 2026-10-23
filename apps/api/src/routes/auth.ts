@@ -1245,6 +1245,50 @@ authRouter.post(
   }
 );
 
+/** "m***@example.com": enough for the person to know it is their account, nothing more. */
+function maskEmail(email: string): string {
+  const [local = '', domain = ''] = email.split('@');
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
+/**
+ * GET /auth/reset-password/:token — does this reset link still work?
+ *
+ * Public and NON-consuming (F500 G5): the page asks before the person types
+ * two 12-character passwords, instead of learning on submit that the link
+ * was dead. 200 { email (masked), expiresAt } while it works; 410 once it
+ * expired or was used; 404 for a token that was never issued — no more
+ * than that ("not valid"). Rate-limited like the reset itself.
+ */
+authRouter.get('/reset-password/:token', resetPasswordIpLimiter, async (req, res, next) => {
+  try {
+    const token = String(req.params.token ?? '');
+    if (token.length < 20 || token.length > 200) throw new HttpError(404, 'not_found', 'This reset link is not valid.');
+    const reset = await withIdentityScope(() =>
+      prisma.passwordResetToken.findUnique({
+        where: { tokenHash: hashResetToken(token) },
+        include: { user: { select: { tenantId: true, email: true, role: true, status: true, deletedAt: true } } },
+      }),
+    );
+    if (!reset) throw new HttpError(404, 'not_found', 'This reset link is not valid.');
+    adoptTenant(reset.user?.tenantId);
+    if (
+      reset.consumedAt ||
+      reset.expiresAt <= new Date() ||
+      !reset.user ||
+      reset.user.deletedAt ||
+      reset.user.status !== 'ACTIVE' ||
+      !HUMAN_ROLES.includes(reset.user.role)
+    ) {
+      throw new HttpError(410, 'link_expired', 'This reset link has expired or was already used.');
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ email: maskEmail(reset.user.email), expiresAt: reset.expiresAt.toISOString() });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * POST /auth/reset-password { token, newPassword }
  *

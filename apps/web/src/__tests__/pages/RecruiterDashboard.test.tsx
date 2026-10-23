@@ -179,7 +179,7 @@ describe('<RecruiterDashboard>', () => {
   it('says plainly when nothing is waiting', async () => {
     vi.mocked(getRecruiterHome).mockResolvedValue(EMPTY);
     renderPage();
-    expect(await screen.findByText(/Nothing waiting on you/)).toBeInTheDocument();
+    expect(await screen.findByText(/Nothing in your pipeline is waiting on you/)).toBeInTheDocument();
     expect(screen.getByText(/Nothing out with anyone/)).toBeInTheDocument();
     expect(screen.getByText('No interviews today')).toBeInTheDocument();
   });

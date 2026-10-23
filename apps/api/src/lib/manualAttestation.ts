@@ -28,6 +28,8 @@ export interface AttestationConfig {
   key: string;
   /** Operator-facing label shown on the scorecard tile. */
   label: string;
+  /** What is owed, as a thing to deliver ("Workers' comp certificate") — how the Inbox names an overdue duty. Falls back to `label`. */
+  deliverable?: string;
   /** Short helper text shown under the label and in the attestation drawer. */
   description: string;
   cadence: AttestationCadence;
@@ -51,6 +53,7 @@ export interface AttestationConfig {
 export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   {
     key: 'MONTHLY_REPORT',
+    deliverable: "Monthly compliance report",
     label: 'Monthly compliance report submitted',
     description:
       'Walmart SOW requires a monthly compliance report. Submit through the vendor portal and confirm here once filed.',
@@ -61,6 +64,7 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   },
   {
     key: 'INVOICE_FORFEITURE',
+    deliverable: "Invoice review for the 90-day forfeiture window",
     label: 'Invoices reviewed for 90-day forfeiture window',
     description:
       'Walmart MSA — invoices not submitted within 90 days are forfeit. Review the AR aging in QBO weekly and confirm any approaching 90 days have been escalated.',
@@ -71,6 +75,7 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   },
   {
     key: 'FIELDGLASS_TIMESHEET',
+    deliverable: "Fieldglass timesheet (Mon 2pm PT)",
     label: 'Fieldglass timesheet submitted (Mon 2pm PST)',
     description:
       "Walmart SOW — Fieldglass timesheet must be submitted by Monday 2pm PST every week. Confirm here once it's filed.",
@@ -81,6 +86,7 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   },
   {
     key: 'WORKERS_COMP',
+    deliverable: "Workers' comp certificate of insurance",
     label: 'Workers Comp insurance current',
     description:
       'Walmart MSA Section 7 — Workers Comp insurance must be in force at all times. Each year, confirm the policy is current and the certificate of insurance has been provided to Walmart. Attach the COI as evidence if available.',
@@ -91,6 +97,7 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   },
   {
     key: 'OSHA_300A_POSTING',
+    deliverable: "OSHA 300A summary posting",
     label: 'OSHA 300A summary posted (Feb 1 – Apr 30)',
     description:
       'OSHA 1904.32 — certify the prior year’s Form 300A summary and post it at each establishment from February 1 through April 30. Confirm here once posted; attach the signed 300A as evidence if available.',
@@ -101,6 +108,7 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   },
   {
     key: 'GENERAL_LIABILITY',
+    deliverable: "General liability certificate of insurance",
     label: 'General Liability insurance current',
     description:
       'Walmart MSA Section 7 — General Liability insurance must be in force at all times. Each year, confirm the policy is current and the certificate of insurance has been provided to Walmart. Attach the COI as evidence if available.',

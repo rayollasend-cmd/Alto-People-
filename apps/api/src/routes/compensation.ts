@@ -336,6 +336,138 @@ compensationRouter.delete(
   },
 );
 
+// ----- /comp/overview ----------------------------------------------------
+//
+// What a compensation lead asks first (F500 2026-10-22: the page opened on
+// band configuration): who is paid below their band's minimum or above its
+// maximum, how many pay changes wait on a second person, and where the
+// live merit cycle stands against its budget. One band rule, the one the
+// pay-change dialog uses (lib/payChangeContext): the person's client (their
+// latest approved application), the rate's pay type, the band for their job
+// profile, else the client's band with no profile.
+//
+// Reach: HR and the owner roles see everyone in their reach; a line manager
+// (the MANAGER role, which carries manage:comp for their own sheet) sees
+// their own reports — the same split as the cycle worksheet.
+
+const OVERVIEW_LIST_CAP = 50;
+
+compensationRouter.get('/overview', requireCapability('view:comp'), async (req, res) => {
+  const user = req.user!;
+  const clientId = z.string().uuid().optional().parse(req.query.clientId || undefined);
+  const hr = hasCapability(user.role, 'manage:comp') && user.role !== 'MANAGER';
+  const lineManagerIds = hr ? null : await coveringManagerIds(user);
+  const people = await prisma.associate.findMany({
+    take: 20_000,
+    where: {
+      AND: [
+        scopeActiveAssociates(user),
+        EMPLOYED_WHERE,
+        ...(lineManagerIds ? [{ managerId: { in: lineManagerIds } }] : []),
+        ...(clientId ? [{ applications: { some: { clientId, status: 'APPROVED' as const, deletedAt: null } } }] : []),
+      ],
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      jobProfileId: true,
+      applications: { where: { deletedAt: null, status: 'APPROVED' }, orderBy: { updatedAt: 'desc' }, take: 1, select: { clientId: true } },
+    },
+  });
+  const ids = people.map((p) => p.id);
+  const clientOf = new Map(people.map((p) => [p.id, p.applications[0]?.clientId ?? null]));
+  const clientIds = [...new Set([...clientOf.values()].filter((x): x is string => !!x))];
+  const [rates, bands, pendingPayChanges, cycle] = await Promise.all([
+    ids.length
+      ? prisma.compensationRecord.findMany({ where: { associateId: { in: ids }, effectiveTo: null }, orderBy: { effectiveFrom: 'desc' }, select: { associateId: true, payType: true, amount: true } })
+      : Promise.resolve([]),
+    clientIds.length
+      ? prisma.compBand.findMany({ where: { deletedAt: null, effectiveTo: null, clientId: { in: clientIds } }, select: { clientId: true, jobProfileId: true, payType: true, name: true, minAmount: true, maxAmount: true } })
+      : Promise.resolve([]),
+    ids.length
+      ? prisma.approvalRequest.count({ where: { status: 'PENDING', kind: { in: ['PAY_RATE_CHANGE', 'PROMOTION'] }, associateId: { in: ids } } })
+      : Promise.resolve(0),
+    // The live cycle: open first, else the newest draft.
+    prisma.meritCycle.findFirst({
+      where: { status: { in: ['OPEN', 'DRAFT'] }, ...(clientId ? { clientId } : {}) },
+      orderBy: [{ status: 'desc' }, { createdAt: 'desc' }],
+    }),
+  ]);
+  const rateOf = new Map<string, { payType: 'HOURLY' | 'SALARY'; amount: number }>();
+  for (const r of rates) if (!rateOf.has(r.associateId)) rateOf.set(r.associateId, { payType: r.payType, amount: Number(r.amount) });
+
+  let below = 0;
+  let above = 0;
+  let inBand = 0;
+  let noBand = 0;
+  let noRate = 0;
+  const outside: Array<{ associateId: string; name: string; payType: 'HOURLY' | 'SALARY'; amount: string; band: string; min: string; max: string; where: 'BELOW' | 'ABOVE' }> = [];
+  for (const p of people) {
+    const rate = rateOf.get(p.id);
+    if (!rate) {
+      noRate += 1;
+      continue;
+    }
+    const c = clientOf.get(p.id);
+    const band =
+      bands.find((b) => b.clientId === c && b.payType === rate.payType && p.jobProfileId && b.jobProfileId === p.jobProfileId) ??
+      bands.find((b) => b.clientId === c && b.payType === rate.payType && !b.jobProfileId) ??
+      null;
+    if (!band) {
+      noBand += 1;
+      continue;
+    }
+    const min = Number(band.minAmount);
+    const max = Number(band.maxAmount);
+    const where = rate.amount < min ? 'BELOW' : rate.amount > max ? 'ABOVE' : null;
+    if (!where) {
+      inBand += 1;
+      continue;
+    }
+    if (where === 'BELOW') below += 1;
+    else above += 1;
+    outside.push({ associateId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), payType: rate.payType, amount: rate.amount.toFixed(2), band: band.name, min: min.toFixed(2), max: max.toFixed(2), where });
+  }
+  outside.sort((a, b) => (a.where === b.where ? a.name.localeCompare(b.name) : a.where === 'BELOW' ? -1 : 1));
+
+  let cycleOut = null;
+  if (cycle) {
+    const proposals = await prisma.meritProposal.findMany({
+      take: 20_000,
+      where: { cycleId: cycle.id, associateId: { in: ids } },
+      select: { status: true, currentAmount: true, proposedAmount: true, currentPayType: true },
+    });
+    const spent = proposals
+      .filter((p) => p.status !== 'REJECTED')
+      .reduce((sum, p) => sum + annual(Number(p.proposedAmount) - Number(p.currentAmount), p.currentPayType), 0);
+    const budget = cycle.budget ? Number(cycle.budget) : null;
+    cycleOut = {
+      id: cycle.id,
+      name: cycle.name,
+      status: cycle.status,
+      effectiveDate: cycle.effectiveDate.toISOString().slice(0, 10),
+      budget: budget?.toFixed(2) ?? null,
+      spent: (Math.round(spent * 100) / 100).toFixed(2),
+      people: proposals.length,
+      pending: proposals.filter((p) => p.status === 'DRAFT' || p.status === 'SUBMITTED').length,
+    };
+  }
+
+  res.json({
+    people: people.length,
+    belowMin: below,
+    aboveMax: above,
+    inBand,
+    noBand,
+    noRate,
+    outsideBand: outside.slice(0, OVERVIEW_LIST_CAP),
+    outsideTruncated: outside.length > OVERVIEW_LIST_CAP,
+    pendingPayChanges,
+    cycle: cycleOut,
+  });
+});
+
 // ----- /comp/cycles ------------------------------------------------------
 
 const CycleCreateSchema = z.object({

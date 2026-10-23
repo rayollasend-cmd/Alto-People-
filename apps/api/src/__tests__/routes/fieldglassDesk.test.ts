@@ -218,6 +218,24 @@ describe('the Fieldglass setup page', () => {
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: w.client.id });
     expect((await (await loginAs(sup.email)).get('/finance/fieldglass')).status).toBe(403);
   });
+
+  it('each queue row carries the photo on file, or null — so the list never asks for one that isn’t there', async () => {
+    const w = await world();
+    const clockInAt = new Date(Date.now() - 2 * 86_400_000);
+    for (const a of [w.ann, w.bo]) {
+      await prisma.timeEntry.create({
+        data: { associateId: a.id, clientId: w.client.id, clockInAt, clockOutAt: new Date(clockInAt.getTime() + 6 * 3600_000), status: 'APPROVED' },
+      });
+    }
+    const at = new Date('2026-06-01T00:00:00Z');
+    await prisma.associate.update({ where: { id: w.ann.id }, data: { photoS3Key: 'profile-photos/ann.jpg', photoUpdatedAt: at } });
+
+    const res = await w.finance.get('/finance/fieldglass');
+    expect(res.status).toBe(200);
+    const byId = new Map(res.body.queue.map((r: { associateId: string; photoUrl: string | null }) => [r.associateId, r.photoUrl]));
+    expect(byId.get(w.ann.id)).toBe(`/api/associates/${w.ann.id}/photo?v=${at.getTime()}`);
+    expect(byId.get(w.bo.id)).toBeNull();
+  });
 });
 
 describe('the week in Fieldglass', () => {
@@ -263,6 +281,28 @@ describe('the week in Fieldglass', () => {
     const theirs = await (await loginAs(sup.email)).post('/time/admin/timesheets').send({ weekStart: WEEK });
     expect(theirs.body.fieldglass.money).toBeNull();
     expect(theirs.body.fieldglass.entered).toBe(1);
+  });
+
+  it('names each row’s store in Alto’s words beside the Fieldglass site label, and sends the photo it has (or null)', async () => {
+    const w = await world();
+    const store = await prisma.site.findFirstOrThrow({ where: { clientId: w.client.id } });
+    await prisma.site.update({ where: { id: store.id }, data: { name: 'Destin 218' } });
+    // Ann punched at the store; Bo's entry carries no store, so the client names it.
+    await prisma.timeEntry.updateMany({ where: { associateId: w.ann.id }, data: { locationId: store.id } });
+    await prisma.associate.update({
+      where: { id: w.ann.id },
+      data: { photoS3Key: 'profile-photos/ann.jpg', photoUpdatedAt: new Date('2026-06-01T00:00:00Z') },
+    });
+
+    const week = await w.finance.post('/time/admin/timesheets').send({ weekStart: WEEK, clientId: w.client.id });
+    expect(week.status).toBe(200);
+    const ann = week.body.rows.find((r: { associateId: string }) => r.associateId === w.ann.id);
+    const bo = week.body.rows.find((r: { associateId: string }) => r.associateId === w.bo.id);
+    // `site` stays the label Fieldglass knows (copy, export); `siteName` is the store.
+    expect(ann).toMatchObject({ site: '1 - Onsite - FL - Destin', siteName: 'Destin 218' });
+    expect(bo).toMatchObject({ site: '1 - Onsite - FL - Destin', siteName: 'Walmart Destin' });
+    expect(ann.photoUrl).toBe(`/api/associates/${w.ann.id}/photo?v=${new Date('2026-06-01T00:00:00Z').getTime()}`);
+    expect(bo.photoUrl).toBeNull();
   });
 
   it('imports the buyer’s Fieldglass list: approved and rejected, the timesheet IDs, the hours that differ, the rows that don’t match', async () => {

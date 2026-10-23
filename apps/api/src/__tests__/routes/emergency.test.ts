@@ -316,3 +316,54 @@ describe('Emergency Mode — the tabletop', () => {
     expect(none.body.error.code).toBe('no_sites');
   });
 });
+
+describe('readiness, in the quiet (F500 G2)', () => {
+  it('counts who a declaration would reach, who has a phone, the languages they would hear, and the vans ready — scoped to the caller', async () => {
+    const w = await world();
+    // Vans: one ready (driver, in service), one with no driver, one out of service.
+    const { user: driver } = await createUser({ role: 'DRIVER' });
+    const { user: driver2 } = await createUser({ role: 'DRIVER' });
+    await prisma.van.create({ data: { name: 'Van 1', capacity: 12, driverUserId: driver.id } });
+    await prisma.van.create({ data: { name: 'Van 2', capacity: 8 } });
+    await prisma.van.create({ data: { name: 'Van 3', capacity: 10, driverUserId: driver2.id, outOfServiceAt: new Date(), outOfServiceReason: 'Brakes' } });
+    await prisma.van.create({ data: { name: 'Van 4', capacity: 15, driverUserId: driver.id, isActive: false } });
+
+    const hr = await loginAs(agent(), w.hr.email);
+    const all = await hr.get('/emergency/readiness');
+    expect(all.status).toBe(200);
+    // Maria (site A, phone, Spanish), Emre (shift at A, no phone, Turkish), Dana (site B, no phone, English).
+    expect(all.body).toEqual({
+      reach: 3,
+      withPhone: 1,
+      languages: [
+        { lang: 'en', people: 1 },
+        { lang: 'es', people: 1 },
+        { lang: 'tr', people: 1 },
+      ],
+      vans: { ready: 1, seats: 12, inService: 2 },
+    });
+
+    // A supervisor bounded to client A counts client A's people only.
+    const sup = await loginAs(agent(), w.supA.email);
+    const mine = await sup.get('/emergency/readiness');
+    expect(mine.status).toBe(200);
+    expect(mine.body.reach).toBe(2);
+    expect(mine.body.withPhone).toBe(1);
+    expect(mine.body.languages.map((l: { lang: string }) => l.lang).sort()).toEqual(['es', 'tr']);
+
+    // No vans module, no van numbers (not a zero).
+    await setTenantProfile(ALTO_TENANT_ID, { modules: { transportation: false } }, null);
+    try {
+      invalidateTenantProfile(ALTO_TENANT_ID);
+      expect((await hr.get('/emergency/readiness')).body.vans).toBeNull();
+    } finally {
+      await setTenantProfile(ALTO_TENANT_ID, { modules: { transportation: true } }, null);
+      invalidateTenantProfile(ALTO_TENANT_ID);
+    }
+
+    // An associate can't read it.
+    const maria = await loginAs(agent(), w.mariaUser.email);
+    expect((await maria.get('/emergency/readiness')).status).toBe(403);
+  });
+});
+

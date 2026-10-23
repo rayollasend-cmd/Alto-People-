@@ -17,6 +17,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import type { PageFact } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { AccountSelect } from '../close/closeKit';
@@ -44,39 +46,41 @@ export function FixedAssetDetailPage() {
 
   const posted = a.schedule.filter((m) => m.posted).length;
   const remaining = a.schedule.length - posted;
+  const linked = linkedRecord(a, can);
+  const facts: PageFact[] = [
+    { label: 'In service', value: fmtDate(a.inServiceOn) },
+    ...(a.linkedLabel ? [{ label: a.vanId ? 'Van' : 'Equipment', value: a.linkedLabel, to: linked ?? undefined }] : []),
+    { label: 'Life', value: `${lifeLabel(a.usefulLifeMonths)} · ${METHOD_LABEL[a.method]}` },
+  ];
 
   return (
     <>
       <RecordTemplate
-        breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Fixed assets', to: '/books/assets' }, { label: a.name }]}
         title={a.name}
-        subtitle={`${FIXED_ASSET_CATEGORY_LABELS[a.category]}${a.linkedLabel ? ` · ${a.linkedLabel}` : ''} · in service ${fmtDate(a.inServiceOn)}`}
+        subtitle={FIXED_ASSET_CATEGORY_LABELS[a.category]}
+        facts={facts}
         status={<AssetStatusBadge status={a.status} size="lg" />}
         actions={
-          manage && a.status !== 'DISPOSED' ? (
-            <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => setEditing(true)}>
-                <Pencil className="h-4 w-4" aria-hidden="true" />
-                Edit
-              </Button>
-              <Button variant="secondary" onClick={() => setDisposing(true)}>
-                <PackageX className="h-4 w-4" aria-hidden="true" />
-                Dispose
-              </Button>
-            </div>
-          ) : undefined
+          manage && a.status !== 'DISPOSED'
+            ? [
+                { label: 'Edit', icon: Pencil, onSelect: () => setEditing(true) },
+                // The dispose dialog is its own confirmation: date, proceeds, the gain or loss.
+                { label: 'Dispose', icon: PackageX, destructive: true, onSelect: () => setDisposing(true) },
+              ]
+            : undefined
         }
         summary={
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <MetricCard label="Cost" value={fmtMoney(a.cost)} hint={a.salvageValue ? `Salvage ${fmtMoney(a.salvageValue)}` : undefined} />
-            <MetricCard label="Depreciated" value={fmtMoney(a.accumulated)} hint={`${posted} of ${a.schedule.length} months`} />
+          <MetricStrip label={`${a.name} at a glance`}>
+            <MetricCard label="Cost" value={fmtMoney(a.cost)} hint={a.salvageValue ? `Salvage ${fmtMoney(a.salvageValue)}` : undefined} tone="neutral" />
+            <MetricCard label="Depreciated" value={fmtMoney(a.accumulated)} hint={`${posted} of ${a.schedule.length} months`} tone="neutral" />
             <MetricCard label="Book value" value={fmtMoney(a.netBookValue)} />
             <MetricCard
               label={a.status === 'DISPOSED' ? 'Disposed' : 'Months left'}
               value={a.status === 'DISPOSED' ? (a.disposedOn ? fmtDate(a.disposedOn) : '—') : remaining}
-              hint={a.status === 'DISPOSED' ? (a.disposalProceeds ? `Sold for ${fmtMoney(a.disposalProceeds)}` : 'No proceeds') : `${lifeLabel(a.usefulLifeMonths)} · ${METHOD_LABEL[a.method]}`}
+              hint={a.status === 'DISPOSED' ? (a.disposalProceeds ? `Sold for ${fmtMoney(a.disposalProceeds)}` : 'No proceeds') : undefined}
+              tone="neutral"
             />
-          </div>
+          </MetricStrip>
         }
         activeTab={tab}
         onTabChange={setTab}
@@ -96,13 +100,41 @@ export function FixedAssetDetailPage() {
   );
 }
 
+/**
+ * Where the asset's own record is: a van on the fleet list, recorded
+ * equipment in Assets — for someone who can open it; otherwise the label
+ * stays plain text.
+ */
+export function linkedRecord(a: Pick<FixedAssetDetail, 'vanId' | 'assetId'>, can: (cap: 'view:transport' | 'view:org') => boolean): string | null {
+  if (a.vanId) return can('view:transport') ? '/transport?tab=vans' : null;
+  if (a.assetId) return can('view:org') ? '/assets' : null;
+  return null;
+}
+
 function Schedule({ asset: a }: { asset: FixedAssetDetail }) {
   if (a.schedule.length === 0) return <EmptyState title="No depreciation" description="Cost and salvage value are the same, so there’s nothing to depreciate." />;
   const current = ymdLocal().slice(0, 7);
   return (
     <Card>
       <CardContent className="pt-[var(--d-tile)]">
-        <div className="max-h-[32rem] overflow-y-auto">
+        {/* Below sm: one line per month, the book value on the right where it stays on screen. */}
+        <ul className="max-h-[32rem] divide-y divide-line overflow-y-auto sm:hidden" aria-label="Depreciation schedule">
+          {a.schedule.map((m) => (
+            <li key={m.periodKey} className={cn('flex items-start justify-between gap-3 py-2', m.periodKey === current && 'bg-gold/[0.06]')}>
+              <span className="min-w-0">
+                <span className="block text-sm text-ink">{monthLabel(m.periodKey)}</span>
+                <span className="block text-xs text-ink-muted">
+                  {fmtMoney(m.amount)} · {m.posted ? (m.postedLate ? 'posted late' : 'posted') : m.periodKey < current && a.status === 'ACTIVE' ? <span className="text-warning">due</span> : 'not yet'}
+                </span>
+              </span>
+              <span className="shrink-0 text-right">
+                <span className="block text-sm tabular-nums text-ink">{fmtMoney(m.netBookValue)}</span>
+                <span className="block text-2xs text-ink-muted">book value</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="hidden max-h-[32rem] overflow-y-auto sm:block">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-surface">
               <tr className="text-left text-xs uppercase tracking-wide text-ink-muted">

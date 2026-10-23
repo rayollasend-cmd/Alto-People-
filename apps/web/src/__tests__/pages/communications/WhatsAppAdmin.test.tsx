@@ -8,7 +8,7 @@ vi.mock('@/lib/whatsappApi', () => ({ getWhatsAppOverview: vi.fn(), listWhatsApp
 vi.mock('@/lib/directoryApi', () => ({ listDirectory: vi.fn().mockResolvedValue({ associates: [] }) }));
 
 import { getWhatsAppOverview, listWhatsAppMessages } from '@/lib/whatsappApi';
-import { WhatsAppAdmin } from '@/pages/communications/WhatsAppAdmin';
+import { WhatsAppAdmin, WhatsAppTemplatesCard } from '@/pages/communications/WhatsAppAdmin';
 
 const overview: WhatsAppOverview = {
   configured: true,
@@ -52,25 +52,50 @@ beforeEach(() => {
   vi.mocked(listWhatsAppMessages).mockReset().mockResolvedValue({ messages: [row] });
 });
 
+const renderIt = (ui: React.ReactElement) =>
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+
 describe('WhatsAppAdmin', () => {
-  it('shows the wiring, the week, the templates to register, and the record with its receipt', async () => {
-    render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <MemoryRouter>
-          <WhatsAppAdmin />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
+  it('shows the wiring, the week and the record with its receipt — not the setup instructions', async () => {
+    renderIt(<WhatsAppAdmin />);
     expect(await screen.findByText('Sending configured')).toBeInTheDocument();
     expect(screen.getByText('Webhook not configured')).toBeInTheDocument();
-    expect(screen.getByText('40')).toBeInTheDocument();
-    expect(screen.getByText('37')).toBeInTheDocument();
+    // The tiles count up from 0; the value's title carries the settled number.
+    expect(await screen.findByTitle('40')).toBeInTheDocument();
+    expect(screen.getByTitle('37')).toBeInTheDocument();
     expect(screen.getByText('12 opted in · 2 opted out')).toBeInTheDocument();
-    expect(screen.getByText('alto_notice')).toBeInTheDocument();
     expect(await screen.findByText('Maria Lopez')).toBeInTheDocument();
     // 'Delivered' is both the week's stat tile and the row's status badge.
     expect(screen.getAllByText('Delivered').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('alto_shift_assigned · es')).toBeInTheDocument();
     expect(listWhatsAppMessages).toHaveBeenCalledWith({ associateId: undefined, limit: 100 });
+    // Template registration is setup: it moved to Settings › Communications.
+    expect(screen.queryByText('alto_notice')).not.toBeInTheDocument();
+  });
+
+  it('a quiet week with nothing connected is one line and a way to set it up, not four zero tiles', async () => {
+    vi.mocked(getWhatsAppOverview).mockResolvedValue({
+      ...overview,
+      configured: false,
+      last7Days: { sent: 0, delivered: 0, read: 0, failed: 0, questions: 0, handoffs: 0 },
+    });
+    vi.mocked(listWhatsAppMessages).mockResolvedValue({ messages: [] });
+    renderIt(<WhatsAppAdmin />);
+    expect(await screen.findByText('Nothing went out or came in by WhatsApp in the last 7 days.')).toBeInTheDocument();
+    expect(screen.queryByText('Sent (7 days)')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Set it up in Settings › Communications' })).toHaveAttribute('href', '/admin/communications#whatsapp');
+  });
+});
+
+describe('WhatsAppTemplatesCard (Settings › Communications)', () => {
+  it('lists each template to register, by its Meta name, with the parameters', async () => {
+    renderIt(<WhatsAppTemplatesCard />);
+    expect(await screen.findByText('alto_notice')).toBeInTheDocument();
+    expect(screen.getByText('Parameters: {{1}} subject · {{2}} message')).toBeInTheDocument();
+    expect(screen.getByText(/Sending is connected · API v21.0/)).toBeInTheDocument();
   });
 });

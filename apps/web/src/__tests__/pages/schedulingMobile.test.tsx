@@ -24,6 +24,12 @@ import { AdminSchedulingView } from '@/pages/scheduling/AdminSchedulingView';
 
 let restore: () => void;
 beforeEach(() => {
+  // The shift is today at 9; hold the clock at 7 so it is still ahead (a past
+  // shift went unfilled and offers no Assign). Only Date is faked.
+  const seven = new Date();
+  seven.setHours(7, 0, 0, 0);
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(seven);
   restore = asPhone();
   world.calls = [];
   const today = new Date();
@@ -32,6 +38,7 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 afterEach(() => {
+  vi.useRealTimers();
   restore();
   cleanup();
   vi.clearAllMocks();

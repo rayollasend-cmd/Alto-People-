@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { Network, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -23,7 +22,6 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -173,23 +171,10 @@ export function OrgUnitsAdmin() {
       <PageHeader
         title="Cost centers & ledger codes"
         subtitle={`The ledger code labor posts to, and which ${storesNoun.toLowerCase()} map to each. Regions${hasClients ? `, ${term('label.clients').toLowerCase()}` : ''} and ${storesNoun.toLowerCase()} are arranged in the Org chart.`}
-        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization profile', to: '/admin/organization' }, { label: 'Cost centers & ledger codes' }]}
-        primaryAction={
-          canManage ? (
-            <Button size="sm" onClick={() => setEditing('new')}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              New cost center
-            </Button>
-          ) : undefined
-        }
+        actions={[{ label: 'New cost center', icon: Plus, primary: true, onSelect: () => setEditing('new'), hidden: !canManage }]}
+        // Where the structure is arranged: a sibling page, not a standing banner (F500 G4).
+        related={[{ label: `Org chart: regions and ${storesNoun.toLowerCase()}`, to: '/org/chart?view=field' }]}
       />
-      <ErrorBanner severity="info">
-        Structure moved to one place.{' '}
-        <Link to="/org/chart?view=field" className="font-medium underline underline-offset-2">
-          Arrange regions and {storesNoun.toLowerCase()} in the Org chart
-        </Link>
-        ; this page keeps the ledger codes.
-      </ErrorBanner>
       {query.isError ? <QueryError what="the cost centers" query={query} /> : null}
       {query.isPending ? <Skeleton className="h-48" /> : null}
       {!query.isPending && !query.isError && ledger.length === 0 ? (

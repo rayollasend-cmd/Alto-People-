@@ -5,6 +5,7 @@ import type { OpsPeriod } from '@prisma/client';
 import { z } from 'zod';
 import { paidMinutesForRange, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
@@ -21,6 +22,7 @@ import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
 import { buildStoreOps, opsShiftScope, scopedOpsPhoto } from '../lib/portalOps.js';
 import { getBlobStore } from '../lib/blobStore.js';
+import { daysPastDue, unpaidStatementsWhere, waitingCandidatesWhere } from '../lib/portalNeedsYou.js';
 import {
   DAY,
   ORG_TZ,
@@ -188,6 +190,61 @@ async function resolveScope(
  *  store when scoped. Store scope is STRICT on locationId — a site-less
  *  shift belongs to the client, not to any one store. */
 
+/**
+ * A client with ONE store: that store's share of a statement IS the
+ * statement (F500 G5). A store account at a multi-store client still sees
+ * only its own line — the client-wide total is every other store's labour
+ * spend too — but at a one-store client there is nothing else on it.
+ */
+async function singleStoreClient(clientId: string): Promise<boolean> {
+  return (await prisma.site.count({ where: { clientId, deletedAt: null } })) === 1;
+}
+
+type StatementSnap = {
+  totals?: { amount?: number; hours?: number };
+  stores?: Array<{ locationName: string; hours: number; amount: number }>;
+} | null;
+
+/**
+ * One statement as the portal shows it — the home and History read the
+ * same row. A store account at a multi-store client gets its own store's
+ * line and no PDF; at a one-store client the totals and the PDF are its
+ * own. `daysPastDue` counts on the store's calendar, from the due date.
+ */
+function portalStatementRow(
+  st: { id: string; number: number | null; periodStart: Date; periodEnd: Date; finalizedAt: Date | null; paidAt: Date | null; dueAt: Date | null; poNumber: string | null; snapshot: unknown },
+  opts: { scope: PortalScope; singleStore: boolean; todayKey: string; pdfUrl: (id: string) => string },
+) {
+  const snap = st.snapshot as StatementSnap;
+  const { scope } = opts;
+  const storeScoped = scope.locationId !== null;
+  // The store's whole statement when it is the client's only store.
+  const ownsTotals = !storeScoped || opts.singleStore;
+  const storeLine = scope.location
+    ? (snap?.stores ?? []).find((s) => s.locationName === scope.location!.name) ?? null
+    : null;
+  const dueKey = st.dueAt ? st.dueAt.toISOString().slice(0, 10) : null;
+  const pastDue = st.paidAt ? null : daysPastDue(st.dueAt, opts.todayKey);
+  return {
+    id: st.id,
+    number: st.number,
+    periodStart: st.periodStart.toISOString().slice(0, 10),
+    periodEnd: st.periodEnd.toISOString().slice(0, 10),
+    amount: ownsTotals ? (snap?.totals?.amount ?? null) : null,
+    hours: ownsTotals ? (snap?.totals?.hours ?? null) : null,
+    storeHours: storeLine ? storeLine.hours : storeScoped && opts.singleStore ? (snap?.totals?.hours ?? null) : null,
+    storeAmount: storeLine ? storeLine.amount : storeScoped && opts.singleStore ? (snap?.totals?.amount ?? null) : null,
+    finalizedAt: st.finalizedAt ? st.finalizedAt.toISOString() : null,
+    paidAt: st.paidAt ? st.paidAt.toISOString() : null,
+    /** The day it falls due (YYYY-MM-DD), the PO it bills against. */
+    dueAt: dueKey,
+    poNumber: st.poNumber,
+    /** Days past the due date, unpaid; null when paid, not yet due or no due date. */
+    daysPastDue: pastDue,
+    pdfUrl: ownsTotals ? opts.pdfUrl(st.id) : null,
+  };
+}
+
 type RosterState = 'open' | 'on-floor' | 'done' | 'confirmed' | 'unconfirmed';
 
 /** Every shift window at the scope's store(s) with the supervisors who lead
@@ -208,10 +265,43 @@ async function dayWindowLeads(scope: PortalScope) {
     label: w.label,
     startMinute: w.startMinute,
     endMinute: w.endMinute,
+    // The contracted headcount for the window, so a day with nothing
+    // scheduled can say what it is short of (F500 G5).
+    targetCount: w.targetCount,
     leads: led
       .filter((l) => l.locationId === w.locationId && l.label === w.label)
       .map((l) => l.userName),
   }));
+}
+
+/** The day's contracted headcount: every window's count summed (a store with only a total, the total). */
+function dailyContract(locations: Awaited<ReturnType<typeof loadTargets>>): number | null {
+  let any = false;
+  let n = 0;
+  for (const l of locations) {
+    if (l.windows.length > 0) {
+      any = true;
+      n += l.windows.reduce((a, w) => a + w.count, 0);
+    } else if (l.total !== null) {
+      any = true;
+      n += l.total;
+    }
+  }
+  return any ? n : null;
+}
+
+/** Contracted person-hours over a Sat→Fri week: each window's headcount × its length × 7. */
+function weeklyContractHours(locations: Awaited<ReturnType<typeof loadTargets>>): number | null {
+  let any = false;
+  let minutes = 0;
+  for (const l of locations) {
+    for (const w of l.windows) {
+      any = true;
+      const len = (w.end - w.start + 1440) % 1440 || 1440;
+      minutes += w.count * len * 7;
+    }
+  }
+  return any ? Math.round(minutes / 60) : null;
 }
 
 clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, next) => {
@@ -311,6 +401,8 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           periodEnd: true,
           finalizedAt: true,
           paidAt: true,
+          dueAt: true,
+          poNumber: true,
           snapshot: true,
         },
       }),
@@ -372,7 +464,9 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           email: true,
           role: true,
           associateId: true,
-          associate: { select: { id: true, firstName: true, lastName: true, phone: true } },
+          photoS3Key: true,
+          photoUpdatedAt: true,
+          associate: { select: { id: true, firstName: true, lastName: true, phone: true, photoS3Key: true, photoUpdatedAt: true } },
         },
         orderBy: { createdAt: 'asc' },
         take: 6,
@@ -443,7 +537,15 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           }),
     ]);
 
-    const [trendEvents, { punched, entries: trendEntries }, targetLocations] = await Promise.all([
+    // What needs the client (F500 G5 "Needs you"): every unpaid statement
+    // (not only the six shown), candidates waiting on their answer, and
+    // their requests — Alto's late replies and this week's answers. The
+    // request desk is the client account's own (store accounts: their store).
+    const requestsWhere =
+      req.user!.role === 'CLIENT_PORTAL' && !req.user!.clientId
+        ? null
+        : { clientId, ...(scope.locationId ? { locationId: scope.locationId } : {}) };
+    const [trendEvents, { punched, entries: trendEntries }, targetLocations, tomorrowTargets, unpaid, singleStore, candidatesWaiting, requestRows] = await Promise.all([
       prisma.attendanceEvent.findMany({
         where: attendanceWhere(scope, trendStart, trendShifts.map((s) => s.id)),
         select: { kind: true, occurredOn: true, shiftId: true },
@@ -451,6 +553,30 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       }),
       loadPunches(scope, trendStart, weekEnd, now),
       loadTargets(scope, now),
+      loadTargets(scope, tomorrowStart),
+      prisma.clientStatement.findMany({
+        where: unpaidStatementsWhere(clientId),
+        select: { id: true, number: true, periodStart: true, periodEnd: true, finalizedAt: true, paidAt: true, dueAt: true, poNumber: true, snapshot: true },
+        orderBy: { dueAt: 'asc' },
+        take: 100,
+      }),
+      singleStoreClient(clientId),
+      // The same where-clause as GET /client-portal/candidates' waiting rows (lib/portalNeedsYou).
+      prisma.candidateSubmittal.count({ where: waitingCandidatesWhere(scope) }),
+      requestsWhere
+        ? prisma.clientRequest.findMany({
+            where: {
+              ...requestsWhere,
+              OR: [
+                { status: { not: 'RESOLVED' }, dueAt: { lt: now } },
+                { status: 'RESOLVED', resolvedAt: { gte: new Date(now.getTime() - 7 * DAY) } },
+              ],
+            },
+            select: { id: true, status: true, dueAt: true, resolvedAt: true },
+            orderBy: { createdAt: 'asc' },
+            take: 100,
+          })
+        : Promise.resolve([] as Array<{ id: string; status: string; dueAt: Date | null; resolvedAt: Date | null }>),
     ]);
     const trendHours = coverageByHours({
       locations: targetLocations,
@@ -598,7 +724,9 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
 
     // ---- Clearance: this week's crew, counts only ----------------------
     const crewIds = [...weekAssociateIds];
-    let clearance = { total: 0, i9Complete: 0, checksInFlight: 0, flagged: 0 };
+    // `cleared`: per person, I-9 done AND nothing flagged or in flight — the
+    // ring's count ("2 of 2 cleared" sat beside "1 I-9 pending", F500 G5).
+    let clearance = { total: 0, i9Complete: 0, checksInFlight: 0, flagged: 0, cleared: 0 };
     if (crewIds.length > 0) {
       const [bg, dt, i9] = await Promise.all([
         prisma.backgroundCheck.findMany({
@@ -632,6 +760,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       let i9Complete = 0;
       let checksInFlight = 0;
       let flagged = 0;
+      let cleared = 0;
       for (const id of crewIds) {
         if (i9Done.has(id)) i9Complete += 1;
         const statuses = [bgLatest.get(id), dtLatest.get(id)].filter(
@@ -639,8 +768,9 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         );
         if (statuses.some((s) => bad.has(s))) flagged += 1;
         else if (statuses.some((s) => inFlight.has(s))) checksInFlight += 1;
+        else if (i9Done.has(id)) cleared += 1;
       }
-      clearance = { total: crewIds.length, i9Complete, checksInFlight, flagged };
+      clearance = { total: crewIds.length, i9Complete, checksInFlight, flagged, cleared };
     }
 
     // ---- Alto leadership on site ----------------------------------------
@@ -660,6 +790,8 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         name: u.associate ? fullName(u.associate) : u.email.split('@')[0] ?? u.email,
         phone: u.associate?.phone ?? null,
         email: u.email,
+        // null = no photo on file: the page shows initials, no request that 404s (F1 SH-1's rule).
+        photoUrl: accountPhotoUrlFor(u),
         title: u.role === 'SHIFT_SUPERVISOR' ? ('supervisor' as const) : ('floor-lead' as const),
         onFloor: !!u.associateId && onFloorIds.has(u.associateId),
         runningOps: opsRunners.has(u.id),
@@ -765,6 +897,30 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
 
     const workedMinutes = weekEntries.reduce((a, e) => a + netMinutes(e, now), 0);
     const reviewed = await loadAcknowledgements(clientId);
+
+    // Nothing filed today: say what is planned, not "evidence appears once
+    // checklists run" at a store that runs them (F500 G5). The next
+    // checklist still to start today, and whether the store ever ran one.
+    let opsPlan: {
+      everRan: boolean;
+      next: { department: string; windowLabel: string; startsAt: string } | null;
+      missedToday: number;
+    } | null = null;
+    if (!opsShifts.some((o) => o.dateKey === opsTodayKey || o.status === 'ACTIVE')) {
+      const [ever, plan] = await Promise.all([
+        prisma.opsShift.findFirst({ where: opsWhere, select: { id: true } }),
+        buildStoreOps(scope, { dateKey: todayKey, cal, now }).catch(() => null),
+      ]);
+      const waiting = (plan?.grid ?? [])
+        .flatMap((g) => g.cells.flatMap((c) => c.expected.map((e) => ({ department: g.department, ...e }))))
+        .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+      const next = waiting.find((e) => !e.missed && Date.parse(e.endsAt) > now.getTime()) ?? null;
+      opsPlan = {
+        everRan: !!ever,
+        next: next ? { department: next.department, windowLabel: next.windowLabel, startsAt: next.startsAt } : null,
+        missedToday: waiting.filter((e) => e.missed).length,
+      };
+    }
     const lastCompletedWeek = nextKey(thisWeekKey, -7);
     const preview = req.user!.role !== 'CLIENT_PORTAL';
     const previewQs = preview
@@ -827,6 +983,8 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           thisWeek.total > 0 ? Math.round((thisWeek.filled / thisWeek.total) * 100) : null,
         hours: Math.round((weekMinutes / 60) * 10) / 10,
         workedHours: Math.round((workedMinutes / 60) * 10) / 10,
+        /** Contracted person-hours for the whole week (windowed targets × 7 days); null without windows. */
+        contractedHours: weeklyContractHours(targetLocations),
       },
       tomorrow: {
         confirmed: tomorrowShifts.filter((s) => s.status === 'ASSIGNED' && s.acknowledgedAt !== null)
@@ -836,6 +994,8 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         ).length,
         open: tomorrowShifts.filter((s) => s.status === 'OPEN').length,
         coverInFlight: new Set(pendingTomorrowClaims.map((c) => c.shiftId)).size,
+        /** People the contract asks for tomorrow (each window's headcount summed), or null with no target. */
+        target: dailyContract(tomorrowTargets),
       },
       leads: { people: leads, supportEmail: orgSetting?.supportEmail ?? null },
       ops:
@@ -858,37 +1018,50 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
               yesterdayKey: opsYesterdayKey,
             }
           : null,
+      opsPlan,
       reliability: { weeks, grade: graded.grade, score: graded.score, basis: graded.basis },
       clearance,
-      statements: statements.map((st) => {
-        const snap = st.snapshot as {
-          totals?: { amount?: number; hours?: number };
-          stores?: Array<{ locationName: string; hours: number; amount: number }>;
-        } | null;
-        const storeLine = scope.location
-          ? (snap?.stores ?? []).find((s) => s.locationName === scope.location!.name) ?? null
-          : null;
-        // A store account never sees the client's total, only its own line.
-        // The client-wide figure is every OTHER store's labour spend as
-        // well, and the statement PDF is the same disclosure on paper.
-        const storeScoped = scope.locationId !== null;
+      statements: statements.map((st) => ({
+        ...portalStatementRow(st, {
+          scope,
+          singleStore,
+          todayKey,
+          pdfUrl: (id) => withPreview(`/api/client-portal/statements/${id}.pdf`),
+        }),
+        reviewed: reviewed('STATEMENT', st.id),
+      })),
+      // Every unpaid statement, said once: "Open balance $5,760.00 · 2
+      // statements", and the past-due ones Needs you leads with. Amounts
+      // follow the rows' rule (null where the account can't see them).
+      balance: (() => {
+        const rows = unpaid.map((st) => portalStatementRow(st, { scope, singleStore, todayKey, pdfUrl: () => '' }));
+        const amountOf = (r: (typeof rows)[number]) => (scope.locationId ? r.storeAmount : r.amount);
+        const sumOf = (list: typeof rows) =>
+          list.every((r) => amountOf(r) !== null) ? Math.round(list.reduce((a, r) => a + (amountOf(r) ?? 0), 0) * 100) / 100 : null;
+        const pastDue = rows.filter((r) => r.daysPastDue !== null);
         return {
-          id: st.id,
-          number: st.number,
-          periodStart: st.periodStart.toISOString().slice(0, 10),
-          periodEnd: st.periodEnd.toISOString().slice(0, 10),
-          amount: storeScoped ? null : (snap?.totals?.amount ?? null),
-          hours: storeScoped ? null : (snap?.totals?.hours ?? null),
-          storeHours: storeLine ? storeLine.hours : null,
-          storeAmount: storeLine ? storeLine.amount : null,
-          finalizedAt: st.finalizedAt ? st.finalizedAt.toISOString() : null,
-          paidAt: st.paidAt ? st.paidAt.toISOString() : null,
-          pdfUrl: storeScoped
-            ? null
-            : withPreview(`/api/client-portal/statements/${st.id}.pdf`),
-          reviewed: reviewed('STATEMENT', st.id),
+          count: rows.length,
+          amount: rows.length ? sumOf(rows) : 0,
+          pastDue: pastDue.length,
+          pastDueAmount: pastDue.length ? sumOf(pastDue) : 0,
+          oldestDaysPastDue: pastDue.reduce<number | null>((m, r) => (m === null || (r.daysPastDue ?? 0) > m ? r.daysPastDue : m), null),
+          /** The one statement to open when only one is past due. */
+          pastDueIds: pastDue.map((r) => r.id),
         };
-      }),
+      })(),
+      candidatesWaiting,
+      requests: (() => {
+        const overdue = requestRows.filter((r) => r.status !== 'RESOLVED');
+        const answered = requestRows.filter((r) => r.status === 'RESOLVED');
+        const oldest = overdue.reduce<Date | null>((m, r) => (r.dueAt && (!m || r.dueAt < m) ? r.dueAt : m), null);
+        return {
+          overdue: overdue.length,
+          overdueDays: oldest ? Math.max(1, Math.floor((now.getTime() - oldest.getTime()) / DAY)) : null,
+          overdueId: overdue[0]?.id ?? null,
+          answered: answered.length,
+          answeredId: answered[answered.length - 1]?.id ?? null,
+        };
+      })(),
       coverage: {
         weekStart: thisWeekKey,
         noCallNoShows: thisWeek.noCallNoShows,
@@ -907,6 +1080,8 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         weekStart: lastCompletedWeek,
         url: withPreview(`/api/client-portal/service-report.pdf?week=${lastCompletedWeek}`),
         reviewed: reviewed('SERVICE_REPORT', serviceReportKey(scope, lastCompletedWeek)),
+        /** Anything scheduled that week — an empty week's report is not a task (lib/portalNeedsYou). */
+        hadShifts: (weekAgg.get(lastCompletedWeek)?.total ?? 0) > 0,
       },
     });
   } catch (err) {
@@ -993,6 +1168,13 @@ clientPortalRouter.get('/client-portal/schedule', requireAuth, async (req, res, 
       days: [...days.entries()].map(([date, shifts]) => ({ date, shifts })),
       filled: rows.filter((r) => r.status !== 'OPEN').length,
       open: rows.filter((r) => r.status === 'OPEN').length,
+      // The contracted windows (store-local minutes; end <= start wraps
+      // midnight), so the heatmap marks every contracted hour that is short —
+      // a day with nothing scheduled against a contract of 8 used to look
+      // neutral (F500 G5). Headcounts only.
+      targets: (await loadTargets(scope, now)).flatMap((l) =>
+        l.windows.map((w) => ({ locationId: l.id, label: w.label, startMinute: w.start, endMinute: w.end, headcount: w.count })),
+      ),
       generatedAt: now.toISOString(),
     });
   } catch (err) {
@@ -1083,7 +1265,9 @@ clientPortalRouter.get(
       // holding another store's labour spend, so this document is for
       // client-wide accounts only. Their own store's hours and amount are
       // on the portal already, taken from the statement's store line.
-      if (scope.locationId) {
+      // At a client with ONE store the statement is that store's alone, so
+      // its manager holds it too (F500 G5).
+      if (scope.locationId && !(await singleStoreClient(scope.clientId))) {
         throw new HttpError(
           403,
           'statement_is_client_wide',
@@ -1278,7 +1462,30 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
       };
     });
 
+    // A day with no shifts says when the next one is (F500 G2), within the
+    // same scope: published shifts only, the first after this day ends.
+    const nextShift =
+      rows.length === 0
+        ? await prisma.shift.findFirst({
+            where: { ...shiftScope(scope), startsAt: { gte: dayEnd } },
+            orderBy: { startsAt: 'asc' },
+            select: { startsAt: true, endsAt: true, position: true, locationRel: { select: { timezone: true } } },
+          })
+        : null;
+
     res.json({
+      ...(rows.length === 0
+        ? {
+            nextShift: nextShift
+              ? {
+                  startsAt: nextShift.startsAt.toISOString(),
+                  endsAt: nextShift.endsAt.toISOString(),
+                  position: nextShift.position,
+                  timezone: nextShift.locationRel?.timezone ?? scope.location?.timezone ?? ORG_TZ,
+                }
+              : null,
+          }
+        : {}),
       client: { id: scope.client.id, name: scope.client.name },
       store: scope.location
         ? { id: scope.location.id, name: scope.location.name, timezone: scope.location.timezone }
@@ -1449,7 +1656,10 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
             number: true,
             periodStart: true,
             periodEnd: true,
+            finalizedAt: true,
             paidAt: true,
+            dueAt: true,
+            poNumber: true,
             snapshot: true,
           },
         }),
@@ -1466,7 +1676,7 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       shifts,
       entries: rangeEntries,
     });
-    const reviewed = await loadAcknowledgements(scope.clientId);
+    const [reviewed, singleStore] = await Promise.all([loadAcknowledgements(scope.clientId), singleStoreClient(scope.clientId)]);
     // Market accounts: the stores side by side, ranked by the same grade.
     let storeRows: Array<{
       id: string;
@@ -1625,7 +1835,13 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
             ? Math.round((sum((d) => d.showed) / sum((d) => d.ended)) * 100)
             : null,
         scheduledHours: Math.round(sum((d) => d.scheduledHours) * 10) / 10,
+        // Every punched hour at the store, scheduled or not (uncapped). The
+        // grade's "delivered" above is capped at the contract each hour —
+        // two different numbers, so they carry two different names, and the
+        // hours worked past the schedule are said, not hidden in a full
+        // meter ("444.1h of 56.5h scheduled", F500 G5).
         workedHours: Math.round(sum((d) => d.workedHours) * 10) / 10,
+        offScheduleHours: Math.max(0, Math.round((sum((d) => d.workedHours) - sum((d) => d.scheduledHours)) * 10) / 10),
       },
       incidents: {
         noCallNoShows: count('NO_CALL_NO_SHOW'),
@@ -1647,34 +1863,17 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
             }
           : null,
       safety: { incidents, open: openIncidents },
-      statements: statements.map((st) => {
-        const snap = st.snapshot as {
-          totals?: { amount?: number; hours?: number };
-          stores?: Array<{ locationName: string; hours: number; amount: number }>;
-        } | null;
-        const storeLine = scope.location
-          ? (snap?.stores ?? []).find((s) => s.locationName === scope.location!.name) ?? null
-          : null;
-        // A store account never sees the client's total, only its own line.
-        // The client-wide figure is every OTHER store's labour spend as
-        // well, and the statement PDF is the same disclosure on paper.
-        const storeScoped = scope.locationId !== null;
-        return {
-          id: st.id,
-          number: st.number,
-          periodStart: st.periodStart.toISOString().slice(0, 10),
-          periodEnd: st.periodEnd.toISOString().slice(0, 10),
-          amount: storeScoped ? null : (snap?.totals?.amount ?? null),
-          hours: storeScoped ? null : (snap?.totals?.hours ?? null),
-          storeHours: storeLine ? storeLine.hours : null,
-          storeAmount: storeLine ? storeLine.amount : null,
-          paidAt: st.paidAt ? st.paidAt.toISOString() : null,
-          pdfUrl: storeScoped
-            ? null
-            : `/api/client-portal/statements/${st.id}.pdf${previewQs ? `?${previewQs.slice(1)}` : ''}`,
-          reviewed: reviewed('STATEMENT', st.id),
-        };
-      }),
+      // The same row the home shows (portalStatementRow): amount, due date,
+      // days past due, the PDF where the account may hold it.
+      statements: statements.map((st) => ({
+        ...portalStatementRow(st, {
+          scope,
+          singleStore: singleStore,
+          todayKey: cal.key(now),
+          pdfUrl: (id) => `/api/client-portal/statements/${id}.pdf${previewQs ? `?${previewQs.slice(1)}` : ''}`,
+        }),
+        reviewed: reviewed('STATEMENT', st.id),
+      })),
       serviceReports: weekStarts.map((w) => ({
         weekStart: w,
         weekEnd: nextKey(w, 6),

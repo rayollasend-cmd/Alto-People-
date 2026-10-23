@@ -296,6 +296,43 @@ skills111Router.get('/associate-skills', VIEW, async (req, res) => {
   });
 });
 
+// ----- Overview -----------------------------------------------------------
+
+/**
+ * GET /skills/overview — the page's first screen (F500 2026-10-22: Skills
+ * opened on an empty search form with no counts). Counted over the active
+ * people in the caller's reach, like the catalog's counts:
+ *   - catalog: skills in this tenant's catalog;
+ *   - peopleWithSkill / peopleWithVerified: people with at least one skill
+ *     on record, and with at least one a verifier has checked;
+ *   - toVerify: self-claims waiting on a verifier (GET /associate-skills/pending);
+ *   - top: the five skills most people hold, with how many are verified.
+ */
+skills111Router.get('/skills/overview', VIEW, async (req, res) => {
+  const scope = scopeActiveAssociates(req.user!);
+  const T = tenantIdForWrite();
+  const [catalog, peopleWithSkill, peopleWithVerified, toVerify, held, verified] = await Promise.all([
+    prisma.skill.count({ where: { tenantId: T } }),
+    prisma.associate.count({ where: { AND: [scope, { skills: { some: {} } }] } }),
+    prisma.associate.count({ where: { AND: [scope, { skills: { some: { verifiedAt: { not: null } } } }] } }),
+    prisma.associateSkill.count({ where: { tenantId: T, selfClaimedAt: { not: null }, verifiedAt: null, associate: { is: scope } } }),
+    prisma.associateSkill.groupBy({ by: ['skillId'], where: { tenantId: T, associate: { is: scope } }, _count: { _all: true } }),
+    prisma.associateSkill.groupBy({ by: ['skillId'], where: { tenantId: T, verifiedAt: { not: null }, associate: { is: scope } }, _count: { _all: true } }),
+  ]);
+  const verifiedBy = new Map(verified.map((g) => [g.skillId, g._count._all]));
+  const ranked = [...held].sort((a, b) => b._count._all - a._count._all);
+  const names = ranked.length
+    ? await prisma.skill.findMany({ where: { id: { in: ranked.slice(0, 20).map((g) => g.skillId) } }, select: { id: true, name: true, category: true } })
+    : [];
+  const nameOf = new Map(names.map((n) => [n.id, n]));
+  const top = ranked
+    .filter((g) => nameOf.has(g.skillId))
+    .map((g) => ({ id: g.skillId, name: nameOf.get(g.skillId)!.name, category: nameOf.get(g.skillId)!.category, people: g._count._all, verified: verifiedBy.get(g.skillId) ?? 0 }))
+    .sort((a, b) => b.people - a.people || a.name.localeCompare(b.name))
+    .slice(0, 5);
+  res.json({ catalog, peopleWithSkill, peopleWithVerified, toVerify, top });
+});
+
 // ----- Search -----------------------------------------------------------
 
 skills111Router.get('/skills/search', VIEW, async (req, res) => {

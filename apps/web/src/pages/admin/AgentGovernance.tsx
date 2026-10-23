@@ -9,13 +9,15 @@ import { AgentGlyph } from '@/components/agents/AgentGlyph';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { apiFetch } from '@/lib/api';
 import { useAuth, useTenant } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
-import { fmtDateTime } from '@/lib/format';
+import { fmtCount, fmtDateTime } from '@/lib/format';
 import { getAgentControl, getPlatformControl, listAgents, listDecisionRecords, resumeAllAgents, resumePlatformAgents, suspendPlatformAgents } from '@/lib/agentsApi';
 import { AgentGatesPanel } from './AgentGatesPanel';
 import { McpCatalogPreview } from './McpCatalogPreview';
@@ -54,29 +56,41 @@ export function AgentGovernance() {
   }, [hash, registry.data]);
 
   const inForce = (gates.data?.policies ?? []).filter((p) => p.inForce).length;
+  const [addingPolicy, setAddingPolicy] = useState(false);
+  const certified = agents.filter((a) => a.certification?.current).length;
+  const liveCredentials = agents.reduce((n, a) => n + a.activeCredentials, 0);
+  const live = registry.data ? registry.data.counts.ACTIVE : agents.filter((a) => a.status === 'ACTIVE').length;
+  const switchOn = Boolean(control?.allSuspendedAt);
 
   return (
     <div className="space-y-6" data-template="settings">
       <PageHeader
         title="Agents & gates"
-        subtitle="Who approves what, whether each agent is certified for the version it runs, the credentials it holds, the tools the MCP server offers, the decisions recorded about people, and the switch that stops every agent."
-        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Agents & gates' }]}
-        secondaryActions={
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/agents">Open the agents</Link>
-          </Button>
-        }
+        subtitle="Who approves what an agent does, whether each agent is certified for the version it runs, the credentials it holds, the MCP tools, the decisions recorded about people, and the switch that stops every agent."
+        related={[{ label: 'Agents', to: '/agents' }]}
       />
 
       {registry.error && <QueryError what="the agents" query={registry} />}
+
+      {/* Status first (F500 G4): the five numbers an auditor asks for, each a link to its section. */}
+      {registry.data && (
+        <MetricStrip label="Agent governance at a glance">
+          <MetricCard label="Agents live" value={live} hint={fmtCount(agents.length, 'agent') + ' registered'} href="/agents" compact />
+          <MetricCard label="Certified" value={`${certified} of ${agents.length}`} hint="For the version each runs" tone={agents.length > 0 && certified < agents.length ? 'warning' : 'neutral'} href="#certification" compact />
+          <MetricCard label="Live credentials" value={liveCredentials} hint="Bearer tokens in use" href="#credentials" compact />
+          <MetricCard label="Gates in force" value={gates.isLoading ? '…' : inForce} hint="Your policies over the platform floor" href="#gates" compact />
+          <MetricCard label="Stop switch" value={control ? (switchOn ? 'On' : 'Off') : '…'} hint={switchOn ? 'Every agent call is refused' : 'Agents run'} tone={switchOn ? 'alert' : 'neutral'} href="#kill-switch" compact />
+        </MetricStrip>
+      )}
 
       <SettingsSection
         id="gates"
         title="Gates: who approves what"
         description="The platform always puts pay, separations, client messages, exports, shift assignments and HR cases in front of a person. Your own policies add approvals above that floor and name who decides."
         status={gates.isLoading ? undefined : <Badge variant={inForce > 0 ? 'accent' : 'outline'} size="sm" withDot={false}>{inForce === 1 ? '1 policy in force' : `${inForce} policies in force`}</Badge>}
+        action={canManage ? <Button size="sm" variant="outline" onClick={() => setAddingPolicy(true)}>Add policy</Button> : undefined}
       >
-        <AgentGatesPanel agents={agents.map((a) => ({ id: a.id, name: a.name }))} canManage={canManage} />
+        <AgentGatesPanel agents={agents.map((a) => ({ id: a.id, name: a.name }))} canManage={canManage} adding={addingPolicy} onAddingChange={setAddingPolicy} />
       </SettingsSection>
 
       <CertificationAcross agents={agents} loading={registry.isLoading} />
@@ -86,7 +100,7 @@ export function AgentGovernance() {
       <SettingsSection
         id="mcp"
         title="MCP tools"
-        description="What an agent connecting over MCP can call here, generated from the capabilities this organization has switched on. Each agent sees only the tools it holds."
+        description="What an agent connecting over MCP can call here, generated from the capabilities this organization has switched on. Each agent connects with its own credential and sees only the tools it holds; a tool that needs approval returns an approval id and does nothing else."
       >
         <McpCatalogPreview />
       </SettingsSection>
@@ -171,7 +185,7 @@ function CredentialsAcross({ agents, loading }: { agents: AgentSummary[]; loadin
       {loading ? (
         <SkeletonRows count={2} />
       ) : holders.length === 0 ? (
-        <EmptyState title="No live credentials" description="Issue one from an agent's Credentials tab when it is ready to call the agent API." />
+        <p className="text-sm text-ink-muted">No live credentials. Issue one from an agent’s Credentials tab when it is ready to call the agent API.</p>
       ) : (
         <ul className="divide-y divide-line text-sm" aria-label="Credentials by agent">
           {holders.map((a) => (
@@ -221,7 +235,7 @@ function DecisionRecordAcross() {
       ) : q.isLoading ? (
         <SkeletonRows count={3} />
       ) : rows.length === 0 ? (
-        <EmptyState title="No decisions recorded" description="A row appears the first time an agent's capability decides something about a person." />
+        <p className="text-sm text-ink-muted">No decisions recorded. A row appears the first time an agent’s capability decides something about a person.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

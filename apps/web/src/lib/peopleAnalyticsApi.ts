@@ -8,6 +8,9 @@ export interface TurnoverGroup {
   separations: number;
   headcount: number;
   annualizedTurnoverPct: number | null;
+  /** The one row every inactive (closed) site folds into; `siteCount` says how many. */
+  inactive?: boolean;
+  siteCount?: number;
 }
 
 export interface PeopleAnalytics {
@@ -36,7 +39,7 @@ export interface PeopleAnalytics {
   /** Separations in the window by store and by how long they had been there. */
   turnoverGrid?: {
     bands: Array<{ key: string; label: string }>;
-    rows: Array<{ storeId: string; storeName: string; clientName: string | null; hires: number; separations: number; bands: number[] }>;
+    rows: Array<{ storeId: string; storeName: string; clientName: string | null; inactive?: boolean; siteCount?: number; hires: number; separations: number; bands: number[] }>;
   };
   /** The first 90 days, cohort by cohort: the share still here at each week (null = not yet reached). */
   survival?: Array<{ month: string; hires: number; points: Array<{ day: number; pct: number | null }> }>;

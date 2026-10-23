@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Expand, IdCard, Wallet } from 'lucide-react';
+import { Expand, Eye, EyeOff, IdCard, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getAppleWalletLink, getGoogleWalletLink, getWorkerBadge, type WorkerBadge } from '@/lib/walletApi';
@@ -57,10 +57,17 @@ function useQr(value: string | undefined, size: number): string | null {
   return url;
 }
 
-/** The pass, drawn. `large` is the full-screen kiosk version. */
-export function BadgeVisual({ badge, large = false }: { badge: WorkerBadge; large?: boolean }) {
+/**
+ * The pass, drawn. `large` is the full-screen kiosk version. `masked`: the
+ * clock-in number shows as •••• behind a tap, like Home and My profile —
+ * a glance over a shoulder shouldn't leak the key to someone's punches
+ * (F500 G5). The full-screen badge (held up at the kiosk) shows it.
+ */
+export function BadgeVisual({ badge, large = false, masked = false }: { badge: WorkerBadge; large?: boolean; masked?: boolean }) {
   const { t } = useI18n();
   const qr = useQr(badge.badgeToken, large ? 560 : 320);
+  const [revealed, setRevealed] = useState(false);
+  const hidden = masked && !revealed;
   return (
     <div
       className={cn('mx-auto w-full overflow-hidden rounded-2xl shadow-xl ring-1 ring-black/10', large ? 'max-w-sm' : 'max-w-[22rem]')}
@@ -106,7 +113,21 @@ export function BadgeVisual({ badge, large = false }: { badge: WorkerBadge; larg
             <dt className="text-2xs font-semibold uppercase tracking-[0.14em]" style={{ color: PASS.label }}>
               {t('badge.number')}
             </dt>
-            <dd className="font-mono text-base tracking-widest">{badge.workerNumber}</dd>
+            <dd className="flex items-center gap-1.5 font-mono text-base tracking-widest">
+              <span data-testid="badge-number">{hidden ? '••••' : badge.workerNumber}</span>
+              {masked && (
+                <button
+                  type="button"
+                  onClick={() => setRevealed((v) => !v)}
+                  className="inline-flex items-center rounded p-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11 coarse:min-w-11 coarse:justify-center"
+                  style={{ color: PASS.label }}
+                  aria-label={revealed ? t('dash.hideNumber') : t('dash.showNumber')}
+                  aria-pressed={revealed}
+                >
+                  {revealed ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+                </button>
+              )}
+            </dd>
           </div>
         )}
       </dl>
@@ -119,7 +140,7 @@ export function BadgeVisual({ badge, large = false }: { badge: WorkerBadge; larg
           )}
         </div>
         <div className="mt-2 text-xs" style={{ color: PASS.muted }}>
-          {badge.workerNumber ? t('badge.qrCaptionNumber', { number: badge.workerNumber }) : t('badge.qrCaption')}
+          {badge.workerNumber && !hidden ? t('badge.qrCaptionNumber', { number: badge.workerNumber }) : t('badge.qrCaption')}
         </div>
       </div>
     </div>
@@ -143,10 +164,18 @@ function WalletButton({ onClick, busy, children }: { onClick: () => void; busy: 
   );
 }
 
-export function WorkerBadgeCard() {
+/**
+ * `fullOpen`/`onFullOpenChange`: the page's own "Show badge" (the header's
+ * primary action on My credentials) opens the full-screen badge; the card
+ * then drops its duplicate button.
+ */
+export function WorkerBadgeCard({ fullOpen, onFullOpenChange }: { fullOpen?: boolean; onFullOpenChange?: (open: boolean) => void } = {}) {
   const { t } = useI18n();
   const q = useQuery({ queryKey: ['me', 'wallet', 'badge'], queryFn: getWorkerBadge, retry: false });
-  const [full, setFull] = useState(false);
+  const [fullState, setFullState] = useState(false);
+  const controlled = fullOpen !== undefined;
+  const full = controlled ? fullOpen : fullState;
+  const setFull = (open: boolean) => (onFullOpenChange ? onFullOpenChange(open) : setFullState(open));
   const [busy, setBusy] = useState<'apple' | 'google' | null>(null);
 
   const open = async (url: string) => {
@@ -231,13 +260,15 @@ export function WorkerBadgeCard() {
         title={t('badge.title')}
         description={t('badge.subtitle')}
         trailing={
-          <Button variant="outline" size="sm" onClick={() => setFull(true)}>
-            <Expand className="h-4 w-4" aria-hidden="true" />
-            {t('badge.show')}
-          </Button>
+          controlled ? undefined : (
+            <Button variant="outline" size="sm" onClick={() => setFull(true)}>
+              <Expand className="h-4 w-4" aria-hidden="true" />
+              {t('badge.show')}
+            </Button>
+          )
         }
       />
-      <BadgeVisual badge={badge} />
+      <BadgeVisual badge={badge} masked />
       {anyWallet ? (
         <div className="mx-auto flex max-w-[22rem] flex-col gap-2 sm:flex-row">{platform === 'android' ? [googleBtn, appleBtn] : [appleBtn, googleBtn]}</div>
       ) : (

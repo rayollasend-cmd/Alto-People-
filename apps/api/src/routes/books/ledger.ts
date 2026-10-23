@@ -6,9 +6,12 @@ import {
   BooksManualEntryInputSchema,
   BooksOpeningBalancesInputSchema,
   BooksVoidInputSchema,
+  BOOKS_COMPARE_KINDS,
+  JOURNAL_SOURCE_LABELS,
   LEDGER_SUBTYPES,
   LedgerAccountCreateInputSchema,
   LedgerAccountUpdateInputSchema,
+  csvCell,
   type BooksDimensions,
   type BooksJournalEntryDetail,
   type BooksJournalRow,
@@ -25,8 +28,9 @@ import { enqueueAudit } from '../../lib/audit.js';
 import { tenantIdForWrite } from '../../lib/tenant.js';
 import { loadBrand } from '../../lib/docKit/index.js';
 import { accountIndex, fromCents, isPeriodClosed, postEntry, toCents, voidEntry, entryForKey } from '../../lib/books/ledger.js';
-import { accountDetail, balanceSheet, cashFlow, monthsBetween, profitAndLoss, trialBalance, type Dimensions } from '../../lib/books/reports.js';
+import { accountDetail, balanceSheet, cashFlow, compareAsOf, compareRange, monthsBetween, profitAndLoss, trialBalance, type Dimensions } from '../../lib/books/reports.js';
 import { emitBooksChange } from '../../lib/books/events.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 import {
   balanceSheetPdf,
   balanceSheetXlsx,
@@ -52,7 +56,8 @@ const MANAGE = requireCapability('manage:books');
 
 const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
-const today = () => ymd(new Date());
+// The company's calendar day (statements, the close and the reports count on it, not UTC's).
+const today = () => orgDateKey(new Date());
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const DAY = 86_400_000;
 
@@ -197,7 +202,8 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
     const openOnStatements = aging.current + aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.over90;
     if (Math.abs(openOnStatements - arTotal) >= 1) {
       const fmt = (c: number) => fromCents(c).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-      needsYou.push({ key: 'ar-unposted', label: `Receivables in the books (${fmt(arTotal)}) don’t match open statements (${fmt(openOnStatements)}) — post history to bring them in`, count: 1, to: '/books/receivables', tone: 'warning' });
+      // First: until history is posted, every other number on the page is short of it.
+      needsYou.unshift({ key: 'ar-unposted', label: `Receivables in the books (${fmt(arTotal)}) don’t match open statements (${fmt(openOnStatements)}) — post history to bring them in`, count: 1, to: '/books/receivables', tone: 'warning' });
     }
     if (aging.over90 > 0) needsYou.push({ key: 'ar-90', label: `${fromCents(aging.over90).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} owed by clients for over 90 days`, count: 1, to: '/books/receivables', tone: 'alert' });
     if (period.status !== 'CLOSED' && Number(asOf.slice(8, 10)) >= 5) needsYou.push({ key: 'close', label: `${new Date(`${lastMonth}-01T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })} isn’t closed yet`, count: 1, to: `/books/close/${lastMonth}`, tone: 'info' });
@@ -262,15 +268,26 @@ booksLedgerRouter.get('/dimensions', async (_req, res, next) => {
 
 /* ---- Accounts --------------------------------------------------------------- */
 
+/** Net movement (cents, debit − credit) per account from Jan 1 of `asOf`'s year through `asOf`. */
+async function movementYearToDate(asOf: string): Promise<Map<string, number>> {
+  const rows = await prisma.journalLine.groupBy({
+    by: ['accountId'],
+    where: { tenantId: tenantIdForWrite(), entry: { status: 'POSTED', entryDate: { gte: dateOnly(`${asOf.slice(0, 4)}-01-01`), lte: dateOnly(asOf) } } },
+    _sum: { debit: true, credit: true },
+  });
+  return new Map(rows.map((r) => [r.accountId, toCents(r._sum.debit) - toCents(r._sum.credit)]));
+}
+
 async function accountRows(asOf: string): Promise<LedgerAccountRow[]> {
   const tenantId = tenantIdForWrite();
   const { byId } = await accountIndex(prisma);
-  const bal = await balancesThrough(asOf);
+  const [bal, ytd] = await Promise.all([balancesThrough(asOf), movementYearToDate(asOf)]);
   const used = new Set((await prisma.journalLine.groupBy({ by: ['accountId'], where: { tenantId } })).map((r) => r.accountId));
   return [...byId.values()]
     .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }))
     .map((a) => {
       const net = bal.get(a.id) ?? 0;
+      const moved = ytd.get(a.id) ?? 0;
       return {
         id: a.id,
         code: a.code,
@@ -282,6 +299,7 @@ async function accountRows(asOf: string): Promise<LedgerAccountRow[]> {
         description: a.description,
         isActive: a.isActive,
         balance: fromCents(debitNormal(a.type) ? net : -net),
+        activityYtd: fromCents(debitNormal(a.type) ? moved : -moved),
         hasEntries: used.has(a.id),
       };
     });
@@ -400,7 +418,7 @@ booksLedgerRouter.get('/accounts/:id/detail', async (req, res, next) => {
 
 /* ---- Journal ---------------------------------------------------------------- */
 
-const JournalQuery = z.object({
+const JournalFilterQuery = z.object({
   from: Ymd.optional(),
   to: Ymd.optional(),
   source: z.string().max(24).optional(),
@@ -408,50 +426,102 @@ const JournalQuery = z.object({
   status: z.enum(['POSTED', 'VOID']).optional(),
   accountId: z.string().uuid().optional(),
   q: z.string().trim().max(120).optional(),
+  /** The column the server orders by (the whole filtered set, not a page). Default: newest first. */
+  sort: z.enum(['date', 'number', 'amount']).optional(),
+  dir: z.enum(['asc', 'desc']).optional(),
+});
+const JournalQuery = JournalFilterQuery.extend({
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
+type JournalFilter = z.infer<typeof JournalFilterQuery>;
+
+function journalWhere(q: JournalFilter): Prisma.JournalEntryWhereInput {
+  return {
+    tenantId: tenantIdForWrite(),
+    ...(q.from || q.to ? { entryDate: { ...(q.from ? { gte: dateOnly(q.from) } : {}), ...(q.to ? { lte: dateOnly(q.to) } : {}) } } : {}),
+    ...(q.source ? { source: q.source } : {}),
+    ...(q.origin ? { origin: q.origin } : {}),
+    ...(q.status ? { status: q.status } : {}),
+    ...(q.accountId ? { lines: { some: { accountId: q.accountId } } } : {}),
+    ...(q.q ? { OR: [{ memo: { contains: q.q, mode: 'insensitive' } }, ...(/^\d+$/.test(q.q) ? [{ number: Number(q.q) }] : [])] } : {}),
+  };
+}
+
+/** The order the whole filtered set is read in — the grid's sort, done where every row is. */
+function journalOrder(q: JournalFilter): Prisma.JournalEntryOrderByWithRelationInput[] {
+  const dir = q.dir ?? 'desc';
+  if (q.sort === 'number') return [{ number: dir }];
+  if (q.sort === 'amount') return [{ totalDebit: dir }, { number: 'desc' }];
+  return [{ entryDate: dir }, { number: dir }];
+}
+
+type JournalEntryWithAccounts = Prisma.JournalEntryGetPayload<{ include: { lines: { select: { accountId: true } } } }>;
+
+async function journalRows(entries: JournalEntryWithAccounts[]): Promise<BooksJournalRow[]> {
+  const { byId } = await accountIndex(prisma);
+  return entries.map((e) => {
+    const accounts = [...new Set(e.lines.map((l) => l.accountId))];
+    return {
+      id: e.id,
+      number: e.number,
+      date: ymd(e.entryDate),
+      memo: e.memo,
+      source: e.source,
+      origin: e.origin as 'SITE' | 'QUICKBOOKS',
+      status: e.status as 'POSTED' | 'VOID',
+      amount: fromCents(toCents(e.totalDebit)),
+      accounts: accounts.length <= 2 ? accounts.map((id) => byId.get(id)?.name ?? '—').join(' / ') : `${accounts.length} accounts`,
+      reverseOn: e.reverseOn ? ymd(e.reverseOn) : null,
+    };
+  });
+}
 
 booksLedgerRouter.get('/journal', async (req, res, next) => {
   try {
     const q = JournalQuery.parse(req.query);
-    const tenantId = tenantIdForWrite();
-    const where: Prisma.JournalEntryWhereInput = {
-      tenantId,
-      ...(q.from || q.to ? { entryDate: { ...(q.from ? { gte: dateOnly(q.from) } : {}), ...(q.to ? { lte: dateOnly(q.to) } : {}) } } : {}),
-      ...(q.source ? { source: q.source } : {}),
-      ...(q.origin ? { origin: q.origin } : {}),
-      ...(q.status ? { status: q.status } : {}),
-      ...(q.accountId ? { lines: { some: { accountId: q.accountId } } } : {}),
-      ...(q.q ? { OR: [{ memo: { contains: q.q, mode: 'insensitive' } }, ...(/^\d+$/.test(q.q) ? [{ number: Number(q.q) }] : [])] } : {}),
-    };
+    const where = journalWhere(q);
     const [total, entries] = await Promise.all([
       prisma.journalEntry.count({ where }),
       prisma.journalEntry.findMany({
         where,
-        orderBy: [{ entryDate: 'desc' }, { number: 'desc' }],
+        orderBy: journalOrder(q),
         skip: q.offset,
         take: q.limit,
         include: { lines: { select: { accountId: true }, orderBy: { lineNo: 'asc' } } },
       }),
     ]);
-    const { byId } = await accountIndex(prisma);
-    const rows: BooksJournalRow[] = entries.map((e) => {
-      const accounts = [...new Set(e.lines.map((l) => l.accountId))];
-      return {
-        id: e.id,
-        number: e.number,
-        date: ymd(e.entryDate),
-        memo: e.memo,
-        source: e.source,
-        origin: e.origin as 'SITE' | 'QUICKBOOKS',
-        status: e.status as 'POSTED' | 'VOID',
-        amount: fromCents(toCents(e.totalDebit)),
-        accounts: accounts.length <= 2 ? accounts.map((id) => byId.get(id)?.name ?? '—').join(' / ') : `${accounts.length} accounts`,
-        reverseOn: e.reverseOn ? ymd(e.reverseOn) : null,
-      };
-    });
-    res.json({ entries: rows, total });
+    res.json({ entries: await journalRows(entries), total });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** The most rows one export carries; past it the file says so on its last line. */
+const JOURNAL_EXPORT_CAP = 50_000;
+
+/**
+ * GET /books/journal.csv — every entry the filters match, in the grid's
+ * order (not just the page on screen), one row per entry.
+ */
+booksLedgerRouter.get('/journal.csv', async (req, res, next) => {
+  try {
+    const q = JournalFilterQuery.parse(req.query);
+    const where = journalWhere(q);
+    const [total, entries] = await Promise.all([
+      prisma.journalEntry.count({ where }),
+      prisma.journalEntry.findMany({ where, orderBy: journalOrder(q), take: JOURNAL_EXPORT_CAP, include: { lines: { select: { accountId: true }, orderBy: { lineNo: 'asc' } } } }),
+    ]);
+    const rows = await journalRows(entries);
+    const lines = [['No.', 'Date', 'Memo', 'Accounts', 'From', 'Status', 'Amount', 'Reverses on'].map(csvCell).join(',')];
+    for (const r of rows) {
+      lines.push([r.number, r.date, r.memo ?? '', r.accounts, r.origin === 'QUICKBOOKS' ? 'QuickBooks' : (JOURNAL_SOURCE_LABELS[r.source] ?? r.source), r.status === 'VOID' ? 'Void' : 'Posted', r.amount.toFixed(2), r.reverseOn ?? ''].map((c) => csvCell(c)).join(','));
+    }
+    if (total > rows.length) lines.push(csvCell(`First ${rows.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} entries — narrow the dates for the rest.`));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName(`journal-${q.from ?? 'start'}-to-${q.to ?? today()}`, 'csv')}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(lines.join('\n'));
   } catch (err) {
     next(err);
   }
@@ -650,6 +720,8 @@ function rangeQuery(req: Request): { from: string; to: string } {
 }
 const asOfQuery = (req: Request) => z.object({ asOf: Ymd.optional() }).parse(req.query).asOf ?? today();
 const columnsQuery = (req: Request) => z.object({ columns: z.enum(['none', 'month', 'client']).default('none') }).parse(req.query).columns;
+/** ?compare=prior|yoy — the statement beside the same one for the comparison range. */
+const compareQuery = (req: Request) => z.object({ compare: z.enum(BOOKS_COMPARE_KINDS).optional() }).parse(req.query).compare;
 
 booksLedgerRouter.get('/reports/trial-balance', async (req, res, next) => {
   try {
@@ -662,7 +734,18 @@ booksLedgerRouter.get('/reports/trial-balance', async (req, res, next) => {
 booksLedgerRouter.get('/reports/profit-and-loss', async (req, res, next) => {
   try {
     const { from, to } = rangeQuery(req);
-    res.json(await profitAndLoss(prisma, from, to, dims(req.query), { columns: columnsQuery(req) }));
+    const d = dims(req.query);
+    const columns = columnsQuery(req);
+    const kind = compareQuery(req);
+    const r = await profitAndLoss(prisma, from, to, d, { columns });
+    // A comparison sits beside the total; split columns (by month, by client) are their own comparison.
+    let compare = null;
+    if (kind && columns === 'none') {
+      const c = compareRange(from, to, kind);
+      const cr = await profitAndLoss(prisma, c.from, c.to, d);
+      compare = { kind, from: c.from, to: c.to, sections: cr.sections, totals: cr.totals };
+    }
+    res.json({ ...r, compare });
   } catch (err) {
     next(err);
   }
@@ -670,7 +753,16 @@ booksLedgerRouter.get('/reports/profit-and-loss', async (req, res, next) => {
 
 booksLedgerRouter.get('/reports/balance-sheet', async (req, res, next) => {
   try {
-    res.json(await balanceSheet(prisma, asOfQuery(req), dims(req.query)));
+    const asOf = asOfQuery(req);
+    const d = dims(req.query);
+    const kind = compareQuery(req);
+    const r = await balanceSheet(prisma, asOf, d);
+    let compare = null;
+    if (kind) {
+      const c = await balanceSheet(prisma, compareAsOf(asOf, kind), d);
+      compare = { kind, asOf: c.asOf, assets: c.assets, liabilities: c.liabilities, equity: c.equity, totals: c.totals };
+    }
+    res.json({ ...r, compare });
   } catch (err) {
     next(err);
   }
@@ -679,7 +771,16 @@ booksLedgerRouter.get('/reports/balance-sheet', async (req, res, next) => {
 booksLedgerRouter.get('/reports/cash-flow', async (req, res, next) => {
   try {
     const { from, to } = rangeQuery(req);
-    res.json(await cashFlow(prisma, from, to, dims(req.query)));
+    const d = dims(req.query);
+    const kind = compareQuery(req);
+    const r = await cashFlow(prisma, from, to, d);
+    let compare = null;
+    if (kind) {
+      const c = compareRange(from, to, kind);
+      const cr = await cashFlow(prisma, c.from, c.to, d);
+      compare = { kind, from: c.from, to: c.to, netIncome: cr.netIncome, operating: cr.operating, investing: cr.investing, financing: cr.financing, totals: cr.totals };
+    }
+    res.json({ ...r, compare });
   } catch (err) {
     next(err);
   }

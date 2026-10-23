@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { ATTENDANCE_FILL_TARGET_PCT } from '@alto-people/shared';
 import { Briefcase, CalendarCheck, ClipboardList, Clock, ShieldAlert, Timer, Users, type LucideIcon } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
@@ -144,7 +145,8 @@ function HrRow() {
 interface OverviewSlice {
   now: { onFloor: number; scheduledNow: number };
   today: { filled: number; open: number };
-  week: { start: string; fillRatePct: number | null };
+  /** `filled`/`total`: the shifts behind the rate (older APIs sent the rate alone). */
+  week: { start: string; fillRatePct: number | null; filled?: number; total?: number };
 }
 
 function OpsRow() {
@@ -168,6 +170,8 @@ function OpsRow() {
   const scheduled = labor.data ? Math.round(labor.data.rows.reduce((s, r) => s + r.scheduledMinutes, 0) / 60) : null;
   const openSeats = positions.data ? (positions.data.byStatus.OPEN ?? 0) : null;
   const shiftsToday = o ? o.today.filled + o.today.open : 0;
+  const fill = o?.week.fillRatePct ?? null;
+  const belowTarget = fill !== null && fill < ATTENDANCE_FILL_TARGET_PCT;
   const tiles: Tile[] = [
     {
       key: 'coverage',
@@ -184,19 +188,27 @@ function OpsRow() {
     {
       key: 'fill',
       label: 'Fill rate this week',
-      value: o ? (o.week.fillRatePct === null ? '—' : `${o.week.fillRatePct}%`) : null,
-      nothing: o && o.week.fillRatePct === null ? 'No shifts this week' : undefined,
-      hint: o ? `${o.now.onFloor} on the floor now of ${o.now.scheduledNow} scheduled` : undefined,
-      to: '/time-attendance',
+      value: o ? (fill === null ? '—' : `${fill}%`) : null,
+      nothing: o && fill === null ? 'No shifts this week' : undefined,
+      // The week's own counts, against the target — the hint used to
+      // describe right now ("0 on the floor now of 0 scheduled").
+      hint:
+        o && o.week.filled !== undefined && o.week.total !== undefined
+          ? `${INT.format(o.week.filled)} of ${fmtCount(o.week.total, 'shift')} filled · target ${ATTENDANCE_FILL_TARGET_PCT}%`
+          : `Target ${ATTENDANCE_FILL_TARGET_PCT}%`,
+      // The week's unfilled shifts.
+      to: o ? `/scheduling?open=1&view=week&week=${o.week.start}` : '/scheduling?open=1',
       icon: Timer,
-      tone: o && o.week.fillRatePct !== null && o.week.fillRatePct < 90 ? 'attention' : 'calm',
+      tone: belowTarget ? 'attention' : 'calm',
     },
     {
       key: 'labor',
       label: 'Hours worked this week',
-      value: worked === null ? null : INT.format(worked),
+      // One hours number on the ops home, with its unit (the snapshot's
+      // "last week" twin is gone from this role's page).
+      value: worked === null ? null : `${INT.format(worked)}h`,
       nothing: worked === 0 && scheduled === 0 ? 'No hours scheduled this week' : undefined,
-      hint: scheduled === null ? undefined : `against ${INT.format(scheduled)} scheduled across ${term('sites').toLowerCase()}`,
+      hint: scheduled === null ? undefined : `of ${INT.format(scheduled)}h scheduled across ${term('sites').toLowerCase()}`,
       to: '/labor-costs',
       icon: Clock,
     },

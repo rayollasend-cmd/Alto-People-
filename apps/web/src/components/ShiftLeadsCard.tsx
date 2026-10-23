@@ -20,12 +20,16 @@ import { SupervisorShiftDialog, type ShiftDialogUser } from '@/pages/admin/Super
  */
 export function ShiftLeadsCard({
   hideWhenClear = false,
+  showLed = false,
   onChanged,
   className,
   style,
 }: {
   /** Render nothing when every shift has a lead (the users page). */
   hideWhenClear?: boolean;
+  /** List every shift with its lead's name or "No lead", all-clear clients
+   *  included (the Store leads page) — not only the gaps. */
+  showLed?: boolean;
   /** After a shift is assigned here — the host refreshes its own list. */
   onChanged?: () => void;
   className?: string;
@@ -34,12 +38,21 @@ export function ShiftLeadsCard({
   const { t } = useI18n();
   const { can } = useAuth();
   const queryClient = useQueryClient();
-  const q = useQuery({ queryKey: ['shift-windows', 'gaps'], queryFn: getShiftCoverageGaps, staleTime: 60_000 });
+  const q = useQuery({
+    queryKey: ['shift-windows', 'gaps', showLed ? 'all' : 'gaps'],
+    queryFn: () => getShiftCoverageGaps({ all: showLed }),
+    staleTime: 60_000,
+  });
   const [picking, setPicking] = useState<ShiftDialogUser | null>(null);
 
   const data = q.data;
   if (q.isError) return null;
   if (hideWhenClear && (!data || data.clients.length === 0)) return null;
+  // A client "has gaps" when a shift has no lead or someone has no shift —
+  // with showLed the list also carries the all-clear clients.
+  const hasGaps = (c: ShiftCoverageGaps['clients'][number]) =>
+    c.uncovered.length > 0 || c.noShift.length > 0 || (c.floorSupervisors?.length ?? 0) > 0;
+  const anyGaps = !!data && data.clients.some(hasGaps);
 
   const open = (c: ShiftCoverageGaps['clients'][number], u: ShiftCoverageGaps['clients'][number]['supervisors'][number]) =>
     setPicking({
@@ -70,7 +83,7 @@ export function ShiftLeadsCard({
     });
 
   return (
-    <Card className={cn(data && data.clients.length > 0 && 'border-warning/30', className)} style={style}>
+    <Card className={cn(anyGaps && 'border-warning/30', className)} style={style}>
       <CardContent className="p-4">
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
@@ -87,14 +100,31 @@ export function ShiftLeadsCard({
           <Skeleton className="mt-3 h-16" />
         ) : data.total === 0 ? (
           <p className="mt-2 text-sm text-silver/70">{t('shiftLeads.noneNamed')}</p>
-        ) : data.clients.length === 0 ? (
+        ) : data.clients.length === 0 || (!showLed && !anyGaps) ? (
           <p className="mt-2 text-sm text-success">{t('shiftLeads.allClear')}</p>
         ) : (
           <ul className="mt-3 space-y-3">
             {data.clients.map((c) => (
               <li key={c.clientId} className="text-xs">
                 <div className="font-medium text-white">{c.clientName}</div>
-                {c.uncovered.length > 0 && (
+                {showLed && c.windows ? (
+                  // Every shift, led or not: "Swing 2:00 PM – 10:00 PM · Front Beach — Dana Reyes".
+                  <ul className="mt-1 space-y-0.5" data-testid="shift-leads-all">
+                    {c.windows.map((w) => (
+                      <li key={`${w.locationId}|${w.label}`} className="text-silver">
+                        {w.leads.length > 0 ? (
+                          <span className="text-ink">{w.leads.join(', ')}</span>
+                        ) : (
+                          <span className="text-warning">{t('shiftLeads.noLead')}</span>
+                        )}{' '}
+                        · {w.label}{' '}
+                        <span className="text-silver/60">
+                          {fmtShiftWindow(w)} · {w.locationName}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : c.uncovered.length > 0 && (
                   <ul className="mt-1 space-y-0.5">
                     {c.uncovered.map((w) => (
                       <li key={`${w.locationId}|${w.label}`} className="text-silver">
@@ -106,7 +136,7 @@ export function ShiftLeadsCard({
                     ))}
                   </ul>
                 )}
-                {c.supervisors.length === 0 ? (
+                {showLed && !hasGaps(c) ? null : c.supervisors.length === 0 ? (
                   <p className="mt-1 text-silver/60">{t('shiftLeads.noSupervisor')}</p>
                 ) : (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

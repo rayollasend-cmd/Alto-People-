@@ -13,6 +13,9 @@ import { toast } from '@/components/ui/Toaster';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { SkeletonRows } from '@/components/ui';
+import { DataGrid } from '@/components/ui/DataGrid';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 
 /**
  * Brief 2-6 step 4 — Billing: the plan, this month's billable count so far
@@ -39,6 +42,8 @@ interface BillingOverview {
   month: string;
   daysCounted: number;
   running: Record<WorkerType, number>;
+  /** The six months before this one, newest first: each id active on a day counts once. */
+  history?: Array<{ month: string; daysCounted: number; counts: Record<WorkerType, number> }>;
   invoices: Array<{
     id: string;
     month: string;
@@ -68,7 +73,7 @@ export function BillingHome() {
   const d = q.data;
   return (
     <div className="space-y-5">
-      <PageHeader title="Billing" subtitle="Your plan, this month’s active workers by type, and your invoices." breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Billing' }]} />
+      <PageHeader title="Billing" subtitle="Your plan, this month’s active workers by type, and your invoices." />
       {q.isError ? (
         <QueryError what="billing" query={q} />
       ) : !d ? (
@@ -91,23 +96,14 @@ export function BillingHome() {
               {fmtMonth(d.month, 'long')} so far
             </h2>
             <p className="text-sm text-silver">Each person, agent and robot active on at least one day of the month counts once. {d.daysCounted} day{d.daysCounted === 1 ? '' : 's'} counted so far.</p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {(Object.keys(TYPE) as WorkerType[]).map((t) => {
-                const Icon = TYPE[t].icon;
-                return (
-                  <Card key={t}>
-                    <CardContent className="flex items-center gap-3">
-                      <Icon className="h-5 w-5 text-silver" aria-hidden="true" />
-                      <div>
-                        <div className="text-2xl font-semibold text-white">{d.running[t] ?? 0}</div>
-                        <div className="text-xs text-silver">{(d.running[t] ?? 0) === 1 ? TYPE[t].one : TYPE[t].label}</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
+            <MetricStrip label={`${fmtMonth(d.month, 'long')} so far`}>
+              {(Object.keys(TYPE) as WorkerType[]).map((t) => (
+                <MetricCard key={t} icon={TYPE[t].icon} label={TYPE[t].label} value={String(d.running[t] ?? 0)} hint={(d.running[t] ?? 0) === 1 ? `1 ${TYPE[t].one.toLowerCase()} active` : undefined} />
+              ))}
+            </MetricStrip>
           </section>
+
+          {d.history && d.history.length > 0 && <HistorySection history={d.history} invoices={d.invoices} />}
 
           <section aria-labelledby="invoices" className="space-y-2">
             <h2 id="invoices" className="text-base font-semibold text-white">Invoices</h2>
@@ -146,6 +142,63 @@ export function BillingHome() {
         </>
       )}
     </div>
+  );
+}
+
+/** The last six months, month by month, beside the invoice each became (F500 G4). */
+function HistorySection({ history, invoices }: { history: NonNullable<BillingOverview['history']>; invoices: BillingOverview['invoices'] }) {
+  const byMonth = new Map(invoices.map((i) => [i.month, i]));
+  const rows = history.map((h) => ({ ...h, invoice: byMonth.get(h.month) ?? null }));
+  // Six rows of zeros say less than one line (a new account, or counting began this month).
+  const nothingCounted = rows.every((r) => r.daysCounted === 0 && !r.invoice);
+  return (
+    <section aria-labelledby="billing-history" className="space-y-2">
+      <h2 id="billing-history" className="text-base font-semibold text-white">
+        The last six months
+      </h2>
+      {nothingCounted ? (
+        <p className="text-sm text-ink-muted">No activity was counted from {fmtMonth(rows[rows.length - 1]!.month, 'long')} to {fmtMonth(rows[0]!.month, 'long')}.</p>
+      ) : (
+      <DataGrid
+        id="billing-history"
+        caption="Billable workers by month"
+        noun={{ one: 'month', many: 'months' }}
+        rows={rows}
+        rowKey={(r) => r.month}
+        search={false}
+        urlState={false}
+        columnChooser={false}
+        exportCsv={{ filename: 'billing-history' }}
+        columns={[
+          { key: 'month', header: 'Month', accessor: (r) => r.month, primary: true, cell: (r) => fmtMonth(r.month, 'long'), csv: (r) => fmtMonth(r.month, 'long') },
+          { key: 'people', header: 'People', accessor: (r) => r.counts.PERSON ?? 0, align: 'right', className: 'tabular-nums' },
+          { key: 'agents', header: 'AI agents', accessor: (r) => r.counts.AGENT ?? 0, align: 'right', className: 'tabular-nums' },
+          { key: 'robots', header: 'Robots', accessor: (r) => r.counts.ROBOT ?? 0, align: 'right', className: 'tabular-nums' },
+          {
+            key: 'invoice',
+            header: 'Invoice',
+            accessor: (r) => r.invoice?.totalCents ?? -1,
+            align: 'right',
+            className: 'tabular-nums',
+            cell: (r) =>
+              r.invoice ? (
+                <span className="inline-flex items-center gap-2">
+                  <Badge variant={STATUS[r.invoice.status]} size="sm">
+                    {r.invoice.status === 'OPEN' ? 'Due' : r.invoice.status.charAt(0) + r.invoice.status.slice(1).toLowerCase()}
+                  </Badge>
+                  {fmtMoney(r.invoice.totalCents / 100)}
+                </span>
+              ) : r.daysCounted === 0 ? (
+                <span className="text-ink-muted">No activity counted</span>
+              ) : (
+                <span className="text-ink-muted">Not invoiced</span>
+              ),
+            csv: (r) => (r.invoice ? fmtMoney(r.invoice.totalCents / 100) : ''),
+          },
+        ]}
+      />
+      )}
+    </section>
   );
 }
 

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
-import { activeHeadcount } from '../lib/activeDefinition.js';
+import { activeAssociateIds } from '../lib/activeDefinition.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -130,9 +130,13 @@ vaccination121Router.get(
 
 vaccination121Router.get('/vaccinations/coverage', VIEW, async (_req, res) => {
   // Brief 1A-2: coverage is measured over the active workforce.
-  const total = await activeHeadcount({ tenantId: tenantIdForWrite() });
-  const byKind = await prisma.vaccinationRecord.groupBy({
+  // Covered = someone Working with a record of that kind, so a share can
+  // never pass 100% (records of people no longer working used to count).
+  const active = await activeAssociateIds({ tenantId: tenantIdForWrite() });
+  const total = active.size;
+  const byKind = total === 0 ? [] : await prisma.vaccinationRecord.groupBy({
     by: ['kind', 'associateId'],
+    where: { tenantId: tenantIdForWrite(), associateId: { in: [...active] } },
   });
   const setByKind: Record<string, Set<string>> = {
     COVID19: new Set(),

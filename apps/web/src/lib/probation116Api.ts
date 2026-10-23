@@ -36,9 +36,13 @@ export interface ProbationSummary {
 }
 
 /** One page of probations: open ones soonest-ending first, decided ones newest first. */
-export const listProbations = (status?: ProbationStatus, page = 0) => {
+/** The summary tiles' windows, as list filters. */
+export type ProbationWindow = 'ending14' | 'overdue' | 'passed90' | 'failed90';
+
+export const listProbations = (status?: ProbationStatus, page = 0, window?: ProbationWindow) => {
   const qs = new URLSearchParams();
   if (status) qs.set('status', status);
+  if (window) qs.set('window', window);
   if (page) qs.set('page', String(page));
   const q = qs.toString();
   return apiFetch<{ probations: ProbationRow[]; total?: number; page?: number; hasMore?: boolean }>(`/probations${q ? `?${q}` : ''}`);

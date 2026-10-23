@@ -121,7 +121,8 @@ interface AuthState {
 }
 
 /** The tenant's profile plus what its team calls the assistant (OrgSetting.assistantName); absent from an older server or an offline session. */
-export type TenantSession = TenantProfile & { id: string; assistantName?: string };
+/** `orgName`: the tenant's display name (branding) — the portal's {org}. Absent from an older server. */
+export type TenantSession = TenantProfile & { id: string; assistantName?: string; orgName?: string };
 
 /** Everything on, Alto HR's words: what an older server or an offline session implies. */
 export const DEFAULT_TENANT: TenantSession = { id: '', ...defaultTenantProfile('WORKFORCE_PROVIDER') };
@@ -189,7 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Brief 2-1b: every dictionary string can name the tenant's words ({site}, {worker} …).
   const { lang: uiLang, setTermVars } = useI18n();
   useEffect(() => {
-    setTermVars(termVarsFrom(termsIn({ terminology: tenant.terminology }, uiLang)));
+    setTermVars(termVarsFrom(termsIn({ terminology: tenant.terminology }, uiLang), { org: tenant.orgName }));
   }, [tenant, uiLang, setTermVars]);
 
   // Refs, not state, inside the listeners: the subscriptions are

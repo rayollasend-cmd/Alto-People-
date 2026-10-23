@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type {
   AvailabilityException,
@@ -90,7 +91,11 @@ function fromAPI(windows: AvailabilityWindow[]): DraftWindow[] {
 const isInvalidRange = (w: DraftWindow) =>
   hhmmToMinutes(w.end) <= hhmmToMinutes(w.start);
 
-export function AvailabilityEditor() {
+/**
+ * `embedded`: inside a sheet that carries its own title (My schedule's
+ * "My availability"), so no card and no heading of its own.
+ */
+export function AvailabilityEditor({ embedded = false }: { embedded?: boolean } = {}) {
   const { t } = useI18n();
   const [drafts, setDrafts] = useState<DraftWindow[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -170,13 +175,17 @@ export function AvailabilityEditor() {
   };
 
   return (
-    <section id="availability" className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
-      <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-2xl text-white">{t('avail.title')}</h2>
-        <span className="text-xs text-silver/70">
-          {t('avail.usedBy')}
-        </span>
-      </div>
+    <section id="availability" className={embedded ? undefined : 'bg-navy border border-navy-secondary rounded-lg p-5 mb-5'}>
+      {embedded ? (
+        <p className="mb-3 text-xs text-silver/70">{t('avail.usedBy')}</p>
+      ) : (
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-2xl text-white">{t('avail.title')}</h2>
+          <span className="text-xs text-silver/70">
+            {t('avail.usedBy')}
+          </span>
+        </div>
+      )}
 
       {loading && (
         <div className="space-y-2 mb-3">
@@ -320,6 +329,7 @@ export function AvailabilityEditor() {
  * not time off.
  */
 function DaysOffEditor() {
+  const inRouter = useInRouterContext();
   const { t } = useI18n();
   const [exceptions, setExceptions] = useState<AvailabilityException[] | null>(null);
   const [date, setDate] = useState('');
@@ -442,6 +452,16 @@ function DaysOffEditor() {
       {error && (
         <ErrorBanner className="mt-2 text-xs">{error}</ErrorBanner>
       )}
+      {/* A day off for a vacation or a sick day is time off — a request a
+          manager approves and pay counts — not a scheduling preference. */}
+      <p className="mt-3 text-xs text-silver/70">
+        {t('avail.timeOffPointer')}{' '}
+        {inRouter ? (
+          <Link to="/time-off" className="text-gold underline underline-offset-2 hover:text-gold-bright">
+            {t('avail.timeOffLink')}
+          </Link>
+        ) : null}
+      </p>
     </div>
   );
 }

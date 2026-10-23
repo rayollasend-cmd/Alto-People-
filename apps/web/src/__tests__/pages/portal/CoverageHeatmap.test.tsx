@@ -51,3 +51,32 @@ describe('<CoverageHeatmap> on touch', () => {
     expect(screen.getByText('Swipe for later hours')).toBeInTheDocument();
   });
 });
+
+describe('<CoverageHeatmap> with the contract hour by hour (F500 G5)', () => {
+  it('marks every contracted hour short of the contract — also an hour with nothing scheduled — and no hour outside it', () => {
+    // Contract: 8 from 6 AM to 2 PM; the day has nothing scheduled at all.
+    const contract = Array.from({ length: 24 }, (_, h) => (h >= 6 && h < 14 ? 8 : 0));
+    render(
+      <CoverageHeatmap
+        days={[{ date: '2026-09-12', label: 'Sat 12', scheduled: Array(24).fill(0), open: Array(24).fill(0), target: contract }]}
+        target={null}
+        todayKey="2026-09-13"
+        labels={{
+          cell: (day, hour, scheduled, open) => `${day} ${hour}: ${scheduled} scheduled, ${open} open`,
+          scale: { low: 'Fewer', high: 'More' },
+          unfilled: 'Unfilled',
+          belowTarget: 'Below the contract',
+        }}
+      />,
+    );
+    // Eight contracted hours, all short; the other sixteen are not marked.
+    expect(screen.getAllByTestId('heat-below')).toHaveLength(8);
+    expect(screen.getByText('Below the contract')).toBeInTheDocument();
+  });
+
+  it('without per-hour targets keeps its old rule: only hours with a slot can be below the single target', () => {
+    renderHeat();
+    // Sat 6a–2p: 3 < 4 (8 hours); Sun 6a–2p: 2 < 4 (8 hours); empty hours unmarked.
+    expect(screen.getAllByTestId('heat-below')).toHaveLength(16);
+  });
+});

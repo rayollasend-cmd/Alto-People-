@@ -97,6 +97,9 @@ describe('the payroll period ledger', () => {
     const src = (inbox.body.sources as Array<{ key: string; count: number; description: string; path: string }>).find((x) => x.key === 'payroll-missed-paydays');
     expect(src).toMatchObject({ count: 2, path: '/payroll?ledger=missed' });
     expect(src!.description).toMatch(/6h approved and unpaid for 1 person/);
+    // Which paydays, not "2 paydays passed with no run" under a title that says so (F500 G5).
+    expect(src!.description).toMatch(/^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2} and [A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2} \(.+\) · 6h/);
+    expect((src as unknown as { dueDate: string }).dueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
     // Without a schedule the off-cycle "pay the hours" run is refused: it decides whose time it is.
     const noSchedule = await a.post('/payroll/runs').send({ kind: 'OFF_CYCLE', includesApprovedTime: true, periodStart: '2026-09-12', periodEnd: '2026-09-25' });

@@ -375,7 +375,7 @@ export async function executePrep(
     const person = await db.associate.findFirst({ where: { id: p.associateId }, select: { firstName: true, lastName: true } });
     await notifyManager(p.associateId, { subject: `Unapproved time for ${person ? `${person.firstName} ${person.lastName}` : 'your team'}`, body: disclose('Hours waiting on your approval won’t be paid in this payroll. Review the timesheet before payroll closes.', 'en'), category: CATEGORY, linkUrl: '/timesheets', byAgentId: agent.workerId });
   } else if (p.action === 'STATE_REVIEW') {
-    await notifyUser(approval.decidedById, { subject: `Review ${p.state ?? 'state'} withholding`, body: disclose('The payroll can’t finalize until this state’s withholding is reviewed.', await userLang(db, approval.decidedById)), category: CATEGORY, linkUrl: '/payroll/state-tax', byAgentId: agent.workerId });
+    await notifyUser(approval.decidedById, { subject: `Review ${p.state ?? 'state'} withholding`, body: disclose('The payroll can’t finalize until this state’s withholding is reviewed.', await userLang(db, approval.decidedById)), category: CATEGORY, linkUrl: '/payroll/tax-tables?tab=state', byAgentId: agent.workerId });
   }
 
   // Used once: the approval is consumed and the proposal carried out.

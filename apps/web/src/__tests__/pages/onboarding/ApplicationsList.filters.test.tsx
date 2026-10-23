@@ -76,7 +76,7 @@ describe('ApplicationsList — filters drive the fetch', () => {
     window.localStorage.clear();
     vi.mocked(getApplicationStats).mockResolvedValue(stats);
     vi.mocked(listApplications).mockImplementation(async (filters) => {
-      const submittedOnly = filters.status === 'SUBMITTED';
+      const submittedOnly = filters.status === 'TO_REVIEW';
       const applications = submittedOnly
         ? [summary('00000000-0000-4000-8000-000000000002', 'Sam Submitted', 'SUBMITTED')]
         : [
@@ -101,10 +101,11 @@ describe('ApplicationsList — filters drive the fetch', () => {
     expect(await screen.findByText('Dana Draft')).toBeInTheDocument();
     expect(listApplications).toHaveBeenCalledWith(expect.objectContaining({ status: 'ACTIVE', page: 1 }));
 
-    await userEvent.click(screen.getByRole('button', { name: /^Submitted/ }));
+    // F500 G1: "Submitted" and "In review" are one chip, "To review" (the Inbox's count).
+    await userEvent.click(within(screen.getByRole('group', { name: 'Filter by status' })).getByRole('button', { name: /^To review/ }));
 
     await waitFor(() =>
-      expect(listApplications).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'SUBMITTED', page: 1 })),
+      expect(listApplications).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'TO_REVIEW', page: 1 })),
     );
     expect(await screen.findByText('Sam Submitted')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Dana Draft')).not.toBeInTheDocument());
@@ -124,7 +125,7 @@ describe('ApplicationsList — on a phone the filters sit behind one chip', () =
     vi.mocked(getApplicationStats).mockResolvedValue(stats);
     vi.mocked(listApplications).mockImplementation(async (filters) => {
       const applications =
-        filters.status === 'SUBMITTED'
+        filters.status === 'TO_REVIEW'
           ? [summary('00000000-0000-4000-8000-000000000002', 'Sam Submitted', 'SUBMITTED')]
           : [summary('00000000-0000-4000-8000-000000000001', 'Dana Draft', 'DRAFT')];
       return { applications, total: applications.length, page: 1, pageSize: 50 };
@@ -154,9 +155,9 @@ describe('ApplicationsList — on a phone the filters sit behind one chip', () =
     renderList();
     expect(await screen.findByText('Dana Draft')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Search by name or email…')).toBeInTheDocument();
-    // No status chips and no invited-date row on the page itself.
-    expect(screen.queryByRole('button', { name: /^Submitted/ })).toBeNull();
-    expect(screen.queryByRole('group', { name: 'Filter by invite date' })).toBeNull();
+    // No status chips and no invited-date picker on the page itself.
+    expect(screen.queryByRole('group', { name: 'Filter by status' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Filter by invite date' })).toBeNull();
     const chip = screen.getByTestId('onboarding-filter-chip');
     expect(chip).toHaveTextContent(/^Filters$/);
     expect(chip).toHaveAttribute('aria-haspopup', 'dialog');
@@ -167,10 +168,10 @@ describe('ApplicationsList — on a phone the filters sit behind one chip', () =
     await screen.findByText('Dana Draft');
     await userEvent.click(screen.getByTestId('onboarding-filter-chip'));
     const sheet = await screen.findByRole('dialog');
-    expect(within(sheet).getByRole('group', { name: 'Filter by invite date' })).toBeInTheDocument();
-    await userEvent.click(within(sheet).getByRole('button', { name: /^Submitted/ }));
+    expect(within(sheet).getByRole('combobox', { name: 'Filter by invite date' })).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole('button', { name: /^To review/ }));
     await waitFor(() =>
-      expect(listApplications).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'SUBMITTED', page: 1 })),
+      expect(listApplications).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'TO_REVIEW', page: 1 })),
     );
     await userEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

@@ -144,6 +144,40 @@ export function countAdminTimeEntries(
   return apiFetch<PendingTimeCount>(`/time/admin/entries/count${qs ? `?${qs}` : ''}`);
 }
 
+/** Someone whose worked time this week plus the rest of their schedule reaches the overtime-risk line. */
+export interface OvertimeRiskPerson {
+  associateId: string;
+  name: string;
+  photoUrl: string | null;
+  workedMinutes: number;
+  scheduledMinutes: number;
+  projectedMinutes: number;
+}
+
+/** Time & attendance's exception tiles (server lib/timeExceptions). */
+export interface TimeExceptions {
+  /** Pending review and flagged "Forgot clock-out". */
+  missedPunches: { count: number; oldestAt: string | null };
+  /** Punches that began in the reader's day more than 5 minutes after their shift. */
+  lateToday: { count: number; dayFrom: string; dayTo: string };
+  overtimeRisk: { count: number; thresholdHours: number; weekStart: string; weekEnd: string; people: OvertimeRiskPerson[] };
+}
+
+export function getTimeExceptions(params: {
+  clientId?: string;
+  locationId?: string;
+  /** The reader's "today", as instants [dayFrom, dayTo). */
+  dayFrom: string;
+  dayTo: string;
+}): Promise<TimeExceptions> {
+  const qs = new URLSearchParams();
+  if (params.clientId) qs.set('clientId', params.clientId);
+  if (params.locationId) qs.set('locationId', params.locationId);
+  qs.set('dayFrom', params.dayFrom);
+  qs.set('dayTo', params.dayTo);
+  return apiFetch<TimeExceptions>(`/time/admin/exceptions?${qs.toString()}`);
+}
+
 /** Selectable pay-period windows (schedule cadence + actual run history). */
 export function listPayPeriods(): Promise<PayPeriodListResponse> {
   return apiFetch<PayPeriodListResponse>('/time/admin/pay-periods');

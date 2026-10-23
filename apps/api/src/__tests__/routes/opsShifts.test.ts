@@ -326,4 +326,43 @@ describe('store ops', () => {
     expect(cross.status).toBe(201); // clamp silently pins to their own client
     expect(opened).toBeNull();
   });
+
+  it('a quiet board names the next scheduled shift in the next 24h, inside the store filter (F500 G2)', async () => {
+    const client = await createClient('Walmart Front Beach');
+    const site = await prisma.site.create({ data: { name: 'Front Beach 218', clientId: client.id } });
+    const other = await prisma.site.create({ data: { name: 'Destin 301', clientId: client.id } });
+    const { user: exec } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
+    const agent = await loginAs(exec.email);
+    const HOUR = 3_600_000;
+    const now = Date.now();
+    const mk = (locationId: string, inHours: number, status: 'OPEN' | 'ASSIGNED' | 'DRAFT' | 'CANCELLED', position: string) =>
+      prisma.shift.create({
+        data: {
+          clientId: client.id,
+          locationId,
+          position,
+          startsAt: new Date(now + inHours * HOUR),
+          endsAt: new Date(now + (inHours + 8) * HOUR),
+          status,
+        },
+      });
+    await mk(site.id, -2, 'ASSIGNED', 'Already started'); // past: not "next"
+    await mk(site.id, 1, 'DRAFT', 'Draft'); // not published
+    await mk(site.id, 2, 'CANCELLED', 'Pulled');
+    await mk(other.id, 3, 'OPEN', 'Destin stocker');
+    await mk(site.id, 5, 'ASSIGNED', 'Overnight stocker');
+    await mk(site.id, 30, 'OPEN', 'Tomorrow night'); // beyond 24h
+
+    const all = await agent.get('/ops/board');
+    expect(all.status).toBe(200);
+    expect(all.body.active).toHaveLength(0);
+    expect(all.body.nextShift).toMatchObject({ position: 'Destin stocker', store: 'Destin 301' });
+
+    const one = await agent.get(`/ops/board?locationId=${site.id}`);
+    expect(one.body.nextShift).toMatchObject({ position: 'Overnight stocker', store: 'Front Beach 218' });
+    expect(new Date(one.body.nextShift.startsAt).getTime()).toBe(now + 5 * HOUR);
+
+    await prisma.shift.deleteMany({ where: { startsAt: { gt: new Date(now) } } });
+    expect((await agent.get('/ops/board')).body.nextShift).toBeNull();
+  });
 });

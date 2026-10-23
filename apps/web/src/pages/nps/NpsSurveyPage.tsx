@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Textarea } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { LinkProblem } from '@/components/LinkProblem';
 
 /**
  * A store manager's answer to the quarter's one question. Reached from the
@@ -58,10 +59,8 @@ export function NpsSurveyPage() {
   return (
     <Shell>
       {gone ? (
-        <div role="status" className="rounded-xl border border-line bg-surface-raised p-6">
-          <div className="text-lg font-medium">This link is not valid</div>
-          <p className="mt-2 text-sm text-ink-muted">Open the latest email from us for the right link.</p>
-        </div>
+        // Survey links don't expire (a closed survey says so below); a 404 is a link we never sent.
+        <LinkProblem kind="invalid" title="This link isn’t valid" reason="It may have been cut off when it was copied. Open the latest survey email from us for the right link." />
       ) : loadError ? (
         <ErrorBanner>{loadError}</ErrorBanner>
       ) : !invite ? (

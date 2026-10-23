@@ -100,10 +100,25 @@ export function anchorWeekFor(now: Date, timezone: string | null): string {
   return dateKeyInZone(startOfWeekForSite(now, tz), tz);
 }
 
-/** Drop the weeks that have not finished yet so the model never reads a half week as a low. */
+/** The site's first week with verified hours, or null when it has none in the range. */
+export function firstVerifiedWeek(series: ReadonlyMap<string, number>): string | null {
+  let first: string | null = null;
+  for (const [k, v] of series) if (v > 0 && (first === null || k < first)) first = k;
+  return first;
+}
+
+/**
+ * Drop the weeks that have not finished yet so the model never reads a half
+ * week as a low — and the weeks before the site's first verified hours: a
+ * site that opened nine weeks ago has nine weeks of history, not 51 weeks
+ * of zeros pulling its recent level and trend down. After the first week,
+ * a week with no entry is a true zero.
+ */
 function completedOnly(series: Map<string, number>, anchor: string): WeekSeries {
+  const first = firstVerifiedWeek(series);
   const out = new Map<string, number>();
-  for (const [k, v] of series) if (k < anchor) out.set(k, v);
+  if (first === null) return out;
+  for (const [k, v] of series) if (k < anchor && k >= first) out.set(k, v);
   return out;
 }
 
@@ -306,7 +321,10 @@ export async function forecastForSite(db: Db, locationId: string, opts: { tenant
     ? await db.forecastSiteWeek.findMany({ where: { runId: run.id, locationId: site.id }, orderBy: { weekStart: 'asc' }, select: { weekStart: true, p10: true, p50: true, p90: true, drivers: true } })
     : [];
   const weeks: ForecastWeek[] = [];
-  const pastKeys = [...history.keys()].filter((k) => k < anchor).sort().slice(-FORECAST_HORIZON_WEEKS);
+  // The chart starts where the site's history does: weeks before its first
+  // verified hours are not a real zero, so they are not drawn as one.
+  const firstWeek = firstVerifiedWeek(history);
+  const pastKeys = firstWeek === null ? [] : [...history.keys()].filter((k) => k < anchor && k >= firstWeek).sort().slice(-FORECAST_HORIZON_WEEKS);
   const emptyDrivers: ForecastDrivers = { lastYearScaled: null, recentMean: 0, trendPerWeek: 0, holidayFactor: 1, holidayName: null, signalFactor: 1, signals: [], lastYearWeight: 0, leadWeeks: 0 };
   const forecastByWeek = new Map(forecastRows.map((r) => [keyOf(r.weekStart), r]));
   for (const k of pastKeys) {

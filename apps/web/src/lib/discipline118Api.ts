@@ -27,6 +27,9 @@ export interface DisciplinaryActionRow {
   rescindedAt: string | null;
   rescindedReason: string | null;
   rescindedByEmail: string | null;
+  /** The employee's own side, written under the notice (F500 G5). Absent from an older server. */
+  employeeResponse?: string | null;
+  employeeRespondedAt?: string | null;
 }
 
 export interface LadderRollup {
@@ -37,17 +40,31 @@ export interface LadderRollup {
 export const listDisciplinaryActions = (params: {
   associateId?: string;
   status?: DisciplineStatus;
+  /** Every action not rescinded (awaiting acknowledgment or acknowledged). */
+  state?: 'in-force';
   kind?: DisciplineKind;
 }) => {
   const q = new URLSearchParams();
   if (params.associateId) q.set('associateId', params.associateId);
   if (params.status) q.set('status', params.status);
+  if (params.state) q.set('state', params.state);
   if (params.kind) q.set('kind', params.kind);
   const qs = q.toString();
-  return apiFetch<{ actions: DisciplinaryActionRow[] }>(
+  return apiFetch<{ actions: DisciplinaryActionRow[]; total?: number }>(
     `/disciplinary-actions${qs ? `?${qs}` : ''}`,
   );
 };
+
+/** GET /disciplinary-actions/summary — the log's numbers, same reach as the list. */
+export interface DisciplineSummary {
+  /** Not rescinded: awaiting acknowledgment or acknowledged. */
+  inForce: number;
+  awaitingAck: number;
+  /** People holding a final warning in force — one step from termination. */
+  finalWarningPeople: number;
+  issued90d: number;
+}
+export const getDisciplineSummary = () => apiFetch<DisciplineSummary>('/disciplinary-actions/summary');
 
 export const getLadder = (associateId: string) =>
   apiFetch<LadderRollup>(`/disciplinary-actions/ladder/${associateId}`);
@@ -69,7 +86,16 @@ export interface MyDisciplinaryAction {
   acknowledgedSig: string | null;
   rescindedAt: string | null;
   rescindedReason: string | null;
+  employeeResponse?: string | null;
+  employeeRespondedAt?: string | null;
 }
+
+/** The employee's written response under a notice — acknowledging is not agreeing (F500 G5). */
+export const respondToDisciplinaryAction = (id: string, text: string) =>
+  apiFetch<{ ok: true; employeeRespondedAt: string }>(`/disciplinary-actions/${id}/response`, {
+    method: 'POST',
+    body: { text },
+  });
 
 export const listMyDisciplinaryActions = () =>
   apiFetch<{ actions: MyDisciplinaryAction[] }>('/disciplinary-actions/me');

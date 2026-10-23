@@ -87,11 +87,30 @@ export function kindLook(kind: string): { Icon: LucideIcon; copy: { title: strin
   };
 }
 
-export const HEALTH_BADGE: Record<ProviderHealth, { label: string; variant: 'success' | 'destructive' | 'outline' | 'pending' }> = {
-  healthy: { label: 'Working', variant: 'success' },
-  failing: { label: 'Needs attention', variant: 'destructive' },
-  not_tested: { label: 'Not tested yet', variant: 'pending' },
-  paused: { label: 'Paused', variant: 'outline' },
+/**
+ * One status vocabulary for every connection on Integrations (F500 G4):
+ * Working · Needs attention · Failing · Not connected. A connection saved
+ * but never tested, or paused, needs someone; one whose provider refuses
+ * it is failing. The line under it (healthLine) says which.
+ */
+export type ConnectionWord = 'Working' | 'Needs attention' | 'Failing' | 'Not connected';
+export const CONNECTION_BADGE: Record<ConnectionWord, 'success' | 'destructive' | 'outline' | 'pending'> = {
+  Working: 'success',
+  'Needs attention': 'pending',
+  Failing: 'destructive',
+  'Not connected': 'outline',
+};
+export const HEALTH_WORD: Record<ProviderHealth, ConnectionWord> = {
+  healthy: 'Working',
+  failing: 'Failing',
+  not_tested: 'Needs attention',
+  paused: 'Needs attention',
+};
+export const HEALTH_BADGE: Record<ProviderHealth, { label: ConnectionWord; variant: 'success' | 'destructive' | 'outline' | 'pending' }> = {
+  healthy: { label: HEALTH_WORD.healthy, variant: CONNECTION_BADGE[HEALTH_WORD.healthy] },
+  failing: { label: HEALTH_WORD.failing, variant: CONNECTION_BADGE[HEALTH_WORD.failing] },
+  not_tested: { label: HEALTH_WORD.not_tested, variant: CONNECTION_BADGE[HEALTH_WORD.not_tested] },
+  paused: { label: HEALTH_WORD.paused, variant: CONNECTION_BADGE[HEALTH_WORD.paused] },
 };
 
 export function environmentLabel(env: 'SANDBOX' | 'PRODUCTION'): string {

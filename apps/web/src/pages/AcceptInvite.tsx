@@ -10,6 +10,7 @@ import type {
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
+import { LinkProblem } from '@/components/LinkProblem';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
@@ -154,34 +155,23 @@ export function AcceptInvite() {
     }
   };
 
-  return (
-    <AuthShell>
-
-      <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3">
-        {loading && (
-          <div>
-            <Skeleton className="h-7 w-2/3 mb-3" />
-            <Skeleton className="h-4 w-full mb-2" />
-            <Skeleton className="h-4 w-1/2 mb-6" />
-            <Skeleton className="h-10 w-full mb-3" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-        )}
-
-        {!loading && error && !invite && (
-          <>
-            <AuthCardTitle className="mb-3">{t('ai.problemTitle')}</AuthCardTitle>
-            <ErrorBanner className="mb-4">{error}</ErrorBanner>
-
-            {renewSent ? (
-              <p className="text-silver text-sm mb-4">
-                {t('ai.renewSent')}
-              </p>
+  if (!loading && error && !invite) {
+    return (
+      <AuthShell>
+        {/* One instruction (F500 G5): the alert said "Ask HR to resend it"
+            while the body offered a self-serve link — now the resend IS the
+            next step, and signing in stays as the way out for anyone who
+            already accepted. */}
+        <LinkProblem
+          kind="expired"
+          title={t('ai.problemTitle')}
+          reason={error}
+          action={
+            renewSent ? (
+              <p className="text-sm text-ink-muted">{t('ai.renewSent')}</p>
             ) : (
-              <form onSubmit={handleRenew} noValidate className="mb-4">
-                <p className="text-silver text-sm mb-3">
-                  {t('ai.renewIntro')}
-                </p>
+              <form onSubmit={handleRenew} noValidate className="w-full text-left">
+                <p className="mb-3 text-sm text-ink-muted">{t('ai.renewIntro')}</p>
                 <Field label={t('ai.emailLabel')} required className="mb-3">
                   {(p) => (
                     <Input
@@ -194,38 +184,38 @@ export function AcceptInvite() {
                     />
                   )}
                 </Field>
-                <Button
-                  type="submit"
-                  loading={renewSubmitting}
-                  disabled={renewSubmitting || !renewEmail.trim()}
-                  className="w-full"
-                >
+                <Button type="submit" loading={renewSubmitting} disabled={renewSubmitting || !renewEmail.trim()} className="w-full">
                   {renewSubmitting ? t('ai.sending') : t('ai.sendNewLink')}
                 </Button>
               </form>
-            )}
+            )
+          }
+        >
+          <div className="mb-4 flex items-center gap-3" aria-hidden="true">
+            <div className="h-px flex-1 bg-line" />
+            <span className="text-2xs uppercase tracking-widest text-ink-muted">{t('ai.or')}</span>
+            <div className="h-px flex-1 bg-line" />
+          </div>
+          <Button variant="secondary" className="w-full" onClick={() => navigate('/login')}>
+            {t('ai.goToSignIn')}
+          </Button>
+        </LinkProblem>
+      </AuthShell>
+    );
+  }
 
-            {/* Equal-weight escape hatch, not a toolbar ghost: everyone who
-                already accepted the invite and clicks the email link again
-                lands in this state, and for them SIGN IN is the right
-                action — renewal would demote their account back to
-                INVITED. Reported 2026-08-14: the old bottom-left ghost
-                button was "almost hidden". */}
-            <div className="flex items-center gap-3 mb-4" aria-hidden="true">
-              <div className="h-px flex-1 bg-navy-secondary" />
-              <span className="text-2xs uppercase tracking-widest text-silver/60">
-                {t('ai.or')}
-              </span>
-              <div className="h-px flex-1 bg-navy-secondary" />
-            </div>
-            <Button
-              variant="secondary"
-              className="w-full"
-              onClick={() => navigate('/login')}
-            >
-              {t('ai.goToSignIn')}
-            </Button>
-          </>
+  return (
+    <AuthShell>
+
+      <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3">
+        {loading && (
+          <div>
+            <Skeleton className="h-7 w-2/3 mb-3" />
+            <Skeleton className="h-4 w-full mb-2" />
+            <Skeleton className="h-4 w-1/2 mb-6" />
+            <Skeleton className="h-10 w-full mb-3" />
+            <Skeleton className="h-10 w-full" />
+          </div>
         )}
 
         {!loading && invite && (

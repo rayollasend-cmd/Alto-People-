@@ -7,7 +7,8 @@ import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { fmtRelativeDayTz, fmtShiftRangeTz } from '@/lib/format';
 import { withArticle } from '@/lib/validationCopy';
-import { CALL_OUT_REASONS, listCallOuts, recordCallOutFor, type CallOutItem, type CallOutReason } from '@/lib/callOutsApi';
+import { CALL_OUT_REASONS, listCallOuts, recordCallOutFor, type CallOutItem, type CallOutList, type CallOutRange, type CallOutReason } from '@/lib/callOutsApi';
+import { useUrlParam } from '@/lib/useUrlState';
 import { assignShift, getAutoFillBatch, listShifts } from '@/lib/schedulingApi';
 import type { AutoFillResponse } from '@alto-people/shared';
 import { ListTemplate } from '@/components/templates';
@@ -30,6 +31,7 @@ import {
   EmptyState,
   Field,
   MetricCard,
+  MetricStrip,
   SegmentedControl,
   Select,
   SkeletonRows,
@@ -60,6 +62,32 @@ const CHANNEL_LABEL: Record<CallOutItem['channel'], string> = {
   VOICE: 'by phone',
   STAFF: 'recorded by a lead',
 };
+
+const RANGES: readonly CallOutRange[] = ['today', 'week', '30d'];
+const RANGE_WORDS: Record<CallOutRange, string> = { today: 'today or tomorrow', week: 'this week', '30d': 'in the last 30 days' };
+
+/** "42 min", "3 h 5 min" — how long cover took. */
+export function fmtCoverTime(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+/**
+ * The one line a quiet range shows instead of four zero tiles: what this
+ * range holds, then the last seven days' record (F500 G4).
+ */
+export function quietLine(d: CallOutList): string {
+  const head = `No call-outs ${RANGE_WORDS[d.range]}`;
+  const w = d.last7Days;
+  if (!w || d.range === '30d') return `${head}.`;
+  if (w.total === 0) return `${head} · none in the last 7 days either.`;
+  const parts = [`${w.total} call-out${w.total === 1 ? '' : 's'}`];
+  if (w.coveredPct !== null) parts.push(`${w.coveredPct}% covered`);
+  if (w.medianMinutesToCover !== null) parts.push(`median ${fmtCoverTime(w.medianMinutesToCover)} to cover`);
+  return `${head} · last 7 days: ${parts.join(', ')}.`;
+}
 
 function notice(minutes: number): string {
   if (minutes < 60) return `${minutes} min notice`;
@@ -178,6 +206,31 @@ function CallOutRow({ item, canManage, highlight, candidates, picksLoaded }: { i
   );
 }
 
+/** People who called out more than once in the range: a conversation to have, by name. */
+function RepeatCallers({ callers, range }: { callers: NonNullable<CallOutList['repeatCallers']>; range: CallOutRange }) {
+  return (
+    <section aria-labelledby="co-repeat">
+      <h2 id="co-repeat" className="mb-2 text-sm font-medium text-ink">
+        Called out more than once {RANGE_WORDS[range]} · {callers.length}
+      </h2>
+      <Card>
+        <CardContent className="p-4">
+          <ul className="divide-y divide-line">
+            {callers.map((c) => (
+              <li key={c.associateId} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                <Link to={`/people/${c.associateId}`} className="min-w-0 truncate text-sm text-ink hover:underline">
+                  {c.name}
+                </Link>
+                <span className="shrink-0 text-sm tabular-nums text-ink-muted">{c.count} call-outs</span>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
 function RecordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const term = useTerm();
   const qc = useQueryClient();
@@ -270,10 +323,13 @@ function RecordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
 export function CallOutsDesk() {
   const { can } = useAuth();
   const canManage = can('manage:scheduling');
-  const [range, setRange] = useState<'today' | 'week'>('today');
+  // The range and the site live in the URL, so a link or Back keeps the view.
+  const [range, setRange] = useUrlParam<CallOutRange>('range', 'today', RANGES);
+  const [site, setSite] = useUrlParam<string>('site', '');
   const [recording, setRecording] = useState(false);
-  const list = useQuery({ queryKey: ['callouts', range], queryFn: () => listCallOuts(range), refetchInterval: 60_000 });
+  const list = useQuery({ queryKey: ['callouts', range, site], queryFn: () => listCallOuts(range, site || null), refetchInterval: 60_000 });
   const d = list.data;
+  const sites = d?.sites ?? [];
 
   // ?callout=<id> (a notification's link): ring that call-out and bring it
   // into view — widening to the week when it isn't today or tomorrow.
@@ -320,25 +376,30 @@ export function CallOutsDesk() {
     <ListTemplate
       title="Call-outs"
       subtitle="When someone can’t make their shift — by phone, text, WhatsApp or the app — cover starts on its own. Here’s how it’s going."
-      breadcrumbs={[{ label: 'Time & scheduling' }, { label: 'Call-outs' }]}
-      primaryAction={
-        canManage ? (
-          <Button onClick={() => setRecording(true)}>
-            <PhoneCall className="h-4 w-4" aria-hidden="true" />
-            Record a call-out
-          </Button>
-        ) : undefined
-      }
+      actions={[{ label: 'Record a call-out', icon: PhoneCall, primary: true, onSelect: () => setRecording(true), hidden: !canManage }]}
       filters={
-        <SegmentedControl
-          ariaLabel="Which days"
-          value={range}
-          onChange={setRange}
-          options={[
-            { value: 'today', label: 'Today and tomorrow' },
-            { value: 'week', label: 'This week' },
-          ]}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <SegmentedControl
+            ariaLabel="Which days"
+            value={range}
+            onChange={setRange}
+            options={[
+              { value: 'today', label: 'Today and tomorrow' },
+              { value: 'week', label: 'This week' },
+              { value: '30d', label: 'Last 30 days' },
+            ]}
+          />
+          {(sites.length > 1 || site) && (
+            <Select aria-label="Site" size="sm" className="w-full sm:w-56" value={site} onChange={(e) => setSite(e.target.value)}>
+              <option value="">Every site</option>
+              {sites.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                </option>
+              ))}
+            </Select>
+          )}
+        </div>
       }
     >
       {list.isError ? (
@@ -351,19 +412,28 @@ export function CallOutsDesk() {
         </Card>
       ) : (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <MetricCard label="Called out" value={d.total} hint={range === 'today' ? 'Shifts today and tomorrow' : 'Shifts this week'} />
-            <MetricCard label="Looking for cover" value={d.looking} hint={d.looking ? 'The bench and the agent are on it' : 'Nothing open'} />
-            <MetricCard label="Covered" value={d.covered} hint={d.total ? `${Math.round((d.covered / d.total) * 100)}% of call-outs` : '—'} />
+          {/* A quiet range is one line with the week's record, not four zero tiles (F500 G4). */}
+          <MetricStrip label="Call-outs at a glance" empty={d.total === 0 ? quietLine(d) : undefined}>
+            <MetricCard label="Called out" value={d.total} hint={range === 'today' ? 'Shifts today and tomorrow' : range === 'week' ? 'Shifts this week' : 'Shifts in the last 30 days'} />
+            <MetricCard label="Looking for cover" value={d.looking} tone={d.looking > 0 ? 'warning' : 'default'} hint={d.looking ? 'The bench and the agent are on it' : 'Nothing open'} />
+            <MetricCard label="Covered" value={d.covered} hint={`${Math.round((d.covered / Math.max(1, d.total)) * 100)}% of call-outs`} />
             <MetricCard label="Late call-outs" value={d.late} hint="Under 2 hours’ notice" />
-          </div>
-          {d.truncated && <p className="text-xs text-ink-muted">Showing the first 500 call-outs — narrow to today to see the rest.</p>}
+            {d.medianMinutesToCover !== undefined && (
+              <MetricCard
+                label="Median time to cover"
+                value={d.medianMinutesToCover === null ? '' : fmtCoverTime(d.medianMinutesToCover)}
+                nothing={d.medianMinutesToCover === null ? 'Nothing covered by a person yet' : undefined}
+                hint="From the call-out to someone else holding the shift"
+              />
+            )}
+          </MetricStrip>
+          {d.truncated && <p className="text-xs text-ink-muted">Showing the first 500 call-outs — narrow the range or pick a site to see the rest.</p>}
           {d.total === 0 ? (
             <Card>
               <CardContent className="p-0">
                 <EmptyState
                   icon={PhoneOff}
-                  title={range === 'today' ? 'No call-outs today or tomorrow' : 'No call-outs this week'}
+                  title={`No call-outs ${RANGE_WORDS[range]}`}
                   description={`When someone calls out, it lands here with the reason, and cover starts at once — the bench is asked, then the agent proposes a fill.`}
                 />
               </CardContent>
@@ -394,6 +464,7 @@ export function CallOutsDesk() {
                   </Card>
                 </section>
               )}
+              {(d.repeatCallers?.length ?? 0) > 0 && <RepeatCallers callers={d.repeatCallers!} range={range} />}
             </>
           )}
         </div>

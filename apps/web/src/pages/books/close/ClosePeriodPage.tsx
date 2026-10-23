@@ -6,9 +6,11 @@ import type { CloseTaskView, ClosePeriodDetail } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { createAccrual, finalizeCloseStatements, getCloseMonth, listAccruals, markCloseReady, postCloseHistory, requestCloseReopen, signOffClose, unmarkCloseReady, updateCloseTask } from '@/lib/books/closeApi';
 import { usePrompt } from '@/lib/confirm';
-import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney, ymdLocal } from '@/lib/format';
+import { useUrlParam } from '@/lib/useUrlState';
 import { cn } from '@/lib/cn';
 import { RecordTemplate } from '@/components/templates';
+import type { PageAction } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -17,10 +19,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { ProgressBar } from '@/components/ui/Progress';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
-import { AccountSelect, CloseStatusBadge, accountIdForKey, pct, useAccountOptions } from './closeKit';
+import { AccountSelect, CloseStatusBadge, accountIdForKey, daysSinceMonthEnd, pct, useAccountOptions } from './closeKit';
 
 /**
  * One month's close: the checklist (most steps check themselves against
@@ -31,7 +33,7 @@ export function ClosePeriodPage() {
   const { periodKey = '' } = useParams<{ periodKey: string }>();
   const qc = useQueryClient();
   const prompt = usePrompt();
-  const [tab, setTab] = useState('checklist');
+  const [tab, setTab] = useUrlParam('tab', 'checklist', CLOSE_TABS, { history: 'push' });
   const q = useQuery({ queryKey: ['books', 'close', periodKey], queryFn: () => getCloseMonth(periodKey) });
   const d = q.data;
 
@@ -92,66 +94,72 @@ export function ClosePeriodPage() {
     d.status === 'READY'
       ? `Prepared by ${d.preparedByName ?? 'someone'} — waiting for a second person to sign it off.`
       : d.status === 'CLOSED'
-        ? `Closed ${d.closedAt ? fmtDateTime(d.closedAt) : ''} · prepared by ${d.preparedByName ?? '—'}, signed off by ${d.signedOffByName ?? '—'}.`
+        ? 'Locked — nothing more posts to it.'
         : d.reopenedAt
           ? `Reopened ${fmtDate(d.reopenedAt)}${d.reopenReason ? ` — ${d.reopenReason}` : ''}.`
           : d.ended
             ? 'Work the steps below, then mark it ready.'
             : `${d.label} is still running; the close opens when it ends.`;
 
-  const actions = (
-    <div className="flex flex-wrap gap-2">
-      {d.status === 'OPEN' && (
-        <Button onClick={() => ready.mutate()} disabled={!d.can.ready} loading={ready.isPending} title={d.can.ready ? undefined : (d.can.why ?? undefined)}>
-          <Check className="h-4 w-4" aria-hidden="true" />
-          Ready to close
-        </Button>
-      )}
-      {d.status === 'READY' && d.can.signOff && (
-        <Button onClick={() => signOff.mutate()} loading={signOff.isPending}>
-          <Lock className="h-4 w-4" aria-hidden="true" />
-          Sign off and close
-        </Button>
-      )}
-      {d.status === 'READY' && d.can.unready && (
-        <Button variant="secondary" onClick={() => unready.mutate()} loading={unready.isPending}>
-          <Undo2 className="h-4 w-4" aria-hidden="true" />
-          Take it back
-        </Button>
-      )}
-      {d.status === 'CLOSED' && d.can.reopen && (
-        <Button variant="secondary" onClick={() => void askReopen()} loading={reopen.isPending}>
-          <LockOpen className="h-4 w-4" aria-hidden="true" />
-          Ask to reopen
-        </Button>
-      )}
-    </div>
-  );
+  // The two-person lock, as the header's actions: one primary at a time.
+  const actions: PageAction[] = [
+    ...(d.status === 'OPEN' ? [{ key: 'ready', label: 'Ready to close', icon: Check, primary: true, disabled: !d.can.ready, hint: d.can.ready ? undefined : (d.can.why ?? undefined), loading: ready.isPending, onSelect: () => ready.mutate() }] : []),
+    ...(d.status === 'READY' && d.can.signOff ? [{ key: 'sign', label: 'Sign off and close', icon: Lock, primary: true, loading: signOff.isPending, onSelect: () => signOff.mutate() }] : []),
+    ...(d.status === 'READY' && d.can.unready ? [{ key: 'unready', label: 'Take it back', icon: Undo2, loading: unready.isPending, onSelect: () => unready.mutate() }] : []),
+    ...(d.status === 'CLOSED' && d.can.reopen ? [{ key: 'reopen', label: 'Ask to reopen', icon: LockOpen, loading: reopen.isPending, onSelect: () => void askReopen() }] : []),
+  ];
+  const today = ymdLocal();
+  const sinceEnd = daysSinceMonthEnd(periodKey, today);
+  const closedAfter = d.closedAt ? Math.max(0, daysSinceMonthEnd(periodKey, d.closedAt.slice(0, 10))) : null;
+  const openTasks = d.tasks.filter((t) => t.status === 'OPEN');
+  // What stands between the month and its lock: each open step's listed items (a step with none is one thing).
+  const blocking = openTasks.reduce((n, t) => n + Math.max(1, t.items.length), 0);
 
   return (
     <RecordTemplate
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Month-end close', to: '/books/close' }, { label: d.label }]}
       title={`${d.label} close`}
       subtitle={waiting}
       status={<CloseStatusBadge status={d.status} ended={d.ended} size="lg" />}
       actions={actions}
+      facts={[
+        { label: 'Prepared by', value: d.preparedByName },
+        { label: 'Signed off by', value: d.signedOffByName },
+        { label: 'Closed', value: d.closedAt ? fmtDateTime(d.closedAt) : null },
+      ]}
       summary={
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Card>
-            <CardContent className="space-y-2 pt-[var(--d-tile)]">
-              <p className="text-2xs font-medium uppercase tracking-widest text-ink-muted">Checklist</p>
-              <p className="text-2xl font-semibold tabular-nums text-ink">
-                {d.tasksDone} <span className="text-base font-normal text-ink-muted">of {d.tasksTotal}</span>
-              </p>
-              <ProgressBar percent={pct(d.tasksDone, d.tasksTotal)} hideLabel label="Close checklist" />
-            </CardContent>
-          </Card>
-          <MetricCard label="Prepared by" value={d.preparedByName ?? '—'} hint={d.status === 'OPEN' ? 'Whoever marks it ready' : undefined} />
-          <MetricCard label="Signed off by" value={d.signedOffByName ?? '—'} hint={d.status === 'CLOSED' ? undefined : 'A second person, not the preparer'} />
+        <div className="space-y-3">
+          {/* Why the lock is out of reach, in words — not only in a tooltip. */}
+          {d.status === 'OPEN' && !d.can.ready && d.can.why && (
+            <p className="text-sm text-ink-muted" data-testid="close-why">
+              {d.can.edit ? (
+                <>
+                  <span className="font-medium text-ink">Not ready to close yet:</span> {d.can.why}
+                </>
+              ) : (
+                d.can.why
+              )}
+            </p>
+          )}
+          <MetricStrip label={`${d.label} close at a glance`}>
+            <MetricCard label="Steps done" value={`${d.tasksDone} of ${d.tasksTotal}`} meter={{ percent: pct(d.tasksDone, d.tasksTotal), tone: d.tasksDone === d.tasksTotal ? 'good' : 'primary' }} />
+            {d.status === 'CLOSED' && closedAfter !== null ? (
+              <MetricCard label="Time to close" value={`${closedAfter} ${closedAfter === 1 ? 'day' : 'days'}`} hint="From month end to the lock" />
+            ) : (
+              <MetricCard label="Since month end" value={`${sinceEnd} ${sinceEnd === 1 ? 'day' : 'days'}`} nothing={sinceEnd > 0 ? undefined : `${d.label} is still running`} tone={sinceEnd > 10 ? 'warning' : 'default'} />
+            )}
+            <MetricCard
+              label="Blocking the close"
+              value={blocking}
+              nothing={d.status === 'CLOSED' ? 'Closed' : blocking ? undefined : 'Nothing blocking'}
+              hint={blocking ? `Across ${openTasks.length} open ${openTasks.length === 1 ? 'step' : 'steps'}` : undefined}
+              tone={blocking ? 'warning' : 'default'}
+              onClick={blocking ? () => setTab('checklist') : undefined}
+            />
+          </MetricStrip>
         </div>
       }
       activeTab={tab}
-      onTabChange={setTab}
+      onTabChange={(k) => setTab(k as (typeof CLOSE_TABS)[number])}
       tabs={[
         {
           key: 'checklist',
@@ -160,7 +168,6 @@ export function ClosePeriodPage() {
           content: (
             <div className="space-y-3">
               {d.pendingReopen && <p className="rounded-lg border border-warning/30 bg-warning/[0.06] px-3 py-2 text-sm text-ink">A request to reopen this month is waiting for a decision in Approvals.</p>}
-              {!d.can.edit && d.can.why && d.status === 'OPEN' && <p className="text-sm text-ink-muted">{d.can.why}</p>}
               <ol className="space-y-2">
                 {d.tasks.map((t) => (
                   <TaskRow key={t.key} task={t} editable={d.can.edit} busy={setTask.isPending} running={runAction.isPending && runAction.variables === t.action?.kind} onAction={t.action ? () => runAction.mutate(t.action!.kind) : undefined} onDone={(note) => done(t, note)} onSkip={() => void skip(t)} onReopen={() => setTask.mutate({ key: t.key, status: 'OPEN' })} />
@@ -204,55 +211,60 @@ export function ClosePeriodPage() {
   );
 }
 
+const CLOSE_TABS = ['checklist', 'accruals', 'liabilities'] as const;
+
 function TaskRow({ task: t, editable, busy, running = false, onAction, onDone, onSkip, onReopen }: { task: CloseTaskView; editable: boolean; busy: boolean; running?: boolean; onAction?: () => void; onDone: (note?: string) => void; onSkip: () => void; onReopen: () => void }) {
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState('');
   const Icon = t.status === 'DONE' ? CheckCircle2 : t.status === 'SKIPPED' ? CircleSlash : Circle;
   return (
     <li className={cn('rounded-lg border bg-surface p-4', t.status === 'OPEN' ? 'border-line' : 'border-line/60')}>
-      <div className="flex flex-wrap items-start gap-3">
-        <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', t.status === 'DONE' ? 'text-success' : t.status === 'SKIPPED' ? 'text-ink-muted' : 'text-warning')} aria-hidden="true" />
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-ink">{t.title}</span>
-            {t.auto ? (
-              <Badge size="sm" variant="info" withDot={false}>
-                <Sparkles className="h-3 w-3" aria-hidden="true" />
-                Checks itself
-              </Badge>
-            ) : (
-              <Badge size="sm" variant="outline" withDot={false}>
-                By hand
-              </Badge>
+      {/* Phone: the step reads full width and its buttons wrap under it; from sm the buttons sit to the right. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', t.status === 'DONE' ? 'text-success' : t.status === 'SKIPPED' ? 'text-ink-muted' : 'text-warning')} aria-hidden="true" />
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-ink">{t.title}</span>
+              {t.auto ? (
+                <Badge size="sm" variant="info" withDot={false}>
+                  <Sparkles className="h-3 w-3" aria-hidden="true" />
+                  Checks itself
+                </Badge>
+              ) : (
+                <Badge size="sm" variant="outline" withDot={false}>
+                  By hand
+                </Badge>
+              )}
+              {t.status === 'SKIPPED' && <Badge size="sm" variant="default">Skipped</Badge>}
+            </div>
+            <p className="text-sm text-ink-muted">{t.summary ?? t.detail}</p>
+            {t.items.length > 0 && t.status === 'OPEN' && (
+              <ul className="space-y-1 pt-1">
+                {t.items.map((i, n) => (
+                  <li key={n} className="text-sm">
+                    {i.link ? (
+                      <Link to={i.link} className="inline-flex items-center gap-1 text-gold hover:underline">
+                        {i.label}
+                        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Link>
+                    ) : (
+                      <span className="text-ink">{i.label}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
-            {t.status === 'SKIPPED' && <Badge size="sm" variant="default">Skipped</Badge>}
+            {t.note && <p className="border-l-2 border-line pl-2 text-sm text-ink">{t.note}</p>}
+            {t.doneByName && t.status !== 'OPEN' && (
+              <p className="text-xs text-ink-muted">
+                {t.status === 'SKIPPED' ? 'Skipped' : 'Done'} by {t.doneByName}
+                {t.doneAt ? ` · ${fmtDateTime(t.doneAt)}` : ''}
+              </p>
+            )}
           </div>
-          <p className="text-sm text-ink-muted">{t.summary ?? t.detail}</p>
-          {t.items.length > 0 && t.status === 'OPEN' && (
-            <ul className="space-y-1 pt-1">
-              {t.items.map((i, n) => (
-                <li key={n} className="text-sm">
-                  {i.link ? (
-                    <Link to={i.link} className="inline-flex items-center gap-1 text-gold hover:underline">
-                      {i.label}
-                      <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                    </Link>
-                  ) : (
-                    <span className="text-ink">{i.label}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          {t.note && <p className="border-l-2 border-line pl-2 text-sm text-ink">{t.note}</p>}
-          {t.doneByName && t.status !== 'OPEN' && (
-            <p className="text-xs text-ink-muted">
-              {t.status === 'SKIPPED' ? 'Skipped' : 'Done'} by {t.doneByName}
-              {t.doneAt ? ` · ${fmtDateTime(t.doneAt)}` : ''}
-            </p>
-          )}
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 pl-8 sm:shrink-0 sm:justify-end sm:pl-0">
           {editable && t.status === 'OPEN' && t.action && onAction && (
             <Button size="sm" onClick={onAction} loading={running} disabled={busy || running}>
               <Check className="h-4 w-4" aria-hidden="true" />

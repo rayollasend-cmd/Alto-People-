@@ -88,7 +88,7 @@ function AssignmentCard({ a, title }: { a: WorkTaskAssignmentView; title: string
           {a.workerName}
         </span>
         <span className="text-xs2 text-ink-muted">
-          {a.decidedBy === 'ENGINE' ? 'Assigned by the engine' : a.decidedBy === 'HANDOFF' ? 'Handed off' : 'Chosen by a person'} · score {a.score} · {money(a.costCents)}
+          {a.decidedBy === 'ENGINE' ? 'Assigned automatically' : a.decidedBy === 'HANDOFF' ? 'Handed off' : 'Chosen by a person'} · score {a.score} · {money(a.costCents)}
         </span>
       </div>
       <div className="mt-3">
@@ -110,7 +110,7 @@ export function TaskDrawer({ taskId, onClose, onChanged, canManage }: { taskId: 
       return recordTaskEvent(taskId, { kind: action });
     },
     onSuccess: (d, action) => {
-      toast.success(action === 'handoff' ? 'Handed to a person.' : action === 'auto' ? 'The engine decided again.' : `Recorded: ${action.toLowerCase()}.`);
+      toast.success(action === 'handoff' ? 'Handed to a person.' : action === 'auto' ? 'Picked again.' : `Recorded: ${action.toLowerCase()}.`);
       for (const w of (d as { warnings?: string[] }).warnings ?? []) toast.warning(w);
       void q.refetch();
       onChanged();
@@ -155,11 +155,11 @@ export function TaskDrawer({ taskId, onClose, onChanged, canManage }: { taskId: 
             {t.assignment ? (
               <AssignmentCard a={t.assignment} title="Current assignment" />
             ) : (
-              <EmptyState icon={Hand} title="Nobody holds this task" description={t.queuedReason ?? 'The engine has not decided yet.'} />
+              <EmptyState icon={Hand} title="Nobody holds this task" description={t.queuedReason ?? 'Nobody has been picked yet.'} />
             )}
 
             {t.assignment && t.assignment.ranking.length > 0 && (
-              <section aria-label="Every candidate the engine weighed">
+              <section aria-label="Every candidate weighed">
                 <button type="button" onClick={() => setShowRanking((v) => !v)} aria-expanded={showRanking} className="flex items-center gap-1.5 text-sm text-accent hover:underline">
                   <ChevronDown className={cn('h-4 w-4 transition-transform', showRanking && 'rotate-180')} aria-hidden="true" />
                   {showRanking ? 'Hide' : 'Show'} the {t.assignment.ranking.length} candidates weighed
@@ -210,7 +210,7 @@ export function TaskDrawer({ taskId, onClose, onChanged, canManage }: { taskId: 
             )}
             {(t.status === 'QUEUED' || t.status === 'OPEN') && (
               <Button variant="secondary" size="sm" onClick={() => act.mutate('auto')} loading={act.isPending}>
-                Ask the engine again
+                Pick again automatically
               </Button>
             )}
             {(t.status === 'ASSIGNED' || t.status === 'HANDED_OFF') && (

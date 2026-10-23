@@ -15,7 +15,7 @@ import { AuthContext } from '@/lib/auth';
 
 const SUMMARY = { weeklyOvertimeHours: 40, dailyOvertimeHours: null, doubleTimeHours: null, seventhDayRule: false, minimumWageCents: 1500, mealRequiredAfterHours: null, restPerHours: null, restBetweenShiftsHours: null, predictiveNoticeDays: null, minorBands: 4 };
 
-vi.mock('@/lib/laborLiveApi', () => ({ getLaborActivations: vi.fn(async () => ({ attestation: 'x', jurisdictions: [] })) }));
+vi.mock('@/lib/laborLiveApi', () => ({ getLaborActivations: vi.fn(async () => ({ attestation: 'x', jurisdictions: [] })), getLaborLastRun: vi.fn(async () => ({ states: [] })) }));
 vi.mock('@/lib/laborRulesApi', () => ({
   listLaborRuleSets: vi.fn(async () => ({ sets: [{ id: 'o1', jurisdiction: 'TENANT', level: 'TENANT', siteId: null, effectiveFrom: '2026-10-01', version: 1, status: 'DRAFT', shipped: false, params: { restBetweenShifts: { minHours: 11 } }, source: 'Union contract section 7', sourceDate: '2026-10-15', approvedBy: null, approvedAt: null, approvalNote: null }] })),
   createLaborOverride: vi.fn(),
@@ -89,7 +89,18 @@ describe('LaborRulesPage', () => {
     expect(screen.getAllByText('Split-shift premium').length).toBeGreaterThan(0);
   });
 
-  it('the shadow runs have their own tab', async () => {
+  it('the test runs have their own tab, in plain words with formatted periods', async () => {
+    renderPage('/payroll/labor-rules?tab=tests');
+    expect(await screen.findByText(/No differences so far/)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Test runs' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Test runs' })).toBeTruthy();
+    expect(screen.queryByText(/shadow|engine/i)).toBeNull();
+    expect(screen.queryByText(/2026-09-26/)).toBeNull();
+    // No hand-written breadcrumbs: the page's place comes from the nav.
+    expect(screen.queryByRole('navigation', { name: /breadcrumb/i })?.textContent ?? '').not.toMatch(/Labor rules.*Labor rules/);
+  });
+
+  it('an old ?tab=shadow link still opens the test runs', async () => {
     renderPage('/payroll/labor-rules?tab=shadow');
     expect(await screen.findByText(/No differences so far/)).toBeTruthy();
   });

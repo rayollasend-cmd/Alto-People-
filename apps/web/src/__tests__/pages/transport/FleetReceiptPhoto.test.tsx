@@ -123,7 +123,8 @@ describe('the fuel receipt on the Fleet card', () => {
   it('shows the last fill-up with the receipt as a thumbnail that opens full size', async () => {
     routes([fleetVan({ lastFuel: { occurredAt: '2026-10-20', costCents: 6_212, notes: '18.4 gal', photoUrl: PHOTO } })]);
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    await userEvent.click(await screen.findByRole('tab', { name: 'Fleet' }));
+    // F500 G2: Fleet sits under Setup (its first section).
+    await userEvent.click(await screen.findByRole('tab', { name: 'Setup' }));
     const line = await screen.findByTestId('fleet-last-fuel');
     expect(line).toHaveTextContent('$62.12');
     expect(line).toHaveTextContent('18.4 gal');
@@ -139,7 +140,8 @@ describe('the fuel receipt on the Fleet card', () => {
       fleetVan({ id: 'v2', name: 'Van 2', plate: 'ALT 102', lastFuel: null }),
     ]);
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    await userEvent.click(await screen.findByRole('tab', { name: 'Fleet' }));
+    // F500 G2: Fleet sits under Setup (its first section).
+    await userEvent.click(await screen.findByRole('tab', { name: 'Setup' }));
     const lines = await screen.findAllByTestId('fleet-last-fuel');
     expect(lines).toHaveLength(1);
     expect(lines[0]).toHaveTextContent('no receipt photo');
@@ -149,7 +151,8 @@ describe('the fuel receipt on the Fleet card', () => {
   it('the van’s service log shows the receipt beside the fuel line', async () => {
     routes([fleetVan({ lastFuel: { occurredAt: '2026-10-20', costCents: 6_212, notes: '18.4 gal', photoUrl: PHOTO } })]);
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    await userEvent.click(await screen.findByRole('tab', { name: 'Fleet' }));
+    // F500 G2: Fleet sits under Setup (its first section).
+    await userEvent.click(await screen.findByRole('tab', { name: 'Setup' }));
     await screen.findByTestId('fleet-last-fuel');
     await userEvent.click(screen.getAllByRole('button', { name: 'Record' })[0]!);
     const dialog = await screen.findByRole('dialog');

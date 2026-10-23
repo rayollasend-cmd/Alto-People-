@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banknote, Check, Download, Plus, Repeat } from 'lucide-react';
@@ -13,7 +13,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
+import { TaxYearSelect } from '@/components/ui/TaxYearSelect';
+import { SavedViewsMenu } from '@/components/SavedViewsMenu';
+import { useUrlParam, useUrlWriter } from '@/lib/useUrlState';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { toast } from '@/components/ui/Toaster';
 import { BillStatusBadge, LinesEditor, PayBillsDialog, blankLine, dueWords, errText, invalidatePayables, linesTotal, money, toLineInputs, useBooksWrite, type DraftLine } from './payablesKit';
@@ -25,97 +30,164 @@ import { BillRunDialog } from './BillRunDialog';
  * them, the bills that repeat, AP aging and the year's vendor 1099s.
  */
 
-type Tab = BillsTab | 'recurring' | 'aging' | '1099';
-const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'approve', label: 'To approve' },
-  { key: 'unpaid', label: 'Unpaid' },
-  { key: 'due', label: 'Due this week' },
-  { key: 'paid', label: 'Paid' },
-  { key: 'draft', label: 'Drafts' },
-  { key: 'all', label: 'All' },
+/**
+ * Two things used to share one row of nine tabs: the bills by status (a
+ * filter on one list) and three other views. Now the views are tabs
+ * (?view=) and the status is a segmented filter on the bills (?status=),
+ * which a saved view can keep. Old links still land: ?tab=approve|unpaid|
+ * due|paid|draft|all is a status, ?tab=recurring|aging|1099 a view, and
+ * ?status=PENDING_APPROVAL the approval queue.
+ */
+type View = 'bills' | 'recurring' | 'aging' | '1099';
+const VIEWS: Array<{ key: View; label: string }> = [
+  { key: 'bills', label: 'Bills' },
   { key: 'recurring', label: 'Recurring' },
   { key: 'aging', label: 'Aging' },
   { key: '1099', label: '1099s' },
 ];
+const VIEW_KEYS = VIEWS.map((v) => v.key);
+const STATUSES: Array<{ key: BillsTab; label: string }> = [
+  { key: 'approve', label: 'To approve' },
+  { key: 'late', label: 'Late' },
+  { key: 'due', label: 'Due in 7 days' },
+  { key: 'unpaid', label: 'All unpaid' },
+  { key: 'paid', label: 'Paid' },
+  { key: 'draft', label: 'Drafts' },
+  { key: 'all', label: 'All' },
+];
+const STATUS_KEYS = STATUSES.map((t) => t.key);
+
+/** Where an old ?tab= / ?status= link meant to go, or null when the URL is already new. */
+export function legacyBillsParams(params: URLSearchParams): { view?: View; status?: BillsTab } | null {
+  const tab = params.get('tab');
+  const status = params.get('status');
+  if (status === 'PENDING_APPROVAL') return { status: 'approve' };
+  if (!tab) return null;
+  if ((VIEW_KEYS as string[]).includes(tab)) return { view: tab as View };
+  if ((STATUS_KEYS as string[]).includes(tab)) return { status: tab as BillsTab };
+  return {};
+}
 
 export function BillsPage() {
   const navigate = useNavigate();
-  const [params, setParams] = useSearchParams();
-  // Older links say ?status=PENDING_APPROVAL; they mean the approval queue.
-  const asked = params.get('tab') ?? (params.get('status') === 'PENDING_APPROVAL' ? 'approve' : null);
-  const tab = (TABS.find((t) => t.key === asked)?.key ?? 'unpaid') as Tab;
-  const setTab = (t: string) => setParams((p) => {
-    p.set('tab', t);
-    return p;
-  }, { replace: true });
+  const [params] = useSearchParams();
+  const writeUrl = useUrlWriter();
+  // An old link (?tab=…, ?status=PENDING_APPROVAL) is rewritten once to the new params.
+  const legacy = legacyBillsParams(params);
+  const legacyKey = legacy ? JSON.stringify(legacy) : '';
+  useEffect(() => {
+    if (!legacyKey) return;
+    const to = JSON.parse(legacyKey) as { view?: View; status?: BillsTab };
+    writeUrl((p) => {
+      p.delete('tab');
+      if (p.get('status') === 'PENDING_APPROVAL') p.delete('status');
+      if (to.view && to.view !== 'bills') p.set('view', to.view);
+      if (to.status && to.status !== 'unpaid') p.set('status', to.status);
+    });
+  }, [legacyKey, writeUrl]);
+  const [urlView, setView] = useUrlParam<View>('view', 'bills', VIEW_KEYS, { history: 'push' });
+  const [urlStatus, setStatus] = useUrlParam<BillsTab>('status', 'unpaid', STATUS_KEYS);
+  const view = legacy?.view ?? urlView;
+  const status = legacy?.status ?? urlStatus;
   const write = useBooksWrite();
-  const billTab = (['approve', 'unpaid', 'due', 'paid', 'draft', 'all'] as const).includes(tab as BillsTab) ? (tab as BillsTab) : null;
-  const bills = useQuery({ queryKey: [...PAYABLES_KEY, 'bills', billTab], queryFn: () => listBills({ tab: billTab ?? 'all' }), enabled: !!billTab });
+  const bills = useQuery({ queryKey: [...PAYABLES_KEY, 'bills', status], queryFn: () => listBills({ tab: status }), enabled: view === 'bills' });
   const open = useQuery({ queryKey: [...PAYABLES_KEY, 'bills', 'unpaid'], queryFn: () => listBills({ tab: 'unpaid' }) });
   const pending = useQuery({ queryKey: [...PAYABLES_KEY, 'bills', 'approve'], queryFn: () => listBills({ tab: 'approve' }) });
-  const openBills = open.data?.bills ?? [];
-  const owed = openBills.reduce((s, b) => s + b.balance, 0);
-  const late = openBills.filter((b) => b.daysPastDue > 0);
-  const dueSoon = openBills.filter((b) => b.daysPastDue > -8);
+  const s = billsSummary(open.data?.bills ?? []);
+  const waiting = pending.data?.bills.length ?? 0;
   const [billRun, setBillRun] = useState(false);
+  // A saved view keeps the status and the grid's search and sort — the list's own URL params.
+  const viewQuery = useMemo(() => {
+    const q: Record<string, string> = {};
+    for (const k of ['status', 'q', 'sort', 'dir']) {
+      const v = params.get(k);
+      if (v) q[k] = v;
+    }
+    return q;
+  }, [params]);
+  const applySavedView = (id: string | null, q: Record<string, string>) =>
+    writeUrl((p) => {
+      for (const k of ['status', 'q', 'sort', 'dir', 'sv']) p.delete(k);
+      for (const [k, v] of Object.entries(q)) if (['status', 'q', 'sort', 'dir'].includes(k) && v) p.set(k, v);
+      if (id) p.set('sv', id);
+    });
+  const counts: Partial<Record<BillsTab, number>> = open.data ? { late: s.late.length, due: s.dueSoon.length, unpaid: s.open.length } : {};
+  if (pending.data) counts.approve = waiting;
 
   return (
     <ListTemplate
       title="Bills"
       subtitle="What the company owes its vendors — each one approved by a second person before it’s on the books, then paid by ACH, check or card."
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Bills' }]}
-      primaryAction={
-        write ? (
-          <Button asChild>
-            <Link to="/books/bills/new">
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              New bill
-            </Link>
-          </Button>
-        ) : undefined
-      }
-      secondaryActions={
-        <>
-          {write && (
-            <Button variant="secondary" onClick={() => setBillRun(true)}>
-              <Banknote className="h-4 w-4" aria-hidden="true" />
-              Pay bills due…
-            </Button>
-          )}
-          <Button asChild variant="secondary">
-            <Link to="/books/vendors">Vendors</Link>
-          </Button>
-        </>
-      }
+      actions={[
+        { label: 'New bill', icon: Plus, to: '/books/bills/new', primary: true, hidden: !write },
+        { label: 'Pay bills due…', icon: Banknote, onSelect: () => setBillRun(true), hidden: !write },
+      ]}
+      related={[{ label: 'Vendors', to: '/books/vendors' }]}
       summary={
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="Owed" value={money(owed)} hint={`${openBills.length} approved ${openBills.length === 1 ? 'bill' : 'bills'} not yet paid`} />
-          <MetricCard label="Due in the next week" value={money(dueSoon.reduce((s, b) => s + b.balance, 0))} hint={`${dueSoon.length} ${dueSoon.length === 1 ? 'bill' : 'bills'}`} />
-          <MetricCard label="Late" value={money(late.reduce((s, b) => s + b.balance, 0))} accent={late.length > 0} hint={late.length ? `${late.length} past their due date` : 'Nothing past due'} />
-          <MetricCard label="Waiting for approval" value={pending.data?.bills.length ?? 0} accent={(pending.data?.bills.length ?? 0) > 0} hint="Owed only once someone approves" />
-        </div>
+        <MetricStrip label="Bills at a glance" empty={open.isSuccess && pending.isSuccess && s.open.length === 0 && waiting === 0}>
+          <MetricCard label="Owed" value={money(s.owed)} hint={`${s.open.length} approved ${s.open.length === 1 ? 'bill' : 'bills'} not yet paid`} href="/books/bills?status=unpaid" nothing={s.open.length === 0 ? 'Nothing owed' : undefined} />
+          <MetricCard label="Due in the next 7 days" value={money(s.dueSoonTotal)} hint={`${s.dueSoon.length} ${s.dueSoon.length === 1 ? 'bill' : 'bills'}, none of them late`} href="/books/bills?status=due" nothing={s.dueSoon.length === 0 ? 'Nothing due this week' : undefined} />
+          <MetricCard label="Late" value={money(s.lateTotal)} tone={s.late.length > 0 ? 'alert' : 'default'} hint={`${s.late.length} past ${s.late.length === 1 ? 'its' : 'their'} due date`} href="/books/bills?status=late" nothing={s.late.length === 0 ? 'Nothing late' : undefined} />
+          <MetricCard label="Waiting for approval" value={waiting} tone={waiting > 0 ? 'warning' : 'default'} hint="Owed only once someone approves" href="/books/bills?status=approve" nothing={waiting === 0 ? 'Nothing waiting' : undefined} />
+        </MetricStrip>
       }
     >
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={view} onValueChange={(v) => setView(v as View)}>
         <TabsList>
-          {TABS.map((t) => (
+          {VIEWS.map((t) => (
             <TabsTrigger key={t.key} value={t.key}>
               {t.label}
-              {t.key === 'approve' && (pending.data?.bills.length ?? 0) > 0 ? ` (${pending.data!.bills.length})` : ''}
             </TabsTrigger>
           ))}
         </TabsList>
       </Tabs>
-      <div className="mt-4">
-        {billTab && <BillsGrid tab={billTab} bills={bills.data?.bills} loading={bills.isPending} error={bills.error} onRetry={() => void bills.refetch()} onOpen={(b) => navigate(`/books/bills/${b.id}`)} />}
-        {tab === 'recurring' && <RecurringSection />}
-        {tab === 'aging' && <AgingSection />}
-        {tab === '1099' && <Vendor1099Section />}
+      <div className="mt-4 space-y-3">
+        {view === 'bills' && (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <SegmentedControl
+                ariaLabel="Which bills"
+                value={status}
+                onChange={(v) => setStatus(v)}
+                options={STATUSES.map((t) => ({ value: t.key, label: t.label, count: counts[t.key] }))}
+              />
+              <SavedViewsMenu scope="books.bills" current={viewQuery} activeId={params.get('sv')} onApply={applySavedView} allLabel="Saved views" />
+            </div>
+            <BillsGrid tab={status} bills={bills.data?.bills} loading={bills.isPending} error={bills.error} onRetry={() => void bills.refetch()} onOpen={(b) => navigate(`/books/bills/${b.id}`)} />
+          </>
+        )}
+        {view === 'recurring' && <RecurringSection />}
+        {view === 'aging' && <AgingSection />}
+        {view === '1099' && <Vendor1099Section />}
       </div>
       {billRun && <BillRunDialog open onOpenChange={setBillRun} />}
     </ListTemplate>
   );
 }
+
+/**
+ * The strip's numbers from the approved, unpaid bills. Late and due never
+ * overlap: a bill past its due date is late; "due in the next 7 days" is
+ * today through a week out (daysPastDue -7…0), the server's 'due' list.
+ */
+export function billsSummary(open: BooksBill[]) {
+  const late = open.filter((b) => b.daysPastDue > 0);
+  const dueSoon = open.filter((b) => b.daysPastDue > -8 && b.daysPastDue <= 0);
+  const sum = (xs: BooksBill[]) => Math.round(xs.reduce((t, b) => t + b.balance * 100, 0)) / 100;
+  return { open, owed: sum(open), late, lateTotal: sum(late), dueSoon, dueSoonTotal: sum(dueSoon) };
+}
+
+const OPEN_TABS: BillsTab[] = ['unpaid', 'late', 'due'];
+
+const EMPTY: Record<BillsTab, { title: string; description: string }> = {
+  approve: { title: 'No bills are waiting for approval', description: 'A bill someone enters and sends for approval lands here for a second person.' },
+  late: { title: 'Nothing is late', description: 'Every approved bill is paid or not yet due.' },
+  due: { title: 'Nothing is due in the next 7 days', description: 'Approved bills due today or in the coming week show here. Late ones are under Late.' },
+  unpaid: { title: 'Nothing is owed', description: 'Approved bills not yet paid show here, oldest due first.' },
+  paid: { title: 'No paid bills yet', description: 'Bills paid by ACH, check or card show here.' },
+  draft: { title: 'No drafts', description: 'A bill saved without sending it for approval waits here.' },
+  all: { title: 'No bills yet', description: 'Enter a vendor’s bill — it goes to a second person to approve, then it’s on the books.' },
+};
 
 function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: BillsTab; bills: BooksBill[] | undefined; loading: boolean; error: unknown; onRetry: () => void; onOpen: (b: BooksBill) => void }) {
   const write = useBooksWrite();
@@ -129,7 +201,9 @@ function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: Bills
     { key: 'number', header: 'Invoice', accessor: (b) => b.billNumber ?? '', sortable: true, cardMeta: true },
     { key: 'billDate', header: 'Dated', accessor: (b) => b.billDate, sortable: true, cell: (b) => fmtDate(b.billDate), className: 'whitespace-nowrap' },
     { key: 'due', header: 'Due', accessor: (b) => b.dueDate, sortable: true, cell: (b) => <span className={b.daysPastDue > 0 && b.balance > 0 && b.status !== 'VOID' ? 'text-alert' : undefined}>{dueWords(b)}</span>, className: 'whitespace-nowrap' },
-    { key: 'status', header: 'Status', accessor: (b) => b.status, sortable: true, cardMeta: true, cell: (b) => <BillStatusBadge bill={b} size="sm" /> },
+    // On the unpaid lists every bill is approved and its lateness is in Due — a
+    // second "25 days late" in a Status column said the same thing twice.
+    ...(OPEN_TABS.includes(tab) ? [] : [{ key: 'status', header: 'Status', accessor: (b: BooksBill) => b.status, sortable: true, cardMeta: true, cell: (b: BooksBill) => <BillStatusBadge bill={b} size="sm" /> }]),
     { key: 'total', header: 'Total', accessor: (b) => b.total, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (b) => money(b.total) },
     { key: 'balance', header: 'Owed', accessor: (b) => b.balance, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (b) => (b.status === 'PAID' || b.status === 'VOID' ? '—' : money(b.balance)) },
     {
@@ -173,7 +247,7 @@ function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: Bills
         defaultSort={{ key: 'due', direction: 'asc' }}
         onRowClick={onOpen}
         rowActionLabel={(b) => `Open the ${money(b.total)} bill from ${b.vendorName}`}
-        empty={{ title: tab === 'approve' ? 'No bills are waiting for approval' : tab === 'due' ? 'Nothing is due this week' : tab === 'draft' ? 'No drafts' : 'No bills here', description: tab === 'approve' ? 'A bill someone enters and submits lands here for a second person.' : 'Enter a vendor’s bill to see it here.' }}
+        empty={{ ...EMPTY[tab], action: write ? <Button asChild size="sm"><Link to="/books/bills/new"><Plus className="h-4 w-4" aria-hidden="true" />New bill</Link></Button> : undefined }}
         selectable={
           write && tab === 'approve'
             ? {
@@ -194,7 +268,7 @@ function BillsGrid({ tab, bills, loading, error, onRetry, onOpen }: { tab: Bills
                   );
                 },
               }
-            : write && (tab === 'unpaid' || tab === 'due' || tab === 'all')
+            : write && (OPEN_TABS.includes(tab) || tab === 'all')
             ? {
                 disabled: (b) => !payable(b),
                 selectAllLabel: 'Select every unpaid bill',
@@ -421,14 +495,14 @@ function AgingSection() {
   return (
     <div className="space-y-3">
       {t && (
-        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <MetricCard label="Not yet due" value={money(t.current)} />
-          <MetricCard label="1–30 days late" value={money(t.days1to30)} accent={t.days1to30 > 0} />
-          <MetricCard label="31–60" value={money(t.days31to60)} accent={t.days31to60 > 0} />
-          <MetricCard label="61–90" value={money(t.days61to90)} accent={t.days61to90 > 0} />
-          <MetricCard label="Over 90" value={money(t.over90)} accent={t.over90 > 0} />
+        <MetricStrip label="Payables aging" empty={t.total === 0}>
           <MetricCard label="Total owed" value={money(t.total)} />
-        </div>
+          <MetricCard label="Not yet due" value={money(t.current)} tone="neutral" />
+          <MetricCard label="1–30 days late" value={money(t.days1to30)} tone={t.days1to30 > 0 ? 'warning' : 'neutral'} />
+          <MetricCard label="31–60 days late" value={money(t.days31to60)} tone={t.days31to60 > 0 ? 'warning' : 'neutral'} />
+          <MetricCard label="61–90 days late" value={money(t.days61to90)} tone={t.days61to90 > 0 ? 'alert' : 'neutral'} />
+          <MetricCard label="Over 90 days late" value={money(t.over90)} tone={t.over90 > 0 ? 'alert' : 'neutral'} />
+        </MetricStrip>
       )}
       <DataGrid
         id="books-ap-aging"
@@ -449,10 +523,12 @@ function AgingSection() {
 
 function Vendor1099Section() {
   const thisYear = Number(ymdLocal().slice(0, 4));
-  const [year, setYear] = useState(thisYear - (new Date().getMonth() < 3 ? 1 : 0));
+  // Jan–Mar is filing season for last year's 1099s; the year is in the URL.
+  const [yearParam, setYearParam] = useUrlParam('year', String(thisYear - (new Date().getMonth() < 3 ? 1 : 0)));
+  const year = /^\d{4}$/.test(yearParam) ? Number(yearParam) : thisYear;
+  const setYear = (y: number) => setYearParam(String(y));
   const q = useQuery({ queryKey: [...PAYABLES_KEY, '1099', year], queryFn: () => vendor1099(year) });
   type Row = NonNullable<typeof q.data>['rows'][number];
-  const years = useMemo(() => [thisYear, thisYear - 1, thisYear - 2, thisYear - 3], [thisYear]);
   const need = (q.data?.rows ?? []).filter((r) => r.needs1099);
   const cols: GridColumn<Row>[] = [
     { key: 'name', header: 'Vendor', accessor: (r) => r.name, sortable: true, primary: true, cell: (r) => <Link className="font-medium text-ink hover:text-gold hover:underline" to={`/books/vendors/${r.vendorId}`}>{r.name}</Link> },
@@ -465,17 +541,10 @@ function Vendor1099Section() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <Field label="Year paid">
-          {(p) => (
-            <Select value={String(year)} onChange={(e) => setYear(Number(e.target.value))} className="w-36" {...p}>
-              {years.map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
+        <label className="flex items-center gap-2 text-sm text-ink-muted">
+          Year paid
+          <TaxYearSelect value={year} onChange={setYear} label="Year paid" />
+        </label>
         <Button asChild variant="secondary">
           <a href={vendor1099CsvUrl(year)}>
             <Download className="h-4 w-4" aria-hidden="true" />

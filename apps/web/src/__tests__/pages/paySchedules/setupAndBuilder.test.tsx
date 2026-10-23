@@ -56,6 +56,21 @@ describe('<NewPaySchedulePage>', () => {
   });
 });
 
+describe('<NewPaySchedulePage> first payday', () => {
+  it('says why the period in progress isn’t on the new schedule', async () => {
+    const ymd = (days: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    // The first period this schedule pays starts in 5 days, so one is already under way.
+    api.previewPattern.mockResolvedValue({ periods: [period({ periodStart: ymd(5), periodEnd: ymd(18), payDate: ymd(25) })] });
+    renderPage(<NewPaySchedulePage />, '/payroll/schedules/new');
+    const note = await screen.findByTestId('period-in-progress');
+    expect(note).toHaveTextContent(/The period in progress \(.+ – .+\) is paid by each person’s current schedule; this one starts with the next\./);
+  });
+});
+
 describe('<AddPeopleBuilder>', () => {
   const schedule = { id: WEEKLY.id, name: WEEKLY.name, nextPeriodStart: '2099-10-24', nextPayDate: '2099-11-05' };
 

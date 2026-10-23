@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { ReportPeriodTokenSchema, type ReportPeriodToken } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import { userDisplayName } from '../lib/clientProspects.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import {
@@ -80,10 +82,17 @@ reports96Router.get('/reports', VIEW, async (req, res) => {
   const rows = await prisma.report.findMany({
     take: 1000,
     where: {
+      tenantId: tenantIdForWrite(),
       deletedAt: null,
       OR: [{ isPublic: true }, { createdById: req.user!.id }],
     },
     orderBy: { name: 'asc' },
+    include: {
+      // Who owns it, how often it goes out, and when it last ran (F500 G4):
+      // what someone scanning the saved list asks first.
+      createdBy: { select: { id: true, email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } },
+      schedules: { where: { isActive: true }, select: { cadence: true } },
+    },
   });
   res.json({
     reports: rows.map((r) => ({
@@ -94,6 +103,11 @@ reports96Router.get('/reports', VIEW, async (req, res) => {
       isPublic: r.isPublic,
       period: specPeriodToken(r.spec),
       createdAt: r.createdAt.toISOString(),
+      ownerName: r.createdBy ? userDisplayName(r.createdBy) : null,
+      mine: r.createdById === req.user!.id,
+      lastRunAt: r.lastRunAt?.toISOString() ?? null,
+      scheduleCount: r.schedules.length,
+      cadences: [...new Set(r.schedules.map((x) => x.cadence))],
     })),
   });
 });
@@ -244,6 +258,7 @@ reports96Router.post('/reports/:id/run', VIEW, async (req, res) => {
   }
   const spec = SpecSchema.parse(r.spec);
   const rows = await runReport(r.entity, spec, req.user!);
+  await prisma.report.update({ where: { id: r.id }, data: { lastRunAt: new Date() } });
   res.json({ entity: r.entity, columns: spec.groupBy?.length ? aggregateColumns(spec) : spec.columns, rows });
 });
 

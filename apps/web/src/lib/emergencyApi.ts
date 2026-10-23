@@ -38,3 +38,19 @@ export function declareEmergency(body: EmergencyDeclareInput): Promise<Emergency
 export function standDownEmergency(id: string): Promise<EmergencySummary> {
   return apiFetch<EmergencySummary>(`/emergency/${id}/stand-down`, { method: 'POST' });
 }
+
+/** How ready a declaration would be right now (apps/api/src/lib/emergency.ts emergencyReadiness). */
+export interface EmergencyReadiness {
+  /** People a declaration for every site would tell. */
+  reach: number;
+  /** Of them, with a phone number on file. */
+  withPhone: number;
+  /** The language each would be told in, most first. */
+  languages: Array<{ lang: 'en' | 'es' | 'tr'; people: number }>;
+  /** In-service vans with a driver and their seats; null when the tenant runs no vans. */
+  vans: { ready: number; seats: number; inService: number } | null;
+}
+
+export function getEmergencyReadiness(): Promise<EmergencyReadiness> {
+  return apiFetch<EmergencyReadiness>('/emergency/readiness');
+}

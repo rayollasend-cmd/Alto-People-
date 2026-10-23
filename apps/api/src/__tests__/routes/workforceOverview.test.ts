@@ -275,6 +275,33 @@ describe('GET /workforce/overview', () => {
     expect(res.body.close.pendingApprovals).toBe(1);
   });
 
+  it('a ready-to-schedule row names the position and the earliest open shift it could fill (F500)', async () => {
+    const now = new Date();
+    const client = await createClient('Front Beach 218');
+    const other = await createClient('Harbor Inn');
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Ready' });
+    const ben = await createAssociate({ firstName: 'Ben', lastName: 'NoOpen' });
+    await prisma.application.create({ data: { associateId: ana.id, clientId: client.id, position: 'Stocker', onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: now } });
+    await prisma.application.create({ data: { associateId: ben.id, clientId: other.id, position: 'Cook', onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date(now.getTime() - HOUR) } });
+    const at = (h: number) => new Date(now.getTime() + h * HOUR);
+    // Open shifts at Ana's client: a later Stocker, an earlier Cashier (wrong position),
+    // the earliest future Stocker, and a past one. Ben's client has no open shift at all.
+    await prisma.shift.create({ data: { clientId: client.id, position: 'Stocker', startsAt: at(72), endsAt: at(80), status: 'OPEN', publishedAt: now } });
+    await prisma.shift.create({ data: { clientId: client.id, position: 'Cashier', startsAt: at(10), endsAt: at(18), status: 'OPEN', publishedAt: now } });
+    const first = await prisma.shift.create({ data: { clientId: client.id, position: 'Stocker', startsAt: at(30), endsAt: at(38), status: 'OPEN', publishedAt: now } });
+    await prisma.shift.create({ data: { clientId: client.id, position: 'Stocker', startsAt: at(-30), endsAt: at(-22), status: 'OPEN', publishedAt: now } });
+
+    const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const res = await (await loginAs(user.email)).get('/workforce/overview');
+    expect(res.status).toBe(200);
+    const rows = res.body.readyToSchedule.rows as Array<Record<string, unknown>>;
+    expect(rows.map((r) => r.name)).toEqual(['Ana Ready', 'Ben NoOpen']);
+    expect(rows[0]).toMatchObject({ position: 'Stocker', earliestOpen: { shiftId: first.id, position: 'Stocker', startsAt: first.startsAt.toISOString() } });
+    expect(rows[1]).toMatchObject({ position: 'Cook', earliestOpen: null });
+    // The client id the lookup needed stays on the server.
+    expect(rows[0]).not.toHaveProperty('clientId');
+  });
+
   it('offers the internal labor market: short stores beside the bench', async () => {
     const now = new Date();
     const client = await createClient('Front Beach 218');

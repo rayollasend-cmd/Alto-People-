@@ -67,6 +67,14 @@ describe('the public status page', () => {
     expect(api.uptime90d).toBe(66.7);
     expect(s.components.find((c) => c.key === 'WEB')!.state).toBe('DEGRADED');
     expect(s.overall).toBe('DEGRADED');
+    // F500 G5: the same days as 90 cells, oldest first — a bad day (≥5% errors) an outage.
+    expect(api.days).toHaveLength(90);
+    expect(api.days![0]!.date).toBe('2026-07-18');
+    expect(api.days![89]).toEqual({ date: '2026-10-15', state: 'OPERATIONAL', pct: 100 });
+    expect(api.days!.find((d) => d.date === '2026-10-14')).toEqual({ date: '2026-10-14', state: 'OUTAGE', pct: 95 });
+    expect(api.days!.find((d) => d.date === '2026-10-01')).toEqual({ date: '2026-10-01', state: 'OPERATIONAL', pct: 100 });
+    expect(api.days!.filter((d) => d.state === 'UNMEASURED')).toHaveLength(87);
+    expect(s.components.find((c) => c.key === 'KIOSK')!.days!.every((d) => d.state === 'UNMEASURED')).toBe(true);
   });
 
   it('an open incident shows publicly and makes its component at least as bad as its impact', async () => {
@@ -80,6 +88,9 @@ describe('the public status page', () => {
     expect(pub.body.overall).toBe('DEGRADED');
     const messaging = pub.body.components.find((c: { key: string }) => c.key === 'MESSAGING');
     expect(messaging.state).toBe('DEGRADED');
+    // Today's cell carries the incident even with no measure of its own.
+    expect(messaging.days.at(-1).state).toBe('DEGRADED');
+    expect(messaging.label).toBe('Text and WhatsApp messages');
     expect(pub.body.incidents).toHaveLength(1);
     expect(pub.body.incidents[0]).toMatchObject({ title: 'WhatsApp deliveries delayed', state: 'INVESTIGATING', resolvedAt: null });
     // The public shape never carries who posted.

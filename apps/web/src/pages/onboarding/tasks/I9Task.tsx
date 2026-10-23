@@ -23,12 +23,13 @@ import {
 } from '@alto-people/shared';
 import { fmtDate, fmtDateTime, fmtSize, parseYmd } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { Field, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
+import { Field, TaskShell, fmtLimit, inputCls, useNextTask, useTaskApplication } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 
 type I9DocumentKind = 'ID' | 'SSN_CARD' | 'I9_SUPPORTING' | 'J1_VISA' | 'J1_DS2019';
@@ -79,6 +80,13 @@ export function I9Task() {
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
   const next = useNextTask('I9_VERIFICATION');
+  // One home for identity documents: when the checklist also has the
+  // Identity documents step (and HR hasn't marked it not needed), that step
+  // collects them and this one only submits them for HR's Section 2 — no
+  // second upload form for the same List A/B/C papers.
+  const hasDocumentsStep = Boolean(
+    useTaskApplication().data?.tasks.some((task) => task.kind === 'DOCUMENT_UPLOAD' && task.status !== 'SKIPPED'),
+  );
 
 
   const refreshQuery = useQuery({
@@ -87,7 +95,6 @@ export function I9Task() {
     enabled: Boolean(applicationId),
   });
   const status: I9Status | null = refreshQuery.data ?? null;
-  const topError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('ob.i9.loadFailed') : null;
   const loading = refreshQuery.isPending;
   const refresh = async () => {
     await refreshQuery.refetch();
@@ -96,23 +103,23 @@ export function I9Task() {
 
   if (loading) {
     return (
-      <TaskShell title={t('ob.i9.title')} backTo={backTo}>
+      <TaskShell title={t('ob.i9.title')} backTo={backTo} kind="I9_VERIFICATION">
         <Skeleton className="h-4 w-3/4 mb-5" />
         <SkeletonRows count={3} rowHeight="h-24" />
       </TaskShell>
     );
   }
-  if (topError) {
+  if (refreshQuery.isError) {
     return (
-      <TaskShell title={t('ob.i9.title')} backTo={backTo}>
-        <ErrorBanner>{topError}</ErrorBanner>
+      <TaskShell title={t('ob.i9.title')} backTo={backTo} kind="I9_VERIFICATION">
+        <QueryError what={t('ob.i9.what')} query={refreshQuery} />
       </TaskShell>
     );
   }
   if (!applicationId || !status) return null;
 
   return (
-    <TaskShell title={t('ob.i9.title')} backTo={backTo}>
+    <TaskShell title={t('ob.i9.title')} backTo={backTo} kind="I9_VERIFICATION">
       <p className="text-silver text-sm mb-5">{t('ob.i9.intro')}</p>
 
       <Section1Card
@@ -123,6 +130,7 @@ export function I9Task() {
       <DocumentsCard
         applicationId={applicationId}
         status={status}
+        documentsStep={hasDocumentsStep ? `/onboarding/me/${applicationId}/tasks/document_upload` : null}
         onChanged={refresh}
         onSubmitted={() => navigate(next?.route ?? backTo, { replace: true })}
       />
@@ -200,11 +208,11 @@ function Section1Card({
 
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
-      <header className="flex items-center justify-between mb-4">
+      <header className="flex items-start justify-between gap-3 mb-4">
         <h2 className="text-lg font-medium text-white">{t('ob.i9.s1Heading')}</h2>
         <span
           className={cn(
-            'text-xs uppercase tracking-widest',
+            'mt-1.5 text-right text-xs uppercase tracking-widest',
             done ? 'text-gold' : 'text-silver/70'
           )}
         >
@@ -317,12 +325,15 @@ function DocumentsCard({
   status,
   onChanged,
   onSubmitted,
+  documentsStep = null,
 }: {
   applicationId: string;
   status: I9Status;
   onChanged: () => void;
   /** Fires after submit-for-review succeeds — the task's final action. */
   onSubmitted: () => void;
+  /** The Identity documents step, when the checklist has one: uploads happen there. */
+  documentsStep?: string | null;
 }) {
   const { t } = useI18n();
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
@@ -423,7 +434,7 @@ function DocumentsCard({
       setError(
         t('ob.i9.fileTooLarge', {
           size: fmtSize(file.size),
-          limit: fmtSize(UPLOAD_MAX_BYTES),
+          limit: fmtLimit(UPLOAD_MAX_BYTES),
         }),
       );
       return;
@@ -452,28 +463,47 @@ function DocumentsCard({
 
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
-      <header className="flex items-center justify-between mb-3">
+      <header className="flex items-start justify-between gap-3 mb-3">
         <h2 className="text-lg font-medium text-white">{t('ob.i9.docsHeading')}</h2>
+        {/* The badge says what is true of the DOCUMENTS: HR verifying in
+            person with nothing uploaded is not "Verified by HR" over an
+            empty list. */}
         <span
           className={cn(
-            'text-xs uppercase tracking-widest',
+            'mt-1.5 text-right text-xs uppercase tracking-widest',
             section2Done
               ? 'text-gold'
               : submitted
                 ? 'text-success'
                 : 'text-silver/70'
           )}
+          data-testid="i9-docs-badge"
         >
           {section2Done
-            ? t('ob.i9.verifiedByHr')
+            ? docCount > 0
+              ? t('ob.i9.verifiedByHr')
+              : t('ob.i9.verifiedInPerson')
             : submitted
               ? t('ob.i9.submittedAwaiting')
               : t('ob.i9.required')}
         </span>
       </header>
-      <p className="text-sm text-silver mb-4">{t('ob.i9.docsIntro')}</p>
+      {section2Done ? (
+        <p className="text-sm text-silver mb-4">
+          {docCount > 0 ? t('ob.i9.docsVerified') : t('ob.i9.docsVerifiedInPerson')}
+        </p>
+      ) : !submitted && documentsStep ? (
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm text-silver">
+          <span className="min-w-0 flex-1 basis-56">{t('ob.i9.docsElsewhere')}</span>
+          <Button asChild size="sm" variant="secondary">
+            <Link to={documentsStep}>{t('ob.i9.goToDocuments')}</Link>
+          </Button>
+        </div>
+      ) : !submitted ? (
+        <p className="text-sm text-silver mb-4">{t('ob.i9.docsIntro')}</p>
+      ) : null}
 
-      {!section2Done && !submitted && (
+      {!section2Done && !submitted && !documentsStep && (
         <>
           {preexistingCount !== null && preexistingCount > 0 && (
             <div className="mb-4 px-3 py-2.5 rounded border border-gold/40 bg-gold/[0.06] text-sm text-silver">
@@ -688,7 +718,7 @@ function DocumentsCard({
             </li>
           ))}
         </ul>
-      ) : (
+      ) : section2Done ? null : (
         <p className="text-xs text-silver/70">
           {t('ob.i9.noDocs')}
         </p>
@@ -717,6 +747,9 @@ function DocumentsCard({
           )}
         </div>
       )}
+      {/* Without the picker (uploads live in the Identity documents step),
+          a failed load or submit still has to say so. */}
+      {documentsStep && error && <ErrorBanner className="mt-3">{error}</ErrorBanner>}
     </section>
   );
 }
@@ -728,11 +761,11 @@ function Section2Status({ status }: { status: I9Status }) {
   const s2 = status.section2;
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5">
-      <header className="flex items-center justify-between mb-2">
+      <header className="flex items-start justify-between gap-3 mb-2">
         <h2 className="text-lg font-medium text-white">{t('ob.i9.s2Heading')}</h2>
         <span
           className={cn(
-            'text-xs uppercase tracking-widest',
+            'mt-1.5 text-right text-xs uppercase tracking-widest',
             s2 ? 'text-gold' : 'text-silver/70'
           )}
         >

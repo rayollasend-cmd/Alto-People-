@@ -12,7 +12,7 @@ import { Select } from '@/components/ui/Select';
 import { useConfirm } from '@/lib/confirm';
 import { errMsg } from './qboWords';
 
-/** How the site's dimensions land in QuickBooks, matching the charts again, and bringing QuickBooks' history in. */
+/** How these books' dimensions land in QuickBooks, matching the charts again, and bringing QuickBooks' history in. */
 
 export function SettingsPanel({ s, manage }: { s: QboSyncStatus; manage: boolean }) {
   const qc = useQueryClient();
@@ -44,7 +44,7 @@ export function SettingsPanel({ s, manage }: { s: QboSyncStatus; manage: boolean
       <Card>
         <CardHeader>
           <CardTitle>How the books are split in QuickBooks</CardTitle>
-          <CardDescription>QuickBooks reports by Class and by Location. Choose what each one carries, so its reports break down the way the site’s do.</CardDescription>
+          <CardDescription>QuickBooks reports by Class and by Location. Choose what each one carries, so its reports break down the way the books here do.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <Field label="Class" hint="Every line tagged with its client (or department) becomes that QuickBooks class.">
@@ -87,7 +87,7 @@ export function SettingsPanel({ s, manage }: { s: QboSyncStatus; manage: boolean
           <CardHeader>
             <CardTitle>Bring in QuickBooks’ history</CardTitle>
             <CardDescription>
-              On connecting, only changes from then on come over, so payroll and statements the site already has aren’t counted twice. Bring in what your accountant entered in QuickBooks from a date — for history the site doesn’t have.
+              On connecting, only changes from then on come over, so payroll and statements already in the books here aren’t counted twice. Bring in what your accountant entered in QuickBooks from a date — for history these books don’t have.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap items-end gap-3">
@@ -99,7 +99,7 @@ export function SettingsPanel({ s, manage }: { s: QboSyncStatus; manage: boolean
               loading={history.isPending}
               disabled={!manage || !since}
               onClick={async () => {
-                if (await confirm({ title: `Bring in QuickBooks’ history from ${since}?`, description: 'Transactions entered in QuickBooks on or after this date come into the site’s books. Anything the site sent to QuickBooks itself is skipped, so nothing is counted twice.', confirmLabel: 'Bring it in' })) history.mutate();
+                if (await confirm({ title: `Bring in QuickBooks’ history from ${since}?`, description: 'Transactions entered in QuickBooks on or after this date come into the books here. Anything sent from here to QuickBooks is skipped, so nothing is counted twice.', confirmLabel: 'Bring it in' })) history.mutate();
               }}
             >
               Bring it in

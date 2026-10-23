@@ -106,13 +106,16 @@ function renderBar(detail: ApplicationDetail, handlers: Partial<Record<'onApprov
 }
 
 describe('<ApplicationDecisionBar>', () => {
-  it('keeps Approve and Reject on a phone screen and says why Approve is blocked', async () => {
+  it('keeps Approve on a phone screen, Reject behind More (F500 G1), and says why Approve is blocked', async () => {
     const onReject = vi.fn();
     renderBar(application(), { onReject });
     const bar = screen.getByRole('toolbar', { name: 'Decision' });
     expect(within(bar).getByText('3 of 8 tasks done — Approve opens when all are done.')).toBeInTheDocument();
     expect(within(bar).getByRole('button', { name: /Approve/ })).toBeDisabled();
-    await userEvent.click(within(bar).getByRole('button', { name: /Reject/ }));
+    // The decline is no longer a button beside the decision.
+    expect(within(bar).queryByRole('button', { name: /Reject/ })).not.toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole('button', { name: /More/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Reject/ }));
     expect(onReject).toHaveBeenCalled();
   });
 

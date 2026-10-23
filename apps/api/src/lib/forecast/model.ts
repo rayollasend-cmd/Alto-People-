@@ -8,7 +8,12 @@ import type { ForecastDrivers, ForecastSignalKind } from '@alto-people/shared';
  *
  *   recent    = mean verified hours of the 8 weeks before the anchor
  *   trend     = (mean of the last 4 − mean of the 4 before) ÷ 4, per week,
- *               capped at ±20% of recent so a short spike cannot run away
+ *               capped at ±20% of recent so a short spike cannot run away;
+ *               and its TOTAL pull over the horizon is capped at ±20% of
+ *               recent too, so a four-week slope is never drawn out for
+ *               26 weeks (F500 G4: a site "falling 16 h a week" from 83 h
+ *               forecast 0 h from week 5 on). A falling site settles at
+ *               80% of its recent level × the season, not at zero.
  *   lastYear  = the same org week a year ago × (recent ÷ the same 8 weeks a
  *               year ago), so a site that grew is scaled up, not copied
  *   p50       = w × lastYear + (1 − w) × (recent + trend × lead) × holiday
@@ -181,7 +186,8 @@ export function forecastSite(series: WeekSeries, opts: ForecastOpts): ForecastPo
     const signalFactor = weekSignals.reduce((f, s) => f * s.factor, 1);
     const w = lastYearScaled === null ? 0 : weights.lastYearWeight;
     // Last year already lived through its holiday; the holiday factor lifts only the recent component.
-    const recentPart = (recentMean + trend * lead) * holidayFactor;
+    const pull = Math.max(-cap, Math.min(cap, trend * lead));
+    const recentPart = (recentMean + pull) * holidayFactor;
     const base = w * (lastYearScaled ?? 0) + (1 - w) * recentPart;
     const p50 = Math.max(0, base * signalFactor);
     out.push({

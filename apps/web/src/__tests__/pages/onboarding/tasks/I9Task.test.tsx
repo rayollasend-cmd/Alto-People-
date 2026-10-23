@@ -16,7 +16,14 @@ vi.mock('@/lib/i9Api', () => ({
   submitI9ForReview: vi.fn(async () => ({ documentsSubmittedAt: new Date().toISOString() })),
 }));
 
+// The task shell reads the application for "Step N of M" and the I-9 step
+// asks whether the checklist also has the Identity documents step.
+vi.mock('@/lib/onboardingApi', () => ({
+  getApplication: vi.fn(),
+}));
+
 import { getI9Status, submitI9Section1, uploadI9Document, listI9Documents } from '@/lib/i9Api';
+import { getApplication } from '@/lib/onboardingApi';
 import { I9Task } from '@/pages/onboarding/tasks/I9Task';
 
 // The page reads through the query layer; every render gets a client.
@@ -73,6 +80,8 @@ beforeEach(() => {
   // override per-call via mockResolvedValueOnce.
   vi.mocked(listI9Documents).mockReset();
   vi.mocked(listI9Documents).mockResolvedValue({ documents: [] });
+  vi.mocked(getApplication).mockReset();
+  vi.mocked(getApplication).mockRejectedValue(new Error('not loaded'));
 });
 
 describe('<I9Task> Section 1', () => {
@@ -255,3 +264,80 @@ describe('<I9Task> document upload', () => {
     expect(screen.getAllByText(/verified/i).length).toBeGreaterThan(0);
   });
 });
+
+// F500 fix-up 2026-10-22: the badge and the words say what is true of the
+// documents, and identity documents have one home.
+describe('<I9Task> documents card (F500)', () => {
+  const signed = {
+    completedAt: '2026-04-26T18:00:00.000Z',
+    citizenshipStatus: 'US_CITIZEN' as const,
+    workAuthExpiresAt: null,
+    hasAlienNumber: false,
+    typedName: 'Maria Lopez',
+  };
+  const verified = {
+    completedAt: '2026-04-26T19:00:00.000Z',
+    verifierEmail: 'admin@altohr.com',
+    documentList: 'LIST_A' as const,
+    supportingDocIds: [],
+  };
+
+  it('HR verified in person with nothing uploaded: "Verified in person", not "Verified by HR" over an empty list', async () => {
+    vi.mocked(getI9Status).mockResolvedValue({ associateId: 'a', section1: signed, documentsSubmittedAt: null, section2: verified });
+    renderTask();
+    expect(await screen.findByTestId('i9-docs-badge')).toHaveTextContent('Verified in person');
+    expect(screen.getByText(/hr verified your documents in person/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no documents uploaded yet/i)).toBeNull();
+    // The intro that points at "Take photo" / "Choose file" goes with the buttons.
+    expect(screen.queryByText(/opens the camera/i)).toBeNull();
+  });
+
+  it('HR verified uploaded documents: "Verified by HR"', async () => {
+    vi.mocked(getI9Status).mockResolvedValue({ associateId: 'a', section1: signed, documentsSubmittedAt: '2026-04-26T18:30:00.000Z', section2: verified });
+    vi.mocked(listI9Documents).mockResolvedValue({
+      documents: [
+        {
+          id: 'doc-1', kind: 'ID', filename: 'passport.png', mimeType: 'image/png', size: 1234, status: 'VERIFIED',
+          side: null, i9DocTitle: 'U.S. Passport or Passport Card', i9List: 'A', createdAt: '2026-04-26T18:30:00.000Z',
+        },
+      ],
+    } as Awaited<ReturnType<typeof listI9Documents>>);
+    renderTask();
+    await screen.findByText('passport.png');
+    expect(screen.getByTestId('i9-docs-badge')).toHaveTextContent('Verified by HR');
+  });
+
+  it('with an Identity documents step on the checklist, uploads live there: a link, no second picker', async () => {
+    vi.mocked(getApplication).mockResolvedValue({
+      id: APP_ID,
+      tasks: [
+        { id: 't1', kind: 'DOCUMENT_UPLOAD', status: 'PENDING', title: 'Docs', description: null, order: 1, documentId: null, completedAt: null },
+        { id: 't2', kind: 'I9_VERIFICATION', status: 'PENDING', title: 'I-9', description: null, order: 2, documentId: null, completedAt: null },
+      ],
+    } as unknown as Awaited<ReturnType<typeof getApplication>>);
+    vi.mocked(getI9Status).mockResolvedValue({ associateId: 'a', section1: signed, documentsSubmittedAt: null, section2: null });
+    const { container } = renderTask();
+    const link = await screen.findByRole('link', { name: /go to identity documents/i });
+    expect(link).toHaveAttribute('href', `/onboarding/me/${APP_ID}/tasks/document_upload`);
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    // Submitting for HR's Section 2 still happens here.
+    expect(screen.getByRole('button', { name: /submit for hr review/i })).toBeInTheDocument();
+    expect(screen.getByTestId('task-step')).toHaveTextContent('Step 2 of 2');
+  });
+
+  it('keeps its own picker when HR marked the Identity documents step not needed', async () => {
+    vi.mocked(getApplication).mockResolvedValue({
+      id: APP_ID,
+      tasks: [
+        { id: 't1', kind: 'DOCUMENT_UPLOAD', status: 'SKIPPED', title: 'Docs', description: null, order: 1, documentId: null, completedAt: null },
+        { id: 't2', kind: 'I9_VERIFICATION', status: 'PENDING', title: 'I-9', description: null, order: 2, documentId: null, completedAt: null },
+      ],
+    } as unknown as Awaited<ReturnType<typeof getApplication>>);
+    vi.mocked(getI9Status).mockResolvedValue({ associateId: 'a', section1: signed, documentsSubmittedAt: null, section2: null });
+    const { container } = renderTask();
+    await screen.findByTestId('task-step');
+    expect(screen.queryByRole('link', { name: /go to identity documents/i })).toBeNull();
+    expect(container.querySelector('input[type="file"]')).not.toBeNull();
+  });
+});
+

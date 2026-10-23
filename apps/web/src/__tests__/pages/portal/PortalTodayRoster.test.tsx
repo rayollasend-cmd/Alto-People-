@@ -87,8 +87,8 @@ describe('<PortalToday> — the roster on a phone', () => {
   it('the shift supervisor reads names and status, with call and text on each row', async () => {
     renderToday('SHIFT_SUPERVISOR');
     const rows = await screen.findByTestId('roster-rows');
-    // Phone-only list; the face wall takes over from sm.
-    expect(rows.className).toContain('sm:hidden');
+    // Rows at every width now (F500 G2): the face wall is an optional mode.
+    expect(rows.className).not.toContain('sm:hidden');
     const items = within(rows).getAllByRole('listitem');
     expect(items).toHaveLength(2);
     expect(within(items[0]!).getByText('Ann Lee')).toBeInTheDocument();

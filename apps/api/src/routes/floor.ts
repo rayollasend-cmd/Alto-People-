@@ -17,6 +17,7 @@ import { smsAvailability } from '../lib/sms.js';
 import { effectiveClientIdFilter } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { ledWindows } from '../lib/shiftWindows.js';
+import { coverageAheadForUser } from '../lib/coverageGaps.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
 import { runCoverFlow } from '../lib/coverShift.js';
 
@@ -299,6 +300,20 @@ floorRouter.post('/floor/flags/:id/ack', requireAnyCapability('manage:scheduling
       notifyUser(flag.raisedById, { subject: `${FLAG_LABEL[flag.kind as keyof typeof FLAG_LABEL] ?? 'Flag'} acknowledged`, body: 'Your shift supervisor has it.', category: 'floor', quiet: true }),
     );
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ---- Short vs contract, the next 7 days ----------------------------------- */
+
+// The windows this person leads, contracted vs scheduled, day by day (one
+// definition with the Needs-you coverage gap: lib/coverageGaps). Counts and
+// window labels only — no people — and only the caller's own windows.
+floorRouter.get('/floor/coverage-ahead', requireAnyCapability('view:time-live', 'view:scheduling'), async (req, res, next) => {
+  try {
+    const days = Math.min(14, Math.max(1, Number(req.query.days) || 7));
+    res.json(await coverageAheadForUser(prisma, req.user!.id, new Date(), days));
   } catch (err) {
     next(err);
   }

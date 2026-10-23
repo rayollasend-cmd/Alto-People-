@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, Gauge, TrendingUp, Users } from 'lucide-react';
-import type { WebVitalMetric, WebVitalRating, WebVitalRouteRow } from '@alto-people/shared';
+import { ROLE_LABELS, type Role, type WebVitalMetric, type WebVitalRating, type WebVitalRouteRow } from '@alto-people/shared';
 import {
   getActiveUsers,
   getAdoption,
@@ -20,6 +20,8 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { fmtDateTz } from '@/lib/format';
+import { useUrlParam } from '@/lib/useUrlState';
+import { ListTemplate } from '@/components/templates';
 
 /**
  * IS ANYONE ACTUALLY USING THIS?
@@ -43,7 +45,8 @@ const WINDOWS = [
 /** "Oct 21" — the API's days are UTC calendar days. */
 const shortDay = (day: string) => fmtDateTz(`${day}T00:00:00Z`, 'UTC');
 
-const pct = (v: number) => `${(v * 100).toFixed(v < 0.01 ? 2 : 1)}%`;
+/** Whole percentages: "100%", "0%" — a rate on a few dozen people has no meaningful decimal. */
+const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 // Web vitals read as plain words; the acronyms stay in the tooltip.
 const VITAL_LABEL: Record<WebVitalMetric, string> = {
@@ -65,8 +68,13 @@ const RATING_TONE: Record<WebVitalRating, string> = {
 };
 const ratingWord = (r: WebVitalRating | null) =>
   r === 'good' ? 'Good' : r === 'poor' ? 'Poor' : r === 'needs-improvement' ? 'Needs work' : '—';
+/**
+ * The p75 is read off a histogram (the API's daily rollup), so it is the
+ * upper edge of the bucket the 75th percentile falls in — "≤400 ms", not
+ * an exact "400 ms" every route happens to share.
+ */
 const fmtVital = (metric: WebVitalMetric, v: number | null) =>
-  v === null ? '—' : metric === 'CLS' ? v.toFixed(2) : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`;
+  v === null ? '—' : `≤${metric === 'CLS' ? v.toFixed(2) : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`}`;
 
 /** "1m 20s" for a duration in milliseconds. */
 function fmtDuration(ms: number): string {
@@ -76,14 +84,17 @@ function fmtDuration(ms: number): string {
   return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
 }
 
-/** "SHIFT_SUPERVISOR" → "Shift supervisor". */
+/** The role's own name ("HR Administrator", "Client Portal"); a role the labels don't know, in sentence case. */
 function roleLabel(role: string): string {
+  const known = (ROLE_LABELS as Record<string, string>)[role as Role];
+  if (known) return known;
   const words = role.toLowerCase().split('_');
   return words.map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w)).join(' ');
 }
 
 export function ProductAnalytics() {
-  const [window, setWindow] = useState('30');
+  // The window lives in the URL (?days=7), so a link or Back keeps it.
+  const [window, setWindow] = useUrlParam('days', '30', ['7', '30', '90']);
   const days = Number(window);
 
   const active = useQuery({
@@ -149,18 +160,12 @@ export function ProductAnalytics() {
   );
 
   return (
+    <ListTemplate
+      title="Product usage"
+      subtitle="Who signs in, what they open, and what breaks."
+      filters={<SegmentedControl options={WINDOWS} value={window} onChange={(v) => setWindow(v as '7' | '30' | '90')} ariaLabel="Reporting window" />}
+    >
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-silver">
-          Who signs in, what they open, and what breaks.
-        </p>
-        <SegmentedControl
-          options={WINDOWS}
-          value={window}
-          onChange={setWindow}
-          aria-label="Reporting window"
-        />
-      </div>
 
       {/* ---- Active users ------------------------------------------- */}
       {active.isError ? (
@@ -278,8 +283,8 @@ export function ProductAnalytics() {
                   const top = adoption.data?.activeByRole[0]?.users ?? 1;
                   return (
                     <li key={r.role} className="flex items-center gap-2 text-sm">
-                      <span className="w-44 shrink-0 truncate text-silver">
-                        {r.role.replace(/_/g, ' ').toLowerCase()}
+                      <span className="w-44 shrink-0 truncate text-silver" title={roleLabel(r.role)}>
+                        {roleLabel(r.role)}
                       </span>
                       <span
                         className="h-2 rounded-full bg-gold/70"
@@ -406,10 +411,14 @@ export function ProductAnalytics() {
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle>Decisions before menus</CardTitle>
+            <CardTitle>Do people find what they came for?</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-silver">How fast a session reaches its first decision, how many decisions a session takes by role, and how often a search ends on a settings page — the sign that something could not be found.</p>
+            {behaviour.data && !behaviourHasData(behaviour.data) ? (
+              <EmptyState icon={Activity} size="sm" title="No decisions or settings searches recorded in this window yet." />
+            ) : (
+            <>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
               <MetricCard
                 label="Time to first decision"
@@ -448,6 +457,8 @@ export function ProductAnalytics() {
                   { key: 'perSession', header: 'A session', accessor: (r) => r.perSession ?? 0, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => (r.perSession == null ? '—' : String(r.perSession)) },
                 ]}
               />
+            )}
+            </>
             )}
           </CardContent>
         </Card>
@@ -525,5 +536,11 @@ export function ProductAnalytics() {
         </div>
       )}
     </div>
+    </ListTemplate>
   );
+}
+
+/** Any decision, session decision or settings search recorded in the window. */
+function behaviourHasData(d: { firstDecision: { avgMs: number | null }; decisionsPerSession: Array<{ decisions: number; sessions: number }>; settingsSearches: { count: number } }): boolean {
+  return d.firstDecision.avgMs != null || d.settingsSearches.count > 0 || d.decisionsPerSession.some((r) => r.decisions > 0);
 }

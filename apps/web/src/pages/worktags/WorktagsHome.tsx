@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useUrlParam } from '@/lib/useUrlState';
 import { useQuery } from '@tanstack/react-query';
 import { BarChart3, Plus, Tags, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -54,6 +55,8 @@ const ENTITY_KINDS: Array<{ value: WorktagEntityKind; label: string }> = [
   { value: 'EXPENSE', label: 'Expense' },
   { value: 'PURCHASE_ORDER', label: 'Purchase order' },
 ];
+/** Names that are already Books dimensions (the chart of accounts, client, store, department). */
+const LEDGER_DIMENSION = /\b(gl|general ledger|ledger|account|accounts|cost cent(er|re)|department|client|customer|site|store|location)\b/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** "GL Account" → "gl_account" — the machine-key format the API enforces. */
@@ -64,17 +67,27 @@ const slugifyKey = (s: string) =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 
+const TABS: Tab[] = ['categories', 'values', 'assign', 'report'];
+
+/**
+ * Tags for reporting: a company's own labels — a campaign, an event, a
+ * program — put on time, pay and expenses, for reports the books don't
+ * already cut. Accounts, clients, stores and departments are Books
+ * dimensions on every journal line; they don't belong here twice, so the
+ * page no longer suggests "GL Account" and warns when a category repeats one.
+ */
 export function WorktagsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'process:payroll') : false;
-  const [tab, setTab] = useState<Tab>('categories');
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'categories', TABS, { history: 'push' });
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Worktags"
-        subtitle="Multi-dimensional categorical tags for spend tracking and reporting (Department, Project, GL Account, Region)."
-        breadcrumbs={[{ label: 'Finance' }, { label: 'Worktags' }]}
+        title="Tags for reporting"
+        topbarTitle="Tags for reporting"
+        subtitle="Your own labels on time, pay and expenses — a campaign, an event, a program — for reports the books don’t already give you."
+        related={[{ label: 'Chart of accounts', to: '/books/accounts' }]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
@@ -213,7 +226,7 @@ export function AssignTab() {
         <Card>
           <CardContent className="space-y-4 py-4">
             {cats.isError || tags.isError || current.isError ? (
-              <ErrorBanner>Could not load the worktags for this record.</ErrorBanner>
+              <ErrorBanner>Could not load the tags for this record.</ErrorBanner>
             ) : active.length === 0 ? (
               <EmptyState icon={Tags} title="No categories" description="Create a category and its values first — then tag records with them here." />
             ) : (
@@ -317,7 +330,7 @@ export function ReportTab() {
           ) : (
             <DataGrid<{ worktagId: string; value: string; count: number }>
               id="worktags-report"
-              caption="Records by worktag"
+              caption="Records by tag"
               rows={rows}
               rowKey={(r) => r.worktagId}
               loading={report.isLoading}
@@ -377,7 +390,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
             <EmptyState
               icon={Tags}
               title="No categories"
-              description='Create categories like "Project" or "GL Account" first, then add values under each.'
+              description='Create a category like "Campaign" or "Event" first, then add its values. Accounts, clients, stores and departments are already on every entry in Books.'
               action={
                 canManage ? (
                   <Button size="sm" onClick={() => setShowNew(true)}>
@@ -389,7 +402,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
           ) : (
             <DataGrid<(typeof rows)[number]>
               id="worktag-categories"
-              caption="Worktag categories"
+              caption="Tag categories"
               rows={rows}
               rowKey={(c) => c.id}
               search={false}
@@ -469,7 +482,7 @@ function NewCategoryDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>New worktag category</DrawerTitle>
+        <DrawerTitle>New tag category</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
@@ -481,8 +494,13 @@ function NewCategoryDrawer({
               setLabel(e.target.value);
               if (!keyTouched) setKey(slugifyKey(e.target.value));
             }}
-            placeholder="GL Account"
+            placeholder="Campaign"
           />
+          {LEDGER_DIMENSION.test(label) && (
+            <p className="mt-1 text-xs2 text-warning" role="status">
+              The books already keep this on every entry — accounts, clients, stores and departments are Books dimensions. A tag here would be a second copy that never reaches the ledger.
+            </p>
+          )}
         </div>
         <div>
           <Label>Key (machine name)</Label>
@@ -493,7 +511,7 @@ function NewCategoryDrawer({
               setKeyTouched(true);
               setKey(e.target.value);
             }}
-            placeholder="gl_account"
+            placeholder="campaign"
           />
           <p className="text-xs2 text-silver mt-1">
             Auto-derived from the label — edit to override.
@@ -574,10 +592,10 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
   }, [worktags, search]);
 
   const onDelete = async (id: string) => {
-    if (!(await confirm({ title: 'Deactivate this worktag?', destructive: true }))) return;
+    if (!(await confirm({ title: 'Deactivate this tag?', destructive: true }))) return;
     try {
       await deleteWorktag(id);
-      toast.success('Worktag deactivated.');
+      toast.success('Tag deactivated.');
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');

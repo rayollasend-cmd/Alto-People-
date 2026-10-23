@@ -175,13 +175,14 @@ describe('<PayrollReviewsPage>', () => {
 });
 
 describe('after sign-off', () => {
-  it('offers to pay the run, and the breadcrumb returns to it', async () => {
+  it('offers to pay the run, and the breadcrumb returns to the run', async () => {
     const s = { id: 's1', signedByName: 'checker@example.com', signedAt: '2026-04-20T16:00:00Z', note: null, soleReviewer: false };
     getPayrollReview.mockResolvedValue({ report: REPORT, signoff: state({ current: s, history: [s], canSign: false, cannotSignReason: 'These numbers are already signed off.' }) });
     renderReview();
     const pay = await screen.findByRole('link', { name: /Disburse \$650\.00/ });
     expect(pay).toHaveAttribute('href', '/payroll?run=run1&next=pay');
-    expect(screen.getByRole('link', { name: 'Payroll' })).toHaveAttribute('href', '/payroll?run=run1');
+    // The trail names the run: Payroll › the run › Review (F500 G3).
+    expect(screen.getByRole('link', { name: 'Run' })).toHaveAttribute('href', '/payroll/runs/run1');
     // The waterfall's table twin carries every step.
     expect(screen.getByRole('img', { name: /Gross pay \$760\.00 becomes net pay \$650\.00/ })).toBeInTheDocument();
   });

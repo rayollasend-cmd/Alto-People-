@@ -74,7 +74,9 @@ tasksRouter.get('/summary', read, async (req, res) => {
 
 tasksRouter.get('/policy', read, async (req, res) => {
   const q = z.object({ locationId: z.string().uuid().optional() }).parse(req.query);
-  res.json(await policyFor(prisma, q.locationId ?? null));
+  // Which sites carry their own policy, so the scope picker can mark them (F500 G4).
+  const overrides = await prisma.workTaskPolicy.findMany({ where: { tenantId: tenantIdForWrite(), locationId: { not: null } }, select: { locationId: true } });
+  res.json({ ...(await policyFor(prisma, q.locationId ?? null)), overrideLocationIds: overrides.map((o) => o.locationId!) });
 });
 
 tasksRouter.put('/policy', admin, async (req, res) => {

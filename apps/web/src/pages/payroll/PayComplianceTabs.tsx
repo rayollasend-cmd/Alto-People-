@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Bell, Download, FileSignature, PiggyBank, ScrollText, Send, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -119,11 +120,18 @@ export function NewHireReportsTab() {
     <div className="space-y-4">
       <Card>
         <CardContent className="flex flex-wrap items-end justify-between gap-4">
-          <div className="max-w-xl space-y-2 text-sm text-silver">
-            <p>
-              Every new employee must be reported to the state within 20 days of hire, and sooner in some states. An employer in more than one state may
-              report everyone to one state after telling the federal Office of Child Support Services which.
-            </p>
+          <div className="min-w-0 max-w-xl space-y-2 text-sm text-ink-muted">
+            {/* One line up front; the rule's detail behind "Learn more". */}
+            <details className="group">
+              <summary className="cursor-pointer list-none text-ink [&::-webkit-details-marker]:hidden">
+                Report each new hire to the state within 20 days.{' '}
+                <span className="text-accent underline underline-offset-2 group-open:hidden">Learn more</span>
+              </summary>
+              <p className="mt-1">
+                Some states want it sooner; each state’s deadline is beside it below. An employer in more than one state may report everyone to one state
+                after telling the federal Office of Child Support Services which.
+              </p>
+            </details>
             {reportsQ.data?.filing && (
               <p className="flex flex-wrap items-center gap-2 text-xs" data-testid="new-hire-filing-status">
                 <Badge variant={reportsQ.data.filing.kind === 'ELECTRONIC' ? 'success' : 'default'}>
@@ -164,11 +172,12 @@ export function NewHireReportsTab() {
       {byState.map(([state, list]) => {
         const ready = list.filter((r) => r.blockedBy.length === 0).length;
         const service = list[0]?.filingService ?? null;
+        const employerGaps = employerGapsOf(list);
         return (
           <Card key={state}>
             <CardContent>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2 text-sm text-silver">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
                   <span className="font-display text-lg text-ink">{state}</span>
                   <span>
                     {list.length} due · {ready} ready
@@ -184,7 +193,8 @@ export function NewHireReportsTab() {
                   </span>
                 </div>
                 {canExport ? (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {ready === 0 && <span className="text-xs text-ink-muted" data-testid={`new-hire-why-${state}`}>No reports ready: fix the missing details first.</span>}
                     {service && (
                       <Button size="sm" onClick={() => void fileThroughService(state)} loading={busyState === state} disabled={!!busyState || ready === 0}>
                         <Send className="h-4 w-4" aria-hidden /> File with {service}
@@ -195,9 +205,19 @@ export function NewHireReportsTab() {
                     </Button>
                   </div>
                 ) : (
-                  <span className="text-xs text-silver">Filing is restricted to HR and Finance.</span>
+                  <span className="text-xs text-ink-muted">Filing is restricted to HR and Finance.</span>
                 )}
               </div>
+              {/* An employer's missing EIN or address blocks every hire it employs: said once, here. */}
+              {employerGaps.map((g) => (
+                <p key={g.id} role="status" className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-warning/30 bg-warning/[0.06] px-3 py-2 text-sm text-ink" data-testid="new-hire-employer-gap">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+                  <span>{employerGapSentence(g)}</span>
+                  <Link to="/admin/employers" className="font-medium text-accent underline underline-offset-2">
+                    Open employers
+                  </Link>
+                </p>
+              ))}
               <DataGrid<NewHireReportRow>
                 id={`new-hire-${state}`}
                 caption={`New-hire reports due in ${state}`}
@@ -206,22 +226,26 @@ export function NewHireReportsTab() {
                 urlState={false}
                 columns={[
                   { key: 'name', header: 'Employee', accessor: (r) => r.name, sortable: true, primary: true, className: 'font-medium text-ink' },
-                  { key: 'hire', header: 'Hired', accessor: (r) => r.hireDate, sortable: true, cardMeta: true, className: 'whitespace-nowrap text-silver', cell: (r) => (r.hireDate ? fmtDate(parseYmd(r.hireDate)) : '—') },
-                  { key: 'due', header: 'Due', accessor: (r) => r.dueDate, sortable: true, cardMeta: true, className: 'whitespace-nowrap text-silver', cell: (r) => (r.dueDate ? fmtDate(parseYmd(r.dueDate)) : '—') },
+                  // Labelled fields on a phone card ("Hired", "Due"), not two bare dates side by side.
+                  { key: 'hire', header: 'Hired', accessor: (r) => r.hireDate, sortable: true, className: 'whitespace-nowrap text-ink-muted', cell: (r) => (r.hireDate ? fmtDate(parseYmd(r.hireDate)) : '—') },
+                  { key: 'due', header: 'Due', accessor: (r) => r.dueDate, sortable: true, className: 'whitespace-nowrap text-ink-muted', cell: (r) => (r.dueDate ? fmtDate(parseYmd(r.dueDate)) : '—') },
                   {
                     key: 'status',
                     header: 'Status',
-                    accessor: (r) => (r.blockedBy.length ? 'missing' : r.overdue ? 'late' : 'ready'),
-                    cell: (r) =>
-                      r.blockedBy.length ? (
-                        <Badge variant="pending" title={r.blockedBy.join(', ')}>
-                          {r.blockedBy.join(', ')}
-                        </Badge>
-                      ) : r.overdue ? (
-                        <Badge variant="destructive">Late</Badge>
-                      ) : (
-                        <Badge variant="default">Ready</Badge>
-                      ),
+                    accessor: (r) => newHireRowStatus(r),
+                    cell: (r) => {
+                      const missing = personGapText(r);
+                      if (missing) {
+                        return (
+                          <span className="inline-flex flex-wrap items-center gap-1.5">
+                            {r.overdue && <Badge variant="destructive">Late</Badge>}
+                            <span className="text-sm text-warning">{missing}</span>
+                          </span>
+                        );
+                      }
+                      if (r.blockedBy.length) return <span className="text-sm text-ink-muted">Waiting on the employer’s details</span>;
+                      return r.overdue ? <Badge variant="destructive">Late</Badge> : <Badge variant="default">Ready</Badge>;
+                    },
                   },
                 ]}
               />
@@ -232,6 +256,54 @@ export function NewHireReportsTab() {
 
     </div>
   );
+}
+
+/** "Missing SSN, address": the person's own gaps, short — the employer's are said once above the list. */
+export function personGapText(r: Pick<NewHireReportRow, 'missing' | 'blockedBy'>): string | null {
+  const person = r.missing?.person ?? legacyPersonGaps(r.blockedBy);
+  if (person.length === 0) return null;
+  return `Missing ${person.map((g) => (g === 'ssn' ? 'SSN' : 'address')).join(', ')}`;
+}
+
+function newHireRowStatus(r: NewHireReportRow): string {
+  const missing = personGapText(r);
+  if (missing) return missing;
+  if (r.blockedBy.length) return 'Waiting on the employer’s details';
+  return r.overdue ? 'Late' : 'Ready';
+}
+
+/** An API without the split (older build): read the person's gaps from the words. */
+function legacyPersonGaps(blockedBy: string[]): Array<'ssn' | 'address'> {
+  const out: Array<'ssn' | 'address'> = [];
+  if (blockedBy.some((b) => /SSN/i.test(b))) out.push('ssn');
+  if (blockedBy.some((b) => /^Home address/i.test(b))) out.push('address');
+  return out;
+}
+
+interface EmployerGaps {
+  id: string;
+  name: string;
+  gaps: Array<'ein' | 'address'>;
+}
+
+/** Each employer whose own record blocks these hires, with what it lacks — once, however many hires it blocks. */
+export function employerGapsOf(rows: NewHireReportRow[]): EmployerGaps[] {
+  const by = new Map<string, EmployerGaps>();
+  for (const r of rows) {
+    const gaps = r.missing?.employer ?? [];
+    if (gaps.length === 0 || !r.employer) continue;
+    const had = by.get(r.employer.id) ?? { id: r.employer.id, name: r.employer.name, gaps: [] };
+    for (const g of gaps) if (!had.gaps.includes(g)) had.gaps.push(g);
+    by.set(r.employer.id, had);
+  }
+  return [...by.values()];
+}
+
+/** "Alto HR's EIN and business address are missing." */
+export function employerGapSentence(g: Pick<EmployerGaps, 'name' | 'gaps'>): string {
+  const what = g.gaps.map((x) => (x === 'ein' ? 'EIN' : 'business address'));
+  const list = what.length === 2 ? `${what[0]} and ${what[1]}` : what[0]!;
+  return `${g.name}’s ${list} ${what.length === 1 ? 'is' : 'are'} missing, so no hire it employs can be reported.`;
 }
 
 /* ===== Pay notices ======================================================== */

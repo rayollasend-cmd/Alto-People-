@@ -7,7 +7,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth, useTenant } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime, localInputToUtcIso, utcToZonedDatetimeInput } from '@/lib/format';
-import { declareEmergency, getEmergencyBoard, listEmergencies, listEmergencySites, standDownEmergency } from '@/lib/emergencyApi';
+import { declareEmergency, getEmergencyBoard, getEmergencyReadiness, listEmergencies, listEmergencySites, standDownEmergency, type EmergencyReadiness } from '@/lib/emergencyApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -17,6 +17,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { ListTemplate } from '@/components/templates';
@@ -45,6 +46,61 @@ const statusBadge = (r: EmergencyBoardRow) =>
 
 const rideWord = (r: EmergencyBoardRow) =>
   !r.needsRide ? '' : !r.ride ? 'asked' : r.ride.status === 'REQUESTED' ? (r.ride.located ? 'waiting for a van' : 'address not on map') : r.ride.status.toLowerCase();
+
+const LANGUAGE_NAME: Record<string, string> = { en: 'English', es: 'Spanish', tr: 'Turkish' };
+
+/**
+ * How ready a declaration would be, in the quiet (F500 G2): who can be
+ * reached by text, the languages the message would go out in, and the
+ * vans that could run tonight. A number the API can't give is left out.
+ */
+export function Readiness() {
+  const q = useQuery({ queryKey: ['emergency', 'readiness'], queryFn: getEmergencyReadiness, staleTime: 5 * 60_000 });
+  // Vans only where the tenant runs transportation (a hotel has none).
+  const hasVans = useTenant().moduleOn('transportation');
+  // No one to reach — or an answer without a count — is no readiness to show (never "NaN%").
+  if (!q.data || typeof q.data.reach !== 'number' || !(q.data.reach > 0)) return null;
+  return <ReadinessStrip r={hasVans ? q.data : { ...q.data, vans: null }} />;
+}
+
+export function ReadinessStrip({ r }: { r: EmergencyReadiness }) {
+  const pct = Math.round((r.withPhone / r.reach) * 100);
+  const missing = r.reach - r.withPhone;
+  return (
+    <section aria-labelledby="emergency-readiness" className="space-y-2">
+      <h2 id="emergency-readiness" className="text-sm font-medium text-ink">
+        If you declared for every site now
+      </h2>
+      <MetricStrip label="Readiness">
+        <MetricCard
+          label="Reachable by text"
+          value={`${pct}%`}
+          hint={`${r.withPhone} of ${r.reach} have a phone number on file${missing > 0 ? ` · ${missing} would get email and the app only` : ''}`}
+          tone={pct < 90 ? 'warning' : 'default'}
+        />
+        <MetricCard
+          label="Languages"
+          value={String((r.languages ?? []).length)}
+          hint={(r.languages ?? []).map((l) => `${LANGUAGE_NAME[l.lang] ?? l.lang} ${l.people}`).join(' · ')}
+        />
+        {r.vans && (
+          <MetricCard
+            label="Vans ready tonight"
+            value={String(r.vans.ready)}
+            hint={
+              r.vans.ready > 0
+                ? `${r.vans.seats} seats · ${r.vans.inService - r.vans.ready > 0 ? `${r.vans.inService - r.vans.ready} more with no driver` : 'every van has a driver'}`
+                : r.vans.inService > 0
+                  ? `${r.vans.inService} in service, none with a driver`
+                  : 'No van in service'
+            }
+            tone={r.vans.ready === 0 ? 'warning' : 'default'}
+          />
+        )}
+      </MetricStrip>
+    </section>
+  );
+}
 
 export function EmergencyHome() {
   // Vans exist only where the tenant runs transportation.
@@ -81,12 +137,13 @@ export function EmergencyHome() {
         <ActiveEmergency emergency={active} canManage={canManage} />
       ) : (
         <Card>
-          <CardContent>
+          <CardContent className="space-y-4">
             <EmptyState
               icon={Siren}
               title="No emergency in effect"
               description="Declaring one suspends the shifts in scope, tells everyone affected in their language, and opens the check-in board here."
             />
+            <Readiness />
           </CardContent>
         </Card>
       )}

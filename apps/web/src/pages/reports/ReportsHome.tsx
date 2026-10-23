@@ -1,11 +1,12 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   ArrowDown,
   ArrowUp,
   BarChart3,
   CalendarClock,
+  ChevronDown,
   Copy,
   Download,
   Pencil,
@@ -17,10 +18,12 @@ import {
 import { REPORT_PERIOD_LABELS, REPORT_PERIOD_TOKENS, type Capability } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { errorText } from '@/lib/errorText';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtDateTime } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
-import { usePersistentState } from '@/lib/usePersistentState';
+import { useUrlParam } from '@/lib/useUrlState';
+import { cn } from '@/lib/cn';
+import { QueryError } from '@/components/ui/QueryError';
 import {
   createReport,
   createSchedule,
@@ -192,20 +195,14 @@ function exportRowsAsCsv(
   ]);
 }
 
+const CADENCE_WORDS: Record<string, string> = { DAILY: 'Daily', WEEKLY: 'Weekly', MONTHLY: 'Monthly' };
+
 export function ReportsHome() {
   const confirm = useConfirm();
-  // 2-3 recurring weekly exports live here — losing the search/entity
-  // narrowing on every visit costs more clicks than a stale query risks.
-  const [search, setSearch] = usePersistentState<string>(
-    'alto:list.reports.search.v1',
-    '',
-    (v): v is string => typeof v === 'string',
-  );
-  const [entityFilter, setEntityFilter] = usePersistentState<'' | ReportEntity>(
-    'alto:list.reports.entity.v1',
-    '',
-    (v): v is '' | ReportEntity => v === '' || ENTITIES.includes(v as ReportEntity),
-  );
+  // The entity filter lives in the URL (?entity=), and the grid's own search
+  // and sort under ?saved.q / ?saved.sort, so a link or Back keeps the view
+  // (it was localStorage only).
+  const [entityFilter, setEntityFilter] = useUrlParam<'' | ReportEntity>('entity', '', ['', ...ENTITIES]);
   const [params, setParams] = useSearchParams();
   // A report the assistant drafted opens straight in the builder, unsaved.
   const [builder, setBuilder] = useState<{ seed: BuilderSeed | null } | null>(() => {
@@ -231,18 +228,10 @@ export function ReportsHome() {
     queryFn: () => listReports(),
   });
   const rows: ReportSummary[] | null = refreshQuery.data?.reports ?? null;
-  const loadError = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load reports.' : null;
   const refresh = () => void refreshQuery.refetch();
+  const hasSaved = rows !== null && rows.length > 0;
 
-  const filtered = useMemo(() => {
-    if (!rows) return [];
-    const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (q && !r.name.toLowerCase().includes(q)) return false;
-      if (entityFilter && r.entity !== entityFilter) return false;
-      return true;
-    });
-  }, [rows, search, entityFilter]);
+  const filtered = useMemo(() => (rows ?? []).filter((r) => !entityFilter || r.entity === entityFilter), [rows, entityFilter]);
 
   const onRun = async (r: ReportSummary) => {
     try {
@@ -252,6 +241,7 @@ export function ReportsHome() {
         columns: res.columns,
         rows: res.rows as Array<Record<string, unknown>>,
       });
+      refresh();
     } catch (err) {
       toast.error(errorText(err, "Couldn't run the report."));
     }
@@ -263,6 +253,7 @@ export function ReportsHome() {
       const res = await runReport(r.id);
       exportRowsAsCsv(r.name, res.columns, res.rows as Array<Record<string, unknown>>);
       toast.success(`Exported ${res.rows.length} rows.`);
+      refresh();
     } catch (err) {
       toast.error(errorText(err, "Couldn't export the report."));
     }
@@ -288,167 +279,192 @@ export function ReportsHome() {
     }
   };
 
+  const gallery = (titled: boolean) => (
+    // The builder no longer starts blank (HR walk 17): the reports HR
+    // builds every month, ready to run or adjust. Nothing is saved
+    // until the person saves it.
+    <TemplateGallery
+      titled={titled}
+      onPick={(tpl) =>
+        setBuilder({
+          seed: {
+            mode: 'draft',
+            report: {
+              id: '',
+              name: tpl.name,
+              description: tpl.hint,
+              entity: tpl.entity,
+              spec: tpl.spec,
+              isPublic: false,
+              createdAt: new Date().toISOString(),
+            },
+          },
+        })
+      }
+    />
+  );
+
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Reports"
-        subtitle="Build, save, and schedule reports across people, time, payroll, applications, and candidates."
-        breadcrumbs={[{ label: 'Insights' }, { label: 'Reports' }]}
+      title="Reports"
+      subtitle="Build, save, and schedule reports across people, time, payroll, applications, and candidates."
+      actions={[{ label: 'New report', icon: Plus, primary: true, onSelect: () => setBuilder({ seed: null }) }]}
+      // The canned people reports (turnover, cohorts, time to fill, absence) are a sibling page.
+      related={[{ label: 'People analytics', to: '/reports/people' }]}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        {rows !== null && rows.length > 0 && (
-          <>
-            <Input
-              className="max-w-xs h-8 text-xs"
-              placeholder="Search reports by name…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label="Search reports"
-            />
-            <div className="w-44">
+      {/* What people come back for first: their saved reports. The templates
+          sit under them, folded, once there is something saved (F500 G4). */}
+      {refreshQuery.isError ? (
+        <QueryError what="saved reports" query={refreshQuery} />
+      ) : rows === null ? (
+        <Card>
+          <CardContent className="p-6">
+            <SkeletonRows count={3} />
+          </CardContent>
+        </Card>
+      ) : !hasSaved ? (
+        <>
+          {gallery(true)}
+          <Card>
+            <CardContent className="p-0">
+              <EmptyState
+                icon={BarChart3}
+                title="No saved reports"
+                description="Start from a template above, or build one by picking an entity, columns, and filters. Save and share with the team."
+                action={
+                  <Button onClick={() => setBuilder({ seed: null })}>
+                    <Plus className="mr-2 h-4 w-4" /> New report
+                  </Button>
+                }
+              />
+            </CardContent>
+          </Card>
+        </>
+      ) : (
+        <>
+          <DataGrid<ReportSummary>
+            id="saved-reports"
+            caption="Saved reports"
+            noun={{ one: 'report', many: 'reports' }}
+            rows={filtered}
+            rowKey={(r) => r.id}
+            search={{ placeholder: 'Search reports by name…' }}
+            urlKey="saved"
+            filters={
               <Select
                 size="sm"
+                className="w-full sm:w-44"
                 value={entityFilter}
                 onChange={(e) => setEntityFilter(e.target.value as '' | ReportEntity)}
                 aria-label="Filter reports by entity"
               >
                 <option value="">All entities</option>
                 {ENTITIES.map((e) => (
-                  <option key={e} value={e}>{ENTITY_LABELS[e]}</option>
+                  <option key={e} value={e}>
+                    {ENTITY_LABELS[e]}
+                  </option>
                 ))}
               </Select>
-            </div>
-          </>
-        )}
-        <div className="ml-auto flex gap-2">
-          {/* The canned people reports: turnover, cohorts, time to fill, absence. */}
-          <Button asChild variant="outline">
-            <Link to="/reports/people">People analytics</Link>
-          </Button>
-          <Button onClick={() => setBuilder({ seed: null })}>
-            <Plus className="mr-2 h-4 w-4" /> New report
-          </Button>
-        </div>
-      </div>
-      {/* The builder no longer starts blank (HR walk 17): the reports HR
-          builds every month, ready to run or adjust. Nothing is saved
-          until the person saves it. */}
-      <TemplateGallery
-        onPick={(tpl) =>
-          setBuilder({
-            seed: {
-              mode: 'draft',
-              report: {
-                id: '',
-                name: tpl.name,
-                description: tpl.hint,
-                entity: tpl.entity,
-                spec: tpl.spec,
-                isPublic: false,
-                createdAt: new Date().toISOString(),
+            }
+            filterKeys={['entity']}
+            exportCsv={{ filename: 'saved-reports' }}
+            onRowClick={(r) => onRun(r)}
+            rowActionLabel={(r) => `Run ${r.name}`}
+            columns={[
+              {
+                key: 'name',
+                header: 'Name',
+                accessor: (r) => r.name,
+                sortable: true,
+                primary: true,
+                className: 'font-medium text-white',
+                cell: (r) => (
+                  <span className="inline-flex items-center gap-2">
+                    {r.name}
+                    {r.period && <Badge variant="outline">{REPORT_PERIOD_LABELS[r.period]}</Badge>}
+                  </span>
+                ),
               },
-            },
-          })
-        }
-      />
-      <Card>
-        <CardContent className="p-0">
-          {loadError ? (
-            <div className="p-6 space-y-3">
-              <ErrorBanner>{loadError}</ErrorBanner>
-              <Button size="sm" variant="outline" onClick={refresh}>
-                Retry
-              </Button>
-            </div>
-          ) : rows === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              icon={BarChart3}
-              title="No saved reports"
-              description="Build a report by picking an entity, columns, and filters. Save and share with the team."
-              action={
-                <Button onClick={() => setBuilder({ seed: null })}>
-                  <Plus className="mr-2 h-4 w-4" /> New report
-                </Button>
-              }
-            />
-          ) : filtered.length === 0 ? (
-            <div className="p-6 text-sm text-silver">
-              No reports match the current search / filter.
-            </div>
-          ) : (
-            <DataGrid<(typeof filtered)[number]>
-              id="saved-reports"
-              caption="Saved reports"
-              rows={filtered}
-              rowKey={(r) => r.id}
-              search={false}
-              urlState={false}
-              exportCsv={{ filename: 'saved-reports' }}
-              onRowClick={(r) => onRun(r)}
-              rowActionLabel={(r) => `Run ${r.name}`}
-              columns={[
-                {
-                  key: 'name',
-                  header: 'Name',
-                  accessor: (r) => r.name,
-                  sortable: true,
-                  primary: true,
-                  className: 'font-medium text-white',
-                  cell: (r) => (
-                    <span className="inline-flex items-center gap-2">
-                      {r.name}
-                      {r.period && <Badge variant="outline">{REPORT_PERIOD_LABELS[r.period]}</Badge>}
-                    </span>
+              { key: 'entity', header: 'Entity', accessor: (r) => ENTITY_LABELS[r.entity] ?? r.entity, sortable: true, cardMeta: true, className: 'text-xs' },
+              { key: 'owner', header: 'Owner', accessor: (r) => (r.mine ? 'You' : (r.ownerName ?? '—')), sortable: true, cardMeta: true, className: 'text-xs' },
+              {
+                key: 'lastRun',
+                header: 'Last run',
+                accessor: (r) => r.lastRunAt ?? '',
+                sortable: true,
+                searchable: false,
+                cardMeta: true,
+                cell: (r) => (r.lastRunAt ? fmtDateTime(r.lastRunAt) : <span className="text-ink-muted">Not run yet</span>),
+                csv: (r) => (r.lastRunAt ? fmtDateTime(r.lastRunAt) : ''),
+              },
+              {
+                key: 'schedule',
+                header: 'Schedule',
+                accessor: (r) => r.scheduleCount ?? 0,
+                sortable: true,
+                searchable: false,
+                cell: (r) =>
+                  (r.scheduleCount ?? 0) > 0 ? (
+                    <button type="button" className="text-accent hover:underline" onClick={() => setSchedulesFor(r)}>
+                      {(r.cadences ?? []).map((c) => CADENCE_WORDS[c] ?? c).join(', ') || `${r.scheduleCount} schedule${r.scheduleCount === 1 ? '' : 's'}`}
+                    </button>
+                  ) : (
+                    <span className="text-ink-muted">None</span>
                   ),
-                },
-                { key: 'entity', header: 'Entity', accessor: (r) => ENTITY_LABELS[r.entity] ?? r.entity, sortable: true, cardMeta: true, className: 'text-xs' },
-                {
-                  key: 'visibility',
-                  header: 'Visibility',
-                  accessor: (r) => (r.isPublic ? 'Shared' : 'Private'),
-                  sortable: true,
-                  cell: (r) => (r.isPublic ? <Badge variant="success">Shared</Badge> : <Badge variant="default">Private</Badge>),
-                },
-                { key: 'created', header: 'Created', accessor: (r) => r.createdAt, sortable: true, searchable: false, cardMeta: true, cell: (r) => fmtDate(r.createdAt) },
-                {
-                  key: 'actions',
-                  header: 'Actions',
-                  accessor: () => null,
-                  searchable: false,
-                  csv: () => '',
-                  align: 'right',
-                  stopRowClick: true,
-                  className: 'whitespace-nowrap space-x-1',
-                  cell: (r) => (
-                    <>
-                      <Button size="sm" onClick={() => onRun(r)}>
-                        <Play className="mr-1 h-3 w-3" /> Run
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => onCsv(r)} title="Run and download CSV" aria-label={`Download CSV for "${r.name}"`}>
-                        <Download className="mr-1 h-3 w-3" /> CSV
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => openSeeded(r, 'edit')} title="Edit" aria-label={`Edit "${r.name}"`}>
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => openSeeded(r, 'duplicate')} title="Duplicate" aria-label={`Duplicate "${r.name}"`}>
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setSchedulesFor(r)} title="Schedules" aria-label={`Schedules for "${r.name}"`}>
-                        <CalendarClock className="h-3 w-3" />
-                      </Button>
-                      <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDelete(r.id)} title="Delete" aria-label={`Delete "${r.name}"`}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </>
-                  ),
-                },
-              ]}
-            />
-          )}
-        </CardContent>
-      </Card>
+                stopRowClick: true,
+                csv: (r) => (r.cadences ?? []).map((c) => CADENCE_WORDS[c] ?? c).join(', '),
+              },
+              {
+                key: 'visibility',
+                header: 'Visibility',
+                accessor: (r) => (r.isPublic ? 'Shared' : 'Private'),
+                sortable: true,
+                cell: (r) => (r.isPublic ? <Badge variant="success">Shared</Badge> : <Badge variant="default">Private</Badge>),
+              },
+              {
+                key: 'actions',
+                header: 'Actions',
+                accessor: () => null,
+                searchable: false,
+                csv: () => '',
+                align: 'right',
+                stopRowClick: true,
+                className: 'whitespace-nowrap space-x-1',
+                cell: (r) => (
+                  <>
+                    <Button size="sm" onClick={() => onRun(r)}>
+                      <Play className="mr-1 h-3 w-3" /> Run
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => onCsv(r)} title="Run and download CSV" aria-label={`Download CSV for "${r.name}"`}>
+                      <Download className="mr-1 h-3 w-3" /> CSV
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => openSeeded(r, 'edit')} title="Edit" aria-label={`Edit "${r.name}"`}>
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => openSeeded(r, 'duplicate')} title="Duplicate" aria-label={`Duplicate "${r.name}"`}>
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setSchedulesFor(r)} title="Schedules" aria-label={`Schedules for "${r.name}"`}>
+                      <CalendarClock className="h-3 w-3" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => onDelete(r.id)} title="Delete" aria-label={`Delete "${r.name}"`}>
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </>
+                ),
+              },
+            ]}
+          />
+          <details className="group rounded-lg border border-line bg-surface">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-ink [&::-webkit-details-marker]:hidden">
+              Start from a template
+              <ChevronDown className="h-4 w-4 text-ink-muted transition-transform group-open:rotate-180" aria-hidden="true" />
+            </summary>
+            <div className="border-t border-line p-4">{gallery(false)}</div>
+          </details>
+        </>
+      )}
       {builder && (
         <ReportBuilder
           seed={builder.seed}
@@ -462,7 +478,10 @@ export function ReportsHome() {
       {schedulesFor && (
         <SchedulesDrawer
           report={schedulesFor}
-          onClose={() => setSchedulesFor(null)}
+          onClose={() => {
+            setSchedulesFor(null);
+            refresh();
+          }}
         />
       )}
       {running && (
@@ -527,7 +546,15 @@ function specToFilterRows(spec: ReportSpec): FilterRow[] {
 
 const NO_COLUMNS: string[] = [];
 
-function TemplateGallery({ onPick }: { onPick: (t: ReportTemplate) => void }) {
+/** Columns that divide the cards evenly at desktop width, so no card sits alone on the last row (F500 G4). */
+function galleryCols(n: number): string {
+  if (n % 3 === 0) return 'lg:grid-cols-3';
+  if (n % 5 === 0) return 'xl:grid-cols-5';
+  if (n % 4 === 0) return 'lg:grid-cols-4';
+  return 'lg:grid-cols-3';
+}
+
+function TemplateGallery({ onPick, titled = true }: { onPick: (t: ReportTemplate) => void; titled?: boolean }) {
   const term = useTerm();
   const hasClients = useTenant().moduleOn('clientPortal');
   // Outside a signed-in shell (a preview, a test) every template shows; the API still checks.
@@ -542,8 +569,12 @@ function TemplateGallery({ onPick }: { onPick: (t: ReportTemplate) => void }) {
   }));
   return (
     <section aria-label="Start from a template" className="space-y-3">
-      <SectionTitle title="Start from a template" description="Opens in the builder, ready to run. Change anything before you save." />
-      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
+      {titled ? (
+        <SectionTitle title="Start from a template" description="Opens in the builder, ready to run. Change anything before you save." />
+      ) : (
+        <p className="text-sm text-ink-muted">Opens in the builder, ready to run. Change anything before you save.</p>
+      )}
+      <ul className={cn('grid grid-cols-1 gap-2 sm:grid-cols-2', galleryCols(templates.length))}>
         {templates.map((tpl) => (
           <li key={tpl.key}>
             <button
@@ -552,7 +583,6 @@ function TemplateGallery({ onPick }: { onPick: (t: ReportTemplate) => void }) {
               className="flex h-full w-full flex-col rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
               <span className="text-sm font-medium text-ink">{tpl.name}</span>
-              <span className="mt-0.5 text-2xs uppercase tracking-wider text-ink-muted">{ENTITY_LABELS[tpl.entity]}</span>
               <span className="mt-1 text-xs text-ink-muted">{tpl.hint}</span>
             </button>
           </li>

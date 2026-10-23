@@ -199,3 +199,95 @@ describe('people are workers too', () => {
     expect((await hr.get(`/workers/${person.id}`)).body.sites[0]).toMatchObject({ locationId: w.site.id, source: 'associate' });
   });
 });
+
+describe('the roster reads people the way the People directory does (F500 G1 /workers)', () => {
+  const DAY = 86_400_000;
+  async function people() {
+    const w = await world();
+    const approve = (associateId: string) =>
+      prisma.application.create({ data: { associateId, clientId: w.client.id, locationId: w.site.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date(Date.now() - 30 * DAY) } });
+    const place = (associateId: string, locationId = w.site.id) => prisma.associateAssignment.create({ data: { associateId, locationId, startedAt: new Date('2026-05-01') } });
+    // Working: placed, punched two days ago.
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Working' });
+    await approve(ana.id);
+    await place(ana.id);
+    await prisma.timeEntry.create({ data: { associateId: ana.id, clientId: w.client.id, locationId: w.site.id, clockInAt: new Date(Date.now() - 2 * DAY), clockOutAt: new Date(Date.now() - 2 * DAY + 8 * HOUR), status: 'APPROVED' } });
+    // No recent shifts: placed, no work.
+    const bo = await createAssociate({ firstName: 'Bo', lastName: 'Idle' });
+    await approve(bo.id);
+    await place(bo.id);
+    // Paused (the worker account reads Suspended).
+    const fay = await createAssociate({ firstName: 'Fay', lastName: 'Paused' });
+    await approve(fay.id);
+    await place(fay.id);
+    await prisma.associate.update({ where: { id: fay.id }, data: { deactivatedAt: new Date(Date.now() - DAY) } });
+    // Separated (the worker account reads Offboarded).
+    const gus = await createAssociate({ firstName: 'Gus', lastName: 'Separated' });
+    await approve(gus.id);
+    await prisma.associate.update({ where: { id: gus.id }, data: { separatedAt: new Date(Date.now() - 5 * DAY) } });
+    // Onboarding: a draft, nothing approved.
+    const ed = await createAssociate({ firstName: 'Ed', lastName: 'Onboarding' });
+    await prisma.application.create({ data: { associateId: ed.id, clientId: w.client.id, onboardingTrack: 'STANDARD', status: 'DRAFT' } });
+    await ensurePersonWorkers(prisma);
+    return { ...w, ana, bo, fay, gus, ed };
+  }
+
+  it('each person carries the directory status, and the People counts are the directory tiles', async () => {
+    const w = await people();
+    const hr = await loginAs(agent(), w.hr.email);
+    const list = await hr.get('/workers');
+    expect(list.status).toBe(200);
+    const byName = new Map<string, { status: string; workStatus: string }>(list.body.workers.map((x: { name: string; status: string; workStatus: string }) => [x.name, x]));
+    expect(byName.get('Ana Working')).toMatchObject({ status: 'ACTIVE', workStatus: 'ACTIVE' });
+    // The account says Active; where Bo stands at work is "No recent shifts" — the word the People page uses.
+    expect(byName.get('Bo Idle')).toMatchObject({ status: 'ACTIVE', workStatus: 'PLACED_NOT_ACTIVE' });
+    expect(byName.get('Fay Paused')).toMatchObject({ status: 'SUSPENDED', workStatus: 'DEACTIVATED' });
+    expect(byName.get('Gus Separated')).toMatchObject({ status: 'OFFBOARDED', workStatus: 'SEPARATED' });
+    expect(byName.get('Ed Onboarding')).toMatchObject({ workStatus: 'ONBOARDING' });
+
+    // One base for every page: on the books = 3 (Ana, Bo, Fay), 5 on file — the directory's tiles exactly.
+    expect(list.body.people).toMatchObject({ ACTIVE: 1, PLACED_NOT_ACTIVE: 1, NOT_PLACED: 0, ONBOARDING: 1, DEACTIVATED: 1, SEPARATED: 1, onTheBooks: 3, total: 5 });
+    const summary = await hr.get('/people/directory/summary');
+    expect(summary.status).toBe(200);
+    for (const k of ['ACTIVE', 'PLACED_NOT_ACTIVE', 'NOT_PLACED', 'ONBOARDING', 'DEACTIVATED', 'SEPARATED', 'onTheBooks', 'total']) {
+      expect(list.body.people[k]).toBe(summary.body[k]);
+    }
+    const headcount = await hr.get('/headcount/overview');
+    expect(headcount.body.onTheBooks).toBe(list.body.people.onTheBooks);
+  });
+
+  it('sends each face it has, and null when none is on file (no guessed photo URL to 404)', async () => {
+    const w = await people();
+    const lead = await createAssociate({ firstName: 'Lee', lastName: 'Lead' });
+    await prisma.associate.update({ where: { id: lead.id }, data: { photoS3Key: 'photos/lee.jpg', photoUpdatedAt: new Date(1_700_000_000_000) } });
+    await prisma.associate.update({ where: { id: w.ana.id }, data: { managerId: lead.id } });
+    await prisma.associate.update({ where: { id: w.bo.id }, data: { managerId: w.fay.id } });
+    const hr = await loginAs(agent(), w.hr.email);
+    const list = await hr.get('/workers');
+    const byName = new Map<string, { manager?: { photoUrl: string | null }; owner: { photoUrl: string | null } }>(list.body.workers.map((x: { name: string }) => [x.name, x]));
+    expect(byName.get('Ana Working')!.manager!.photoUrl).toBe(`/api/associates/${lead.id}/photo?v=1700000000000`);
+    expect(byName.get('Bo Idle')!.manager!.photoUrl).toBeNull();
+    // The HR owner has no photo on file.
+    expect(byName.get('Ana Working')!.owner.photoUrl).toBeNull();
+  });
+
+  it('a site-bound office account counts only the people at its sites (list, counts and people alike)', async () => {
+    const w = await people();
+    const north = await createClient('North Co');
+    const northStore = await prisma.site.findFirstOrThrow({ where: { clientId: north.id } });
+    const nia = await createAssociate({ firstName: 'Nia', lastName: 'North' });
+    await prisma.associateAssignment.create({ data: { associateId: nia.id, locationId: northStore.id, startedAt: new Date('2026-05-01') } });
+    await ensurePersonWorkers(prisma);
+    const { user: ops } = await createUser({ role: 'OPERATIONS_MANAGER' });
+    await prisma.user.update({ where: { id: ops.id }, data: { scopeSiteIds: [northStore.id] } });
+    const a = await loginAs(agent(), ops.email);
+    const list = await a.get('/workers');
+    expect(list.status).toBe(200);
+    const persons = (list.body.workers as Array<{ type: string; name: string }>).filter((x) => x.type === 'PERSON').map((x) => x.name);
+    expect(persons).toEqual(['Nia North']);
+    // The tiles count the same reach: one person, not the tenant's six.
+    expect(list.body.counts.PERSON.ACTIVE + list.body.counts.PERSON.SUSPENDED + list.body.counts.PERSON.OFFBOARDED + list.body.counts.PERSON.ONBOARDING).toBe(1);
+    expect(list.body.people).toMatchObject({ total: 1, onTheBooks: 1, NOT_PLACED: 0 });
+    void w;
+  });
+});

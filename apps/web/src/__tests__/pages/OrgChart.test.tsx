@@ -166,4 +166,51 @@ describe('<OrgChart>', () => {
     await screen.findByRole('tree');
     expect(screen.queryByRole('button', { name: /reports to/i })).toBeNull();
   });
+
+  it('an account with no name reads as the start of its email, on one line, with the role under it', async () => {
+    getOrgChart.mockImplementation(({ view }: { view: string }) =>
+      Promise.resolve({ view, nodes: [node({ id: 'u:mgr', kind: 'staff', name: 'manager@altohr.com', role: 'MANAGER', userId: 'mgr' })], fieldOnly: 0, unplaced: 0, truncated: false, limit: 5000 }),
+    );
+    renderAs('HR_ADMINISTRATOR', <OrgChart />, '/org/chart');
+    const canvas = await screen.findByTestId('org-canvas');
+    const name = within(canvas).getByText('manager');
+    expect(name).toHaveAttribute('title', 'manager@altohr.com');
+    expect(within(canvas).queryByText('@altohr.com')).not.toBeInTheDocument();
+    // US spelling in the chart's controls.
+    expect(screen.getByRole('option', { name: 'No color' })).toBeInTheDocument();
+  });
+
+  it('with no reporting lines it offers to set them, for many people at once', async () => {
+    const FLAT: OrgNode[] = [
+      node({ id: 'u:boss', kind: 'staff', name: 'ops@altohr.com', role: 'OPERATIONS_MANAGER', userId: 'boss' }),
+      node({ id: 'u:hr', kind: 'staff', name: 'admin@altohr.com', role: 'HR_ADMINISTRATOR', userId: 'hr' }),
+      node({ id: 'a:tg', kind: 'person', name: 'Tasha Grant', subtitle: 'Transportation director', associateId: 'tg', userId: 'tgu' }),
+      node({ id: 'a:mc', kind: 'person', name: 'Mike Chen', subtitle: 'Driver', associateId: 'mc' }),
+    ];
+    getOrgChart.mockImplementation(({ view }: { view: string }) => Promise.resolve({ view, nodes: FLAT, fieldOnly: 0, unplaced: 0, truncated: false, limit: 5000 }));
+    setStaffReportsTo.mockResolvedValue({});
+    assignOrgFields.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderAs('HR_ADMINISTRATOR', <OrgChart />, '/org/chart');
+    expect(await screen.findByText('Nobody has a manager on this chart yet')).toBeInTheDocument();
+    await user.click(screen.getAllByRole('button', { name: /Set reporting lines/ })[0]!);
+    const dialog = await screen.findByRole('dialog', { name: 'Set reporting lines' });
+    await user.selectOptions(within(dialog).getByLabelText('Manager'), 'u:boss');
+    // Mike has only a person record: an account-only manager can't take him.
+    const mike = within(dialog).getByRole('checkbox', { name: /Mike Chen/ });
+    expect(mike).toBeDisabled();
+    expect(within(dialog).getByText('Needs a manager with a person record')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /Everyone at the top \(2\)/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Save for 2' }));
+    // Accounts go through the staff route; Tasha has an account too, so hers moves the same way.
+    await waitFor(() => expect(setStaffReportsTo).toHaveBeenCalledTimes(2));
+    expect(setStaffReportsTo.mock.calls.map((c) => c.join('→')).sort()).toEqual(['hr→boss', 'tgu→boss']);
+    expect(assignOrgFields).not.toHaveBeenCalled();
+  });
+
+  it('the bulk reporting-lines action is not offered to someone who can’t edit the chart', async () => {
+    renderAs('FINANCE_ACCOUNTANT', <OrgChart />, '/org/chart');
+    await screen.findByTestId('org-canvas');
+    expect(screen.queryByRole('button', { name: /Set reporting lines/ })).not.toBeInTheDocument();
+  });
 });

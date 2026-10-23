@@ -386,6 +386,19 @@ export function MyNext14Strip({ shifts }: { shifts: Shift[] | null | undefined }
   const needsConfirm = (d: (typeof days)[number]) =>
     d.shifts.some((s) => s.status === 'ASSIGNED' && !s.acknowledgedAt && new Date(s.startsAt).getTime() > now);
 
+  // Nothing in the next two weeks: one line, not fourteen empty cells under
+  // a hero that already says "Nothing scheduled" (F500 G5).
+  if (working === 0) {
+    return (
+      <p className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-muted" data-testid="next-14-none">
+        {t('next14.none')}
+        <Link to="/marketplace" className="inline-flex min-h-6 items-center text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-11">
+          {t('next14.seeOpen')}
+        </Link>
+      </p>
+    );
+  }
+
   return (
     <Card className="mb-4 animate-enter">
       <CardContent>

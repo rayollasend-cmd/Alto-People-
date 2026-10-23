@@ -63,13 +63,13 @@ export function ClientRequestsSection({
 
   return (
     <section aria-labelledby="client-requests">
-      <SectionHead icon={Store} title="Client requests" meta="the customer is watching" id="client-requests" />
+      <SectionHead icon={Store} title="Client requests" id="client-requests" />
       <Card className="overflow-hidden p-0">
         {shown.length === 0 ? (
           <p className="flex items-center gap-2 px-4 py-3 text-sm text-success">
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             {rows.length === 0 ? (
-              'No open client requests. Silence means green.'
+              'No open client requests.'
             ) : (
               <span>
                 None for {DESK_LABELS[lens as Desk]}.{' '}
@@ -163,7 +163,7 @@ export function ClientRequestsSection({
   );
 }
 
-/** "New wave" — name, headcount, landing date. */
+/** "New hiring push" — name, headcount, landing date. */
 function NewCohortButton({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -181,9 +181,9 @@ function NewCohortButton({ onCreated }: { onCreated: () => void }) {
       setTarget('');
       setLandBy('');
       onCreated();
-      toast.success('Wave created — put lanes in it from each lane.');
+      toast.success('Hiring push created — add new hires to it from each lane.');
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not create the wave.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the hiring push.');
     } finally {
       setBusy(false);
     }
@@ -192,16 +192,16 @@ function NewCohortButton({ onCreated }: { onCreated: () => void }) {
   return (
     <>
       <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
-        New wave
+        New hiring push
       </Button>
       <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New wave</DialogTitle>
+            <DialogTitle>New hiring push</DialogTitle>
             <DialogDescription>A hiring push with a headcount and a landing date — its lanes group under one banner with a readiness bar.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='Name — e.g. "Peak season — Walmart DC"' aria-label="Wave name" maxLength={120} />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='Name — e.g. "Peak season — Walmart DC"' aria-label="Hiring push name" maxLength={120} />
             <Input type="number" min={1} value={target} onChange={(e) => setTarget(e.target.value)} placeholder="Target headcount" aria-label="Target headcount" />
             <Input type="date" value={landBy} onChange={(e) => setLandBy(e.target.value)} aria-label="Land by date" />
           </div>
@@ -210,7 +210,7 @@ function NewCohortButton({ onCreated }: { onCreated: () => void }) {
               Cancel
             </Button>
             <Button onClick={() => void create()} loading={busy} disabled={!valid}>
-              Create wave
+              Create hiring push
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -223,11 +223,11 @@ export function WavesSection({ cohorts, canManage, onChanged }: { cohorts: Cohor
   if (cohorts.length === 0 && !canManage) return null;
   return (
     <section aria-labelledby="relay-waves">
-      <SectionHead icon={Target} title="Waves" meta={cohorts.length ? `${cohorts.length} racing a date` : undefined} id="relay-waves">
+      <SectionHead icon={Target} title="Hiring pushes" meta={cohorts.length ? `${cohorts.length} with a deadline` : undefined} id="relay-waves">
         {canManage && <NewCohortButton onCreated={onChanged} />}
       </SectionHead>
       {cohorts.length === 0 ? (
-        <p className="text-xs text-silver/60">No waves yet. A wave groups a hiring push — “40 heads by Nov 1” — so every desk staffs it against the same clock.</p>
+        <p className="text-xs text-silver/60">No hiring pushes yet. A push groups the hires for one goal — “40 people by Nov 1” — so every desk works to the same date.</p>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {cohorts.map((c) => {

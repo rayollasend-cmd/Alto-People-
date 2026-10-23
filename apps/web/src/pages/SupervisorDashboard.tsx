@@ -21,6 +21,7 @@ import {
   ymdLocal,
   zonedDayKey,
   zonedMinutesOfDay,
+  mapsUrl,
 } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { VanArrivalsCard } from '@/components/VanArrivals';
@@ -65,6 +66,8 @@ import {
 } from '@/pages/portal/shiftFocus';
 import { fmtClockMinute, fmtShiftWindow, isOpenShift, minuteOfDayInZone } from '@alto-people/shared';
 import { CoverageGapNotice, coverageGaps } from '@/components/floor/CoverageGapNotice';
+import { getCoverageAhead } from '@/lib/floorApi';
+import { MetricCard } from '@/components/ui/MetricCard';
 
 /**
  * My floor — the SHIFT_SUPERVISOR's home, in the store manager's grammar.
@@ -218,6 +221,14 @@ export function SupervisorDashboard() {
       return listShifts({ from: from.toISOString(), to: new Date(from.getTime() + 7 * DAY_MS).toISOString() });
     },
   });
+  // Short vs contract over the next 7 days, on the windows this lead runs —
+  // the same definition as the Needs-you coverage gap (lib/coverageGaps).
+  const coverageAheadQuery = useQuery({
+    queryKey: ['floor', 'coverage-ahead', todayKey],
+    enabled: !watchOnly,
+    queryFn: () => getCoverageAhead(7),
+    staleTime: 60_000,
+  });
   // Fill rate by the store's workweek (Sat→Fri, on the store's clock) —
   // the week the store manager's portal grades, so both read one number.
   const kpiThis = useQuery({
@@ -336,15 +347,20 @@ export function SupervisorDashboard() {
       <span className="font-medium text-ink">{placeName}</span>
       {clientLine && <span>{clientLine}</span>}
       {address && (
-        <span className="flex items-center gap-1 text-ink-muted">
-          <MapPin className="h-3 w-3" aria-hidden="true" />
-          {address}
-        </span>
+        <a
+          href={mapsUrl(address)}
+          target="_blank"
+          rel="noreferrer"
+          className="flex min-w-0 max-w-full items-center gap-1 text-ink-muted hover:text-gold"
+        >
+          <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{address}</span>
+        </a>
       )}
     </span>
   );
   const meta = data ? (
-    <span className="flex items-center gap-1.5 text-xs text-ink-muted">
+    <span className="hidden items-center gap-1.5 text-xs text-ink-muted md:flex">
       <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
@@ -352,35 +368,40 @@ export function SupervisorDashboard() {
       {t('portal.asOf', { time: fmtTime(data.generatedAt) })}
     </span>
   ) : undefined;
-  const primary = watchOnly ? (
-    <Button size="sm" asChild>
-      <Link to="/today">
-        <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-        {t('portal.todayNav')}
-      </Link>
-    </Button>
-  ) : (
-    <Button size="sm" asChild>
-      <Link to="/scheduling">
-        <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-        {t('sup.openSchedule')}
-      </Link>
-    </Button>
+  const primary = (
+    <div className="flex items-center gap-2">
+      {canReport && (
+        <Button size="sm" variant="secondary" className="md:hidden" onClick={() => setIncidentOpen(true)} data-testid="header-report">
+          <ShieldAlert className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+          {t('sup.reportIncident')}
+        </Button>
+      )}
+      {watchOnly ? (
+        <Button size="sm" asChild className="hidden md:inline-flex">
+          <Link to="/today">
+            <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            {t('portal.todayNav')}
+          </Link>
+        </Button>
+      ) : (
+        <Button size="sm" asChild className="hidden md:inline-flex">
+          <Link to="/scheduling">
+            <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            {t('sup.openSchedule')}
+          </Link>
+        </Button>
+      )}
+    </div>
   );
   // Ways in (§4.1): the places this person works from, after the decisions.
   const waysIn = (
     <div className="flex flex-wrap gap-2">
-      <Button size="sm" variant="outline" asChild>
-        <Link to="/time-attendance">
-          <Timer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-          {t('tabs.liveBoard')}
-        </Link>
-      </Button>
+      {/* The watch-only lead has the live board as a tab already. */}
       {!watchOnly && (
         <Button size="sm" variant="outline" asChild>
-          <Link to="/today">
-            <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            {t('portal.todayNav')}
+          <Link to="/time-attendance">
+            <Timer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            {t('tabs.liveBoard')}
           </Link>
         </Button>
       )}
@@ -390,11 +411,6 @@ export function SupervisorDashboard() {
           {t('floor.siteOps')}
         </Link>
       </Button>
-      {!watchOnly && (
-        <Button size="sm" variant="outline" asChild>
-          <Link to="/approvals">{t('tabs.approvals')}</Link>
-        </Button>
-      )}
     </div>
   );
   const floorDialogs = (
@@ -495,6 +511,16 @@ export function SupervisorDashboard() {
       ? k.fillRatePercent - kLast.fillRatePercent
       : null;
   const openAhead = aheadDays?.reduce((n, d) => n + d.open, 0) ?? null;
+  const cov = coverageAheadQuery.data ?? null;
+  // Who isn't in yet, before any window of theirs has started: nobody is due
+  // — not "Everyone's in" over an empty floor.
+  const scheduledInFocus = focusRows.filter((r) => r.state !== 'open').length;
+  const notDueYet = mine && runningNow.length === 0 && nextUp
+    ? { title: t('notIn.notDueTitle', { label: nextUp.label, time: fmtClockMinute(nextUp.startMinute) }), description: t('notIn.notDueDesc') }
+    : data.date === data.today && scheduledInFocus === 0
+      ? // Nobody scheduled: nobody to wait for — the gap itself is under Needs you.
+        { title: mine && runningNow.length > 0 ? t('notIn.noneScheduledWindow', { label: focusName(runningNow) }) : t('notIn.noneScheduledToday'), description: gaps.length > 0 ? t('notIn.noneScheduledDesc') : undefined }
+      : undefined;
   const filledAhead = aheadDays?.reduce((n, d) => n + d.filled, 0) ?? 0;
   const tmAll = tomorrowQuery.data?.roster ?? null;
   const tm = tmAll && mine ? tmAll.filter((r) => inWindows(r, myWindows)) : tmAll;
@@ -651,6 +677,10 @@ export function SupervisorDashboard() {
                           </span>
                         )}
                       </span>
+                      {/* Phone: the live "as of" rides in the hero, not above it. */}
+                      <span className="ml-auto text-2xs font-normal normal-case tracking-normal text-ink-muted md:hidden" data-testid="hero-asof">
+                        {t('portal.asOf', { time: fmtTime(data.generatedAt) })}
+                      </span>
                     </span>
                     <div className="mt-2 flex items-baseline gap-2">
                       <span
@@ -749,6 +779,7 @@ export function SupervisorDashboard() {
             {/* ---- Not in yet: started, no punch — call, text, or cover ---- */}
             <NotInYetCard
               className="animate-enter"
+              quiet={notDueYet}
               canCover={!watchOnly}
               filter={mine ? (p) => inWindows({ locationId: p.siteId, startsAt: p.startsAt, timezone: p.timezone }, myWindows) : undefined}
             />
@@ -849,7 +880,26 @@ export function SupervisorDashboard() {
                   : undefined
               }
             />
-            {/* The tile counts open shifts: open the schedule on them, today. */}
+            {cov && cov.windows > 0 ? (
+              // The contract, not just posted open shifts: "0 · Every shift
+              // covered" sat beside a hero reading "0 of 6 · 6 short".
+              <MetricCard
+                href="/scheduling"
+                cta={false}
+                className="h-full"
+                label={t('sup.shortNext7')}
+                value={cov.shortOfContract}
+                tone={cov.shortOfContract > 0 ? 'warning' : 'default'}
+                hint={
+                  cov.shortOfContract === 0
+                    ? t('sup.contractMet7')
+                    : cov.openPosted > 0
+                      ? t('sup.openPosted', { count: cov.openPosted })
+                      : t('sup.noneOpenPosted')
+                }
+              />
+            ) : (
+            // The tile counts open shifts: open the schedule on them.
             <TileLink to="/scheduling?open=1">
               <StatTile
                 className="h-full"
@@ -872,6 +922,7 @@ export function SupervisorDashboard() {
                 }
               />
             </TileLink>
+            )}
             <StatTile
               label={t('sup.tomorrowConfirmed')}
               value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
@@ -937,6 +988,7 @@ export function SupervisorDashboard() {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
           {/* ---- Today by shift (the faces live on /today) ------------------- */}
+          {!(waves.length === 0 && gaps.length > 0) && (
           <Card
             className={cn('animate-enter md:col-span-2', watchOnly ? 'xl:col-span-7' : 'xl:col-span-5')}
             style={enterStagger(3)}
@@ -1009,10 +1061,11 @@ export function SupervisorDashboard() {
               )}
             </CardContent>
           </Card>
+          )}
 
           {/* ---- The next seven days: fill by day ---------------------------- */}
           {!watchOnly && (
-            <Card className="animate-enter xl:col-span-7" style={enterStagger(4)}>
+            <Card className={cn('animate-enter', waves.length === 0 && gaps.length > 0 ? 'md:col-span-2 xl:col-span-12' : 'xl:col-span-7')} style={enterStagger(4)}>
               <CardContent>
                 <SectionTitle
                   icon={CalendarDays}
@@ -1031,7 +1084,12 @@ export function SupervisorDashboard() {
                 {aheadDays === null ? (
                   <Skeleton className="mt-3 h-40" />
                 ) : filledAhead + (openAhead ?? 0) === 0 ? (
-                  <p className="mt-2 text-sm text-ink-muted">{t('sup.nothingNext7')}</p>
+                  // Nothing scheduled is not "nothing to do" when the contract asks for people.
+                  cov && cov.shortOfContract > 0 ? (
+                    <p className="mt-2 text-sm text-warning" data-testid="next7-short">{t('sup.nothingNext7Short', { n: cov.shortOfContract })}</p>
+                  ) : (
+                    <p className="mt-2 text-sm text-ink-muted">{t('sup.nothingNext7')}</p>
+                  )
                 ) : (
                   <>
                     <div className="mt-3">
@@ -1079,7 +1137,7 @@ export function SupervisorDashboard() {
         // One tap from anywhere on a long page: what happens on the floor
         // gets reported the moment it happens, not after seven scrolls.
         <div
-          className="pointer-events-none sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 flex justify-end px-4 md:bottom-4"
+          className="pointer-events-none sticky bottom-4 z-20 hidden justify-end px-4 md:flex"
           data-testid="floor-actions"
         >
           <div className="pointer-events-auto flex gap-2 rounded-full border border-line bg-surface/95 p-1.5 shadow-lg backdrop-blur">

@@ -81,6 +81,14 @@ describe('overdue contract duties', () => {
     const src = (r.body.sources as Array<{ key: string; count: number; path: string; urgency?: string }>).find((s) => s.key === 'contract-duties');
     expect(src).toMatchObject({ path: '/compliance?tab=scorecard', urgency: 'legal' });
     expect(src!.count).toBeGreaterThan(0);
+    // The oldest due day is a calendar day, never UTC midnight (it read as the day before west of UTC).
+    const due = src as unknown as { dueAt: string | null; dueDate: string; description: string; preview?: string[] };
+    expect(due.dueAt).toBeNull();
+    expect(due.dueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Named as deliverables, never as a status inside an "overdue" row ("…insurance current").
+    const names = due.preview ?? due.description;
+    expect(JSON.stringify(names)).not.toMatch(/insurance current/);
+    if (src!.count <= 3) expect(due.preview!.length).toBe(src!.count);
   });
 });
 
@@ -121,8 +129,8 @@ describe('stuck onboarding opens the "Stuck" filter (one rule, F500 SH-4)', () =
   });
 });
 
-describe('rejected e-files open the Returns tab, which lists them', () => {
-  it('links /payroll/taxes?tab=returns and the tax forms list filters to the rejected ones', async () => {
+describe('rejected e-files open Year-end › Forms, which lists them', () => {
+  it('links /payroll/year-end?tab=forms and the tax forms list filters to the rejected ones', async () => {
     const p = await createAssociate({ firstName: 'Rae', lastName: 'Jones' });
     await prisma.taxForm.create({ data: { kind: 'W2', taxYear: 2025, associateId: p.id, amounts: {}, status: 'DRAFT', efileStatus: 'REJECTED', efileRejectionReason: 'SSN does not match the name.' } });
     await prisma.taxForm.create({ data: { kind: 'W2', taxYear: 2025, associateId: p.id, amounts: {}, status: 'FILED', efileStatus: 'ACCEPTED' } });
@@ -130,7 +138,7 @@ describe('rejected e-files open the Returns tab, which lists them', () => {
     const a = await loginAs(agent(), user.email);
     const inbox = await a.get('/me/inbox');
     const sources = inbox.body.sources as Array<{ key: string; count: number; path: string; urgency?: string }>;
-    expect(sources.find((s) => s.key === 'efile-rejected')).toMatchObject({ count: 1, path: '/payroll/taxes?tab=returns' });
+    expect(sources.find((s) => s.key === 'efile-rejected')).toMatchObject({ count: 1, path: '/payroll/year-end?tab=forms' });
     expect(sources.find((s) => s.key === 'payroll-missed-paydays')?.urgency).toBe('money');
 
     const rejected = await a.get('/tax-forms?efileStatus=REJECTED');

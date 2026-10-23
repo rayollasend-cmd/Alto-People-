@@ -275,6 +275,18 @@ export interface Carrier {
   active: boolean;
   plans: CarrierPlan[];
   lastFile: { createdAt: string; mode: string; status: string } | null;
+  /** How the feed is doing (GET /benefit-carriers only). */
+  health?: CarrierFeedHealth;
+}
+/**
+ * People the next full file carries, people whose enrollment changed since
+ * the last file made (null before the first file), and the newest file with
+ * its delivery result. Carriers' acknowledgments aren't received here.
+ */
+export interface CarrierFeedHealth {
+  people: number;
+  changesWaiting: number | null;
+  lastFile: { createdAt: string; mode: string; status: string; controlNumber: number; memberCount: number; sentAt: string | null; error: string | null } | null;
 }
 export type CarrierInput = Pick<Carrier, 'name' | 'receiverId' | 'receiverQualifier' | 'senderId' | 'senderQualifier' | 'sponsorTaxId' | 'policyNumber' | 'usageIndicator' | 'transport'> & { active?: boolean };
 export interface Edi834File { id: string; mode: 'FULL' | 'CHANGE'; controlNumber: number; memberCount: number; status: 'GENERATED' | 'SENT' | 'FAILED'; error: string | null; sentAt: string | null; createdAt: string }

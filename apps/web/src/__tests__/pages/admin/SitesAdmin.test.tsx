@@ -36,12 +36,25 @@ describe('Sites', () => {
     expect(screen.getAllByText('Coastal Resorts').length).toBeGreaterThan(0);
     // Front Beach is pinned to its region's own unit: no cost center to show.
     expect(screen.queryByText(/Panhandle · Region/)).toBeNull();
+    // F500 G4: a client's place says whose it is in words.
+    expect(screen.getAllByText('Client-owned').length).toBeGreaterThan(0);
+  });
+
+  // F500 G4: closed places no longer lead the list; one chip brings them back, and the URL keeps it.
+  it('shows active places by default, with the inactive ones a chip away', async () => {
+    const user = userEvent.setup();
+    renderAsAdmin(<SitesAdmin />, '/admin/sites');
+    await screen.findAllByText('Harbor House');
+    expect(screen.queryAllByText('Downtown Office')).toHaveLength(0);
+    expect(screen.queryAllByText('Inactive')).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: /Include inactive/ }));
+    await waitFor(() => expect(screen.getAllByText('Downtown Office').length).toBeGreaterThan(0));
     expect(screen.getAllByText('Inactive').length).toBeGreaterThan(0);
   });
 
   it('filters to one region, or to places in no region', async () => {
     const user = userEvent.setup();
-    renderAsAdmin(<SitesAdmin />, '/admin/sites');
+    renderAsAdmin(<SitesAdmin />, '/admin/sites?inactive=1');
     await screen.findAllByText('Harbor House');
     await user.selectOptions(screen.getByLabelText('Region'), 'r-ph');
     await waitFor(() => expect(screen.queryAllByText('Harbor House')).toHaveLength(0));
@@ -113,5 +126,15 @@ describe('Sites', () => {
     expect(within(dialog).queryByLabelText('Name')).toBeNull();
     expect(within(dialog).getByRole('link', { name: 'Edit in Coastal Resorts' })).toHaveAttribute('href', '/clients/cl1');
     expect(updateSite).not.toHaveBeenCalled();
+  });
+
+  it('with only inactive places on file, says so and offers to show them', async () => {
+    const user = userEvent.setup();
+    vi.mocked(listSites).mockResolvedValue({ sites: [sites[1]!] });
+    renderAsAdmin(<SitesAdmin />, '/admin/sites');
+    expect(await screen.findByText(/^No active /)).toBeInTheDocument();
+    expect(screen.queryByText(/ yet$/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Show inactive' }));
+    await waitFor(() => expect(screen.getAllByText('Downtown Office').length).toBeGreaterThan(0));
   });
 });

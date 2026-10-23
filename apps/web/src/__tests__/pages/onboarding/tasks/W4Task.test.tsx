@@ -100,7 +100,8 @@ describe('<W4Task>', () => {
     renderTask();
     // The saved elections arrive through the query cache; submit only once
     // the form has hydrated (SSN on file → no SSN input to fail on).
-    await screen.findByText(/•••-••-6789/);
+    // (The SSN on file shows twice now: in Step 1 and in the review.)
+    await screen.findAllByText(/•••-••-6789/);
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
 
     await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
@@ -223,5 +224,70 @@ describe('<W4Task>', () => {
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
     await waitFor(() => expect(submitW4).toHaveBeenCalled());
     expect(submitW4.mock.calls[0][1]).toMatchObject({ filingStatus: 'HEAD_OF_HOUSEHOLD' });
+  });
+
+  // F500 fix-up 2026-10-22: Step 3 is asked the IRS way — counts, not a
+  // dollar box — and the amount the API stores is worked out exactly.
+  it('works out the Step 3 amount from the counts: 2 children + 1 other = $4,500', async () => {
+    const user = userEvent.setup();
+    renderTask();
+    await screen.findAllByText(/•••-••-6789/);
+    const kids = screen.getByLabelText(/children under 17/i);
+    const others = screen.getByLabelText(/other dependents/i);
+    await user.clear(kids);
+    await user.type(kids, '2');
+    await user.clear(others);
+    await user.type(others, '1');
+    expect(screen.getByTestId('w4-dependents-total')).toHaveTextContent('Total for dependents: $4,500');
+    // The review reads back the same number before anything is sent.
+    expect(screen.getByTestId('w4-review')).toHaveTextContent('$4,500');
+
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(submitW4).mock.calls[0][1]).toMatchObject({ dependentsAmount: 4500 });
+  });
+
+  it('keeps a dependents amount already on file as filed (it cannot be split back into people)', async () => {
+    vi.mocked(getW4).mockResolvedValueOnce({
+      hasSubmission: true, filingStatus: 'MARRIED_FILING_JOINTLY', multipleJobs: true,
+      dependentsAmount: '3700', otherIncome: null, deductions: null,
+      extraWithholding: '25', hasSsnOnFile: true, ssnNeedsResubmit: false,
+      hasSsnCardOnFile: true, ssnLast4: '6789', submittedAt: null,
+    });
+    const user = userEvent.setup();
+    renderTask();
+    const amount = await screen.findByLabelText(/dependents amount/i);
+    expect(amount).toHaveValue(3700);
+    expect(screen.queryByLabelText(/children under 17/i)).toBeNull();
+    // Step 4 opens by itself because something in it was filed.
+    expect(screen.getByLabelText(/extra withholding/i)).toBeVisible();
+    expect(screen.getByTestId('w4-review')).toHaveTextContent('Extra withholding $25');
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(submitW4).mock.calls[0][1]).toMatchObject({
+      filingStatus: 'MARRIED_FILING_JOINTLY',
+      multipleJobs: true,
+      dependentsAmount: 3700,
+      extraWithholding: 25,
+    });
+  });
+
+  it('asks for the SSN first (Step 1) and reads it back as the last 4 only', async () => {
+    vi.mocked(getW4).mockResolvedValueOnce({
+      hasSubmission: false, filingStatus: null, multipleJobs: false,
+      dependentsAmount: null, otherIncome: null, deductions: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnNeedsResubmit: false,
+      hasSsnCardOnFile: false, ssnLast4: null, submittedAt: null,
+    });
+    const user = userEvent.setup();
+    renderTask();
+    const ssnField = await screen.findByLabelText(/social security/i);
+    const kids = screen.getByLabelText(/children under 17/i);
+    // Document order: the SSN comes before Step 3, not last.
+    expect(ssnField.compareDocumentPosition(kids) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId('w4-review')).toHaveTextContent('Not entered yet');
+    await user.type(ssnField, '123-45-6789');
+    expect(screen.getByTestId('w4-review')).toHaveTextContent('•••-••-6789');
+    expect(screen.getByTestId('w4-review')).not.toHaveTextContent('123-45');
   });
 });

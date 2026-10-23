@@ -38,7 +38,7 @@ import {
   Field,
   Select,
 } from '@/components/ui';
-import { PALETTE, ancestorsOf, managerChoices, type OrgIndex } from './orgChartModel';
+import { PALETTE, ancestorsOf, descendantIds, managerChoices, type OrgIndex } from './orgChartModel';
 import { enumWords, known } from '@/lib/known';
 
 /**
@@ -72,17 +72,21 @@ export interface Painter {
   term: (k: TermKey) => string;
 }
 
-/** A name that may be an email (an account with no display name): break it at the @, not mid-word. */
-function NameText({ name }: { name: string }) {
+/**
+ * How a node is named on a card: an account with no display name is named
+ * by its email, which broke across two lines at the @ ("manager /
+ * @altohr.com"). Show the part before the @ — the role is the line under
+ * it — and keep the full address in the tooltip and in search.
+ */
+export function displayName(name: string): string {
   const at = name.indexOf('@');
-  if (at <= 0) return <>{name}</>;
-  return (
-    <>
-      {name.slice(0, at)}
-      <wbr />
-      <span className="font-normal text-ink-muted">{name.slice(at)}</span>
-    </>
-  );
+  return at > 0 && !/\s/.test(name) ? name.slice(0, at) : name;
+}
+
+function NameText({ name }: { name: string }) {
+  const shown = displayName(name);
+  if (shown === name) return <>{name}</>;
+  return <span title={name}>{shown}</span>;
 }
 
 const SEAT_STATUS: Record<'PLANNED' | 'OPEN' | 'FROZEN', { label: string; variant: 'pending' | 'success' | 'info' }> = {
@@ -401,8 +405,9 @@ export function ChartCanvas({
                 className={cn('max-w-[12rem] truncate rounded px-1.5 py-0.5 hover:bg-surface-raised', i === all.length - 1 ? 'font-medium text-ink' : 'text-ink-muted')}
                 onClick={() => setFocus(n.id)}
                 aria-current={i === all.length - 1 ? 'location' : undefined}
+                title={n.name}
               >
-                {n.name}
+                {displayName(n.name)}
               </button>
             </span>
           ))}
@@ -733,6 +738,169 @@ export function TreeList({
 
 /* ----- Reports to ---------------------------------------------------------- */
 
+/**
+ * Put `s` under `manager` (or at the top): a person record's manager lives
+ * on the record (with its history); an account with no person record
+ * reports to another account.
+ */
+async function saveReportsTo(s: OrgNode, manager: OrgNode | undefined): Promise<void> {
+  if (s.associateId && (!manager || manager.associateId)) {
+    await assignOrgFields(s.associateId, { managerId: manager?.associateId ?? null });
+    if (!manager && s.userId) await setStaffReportsTo(s.userId, null);
+    return;
+  }
+  if (s.userId) {
+    await setStaffReportsTo(s.userId, manager?.userId ?? null);
+    return;
+  }
+  throw new Error('Pick a manager with a person record for this person.');
+}
+
+/**
+ * Set reporting lines for many people at once (F500 G1 /org/chart): pick a
+ * manager, tick who reports to them, save. The same rules as one card's
+ * "Reports to": never yourself or your own team, and a person record
+ * reports to a person record. Opens on everyone at the top of the chart —
+ * on a new chart, that is everyone.
+ */
+export function BulkReportsToDialog({ open, index, roleLabel, onClose }: { open: boolean; index: OrgIndex; roleLabel: (r: Role) => string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const people = useMemo(
+    () =>
+      [...index.byId.values()]
+        .filter((n) => (n.kind === 'person' || n.kind === 'staff') && !n.former)
+        .sort((a, b) => displayName(a.name).localeCompare(displayName(b.name))),
+    [index],
+  );
+  const [managerId, setManagerId] = useState('');
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    if (!open) return;
+    setManagerId('');
+    setQuery('');
+    setChosen(new Set());
+  }, [open]);
+  const manager = managerId ? index.byId.get(managerId) : undefined;
+  /** Why `n` can't go under the picked manager, or null when it can. */
+  const blocked = (n: OrgNode): string | null => {
+    if (!manager) return null;
+    if (n.id === manager.id) return 'The manager';
+    if (managerChoices(index, n).some((c) => c.id === manager.id)) return null;
+    if (descendantIds(index, n.id).has(manager.id)) return `${displayName(manager.name)} is in their team`;
+    return 'Needs a manager with a person record';
+  };
+  const q = query.trim().toLowerCase();
+  const shown = people.filter((n) => !q || n.name.toLowerCase().includes(q) || (n.subtitle ?? '').toLowerCase().includes(q));
+  const eligible = (n: OrgNode) => !!manager && blocked(n) === null;
+  const picked = [...chosen].map((id) => index.byId.get(id)).filter((n): n is OrgNode => !!n && eligible(n));
+  const atTop = people.filter((n) => !n.parentId && n.id !== managerId);
+  const toggle = (id: string, on: boolean) =>
+    setChosen((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const apply = useMutation({
+    mutationFn: async () => {
+      const results = await Promise.allSettled(picked.map((n) => saveReportsTo(n, manager)));
+      const failed = results.flatMap((r, i) => (r.status === 'rejected' ? [{ n: picked[i]!, why: r.reason instanceof ApiError || r.reason instanceof Error ? r.reason.message : 'failed' }] : []));
+      return { ok: picked.length - failed.length, failed };
+    },
+    onSuccess: ({ ok, failed }) => {
+      void qc.invalidateQueries({ queryKey: ['org'] });
+      if (ok > 0) toast.success(`${ok} ${ok === 1 ? 'person now reports' : 'people now report'} to ${displayName(manager!.name)}.`);
+      for (const f of failed.slice(0, 3)) toast.error(`${displayName(f.n.name)}: ${f.why}`);
+      if (failed.length === 0) onClose();
+      else setChosen(new Set(failed.map((f) => f.n.id)));
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && !apply.isPending && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Set reporting lines</DialogTitle>
+          <DialogDescription>Pick a manager, then everyone who reports to them. Each person’s own team moves with them.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Field label="Manager">
+            {(p) => (
+              <Select {...p} value={managerId} onChange={(e) => setManagerId(e.target.value)}>
+                <option value="">Choose a manager</option>
+                {people.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {displayName(n.name)}
+                    {n.subtitle ? ` — ${n.subtitle}` : n.role ? ` — ${roleLabel(n.role)}` : ''}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <fieldset className="space-y-2" disabled={!manager}>
+            <legend className="text-sm font-medium text-ink">Reports to {manager ? displayName(manager.name) : 'them'}</legend>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Find a person"
+                aria-label="Find a person"
+                className="h-8 min-w-0 flex-1 rounded-md border border-line bg-surface px-2 text-sm text-ink placeholder:text-ink-muted"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={!manager || atTop.length === 0}
+                onClick={() => setChosen(new Set(atTop.filter(eligible).map((n) => n.id)))}
+              >
+                Everyone at the top ({atTop.filter((n) => !manager || eligible(n)).length})
+              </Button>
+            </div>
+            <ul className="max-h-72 divide-y divide-line overflow-y-auto rounded-md border border-line" aria-label="People">
+              {shown.map((n) => {
+                const why = blocked(n);
+                const now = n.parentId ? index.byId.get(n.parentId) : undefined;
+                return (
+                  <li key={n.id}>
+                    <label className={cn('flex items-center gap-3 px-3 py-2 text-sm coarse:min-h-11', why ? 'opacity-60' : 'cursor-pointer')}>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 coarse:h-6 coarse:w-6"
+                        checked={chosen.has(n.id) && !why}
+                        disabled={!manager || !!why}
+                        onChange={(e) => toggle(n.id, e.target.checked)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-ink" title={n.name}>
+                          {displayName(n.name)}
+                        </span>
+                        <span className="block truncate text-xs text-ink-muted">{why ?? (now ? `Now reports to ${displayName(now.name)}` : 'Now at the top')}</span>
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+              {shown.length === 0 && <li className="px-3 py-2 text-sm text-ink-muted">Nobody matches.</li>}
+            </ul>
+          </fieldset>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={apply.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={() => apply.mutate()} loading={apply.isPending} disabled={!manager || picked.length === 0}>
+            {picked.length > 0 ? `Save for ${picked.length}` : 'Save'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function ReportsToDialog({ subject, index, onClose }: { subject: OrgNode | null; index: OrgIndex; onClose: () => void }) {
   const qc = useQueryClient();
   const choices = useMemo(() => (subject ? managerChoices(index, subject) : []), [index, subject]);
@@ -743,21 +911,7 @@ export function ReportsToDialog({ subject, index, onClose }: { subject: OrgNode 
   }, [subject?.id, currentParent, choices]);
 
   const save = useMutation({
-    mutationFn: async () => {
-      const manager = pick ? index.byId.get(pick) : undefined;
-      const s = subject!;
-      if (s.associateId && (!manager || manager.associateId)) {
-        // A person record's manager lives on the record (with its history).
-        await assignOrgFields(s.associateId, { managerId: manager?.associateId ?? null });
-        if (!manager && s.userId) await setStaffReportsTo(s.userId, null);
-        return;
-      }
-      if (s.userId) {
-        await setStaffReportsTo(s.userId, manager?.userId ?? null);
-        return;
-      }
-      throw new Error('Pick a manager with a person record for this person.');
-    },
+    mutationFn: () => saveReportsTo(subject!, pick ? index.byId.get(pick) : undefined),
     onSuccess: () => {
       toast.success(pick ? `${subject!.name} now reports to ${index.byId.get(pick)?.name}.` : `${subject!.name} is now at the top of the chart.`);
       void qc.invalidateQueries({ queryKey: ['org', 'chart'] });

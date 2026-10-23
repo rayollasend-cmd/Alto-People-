@@ -126,4 +126,24 @@ describe('<MarketRatesHome>', () => {
     await userEvent.click(screen.getByRole('button', { name: /refresh now/i }));
     await waitFor(() => expect(refreshMarketData).toHaveBeenCalled());
   });
+
+  it('one “Negotiation brief…” button opens a dialog with the client to pick (F500)', async () => {
+    renderAs('HR_ADMINISTRATOR', <MarketRatesHome />, '/market-rates');
+    await screen.findAllByText('Front Beach');
+    // No select-plus-disabled-button pair in the header any more.
+    expect(screen.queryByRole('combobox', { name: /negotiation brief/i })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /Negotiation brief/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Negotiation brief' });
+    expect(within(dialog).getByRole('button', { name: 'Download the brief' })).toBeDisabled();
+    await userEvent.selectOptions(within(dialog).getByLabelText('Client'), 'c1');
+    expect(within(dialog).getByRole('link', { name: /Download Coastal Resorts’s brief/ })).toHaveAttribute('href', expect.stringContaining('c1'));
+  });
+
+  it('the client, store and role filters live in the URL', async () => {
+    renderAs('HR_ADMINISTRATOR', <MarketRatesHome />, '/market-rates?client=c1&role=Stocker');
+    await screen.findAllByText('Front Beach');
+    await waitFor(() => expect(getMarketRates).toHaveBeenCalledWith({ clientId: 'c1' }));
+    expect((screen.getByLabelText('Role') as HTMLSelectElement).value).toBe('Stocker');
+  });
 });
+

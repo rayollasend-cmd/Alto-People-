@@ -14,6 +14,9 @@ import {
   trackNotificationWork,
 } from '../lib/notify.js';
 import { sendToFinance } from '../lib/fieldglassNotify.js';
+import { scopeAssociatesIncludingFormer, scopeWhere } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
+import type { SessionUser } from '../types/express.js';
 
 /**
  * Gap 10 — Reimbursement two-step approval + payroll-fold integration.
@@ -94,24 +97,28 @@ async function recomputeTotal(reimbursementId: string): Promise<number> {
  * GET /reimbursements — list. Associate scope is enforced server-side
  * (associates can never see another's row regardless of query params).
  */
+/**
+ * Whose reports the caller may see: an associate only their own (no linked
+ * record = nothing — an empty `in`; a non-UUID literal was refused by
+ * Postgres as a malformed id); anyone else the people in their reach
+ * (current or former — a report outlives the placement), in their tenant.
+ */
+function reportsInReach(user: SessionUser): Prisma.ReimbursementWhereInput {
+  if (user.role === 'ASSOCIATE') return { tenantId: tenantIdForWrite(), associateId: user.associateId ? user.associateId : { in: [] } };
+  return scopeWhere<Prisma.ReimbursementWhereInput>({ tenantId: tenantIdForWrite() }, { associate: scopeAssociatesIncludingFormer(user) });
+}
+
 reimbursements97Router.get('/reimbursements', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const status = z
     .enum(['DRAFT', 'SUBMITTED', 'MANAGER_APPROVED', 'SETTLED', 'REJECTED', 'PAID'])
     .optional()
     .parse(req.query.status);
-  const isAssociate = req.user!.role === 'ASSOCIATE';
-  const myAssociateId = req.user!.associateId;
-  const where: Prisma.ReimbursementWhereInput = {
-    // An associate with no linked record sees nothing (an empty `in`; a
-    // non-UUID literal here was refused by Postgres as a malformed id).
-    ...(isAssociate
-      ? { associateId: myAssociateId ? myAssociateId : { in: [] } }
-      : associateId
-        ? { associateId }
-        : {}),
-    ...(status ? { status } : {}),
-  };
+  const where = scopeWhere<Prisma.ReimbursementWhereInput>(
+    reportsInReach(req.user!),
+    req.user!.role !== 'ASSOCIATE' && associateId ? { associateId } : null,
+    status ? { status } : null,
+  );
   const rows = await prisma.reimbursement.findMany({
     where,
     include: {
@@ -141,6 +148,30 @@ reimbursements97Router.get('/reimbursements', VIEW, async (req, res) => {
       createdAt: r.createdAt.toISOString(),
     })),
   });
+});
+
+/**
+ * GET /reimbursements/summary — the numbers the page leads with, over
+ * every report in the caller's reach (the list is capped at 200 rows, so
+ * the page never adds them up itself): what waits for a manager, what is
+ * ready to settle, what is queued for the next payroll, and what payroll
+ * paid this calendar month.
+ */
+reimbursements97Router.get('/reimbursements/summary', VIEW, async (req, res) => {
+  const reach = reportsInReach(req.user!);
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const sum = async (extra: Prisma.ReimbursementWhereInput) => {
+    const a = await prisma.reimbursement.aggregate({ where: scopeWhere<Prisma.ReimbursementWhereInput>(reach, extra), _sum: { totalAmount: true }, _count: { _all: true } });
+    return { count: a._count._all, amount: round2(Number(a._sum.totalAmount ?? 0)) };
+  };
+  const [toApprove, readyToSettle, queuedForPayroll, paidThisMonth] = await Promise.all([
+    sum({ status: 'SUBMITTED' }),
+    sum({ status: 'MANAGER_APPROVED' }),
+    sum({ status: 'SETTLED' }),
+    sum({ status: 'PAID', paidAt: { gte: monthStart } }),
+  ]);
+  res.json({ toApprove, readyToSettle, queuedForPayroll, paidThisMonth });
 });
 
 /**
@@ -436,7 +467,8 @@ reimbursements97Router.post(
           body:
             `"${r.title}" ($${Number(r.totalAmount).toFixed(2)}) for ${who} was manager-approved ` +
             'and is waiting on Finance to settle. It pays out with the next payroll run once settled.',
-          linkUrl: '/reimbursements',
+          // Straight to this report, on the "Ready to settle" queue.
+          linkUrl: `/reimbursements?id=${r.id}&status=ready`,
           category: 'finance.reimbursement',
         });
       } catch {
@@ -464,69 +496,123 @@ const SettleBodySchema = z.object({
  * settle unless `waiveMissingReceipts=true` plus a `waiverNote` are
  * supplied (the note is stored on Reimbursement.receiptWaiverNote).
  */
+class SettleRefused extends HttpError {}
+
+/**
+ * Settle one report: MANAGER_APPROVED → SETTLED, queued for the next
+ * REGULAR run. The single and the bulk route share it, so a bulk settle is
+ * exactly N single settles — the same checks, audit and notice each.
+ */
+async function settleOne(
+  user: SessionUser,
+  id: string,
+  input: z.infer<typeof SettleBodySchema>,
+  req: Parameters<typeof recordReimbursementEvent>[0]['req'],
+): Promise<{ id: string; amount: number }> {
+  const r = await prisma.reimbursement.findFirst({
+    where: scopeWhere<Prisma.ReimbursementWhereInput>({ id }, reportsInReach(user)),
+    include: { lines: true },
+  });
+  if (!r) throw new SettleRefused(404, 'not_found', 'Reimbursement not found.');
+  if (r.status !== 'MANAGER_APPROVED') {
+    throw new SettleRefused(409, 'invalid_state', `Cannot settle ${r.status}.`);
+  }
+  const linesMissingReceipt = r.lines.filter(
+    (l) => l.kind === 'RECEIPT' && !l.receiptUrl,
+  );
+  if (linesMissingReceipt.length > 0 && !input.waiveMissingReceipts) {
+    throw new SettleRefused(
+      400,
+      'receipts_required',
+      `${linesMissingReceipt.length} receipt line(s) are missing a receipt. Pass waiveMissingReceipts=true with a waiverNote to override.`,
+    );
+  }
+  if (input.waiveMissingReceipts && !input.waiverNote) {
+    throw new SettleRefused(
+      400,
+      'waiver_note_required',
+      'A waiver note is required when overriding the receipt-required guard.',
+    );
+  }
+  // Only a report still MANAGER_APPROVED moves — two settlers can't both settle it.
+  const moved = await prisma.reimbursement.updateMany({
+    where: { id: r.id, status: 'MANAGER_APPROVED' },
+    data: {
+      status: 'SETTLED',
+      settledAt: new Date(),
+      settledById: user.id,
+      settleNote: input.note?.length ? input.note : null,
+      receiptWaiverNote: input.waiveMissingReceipts ? (input.waiverNote ?? null) : null,
+    },
+  });
+  if (moved.count === 0) throw new SettleRefused(409, 'invalid_state', 'Someone else just settled or rejected it.');
+  await recordReimbursementEvent({
+    actorUserId: user.id,
+    action: 'reimbursement.settled',
+    reimbursementId: r.id,
+    associateId: r.associateId,
+    metadata: {
+      totalAmount: r.totalAmount.toString(),
+      receiptsWaived: input.waiveMissingReceipts ? linesMissingReceipt.length : 0,
+    },
+    req,
+  });
+  void notifyAssociate(r.associateId, {
+    subject: 'Expense report settled — queued for payroll',
+    body:
+      `"${r.title}" ($${Number(r.totalAmount).toFixed(2)}) was settled and will be added to your next regular payroll run.` +
+      (input.note?.length ? ` Reviewer note: ${input.note}` : ''),
+    category: 'reimbursements',
+    linkUrl: '/reimbursements',
+    emailFallback: true,
+  });
+  return { id: r.id, amount: round2(Number(r.totalAmount)) };
+}
+
+/**
+ * POST /reimbursements/:id/settle — HR/Finance moves MANAGER_APPROVED into
+ * SETTLED. The row sits in the payroll-fold queue waiting for the next
+ * REGULAR run. Capability: settle:reimbursement.
+ *
+ * Receipt-required guard: any RECEIPT line lacking receiptUrl blocks the
+ * settle unless `waiveMissingReceipts=true` plus a `waiverNote` are
+ * supplied (the note is stored on Reimbursement.receiptWaiverNote).
+ */
 reimbursements97Router.post(
   '/reimbursements/:id/settle',
   SETTLE,
   async (req, res) => {
     const input = SettleBodySchema.parse(req.body ?? {});
-    const r = await prisma.reimbursement.findUnique({
-      where: { id: req.params.id },
-      include: { lines: true },
-    });
-    if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
-    if (r.status !== 'MANAGER_APPROVED') {
-      throw new HttpError(409, 'invalid_state', `Cannot settle ${r.status}.`);
-    }
-    const linesMissingReceipt = r.lines.filter(
-      (l) => l.kind === 'RECEIPT' && !l.receiptUrl,
-    );
-    if (linesMissingReceipt.length > 0 && !input.waiveMissingReceipts) {
-      throw new HttpError(
-        400,
-        'receipts_required',
-        `${linesMissingReceipt.length} receipt line(s) are missing a receipt. Pass waiveMissingReceipts=true with a waiverNote to override.`,
-      );
-    }
-    if (input.waiveMissingReceipts && !input.waiverNote) {
-      throw new HttpError(
-        400,
-        'waiver_note_required',
-        'A waiver note is required when overriding the receipt-required guard.',
-      );
-    }
-    await prisma.reimbursement.update({
-      where: { id: r.id },
-      data: {
-        status: 'SETTLED',
-        settledAt: new Date(),
-        settledById: req.user!.id,
-        settleNote: input.note?.length ? input.note : null,
-        receiptWaiverNote: input.waiveMissingReceipts ? (input.waiverNote ?? null) : null,
-      },
-    });
-    await recordReimbursementEvent({
-      actorUserId: req.user!.id,
-      action: 'reimbursement.settled',
-      reimbursementId: r.id,
-      associateId: r.associateId,
-      metadata: {
-        totalAmount: r.totalAmount.toString(),
-        receiptsWaived: input.waiveMissingReceipts ? linesMissingReceipt.length : 0,
-      },
-      req,
-    });
-    void notifyAssociate(r.associateId, {
-      subject: 'Expense report settled — queued for payroll',
-      body:
-        `"${r.title}" ($${Number(r.totalAmount).toFixed(2)}) was settled and will be added to your next regular payroll run.` +
-        (input.note?.length ? ` Reviewer note: ${input.note}` : ''),
-      category: 'reimbursements',
-      linkUrl: '/reimbursements',
-      emailFallback: true,
-    });
+    await settleOne(req.user!, String(req.params.id), input, req);
     res.json({ ok: true });
   },
 );
+
+const SettleBulkSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(200),
+  note: z.string().max(2000).trim().optional(),
+});
+
+/**
+ * POST /reimbursements/settle-bulk — settle the reports picked on the
+ * grid, one decision each. A report that can't be settled (not approved
+ * yet, out of reach, a receipt missing — a waiver is a one-report call,
+ * made on the report) is skipped with the reason; the rest settle.
+ */
+reimbursements97Router.post('/reimbursements/settle-bulk', SETTLE, async (req, res) => {
+  const input = SettleBulkSchema.parse(req.body ?? {});
+  const settled: Array<{ id: string; amount: number }> = [];
+  const skipped: Array<{ id: string; code: string; reason: string }> = [];
+  for (const id of [...new Set(input.ids)]) {
+    try {
+      settled.push(await settleOne(req.user!, id, { note: input.note }, req));
+    } catch (err) {
+      if (!(err instanceof SettleRefused)) throw err;
+      skipped.push({ id, code: err.code, reason: err.message });
+    }
+  }
+  res.json({ settled, skipped, amount: round2(settled.reduce((t, s) => t + s.amount, 0)) });
+});
 
 const RejectBodySchema = z.object({
   reason: z.string().trim().min(1, 'reason is required').max(2000),

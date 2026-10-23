@@ -1,5 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import jwt from 'jsonwebtoken';
 import request, { type Test } from 'supertest';
+import { env } from '../../config/env.js';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { seasonWeeks } from '../../lib/seasonPlanner.js';
@@ -48,6 +50,8 @@ describe("the associate's counted Needs you", () => {
   it('counts what is theirs to do, from the same inbox the badge reads', async () => {
     const client = await createClient('Walmart 218');
     const { associate, user } = await placedAssociate(client.id);
+    // Availability on file, so "Set when you can work" isn't one of the counted items.
+    await prisma.associateAvailability.create({ data: { associateId: associate.id, dayOfWeek: 1, startMinute: 480, endMinute: 1020 } });
     await prisma.agreement.create({ data: { associateId: associate.id, kind: 'NDA', status: 'PENDING_SIGNATURE' } });
     await prisma.shift.create({ data: { clientId: client.id, position: 'Stocker', startsAt: inHours(30), endsAt: inHours(36), status: 'ASSIGNED', assignedAssociateId: associate.id, publishedAt: new Date() } });
     const course = await prisma.course.create({ data: { title: 'Forklift safety', isRequired: true, status: 'PUBLISHED' } });
@@ -124,6 +128,9 @@ describe('the credential wallet', () => {
     expect(pub.body.items).toHaveLength(2);
     expect(JSON.stringify(pub.body)).not.toContain(associate.email);
     expect((await request(app()).get('/wallet/public/not-a-token')).status).toBe(404);
+    // A real link past its days is gone (410), not "not valid" (F500 G5).
+    const stale = jwt.sign({ sub: associate.id, t: ALTO_TENANT_ID, exp: Math.floor(Date.now() / 1000) - 60 }, env.JWT_SECRET, { algorithm: 'HS256', audience: 'alto:wallet-share' });
+    expect((await request(app()).get(`/wallet/public/${stale}`)).status).toBe(410);
 
     // A staff account with no associate record has no wallet.
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });

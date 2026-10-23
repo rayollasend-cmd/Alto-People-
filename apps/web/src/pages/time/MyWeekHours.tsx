@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Timer } from 'lucide-react';
+import { paidMinutesForRange, type Shift, type TimeEntry } from '@alto-people/shared';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { fmtHours } from '@/lib/format';
@@ -19,10 +21,45 @@ import { useMyEarnings } from '@/components/EarningsCard';
  * paycheck pays (daily rules included where they're paid), and the
  * schedule's projected overtime from the earnings estimate — never
  * "minutes − 40h" worked out here.
+ *
+ * "To go" is only what is still ahead: a future shift in full, the shift in
+ * progress from now. A shift that already ended without a punch is not
+ * "to go" — it reads "7h scheduled, not punched", with the way to fix it
+ * (F500 G2: a past, unworked shift used to say "7h to go").
  */
+
+/** The week's shifts split by the clock: what is still ahead, and what passed with no punch. */
+export function weekScheduleSplit(
+  shifts: readonly Pick<Shift, 'id' | 'startsAt' | 'endsAt' | 'status'>[],
+  entries: readonly Pick<TimeEntry, 'shiftId' | 'clockInAt' | 'clockOutAt' | 'status'>[],
+  now: Date = new Date(),
+): { toGoMinutes: number; notPunchedMinutes: number } {
+  const t = now.getTime();
+  const live = entries.filter((e) => e.status !== 'REJECTED');
+  let toGoMinutes = 0;
+  let notPunchedMinutes = 0;
+  for (const s of shifts) {
+    const start = new Date(s.startsAt).getTime();
+    const end = new Date(s.endsAt).getTime();
+    if (end > t) {
+      toGoMinutes += paidMinutesForRange(new Date(Math.max(start, t)), new Date(end));
+      continue;
+    }
+    // Ended: was it punched? The punch linked to it, or any punch that
+    // overlaps its window (a walk-in punch the matcher didn't link).
+    const punched = live.some(
+      (e) =>
+        e.shiftId === s.id ||
+        (new Date(e.clockInAt).getTime() < end && (e.clockOutAt ? new Date(e.clockOutAt).getTime() : t) > start),
+    );
+    if (!punched) notPunchedMinutes += paidMinutesForRange(s.startsAt, s.endsAt);
+  }
+  return { toGoMinutes, notPunchedMinutes };
+}
 
 export function MyWeekHours() {
   const { t } = useI18n();
+  const [params] = useSearchParams();
   const { start, end } = workweekBounds();
   // No `.catch(() => null)` on these. Swallowing the error made the query
   // *succeed* with null, so React Query never retried, nothing was ever
@@ -56,16 +93,18 @@ export function MyWeekHours() {
   const worked = entries.data.entries
     .filter((e) => e.status !== 'REJECTED')
     .reduce((n, e) => n + (e.netMinutes ?? e.minutesElapsed), 0);
-  const scheduled = shifts.data.shifts
-    .filter((s) => {
-      const at = new Date(s.startsAt).getTime();
-      return s.status !== 'CANCELLED' && at >= start.getTime() && at < end.getTime();
-    })
-    .reduce((n, s) => n + paidShiftMinutes(s), 0);
+  const weekShifts = shifts.data.shifts.filter((s) => {
+    const at = new Date(s.startsAt).getTime();
+    return s.status !== 'CANCELLED' && at >= start.getTime() && at < end.getTime();
+  });
+  const scheduled = weekShifts.reduce((n, s) => n + paidShiftMinutes(s), 0);
   if (worked === 0 && scheduled === 0) return null;
 
   const pct = scheduled > 0 ? Math.min(100, Math.round((worked / scheduled) * 100)) : 100;
-  const toGo = Math.max(0, scheduled - worked);
+  const { toGoMinutes: toGo, notPunchedMinutes: notPunched } = weekScheduleSplit(weekShifts, entries.data.entries);
+  // "Fix a punch" opens the request on this same page (PunchFixes reads ?fix=1).
+  const fixParams = new URLSearchParams(params);
+  fixParams.set('fix', '1');
   const overtime = Math.round(
     entries.data.entries
       .filter((e) => e.status !== 'REJECTED')
@@ -84,7 +123,7 @@ export function MyWeekHours() {
           <Timer className="h-3.5 w-3.5" aria-hidden="true" />
           {t('sched.thisWeek')}
         </span>
-        {scheduled > 0 && (
+        {scheduled > 0 && (toGo > 0 || notPunched === 0) && (
           <span className="text-xs tabular-nums text-silver/80">
             {toGo > 0 ? t('week.toGo', { hours: fmtHours(toGo / 60) }) : t('week.allWorked')}
           </span>
@@ -104,6 +143,14 @@ export function MyWeekHours() {
           style={{ width: `${pct}%` }}
         />
       </div>
+      {notPunched > 0 && (
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-warning" data-testid="week-not-punched">
+          <span className="tabular-nums">{t('week.notPunched', { hours: fmtHours(notPunched / 60) })}</span>
+          <Link to={`?${fixParams.toString()}`} className="font-medium text-gold underline-offset-2 hover:underline">
+            {t('timefix.title')}
+          </Link>
+        </p>
+      )}
       {(overtime > 0 || heading) && (
         <p className={cn('mt-2 text-xs', overtime > 0 ? 'text-warning' : 'text-silver')}>
           {overtime > 0

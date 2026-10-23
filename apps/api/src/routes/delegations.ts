@@ -5,6 +5,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { personDisplayName, realName } from '../lib/displayName.js';
 
 export const delegationsRouter = Router();
 
@@ -38,10 +39,11 @@ function shape(d: {
   startsOn: Date;
   endsOn: Date;
   note: string | null;
-  from: { id: string; email: string; displayName: string | null; associate: { firstName: string; lastName: string } | null };
-  to: { id: string; email: string; displayName: string | null; associate: { firstName: string; lastName: string } | null };
+  from: { id: string; email: string; role: string; displayName: string | null; associate: { firstName: string; lastName: string } | null };
+  to: { id: string; email: string; role: string; displayName: string | null; associate: { firstName: string; lastName: string } | null };
 }) {
-  const name = (u: typeof d.from) => u.displayName ?? (u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : u.email);
+  // The shared rule (lib/displayName): a name, else "Role · email".
+  const name = (u: typeof d.from) => personDisplayName(u);
   return {
     id: d.id,
     startsOn: ymd(d.startsOn),
@@ -52,7 +54,7 @@ function shape(d: {
   };
 }
 
-const PERSON = { select: { id: true, email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } };
+const PERSON = { select: { id: true, email: true, role: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } };
 
 /** GET /delegations/mine — cover I have given and cover I am providing, current and upcoming. */
 delegationsRouter.get('/mine', TEAM, async (req, res, next) => {
@@ -86,7 +88,9 @@ delegationsRouter.get('/candidates', TEAM, async (req, res, next) => {
     res.json({
       candidates: rows.map((u) => ({
         id: u.id,
-        name: u.displayName ?? (u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : u.email),
+        // "Manager · manager@altohr.com", not the address twice ("manager@altohr.com — manager@altohr.com").
+        name: personDisplayName(u),
+        named: realName(u) !== null,
         email: u.email,
         role: u.role,
       })),

@@ -23,6 +23,7 @@ import {
   DedupeDraftsInputSchema,
   DedupeDraftsResponseSchema,
   LaborCostReportResponseSchema,
+  PayPeriodListResponseSchema,
   FloorNowResponseSchema,
   OtOutlookResponseSchema,
   StaffingTargetInputSchema,
@@ -163,6 +164,7 @@ import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
 import { emitShiftEvent } from '../lib/webhookEvents.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { listPayPeriods } from '../lib/payPeriods.js';
 
 export const schedulingRouter = Router();
 
@@ -677,6 +679,14 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
     if (id !== undefined && !z.string().uuid().safeParse(id).success) {
       throw new HttpError(400, 'invalid_id', '`id` must be a shift id');
     }
+    // ?ended=false — not over yet; ?ended=true — already over. With
+    // status=OPEN they are the two meanings the page keeps apart: "Open"
+    // (still fillable, isOpenShift) and "Went unfilled" (wentUnfilled).
+    const endedRaw = req.query.ended?.toString();
+    if (endedRaw !== undefined && endedRaw !== 'true' && endedRaw !== 'false') {
+      throw new HttpError(400, 'invalid_query', '`ended` must be true or false');
+    }
+    const endedNow = new Date();
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -684,6 +694,7 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
       // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
       tenantId: tenantIdForWrite(),
       ...(status ? { status: status as Prisma.ShiftWhereInput['status'] } : {}),
+      ...(endedRaw === 'true' ? { endsAt: { lte: endedNow } } : endedRaw === 'false' ? { endsAt: { gt: endedNow } } : {}),
       ...(clientId ? { clientId } : {}),
       // Narrow to one work-site within the client (cascading filter).
       // Site-less shifts (locationId null) are INCLUDED: they belong to no
@@ -964,7 +975,7 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
 
 /**
  * POST /scheduling/shifts/close-out-unfilled
- * Body: { clientId?, locationId?, from?, to? }  →  { closed, shiftIds }
+ * Body: { clientId?, locationId?, from?, to?, shiftIds? }  →  { closed, shiftIds }
  *
  * A shift that ended still OPEN went unfilled; it is history, not work
  * (isOpenShift in @alto-people/shared). Leaving it OPEN kept it in the
@@ -983,6 +994,9 @@ schedulingRouter.post('/shifts/close-out-unfilled', MANAGE, async (req, res, nex
         locationId: z.string().uuid().optional(),
         from: z.string().optional(),
         to: z.string().optional(),
+        // One row's "Close out" names its shift; still only OPEN, ended,
+        // in-scope shifts close.
+        shiftIds: z.array(z.string().uuid()).min(1).max(500).optional(),
       })
       .safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -999,6 +1013,7 @@ schedulingRouter.post('/shifts/close-out-unfilled', MANAGE, async (req, res, nex
         ...scopeShifts(req.user!),
         tenantId: tenantIdForWrite(),
         status: 'OPEN',
+        ...(parsed.data.shiftIds ? { id: { in: parsed.data.shiftIds } } : {}),
         // Ended already — and, with a `to`, ended inside the window asked for.
         endsAt: { lte: to && to < now ? to : now },
         ...(from ? { startsAt: { gte: from } } : {}),
@@ -1052,6 +1067,23 @@ schedulingRouter.get('/last-shift', MANAGE, async (req, res, next) => {
       include: SHIFT_INCLUDE,
     });
     res.json({ shift: row ? forViewer(req.user!, await withEffectiveRate(row)) : null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/labor-costs/periods — the pay periods the labor-cost
+ * report opens on ("this period to date", "last period"). The same windows
+ * Time & attendance's review picker uses (lib/payPeriods), on the report's
+ * own gate: Finance and executives read labor cost without manage:time.
+ * Dates only — no people, no money — so there is nothing to scope past
+ * the tenant.
+ */
+schedulingRouter.get('/labor-costs/periods', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (_req, res, next) => {
+  try {
+    const periods = await listPayPeriods(prisma);
+    res.json(PayPeriodListResponseSchema.parse({ periods }));
   } catch (err) {
     next(err);
   }

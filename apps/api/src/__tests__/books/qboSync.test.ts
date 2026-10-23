@@ -287,7 +287,7 @@ describe('QuickBooks → site', () => {
     expect(r.pulled.conflicts).toBe(1);
     expect(await entryForKey(prisma, `qbo:Purchase:${p.Id}`)).toBeNull();
     const c = await prisma.qboSyncConflict.findFirstOrThrow();
-    expect(c.summary).toMatch(/2026-08, which is closed on the site/);
+    expect(c.summary).toMatch(/August 2026, which is closed in the books here/);
 
     const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
     const a = await loginAs(agent(), user.email);
@@ -311,7 +311,7 @@ describe('QuickBooks → site', () => {
     qbo.edit('Vendor', qv.Id, { DisplayName: 'Enterprise Holdings' });
     await runSync(prisma, { push: false });
     const c = await prisma.qboSyncConflict.findFirstOrThrow({ where: { localId: vendor.id } });
-    expect(c.summary).toMatch(/changed on the site and in QuickBooks/);
+    expect(c.summary).toMatch(/changed here and in QuickBooks/);
     await resolveConflict(prisma, c.id, 'QUICKBOOKS', null);
     expect((await prisma.vendor.findUniqueOrThrow({ where: { id: vendor.id } })).name).toBe('Enterprise Holdings');
 
@@ -324,7 +324,7 @@ describe('QuickBooks → site', () => {
     qbo.edit('Bill', qb.Id, { TotalAmt: 350, Line: [{ ...(qb.Line as object[])[0], Amount: 350 }] });
     await runSync(prisma);
     const billConflict = await prisma.qboSyncConflict.findFirstOrThrow({ where: { localId: bill.id, status: 'OPEN' } });
-    expect(billConflict.summary).toMatch(/its truth lives on the site/);
+    expect(billConflict.summary).toMatch(/its record lives here/);
     await resolveConflict(prisma, billConflict.id, 'SITE', null);
     expect((qbo.all('Bill')[0]!.Line as Array<{ Amount: number }>)[0]!.Amount).toBe(300);
   });

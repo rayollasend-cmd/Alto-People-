@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { fmtClock, opsTimeZone, opsTimeZoneCity, opsToday, setOpsTimeZone } from '@/pages/ops/opsTime';
+import { fmtClock, opsTimeZone, opsTimeZoneCity, opsTimeZoneLabel, opsToday, setOpsTimeZone } from '@/pages/ops/opsTime';
 
 /**
  * The ops pages read their clock from the zone the API names (F500 SH-4):
@@ -25,5 +25,11 @@ describe('the ops clock', () => {
     setOpsTimeZone(undefined);
     setOpsTimeZone('Not/AZone');
     expect(opsTimeZone()).toBe('America/Chicago');
+  });
+
+  it('names the zone with its abbreviation, for the label beside the times (F500 G2)', () => {
+    setOpsTimeZone('America/Chicago');
+    expect(opsTimeZoneLabel(new Date('2026-10-22T18:03:00.000Z'))).toBe('Chicago (CDT)');
+    expect(opsTimeZoneLabel(new Date('2026-12-22T18:03:00.000Z'))).toBe('Chicago (CST)');
   });
 });

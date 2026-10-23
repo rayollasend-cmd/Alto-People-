@@ -32,6 +32,8 @@ const api = vi.hoisted(() => ({
   refreshEfile: vi.fn(),
 }));
 vi.mock('@/lib/providersApi', () => api);
+const payroll = vi.hoisted(() => ({ getDisbursementWebhookStatus: vi.fn() }));
+vi.mock('@/lib/payrollApi', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/payrollApi')>()), getDisbursementWebhookStatus: payroll.getDisbursementWebhookStatus }));
 
 import { ProvidersSection } from '@/pages/integrations/providers/ProvidersSection';
 import { EVerifyProviderPanel } from '@/pages/compliance/providers/EVerifyProviderPanel';
@@ -101,6 +103,8 @@ const CATALOG = {
 
 beforeEach(() => {
   for (const f of Object.values(api)) f.mockReset();
+  payroll.getDisbursementWebhookStatus.mockReset();
+  payroll.getDisbursementWebhookStatus.mockResolvedValue({ provider: 'STUB', health: 'stub', detail: '', lastEventAt: null, minutesSinceLastEvent: null, eventsLast24h: 0, errorsLast7d: 0, pendingFinalizedItems: 0, latestError: null });
   api.providerCatalog.mockResolvedValue(CATALOG);
   api.providerEvents.mockResolvedValue({ events: [] });
   api.providerSummary.mockResolvedValue({ connected: {}, canManageIntegrations: true });
@@ -116,8 +120,37 @@ describe('Integrations → Screening, filing and payouts', () => {
     expect(within(list).getByText(/opened on the government site/)).toBeInTheDocument();
     expect(within(list).getByRole('button', { name: 'Set up E-Verify' })).toBeInTheDocument();
     expect(within(list).getByText('Wise · Live')).toBeInTheDocument();
-    expect(within(list).getByText('Needs attention')).toBeInTheDocument();
+    // One vocabulary (F500 G4): Working · Needs attention · Failing · Not connected.
+    expect(within(list).getByText('Failing')).toBeInTheDocument();
+    expect(within(list).getAllByText('Not connected')).toHaveLength(4);
     expect(within(list).getByText(/Failing since .*: Bad token/)).toBeInTheDocument();
+    // The failing card's fix is the one gold button; every "Set up" is an outline.
+    const reconnect = within(list).getByRole('button', { name: 'Reconnect Wise' });
+    expect(reconnect.className).toMatch(/btn-gold/);
+    expect(within(list).getByRole('button', { name: 'Set up E-Verify' }).className).not.toMatch(/btn-gold/);
+  });
+
+  it('says a payouts failure once, on the Payouts card, even when only the disbursement rail knows it', async () => {
+    payroll.getDisbursementWebhookStatus.mockResolvedValue({
+      provider: 'WISE',
+      health: 'erroring',
+      detail: 'Payments go out from your own Wise balance, but the connection is failing.',
+      lastEventAt: '2026-10-17T23:48:00Z',
+      minutesSinceLastEvent: 7000,
+      eventsLast24h: 0,
+      errorsLast7d: 1,
+      pendingFinalizedItems: 2,
+      latestError: { at: '2026-10-17T23:48:00Z', eventType: 'transfer.failed', notes: 'Wise refused the token (HTTP 401): Invalid token' },
+    });
+    api.listProviderConnections.mockResolvedValue(kinds({ PAYOUT: conn({ id: 'w', kind: 'PAYOUT', provider: 'WISE', providerLabel: 'Wise', environment: 'PRODUCTION', health: 'healthy' }) }));
+    renderAs('HR_ADMINISTRATOR', <ProvidersSection canManage />, '/integrations');
+    const list = await screen.findByRole('list', { name: 'Provider kinds' });
+    const payouts = within(list).getByRole('heading', { name: 'Payouts' }).closest('li')!;
+    await waitFor(() => expect(within(payouts).getByText('Failing')).toBeInTheDocument());
+    expect(within(payouts).getByText(/Wise refused the token \(HTTP 401\)/)).toBeInTheDocument();
+    expect(within(payouts).getByText('2 paychecks waiting to pay out.')).toBeInTheDocument();
+    expect(within(payouts).getByRole('button', { name: 'Reconnect Wise' })).toBeInTheDocument();
+    expect(screen.getAllByText(/Wise refused the token/)).toHaveLength(1);
   });
 
   it('the bank (ACH) card shows, and a kind this screen doesn’t know yet reads as a plain card instead of breaking the page', async () => {

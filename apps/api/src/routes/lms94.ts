@@ -267,6 +267,9 @@ lms94Router.get('/enrollments', VIEW, async (req, res) => {
     .parse(req.query.status);
   const rows = await prisma.courseEnrollment.findMany({
     where: {
+      // This tenant's enrollments, for people in the caller's reach.
+      tenantId: tenantIdForWrite(),
+      associate: { is: scopeActiveAssociates(req.user!, { former: true }) },
       ...(associateId ? { associateId } : {}),
       ...(courseId ? { courseId } : {}),
       ...(status ? { status } : {}),
@@ -328,6 +331,52 @@ lms94Router.post('/enrollments/:id/waive', MANAGE, async (req, res) => {
     data: { status: 'WAIVED' },
   });
   res.json({ ok: true });
+});
+
+/**
+ * GET /lms/summary — training at a glance for the Learning desk (F500
+ * 2026-10-22: the admin page had no numbers). Enrollments carry no due
+ * date, so every number is one the data holds:
+ *   - lapsed: completed training past its expiry (renewal overdue), or
+ *     re-flagged EXPIRED by the expiry worker;
+ *   - expiring30 / expiring14: completed training whose expiry falls in the
+ *     next 30 / 14 days (the Expiring tab's default window);
+ *   - open: assigned or in progress; openStale: of those, assigned 30+ days ago;
+ *   - assigned30 / completed30: enrollments assigned in the last 30 days, and
+ *     how many of them are complete — the completion rate (null with none).
+ * This tenant's people who still work here, inside the caller's reach — the
+ * same people the Expiring tab lists.
+ */
+lms94Router.get('/lms/summary', VIEW, async (req, res) => {
+  const now = new Date();
+  const DAY = 86_400_000;
+  const in14 = new Date(now.getTime() + 14 * DAY);
+  const in30 = new Date(now.getTime() + 30 * DAY);
+  const ago30 = new Date(now.getTime() - 30 * DAY);
+  const people: Prisma.CourseEnrollmentWhereInput = {
+    tenantId: tenantIdForWrite(),
+    associate: { AND: [{ deletedAt: null, deactivatedAt: null }, scopeAssociates(req.user!)] },
+  };
+  const count = (where: Prisma.CourseEnrollmentWhereInput) => prisma.courseEnrollment.count({ where: { AND: [people, where] } });
+  const [lapsed, expiring30, expiring14, open, openStale, assigned30, completed30] = await Promise.all([
+    count({ OR: [{ status: 'EXPIRED' }, { status: 'COMPLETED', expiresAt: { lt: now } }] }),
+    count({ status: 'COMPLETED', expiresAt: { gte: now, lte: in30 } }),
+    count({ status: 'COMPLETED', expiresAt: { gte: now, lte: in14 } }),
+    count({ status: { in: ['ASSIGNED', 'IN_PROGRESS'] } }),
+    count({ status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, assignedAt: { lt: ago30 } }),
+    count({ assignedAt: { gte: ago30 }, status: { not: 'WAIVED' } }),
+    count({ assignedAt: { gte: ago30 }, status: 'COMPLETED' }),
+  ]);
+  res.json({
+    lapsed,
+    expiring30,
+    expiring14,
+    open,
+    openStale,
+    assigned30,
+    completed30,
+    completionRate30: assigned30 > 0 ? Math.round((completed30 / assigned30) * 100) : null,
+  });
 });
 
 /**

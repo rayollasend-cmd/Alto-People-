@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
@@ -73,92 +73,88 @@ beforeEach(() => {
   vi.mocked(acknowledgePolicy).mockReset();
 });
 
+// Policies as a list, each read in a sheet (F500 fix-up 2026-10-22). The
+// legal posture is the old one: the full text renders, a policy can only be
+// acknowledged once its text was read to the end (jsdom has no
+// IntersectionObserver, so the read gate fails open when the sheet opens),
+// and every acknowledgment is its own POST.
 describe('<PolicyAckTask>', () => {
-  it('renders every unacknowledged policy body in one continuous flow', async () => {
+  it('lists every policy as a row (title, version, state) with the text kept out of the list', async () => {
     vi.mocked(getApplicationPolicies).mockResolvedValueOnce({
-      policies: [policy('p1', 'Code of Conduct'), policy('p2', 'Food Safety')],
+      policies: [policy('p1', 'Code of Conduct', true), policy('p2', 'Food Safety')],
     });
     renderTask();
-
-    // Each policy is a numbered section with its full body already visible —
-    // no expand step.
-    expect(
-      await screen.findByRole('heading', { name: /code of conduct/i })
-    ).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /food safety/i })).toBeInTheDocument();
-    expect(screen.getByText('Policy 1 of 2')).toBeInTheDocument();
-    expect(screen.getByText('Policy 2 of 2')).toBeInTheDocument();
-    expect(screen.getAllByText('Short policy body for tests.')).toHaveLength(2);
-    // One inline Acknowledge checkpoint per section.
-    expect(screen.getAllByRole('button', { name: /^acknowledge$/i })).toHaveLength(2);
+    const row1 = await screen.findByTestId('policy-row-p1');
+    expect(row1).toHaveTextContent('Code of Conduct');
+    expect(row1).toHaveTextContent('v1.0');
+    expect(row1).toHaveTextContent('Acknowledged');
+    expect(screen.getByTestId('policy-row-p2')).toHaveTextContent('Not read yet');
+    // No twelve screens of text: bodies only render in the sheet.
+    expect(screen.queryByText('Short policy body for tests.')).toBeNull();
+    // The sticky progress says where you are.
+    expect(screen.getByTestId('policy-progress')).toHaveTextContent('1 of 2 acknowledged');
   });
 
-  it('clicks an inline Acknowledge → calls API → re-fetches the list', async () => {
+  it('opens a policy in a sheet; I acknowledge → one POST → refetch → on to the next', async () => {
     vi.mocked(getApplicationPolicies)
-      .mockResolvedValueOnce({ policies: [policy('p1', 'Code of Conduct')] })
-      .mockResolvedValueOnce({ policies: [policy('p1', 'Code of Conduct', true)] });
+      .mockResolvedValueOnce({ policies: [policy('p1', 'Code of Conduct'), policy('p2', 'Food Safety')] })
+      .mockResolvedValueOnce({ policies: [policy('p1', 'Code of Conduct', true), policy('p2', 'Food Safety')] });
     vi.mocked(acknowledgePolicy).mockResolvedValueOnce(undefined);
 
     const user = userEvent.setup();
     renderTask();
-    // jsdom has no IntersectionObserver, so the read-gate fails open and
-    // the per-section Acknowledge button is enabled immediately.
-    const ackButton = await screen.findByRole('button', { name: /^acknowledge$/i });
-    await user.click(ackButton);
+    await user.click(await screen.findByTestId('policy-row-p1'));
+    const sheet = await screen.findByTestId('policy-sheet');
+    expect(within(sheet).getByRole('heading', { name: 'Code of Conduct' })).toBeInTheDocument();
+    expect(within(sheet).getByText('Short policy body for tests.')).toBeInTheDocument();
+    expect(within(sheet).getByText(/policy 1 of 2/i)).toBeInTheDocument();
 
+    await user.click(within(sheet).getByRole('button', { name: /^i acknowledge$/i }));
     await waitFor(() => expect(acknowledgePolicy).toHaveBeenCalledWith(APP_ID, { policyId: 'p1' }));
     await waitFor(() => expect(getApplicationPolicies).toHaveBeenCalledTimes(2));
-    // The checkpoint flips to an "Acknowledged" state (exact case).
-    expect(await screen.findByText('Acknowledged')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^acknowledge$/i })).not.toBeInTheDocument();
+    // The sheet moves on to the next one still to acknowledge.
+    expect(await screen.findByRole('heading', { name: 'Food Safety' })).toBeInTheDocument();
+    expect(screen.getByTestId('policy-progress')).toHaveTextContent('1 of 2 acknowledged');
   });
 
-  it('"Acknowledge all remaining" fires one POST per unacknowledged policy', async () => {
+  it('"Acknowledge all I\'ve read" posts only the policies whose text was read', async () => {
     vi.mocked(getApplicationPolicies)
       .mockResolvedValueOnce({
-        policies: [
-          policy('p1', 'Code of Conduct', true),
-          policy('p2', 'Food Safety'),
-          policy('p3', 'Attendance'),
-        ],
+        policies: [policy('p1', 'Code of Conduct', true), policy('p2', 'Food Safety'), policy('p3', 'Attendance')],
       })
       .mockResolvedValueOnce({
-        policies: [
-          policy('p1', 'Code of Conduct', true),
-          policy('p2', 'Food Safety', true),
-          policy('p3', 'Attendance', true),
-        ],
+        policies: [policy('p1', 'Code of Conduct', true), policy('p2', 'Food Safety', true), policy('p3', 'Attendance')],
       });
     vi.mocked(acknowledgePolicy).mockResolvedValue(undefined);
 
     const user = userEvent.setup();
     renderTask();
+    // Nothing read yet: the bulk action has nothing to do.
+    const bulk0 = await screen.findByRole('button', { name: /acknowledge all i've read \(0\)/i });
+    expect(bulk0).toBeDisabled();
 
-    const bulk = await screen.findByRole('button', {
-      name: /acknowledge all remaining \(2\)/i,
-    });
-    await user.click(bulk);
+    // Read Food Safety (open it, close it without acknowledging).
+    await user.click(screen.getByTestId('policy-row-p2'));
+    await screen.findByTestId('policy-sheet');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('policy-sheet')).toBeNull());
+    expect(screen.getByTestId('policy-row-p2')).toHaveTextContent(/read · not yet acknowledged/i);
 
-    await waitFor(() => expect(acknowledgePolicy).toHaveBeenCalledTimes(2));
-    // Same per-policy POST as the inline checkpoints — one audit record each.
-    expect(acknowledgePolicy).toHaveBeenNthCalledWith(1, APP_ID, { policyId: 'p2' });
-    expect(acknowledgePolicy).toHaveBeenNthCalledWith(2, APP_ID, { policyId: 'p3' });
-    await waitFor(() => expect(getApplicationPolicies).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('3 of 3 acknowledged')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /acknowledge all i've read \(1\)/i }));
+    await waitFor(() => expect(acknowledgePolicy).toHaveBeenCalledTimes(1));
+    // Same per-policy POST as the sheet — one audit record each, and never
+    // for Attendance, which was never opened.
+    expect(acknowledgePolicy).toHaveBeenCalledWith(APP_ID, { policyId: 'p2' });
+    await waitFor(() => expect(screen.getByTestId('policy-progress')).toHaveTextContent('2 of 3 acknowledged'));
   });
 
-  it('collapses policies acknowledged before this visit to one-line rows', async () => {
+  it('once everything is acknowledged the way on is the only action', async () => {
     vi.mocked(getApplicationPolicies).mockResolvedValueOnce({
-      policies: [policy('p1', 'Code of Conduct', true), policy('p2', 'Food Safety')],
+      policies: [policy('p1', 'Code of Conduct', true), policy('p2', 'Food Safety', true)],
     });
     renderTask();
-
-    await screen.findByRole('heading', { name: /food safety/i });
-    // The already-acked policy renders as a collapsed row, not a section —
-    // its body is not repeated in the reading flow.
-    expect(screen.queryByRole('heading', { name: /code of conduct/i })).toBeNull();
-    expect(screen.getByText('Code of Conduct')).toBeInTheDocument();
-    expect(screen.getAllByText('Short policy body for tests.')).toHaveLength(1);
+    expect(await screen.findByRole('button', { name: /done — back to checklist/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /acknowledge all/i })).toBeNull();
   });
 
   it('shows a skeleton loading state until the first fetch resolves', async () => {
@@ -175,5 +171,13 @@ describe('<PolicyAckTask>', () => {
     await waitFor(() =>
       expect(container.querySelectorAll('[aria-busy="true"]').length).toBe(0)
     );
+  });
+
+  it('a failed load says so with Retry, not skeletons that keep pulsing', async () => {
+    vi.mocked(getApplicationPolicies).mockRejectedValueOnce(new Error('boom'));
+    const { container } = renderTask();
+    expect(await screen.findByText(/couldn.t load your policies/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(container.querySelectorAll('[aria-busy="true"]').length).toBe(0);
   });
 });

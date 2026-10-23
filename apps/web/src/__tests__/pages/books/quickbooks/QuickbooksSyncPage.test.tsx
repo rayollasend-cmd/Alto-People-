@@ -92,8 +92,8 @@ describe('<QuickbooksSyncPage>', () => {
     vi.stubGlobal('location', { ...window.location, assign });
     renderAs('FINANCE_ACCOUNTANT', <QuickbooksSyncPage />, '/books/quickbooks');
     expect(await screen.findByRole('heading', { name: 'Connect your company’s QuickBooks' })).toBeInTheDocument();
-    expect(screen.getByText('From the site to QuickBooks')).toBeInTheDocument();
-    expect(screen.getByText('From QuickBooks to the site')).toBeInTheDocument();
+    expect(screen.getByText('From here to QuickBooks')).toBeInTheDocument();
+    expect(screen.getByText('From QuickBooks to here')).toBeInTheDocument();
     expect(screen.getByText(/simulated QuickBooks company/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Connect QuickBooks' }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/api/books/quickbooks/callback?code=STUB'));
@@ -137,7 +137,7 @@ describe('<QuickbooksSyncPage>', () => {
     renderAs('EXECUTIVE_CHAIRMAN', <QuickbooksSyncPage />, '/books/quickbooks');
     expect(await screen.findByText(conflict.summary)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sync now' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Keep the site’s' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Keep the version here' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Disconnect/ })).toBeNull();
   });
 });

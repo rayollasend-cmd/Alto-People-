@@ -10,16 +10,17 @@ import { z } from 'zod';
  *   PATCH  /books/accounts/:id                   LedgerAccountUpdateInput → { account }
  *   DELETE /books/accounts/:id                   → 204 (only with no entries)
  *   GET    /books/accounts/:id/detail?from&to&clientId&siteId&departmentId&costCenterId → LedgerAccountDetail
- *   GET    /books/journal?from&to&source&origin&status&accountId&q&limit&offset → BooksJournalList
+ *   GET    /books/journal?from&to&source&origin&status&accountId&q&sort&dir&limit&offset → BooksJournalList
+ *   GET    /books/journal.csv?(the same filters and sort) → every matching entry as CSV
  *   GET    /books/journal/:id                    → { entry: BooksJournalEntryDetail }
  *   POST   /books/journal                        BooksManualEntryInput → { entry }
  *   POST   /books/journal/:id/void               { reason } → { voided, reversalId }
  *   GET    /books/opening-balances               → { date, lines } (the current opening entry, if any)
  *   POST   /books/opening-balances               BooksOpeningBalancesInput → { entry }
  *   GET    /books/reports/trial-balance[.xlsx|.pdf]?asOf&dims
- *   GET    /books/reports/profit-and-loss[.xlsx|.pdf]?from&to&columns&dims
- *   GET    /books/reports/balance-sheet[.xlsx|.pdf]?asOf&dims
- *   GET    /books/reports/cash-flow[.xlsx|.pdf]?from&to&dims
+ *   GET    /books/reports/profit-and-loss[.xlsx|.pdf]?from&to&columns&dims&compare=prior|yoy
+ *   GET    /books/reports/balance-sheet[.xlsx|.pdf]?asOf&dims&compare=prior|yoy
+ *   GET    /books/reports/cash-flow[.xlsx|.pdf]?from&to&dims&compare=prior|yoy
  */
 
 const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -113,6 +114,8 @@ export interface LedgerAccountRow {
   balance: number;
   /** Has any entry: its type can't change and it can't be deleted. */
   hasEntries: boolean;
+  /** Net movement from Jan 1 of the as-of year through the as-of date, signed like `balance`. */
+  activityYtd: number;
 }
 
 export const LedgerAccountCreateInputSchema = z.object({
@@ -283,12 +286,22 @@ export interface BooksPnlTotals {
   netIncome: number;
 }
 
+/**
+ * A statement's comparison: `prior` is the same span just before (the month
+ * before a month, the quarter before a quarter, last year's year-to-date
+ * for a year-to-date); `yoy` is the same dates a year earlier.
+ */
+export const BOOKS_COMPARE_KINDS = ['prior', 'yoy'] as const;
+export type BooksCompareKind = (typeof BOOKS_COMPARE_KINDS)[number];
+
 export interface BooksProfitAndLoss {
   from: string;
   to: string;
   sections: BooksPnlSections;
   totals: BooksPnlTotals;
   columns: Array<{ key: string; label: string; sections: BooksPnlSections; totals: BooksPnlTotals }>;
+  /** With ?compare= (and no columns): the same statement for the comparison range. */
+  compare?: { kind: BooksCompareKind; from: string; to: string; sections: BooksPnlSections; totals: BooksPnlTotals } | null;
 }
 
 export interface BooksBalanceSheet {
@@ -298,6 +311,8 @@ export interface BooksBalanceSheet {
   liabilities: BooksReportRow[];
   equity: BooksReportRow[];
   totals: { assets: number; liabilities: number; equity: number; liabilitiesAndEquity: number; balanced: boolean };
+  /** With ?compare=: the balance sheet a month (prior) or a year (yoy) earlier. */
+  compare?: { kind: BooksCompareKind; asOf: string; assets: BooksReportRow[]; liabilities: BooksReportRow[]; equity: BooksReportRow[]; totals: BooksBalanceSheet['totals'] } | null;
 }
 
 export interface BooksCashFlow {
@@ -308,6 +323,8 @@ export interface BooksCashFlow {
   investing: BooksReportRow[];
   financing: BooksReportRow[];
   totals: { operating: number; investing: number; financing: number; netChange: number; cashChange: number; reconciles: boolean };
+  /** With ?compare=: the same statement for the comparison range. */
+  compare?: { kind: BooksCompareKind; from: string; to: string; netIncome: number; operating: BooksReportRow[]; investing: BooksReportRow[]; financing: BooksReportRow[]; totals: BooksCashFlow['totals'] } | null;
 }
 
 export interface BooksTrialBalance {

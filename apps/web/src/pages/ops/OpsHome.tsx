@@ -8,6 +8,7 @@ import { OpsRunner } from './OpsRunner';
 import { OpsBoard } from './OpsBoard';
 import { OpsLibrary } from './OpsLibrary';
 import { ListTemplate } from '@/components/templates';
+import { termizeText } from '@/lib/modules';
 import { StoreOps } from '../portal/PortalOps';
 
 /**
@@ -72,7 +73,7 @@ export function OpsHome() {
         subtitle={
           searchParams.get('shift')
             ? undefined
-            : 'The floor, on the record — SOP checklists, live shifts, handover, and the standard behind them.'
+            : termizeText('Checklists, live shifts and handovers for every store.', term)
         }
     >
       {/* Mid-checklist the page is the checklist: no explainer above it. */}

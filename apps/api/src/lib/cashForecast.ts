@@ -76,7 +76,8 @@ export interface CashForecast {
   from: string;
   to: string;
   /** The Books cash position today (null when the books hold no bank account yet). */
-  opening: { balance: number; accounts: number; asOf: string } | null;
+  /** `onFile`: false when the bank accounts exist but nothing is posted to them (no opening balance, no feed). */
+  opening: { balance: number; accounts: number; asOf: string; onFile: boolean } | null;
   /** The cash floor from Settings → Finance; null when none is set. */
   minimumCash: number | null;
   /** The week the projected balance is lowest. */
@@ -132,7 +133,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     cashOnHand(prisma, today).catch(() => null),
     prisma.orgSetting.findFirst({ where: { tenantId: opts.tenantId ?? tenantIdForWrite() }, select: { cashMinimum: true } }),
   ]);
-  const opening = cash && cash.accounts > 0 ? { balance: cash.total, accounts: cash.accounts, asOf: today } : null;
+  const opening = cash && cash.accounts > 0 ? { balance: cash.total, accounts: cash.accounts, asOf: today, onFile: cash.postedAccounts > 0 } : null;
   const minimumCash = org?.cashMinimum != null ? Number(org.cashMinimum) : null;
 
   // ---- Payroll: the next two paydays ------------------------------------

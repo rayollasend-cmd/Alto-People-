@@ -1,6 +1,7 @@
 import type {
   BooksBalanceSheet,
   BooksCashFlow,
+  BooksCompareKind,
   BooksDimensions,
   BooksDimensionsFilter,
   BooksJournalEntryDetail,
@@ -45,10 +46,15 @@ export interface JournalFilters {
   status?: 'POSTED' | 'VOID';
   accountId?: string;
   q?: string;
+  /** The server orders the whole filtered set; default newest first. */
+  sort?: 'date' | 'number' | 'amount';
+  dir?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
 }
 export const listJournal = (f: JournalFilters = {}) => apiFetch<BooksJournalList>(`${B}/journal${qs({ ...f })}`);
+/** Every entry the filters match (not just the page on screen), as CSV. */
+export const downloadJournalCsv = (f: Omit<JournalFilters, 'limit' | 'offset'> = {}) => downloadFile(`${B}/journal.csv${qs({ ...f })}`, 'journal.csv');
 export const getJournalEntry = (id: string) => apiFetch<{ entry: BooksJournalEntryDetail }>(`${B}/journal/${id}`);
 export const postManualEntry = (body: BooksManualEntryInput) => apiFetch<{ entry: { id: string; number: number } }>(`${B}/journal`, { method: 'POST', body });
 export const voidJournalEntry = (id: string, reason: string) => apiFetch<{ voided: boolean; reversalId: string | null }>(`${B}/journal/${id}/void`, { method: 'POST', body: { reason } });
@@ -61,6 +67,8 @@ export interface ReportParams extends BooksDimensionsFilter {
   to?: string;
   asOf?: string;
   columns?: 'none' | 'month' | 'client';
+  /** Beside the statement: the same one for the period (prior) or year (yoy) before. */
+  compare?: BooksCompareKind;
 }
 export const getProfitAndLoss = (p: ReportParams) => apiFetch<BooksProfitAndLoss>(`${B}/reports/profit-and-loss${qs({ ...p })}`);
 export const getBalanceSheet = (p: ReportParams) => apiFetch<BooksBalanceSheet>(`${B}/reports/balance-sheet${qs({ ...p })}`);
@@ -69,7 +77,13 @@ export const getTrialBalance = (p: ReportParams) => apiFetch<BooksTrialBalance>(
 
 /** Download a statement as a PDF or a workbook. */
 export async function downloadReport(kind: ReportKind, format: 'pdf' | 'xlsx', p: ReportParams): Promise<void> {
-  const res = await fetch(`/api${B}/reports/${kind}.${format}${qs({ ...p })}`, { credentials: 'include' });
+  const { compare: _compare, ...rest } = p;
+  return downloadFile(`${B}/reports/${kind}.${format}${qs({ ...rest })}`, `${kind}.${format}`);
+}
+
+/** Fetch a file the API sends as an attachment and hand it to the browser. */
+async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(`/api${path}`, { credentials: 'include' });
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     throw new Error(data?.error?.message ?? 'The download failed.');
@@ -79,7 +93,7 @@ export async function downloadReport(kind: ReportKind, format: 'pdf' | 'xlsx', p
   const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '');
   const a = document.createElement('a');
   a.href = url;
-  a.download = m?.[1] ?? `${kind}.${format}`;
+  a.download = m?.[1] ?? fallbackName;
   document.body.appendChild(a);
   a.click();
   a.remove();

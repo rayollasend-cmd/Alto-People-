@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  ArrowLeft,
   Camera,
   Download,
   MessageSquare,
@@ -21,6 +20,7 @@ import { fmtDate, fmtDateTime, fmtRelativeDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { personPhotoUrl } from '@/lib/photoUrl';
 import {
+  getDirect,
   getThread,
   listConversations,
   markRead,
@@ -30,6 +30,7 @@ import {
   sendPhoto,
   startConversation,
   transcriptUrl,
+  personLine,
   type ConversationRow,
   type MessagePerson,
   type MessageRow,
@@ -50,6 +51,23 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
+import { usePageHero } from '@/lib/pageTitle';
+import type { MessageKey } from '@/lib/i18n';
+
+/** Whose copy: the store's people, the driver, the associate, or the desks (F500 G5). */
+type Voice = 'store' | 'driver' | 'associate' | 'staff';
+function voiceOf(role: string | undefined): Voice {
+  if (role === 'CLIENT_PORTAL' || role === 'SHIFT_SUPERVISOR' || role === 'FLOOR_SUPERVISOR') return 'store';
+  if (role === 'DRIVER') return 'driver';
+  if (role === 'ASSOCIATE') return 'associate';
+  return 'staff';
+}
+const SUBTITLE: Record<Voice, MessageKey> = {
+  store: 'msg.subtitle',
+  driver: 'msg.subtitleDriver',
+  associate: 'msg.subtitleAssociate',
+  staff: 'msg.subtitleStaff',
+};
 
 
 /**
@@ -146,21 +164,25 @@ export function MessagesHome() {
     [queryClient],
   );
 
-  // Deep link from the portal: /messages?to=<userId> opens (or starts) a
-  // direct thread with that person. Consumed once.
+  // Deep link from anywhere: /messages?to=<userId> opens the direct thread
+  // with that person, or a draft that becomes the thread with its first
+  // message — never an empty thread (F500 G5: it fired twice and made two).
   const to = searchParams.get('to');
+  // Looked up once per address (a query, so a re-render or a second effect
+  // run can't start anything twice), never created here.
+  const direct = useQuery({ queryKey: ['messages', 'direct', to], queryFn: () => getDirect(to!), enabled: !!to, retry: false, staleTime: 60_000 });
+  const handledTo = useRef<string | null>(null);
   useEffect(() => {
-    if (!to) return;
-    let cancelled = false;
-    void startConversation({ participantIds: [to] })
-      .then((r) => {
-        if (!cancelled) navigate(`/messages/${r.id}`, { replace: true });
-      })
-      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('msg.startFailed')));
-    return () => {
-      cancelled = true;
-    };
-  }, [to, navigate, t]);
+    if (!to || handledTo.current === to) return;
+    if (direct.data?.conversationId) {
+      handledTo.current = to;
+      navigate(`/messages/${direct.data.conversationId}`, { replace: true });
+    } else if (direct.isError) {
+      handledTo.current = to;
+      toast.error(direct.error instanceof Error ? direct.error.message : t('msg.startFailed'));
+    }
+  }, [to, direct.data, direct.isError, direct.error, navigate, t]);
+  const draftTo: MessagePerson | null = to && direct.data && !direct.data.conversationId ? direct.data.person : null;
 
   const search = useQuery({
     queryKey: ['messages', 'search', q],
@@ -171,18 +193,29 @@ export function MessagesHome() {
   if (!user) return null;
   const rows = inbox.data?.conversations ?? [];
   const totalUnread = rows.reduce((a, r) => a + r.unread, 0);
+  const voice = voiceOf(user.role);
+  // A draft (from ?to=) sits where a thread would.
+  const draft = !id && draftTo ? draftTo : null;
+  const threadOpen = !!id || !!draft;
 
   return (
     <div ref={fill.ref} className="mx-auto flex h-[calc(100dvh-8.5rem)] max-w-6xl flex-col md:h-[calc(100dvh-7rem)]" style={fill.height ? { height: fill.height } : undefined}>
       <PageHeader
         title={t('msg.title')}
-        subtitle={totalUnread > 0 ? t('msg.unreadLine', { count: totalUnread }) : t('msg.subtitle')}
-        className={cn('mb-3', id && 'hidden md:block')}
+        // One line on a phone: the list starts on the first screen.
+        subtitle={<span className="line-clamp-1 sm:line-clamp-none">{totalUnread > 0 ? t('msg.unreadLine', { count: totalUnread }) : t(SUBTITLE[voice])}</span>}
+        className={cn('mb-3', threadOpen && 'hidden md:block')}
         primaryAction={
-          <Button size="sm" onClick={() => setComposeOpen(true)}>
-            <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-            {t('msg.new')}
-          </Button>
+          <>
+            {/* Phone: an icon in the header row, not a full-width button. */}
+            <Button size="icon-sm" className="sm:hidden" onClick={() => setComposeOpen(true)} aria-label={t('msg.new')} title={t('msg.new')}>
+              <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button size="sm" className="hidden sm:inline-flex" onClick={() => setComposeOpen(true)}>
+              <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              {t('msg.new')}
+            </Button>
+          </>
         }
       />
       <div className="flex min-h-0 flex-1 gap-4">
@@ -190,9 +223,11 @@ export function MessagesHome() {
         <aside
           className={cn(
             'flex w-full min-w-0 flex-col rounded-lg border border-navy-secondary bg-navy-secondary/10 md:w-80 md:shrink-0',
-            id && 'hidden md:flex',
+            threadOpen && 'hidden md:flex',
           )}
         >
+          {/* No search box over an empty list. */}
+          {(rows.length > 0 || q) && (
           <div className="p-2">
             <label className="relative block">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-silver/50" aria-hidden="true" />
@@ -205,6 +240,7 @@ export function MessagesHome() {
               />
             </label>
           </div>
+          )}
           <div className="min-h-0 flex-1 overflow-y-auto">
             {q.trim().length >= 2 ? (
               <ul className="divide-y divide-navy-secondary/60">
@@ -247,7 +283,7 @@ export function MessagesHome() {
               </div>
             ) : rows.length === 0 ? (
               <div className="p-4">
-                <EmptyState icon={MessageSquare} title={t('msg.none')} description={t('msg.noneHint')} />
+                <EmptyState icon={MessageSquare} title={t('msg.none')} description={t(voice === 'store' ? 'msg.noneHint' : 'msg.noneHintOther')} />
               </div>
             ) : (
               <ul className="divide-y divide-navy-secondary/60">
@@ -263,13 +299,19 @@ export function MessagesHome() {
                       <ConversationAvatar c={c} meId={user.id} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline justify-between gap-2">
-                          <span className={cn('truncate text-sm', c.unread > 0 ? 'font-semibold text-ink' : 'font-medium text-ink/90')}>
+                          <span className={cn('min-w-0 truncate text-sm', c.unread > 0 ? 'font-semibold text-ink' : 'font-medium text-ink/90')}>
                             {c.title}
                           </span>
                           {c.lastMessageAt && (
                             <span className="shrink-0 text-2xs tabular-nums text-silver/50">{fmtRelativeDate(c.lastMessageAt)}</span>
                           )}
                         </div>
+                        {/* Who they are: "Associate · Front Beach 218" (a direct thread). */}
+                        {c.kind === 'DIRECT' && (() => {
+                          const other = c.participants.find((p) => p.id !== user.id);
+                          const line = other ? personLine(other) : '';
+                          return line ? <div className="truncate text-2xs text-silver/60" data-testid="row-person-line">{line}</div> : null;
+                        })()}
                         <div className="flex items-center gap-2">
                           <p className={cn('min-w-0 flex-1 truncate text-xs', c.unread > 0 ? 'text-silver' : 'text-silver/60')}>
                             {c.lastPreview ?? t('msg.noMessagesYet')}
@@ -290,12 +332,34 @@ export function MessagesHome() {
         </aside>
 
         {/* ---- Thread ----------------------------------------------------- */}
-        <section className={cn('min-w-0 flex-1', !id && 'hidden md:block')}>
+        <section className={cn('min-w-0 flex-1', !threadOpen && 'hidden md:block')}>
           {id ? (
-            <Thread key={id} id={id} meId={user.id} onBack={() => navigate('/messages')} />
+            <Thread key={id} id={id} meId={user.id} />
+          ) : draft ? (
+            <DraftThread
+              person={draft}
+              onStarted={(cid) => {
+                void queryClient.invalidateQueries({ queryKey: ['messages'] });
+                navigate(`/messages/${cid}`, { replace: true });
+              }}
+            />
           ) : (
             <div className="hidden h-full items-center justify-center rounded-lg border border-dashed border-navy-secondary md:flex">
-              <EmptyState icon={MessageSquare} title={t('msg.pick')} description={t('msg.pickHint')} />
+              {rows.length === 0 && inbox.data ? (
+                // Nothing to pick: the way to start one, not "pick on the left".
+                <EmptyState
+                  icon={MessageSquarePlus}
+                  title={t('msg.new')}
+                  description={t('msg.draftHint')}
+                  action={
+                    <Button size="sm" onClick={() => setComposeOpen(true)}>
+                      {t('msg.new')}
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState icon={MessageSquare} title={t('msg.pick')} description={t(voice === 'store' ? 'msg.pickHint' : 'msg.pickHintOther')} />
+              )}
             </div>
           )}
         </section>
@@ -336,7 +400,7 @@ function ConversationAvatar({ c, meId }: { c: ConversationRow; meId: string }) {
 
 /* ---- One thread ---------------------------------------------------------- */
 
-function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => void }) {
+function Thread({ id, meId }: { id: string; meId: string }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
@@ -408,20 +472,23 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
   const loadFailed = thread.isError && !data;
   const others = (data?.participants ?? []).filter((p) => p.id !== meId);
   const participantById = useMemo(() => new Map((data?.participants ?? []).map((p) => [p.id, p])), [data]);
+  // The conversation's name is the page's: the phone's top bar shows it with
+  // its Back (it read "Mes…" beside a second back arrow in the card).
+  const heroRef = usePageHero<HTMLHeadingElement>(data?.title, data ? [{ label: t('msg.title'), to: '/messages' }, { label: data.title }] : null);
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-lg border border-navy-secondary bg-navy-secondary/10">
       <header className="flex items-center gap-2 border-b border-navy-secondary px-3 py-2">
-        <Button size="sm" variant="ghost" className="md:hidden" onClick={onBack} aria-label={t('msg.back')}>
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        </Button>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-ink">{data?.title ?? '…'}</div>
+          <h2 ref={heroRef} className="hidden truncate text-sm font-medium text-ink md:block">{data?.title ?? '…'}</h2>
           {data && (
-            <div className="truncate text-2xs text-silver/60">
+            <div className="truncate text-2xs text-silver/60" data-testid="thread-subtitle">
               {data.kind === 'STORE_CHANNEL'
                 ? t('msg.channelMembers', { count: data.participants.length })
-                : others.map((p) => `${p.name} · ${p.roleLabel}`).join(' · ')}
+                : data.kind === 'DIRECT'
+                  ? // "Associate · Front Beach 218", not the name a second time.
+                    others.map((p) => personLine(p)).filter(Boolean).join(' · ')
+                  : others.map((p) => p.name).join(', ')}
             </div>
           )}
         </div>
@@ -593,6 +660,58 @@ function groupByDay(messages: MessageRow[]): Array<{ day: string; label: string;
   return out;
 }
 
+/* ---- A first message to one person (/messages?to=) ------------------------- */
+
+function DraftThread({ person, onStarted }: { person: MessagePerson; onStarted: (id: string) => void }) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const heroRef = usePageHero<HTMLHeadingElement>(person.name, [{ label: t('msg.title'), to: '/messages' }, { label: person.name }]);
+  const send = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setBusy(true);
+    try {
+      const r = await startConversation({ participantIds: [person.id], body });
+      onStarted(r.id);
+    } catch (err) {
+      toast.error(failureText(err, t('msg.startFailed')));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex h-full min-h-0 flex-col rounded-lg border border-navy-secondary bg-navy-secondary/10" data-testid="message-draft">
+      <header className="flex items-center gap-2 border-b border-navy-secondary px-3 py-2">
+        <Avatar src={person.photoUrl ?? undefined} name={person.name} email="" size="sm" />
+        <div className="min-w-0 flex-1">
+          <h2 ref={heroRef} className="truncate text-sm font-medium text-ink">{person.name}</h2>
+          <div className="truncate text-2xs text-silver/60">{personLine(person)}</div>
+        </div>
+      </header>
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-silver/70">{t('msg.draftHint')}</div>
+      <footer className="border-t border-navy-secondary p-2">
+        <div className="flex items-end gap-2">
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={t('msg.placeholder')}
+            rows={1}
+            maxLength={4000}
+            className="min-h-10 flex-1 resize-none"
+            aria-label={t('msg.placeholder')}
+            autoFocus
+          />
+          <Button size="md" onClick={() => void send()} loading={busy} disabled={!draft.trim()}>
+            <Send className="h-4 w-4" aria-hidden="true" />
+            <span className="sr-only">{t('msg.send')}</span>
+          </Button>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
 /* ---- Start a thread -------------------------------------------------------- */
 
 function ComposeDialog({
@@ -628,7 +747,7 @@ function ComposeDialog({
     try {
       const r = await startConversation({
         participantIds: picked.map((p) => p.id),
-        body: body.trim() || undefined,
+        body: body.trim(),
       });
       onStarted(r.id);
     } catch (err) {
@@ -689,10 +808,7 @@ function ComposeDialog({
                     <Avatar src={photoUrl(p)} name={p.name} email="" size="sm" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm text-ink">{p.name}</span>
-                      <span className="block truncate text-2xs text-silver/60">
-                        {p.roleLabel}
-                        {p.clientName ? ` · ${p.clientName}` : ''}
-                      </span>
+                      <span className="block truncate text-2xs text-silver/60">{personLine({ ...p, siteName: p.siteName ?? p.clientName })}</span>
                     </span>
                   </button>
                 </li>
@@ -702,7 +818,8 @@ function ComposeDialog({
           <Textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder={t('msg.firstMessage')}
+            placeholder={t('msg.firstMessageNeeded')}
+            aria-label={t('msg.firstMessageNeeded')}
             rows={3}
             maxLength={4000}
           />
@@ -711,7 +828,8 @@ function ComposeDialog({
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={() => void start()} loading={busy} disabled={picked.length === 0}>
+          {/* A conversation starts with its first message — no empty threads in two inboxes. */}
+          <Button onClick={() => void start()} loading={busy} disabled={picked.length === 0 || !body.trim()}>
             <Send className="mr-1.5 h-4 w-4" aria-hidden="true" />
             {t('msg.start')}
           </Button>

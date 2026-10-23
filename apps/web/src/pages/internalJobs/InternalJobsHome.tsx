@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
-import { Briefcase, MapPin, Send, Users } from 'lucide-react';
+import { Briefcase, MapPin, Plus, Send, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { useUrlParam } from '@/lib/useUrlState';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
 import { ApiError } from '@/lib/api';
@@ -86,17 +88,21 @@ function errMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
 
+const JOB_TABS = ['browse', 'mine'] as const;
+
 export function InternalJobsHome() {
   const { user } = useAuth();
   // Brief 2-1b: a tenant with no clients is not offered a client to search by.
   const hasClients = useTenant().moduleOn('clientPortal');
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:recruiting') : false;
-  const [tab, setTab] = useState<'browse' | 'mine'>('browse');
+  const [tab, setTab] = useUrlParam<'browse' | 'mine'>('tab', 'browse', JOB_TABS, { history: 'push' });
   const [applyJob, setApplyJob] = useState<JobRow | null>(null);
   const [reviewJob, setReviewJob] = useState<JobRow | null>(null);
   const [search, setSearch] = useState('');
-  const [locationFilter, setLocationFilter] = useState<string | null>(null);
+  const [locationParam, setLocationParam] = useUrlParam<string>('location', '');
+  const locationFilter = locationParam || null;
+  const setLocationFilter = (l: string | null) => setLocationParam(l ?? '');
   // One in-flight action at a time — a double-click on Withdraw used to
   // fire the write twice.
   const [actionKey, setActionKey] = useState<string | null>(null);
@@ -160,7 +166,8 @@ export function InternalJobsHome() {
     <ListTemplate
         title="Internal jobs"
         subtitle="Open roles across the company. Apply directly — your manager and the hiring manager will see it."
-        breadcrumbs={[{ label: 'Me' }, { label: 'Internal jobs' }]}
+        // Whoever posts the jobs gets the way there; navigation, not a button.
+        related={canManage ? [{ label: 'Manage postings', to: '/recruiting/extras?tab=postings' }] : undefined}
     >
 
       <SegmentedControl<'browse' | 'mine'>
@@ -175,16 +182,20 @@ export function InternalJobsHome() {
 
       {tab === 'browse' ? (
         <div className="space-y-3">
-          <FilterBar>
-            <div className="w-full sm:w-72">
-              <SearchInput
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={hasClients ? 'Search title, client, or location…' : 'Search title or location…'}
-                aria-label="Search internal jobs"
-              />
-            </div>
-            {locations.length > 0 && (
+          <FilterBar
+            bare
+            search={
+              <div className="w-full sm:w-72">
+                <SearchInput
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={hasClients ? 'Search title, client, or location…' : 'Search title or location…'}
+                  aria-label="Search internal jobs"
+                />
+              </div>
+            }
+          >
+            {locations.length > 1 && (
               <>
                 <FilterChip
                   active={locationFilter === null}
@@ -231,7 +242,9 @@ export function InternalJobsHome() {
                   description={
                     search.trim() || locationFilter
                       ? 'Try a different search or clear the location filter.'
-                      : 'Check back — internal openings are posted here as roles open up.'
+                      : canManage
+                        ? 'Post a job and it shows here for everyone to apply to.'
+                        : 'Internal openings are posted here as roles open up.'
                   }
                   action={
                     search.trim() || locationFilter ? (
@@ -243,6 +256,12 @@ export function InternalJobsHome() {
                         }}
                       >
                         Clear filters
+                      </Button>
+                    ) : canManage ? (
+                      <Button asChild>
+                        <Link to="/recruiting/extras?tab=postings&new=1">
+                          <Plus className="mr-2 h-4 w-4" /> Post a job
+                        </Link>
                       </Button>
                     ) : undefined
                   }

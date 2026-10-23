@@ -155,10 +155,9 @@ describe('the floor’s activity feed and the one meaning of "open"', () => {
     const feed = await hr.get('/ops-activity');
     expect(feed.status).toBe(200);
     expect(feed.body.items.filter((i: { kind: string }) => i.kind === 'call_out')).toHaveLength(2);
-    // One publish row per client and batch (both share the timestamp here).
+    // One publish row per store and day, the store named in the title (F500 G5).
     const published = feed.body.items.filter((i: { kind: string }) => i.kind === 'published');
-    expect(published.find((i: { detail: string }) => i.detail === 'Coastal Resort')).toMatchObject({ title: '2 shifts published' });
-    expect(published.find((i: { detail: string }) => i.detail === 'Seaside')).toMatchObject({ title: '1 shift published' });
+    expect(published.map((i: { title: string }) => i.title).sort()).toEqual(['1 shift published · Seaside', '2 shifts published · Coastal Resort']);
 
     // A supervisor bound to Coastal sees Coastal's floor only.
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: a.id });

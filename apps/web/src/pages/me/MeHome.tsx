@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
-import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, MapPin, Pencil, Phone, Plus, Trash2, UserRound } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { isPending } from '@/lib/approvalRequestsApi';
 import {
@@ -39,6 +39,9 @@ import { useConfirm } from '@/lib/confirm';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { MySkillsCard } from './MySkillsCard';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
+import { updateProfile } from '@/lib/settingsApi';
+import { useAuth } from '@/lib/auth';
+import { fmtPhone } from '@/lib/format';
 import {
   Badge,
   Button,
@@ -77,6 +80,14 @@ const TAB_VALUES = [
 ] as const;
 
 type Tab = (typeof TAB_VALUES)[number];
+const TAB_LABEL: Record<Tab, MessageKey> = {
+  profile: 'me.tab.profile',
+  emergency: 'me.tab.emergency',
+  dependents: 'me.tab.dependents',
+  beneficiaries: 'me.tab.beneficiaries',
+  'life-events': 'me.tab.lifeEvents',
+  'tax-docs': 'me.tab.taxDocs',
+};
 
 type ContactDraft = {
   id?: string;
@@ -105,6 +116,15 @@ type BeneficiaryDraft = {
   percentage: number;
   dependentId: string | null;
 };
+
+/** The photo uploader Settings uses for staff; an associate's photo lives here (F500 G5: one home). */
+const ProfilePhotoCard = lazy(() => import('@/pages/Settings').then((m) => ({ default: m.ProfilePhotoCard })));
+
+const US_STATES = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD',
+  'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'PR',
+] as const;
 
 const relLabel = (t: Translate, r: string): string =>
   t(('me.rel.' + r) as MessageKey);
@@ -225,6 +245,9 @@ export function MeHome() {
   };
 
   const pullState = usePullToRefresh(refresh);
+  // The personal-details drawer: opened from the Profile tab, the "what's
+  // missing" row, Life events (moving is an address change), or ?edit=1.
+  const [editing, setEditing] = useState(() => searchParams.get('edit') === 'address');
 
   return (
     <>
@@ -233,12 +256,10 @@ export function MeHome() {
       <ListTemplate
         title={t('me.title')}
         subtitle={t('me.subtitle')}
-        // No "Workforce" breadcrumb — that's internal HR taxonomy, and it
-        // wasn't clickable anyway. This page is simply theirs.
-        breadcrumbs={[{ label: t('me.title') }]}
+        // No breadcrumb: one crumb repeating the title said nothing (F500 G5).
         secondaryActions={
           <Button asChild variant="outline" size="sm">
-            <Link to="/settings">{t('me.settingsLink')}</Link>
+            <Link to="/settings">{t('me.securityLink')}</Link>
           </Button>
         }
       >
@@ -256,7 +277,17 @@ export function MeHome() {
       )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList>
+        {/* A phone gets the six sections as one picker; "Tax documents" sat off-screen in a strip. */}
+        <div className="mb-3 sm:hidden">
+          <Select aria-label={t('me.sectionPick')} value={tab} onChange={(e) => setTab(e.target.value as Tab)} data-testid="me-tab-select">
+            {TAB_VALUES.map((v) => (
+              <option key={v} value={v}>
+                {t(TAB_LABEL[v])}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <TabsList className="hidden sm:flex">
           <TabsTrigger value="profile">{t('me.tab.profile')}</TabsTrigger>
           <TabsTrigger value="emergency">{t('me.tab.emergency')}</TabsTrigger>
           <TabsTrigger value="dependents">{t('me.tab.dependents')}</TabsTrigger>
@@ -266,13 +297,33 @@ export function MeHome() {
         </TabsList>
 
         <TabsContent value="profile">
+          {profile && (
+            <ProfileGaps
+              missing={[
+                ...(contacts !== null && contacts.length === 0 ? (['emergency'] as const) : []),
+                ...(!profile.addressLine1 ? (['address'] as const) : []),
+                ...(!profile.photoUrl ? (['photo'] as const) : []),
+              ]}
+              onTab={setTab}
+              onEditAddress={() => setEditing(true)}
+            />
+          )}
           <ProfilePanel
             profile={profile}
             employeeNumber={employeeNumber}
             error={sectionErrors.profile}
             onRetry={refresh}
             onSaved={refresh}
+            editing={editing}
+            setEditing={setEditing}
           />
+          {profile && (
+            <div className="mt-4" id="me-photo">
+              <Suspense fallback={<SkeletonRows count={2} />}>
+                <ProfilePhotoCard />
+              </Suspense>
+            </div>
+          )}
           {/* My skills: added here, verified by HR (HR walk, wave 2). */}
           {profile && <MySkillsCard />}
         </TabsContent>
@@ -311,6 +362,10 @@ export function MeHome() {
             error={sectionErrors.events}
             onRetry={refresh}
             onChange={refresh}
+            onEditAddress={() => {
+              setTab('profile');
+              setEditing(true);
+            }}
           />
         </TabsContent>
 
@@ -353,42 +408,78 @@ function SectionError({
 
 // ============ Profile ============
 
+/**
+ * What is still missing from their profile, said once at the top with the
+ * way to fix each — the page used to open on fields and a toggle without
+ * saying there was no emergency contact or street address on file.
+ */
+function ProfileGaps({
+  missing,
+  onTab,
+  onEditAddress,
+}: {
+  missing: ReadonlyArray<'emergency' | 'address' | 'photo'>;
+  onTab: (t: Tab) => void;
+  onEditAddress: () => void;
+}) {
+  const { t } = useI18n();
+  if (missing.length === 0) return null;
+  const link = 'inline-flex min-h-6 items-center text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-11';
+  return (
+    <div className="mb-4 rounded-lg border border-gold/40 bg-gold/[0.06] px-4 py-3 text-sm" data-testid="me-gaps">
+      <div className="font-medium text-ink">{t('me.gaps.title', { count: missing.length })}</div>
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+        {missing.includes('emergency') && (
+          <li>
+            <button type="button" className={link} onClick={() => onTab('emergency')}>
+              {t('me.gaps.emergency')}
+            </button>
+          </li>
+        )}
+        {missing.includes('address') && (
+          <li>
+            <button type="button" className={link} onClick={onEditAddress}>
+              {t('me.gaps.address')}
+            </button>
+          </li>
+        )}
+        {missing.includes('photo') && (
+          <li>
+            <a href="#me-photo" className={link}>
+              {t('me.gaps.photo')}
+            </a>
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+/** "100 Seaside Dr, Apt 2, Destin, FL 32541" — the address on one line. */
+function addressLine(p: SelfProfile): string | null {
+  const cityLine = [p.city, [p.state, p.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const parts = [p.addressLine1, p.addressLine2, cityLine].filter((x) => x && x.trim());
+  return parts.length ? parts.join(', ') : null;
+}
+
 function ProfilePanel({
   profile,
   employeeNumber,
   error,
   onRetry,
   onSaved,
+  editing,
+  setEditing,
 }: {
   profile: SelfProfile | null;
   employeeNumber: EmployeeNumber | null;
   error: string | null;
   onRetry: () => void;
   onSaved: () => void;
+  editing: boolean;
+  setEditing: (open: boolean) => void;
 }) {
   const { t } = useI18n();
-  const [phone, setPhone] = useState('');
-  const [addressLine1, setAddressLine1] = useState('');
-  const [addressLine2, setAddressLine2] = useState('');
-  const [city, setCity] = useState('');
-  const [stateCode, setStateCode] = useState('');
-  const [zip, setZip] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  // Seed once per mount, then hands off. Re-seeding on every profile
-  // identity change meant an accidental pull-to-refresh mid-edit silently
-  // discarded every keystroke and snapped the old values back.
-  const seededRef = useRef(false);
-  useEffect(() => {
-    if (!profile || seededRef.current) return;
-    seededRef.current = true;
-    setPhone(profile.phone ?? '');
-    setAddressLine1(profile.addressLine1 ?? '');
-    setAddressLine2(profile.addressLine2 ?? '');
-    setCity(profile.city ?? '');
-    setStateCode(profile.state ?? '');
-    setZip(profile.zip ?? '');
-  }, [profile]);
 
   if (!profile) {
     return (
@@ -404,35 +495,49 @@ function ProfilePanel({
     );
   }
 
-  const onSave = async () => {
-    setSaving(true);
-    try {
-      const r = await updateSelfProfile({
-        phone: phone.trim() || null,
-        addressLine1: addressLine1.trim() || null,
-        addressLine2: addressLine2.trim() || null,
-        city: city.trim() || null,
-        state: stateCode.trim() ? stateCode.trim().toUpperCase() : null,
-        zip: zip.trim() || null,
-      });
-      // The organization may ask HR to confirm an address change first (202).
-      toast.success(isPending(r) ? t('me.pendingApproval') : t('me.profileUpdated'));
-      onSaved();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : t('me.saveFailed'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  const address = addressLine(profile);
   return (
     <Card>
       <CardContent className="space-y-5">
         <EmployeeNumberRow employeeNumber={employeeNumber} />
         <FaceConsentRow />
 
+        {/* Read first, edit on purpose: the phone and address were always-open
+            boxes under a heading called "Editable" (F500 G5). */}
+        <section aria-labelledby="me-personal" className="rounded-md border border-navy-secondary p-4" data-testid="me-personal">
+          <div className="flex items-center justify-between gap-3">
+            <h2 id="me-personal" className="text-sm font-medium text-ink">{t('me.personal.title')}</h2>
+            <Button size="sm" variant="secondary" onClick={() => setEditing(true)} data-testid="me-personal-edit">
+              <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {t('me.personal.edit')}
+            </Button>
+          </div>
+          <dl className="mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+            <div className="flex gap-2">
+              <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+              <div className="min-w-0">
+                <dt className="text-xs text-silver">{t('me.fld.name')}</dt>
+                <dd className="text-ink">{`${profile.firstName} ${profile.lastName}`}</dd>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Phone className="mt-0.5 h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+              <div className="min-w-0">
+                <dt className="text-xs text-silver">{t('me.fld.phone')}</dt>
+                <dd className={profile.phone ? 'text-ink' : 'text-silver'}>{profile.phone ? fmtPhone(profile.phone) : t('me.personal.none')}</dd>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+              <div className="min-w-0">
+                <dt className="text-xs text-silver">{t('me.personal.address')}</dt>
+                <dd className={address ? 'break-words text-ink' : 'text-silver'} data-testid="me-address">{address ?? t('me.personal.none')}</dd>
+              </div>
+            </div>
+          </dl>
+        </section>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ReadonlyField label={t('me.fld.name')} value={`${profile.firstName} ${profile.lastName}`} />
           <ReadonlyField label={t('me.fld.workEmail')} value={profile.email} />
           <ReadonlyField
             label={t('me.fld.department')}
@@ -482,53 +587,116 @@ function ProfilePanel({
             value={EMPLOYMENT_LABEL[profile.employmentType] ?? profile.employmentType}
           />
         </div>
-
-        <div className="border-t border-navy-secondary pt-5 space-y-4">
-          <div className="text-sm font-medium text-white">{t('me.fld.editable')}</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FieldInput
-              label={t('me.fld.phone')}
-              value={phone}
-              onChange={setPhone}
-              placeholder="+1 555 555 5555"
-              type="tel"
-              inputMode="tel"
-            />
-            <FieldInput
-              label={t('me.fld.addr1')}
-              value={addressLine1}
-              onChange={setAddressLine1}
-            />
-            <FieldInput
-              label={t('me.fld.addr2')}
-              value={addressLine2}
-              onChange={setAddressLine2}
-            />
-            <FieldInput label={t('me.fld.city')} value={city} onChange={setCity} />
-            <FieldInput
-              label={t('me.fld.state')}
-              value={stateCode}
-              onChange={(v) => setStateCode(v.toUpperCase().slice(0, 2))}
-              placeholder="CA"
-            />
-            <FieldInput
-              label={t('me.fld.zip')}
-              value={zip}
-              onChange={setZip}
-              placeholder="94110"
-            />
-          </div>
-          <div className="text-xs text-silver">
-            {t('me.stateChangeNote')}
-          </div>
-          <div className="flex justify-end">
-            <Button onClick={onSave} disabled={saving}>
-              {saving ? t('me.saving') : t('me.saveChanges')}
-            </Button>
-          </div>
-        </div>
       </CardContent>
+      <Drawer open={editing} onOpenChange={(o) => !o && setEditing(false)}>
+        {editing && (
+          <PersonalDrawer
+            profile={profile}
+            onClose={() => setEditing(false)}
+            onSaved={() => {
+              setEditing(false);
+              onSaved();
+            }}
+          />
+        )}
+      </Drawer>
     </Card>
+  );
+}
+
+/** Name, phone and home address — the one place an associate changes them. */
+function PersonalDrawer({ profile, onClose, onSaved }: { profile: SelfProfile; onClose: () => void; onSaved: () => void }) {
+  const { t } = useI18n();
+  const { refreshUser } = useAuth();
+  const [firstName, setFirstName] = useState(profile.firstName);
+  const [lastName, setLastName] = useState(profile.lastName);
+  const [phone, setPhone] = useState(profile.phone ?? '');
+  const [addressLine1, setAddressLine1] = useState(profile.addressLine1 ?? '');
+  const [addressLine2, setAddressLine2] = useState(profile.addressLine2 ?? '');
+  const [city, setCity] = useState(profile.city ?? '');
+  const [stateCode, setStateCode] = useState(profile.state ?? '');
+  const [zip, setZip] = useState(profile.zip ?? '');
+  const [saving, setSaving] = useState(false);
+  const nameChanged = firstName.trim() !== profile.firstName || lastName.trim() !== profile.lastName;
+
+  const onSave = async () => {
+    if (!firstName.trim() || !lastName.trim()) {
+      toast.error(t('me.personal.nameRequired'));
+      return;
+    }
+    setSaving(true);
+    try {
+      if (nameChanged) {
+        await updateProfile({ firstName: firstName.trim(), lastName: lastName.trim() });
+        await refreshUser();
+      }
+      const r = await updateSelfProfile({
+        phone: phone.trim() || null,
+        addressLine1: addressLine1.trim() || null,
+        addressLine2: addressLine2.trim() || null,
+        city: city.trim() || null,
+        state: stateCode || null,
+        zip: zip.trim() || null,
+      });
+      // The organization may ask HR to confirm an address change first (202).
+      toast.success(isPending(r) ? t('me.pendingApproval') : t('me.profileUpdated'));
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('me.saveFailed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const field = (label: string, value: string, set: (v: string) => void, extra: { type?: string; inputMode?: 'tel' | 'numeric'; autoComplete?: string; maxLength?: number } = {}) => (
+    <div>
+      <Label>
+        {label}
+        <Input className="mt-1" value={value} onChange={(e) => set(e.target.value)} type={extra.type} inputMode={extra.inputMode} autoComplete={extra.autoComplete} maxLength={extra.maxLength} />
+      </Label>
+    </div>
+  );
+  return (
+    <>
+      <DrawerHeader>
+        <DrawerTitle>{t('me.personal.editTitle')}</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {field(t('me.fld.firstName'), firstName, setFirstName, { autoComplete: 'given-name', maxLength: 100 })}
+          {field(t('me.fld.lastName'), lastName, setLastName, { autoComplete: 'family-name', maxLength: 100 })}
+        </div>
+        {field(t('me.fld.phone'), phone, setPhone, { type: 'tel', inputMode: 'tel', autoComplete: 'tel' })}
+        {field(t('me.fld.addr1'), addressLine1, setAddressLine1, { autoComplete: 'address-line1' })}
+        {field(t('me.fld.addr2'), addressLine2, setAddressLine2, { autoComplete: 'address-line2' })}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_7rem_8rem]">
+          {field(t('me.fld.city'), city, setCity, { autoComplete: 'address-level2' })}
+          <div>
+            <Label>
+              {t('me.fld.state')}
+              <Select className="mt-1" value={stateCode} onChange={(e) => setStateCode(e.target.value)} autoComplete="address-level1">
+                <option value="">—</option>
+                {US_STATES.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </Select>
+            </Label>
+          </div>
+          {field(t('me.fld.zip'), zip, setZip, { inputMode: 'numeric', autoComplete: 'postal-code', maxLength: 10 })}
+        </div>
+        {/* Said where the home state is changed (it sat under the old form, about a "work state"). */}
+        <p className="text-xs text-silver">{t('me.homeStateNote')}</p>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          {t('me.cancel')}
+        </Button>
+        <Button onClick={onSave} disabled={saving} data-testid="me-personal-save">
+          {saving ? t('me.saving') : t('me.save')}
+        </Button>
+      </DrawerFooter>
+    </>
   );
 }
 
@@ -633,14 +801,23 @@ function FaceConsentRow() {
                 ? t('me.face.offHint')
                 : t('me.face.askHint')}
           </span>
-          {consent.status !== 'GRANTED' && (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(true)}>
-              {t('me.face.turnOn')}
-            </Button>
-          )}
-          {consent.status !== 'DECLINED' && (
+          {consent.status === null ? (
+            // Nothing chosen yet: a question, not "Turn off" for something that isn't on.
+            <span className="flex gap-2">
+              <Button size="sm" disabled={busy} onClick={() => change(true)}>
+                {t('me.face.allow')}
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(false)}>
+                {t('me.face.dontAllow')}
+              </Button>
+            </span>
+          ) : consent.status === 'GRANTED' ? (
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(false)}>
               {t('me.face.turnOff')}
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(true)}>
+              {t('me.face.turnOn')}
             </Button>
           )}
         </div>
@@ -703,38 +880,6 @@ function ReadonlyField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function FieldInput({
-  label,
-  value,
-  onChange,
-  placeholder,
-  type,
-  inputMode,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-  inputMode?: 'tel' | 'numeric' | 'email';
-}) {
-  const id = useId();
-  return (
-    <div>
-      <Label htmlFor={id}>{label}</Label>
-      <Input
-        id={id}
-        className="mt-1"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        type={type}
-        inputMode={inputMode}
-      />
-    </div>
-  );
-}
-
 // ============ Emergency contacts ============
 
 function EmergencyPanel({
@@ -774,11 +919,13 @@ function EmergencyPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={openAdd}>
-          <Plus className="mr-2 h-4 w-4" /> {t('me.em.add')}
-        </Button>
-      </div>
+      {rows !== null && rows.length > 0 && (
+        <div className="flex justify-end">
+          <Button onClick={openAdd}>
+            <Plus className="mr-2 h-4 w-4" /> {t('me.em.add')}
+          </Button>
+        </div>
+      )}
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
@@ -998,11 +1145,13 @@ function DependentsPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={openAdd}>
-          <Plus className="mr-2 h-4 w-4" /> {t('me.dep.add')}
-        </Button>
-      </div>
+      {rows !== null && rows.length > 0 && (
+        <div className="flex justify-end">
+          <Button onClick={openAdd}>
+            <Plus className="mr-2 h-4 w-4" /> {t('me.dep.add')}
+          </Button>
+        </div>
+      )}
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
@@ -1283,9 +1432,11 @@ function BeneficiariesPanel({
               t('me.ben.mustTotal')}
           </span>
         </div>
-        <Button onClick={openAdd}>
-          <Plus className="mr-2 h-4 w-4" /> {t('me.ben.add')}
-        </Button>
+        {rows !== null && rows.length > 0 && (
+          <Button onClick={openAdd}>
+            <Plus className="mr-2 h-4 w-4" /> {t('me.ben.add')}
+          </Button>
+        )}
       </div>
       <Card>
         <CardContent className="p-0">
@@ -1546,11 +1697,13 @@ function LifeEventsPanel({
   error,
   onRetry,
   onChange,
+  onEditAddress,
 }: {
   rows: LifeEvent[] | null;
   error: string | null;
   onRetry: () => void;
   onChange: () => void;
+  onEditAddress: () => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -1585,11 +1738,20 @@ function LifeEventsPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={() => setOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> {t('me.ev.report')}
-        </Button>
-      </div>
+      {/* Moving is an address change: one place to make it (F500 G5). */}
+      <p className="text-sm text-silver" data-testid="me-ev-address">
+        {t('me.ev.movedHint')}{' '}
+        <button type="button" onClick={onEditAddress} className="inline-flex min-h-6 items-center text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-11">
+          {t('me.ev.movedLink')}
+        </button>
+      </p>
+      {rows !== null && rows.length > 0 && (
+        <div className="flex justify-end">
+          <Button onClick={() => setOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" /> {t('me.ev.report')}
+          </Button>
+        </div>
+      )}
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
@@ -1601,7 +1763,7 @@ function LifeEventsPanel({
           ) : rows.length === 0 ? (
             <EmptyState
               title={t('me.ev.emptyTitle')}
-              description={t('me.ev.emptyDesc')}
+              description={t('me.ev.emptyDesc2')}
               action={
                 <Button onClick={() => setOpen(true)}>
                   <Plus className="mr-2 h-4 w-4" /> {t('me.ev.report')}
@@ -1648,7 +1810,8 @@ function LifeEventsPanel({
               value={kind}
               onChange={(e) => setKind(e.target.value as typeof LIFE_EVENT_KINDS[number])}
             >
-              {LIFE_EVENT_KINDS.map((k) => (
+              {/* An address change is made on the Profile tab (the line above links it). */}
+              {LIFE_EVENT_KINDS.filter((k) => k !== 'ADDRESS_CHANGE').map((k) => (
                 <option key={k} value={k}>
                   {evkLabel(t, k)}
                 </option>

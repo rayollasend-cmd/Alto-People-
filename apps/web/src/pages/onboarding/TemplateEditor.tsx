@@ -4,7 +4,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowDown,
   ArrowUp,
-  GripVertical,
+  ChevronDown,
+  ChevronRight,
   Plus,
   Save,
   Trash2,
@@ -112,7 +113,20 @@ export function TemplateEditor() {
   const [name, setName] = useState('');
   const [track, setTrack] = useState<OnboardingTrack>('STANDARD');
   const [clientId, setClientId] = useState<string>(''); // '' = global
-  const [tasks, setTasks] = useState<DraftTask[]>([blankTask()]);
+  const [tasks, setTasks] = useState<DraftTask[]>(() => [blankTask()]);
+  // F500 G1: each task is one line (kind, title, due) until opened — eight
+  // always-open cards were five screens. A new template's first task, a
+  // task just added, and a task that fails validation open themselves.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(isNew && !duplicateFromId ? ['__first__'] : []));
+  const isOpen = (t: DraftTask, i: number) => expanded.has(t._key) || (i === 0 && expanded.has('__first__'));
+  const toggleOpen = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.delete('__first__');
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const [saving, setSaving] = useState(false);
   // Snapshot captured the moment we finish loading (or on initial mount
   // for new templates). The form is "dirty" if the current values differ.
@@ -214,7 +228,9 @@ export function TemplateEditor() {
   };
 
   const addTask = () => {
-    setTasks((prev) => [...prev, blankTask()]);
+    const t = blankTask();
+    setTasks((prev) => [...prev, t]);
+    setExpanded((prev) => new Set(prev).add(t._key));
   };
 
   const dirty = useMemo(
@@ -239,6 +255,12 @@ export function TemplateEditor() {
       return;
     }
     if (tasks.some((t) => !t.title.trim())) {
+      // Open the ones missing a title so the field is in view.
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const t of tasks) if (!t.title.trim()) next.add(t._key);
+        return next;
+      });
       toast.error('Every task needs a title.');
       return;
     }
@@ -333,7 +355,7 @@ export function TemplateEditor() {
           <Field
             label="Track"
             required
-            hint="One template per client-and-track pair. Standard and J-1 are usually global; client-specific always needs a client."
+            hint="Each client can have one template per hiring track."
           >
             {(p) => (
               <Select
@@ -391,116 +413,54 @@ export function TemplateEditor() {
 
       <div className="space-y-2.5 mb-6">
         {tasks.map((t, i) => (
-          <Card key={t._key} className="p-3">
-            <div className="flex items-start gap-2.5">
-              <div className="flex flex-col items-center pt-1.5 text-silver/70">
+          <Card key={t._key} className="p-0">
+            <div className="flex items-center gap-2 px-3 py-2">
+              <div className="flex items-center text-silver/70">
                 <button
                   type="button"
                   onClick={() => moveTask(i, -1)}
                   disabled={i === 0}
-                  className="hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="grid h-7 w-7 place-items-center rounded hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed"
                   aria-label="Move task up"
                 >
                   <ArrowUp className="h-3.5 w-3.5" />
                 </button>
-                <GripVertical className="h-3 w-3 my-0.5 opacity-50" />
                 <button
                   type="button"
                   onClick={() => moveTask(i, 1)}
                   disabled={i === tasks.length - 1}
-                  className="hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="grid h-7 w-7 place-items-center rounded hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed"
                   aria-label="Move task down"
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                <Field label="Kind">
-                  {(p) => (
-                    <Select
-                      value={t.kind}
-                      onChange={(e) => {
-                        const kind = e.target.value as TaskKind;
-                        // Follow the kind with its default title, but only
-                        // while the title is still a stock kind label — a
-                        // customized title is never clobbered.
-                        const label = TASK_KIND_OPTIONS.find(
-                          (o) => o.value === kind,
-                        )?.label;
-                        const isStockTitle = TASK_KIND_OPTIONS.some(
-                          (o) => o.label === t.title.trim(),
-                        );
-                        updateTask(
-                          i,
-                          label && isStockTitle
-                            ? { kind, title: label }
-                            : { kind },
-                        );
-                      }}
-                      {...p}
-                    >
-                      {TASK_KIND_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                </Field>
-                <Field label="Title" required>
-                  {(p) => (
-                    <Input
-                      value={t.title}
-                      onChange={(e) => updateTask(i, { title: e.target.value })}
-                      maxLength={120}
-                      {...p}
-                    />
-                  )}
-                </Field>
-                <Field label="Description" className="md:col-span-2">
-                  {(p) => (
-                    <Textarea
-                      value={t.description ?? ''}
-                      onChange={(e) => updateTask(i, { description: e.target.value })}
-                      rows={2}
-                      maxLength={500}
-                      placeholder="What the associate should know about this step (optional)"
-                      {...p}
-                    />
-                  )}
-                </Field>
-                <Field label="Due (days before start)">
-                  {(p) => (
-                    <Input
-                      type="number"
-                      min={0}
-                      max={365}
-                      step={1}
-                      value={t.dueOffsetDays ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === '') {
-                          updateTask(i, { dueOffsetDays: null });
-                          return;
-                        }
-                        const n = Number(v);
-                        if (!Number.isFinite(n)) return;
-                        updateTask(i, {
-                          dueOffsetDays: Math.min(365, Math.max(0, Math.floor(n))),
-                        });
-                      }}
-                      placeholder="No deadline"
-                      className="max-w-[10rem]"
-                      {...p}
-                    />
-                  )}
-                </Field>
-              </div>
+              <button
+                type="button"
+                onClick={() => toggleOpen(t._key)}
+                aria-expanded={isOpen(t, i)}
+                className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 text-left hover:bg-navy-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+              >
+                {isOpen(t, i) ? (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
+                )}
+                <span className="w-5 shrink-0 text-xs tabular-nums text-silver">{i + 1}.</span>
+                <span className="min-w-0 flex-1 truncate text-sm">
+                  <span className="text-ink">{t.title.trim() || <span className="text-alert">Untitled task</span>}</span>
+                  <span className="text-silver"> · {TASK_KIND_OPTIONS.find((o) => o.value === t.kind)?.label ?? t.kind}</span>
+                </span>
+                <span className="hidden shrink-0 text-xs text-silver sm:inline">
+                  {t.dueOffsetDays == null ? 'No deadline' : t.dueOffsetDays === 0 ? 'Due by the start date' : `Due ${t.dueOffsetDays} day${t.dueOffsetDays === 1 ? '' : 's'} before start`}
+                </span>
+                <span className="sr-only">{isOpen(t, i) ? 'Close' : 'Edit'}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => removeTask(i)}
                 disabled={tasks.length === 1}
-                className="text-alert hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed pt-1.5"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded text-alert hover:bg-alert/10 disabled:opacity-50 disabled:cursor-not-allowed"
                 aria-label="Remove task"
                 title={
                   tasks.length === 1
@@ -511,6 +471,92 @@ export function TemplateEditor() {
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
+            {isOpen(t, i) && (
+              <div className="border-t border-navy-secondary px-3 pb-3 pt-2.5">
+                <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  <Field label="Kind">
+                    {(p) => (
+                      <Select
+                        value={t.kind}
+                        onChange={(e) => {
+                          const kind = e.target.value as TaskKind;
+                          // Follow the kind with its default title, but only
+                          // while the title is still a stock kind label — a
+                          // customized title is never clobbered.
+                          const label = TASK_KIND_OPTIONS.find(
+                            (o) => o.value === kind,
+                          )?.label;
+                          const isStockTitle = TASK_KIND_OPTIONS.some(
+                            (o) => o.label === t.title.trim(),
+                          );
+                          updateTask(
+                            i,
+                            label && isStockTitle
+                              ? { kind, title: label }
+                              : { kind },
+                          );
+                        }}
+                        {...p}
+                      >
+                        {TASK_KIND_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </Field>
+                  <Field label="Title" required>
+                    {(p) => (
+                      <Input
+                        value={t.title}
+                        onChange={(e) => updateTask(i, { title: e.target.value })}
+                        maxLength={120}
+                        {...p}
+                      />
+                    )}
+                  </Field>
+                  <Field label="Description" className="md:col-span-2">
+                    {(p) => (
+                      <Textarea
+                        value={t.description ?? ''}
+                        onChange={(e) => updateTask(i, { description: e.target.value })}
+                        rows={2}
+                        maxLength={500}
+                        placeholder="What the associate should know about this step (optional)"
+                        {...p}
+                      />
+                    )}
+                  </Field>
+                  <Field label="Due (days before start)">
+                    {(p) => (
+                      <Input
+                        type="number"
+                        min={0}
+                        max={365}
+                        step={1}
+                        value={t.dueOffsetDays ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === '') {
+                            updateTask(i, { dueOffsetDays: null });
+                            return;
+                          }
+                          const n = Number(v);
+                          if (!Number.isFinite(n)) return;
+                          updateTask(i, {
+                            dueOffsetDays: Math.min(365, Math.max(0, Math.floor(n))),
+                          });
+                        }}
+                        placeholder="No deadline"
+                        className="max-w-[10rem]"
+                        {...p}
+                      />
+                    )}
+                  </Field>
+                </div>
+              </div>
+            )}
           </Card>
         ))}
       </div>

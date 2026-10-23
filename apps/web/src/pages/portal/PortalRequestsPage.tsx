@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, MessageSquarePlus } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -50,8 +50,19 @@ export function PortalRequestsPage() {
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
         breadcrumbs={[{ label: t('portal.title'), to: '/portal' }, { label: t('portal.reqTitle') }]}
+        // "Make a request" is the page's action, in its header — it sat inside
+        // a card titled "Requests" under a page titled "Requests" (F500 G5).
+        actions={[
+          {
+            key: 'new',
+            label: t('portal.reqNew'),
+            icon: MessageSquarePlus,
+            primary: true,
+            onSelect: () => setPrefill({ kind: 'STAFFING', subject: '', body: '', nonce: Date.now() }),
+          },
+        ]}
     >
-      <PortalRequests prefill={prefill} />
+      <PortalRequests prefill={prefill} bare tabs />
     </ListTemplate>
   );
 }

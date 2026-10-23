@@ -118,3 +118,11 @@ describe('the contract scorecard and the J-1 tab follow the tenant\'s modules', 
     expect(screen.getByText('i9')).toBeInTheDocument();
   });
 });
+
+describe('Safety & EEO is a sibling page, linked, not a floating ghost button', () => {
+  it('the header links to it by its plain name', () => {
+    renderAs('HR_ADMINISTRATOR');
+    expect(screen.getByRole('link', { name: 'Safety & EEO reporting' })).toHaveAttribute('href', '/compliance/osha');
+    expect(screen.queryByText('OSHA / WC / EEO-1')).toBeNull();
+  });
+});

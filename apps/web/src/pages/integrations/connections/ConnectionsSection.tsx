@@ -7,13 +7,12 @@ import { listIntegrationConnections, listIntegrationVendors } from '@/lib/integr
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { fmtDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { ConnectDrawer } from './ConnectDrawer';
-import { connectionStatus, vendorLabel } from './shared';
+import { connectionStatus, modeLabel, vendorLabel } from './shared';
 
 /**
  * Brief 3-5: the tenant's HR and VMS connections, on Settings & Trust ›
@@ -37,14 +36,18 @@ export function ConnectionsSection({ canManage }: { canManage: boolean }) {
       ) : rows === null ? (
         <Card><CardContent><SkeletonRows count={2} /></CardContent></Card>
       ) : rows.length === 0 ? (
+        // One quiet line, not a hero (F500 G4): the only gold button on Integrations is a failing connection's fix.
         <Card>
-          <CardContent className="p-0">
-            <EmptyState
-              icon={Plug}
-              title="No HR or VMS system connected"
-              description="Connect Fieldglass, ADP, Workday, UKG or Beeline. A new connection starts in sandbox mode and proves its mapping before it touches the vendor."
-              action={canManage ? <Button onClick={() => setOpen(true)}><Plus className="mr-2 h-4 w-4" /> Connect a system</Button> : undefined}
-            />
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <span className="flex min-w-0 items-center gap-3">
+              <Plug className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />
+              <span className="text-sm text-ink">No HR or VMS system connected</span>
+            </span>
+            {canManage && (
+              <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Connect a system
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -81,7 +84,7 @@ function ConnectionRow({ c }: { c: IntegrationConnectionSummary }) {
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium text-ink">{c.name}</span>
           <span className="block truncate text-xs text-ink-muted">
-            {vendorLabel(c.vendor)} · {c.capabilities.length} of the vendor’s capabilities on
+            {vendorLabel(c.vendor)} · {modeLabel(c)} · {c.capabilities.length} of the vendor’s capabilities on
             {c.scheduleMinutes ? ` · every ${c.scheduleMinutes >= 60 ? `${c.scheduleMinutes / 60}h` : `${c.scheduleMinutes}m`}` : ''}
             {c.eventDriven ? ' · on events' : ''}
           </span>

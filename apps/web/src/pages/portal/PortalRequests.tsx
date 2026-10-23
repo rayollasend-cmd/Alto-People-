@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { cn } from '@/lib/cn';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SectionTitle } from '@/components/ui/SectionTitle';
@@ -22,6 +24,8 @@ import {
 } from '@/components/ui/Dialog';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { useUrlParam } from '@/lib/useUrlState';
 
 /**
  * The client's side of the loop: make a structured request (staffing /
@@ -79,8 +83,26 @@ export interface RequestPrefill {
   nonce: number;
 }
 
-/** `refetchMs`: the Requests tab polls every minute; the Home embed can ease off. */
-export function PortalRequests({ prefill, refetchMs = 60_000 }: { prefill?: RequestPrefill | null; refetchMs?: number }) {
+type Show = 'open' | 'resolved';
+const SHOWS: readonly Show[] = ['open', 'resolved'];
+
+/**
+ * `refetchMs`: the Requests tab polls every minute; the Home embed can ease off.
+ * `bare`: the page's own header carries the title and "Make a request" (the
+ * Requests page), so the list drops its card title — "Requests" sat twice.
+ * `tabs`: Open | Resolved, kept in the URL (?show=).
+ */
+export function PortalRequests({
+  prefill,
+  refetchMs = 60_000,
+  bare = false,
+  tabs = false,
+}: {
+  prefill?: RequestPrefill | null;
+  refetchMs?: number;
+  bare?: boolean;
+  tabs?: boolean;
+}) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const query = useQuery({
@@ -151,23 +173,53 @@ export function PortalRequests({ prefill, refetchMs = 60_000 }: { prefill?: Requ
     }
   };
 
-  const rows = query.data?.requests ?? [];
+  const allRows = query.data?.requests ?? [];
+  // A notification or a Needs-you row links to one request (?id=): open the
+  // list on it, scrolled into view and marked.
+  const [searchParams] = useSearchParams();
+  const focusId = searchParams.get('id');
+  const [showParam, setShow] = useUrlParam<Show>('show', 'open', SHOWS);
+  const openCount = allRows.filter((r) => r.status !== 'RESOLVED').length;
+  const resolvedCount = allRows.length - openCount;
+  // A linked request opens on its own tab (a reply lands on a resolved one).
+  const focusRow = focusId ? allRows.find((r) => r.id === focusId) : undefined;
+  const show: Show = focusRow && !searchParams.get('show') ? (focusRow.status === 'RESOLVED' ? 'resolved' : 'open') : showParam;
+  const rows = tabs ? allRows.filter((r) => (show === 'resolved' ? r.status === 'RESOLVED' : r.status !== 'RESOLVED')) : allRows;
+  const focusFound = !!focusId && rows.some((r) => r.id === focusId);
+  useEffect(() => {
+    if (!focusFound || !focusId) return;
+    document.getElementById(`request-${focusId}`)?.scrollIntoView({ block: 'center' });
+  }, [focusFound, focusId]);
 
   return (
     <Card className="animate-enter print:hidden" id="requests">
       <CardContent>
-        <SectionTitle
-          size="sm"
-          wrap
-          className="mb-0"
-          title={t('portal.reqTitle')}
-          trailing={
-            <Button size="md" className="w-full sm:w-auto" onClick={() => setOpen(true)}>
-              <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              {t('portal.reqNew')}
-            </Button>
-          }
-        />
+        {!bare && (
+          <SectionTitle
+            size="sm"
+            wrap
+            className="mb-0"
+            title={t('portal.reqTitle')}
+            trailing={
+              <Button size="md" className="w-full sm:w-auto" onClick={() => setOpen(true)}>
+                <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                {t('portal.reqNew')}
+              </Button>
+            }
+          />
+        )}
+        {tabs && allRows.length > 0 && (
+          <SegmentedControl
+            className={cn(!bare && 'mt-3')}
+            ariaLabel={t('portal.reqShowAria')}
+            value={show}
+            onChange={setShow}
+            options={[
+              { value: 'open', label: t('portal.reqShowOpen'), count: openCount },
+              { value: 'resolved', label: t('portal.reqShowResolved'), count: resolvedCount },
+            ]}
+          />
+        )}
         {query.isError && !query.data ? (
           <div className="mt-3">
             <ErrorBanner
@@ -186,19 +238,32 @@ export function PortalRequests({ prefill, refetchMs = 60_000 }: { prefill?: Requ
             <Skeleton className="h-14" />
           </div>
         ) : rows.length === 0 ? (
-          <p className="mt-3 text-sm text-silver/60">{t('portal.reqNone')}</p>
+          <p className="mt-3 text-sm text-silver/60">
+            {tabs && allRows.length > 0 ? (show === 'open' ? t('portal.reqNoneOpen') : t('portal.reqNoneResolved')) : t('portal.reqNone')}
+          </p>
         ) : (
           <ul className="mt-3 divide-y divide-navy-secondary/60">
             {rows.map((r) => (
-              <li key={r.id} className="py-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-white">
-                    {r.subject}
-                  </span>
+              <li
+                key={r.id}
+                id={`request-${r.id}`}
+                data-testid="portal-request"
+                className={cn('scroll-mt-24 py-3', focusId === r.id && '-mx-2 rounded-md bg-gold/5 px-2 ring-1 ring-gold/40')}
+              >
+                {/* The subject on its own line: it shared a row with two
+                    badges and collapsed to "T" on a phone (F500 G5). */}
+                <p className="line-clamp-2 break-words text-sm font-medium text-white">{r.subject}</p>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
                   <Badge variant="outline">{t(KIND_KEY[r.kind])}</Badge>
-                  <Badge variant={r.overdue ? 'destructive' : STATUS_VARIANT[r.status]}>
-                    {r.overdue ? t('portal.reqOverdue') : t(STATUS_KEY[r.status])}
-                  </Badge>
+                  {/* The status always shows; a late reply is Alto's lateness, said as such. */}
+                  <Badge variant={STATUS_VARIANT[r.status]}>{t(STATUS_KEY[r.status])}</Badge>
+                  {r.overdue && r.dueAt && (
+                    <span className="text-xs font-medium tabular-nums text-alert" data-testid="request-reply-overdue">
+                      {t('portal.reqReplyOverdue', {
+                        count: Math.max(1, Math.floor((Date.now() - Date.parse(r.dueAt)) / 86_400_000)),
+                      })}
+                    </span>
+                  )}
                 </div>
                 {r.associateName && (
                   <p className="mt-1 text-xs text-silver">

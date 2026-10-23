@@ -88,6 +88,22 @@ describe('<AttendanceTrendTiles>', () => {
   });
 });
 
+describe('<AttendanceTrendTiles> with no shifts last week (F500)', () => {
+  it('shows this week so far instead of "—" over a sparkline with values, in warning below target', async () => {
+    const data = trends();
+    data.weeks[2] = week('2026-10-10', { fillRatePct: null, scheduledShifts: 0, filledShifts: 0 });
+    data.weeks[3] = week('2026-10-17', { inProgress: true, fillRatePct: 18 });
+    api.getAttendanceTrends.mockResolvedValue(data);
+    renderAs('WORKFORCE_MANAGER', <AttendanceTrendTiles />);
+    expect(await screen.findByText('Fill rate · this week')).toBeInTheDocument();
+    expect(screen.queryByText('Fill rate · last week')).toBeNull();
+    expect(screen.getByText('So far · target 95%')).toBeInTheDocument();
+    // The value counts up to 18%.
+    expect(await screen.findByText('18%')).toBeInTheDocument();
+    expect(screen.getByText('Fill rate · this week').closest('a')).toHaveAttribute('href', '/scheduling');
+  });
+});
+
 describe('<AttendanceHeatmapCard>', () => {
   it('switches between lateness, overtime and call-outs', async () => {
     api.getAttendanceHeatmap.mockImplementation(async ({ metric }: { metric: string }) => ({

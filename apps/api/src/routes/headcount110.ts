@@ -43,7 +43,8 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
   const active = await activeBreakdown(now, prisma, undefined, { tenantId, ...(ids ? { associateIds: ids } : {}) });
   // Where everyone stands, by the one rule (lib/peopleStatus): the same
   // counts the People directory's tiles and Analytics show.
-  const standing = countStandings(await peopleStandings({ tenantId, ...(ids ? { associateIds: ids } : {}) }, now, prisma));
+  const standings = await peopleStandings({ tenantId, ...(ids ? { associateIds: ids } : {}) }, now, prisma);
+  const standing = countStandings(standings);
   const withoutRate = await associatesWithoutRate(prisma, now, { tenantId, ...(ids ? { associateIds: ids } : {}) });
   const noRateByClient = new Map<string, number>();
   const noRateByLocation = new Map<string, number>();
@@ -71,7 +72,7 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
     reach ? Promise.resolve(null) : prisma.payrollRun.findFirst({
       where: { ...T, status: { in: ['FINALIZED', 'DISBURSED'] } },
       orderBy: { periodEnd: 'desc' },
-      select: { periodStart: true, periodEnd: true, _count: { select: { items: true } } },
+      select: { periodStart: true, periodEnd: true, finalizedAt: true, _count: { select: { items: true } } },
     }),
     reach ? Promise.resolve(null) : prisma.reconciliationSnapshot.findFirst({ where: T, orderBy: [{ periodEnd: 'desc' }, { ranAt: 'desc' }] }),
   ]);
@@ -117,7 +118,17 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
     onTheBooks: standing.onTheBooks,
     statusCounts: standing,
     scheduledThisWeek: scheduledIds.size,
-    onPayrollLastPeriod: lastRun ? { count: lastRun._count.items, periodStart: lastRun.periodStart.toISOString().slice(0, 10), periodEnd: lastRun.periodEnd.toISOString().slice(0, 10) } : null,
+    // Scheduled this week but not Working — had a shift earlier this week
+    // and no work in the window — so "Working 0 · Scheduled 2" explains itself.
+    scheduledNotWorking: [...scheduledIds].filter((id) => standings.people.get(id)?.status !== 'ACTIVE').length,
+    onPayrollLastPeriod: lastRun
+      ? {
+          count: lastRun._count.items,
+          periodStart: lastRun.periodStart.toISOString().slice(0, 10),
+          periodEnd: lastRun.periodEnd.toISOString().slice(0, 10),
+          finalizedOn: lastRun.finalizedAt ? lastRun.finalizedAt.toISOString().slice(0, 10) : null,
+        }
+      : null,
     inHousing: null,
     notActive: {
       employedNotPlaced: standing.NOT_PLACED,

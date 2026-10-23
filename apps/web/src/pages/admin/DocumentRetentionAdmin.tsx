@@ -8,7 +8,6 @@ import { useAuth } from '@/lib/auth';
 import { fmtDate, parseYmd } from '@/lib/format';
 import { getRetentionPolicies, previewRetention, updateRetentionPolicies, type RetentionPolicyRow } from '@/lib/documentRetentionApi';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Input } from '@/components/ui/Input';
@@ -90,21 +89,19 @@ export function DocumentRetentionAdmin() {
       accessor: (r) => r.retainYearsAfterSeparation ?? '',
       searchable: false,
       stopRowClick: true,
+      // Blank reads "Forever" in the box itself; no second "kept forever" beside it (F500 G4).
       cell: (r) => (
-        <div className="flex items-center gap-2">
-          <Input
-            type="number"
-            min={r.floorYears ?? 1}
-            max={100}
-            className="w-24"
-            aria-label={`Years to keep ${KIND_LABEL[r.kind]}`}
-            value={draft[r.kind] ?? ''}
-            placeholder="Forever"
-            disabled={!canManage}
-            onChange={(e) => setDraft((d) => ({ ...d, [r.kind]: e.target.value }))}
-          />
-          {(draft[r.kind] ?? '') === '' && <span className="text-xs text-ink-muted">kept forever</span>}
-        </div>
+        <Input
+          type="number"
+          min={r.floorYears ?? 1}
+          max={100}
+          className="w-24"
+          aria-label={`Years to keep ${KIND_LABEL[r.kind]}`}
+          value={draft[r.kind] ?? ''}
+          placeholder="Forever"
+          disabled={!canManage}
+          onChange={(e) => setDraft((d) => ({ ...d, [r.kind]: e.target.value }))}
+        />
       ),
     },
     { key: 'floor', header: 'Legal floor', accessor: (r) => r.floorYears ?? '', searchable: false, className: 'text-xs text-ink-muted', cell: (r) => (r.floorYears ? <Badge variant="outline">At least {r.floorYears} years</Badge> : '—') },
@@ -115,14 +112,7 @@ export function DocumentRetentionAdmin() {
       <PageHeader
         title="Document retention"
         subtitle="How long each kind of document stays after a person leaves. Files past their policy are purged by the daily sweep; the record of the document, and an audit entry, remain."
-        breadcrumbs={[{ label: 'Settings & trust' }, { label: 'Document retention' }]}
-        primaryAction={
-          canManage ? (
-            <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!dirty || invalid.length > 0}>
-              Save policies
-            </Button>
-          ) : undefined
-        }
+        actions={[{ label: 'Save policies', primary: true, onSelect: () => save.mutate(), loading: save.isPending, disabled: !dirty || invalid.length > 0, hidden: !canManage }]}
       />
       {query.isError && <QueryError what="the retention policies" query={query} />}
       {invalid.length > 0 && (
@@ -143,8 +133,9 @@ export function DocumentRetentionAdmin() {
               <QueryError what="the preview" query={preview} />
             ) : (
               <>
-                <div className="px-2 pb-2 text-sm text-ink-muted" aria-live="polite">
-                  {preview.data ? `${preview.data.count} ${preview.data.count === 1 ? 'file' : 'files'} would be purged.` : 'Checking…'}
+                {/* The count only when there is something to count: an empty preview is the grid's one empty state. */}
+                <div className="px-2 pb-2 text-sm text-ink-muted empty:hidden" aria-live="polite">
+                  {!preview.data ? 'Checking…' : preview.data.count > 0 ? `${preview.data.count} ${preview.data.count === 1 ? 'file' : 'files'} would be purged.` : null}
                 </div>
                 <DataGrid<{ id: string; kind: DocumentKind; filename: string; associateId: string; associateName: string; separatedAt: string; retainYears: number }>
                   id="document-retention-preview"
@@ -154,6 +145,7 @@ export function DocumentRetentionAdmin() {
                   loading={preview.isLoading}
                   search={false}
                   urlState={false}
+                  empty={{ icon: Archive, title: 'Nothing would be purged today', description: 'No file is past its policy yet.' }}
                   columns={[
                     { key: 'person', header: 'Person', accessor: (r) => r.associateName, primary: true, cell: (r) => <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink> },
                     { key: 'kind', header: 'Kind', accessor: (r) => KIND_LABEL[r.kind], cardMeta: true },

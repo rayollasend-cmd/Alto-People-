@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useContext, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, CalendarClock, ChevronRight, Inbox } from 'lucide-react';
 import { INBOX_URGENCIES, rankInboxSources, type InboxSource, type InboxUrgency } from '@alto-people/shared';
@@ -6,7 +6,8 @@ import { ListTemplate } from '@/components/templates';
 import { Badge, Card, EmptyState, SkeletonRows, buttonVariants } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { cn } from '@/lib/cn';
-import { fmtDateOnly } from '@/lib/format';
+import { fmtDateOnly, ymdLocal } from '@/lib/format';
+import { AuthContext } from '@/lib/auth';
 import { inboxLink, useInbox } from '@/lib/inboxApi';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { useListKeyboard } from '@/lib/shortcuts';
@@ -36,6 +37,11 @@ const BAND_LABEL: Record<InboxUrgency, MessageKey> = {
 
 export function InboxHome() {
   const { t } = useI18n();
+  // Read without requiring a provider (the page renders in tests and the phone sheet without one).
+  const role = useContext(AuthContext)?.role ?? null;
+  // An associate has a handful of their own tasks, not triage bands: no
+  // "ROUTINE 3" header and no "N queues clear" footer (F500 G5).
+  const plain = role === 'ASSOCIATE';
   const inbox = useInbox();
   const navigate = useNavigate();
 
@@ -71,17 +77,22 @@ export function InboxHome() {
             <Card animate={false}>
               <div {...kb.listProps} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-lg">
                 {bands.map((band) => (
-                  <section key={band.urgency} aria-labelledby={`inbox-band-${band.urgency}`}>
-                    <h2
-                      id={`inbox-band-${band.urgency}`}
-                      className={cn(
-                        'border-b border-navy-secondary px-[var(--d-card)] pt-3 pb-1.5 text-2xs font-semibold uppercase tracking-widest',
-                        band.urgency === 'legal' ? 'text-alert' : band.urgency === 'money' ? 'text-gold' : 'text-silver/80',
-                      )}
-                    >
-                      {t(BAND_LABEL[band.urgency])}
-                      <span className="ml-1.5 font-normal tabular-nums text-silver/60">{band.rows.length}</span>
-                    </h2>
+                  <section key={band.urgency} aria-labelledby={plain ? undefined : `inbox-band-${band.urgency}`} aria-label={plain ? t('decisions.waitingAria') : undefined}>
+                    {!plain && (
+                      <h2
+                        id={`inbox-band-${band.urgency}`}
+                        className={cn(
+                          'border-b border-navy-secondary px-[var(--d-card)] pt-3 pb-1.5 text-2xs font-semibold uppercase tracking-widest',
+                          band.urgency === 'legal' ? 'text-alert' : band.urgency === 'money' ? 'text-gold' : 'text-silver/80',
+                        )}
+                      >
+                        {t(BAND_LABEL[band.urgency])}
+                        {/* Queues and the items in them — the pills and the badge count items. */}
+                        <span className="ml-1.5 font-normal normal-case tracking-normal tabular-nums text-silver/60" data-testid="inbox-band-count">
+                          {t('decisions.bandQueues', { count: band.rows.length })} · {t('decisions.bandItems', { count: band.rows.reduce((n, r) => n + r.count, 0) })}
+                        </span>
+                      </h2>
+                    )}
                     <ul className="divide-y divide-navy-secondary" aria-label={t('decisions.waitingAria')}>
                       {band.rows.map((s) => (
                         <SourceRow key={s.key} source={s} rowProps={kb.rowProps(s.key)} />
@@ -107,7 +118,7 @@ export function InboxHome() {
               </ul>
             </details>
           )}
-          {quiet.length > 0 && (
+          {quiet.length > 0 && !plain && (
             // Folded: the names still answer "is that being watched?", the
             // zeros no longer take 1,200px of scroll (ops 20).
             <details className="group rounded-lg border border-navy-secondary/60" data-testid="inbox-quiet">
@@ -139,46 +150,72 @@ export function InboxHome() {
   );
 }
 
-/** "Next due Oct 24" — in alert tone once the day has passed. */
-function DueChip({ dueAt }: { dueAt: string }) {
+/** "Next due Oct 24" — in alert tone once the day has passed. A `dueDate`
+ *  ('YYYY-MM-DD') is a calendar day and reads as that day in every zone. */
+function DueChip({ dueAt, dueDate }: { dueAt?: string | null; dueDate?: string | null }) {
   const { t } = useI18n();
-  const overdue = Date.parse(dueAt) < Date.now() - 86_400_000;
+  const day = dueDate ?? dueAt!;
+  const overdue = dueDate ? dueDate < ymdLocal() : Date.parse(dueAt!) < Date.now() - 86_400_000;
   return (
     <Badge variant={overdue ? 'destructive' : 'default'} size="sm" withDot={false} className="gap-1 tabular-nums" data-testid="inbox-due">
       <CalendarClock className="h-3 w-3" aria-hidden="true" />
       {/* A date-only due date arrives as UTC midnight: read it as the day it names (it showed Jan 30 for a Jan 31 deadline west of UTC). */}
-      {overdue ? t('decisions.overdue', { date: fmtDateOnly(dueAt) }) : t('decisions.nextDue', { date: fmtDateOnly(dueAt) })}
+      {overdue ? t('decisions.overdue', { date: fmtDateOnly(day) }) : t('decisions.nextDue', { date: fmtDateOnly(day) })}
     </Badge>
   );
 }
 
 function SourceRow({ source, rowProps }: { source: InboxSource; rowProps?: ReturnType<ReturnType<typeof useListKeyboard>['rowProps']> }) {
   const { t } = useI18n();
+  const count = source.count >= 999 ? '999+' : source.count;
   return (
-    <li className="flex items-center gap-4 p-[var(--d-card)]" {...rowProps}>
-      <Badge
-        variant="pending"
-        size="lg"
-        withDot={false}
-        className="min-w-[2.75rem] justify-center tabular-nums"
-        aria-label={t('decisions.nWaiting', { n: source.count })}
-      >
-        {source.count >= 999 ? '999+' : source.count}
-      </Badge>
-      <div className="min-w-0 flex-1">
-        <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base font-medium text-ink">
-          <span>{source.label}</span>
-          {source.dueAt && <DueChip dueAt={source.dueAt} />}
-        </h3>
-        <p className="mt-0.5 text-sm text-silver">{source.description}</p>
-      </div>
+    <li {...rowProps}>
+      {/* The whole row opens the queue. On a phone it is compact (~88px):
+          the count inline before the title, the due chip on the title line,
+          one line of description and a chevron — it was three columns with
+          the text squeezed to 45% and rows 300–420px tall. */}
       <Link
         to={inboxLink(source.path, source.key)}
-        className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'shrink-0')}
+        className="group flex items-center gap-3 p-[var(--d-card)] hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright sm:gap-4"
         aria-label={t('decisions.openX', { label: source.label })}
+        data-testid="inbox-row"
       >
-        {t('decisions.open')}
-        <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
+        <Badge
+          variant="pending"
+          size="lg"
+          withDot={false}
+          className="hidden min-w-[2.75rem] justify-center tabular-nums sm:inline-flex"
+          aria-label={t('decisions.nWaiting', { n: source.count })}
+        >
+          {count}
+        </Badge>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2">
+            <Badge variant="pending" size="sm" withDot={false} className="mt-0.5 shrink-0 tabular-nums sm:hidden" aria-hidden="true">
+              {count}
+            </Badge>
+            <h3 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-base font-medium text-ink">
+              <span>{source.label}</span>
+              {(source.dueDate || source.dueAt) && <DueChip dueAt={source.dueAt} dueDate={source.dueDate} />}
+            </h3>
+          </div>
+          <p className="mt-0.5 line-clamp-1 text-sm text-silver sm:line-clamp-none">{source.description}</p>
+          {source.preview && source.preview.length > 0 && (
+            // Three or fewer: their names, so the row says what is in it.
+            <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-ink-muted" data-testid="inbox-preview">
+              {source.preview.map((name) => (
+                <li key={name} className="before:mr-1.5 before:content-['·'] first:before:content-none">
+                  {name}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <span className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'hidden shrink-0 sm:inline-flex')} aria-hidden="true">
+          {t('decisions.open')}
+          <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+        <ChevronRight className="h-4 w-4 shrink-0 text-silver/60 sm:hidden" aria-hidden="true" />
       </Link>
     </li>
   );

@@ -2,18 +2,21 @@ import { useMemo, useState } from 'react';
 import { termizeText } from '@/lib/modules';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowUp, Scale, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, Scale, Settings2, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import type { HeadcountOverview, HeadcountRow, ReconciliationSummary } from '@alto-people/shared';
 import { getHeadcountOverview, getTurnover } from '@/lib/headcount110Api';
 import { patchOrgBranding } from '@/lib/brandingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm, useTenant } from '@/lib/auth';
-import { fmtDate, fmtDateTime, fmtHours, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtDateOnlyRange, fmtDateTime, fmtHours, fmtMoney } from '@/lib/format';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
+import { urlNumber, useUrlParam, useUrlState } from '@/lib/useUrlState';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -48,18 +51,32 @@ function definitionSentence(windowDays: number | undefined): string {
   return `Active = placed at a site and either clocked in within the last ${days} days or scheduled ahead. Separated and deactivated people never count.`;
 }
 
+/** The Working tile's hint: why the number is what it is. */
+function workingHint(o: HeadcountOverview): string {
+  const behind = o.scheduledNotWorking ?? 0;
+  if (behind > 0) {
+    return `${n(behind)} scheduled this week ${behind === 1 ? "hasn't" : "haven't"} worked in ${o.windowDays} days`;
+  }
+  return `Worked in the last ${o.windowDays} days or scheduled ahead`;
+}
+
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError && err.message ? err.message : fallback;
 }
 
 const n = (v: number) => v.toLocaleString('en-US');
 
+const TURNOVER_DAYS = urlNumber({ integer: true, min: 30, max: 365 });
+const CUTS = ['store', 'client'] as const;
+
 export function HeadcountHome() {
   const term = useTerm();
   const { can } = useAuth();
   const canManage = can('manage:org');
-  const [days, setDays] = useState<TurnoverDays>(90);
-  const [cut, setCut] = useState<Cut>('store');
+  const [daysRaw, setDays] = useUrlState<number>('turnover', 90, TURNOVER_DAYS);
+  const days: TurnoverDays = daysRaw === 30 || daysRaw === 365 ? daysRaw : 90;
+  const [cut, setCut] = useUrlParam<Cut>('cut', 'store', CUTS);
+  const [windowOpen, setWindowOpen] = useState(false);
 
   const overview = useQuery({ queryKey: ['headcount', 'overview'], queryFn: getHeadcountOverview });
   const turnover = useQuery({ queryKey: ['headcount', 'turnover', days], queryFn: () => getTurnover(days) });
@@ -67,49 +84,77 @@ export function HeadcountHome() {
   const o = overview.data;
   const t = turnover.data;
   const loading = overview.isLoading;
-
-  const payrollHint = o
-    ? o.onPayrollLastPeriod
-      ? `${fmtDate(o.onPayrollLastPeriod.periodStart)} – ${fmtDate(o.onPayrollLastPeriod.periodEnd)}`
-      : 'No closed pay run'
-    : undefined;
+  const run = o?.onPayrollLastPeriod ?? null;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title={term('nav.headcount')} subtitle={definitionSentence(o?.windowDays)} breadcrumbs={[{ label: term('nav.headcount') }]}
-        secondaryActions={
-          <Button asChild variant="outline">
-            <Link to="/headcount/plan">Headcount plan</Link>
-          </Button>
-        }
+      title={term('nav.headcount')}
+      subtitle="Who's working, where, and how that's changing."
+      related={[{ label: 'Headcount plan', to: '/headcount/plan' }]}
+      actions={canManage ? [{ label: 'Activity window', icon: Settings2, onSelect: () => setWindowOpen(true), hint: definitionSentence(o?.windowDays) }] : undefined}
     >
 
       {overview.isError && <QueryError what="the headcount" query={overview} />}
 
-      <div className={`grid grid-cols-2 gap-4 ${typeof o?.inHousing === 'number' ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+      {/* One error, said once: the cards and the grid below read the same query. */}
+      {!overview.isError && (
+      <>
+      <MetricStrip label="Headcount now">
         {/* "Working" and "On the books": the two named numbers every page
             shows (apps/api/src/lib/peopleStatus.ts). */}
         <MetricCard
           label="Working"
           value={loading || !o ? '—' : n(o.active)}
-          hint={o ? `Worked in the last ${o.windowDays} days or scheduled ahead${o.onTheBooks !== undefined ? ` · ${n(o.onTheBooks)} on the books` : ''}` : undefined}
+          hint={o ? workingHint(o) : undefined}
+          valueTitle={definitionSentence(o?.windowDays)}
           href="/people?workStatus=ACTIVE"
         />
+        <MetricCard
+          label="On the books"
+          value={loading || !o || o.onTheBooks === undefined ? '—' : n(o.onTheBooks)}
+          hint="Hired and not separated"
+          href="/people"
+        />
         <MetricCard label="Scheduled this week" value={loading || !o ? '—' : n(o.scheduledThisWeek)} hint="On an assigned shift in the current workweek" />
-        <MetricCard label="On payroll last period" value={loading || !o ? '—' : o.onPayrollLastPeriod ? n(o.onPayrollLastPeriod.count) : '—'} hint={payrollHint} />
+        <MetricCard
+          label="Last payroll run"
+          value={loading || !o ? '—' : run ? n(run.count) : '—'}
+          hint={o ? (run ? `Paid ${fmtDateOnlyRange(run.periodStart, run.periodEnd)}${run.finalizedOn ? ` · finalized ${fmtDateOnly(run.finalizedOn)}` : ''}` : undefined) : undefined}
+          nothing={o && !run ? 'No payroll run yet' : undefined}
+        />
         {/* Shown once housing is linked: a dash and "No housing link yet" in prime space said nothing (and a hotel tenant has no housing). */}
         {typeof o?.inHousing === 'number' && <MetricCard label="In housing" value={loading ? '—' : n(o.inHousing)} />}
-      </div>
+      </MetricStrip>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ReconciliationCard summary={o?.reconciliation} loaded={Boolean(o)} />
-        <NotActiveCard notActive={o?.notActive} windowDays={o?.windowDays} />
-      </div>
+      {o && !o.reconciliation ? (
+        // No reconciliation yet: one line, not half a card of dashes.
+        <>
+          <NotActiveCard notActive={o.notActive} windowDays={o.windowDays} />
+          <p className="text-sm text-silver" data-testid="reconciliation-none">
+            No reconciliation yet. Once a payroll export has been checked against the platform, the match rate and any differences appear here.
+          </p>
+        </>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ReconciliationCard summary={o?.reconciliation} loaded={Boolean(o)} />
+          <NotActiveCard notActive={o?.notActive} windowDays={o?.windowDays} />
+        </div>
+      )}
 
-      <ActivityWindowCard windowDays={o?.windowDays} canManage={canManage} />
+      {canManage ? (
+        <Dialog open={windowOpen} onOpenChange={setWindowOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Activity window</DialogTitle>
+              <DialogDescription>{definitionSentence(o?.windowDays)}</DialogDescription>
+            </DialogHeader>
+            <ActivityWindowCard windowDays={o?.windowDays} canManage onSaved={() => setWindowOpen(false)} />
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
-      <CutGrid overview={o} cut={cut} onCut={setCut} loading={loading} error={overview.error} onRetry={() => overview.refetch()} />
+      <CutGrid overview={o} cut={cut} onCut={setCut} loading={loading} error={null} onRetry={() => overview.refetch()} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <CompactList
@@ -127,6 +172,9 @@ export function HeadcountHome() {
         />
       </div>
 
+      </>
+      )}
+
       {can('view:analytics') && <HeadcountTrend />}
 
       <section className="space-y-3" aria-labelledby="headcount-turnover">
@@ -140,7 +188,7 @@ export function HeadcountHome() {
           />
         </div>
         {turnover.isError && <QueryError what="turnover" query={turnover} />}
-        <div className="grid gap-4 sm:grid-cols-3">
+        <MetricStrip label="Turnover">
           <MetricCard label="Hires" value={t ? n(t.hires) : '—'} hint={<span className="inline-flex items-center gap-1"><ArrowUp className="h-3 w-3" aria-hidden="true" />Last {days} days</span>} />
           <MetricCard label="Separations" value={t ? n(t.terminations) : '—'} accent={Boolean(t && t.terminations > 0)} hint={<span className="inline-flex items-center gap-1"><ArrowDown className="h-3 w-3" aria-hidden="true" />Last {days} days</span>} />
           <MetricCard
@@ -154,7 +202,7 @@ export function HeadcountHome() {
               </span>
             }
           />
-        </div>
+        </MetricStrip>
       </section>
     </ListTemplate>
   );
@@ -280,7 +328,8 @@ function NotActiveCard({ notActive, windowDays }: { notActive: HeadcountOverview
 
 /* ---------------------------------------------------- activity window */
 
-function ActivityWindowCard({ windowDays, canManage }: { windowDays: number | undefined; canManage: boolean }) {
+/** The activity window, set from the header's "Activity window" (it changes every headcount on the platform, so it isn't mid-page). */
+function ActivityWindowCard({ windowDays, canManage, onSaved }: { windowDays: number | undefined; canManage: boolean; onSaved?: () => void }) {
   const term = useTerm();
   const qc = useQueryClient();
   // null = untouched: the input shows the server value, and a refetch
@@ -301,6 +350,7 @@ function ActivityWindowCard({ windowDays, canManage }: { windowDays: number | un
       toast.success(`Activity window set to ${parsed} ${parsed === 1 ? 'day' : 'days'}.`);
       setTyped(null);
       await Promise.all([qc.invalidateQueries({ queryKey: ['headcount'] }), qc.invalidateQueries({ queryKey: ['BrandingHome', 'branding'] })]);
+      onSaved?.();
     } catch (err) {
       toast.error(errorMessage(err, 'Could not save the activity window.'));
     } finally {
@@ -309,52 +359,41 @@ function ActivityWindowCard({ windowDays, canManage }: { windowDays: number | un
   };
 
   return (
-    <Card>
-      <CardContent className="flex flex-wrap items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-base font-medium text-white">Activity window (days)</h2>
-          <p className="text-sm text-silver">How many trailing days of work keep a placed {term('worker').toLowerCase()} active. Changing it changes every headcount on the platform.</p>
-        </div>
-        {canManage ? (
-          <form
-            className="flex items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void save();
-            }}
-          >
-            <label htmlFor="headcount-window-days" className="sr-only">
-              Activity window (days)
-            </label>
-            <Input
-              id="headcount-window-days"
-              type="number"
-              inputMode="numeric"
-              min={WINDOW_MIN}
-              max={WINDOW_MAX}
-              step={1}
-              size="sm"
-              className="w-24 text-right"
-              value={draft}
-              onChange={(e) => setTyped(e.target.value)}
-              invalid={draft !== '' && !valid}
-              aria-describedby="headcount-window-range"
-              disabled={windowDays === undefined || saving}
-            />
-            <span id="headcount-window-range" className="text-xs text-silver">
-              {WINDOW_MIN}–{WINDOW_MAX}
-            </span>
-            <Button type="submit" size="sm" disabled={!dirty || saving}>
-              {saving ? 'Saving…' : 'Save'}
-            </Button>
-          </form>
-        ) : (
-          <p className="font-sans text-2xl font-semibold tracking-tight tabular-nums text-white" data-testid="window-readonly">
-            {windowDays === undefined ? '—' : `${windowDays} ${windowDays === 1 ? 'day' : 'days'}`}
-          </p>
-        )}
-      </CardContent>
-    </Card>
+    <div className="space-y-3">
+      <p className="text-sm text-silver">How many trailing days of work keep a placed {term('worker').toLowerCase()} Working. Changing it changes every headcount on the platform.</p>
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <label htmlFor="headcount-window-days" className="sr-only">
+          Activity window (days)
+        </label>
+        <Input
+          id="headcount-window-days"
+          type="number"
+          inputMode="numeric"
+          min={WINDOW_MIN}
+          max={WINDOW_MAX}
+          step={1}
+          size="sm"
+          className="w-24 text-right"
+          value={draft}
+          onChange={(e) => setTyped(e.target.value)}
+          invalid={draft !== '' && !valid}
+          aria-describedby="headcount-window-range"
+          disabled={windowDays === undefined || saving}
+        />
+        <span id="headcount-window-range" className="text-xs text-silver">
+          {WINDOW_MIN}–{WINDOW_MAX} days
+        </span>
+        <Button type="submit" size="sm" disabled={!dirty || saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </form>
+    </div>
   );
 }
 
@@ -507,13 +546,13 @@ function HeadcountTrend() {
         <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} stackOffset="sign">
           <CartesianGrid stroke={PALETTE.grid} vertical={false} />
           <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
-          <YAxis yAxisId="flow" tick={TICK} tickLine={false} axisLine={false} width={40} allowDecimals={false} tickFormatter={(v: number) => String(Math.abs(v))} />
-          <YAxis yAxisId="count" orientation="right" tick={TICK} tickLine={false} axisLine={false} width={48} allowDecimals={false} />
+          <YAxis yAxisId="flow" tick={TICK} tickLine={false} axisLine={false} width={48} allowDecimals={false} tickFormatter={(v: number) => String(Math.abs(v))} label={{ value: 'Hires · separations', angle: -90, position: 'insideLeft', style: { ...TICK, textAnchor: 'middle' } }} />
+          <YAxis yAxisId="count" orientation="right" tick={TICK} tickLine={false} axisLine={false} width={56} allowDecimals={false} label={{ value: 'Employed', angle: 90, position: 'insideRight', style: { ...TICK, textAnchor: 'middle' } }} />
           <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} formatter={(v) => Math.abs(Number(v)).toLocaleString('en-US')} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           <Bar yAxisId="flow" dataKey="hires" name="Hires" stackId="flow" fill={PALETTE.good} radius={[3, 3, 0, 0]} maxBarSize={24} />
           <Bar yAxisId="flow" dataKey="separations" name="Separations" stackId="flow" fill={PALETTE.bad} radius={[0, 0, 3, 3]} maxBarSize={24} />
-          <Line yAxisId="count" dataKey="headcount" name="Employed" stroke={PALETTE.series[0]} strokeWidth={2} dot={false} type="monotone" />
+          <Line yAxisId="count" dataKey="headcount" name="Employed" stroke={PALETTE.series[0]} strokeWidth={2} dot={false} type="stepAfter" />
         </ComposedChart>
       </ResponsiveContainer>
     </ChartFrame>

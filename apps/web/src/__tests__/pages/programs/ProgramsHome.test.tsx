@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -161,13 +161,56 @@ describe('ProgramsHome', () => {
     expect(screen.getByText('30 days')).toBeInTheDocument();
   });
 
-  it('saves edited lead times', async () => {
-    renderPage('HR_ADMINISTRATOR', '/programs?tab=settings');
-    const input = await screen.findByDisplayValue('60, 30, 14, 7');
-    await userEvent.clear(input);
-    await userEvent.type(input, '45, 10');
-    await userEvent.click(screen.getByRole('button', { name: /save lead times/i }));
+  it('saves edited lead times from the Alert settings dialog, as chips', async () => {
+    renderPage();
+    await screen.findByText('Maria Lopez');
+    // Settings are a header action, not a tab of the work.
+    expect(screen.queryByRole('tab', { name: /alert settings/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /alert settings/i }));
+    const dialog = await screen.findByRole('dialog');
+    const field = 'Program end (and grace end)';
+    for (const d of [60, 30, 14, 7]) {
+      await userEvent.click(within(dialog).getByRole('button', { name: `Remove ${d} days from ${field}` }));
+    }
+    const add = within(dialog).getByLabelText(`Add a lead time to ${field}, in days`);
+    await userEvent.type(add, '10{Enter}');
+    await userEvent.type(add, '45{Enter}');
+    expect(within(dialog).getByText('45 days')).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: /save lead times/i }));
     await waitFor(() => expect(saveAlertSettings).toHaveBeenCalled());
     expect(vi.mocked(saveAlertSettings).mock.calls[0]![0]).toMatchObject({ programEndDays: [45, 10], visaExpiryDays: [60, 30] });
+  });
+
+  it('an old ?tab=settings link opens the settings dialog', async () => {
+    renderPage('HR_ADMINISTRATOR', '/programs?tab=settings');
+    const dialog = await screen.findByRole('dialog', { name: /alert lead times/i });
+    expect(await within(dialog).findByText('On the day')).toBeInTheDocument();
+  });
+
+  it('with nothing on record, the empty state is the page: no zero tiles, no filters, an Add program', async () => {
+    vi.mocked(listPrograms).mockResolvedValue({ programs: [] });
+    renderPage();
+    expect(await screen.findByText('No programs on record')).toBeInTheDocument();
+    expect(screen.getByText(/one person through one visa season/)).toBeInTheDocument();
+    expect(screen.queryByText('Active programs')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Program type' })).not.toBeInTheDocument();
+    // The header's primary and the empty state's own button.
+    expect(screen.getAllByRole('button', { name: /add program/i }).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the header holds Add program; the J-1 ghost link is gone', async () => {
+    renderPage();
+    await screen.findByText('Maria Lopez');
+    expect(screen.queryByRole('link', { name: /J-1 compliance tab/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: /add program/i })[0]!);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('the calendar PDF is a quiet button, off when the window is empty', async () => {
+    const { getTransitionCalendar } = await import('@/lib/programsApi');
+    vi.mocked(getTransitionCalendar).mockResolvedValue({ months: ['2026-10'], cells: [], totals: { arrivals: 0, programEnds: 0, departures: 0 } } as never);
+    renderPage('HR_ADMINISTRATOR', '/programs?tab=calendar');
+    expect(await screen.findByText('Nothing in this window')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /download pdf/i })).toBeDisabled();
   });
 });

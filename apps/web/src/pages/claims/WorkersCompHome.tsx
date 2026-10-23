@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, HardHat, Send } from 'lucide-react';
+import { ArrowLeft, Download, HardHat, Plus, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
@@ -26,6 +26,13 @@ import {
   type WcStatus,
 } from '@/lib/claimsApi';
 import { DeskTemplate } from '@/components/templates';
+import { createOshaIncident, type OshaSeverity } from '@/lib/oshaWcEeoApi';
+import { useClients } from '@/lib/useClients';
+import { useStoreScope } from '@/lib/storeScope';
+import { useUrlParam } from '@/lib/useUrlState';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { Label } from '@/components/ui/Label';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import {
   Avatar,
   Badge,
@@ -83,7 +90,8 @@ export function WorkersCompHome() {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const openId = params.get('claim');
-  const [status, setStatus] = useState('open');
+  const [status, setStatus] = useUrlParam<string>('status', 'open', ['open', 'OPEN', 'SUBMITTED', 'all']);
+  const [reporting, setReporting] = useState(false);
   const summary = useQuery({ queryKey: ['claims', 'wc', 'summary'], queryFn: getWcSummary });
   const incidents = useQuery({ queryKey: ['claims', 'wc', 'incidents'], queryFn: listUnclaimedIncidents });
   const list = useQuery({ queryKey: ['claims', 'wc', 'list', status], queryFn: () => listWcClaims({ status }) });
@@ -108,16 +116,19 @@ export function WorkersCompHome() {
   // On a phone with an item open, the item takes the screen: the counts and filters step aside.
   const filters = (
     <div className={cn('space-y-3', openId && 'hidden lg:block')}>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Reports to send" value={s?.froiDue ?? '—'} hint={s ? (s.froiOverdue ? `${s.froiOverdue} past the filing window` : 'None past the filing window') : undefined} />
-        <MetricCard label="Open claims" value={s?.open ?? '—'} hint={s ? `${s.claimsLast12Months} in the last 12 months` : undefined} />
-        <MetricCard label="Lost-time days" value={s?.lostTimeDaysOpen ?? '—'} hint={s ? `${s.restrictedDaysOpen} restricted days on open claims` : undefined} />
+      <MetricStrip label="Workers’ comp at a glance">
+        <MetricCard label="Reports to send" value={s?.froiDue ?? '—'} tone={s?.froiOverdue ? 'alert' : s?.froiDue ? 'warning' : 'default'} hint={s ? (s.froiOverdue ? `${s.froiOverdue} past the filing window` : 'None past the filing window') : undefined} onClick={() => setStatus('OPEN')} selected={status === 'OPEN'} nothing={s && !s.froiDue ? 'No reports to send' : undefined} />
+        <MetricCard label="Open claims" value={s?.open ?? '—'} tone="neutral" hint={s ? `${s.claimsLast12Months} in the last 12 months` : undefined} onClick={() => setStatus('open')} selected={status === 'open'} nothing={s && !s.open ? 'No open claims' : undefined} />
+        <MetricCard label="Lost-time days" value={s?.lostTimeDaysOpen ?? '—'} tone="neutral" hint={s ? `${s.restrictedDaysOpen} restricted days on open claims` : undefined} />
         <MetricCard
           label="Incident rate"
           value={s?.incidentRate ?? '—'}
-          hint={s && s.incidentRate === null ? `Needs a full-time year of hours — ${s.hoursWorkedLast12Months.toLocaleString()} logged so far` : 'Recordable cases per 100 full-time workers, 12 months'}
+          tone="neutral"
+          hint="Recordable cases per 100 full-time workers, 12 months"
+          // Not enough hours for a rate yet: say why, on a phone too (the hint hides there).
+          nothing={s && s.incidentRate === null ? `Needs a full-time year of hours — ${s.hoursWorkedLast12Months.toLocaleString()} so far` : undefined}
         />
-      </div>
+      </MetricStrip>
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter claims">
         {[
           ['open', 'Open'],
@@ -256,15 +267,27 @@ export function WorkersCompHome() {
   );
 
   return (
+    <>
     <DeskTemplate
       title="Workers’ comp claims"
       subtitle="From the injury to the carrier and back to work."
-      breadcrumbs={[{ label: 'Compliance', to: '/compliance' }, { label: 'Workers’ comp claims' }]}
+      actions={<Button onClick={() => setReporting(true)}><Plus className="h-4 w-4" aria-hidden="true" />Report an injury</Button>}
       filters={filters}
       queue={queue}
       item={item}
       itemOpen={!!openId}
     />
+    {reporting && (
+      <ReportInjuryDialog
+        onClose={() => setReporting(false)}
+        onStarted={(id) => {
+          setReporting(false);
+          refresh();
+          setOpen(id);
+        }}
+      />
+    )}
+    </>
   );
 }
 
@@ -286,18 +309,21 @@ function ClaimView({ id, onBack, onChanged }: { id: string; onBack: () => void; 
       </Button>
       <Card>
         <CardContent className="space-y-4 p-4 md:p-5">
-          <div className="flex flex-wrap items-start gap-3">
+          {/* On a phone the badges sit under the name, so it isn't squeezed to "Aaliyah …". */}
+          <div className="flex items-start gap-3">
             <Avatar name={c.associateName} size="md" />
             <div className="min-w-0 flex-1">
-              <SectionTitle className="mb-0" title={<Link to={`/people/${c.associateId}`} className="hover:underline">{c.associateName}</Link>} />
+              <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                <SectionTitle className="mb-0 min-w-0" title={<Link to={`/people/${c.associateId}`} className="hover:underline">{c.associateName}</Link>} />
+                <div className="flex shrink-0 flex-wrap gap-1.5">
+                  <Badge variant={statusMetaOf(c.status).variant}>{statusMetaOf(c.status).label}</Badge>
+                  <Badge variant="outline">{c.claimType === 'INDEMNITY' ? 'Lost time' : 'Medical only'}</Badge>
+                </div>
+              </div>
               <p className="text-sm text-ink-muted">
                 {c.froi.injury.bodyPart ?? 'Injury'} · {fmtDateTime(c.injuryDate)} · {c.storeName ?? c.clientName ?? '—'} · {c.jurisdiction}
               </p>
               {c.carrierClaimNumber && <p className="text-sm text-ink-muted">Carrier claim {c.carrierClaimNumber}{c.carrierName ? ` · ${c.carrierName}` : ''}</p>}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Badge variant={statusMetaOf(c.status).variant}>{statusMetaOf(c.status).label}</Badge>
-              <Badge variant="outline">{c.claimType === 'INDEMNITY' ? 'Lost time' : 'Medical only'}</Badge>
             </div>
           </div>
           {c.next && (
@@ -311,7 +337,7 @@ function ClaimView({ id, onBack, onChanged }: { id: string; onBack: () => void; 
                 {c.next.key === 'froi' && <div className="text-xs text-ink-muted">A {q.data.froiDefaultDays}-day window for {c.jurisdiction} by default — confirm yours with your carrier.</div>}
               </div>
               {c.next.key === 'froi' && (
-                <Button onClick={() => setSubmitting(true)}>
+                <Button className="w-full sm:w-auto" onClick={() => setSubmitting(true)}>
                   <Send className="h-4 w-4" aria-hidden="true" />
                   Record it as sent
                 </Button>
@@ -350,18 +376,58 @@ function FroiCard({ c, onChanged }: { c: WcClaim; onChanged: () => void }) {
         },
       }),
     onSuccess: () => {
-      toast.success('First report saved.');
+      toast.success(sent ? 'Amendment saved — send the carrier the corrected report.' : 'First report saved.');
+      setAmending(false);
       onChanged();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not save.'),
   });
+  // Once it has gone to the carrier the report is a record: read it, and
+  // change it on purpose ("Amend") — a correction the carrier must also get.
+  const sent = !!c.froiSubmittedAt;
+  const [amending, setAmending] = useState(false);
   const set = <K extends keyof FroiFields>(k: K, patch: Partial<FroiFields[K]>) => setF({ ...f, [k]: { ...f[k], ...patch } });
   const missing = [!f.employer.fein && 'employer FEIN', !f.employer.policyNumber && 'policy number', !f.injury.nature && 'nature of injury', !f.injury.cause && 'cause'].filter(Boolean) as string[];
+  if (sent && !amending) {
+    const row = (label: string, value: React.ReactNode) => (
+      <div>
+        <dt className="text-ink-muted">{label}</dt>
+        <dd className="text-ink">{value || '—'}</dd>
+      </div>
+    );
+    return (
+      <Card>
+        <CardContent className="space-y-4 p-4 md:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">First report of injury</h3>
+              <p className="text-xs text-ink-muted">Sent to the carrier {fmtDate(c.froiSubmittedAt!)}.</p>
+            </div>
+            <Button size="sm" variant="secondary" onClick={() => setAmending(true)}>
+              Amend
+            </Button>
+          </div>
+          <dl className="grid gap-3 text-sm sm:grid-cols-2">
+            {row('Employer', f.employer.name)}
+            {row('FEIN', f.employer.fein)}
+            {row('Policy number', f.employer.policyNumber)}
+            {row('Occupation', f.employee.jobTitle)}
+            {row('What happened', f.injury.description)}
+            {row('Part of body', f.injury.bodyPart)}
+            {row('Nature of injury', f.injury.nature)}
+            {row('Cause', f.injury.cause)}
+            {row('Treatment', f.injury.treatment ? TREATMENT_TEXT[f.injury.treatment] : null)}
+            {row('Physician or facility', f.injury.physician)}
+          </dl>
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <Card>
       <CardContent className="space-y-4 p-4 md:p-5">
         <div>
-          <h3 className="text-sm font-semibold text-ink">First report of injury</h3>
+          <h3 className="text-sm font-semibold text-ink">{sent ? 'Amend the first report' : 'First report of injury'}</h3>
           <p className="text-xs text-ink-muted">{missing.length ? `Still to fill: ${missing.join(', ')}.` : 'Everything the common state forms ask for is filled in.'}</p>
         </div>
         <fieldset className="grid gap-3 sm:grid-cols-2">
@@ -405,9 +471,16 @@ function FroiCard({ c, onChanged }: { c: WcClaim; onChanged: () => void }) {
           </Field>
           <Field label="Physician or facility">{(p) => <Input {...p} value={f.injury.physician ?? ''} onChange={(e) => set('injury', { physician: e.target.value || null })} />}</Field>
         </fieldset>
-        <Button loading={save.isPending} onClick={() => save.mutate()}>
-          Save the report
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button loading={save.isPending} onClick={() => save.mutate()}>
+            {sent ? 'Save the amendment' : 'Save the report'}
+          </Button>
+          {sent && (
+            <Button variant="secondary" onClick={() => { setF(c.froi); setAmending(false); }}>
+              Cancel
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -617,3 +690,86 @@ function SubmitDialog({ c, onClose, onDone }: { c: WcClaim; onClose: () => void;
     </Dialog>
   );
 }
+
+/**
+ * Report an injury and start its claim in one step: the injury is logged
+ * to the OSHA log (the record the claim is built from) and the claim opens
+ * with its first report filled in. First aid only isn't a claim.
+ */
+function ReportInjuryDialog({ onClose, onStarted }: { onClose: () => void; onStarted: (claimId: string) => void }) {
+  const term = useTerm();
+  const scope = useStoreScope();
+  const { clients } = useClients();
+  const [person, setPerson] = useState<PickedAssociate | null>(null);
+  const [clientId, setClientId] = useState(scope.clientId);
+  const [when, setWhen] = useState(() => {
+    const d = new Date();
+    const p2 = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  });
+  const [description, setDescription] = useState('');
+  const [bodyPart, setBodyPart] = useState('');
+  const [severity, setSeverity] = useState<OshaSeverity>('MEDICAL_TREATMENT');
+  const go = useMutation({
+    mutationFn: async () => {
+      const incident = await createOshaIncident({ clientId, associateId: person!.id, occurredAt: new Date(when).toISOString(), description: description.trim(), bodyPart: bodyPart.trim() || null, severity });
+      return openWcClaim({ oshaIncidentId: incident.id });
+    },
+    onSuccess: (r) => {
+      toast.success(`Claim started. The first report is due to the carrier ${fmtDate(r.claim.froiDueAt)}.`);
+      onStarted(r.claim.id);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not report the injury.'),
+  });
+  const ready = !!person && !!clientId && !!when && description.trim().length > 0;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Report an injury</DialogTitle>
+          <DialogDescription>It goes on the OSHA log and its workers’ comp claim starts, with the first report filled in from what you enter here.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2 [&>*]:min-w-0">
+          <div className="sm:col-span-2">
+            <Label>Who was hurt</Label>
+            <AssociatePicker value={person} onChange={setPerson} />
+          </div>
+          <Field label={term('label.client')}>
+            {(p) => (
+              <Select {...p} value={clientId} onChange={(e) => setClientId(e.target.value)}>
+                <option value="">Pick one…</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="When">{(p) => <Input {...p} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />}</Field>
+          <Field label="What happened" className="sm:col-span-2">{(p) => <Textarea {...p} rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />}</Field>
+          <Field label="Part of body">{(p) => <Input {...p} value={bodyPart} onChange={(e) => setBodyPart(e.target.value)} placeholder="Lower back" />}</Field>
+          <Field label="How serious">
+            {(p) => (
+              <Select {...p} value={severity} onChange={(e) => setSeverity(e.target.value as OshaSeverity)}>
+                <option value="MEDICAL_TREATMENT">Medical treatment</option>
+                <option value="RESTRICTED_DUTY">Restricted duty</option>
+                <option value="DAYS_AWAY">Days away from work</option>
+                <option value="FATAL">Fatal</option>
+              </Select>
+            )}
+          </Field>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => go.mutate()} loading={go.isPending} disabled={!ready}>
+            Report and start the claim
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+

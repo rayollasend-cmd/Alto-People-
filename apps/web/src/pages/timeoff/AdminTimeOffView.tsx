@@ -51,14 +51,18 @@ import { SearchInput } from '@/components/ui/FilterBar';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
 import { Avatar } from '@/components/ui/Avatar';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { useTerm } from '@/lib/auth';
+import { useUrlParam } from '@/lib/useUrlState';
 
-const TABS: { key: TimeOffRequestStatus | 'ALL'; label: string }[] = [
+type StatusTab = TimeOffRequestStatus | 'ALL';
+const STATUS_KEYS: readonly StatusTab[] = ['PENDING', 'APPROVED', 'DENIED', 'CANCELLED', 'ALL'];
+
+const TABS: { key: StatusTab; label: string }[] = [
   { key: 'PENDING', label: 'Pending' },
   { key: 'APPROVED', label: 'Approved' },
   { key: 'DENIED', label: 'Denied' },
@@ -97,10 +101,19 @@ export const isInsufficient = (r: TimeOffRequest) =>
   r.balanceMinutes !== undefined &&
   r.balanceMinutes < r.requestedMinutes;
 
-export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
+export function AdminTimeOffView({
+  canManage,
+  whosOffShown = false,
+}: {
+  canManage: boolean;
+  /** The page shows the "Who's off" strip (#whos-off): the empty queue points to it. */
+  whosOffShown?: boolean;
+}) {
   const term = useTerm();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<TimeOffRequestStatus | 'ALL'>('PENDING');
+  // The status lives in ?status= so a notification can open "Pending" or
+  // "Approved" directly (F500 G2).
+  const [tab, setTab] = useUrlParam<StatusTab>('status', 'PENDING', STATUS_KEYS);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [approveTarget, setApproveTarget] = useState<TimeOffRequest | null>(null);
@@ -316,29 +329,26 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-6">
-      <Tabs
-        value={tab}
-        onValueChange={(v) => setTab(v as TimeOffRequestStatus | 'ALL')}
-      >
-        <TabsList>
-          {TABS.map((t) => (
-            <TabsTrigger key={t.key} value={t.key}>
-              {t.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>Queue</CardTitle>
-              <CardDescription>
-                {tab === 'PENDING'
-                  ? 'Awaiting decision'
-                  : `${(TABS.find((t) => t.key === tab)?.label ?? tab).toLowerCase()} requests`}
-              </CardDescription>
+            <div className="space-y-2">
+              <div>
+                <CardTitle>Queue</CardTitle>
+                <CardDescription>
+                  {tab === 'PENDING'
+                    ? 'Awaiting decision'
+                    : `${(TABS.find((t) => t.key === tab)?.label ?? tab).toLowerCase()} requests`}
+                </CardDescription>
+              </div>
+              {/* One control for the status, inside the card it filters — a
+                  second underline tab bar under the page's tabs read as noise. */}
+              <SegmentedControl
+                ariaLabel="Request status"
+                value={tab}
+                onChange={setTab}
+                options={TABS.map((t) => ({ value: t.key, label: t.label }))}
+              />
             </div>
             <SearchInput
               value={search}
@@ -374,13 +384,24 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
             <div className="p-6">
               <EmptyState
                 icon={CalendarCheck}
-                title={search.trim() ? 'No matches' : 'Nothing in this queue'}
+                title={search.trim() ? 'No matches' : tab === 'PENDING' ? 'Nothing to approve' : 'Nothing in this queue'}
                 description={
                   search.trim()
                     ? 'No requests match that associate name.'
                     : tab === 'PENDING'
-                      ? 'You\'re all caught up.'
+                      ? 'Every request has a decision.'
                       : 'No requests with this status.'
+                }
+                action={
+                  !search.trim() && tab === 'PENDING' && whosOffShown ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('whos-off')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                    >
+                      See who's off this week →
+                    </Button>
+                  ) : undefined
                 }
               />
             </div>

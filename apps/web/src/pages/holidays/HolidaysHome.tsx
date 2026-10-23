@@ -8,6 +8,7 @@ import {
   deleteHoliday,
   importUsFederal,
   listHolidays,
+  listUpcomingHolidays,
   updateHoliday,
   type HolidayRow,
   type HolidayType,
@@ -132,6 +133,42 @@ const US_STATES: { code: string; name: string }[] = [
   { code: 'WY', name: 'Wyoming' },
 ];
 
+const LONG_DATE = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+/** The next three holidays, for the person who works them. */
+function UpcomingHolidays({ query }: { query: { data?: { holidays: Array<{ id: string; name: string; date: string; paid: boolean; daysUntil: number }> }; isError: boolean } }) {
+  if (query.isError) return null;
+  const next = query.data?.holidays.slice(0, 3);
+  if (!next) return <SkeletonRows count={2} />;
+  return (
+    <Card>
+      <CardContent>
+        <div className="text-xs font-medium uppercase tracking-wider text-gold">Coming up</div>
+        {next.length === 0 ? (
+          <EmptyState size="sm" className="mt-2" title="No holidays on the calendar in the next year yet." />
+        ) : (
+          <ul className="mt-2 divide-y divide-navy-secondary" data-testid="upcoming-holidays">
+            {next.map((h) => (
+              <li key={h.id} className="flex items-baseline justify-between gap-3 py-2">
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-ink">{h.name}</span>
+                  <span className="block text-xs text-silver">
+                    {LONG_DATE.format(new Date(`${h.date}T12:00:00Z`))} ·{' '}
+                    {h.daysUntil === 0 ? 'today' : h.daysUntil === 1 ? 'tomorrow' : `in ${h.daysUntil} days`}
+                  </span>
+                </span>
+                <span className={h.paid ? 'shrink-0 text-xs text-success' : 'shrink-0 text-xs text-silver/70'}>
+                  {h.paid ? 'Paid holiday' : 'Unpaid'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function StateSelect({
   id,
   value,
@@ -171,6 +208,15 @@ export function HolidaysHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:scheduling') : false;
+  // An associate reads the calendar; the type and client filters and the
+  // HR copy are for the people who keep it (F500 G2).
+  const isAssociate = user?.role === 'ASSOCIATE';
+  const upcoming = useQuery({
+    queryKey: ['HolidaysHome', 'upcoming'],
+    queryFn: () => listUpcomingHolidays(365),
+    enabled: isAssociate,
+    staleTime: 10 * 60_000,
+  });
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Seed the chips/drawers with their one client so the
   // filter and CLIENT_SPECIFIC holidays still work.
@@ -190,7 +236,7 @@ export function HolidaysHome() {
   // without client access) just leaves the chips hidden. Client-bound
   // viewers are seeded with their one client and never fetch (the
   // endpoint would 403). Served from the app-wide react-query cache.
-  const { clients: fetchedClients } = useClients({ enabled: !boundedClient });
+  const { clients: fetchedClients } = useClients({ enabled: !boundedClient && !isAssociate });
   const clients = useMemo<Array<Pick<ClientListItem, 'id' | 'name'>>>(
     () => (boundedClient ? [boundedClient] : fetchedClients),
     [boundedClient, fetchedClients],
@@ -256,9 +302,13 @@ export function HolidaysHome() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Holidays"
-        subtitle="Federal, state, company, and site-specific holidays. Pay multipliers and shift planning use this list."
-        breadcrumbs={[{ label: 'Time & scheduling' }, { label: 'Holidays' }]}
+        subtitle={
+          isAssociate
+            ? 'The days your workplace observes this year.'
+            : 'Federal, state, company, and site-specific holidays. Pay multipliers and shift planning use this list.'
+        }
     >
+      {isAssociate && <UpcomingHolidays query={upcoming} />}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -301,6 +351,7 @@ export function HolidaysHome() {
         )}
       </div>
 
+      {!isAssociate && (
       <div className="space-y-1.5">
         <div className="flex flex-wrap gap-1.5">
           {TYPE_FILTERS.map((f) => (
@@ -333,6 +384,7 @@ export function HolidaysHome() {
           </div>
         )}
       </div>
+      )}
 
       {error ? (
         <Card>

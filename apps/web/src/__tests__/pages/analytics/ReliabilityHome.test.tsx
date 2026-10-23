@@ -13,7 +13,7 @@ vi.mock('@/lib/scheduledJobsApi', async (orig) => ({
 
 import { getReliability } from '@/lib/reliabilityApi';
 import { listScheduledJobs, runScheduledJob, type ScheduledJob } from '@/lib/scheduledJobsApi';
-import { ReliabilityHome } from '@/pages/analytics/ReliabilityHome';
+import { ReliabilityHome, weekLabel } from '@/pages/analytics/ReliabilityHome';
 import { AuthContext } from '@/lib/auth';
 
 /**
@@ -55,7 +55,7 @@ function response(over: Partial<ReliabilityResponse> = {}): ReliabilityResponse 
   };
 }
 
-function renderPage() {
+function renderPage(initial = '/reliability') {
   // The page reads the signed-in person and the tenant (the operator's incident panel).
   return render(
     <AuthContext.Provider
@@ -72,7 +72,7 @@ function renderPage() {
       }
     >
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[initial]}>
           <ReliabilityHome />
         </MemoryRouter>
       </QueryClientProvider>
@@ -132,13 +132,13 @@ describe('ReliabilityHome', () => {
     vi.mocked(getReliability).mockResolvedValue(response());
     renderPage();
     expect(await screen.findByText('Within budget')).toBeInTheDocument();
-    expect(screen.getByText('In Sentry so far')).toBeInTheDocument();
-    expect(screen.getByText('5 more to the exit')).toBeInTheDocument();
+    expect(screen.getByText('Errors so far')).toBeInTheDocument();
+    expect(screen.getByText('5 more for eight in a row')).toBeInTheDocument();
     // The slowest busy route leads with its p95, not its mean (the same
     // figure also sits in the slowest-routes table below).
     expect(screen.getAllByText('2.5 s').length).toBeGreaterThan(0);
     expect(screen.queryByText('900 ms')).toBeInTheDocument();
-    expect(screen.getByText('p95 · GET /rides/:id')).toBeInTheDocument();
+    expect(screen.getByText('Slowest 5% of requests · GET /rides/:id')).toBeInTheDocument();
     expect(screen.getByText('97%')).toBeInTheDocument();
     expect(screen.getByText('95%')).toBeInTheDocument();
     expect(screen.getByText('57 of 60 · 2 no-show · 1 never closed')).toBeInTheDocument();
@@ -153,7 +153,11 @@ describe('ReliabilityHome', () => {
       }),
     );
     renderPage();
-    expect((await screen.findAllByText('Sentry is not connected')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Error tracking isn't connected")).length).toBeGreaterThan(0);
+    // Plain words for the HR admin: no env-var names, no Phase 1.
+    expect(screen.getAllByText(/Ask your Alto admin to connect error tracking/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/SENTRY_AUTH_TOKEN/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Phase 1/)).not.toBeInTheDocument();
     expect(screen.queryByText('Within budget')).not.toBeInTheDocument();
     expect(screen.queryByText('Over budget')).not.toBeInTheDocument();
     expect(screen.getByText('Server errors this week')).toBeInTheDocument();
@@ -163,5 +167,51 @@ describe('ReliabilityHome', () => {
     vi.mocked(getReliability).mockResolvedValue(response({ errors: { ...response().errors, thisWeek: 14 } }));
     renderPage();
     expect(await screen.findByText('Over budget')).toBeInTheDocument();
+  });
+});
+
+describe('ReliabilityHome — F500 pass', () => {
+  it('is a titled page with the window as its header control, kept in the URL', async () => {
+    vi.mocked(getReliability).mockResolvedValue(response({ days: 30 }));
+    renderPage('/reliability?window=30');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Reliability' })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'Reporting window' })).toBeInTheDocument();
+    expect(getReliability).toHaveBeenCalledWith(30);
+  });
+
+  it('labels org weeks Saturday to Friday from their day keys, the short way', () => {
+    const now = new Date('2026-10-22T12:00:00Z');
+    expect(weekLabel({ weekStart: '2026-10-17T04:00:00.000Z', weekEnd: '2026-10-24T04:00:00.000Z' }, now)).toBe('Oct 17 – 23');
+    expect(weekLabel({ weekStart: '2026-10-31T04:00:00.000Z', weekEnd: '2026-11-07T04:00:00.000Z' }, now)).toBe('Oct 31 – Nov 6');
+    expect(weekLabel({ weekStart: '2025-12-27T05:00:00.000Z', weekEnd: '2026-01-03T05:00:00.000Z' }, now)).toBe('Dec 27, 2025 – Jan 2, 2026');
+    expect(weekLabel({ weekStart: '2025-06-28T04:00:00.000Z', weekEnd: '2025-07-05T04:00:00.000Z' }, now)).toBe('Jun 28 – Jul 4, 2025');
+  });
+
+  it('says "No kiosk punches" and "No rides" instead of "— 0 of 0", and hides restarts when there were none', async () => {
+    vi.mocked(getReliability).mockResolvedValue(
+      response({
+        kiosk: { total: 0, accepted: 0, rejected: 0, rate: null, series: [] },
+        rides: { total: 0, completed: 0, noShow: 0, unresolved: 0, rate: null },
+        restarts: { count: 0, lastBootAt: null, version: null },
+      }),
+    );
+    renderPage();
+    expect(await screen.findByText('No kiosk punches in this window')).toBeInTheDocument();
+    expect(screen.getByText('No rides in this window')).toBeInTheDocument();
+    expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
+    expect(screen.queryByText('API restarts')).not.toBeInTheDocument();
+  });
+
+  it('shows restarts against a threshold: 2 in a week is normal, 932 is not', async () => {
+    vi.mocked(getReliability).mockResolvedValue(response({ restarts: { count: 2, lastBootAt: null, version: 'abc' } }));
+    const { unmount } = renderPage();
+    expect(await screen.findByText('API restarts')).toBeInTheDocument();
+    expect(screen.getByText('Up to 3 in 7 days is normal')).toBeInTheDocument();
+    unmount();
+    vi.mocked(getReliability).mockResolvedValue(response({ restarts: { count: 932, lastBootAt: null, version: 'abc' } }));
+    renderPage();
+    expect(await screen.findByText('More than 3 in 7 days')).toBeInTheDocument();
+    // The value counts up to its number.
+    expect(await screen.findByText('932', {}, { timeout: 2000 })).toBeInTheDocument();
   });
 });

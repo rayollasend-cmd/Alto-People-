@@ -22,7 +22,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtDateOnly, fmtDateTz, fmtHours, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
+import { fmtDateOnly, fmtDateTz, fmtHours, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Button } from '@/components/ui/Button';
@@ -82,9 +82,9 @@ function useNow(): number {
 
 type StepState = 'done' | 'current' | 'todo' | 'warn';
 
-function Step({ state, label, value, sub, children }: { state: StepState; label: string; value: ReactNode; sub?: ReactNode; children?: ReactNode }) {
+function Step({ state, label, value, sub, children, className }: { state: StepState; label: string; value: ReactNode; sub?: ReactNode; children?: ReactNode; className?: string }) {
   return (
-    <li className="relative min-w-0 flex-1">
+    <li className={cn('relative min-w-0 flex-1', className)}>
       <div className="flex items-center gap-2">
         <span
           className={cn(
@@ -121,6 +121,12 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
   const cycle = data.payCycle ?? null;
   const today = todayYmd();
   const daysToPayday = payday ? Math.max(0, daysBetween(today, payday.date.slice(0, 10))) : null;
+  // People went unpaid: said at the top of the hero, not only in the list
+  // under it — the cycle below can look calm while two paydays passed.
+  const inbox = useInbox();
+  const missed = inbox.data?.sources?.find((src) => src.key === 'payroll-missed-paydays');
+  // Hours waiting from periods before this one (the close chase counts them all).
+  const earlierPending = cycle ? Math.max(0, data.close.pendingHours - cycle.hours.pending) : 0;
 
   return (
     <Card className="relative h-full overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
@@ -129,13 +135,27 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
       />
       <CardContent className="relative flex h-full flex-col">
+        {missed && missed.count > 0 && (
+          <Link
+            to={missed.path}
+            data-testid="missed-paydays"
+            className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-alert/40 bg-alert/10 px-3 py-2 text-sm font-medium text-alert hover:bg-alert/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          >
+            <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1">{t('fin.missedLine', { count: missed.count })}</span>
+            <span className="inline-flex shrink-0 items-center gap-1 underline underline-offset-2">
+              {t('fin.missedRun', { count: missed.count })}
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+          </Link>
+        )}
         <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
           <Banknote className="h-3.5 w-3.5" aria-hidden="true" />
           {t('fin.payday')}
         </span>
         {payday ? (
           <>
-            <div className="mt-2 text-4xl font-bold tracking-tight tabular-nums text-white md:text-5xl">{fmtDate(payday.date)}</div>
+            <div className="mt-2 text-4xl font-bold tracking-tight tabular-nums text-white md:text-5xl">{fmtDateOnly(payday.date, { weekday: true, year: 'auto' })}</div>
             <p className="mt-1.5 text-sm text-silver tabular-nums">
               <span className="font-semibold text-gold">
                 {daysToPayday === 0 ? t('fin.paydayToday') : daysToPayday === 1 ? t('fin.paydayTomorrow') : t('fin.paydayIn', { days: daysToPayday ?? 0 })}
@@ -147,15 +167,17 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
           <p className="mt-2 text-sm text-silver">{t('fin.paydayNone')}</p>
         )}
 
-        {cycle && <PayCycleSteps cycle={cycle} today={today} />}
+        {cycle && <PayCycleSteps cycle={cycle} today={today} earlierPending={earlierPending} />}
 
+        {/* On a phone the hero is the payday line and the two steps that need
+            someone; the cash line and last payday are on the cards below. */}
         {data.cash && data.cash.weeks.length > 0 && <CashLine weeks={data.cash.weeks} />}
 
         {data.payday.lastDisbursed && (
-          <p className="mt-auto pt-4 text-xs text-silver/60 tabular-nums">
+          <p className="mt-auto hidden pt-4 text-xs text-silver/60 tabular-nums sm:block">
             {t('fin.lastPay', {
               gross: fmtMoney(data.payday.lastDisbursed.totalGross),
-              date: fmtDate(data.payday.lastDisbursed.periodEnd),
+              date: fmtDateOnly(data.payday.lastDisbursed.periodEnd, { year: 'auto' }),
             })}
           </p>
         )}
@@ -164,7 +186,7 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
   );
 }
 
-function PayCycleSteps({ cycle, today }: { cycle: PayCycle; today: string }) {
+function PayCycleSteps({ cycle, today, earlierPending = 0 }: { cycle: PayCycle; today: string; earlierPending?: number }) {
   const { t } = useI18n();
   const periodDays = daysBetween(cycle.periodStart, cycle.periodEnd) + 1;
   const periodOver = today > cycle.periodEnd;
@@ -180,6 +202,7 @@ function PayCycleSteps({ cycle, today }: { cycle: PayCycle; today: string }) {
   return (
     <ol className="mt-5 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-gold/20 pt-4 md:flex md:gap-3" aria-label={t('fin.cycle.title')}>
       <Step
+        className="hidden md:block"
         state={periodOver ? 'done' : 'current'}
         label={t('fin.cycle.period')}
         value={`${md(cycle.periodStart)} – ${md(cycle.periodEnd)}`}
@@ -188,18 +211,34 @@ function PayCycleSteps({ cycle, today }: { cycle: PayCycle; today: string }) {
         {!periodOver && <Bar pct={(day / periodDays) * 100} />}
       </Step>
       <Step
-        state={hoursState}
+        state={total === 0 ? (earlierPending > 0 ? 'warn' : 'todo') : hoursState}
         label={t('fin.cycle.hours')}
-        value={t('fin.cycle.hoursOf', { approved: fmtHours(cycle.hours.approved), total: fmtHours(total) })}
+        value={
+          total === 0 ? (
+            // Honest zero: "0h of 0h · all approved" read as done.
+            <span className="font-normal text-silver">{t('fin.cycle.hoursNone')}</span>
+          ) : (
+            t('fin.cycle.hoursOf', { approved: fmtHours(cycle.hours.approved), total: fmtHours(total) })
+          )
+        }
         sub={
-          cycle.hours.pending > 0 ? (
+          total === 0 ? undefined : cycle.hours.pending > 0 ? (
             <span className={cn(periodOver && 'text-warning')}>{t('fin.cycle.hoursWaiting', { hours: fmtHours(cycle.hours.pending) })}</span>
           ) : (
             t('fin.cycle.hoursAll')
           )
         }
       >
-        <Bar pct={approvedPct} tone={cycle.hours.pending > 0 && periodOver ? 'bg-warning' : 'bg-success'} />
+        {total > 0 && <Bar pct={approvedPct} tone={cycle.hours.pending > 0 && periodOver ? 'bg-warning' : 'bg-success'} />}
+        {earlierPending > 0 && (
+          <Link
+            to="/timesheets"
+            data-testid="hours-earlier"
+            className="mt-1 inline-block text-xs tabular-nums text-warning underline underline-offset-2 hover:text-gold-bright"
+          >
+            {t('fin.cycle.hoursEarlier', { hours: fmtHours(earlierPending) })}
+          </Link>
+        )}
       </Step>
       <Step
         state={runState}
@@ -223,11 +262,12 @@ function PayCycleSteps({ cycle, today }: { cycle: PayCycle; today: string }) {
           <ArrowRight className="h-3 w-3" aria-hidden="true" />
         </Link>
       </Step>
+      {/* The headline already says when payday is; this step says only whether it's paid. */}
       <Step
+        className="hidden md:block"
         state={paid ? 'done' : 'todo'}
-        label={t('fin.payday')}
-        value={`${wd(cycle.payDate)}, ${md(cycle.payDate)}`}
-        sub={paid ? t('fin.cycle.paid') : cycle.schedule}
+        label={t('fin.cycle.paidStep')}
+        value={paid ? t('fin.cycle.paidOn', { date: `${wd(cycle.payDate)}, ${md(cycle.payDate)}` }) : <span className="font-normal text-silver">{t('fin.cycle.notPaid')}</span>}
       />
     </ol>
   );
@@ -241,7 +281,7 @@ function CashLine({ weeks }: { weeks: CashWeek[] }) {
   return (
     <Link
       to="/finance/cash-forecast"
-      className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-gold/20 pt-3 text-xs tabular-nums text-silver hover:text-gold"
+      className="mt-4 hidden flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-gold/20 pt-3 text-xs tabular-nums text-silver hover:text-gold sm:flex"
     >
       <span className="flex items-center gap-1.5 font-medium uppercase tracking-wider text-gold">
         <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
@@ -266,7 +306,7 @@ export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
   const { t } = useI18n();
   if (!cash) return null;
   return (
-    <Card className="h-full animate-enter" style={enterStagger(5)}>
+    <Card className="animate-enter" style={enterStagger(5)}>
       <CardContent>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="flex items-center gap-1.5 text-sm font-medium text-ink">
@@ -279,7 +319,14 @@ export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
           </Link>
         </div>
         <p className="mt-1 text-xs text-silver">{t('fin.cashSub')}</p>
-        {cash.opening && (
+        {cash.opening && cash.opening.onFile === false ? (
+          <p className="mt-2 text-sm text-silver" data-testid="cash-no-balance">
+            {t('fin.cashNoBalance')}{' '}
+            <Link to="/books/accounts" className="text-gold underline underline-offset-2 hover:text-gold-bright">
+              {t('fin.cashSet')}
+            </Link>
+          </p>
+        ) : cash.opening && (
           <p className="mt-2 text-sm text-ink tabular-nums">
             {t('fin.cashToday', { amount: fmtMoney(cash.opening.balance) })}
             {cash.lowest && (
@@ -418,7 +465,7 @@ export function financeTasks(
       icon: ClockAlert,
       title: t('fin.task.chase', { hours: fmtHours(data.close.pendingHours) }),
       sub: data.close.oldestDay
-        ? t('fin.task.chaseSub', { count: data.close.pendingEntries, date: fmtDate(data.close.oldestDay) })
+        ? t('fin.task.chaseSub', { count: data.close.pendingEntries, date: fmtDateOnly(data.close.oldestDay, { year: 'auto' }) })
         : undefined,
       to: '/timesheets',
     });
@@ -500,7 +547,7 @@ export function TodayList({ data, headless = false }: { data: FinanceOverview; h
   const inbox = useInbox();
   const tasks = financeTasks(data, t, now, { statements: tenant.moduleOn('clientPortal') && tenant.moduleOn('billRates'), inbox: inbox.data?.sources });
   return (
-    <Card className="h-full animate-enter" style={enterStagger(1)}>
+    <Card className="animate-enter" style={enterStagger(1)}>
       <CardContent>
         {!headless && (
           <h2 className="flex items-baseline justify-between gap-2 text-sm font-medium text-white">
@@ -566,8 +613,8 @@ export function BillingWeekCard({ billing }: { billing: BillingWeek | null | und
   const closed = toGo <= 0 && billing.toEnter === 0;
   const pct = billing.registered > 0 ? Math.round((billing.entered / billing.registered) * 100) : 0;
   return (
-    <Card className={cn('h-full animate-enter', late && 'border-alert/40')} style={enterStagger(3)}>
-      <CardContent className="flex h-full flex-col">
+    <Card className={cn('animate-enter', late && 'border-alert/40')} style={enterStagger(3)}>
+      <CardContent className="flex flex-col">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-sm font-medium text-white">{t('fin.billTitle', { date: fmtDateOnly(billing.weekEnding, { weekday: true, year: false }) })}</h2>
           <Link to={`/time-attendance/timesheets?week=${billing.weekStart}`} className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright">
@@ -617,7 +664,7 @@ export function BillingWeekCard({ billing }: { billing: BillingWeek | null | und
           </p>
         )}
         {billing.unpricedHours > 0 && <p className="mt-1.5 text-2xs text-silver/70">{t('fin.billUnpriced', { hours: fmtHours(billing.unpricedHours) })}</p>}
-        <div className="mt-auto flex flex-wrap gap-2 pt-4">
+        <div className="flex flex-wrap gap-2 pt-4">
           <Button asChild size="sm" variant={billing.toEnter > 0 ? 'primary' : 'secondary'}>
             <Link to={`/time-attendance/timesheets?week=${billing.weekStart}`}>
               <ClipboardCheck className="h-3.5 w-3.5" />
@@ -627,7 +674,7 @@ export function BillingWeekCard({ billing }: { billing: BillingWeek | null | und
           <Button asChild size="sm" variant="ghost">
             <Link to="/fieldglass">
               <UserCheck className="h-3.5 w-3.5" />
-              {t('fin.fg')}
+              {t('fin.fgButton')}
             </Link>
           </Button>
         </div>
@@ -650,7 +697,7 @@ export function MarginTrendCard({ margin }: { margin: MarginTrend | null | undef
   const totalMargin = totals.revenue - totals.wages;
   const unpriced = weeks.reduce((s, w) => s + w.unpricedHours, 0);
   return (
-    <Card className="h-full animate-enter" style={enterStagger(4)}>
+    <Card className="animate-enter" style={enterStagger(4)}>
       <CardContent>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-sm font-medium text-white">{t('fin.marginTitle')}</h2>
@@ -728,7 +775,7 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
     { key: 'over90', label: t('fin.ar91'), amount: aging.over90, tone: 'bg-alert' },
   ];
   return (
-    <Card className="h-full animate-enter" style={enterStagger(6)}>
+    <Card className="animate-enter" style={enterStagger(6)} data-testid="receivables-card">
       <CardContent>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
@@ -773,8 +820,8 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
             {(receivables.byClient ?? []).length > 0 && (
               <ul className="mt-3 divide-y divide-navy-secondary/60 border-t border-navy-secondary/60">
                 {(receivables.byClient ?? []).map((c) => (
-                  <li key={c.clientName} className="flex items-baseline justify-between gap-3 py-1.5 text-sm">
-                    <span className="truncate text-white">{c.clientName}</span>
+                  <li key={c.clientName} className="flex flex-col gap-0.5 py-1.5 text-sm sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
+                    <span className="min-w-0 break-words text-white">{c.clientName}</span>
                     <span className="shrink-0 tabular-nums">
                       <span className="text-white">{fmtMoney(c.amount)}</span>
                       <span className={cn('ml-2 text-xs', c.oldestDays > 60 ? 'text-alert' : c.oldestDays > 30 ? 'text-warning' : 'text-silver/60')}>

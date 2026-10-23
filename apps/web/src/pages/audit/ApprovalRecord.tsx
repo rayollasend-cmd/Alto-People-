@@ -11,12 +11,12 @@ import {
 } from '@alto-people/shared';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ApprovalRequestCard } from '@/components/approvals/ApprovalRequestCard';
-import { ApiError, apiFetch } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
+import { QueryError } from '@/components/ui/QueryError';
 import { fmtDateTime } from '@/lib/format';
 import { listApprovalRequests, type RecordFilters } from '@/lib/approvalRequestsApi';
 
@@ -42,6 +42,7 @@ const STATUS_TONE: Record<ApprovalRequestStatus, 'pending' | 'success' | 'destru
 };
 const KINDS = ApprovalRequestKindSchema.options;
 const STATUSES: ApprovalRequestStatus[] = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'];
+const FILTER_KEYS = ['kind', 'status', 'requester', 'approver', 'from', 'to'] as const;
 
 interface Person {
   id: string;
@@ -64,7 +65,13 @@ export function ApprovalRecord() {
     else next.delete(key);
     setSp(next, { replace: true });
   };
-  const anyFilter = ['kind', 'status', 'requester', 'approver', 'from', 'to'].some((k) => sp.get(k));
+  const activeFilters = FILTER_KEYS.filter((k) => sp.get(k)).length;
+  const anyFilter = activeFilters > 0;
+  const clearFilters = () => {
+    const next = new URLSearchParams(sp);
+    for (const k of FILTER_KEYS) next.delete(k);
+    setSp(next, { replace: true });
+  };
 
   const record = useQuery({
     queryKey: ['approvals', 'record', filters],
@@ -88,27 +95,32 @@ export function ApprovalRecord() {
     [],
   );
 
-  const error = record.error ? (record.error instanceof ApiError ? record.error.message : 'Could not load the record.') : null;
+  const rows = record.data?.requests ?? null;
+  // Seven filters over "No requests yet" were noise (F500 G4): they appear once there is a record to filter.
+  const showFilters = anyFilter || (rows?.length ?? 0) > 0;
 
   return (
     <ListTemplate
       title="Approval record"
       subtitle="Every change that went to a second person — who asked, who decided, the before and after, and the reason."
-      breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Audit & integrity', to: '/audit' }, { label: 'Approval record' }]}
     >
+      {record.isError ? (
+        <QueryError what="the approval record" query={record} />
+      ) : (
       <DataGrid<ApprovalRequestSummary>
         id="approval-record"
         caption="Approval record"
-        rows={record.data?.requests ?? null}
+        rows={rows}
         loading={record.isPending}
-        error={error}
-        onRetry={() => void record.refetch()}
         columns={columns}
         rowKey={(r) => r.id}
         urlState={false}
         noun={{ one: 'request', many: 'requests' }}
         search={{ placeholder: 'Search the record' }}
+        activeFilters={activeFilters}
+        onClearFilters={clearFilters}
         filters={
+          showFilters ? (
           <>
             <div className="w-40">
               <Select size="sm" value={filters.kind ?? ''} onChange={(e) => set('kind', e.target.value)} aria-label="Filter by kind">
@@ -152,12 +164,8 @@ export function ApprovalRecord() {
             </div>
             <Input type="date" className="h-9 w-40" value={filters.from ?? ''} onChange={(e) => set('from', e.target.value)} aria-label="Asked on or after" />
             <Input type="date" className="h-9 w-40" value={filters.to ?? ''} min={filters.from ?? undefined} onChange={(e) => set('to', e.target.value)} aria-label="Asked on or before" />
-            {anyFilter && (
-              <Button size="sm" variant="ghost" onClick={() => setSp(new URLSearchParams(), { replace: true })}>
-                Clear
-              </Button>
-            )}
           </>
+          ) : undefined
         }
         expandable={{
           single: true,
@@ -174,6 +182,7 @@ export function ApprovalRecord() {
           description: anyFilter ? 'Widen the dates or clear a filter.' : 'When a change needs a second person, it is kept here for good — decided or not.',
         }}
       />
+      )}
     </ListTemplate>
   );
 }

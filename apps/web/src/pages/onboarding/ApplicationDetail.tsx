@@ -7,15 +7,15 @@ import {
   CalendarDays,
   CheckCircle2,
   Circle,
-  ClipboardList,
   Clock,
   Copy,
   Eye,
   FileDown,
   MailCheck,
-  MoreHorizontal,
   MailWarning,
-  ExternalLink,
+  ArrowRight,
+  ChevronDown,
+  MessageCircle,
   MinusCircle,
   PartyPopper,
   RotateCcw,
@@ -95,6 +95,11 @@ import {
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { StickyActionBar } from '@/components/ui/StickyActionBar';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { HeaderActions, HeaderFacts, type PageAction, type PageFact } from '@/components/ui/PageHeader';
+import { usePageHero } from '@/lib/pageTitle';
+import { useMinWidth } from '@/lib/useViewport';
+import { QueryError } from '@/components/ui/QueryError';
+import { NudgeDialog } from './NudgeDialog';
 import {
   Dialog,
   DialogContent,
@@ -107,20 +112,14 @@ import { Input } from '@/components/ui/Input';
 import { Field } from '@/components/ui/Field';
 import { Select } from '@/components/ui/Select';
 import { listClientLocations } from '@/lib/clientsApi';
-import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
 import { getAssociatePaySchedule } from '@/lib/payScheduleFlowApi';
+import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
 import { ReadyToWorkLine } from '@/components/ReadyToWorkLine';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
 import { FirstDayCard } from './FirstDayCard';
 import { CancelInviteDialog, cancelledToast, type AfterCancel, type CancelledInvite } from './CancelInviteDialog';
 import { cn } from '@/lib/cn';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/DropdownMenu';
 
 const EMPLOYMENT_LABEL: Record<string, string> = {
   W2_EMPLOYEE: 'W-2',
@@ -245,7 +244,10 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
   const [approveWarnings, setApproveWarnings] = useState<string[] | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [nudgeOpen, setNudgeOpen] = useState(false);
   const [reopening, setReopening] = useState(false);
+  // From md up the header's actions; below it the sticky decision bar.
+  const wide = useMinWidth(768);
   // In-flight flag for the header's one-click approve (no dialog to own it).
   const [directApproving, setDirectApproving] = useState(false);
   // Task pending the required-reason skip confirmation (sensitive kinds only).
@@ -312,16 +314,12 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
       queryKey: ['application', applicationId],
     });
   const setError = setMutationError;
-  const error = mutationError
-    ? mutationError
-    : detailQuery.error
-      ? detailQuery.error instanceof ApiError
-        ? detailQuery.error.message
-        : 'Failed to load.'
-      : null;
 
-  if (error) {
-    return <ErrorBanner>{error}</ErrorBanner>;
+  if (detailQuery.isError) {
+    return <QueryError what="this application" query={detailQuery} />;
+  }
+  if (mutationError) {
+    return <ErrorBanner>{mutationError}</ErrorBanner>;
   }
 
   if (!detail) {
@@ -522,6 +520,11 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
     acc[t.status] = (acc[t.status] ?? 0) + 1;
     return acc;
   }, {});
+  const resolved = (counts.DONE ?? 0) + (counts.SKIPPED ?? 0);
+  // A reminder of the next step makes sense while the hire still has one.
+  const nudgeable =
+    detail.status !== 'APPROVED' && detail.status !== 'REJECTED' && detail.status !== 'CANCELLED' && resolved < detail.tasks.length;
+  const nextTask = [...detail.tasks].sort((a, b) => a.order - b.order).find((t) => t.status !== 'DONE' && t.status !== 'SKIPPED') ?? null;
 
   return (
     <>
@@ -534,29 +537,27 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         {mode === 'page' && (
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="flex min-w-0 items-center gap-4">
-              <Avatar
-                src={personPhotoUrl({ photoUrl: detail.photoUrl, associateId: detail.associateId })}
-                name={detail.associateName}
-                size="xl"
-              />
+              {/* On a phone the name gets the width; the avatar shows from sm up. */}
+              <div className="hidden sm:block">
+                <Avatar
+                  src={personPhotoUrl({ photoUrl: detail.photoUrl, associateId: detail.associateId })}
+                  name={detail.associateName}
+                  size="xl"
+                />
+              </div>
               <div className="min-w-0">
-                <h1 className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
-                  {canManage ? (
-                    <Link
-                      to={`/people?associateId=${detail.associateId}`}
-                      className="hover:text-gold transition-colors"
-                      title={`Open this ${workerLc}'s profile`}
-                    >
-                      {detail.associateName}
-                    </Link>
-                  ) : (
-                    detail.associateName
-                  )}
-                </h1>
+                <DetailTitle
+                  name={detail.associateName}
+                  to={canManage ? `/people/${detail.associateId}` : null}
+                  linkTitle={`Open this ${workerLc}'s record`}
+                />
                 <DetailMeta detail={detail} />
+                <HeaderFacts facts={detailFacts(detail)} />
               </div>
             </div>
-            {canManage && (
+            {/* From md up the header carries the actions; below it the
+                decision bar at the bottom of the screen does. */}
+            {canManage && wide && (
               <DetailActions
                 detail={detail}
                 onResend={handleResend}
@@ -564,6 +565,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
                 onReject={() => setRejectOpen(true)}
                 onCancel={() => setCancelOpen(true)}
                 onReopen={() => void handleReopen()}
+                onNudge={nudgeable ? () => setNudgeOpen(true) : undefined}
                 reopening={reopening}
                 directApproveDate={directApproveDate}
                 directApproveSchedule={hireScheduleName}
@@ -576,8 +578,11 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         )}
         {mode === 'drawer' && (
           <div className="flex items-start justify-between gap-3 flex-wrap">
-            <DetailMeta detail={detail} />
-            {canManage && (
+            <div className="min-w-0">
+              <DetailMeta detail={detail} />
+              <HeaderFacts facts={detailFacts(detail)} />
+            </div>
+            {canManage && wide && (
               <DetailActions
                 detail={detail}
                 onResend={handleResend}
@@ -585,6 +590,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
                 onReject={() => setRejectOpen(true)}
                 onCancel={() => setCancelOpen(true)}
                 onReopen={() => void handleReopen()}
+                onNudge={nudgeable ? () => setNudgeOpen(true) : undefined}
                 reopening={reopening}
                 directApproveDate={directApproveDate}
                 directApproveSchedule={hireScheduleName}
@@ -647,11 +653,16 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         </CardHeader>
         <CardContent className="pt-2">
           <ProgressBar percent={detail.percentComplete} hideLabel />
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs2">
+          {/* Each task counted once (F500 G1): "3 Done" used to be done +
+              skipped, with the 2 skipped shown again beside it. */}
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs2">
+            <span className="text-sm text-ink tabular-nums" data-testid="checklist-resolved">
+              {resolved} of {detail.tasks.length} resolved
+            </span>
             <CountChip
               icon={CheckCircle2}
               label="Done"
-              count={(counts.DONE ?? 0) + (counts.SKIPPED ?? 0)}
+              count={counts.DONE ?? 0}
               total={detail.tasks.length}
               tone="success"
             />
@@ -691,6 +702,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
             clientId={detail.clientId}
             status={detail.status}
             payScheduleName={hireScheduleName}
+            payScheduleUncovered={hireUncovered}
           />
         </section>
       )}
@@ -727,34 +739,22 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
                 ? taskDestination(t.kind, detail.associateId, returnTo)
                 : null
             }
+            // The W-4 / direct deposit / policy / profile submission, read
+            // inside its own tile once there is one (manage scope only — the
+            // same gate as the API's assertCanModifyApplication).
+            submitted={
+              canManage && SUBMITTED_DATA_KINDS.has(t.kind) && (t.status === 'DONE' || t.status === 'IN_PROGRESS')
+                ? <SubmittedFor applicationId={detail.id} kind={t.kind} />
+                : undefined
+            }
+            submittedOpen={detail.status === 'SUBMITTED' || detail.status === 'IN_REVIEW'}
           />
         ))}
       </section>
 
-      {/* Submitted W-4 / direct deposit / policy-ack / profile data, inline.
-          These endpoints are gated exactly like the I-9 card below (manage
-          scope via assertCanModifyApplication) — same reason for canManage. */}
-      {canManage &&
-        detail.tasks.some((t) => SUBMITTED_DATA_KINDS.has(t.kind)) && (
-          <section className="mb-6">
-            <SubmittedDataCard detail={detail} mode={mode} />
-          </section>
-        )}
-
-      {/* Which pay schedule the hire lands on — what the rules choose, or a
-          nudge to choose one. Never blocks approval. */}
-      {canManage && (
-        <section className="mb-6">
-          <Card>
-            <CardContent className="py-4">
-              <PayScheduleAssignment
-                associateId={detail.associateId}
-                variant={detail.status === 'APPROVED' ? 'record' : 'hire'}
-              />
-            </CardContent>
-          </Card>
-        </section>
-      )}
+      {/* Which pay schedule the hire lands on is a line of First day above
+          (F500 G1): "No pay schedule covers this hire" was said there and
+          again in a card of its own down here. */}
 
       {/* I-9 Section 1 data and the uploaded identity documents behind it are
           HR-only — invite-scoped roles (SHIFT_SUPERVISOR) see checklist
@@ -821,8 +821,18 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         onResend={() => void handleResend()}
         onCancel={() => setCancelOpen(true)}
         onInPerson={() => navigate(`/onboarding/in-person/${detail.id}`)}
-        onPacket={() => window.open(`${compliancePacketUrl(detail.id)}?inline=1`, '_blank', 'noopener')}
+        onPacket={() => openPacket(detail.id)}
+        onNudge={nudgeable ? () => setNudgeOpen(true) : undefined}
       />}
+
+      <NudgeDialog
+        open={nudgeOpen}
+        onOpenChange={setNudgeOpen}
+        applicationId={detail.id}
+        associateName={detail.associateName}
+        suggestedSubject={nextTask ? `Quick nudge: ${nextTask.title}` : undefined}
+        suggestedBody={nudgeBodyFor(detail.associateName, detail.percentComplete, nextTask?.title ?? null)}
+      />
 
       <ApproveDialog
         open={approveOpen}
@@ -893,6 +903,71 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
   );
 }
 
+/**
+ * The page's heading: the hire's name, published to the top bar (it read
+ * "Alto People") and handed back to the bar once it scrolls away.
+ */
+function DetailTitle({ name, to, linkTitle }: { name: string; to: string | null; linkTitle: string }) {
+  // The bar's compact trail names the page by its last crumb: the hire.
+  const ref = usePageHero<HTMLHeadingElement>(name, [
+    { label: 'Onboarding', to: '/onboarding' },
+    { label: name },
+  ]);
+  return (
+    <h1 ref={ref} className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
+      {to ? (
+        <Link to={to} className="hover:text-gold transition-colors" title={linkTitle}>
+          {name}
+        </Link>
+      ) : (
+        name
+      )}
+    </h1>
+  );
+}
+
+/**
+ * The key facts under the name (F500 G1): when they were invited, when
+ * anything last moved (the stuck rule's own clock), when they start and
+ * who sent the invite. An unknown owner is left out, not guessed.
+ */
+export function detailFacts(detail: ApplicationDetailType): PageFact[] {
+  const decided = detail.status === 'APPROVED' || detail.status === 'REJECTED' || detail.status === 'CANCELLED';
+  return [
+    { label: 'Invited', value: fmtDate(detail.invitedAt) },
+    ...(decided
+      ? []
+      : [
+          {
+            label: 'Last activity',
+            value: detail.lastActivityAt ? (
+              <span className={detail.stuck ? 'text-alert' : undefined}>
+                {fmtRelativeDate(detail.lastActivityAt)}
+                {detail.stuck ? ' · stuck' : ''}
+              </span>
+            ) : null,
+            hint: 'The latest finished task, or the invite',
+          },
+        ]),
+    { label: 'Starts', value: detail.startDate ? fmtDateLabel(detail.startDate) : 'Not set' },
+    { label: 'Owner', value: detail.ownerName ?? null, hint: 'Who sent the invite' },
+  ];
+}
+
+/** The nudge email's body, naming the next step (the list's row nudge says the same). */
+function nudgeBodyFor(name: string, percent: number, nextTitle: string | null): string {
+  const firstName = name.trim().split(/\s+/)[0] || 'there';
+  return [
+    `Hi ${firstName},`,
+    '',
+    nextTitle
+      ? `Your onboarding is ${percent}% done — the next step is '${nextTitle}'. It only takes a few minutes.`
+      : `Your onboarding is ${percent}% done — just a few tasks left, and each only takes a few minutes.`,
+    '',
+    "Let us know if you're stuck.",
+  ].join('\n');
+}
+
 function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
   const clientsOn = useTenant().moduleOn('clientPortal');
   // A direct employer's hire has no client: the line starts with what is known.
@@ -906,15 +981,7 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
           <span>{detail.position}</span>
         </>
       )}
-      {detail.startDate && (
-        <>
-          <span className="text-silver/70">·</span>
-          <span>
-            Starts{' '}
-            <span className="text-white">{fmtDateLabel(detail.startDate)}</span>
-          </span>
-        </>
-      )}
+      {/* The start date is a fact under the name (detailFacts). */}
       <Badge variant="outline" className="text-2xs">
         {trackLabel(detail.onboardingTrack, clientsOn)} track
       </Badge>
@@ -937,6 +1004,24 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
   );
 }
 
+/** Why Approve is off, in words — shown under the button and on its hover. */
+function approveBlockedReason(detail: ApplicationDetailType, needsSchedule: boolean, directApproveDate: string | null): string | null {
+  const checklistComplete = detail.tasks.length === 0 || detail.percentComplete === 100;
+  const pendingTasks = detail.tasks.filter((t) => t.status !== 'DONE' && t.status !== 'SKIPPED').length;
+  if (!checklistComplete) return `${pendingTasks} of ${detail.tasks.length} tasks pending`;
+  if (needsSchedule && !directApproveDate) return 'No pay schedule covers this hire yet — choose one as you approve';
+  return null;
+}
+
+const openPacket = (id: string) => window.open(`${compliancePacketUrl(id)}?inline=1`, '_blank', 'noopener');
+
+/**
+ * The application's actions (F500 G1): Approve is the one primary; Nudge
+ * and Onboard in person stand beside it; the rest — another hire date,
+ * the packet, a fresh invite — sit in More, and the two that end things
+ * (Cancel invite, Reject) are at the bottom of More, each behind its own
+ * dialog. Reject used to be a red button next to Approve.
+ */
 export function DetailActions({
   detail,
   onResend,
@@ -944,13 +1029,14 @@ export function DetailActions({
   onReject,
   onCancel,
   onReopen,
+  onNudge,
   reopening,
   directApproveDate,
   directApproveSchedule,
   needsSchedule,
   directApproving,
   onDirectApprove,
-  compact,
+  compact: _compact,
 }: {
   detail: ApplicationDetailType;
   onResend: () => void;
@@ -961,6 +1047,8 @@ export function DetailActions({
   onCancel: () => void;
   /** Bring a cancelled invite back with a fresh link. */
   onReopen: () => void;
+  /** Opens the nudge email (a reminder of the next step). */
+  onNudge?: () => void;
   reopening: boolean;
   /** YYYY-MM-DD when the record's start date is today-or-future — enables
    *  the one-click approve; null falls back to the dialog. */
@@ -971,137 +1059,86 @@ export function DetailActions({
   needsSchedule: boolean;
   directApproving: boolean;
   onDirectApprove: () => void;
+  /** Kept for callers; the action row sizes itself. */
   compact?: boolean;
 }) {
   const term = useTerm();
-  // Approve / Reject only shown while the application is still under review.
-  // After APPROVED, REJECTED or CANCELLED the buttons disappear — the API
-  // also rejects re-decisions with 409, but hiding them avoids a confusing
-  // dead button. Approve also requires the checklist at 100%.
+  // Approve / Reject only while the application is still under review.
+  // After APPROVED, REJECTED or CANCELLED they disappear — the API also
+  // rejects re-decisions with 409, but hiding them avoids a dead button.
   const decided =
     detail.status === 'APPROVED' || detail.status === 'REJECTED' || detail.status === 'CANCELLED';
   // Checklist-less applications (pre-fix CSV migrations, legacy rows) have
   // nothing to complete — the API lets them through to the approve-anyway
   // warning flow, so the button must not dead-end at a permanent 0%.
-  const checklistComplete =
-    detail.tasks.length === 0 || detail.percentComplete === 100;
-
+  const checklistComplete = detail.tasks.length === 0 || detail.percentComplete === 100;
   // The reason Approve is off, said under it — a tooltip is invisible on a
   // phone and to most people on a desktop.
-  const pendingTasks = detail.tasks.filter((t) => t.status !== 'DONE' && t.status !== 'SKIPPED').length;
-  const approveReason = !checklistComplete
-    ? `${pendingTasks} of ${detail.tasks.length} tasks pending`
-    : needsSchedule && !directApproveDate
-      ? 'No pay schedule covers this hire yet — choose one as you approve'
-      : null;
+  const approveReason = approveBlockedReason(detail, needsSchedule, directApproveDate);
+  const packet: PageAction[] = [
+    { key: 'packet', label: 'View packet', icon: Eye, overflow: true, hint: 'The audit packet, in a new tab', onSelect: () => openPacket(detail.id) },
+    {
+      key: 'download',
+      label: 'Download packet (PDF)',
+      icon: FileDown,
+      overflow: true,
+      href: compliancePacketUrl(detail.id),
+      download: `compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`,
+    },
+  ];
+  const actions: PageAction[] = decided
+    ? detail.status === 'CANCELLED'
+      ? [{ key: 'reopen', label: 'Reopen', icon: RotateCcw, primary: true, loading: reopening, hint: 'Reopen with a fresh invite link', onSelect: onReopen }, ...packet]
+      : packet
+    : [
+        {
+          key: 'approve',
+          label: directApproveDate ? `Approve · starts ${fmtDateLabel(directApproveDate)}` : 'Approve',
+          icon: ThumbsUp,
+          primary: true,
+          disabled: !checklistComplete,
+          loading: directApproving,
+          hint:
+            approveReason ??
+            (directApproveDate && directApproveSchedule
+              ? `Approve now with the start date already on file · paid on ${directApproveSchedule}`
+              : undefined),
+          onSelect: directApproveDate ? onDirectApprove : onApprove,
+        },
+        ...(onNudge ? [{ key: 'nudge', label: 'Nudge', icon: MessageCircle, hint: 'Email a reminder of the next step', onSelect: onNudge }] : []),
+        {
+          key: 'in-person',
+          label: 'Onboard in person',
+          icon: UserCheck,
+          to: `/onboarding/in-person/${detail.id}`,
+          hint: `Onboard with the ${term('worker').toLowerCase()} physically present — scan IDs from the laptop webcam`,
+        },
+        ...(directApproveDate
+          ? [{ key: 'approve-date', label: 'Approve with another date', icon: CalendarDays, overflow: true, disabled: !checklistComplete || directApproving, onSelect: onApprove }]
+          : []),
+        { key: 'resend', label: 'Resend invite', icon: Send, overflow: true, onSelect: onResend },
+        ...packet,
+        { key: 'cancel', label: 'Cancel invite…', icon: Ban, destructive: true, onSelect: onCancel },
+        { key: 'reject', label: 'Reject…', icon: ThumbsDown, destructive: true, onSelect: onReject },
+      ];
 
   return (
-    <div className="flex shrink-0 flex-wrap items-start gap-2">
-      <Button asChild variant="outline" size="sm">
-        <a href={`${compliancePacketUrl(detail.id)}?inline=1`} target="_blank" rel="noreferrer" title="View the audit packet in the browser">
-          <Eye className="h-4 w-4" />
-          {compact ? 'Packet' : 'View packet'}
-        </a>
-      </Button>
-      {!decided && (
-        <Button asChild variant="secondary" size="sm">
-          <Link
-            to={`/onboarding/in-person/${detail.id}`}
-            title={`Onboard with the ${term('worker').toLowerCase()} physically present — scan IDs from the laptop webcam`}
-          >
-            <UserCheck className="h-4 w-4" />
-            {compact ? 'In person' : 'Onboard in person'}
-          </Link>
-        </Button>
-      )}
-      {detail.status === 'CANCELLED' && (
-        <Button variant="outline" size="sm" onClick={onReopen} loading={reopening} title="Reopen with a fresh invite link">
-          <RotateCcw className="h-4 w-4" />
-          Reopen
-        </Button>
-      )}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" aria-label="More actions">
-            <MoreHorizontal className="h-4 w-4" />
-            {!compact && 'More'}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {!decided && (
-            <DropdownMenuItem onSelect={onResend}>
-              <Send className="mr-2 h-3.5 w-3.5" />
-              Resend invite
-            </DropdownMenuItem>
-          )}
-          {!decided && (
-            <DropdownMenuItem onSelect={onCancel}>
-              <Ban className="mr-2 h-3.5 w-3.5" />
-              Cancel invite
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem asChild>
-            <a
-              href={compliancePacketUrl(detail.id)}
-              download={`compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`}
-            >
-              <FileDown className="mr-2 h-3.5 w-3.5" />
-              Download packet (PDF)
-            </a>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {!decided && (
-        <Button variant="outline" size="sm" onClick={onReject} className="hidden text-alert hover:text-alert sm:inline-flex">
-          <ThumbsDown className="h-4 w-4" />
-          Reject
-        </Button>
-      )}
-      {/* One-click approve when the record already holds a usable start
-          date: the primary button submits directly with that date, and the
-          small calendar button beside it opens the old dialog to change it.
-          No usable date → the primary button IS the dialog path. */}
-      {!decided && directApproveDate && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onApprove}
-          disabled={!checklistComplete || directApproving}
-          className="hidden px-2 sm:inline-flex"
-          aria-label="Approve with a different hire date"
-          title="Change the hire date before approving"
-        >
-          <CalendarDays className="h-4 w-4" />
-        </Button>
-      )}
-      {!decided && (
-        <div className="hidden flex-col items-end gap-1 sm:flex">
-          <Button
-            size="sm"
-            onClick={directApproveDate ? onDirectApprove : onApprove}
-            loading={directApproving}
-            disabled={!checklistComplete}
-            aria-describedby={approveReason ? `approve-why-${detail.id}` : undefined}
-            title={directApproveDate && directApproveSchedule ? `Approve now with the start date already on file · paid on ${directApproveSchedule}` : undefined}
-          >
-            <ThumbsUp className="h-4 w-4" />
-            {directApproveDate ? `Approve · starts ${fmtDateLabel(directApproveDate)}` : 'Approve'}
-          </Button>
-          {approveReason && (
-            <span id={`approve-why-${detail.id}`} className="max-w-[16rem] text-right text-xs text-ink-muted">
-              {approveReason}
-            </span>
-          )}
-        </div>
+    <div className="flex shrink-0 flex-col items-end gap-1">
+      <HeaderActions actions={actions} />
+      {!decided && approveReason && (
+        <span id={`approve-why-${detail.id}`} className="max-w-[18rem] text-right text-xs text-ink-muted">
+          {approveReason}
+        </span>
       )}
     </div>
   );
 }
 
 /**
- * The decision on a phone (role walk HR 15): Approve and Reject at the
- * bottom of the screen, the rest behind More, and why Approve is blocked
- * said in words. Below `sm` only — the header's own buttons hide there.
+ * The decision on a phone (role walk HR 15): Approve at the bottom of the
+ * screen, Nudge beside it, everything else — Reject and Cancel invite at
+ * the end — behind More, and why Approve is blocked said in words. Below
+ * `md` only; from md up the header's own actions take over.
  */
 export function ApplicationDecisionBar({
   detail,
@@ -1114,6 +1151,7 @@ export function ApplicationDecisionBar({
   onCancel,
   onInPerson,
   onPacket,
+  onNudge,
 }: {
   detail: ApplicationDetailType;
   onApprove: () => void;
@@ -1126,6 +1164,8 @@ export function ApplicationDecisionBar({
   onCancel: () => void;
   onInPerson: () => void;
   onPacket: () => void;
+  /** Email a reminder of the next step. Without it, Onboard in person sits beside Approve. */
+  onNudge?: () => void;
 }) {
   const decided =
     detail.status === 'APPROVED' || detail.status === 'REJECTED' || detail.status === 'CANCELLED';
@@ -1135,6 +1175,7 @@ export function ApplicationDecisionBar({
   return (
     <StickyActionBar
       label="Decision"
+      hideFrom="md"
       note={checklistComplete ? undefined : `${done} of ${detail.tasks.length} tasks done — Approve opens when all are done.`}
       primary={
         <Button onClick={onApprove} loading={approving} disabled={!checklistComplete || approving}>
@@ -1143,17 +1184,25 @@ export function ApplicationDecisionBar({
         </Button>
       }
       secondary={
-        <Button variant="outline" onClick={onReject} className="text-alert hover:text-alert">
-          <ThumbsDown className="h-4 w-4" />
-          Reject
-        </Button>
+        onNudge ? (
+          <Button variant="outline" onClick={onNudge}>
+            <MessageCircle className="h-4 w-4" />
+            Nudge
+          </Button>
+        ) : (
+          <Button variant="outline" onClick={onInPerson}>
+            <UserCheck className="h-4 w-4" />
+            In person
+          </Button>
+        )
       }
       more={[
         ...(onChangeDate ? [{ label: 'Approve with another date', onSelect: onChangeDate, icon: <CalendarDays className="mr-2 h-4 w-4" /> }] : []),
-        { label: 'Onboard in person', onSelect: onInPerson, icon: <UserCheck className="mr-2 h-4 w-4" /> },
+        ...(onNudge ? [{ label: 'Onboard in person', onSelect: onInPerson, icon: <UserCheck className="mr-2 h-4 w-4" /> }] : []),
         { label: 'View packet', onSelect: onPacket, icon: <Eye className="mr-2 h-4 w-4" /> },
         { label: 'Resend invite', onSelect: onResend, icon: <Send className="mr-2 h-4 w-4" /> },
         { label: 'Cancel invite', onSelect: onCancel, destructive: true, icon: <Ban className="mr-2 h-4 w-4" /> },
+        { label: 'Reject', onSelect: onReject, destructive: true, icon: <ThumbsDown className="mr-2 h-4 w-4" /> },
       ]}
     />
   );
@@ -1543,8 +1592,8 @@ function CountChip({
   return (
     <span className={cn('inline-flex items-center gap-1.5', cx)}>
       <Icon className="h-3.5 w-3.5" />
+      <span className="text-silver">{label}</span>
       <span className="tabular-nums font-medium">{count}</span>
-      <span className="text-silver/70 uppercase tracking-wider">{label}</span>
     </span>
   );
 }
@@ -1558,6 +1607,11 @@ interface TaskTileProps {
   onSkip: () => void;
   /** Deep link to where this task's full record lives (null = no link). */
   destination: { to: string; label: string } | null;
+  /** What the hire submitted for this task, shown inside the tile (F500 G1:
+   *  it used to be a separate "Submitted data" card repeating the links). */
+  submitted?: React.ReactNode;
+  /** Open the submission from the start (the application is awaiting review). */
+  submittedOpen?: boolean;
 }
 
 const STATUS_TONE: Record<
@@ -1649,13 +1703,14 @@ function taskDestination(
     // also replace it.
     // falls through
     case 'PROFILE_PHOTO':
-      return { to: `/people?associateId=${associateId}`, label: 'Open profile' };
+      // The person's record (the /people drawer is gone; its link redirects).
+      return { to: `/people/${associateId}`, label: 'Open profile' };
     case 'DOCUMENT_UPLOAD':
     case 'W4':
     case 'POLICY_ACK':
     case 'E_SIGN':
       return {
-        to: `/people?associateId=${associateId}&tab=documents`,
+        to: `/people/${associateId}?tab=documents`,
         label: 'Open document vault',
       };
     case 'AVAILABILITY':
@@ -1688,7 +1743,8 @@ function taskDestination(
   }
 }
 
-function TaskTile({ task, canSkip, quietSkip, onSkip, destination }: TaskTileProps) {
+function TaskTile({ task, canSkip, quietSkip, onSkip, destination, submitted, submittedOpen = false }: TaskTileProps) {
+  const [showSubmitted, setShowSubmitted] = useState(submittedOpen);
   const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
   const Icon = tone.icon;
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
@@ -1724,15 +1780,29 @@ function TaskTile({ task, canSkip, quietSkip, onSkip, destination }: TaskTilePro
               {task.description}
             </div>
           )}
-          {destination && (
-            <Link
-              to={destination.to}
-              className="mt-2 inline-flex items-center gap-1 text-xs text-gold hover:underline"
-            >
-              {destination.label}
-              <ExternalLink className="h-3 w-3" aria-hidden />
-            </Link>
-          )}
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+            {submitted && (
+              <button
+                type="button"
+                onClick={() => setShowSubmitted((v) => !v)}
+                aria-expanded={showSubmitted}
+                className="inline-flex items-center gap-1 text-xs text-silver hover:text-ink"
+              >
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', !showSubmitted && '-rotate-90')} aria-hidden />
+                What they submitted
+              </button>
+            )}
+            {destination && (
+              <Link
+                to={destination.to}
+                className="inline-flex items-center gap-1 text-xs text-gold hover:underline"
+              >
+                {destination.label}
+                <ArrowRight className="h-3 w-3" aria-hidden />
+              </Link>
+            )}
+          </div>
+          {submitted && showSubmitted && <div className="mt-3 border-t border-navy-secondary pt-3">{submitted}</div>}
         </div>
         {canSkip && !isComplete && (
           // One control everywhere: the small ghost button. The ellipsis
@@ -1763,15 +1833,16 @@ function TaskTile({ task, canSkip, quietSkip, onSkip, destination }: TaskTilePro
  * review-next chain. Everything shown here is exactly what the four GET
  * endpoints already return to this caller — no additional PII.
  */
-function SubmittedDataCard({
-  detail,
-  mode,
+function SubmittedFor({
+  applicationId,
+  kind,
 }: {
-  detail: ApplicationDetailType;
-  mode: 'page' | 'drawer';
+  applicationId: string;
+  /** The task kind whose submission to show: W4, DIRECT_DEPOSIT, POLICY_ACK or PROFILE_INFO. */
+  kind: string;
 }) {
-  const id = detail.id;
-  const kinds = new Set(detail.tasks.map((t) => t.kind));
+  const id = applicationId;
+  const kinds = new Set([kind]);
 
   // Keyed under ['application', id, …] so the parent's prefix-match
   // invalidation (after skip/approve) refreshes these too. retry: false —
@@ -1820,25 +1891,9 @@ function SubmittedDataCard({
     : '';
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <ClipboardList className="h-4 w-4 text-gold" aria-hidden />
-          Submitted data
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div
-          className={cn(
-            'grid grid-cols-1 gap-x-8 gap-y-5',
-            mode === 'drawer' ? '' : 'md:grid-cols-2'
-          )}
-        >
+        <div className="space-y-1.5">
           {kinds.has('W4') && (
-            <SubmittedSection
-              title="W-4 tax withholding"
-              link={taskDestination('W4', detail.associateId)}
-            >
+            <>
               {w4Query.isPending ? (
                 <SectionSkeleton />
               ) : w4Query.isError ? (
@@ -1881,14 +1936,11 @@ function SubmittedDataCard({
                   <DataRow label="Submitted" value={fmtDate(w4.submittedAt)} />
                 </>
               )}
-            </SubmittedSection>
+            </>
           )}
 
           {kinds.has('DIRECT_DEPOSIT') && (
-            <SubmittedSection
-              title="Direct deposit"
-              link={taskDestination('DIRECT_DEPOSIT', detail.associateId)}
-            >
+            <>
               {depositQuery.isPending ? (
                 <SectionSkeleton />
               ) : depositQuery.isError ? (
@@ -1950,14 +2002,11 @@ function SubmittedDataCard({
                   />
                 </>
               )}
-            </SubmittedSection>
+            </>
           )}
 
           {kinds.has('POLICY_ACK') && (
-            <SubmittedSection
-              title="Policy acknowledgments"
-              link={taskDestination('POLICY_ACK', detail.associateId)}
-            >
+            <>
               {policiesQuery.isPending ? (
                 <SectionSkeleton />
               ) : policiesQuery.isError ? (
@@ -2001,14 +2050,11 @@ function SubmittedDataCard({
                   </ul>
                 </details>
               )}
-            </SubmittedSection>
+            </>
           )}
 
           {kinds.has('PROFILE_INFO') && (
-            <SubmittedSection
-              title="Profile"
-              link={taskDestination('PROFILE_INFO', detail.associateId)}
-            >
+            <>
               {profileQuery.isPending ? (
                 <SectionSkeleton />
               ) : profileQuery.isError ? (
@@ -2025,42 +2071,9 @@ function SubmittedDataCard({
                   <DataRow label="Address" value={addressLine || '—'} />
                 </>
               )}
-            </SubmittedSection>
+            </>
           )}
         </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SubmittedSection({
-  title,
-  link,
-  children,
-}: {
-  title: string;
-  /** Deep link to the full record (small "open full record" affordance). */
-  link: { to: string; label: string } | null;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="text-2xs uppercase tracking-widest text-silver">
-          {title}
-        </div>
-        {link && (
-          <Link
-            to={link.to}
-            className="inline-flex items-center gap-1 text-xs text-gold hover:underline shrink-0"
-          >
-            {link.label}
-            <ExternalLink className="h-3 w-3" aria-hidden />
-          </Link>
-        )}
-      </div>
-      <div className="space-y-1.5">{children}</div>
-    </div>
   );
 }
 
@@ -2307,7 +2320,7 @@ function I9Card({
             className="inline-flex items-center gap-1 text-xs text-gold hover:underline"
           >
             Open in Compliance
-            <ExternalLink className="h-3 w-3" aria-hidden />
+            <ArrowRight className="h-3 w-3" aria-hidden />
           </Link>
         </div>
       </CardHeader>

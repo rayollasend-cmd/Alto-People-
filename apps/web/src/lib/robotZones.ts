@@ -78,3 +78,10 @@ export function shapePoints(shape: ZoneShape): string {
 export function shapeLabel(shape: ZoneShape): string {
   return shape.type === 'rect' ? `Rectangle ${shape.w} × ${shape.h} at ${shape.x}, ${shape.y}` : `Polygon, ${shape.points.length} points`;
 }
+
+/** The name of the first zone a map point falls in, or null (F500 G2: a robot's
+ *  "Position" said "12, 40" where "Lobby bar" was the answer). */
+export function zoneNameAt(zones: readonly { name: string; shape: ZoneShape }[], x: number | null | undefined, y: number | null | undefined): string | null {
+  if (x == null || y == null) return null;
+  return zones.find((z) => pointInShape(z.shape, x, y))?.name ?? null;
+}

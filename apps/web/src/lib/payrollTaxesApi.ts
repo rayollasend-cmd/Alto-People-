@@ -51,6 +51,22 @@ export interface TaxOverview {
   returns: { previous: { periodLabel: string; items: ChecklistReturn[] }; current: { periodLabel: string; items: ChecklistReturn[] } };
   registrations: RegistrationNeed[];
   noticesDue: Array<{ id: string; agencyName: string; noticeType: string; responseDueAt: string | null; amountDue: number | null }>;
+  /** This quarter's posted taxes (withheld and employer share) and how much of it is deposited. */
+  quarter?: { periodLabel: string; posted: number; deposited: number };
+  /** Payroll has posted at least one tax here. */
+  hasLiabilities?: boolean;
+  /** Paid payrolls whose taxes never posted to the desk. */
+  unposted?: { count: number; amount: number; runs: UnpostedRun[] };
+}
+
+export interface UnpostedRun {
+  id: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  paidOn: string | null;
+  amount: number;
+  /** Its stored totals say it withheld tax, but it has no paid paychecks to post them from. */
+  paychecksMissing: boolean;
 }
 
 export interface Liability {

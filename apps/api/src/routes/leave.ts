@@ -205,24 +205,45 @@ leaveRouter.put('/leave/settings', MANAGE, async (req, res) => {
 
 /* ===== HR desk ============================================================== */
 
+/**
+ * The four desk tiles, each one definition: the summary counts with it and
+ * the case list filters by it (F500 G2: the tiles are the filter), so a
+ * tile's number and the rows it shows always agree.
+ */
+type LeaveLens = 'on-leave' | 'notices' | 'certs-due' | 'returning';
+function lensWhere(lens: LeaveLens, t: Date): Prisma.LeaveCaseWhereInput {
+  const week = new Date(t.getTime() + 7 * DAY_MS);
+  switch (lens) {
+    case 'on-leave':
+      return { status: 'APPROVED', startDate: { lte: t }, OR: [{ endDate: null }, { endDate: { gte: t } }] };
+    case 'notices':
+      return { status: 'REQUESTED' };
+    case 'certs-due':
+      return { status: 'PENDING_CERTIFICATION', certificationReceivedAt: null, certificationDueAt: { lte: week } };
+    case 'returning':
+      return { status: 'APPROVED', actualReturnDate: null, OR: [{ expectedReturnDate: { lte: week } }, { expectedReturnDate: null, endDate: { lte: week } }] };
+  }
+}
+
 leaveRouter.get('/leave/summary', MANAGE, async (req, res) => {
   const now = new Date();
   const t = today();
   const base: Prisma.LeaveCaseWhereInput = { tenantId: tenantIdForWrite(), associate: scopeActiveAssociates(req.user!, { former: true }) };
+  const lens = (l: LeaveLens) => prisma.leaveCase.count({ where: scopeWhere<Prisma.LeaveCaseWhereInput>(base, lensWhere(l, t)) });
   const [open, onLeave, certDue, noticeOwed, returning] = await Promise.all([
     prisma.leaveCase.count({ where: { ...base, status: { in: ['REQUESTED', 'PENDING_CERTIFICATION', 'APPROVED'] } } }),
-    prisma.leaveCase.count({ where: { ...base, status: 'APPROVED', startDate: { lte: t }, OR: [{ endDate: null }, { endDate: { gte: t } }] } }),
-    prisma.leaveCase.count({ where: { ...base, status: 'PENDING_CERTIFICATION', certificationReceivedAt: null, certificationDueAt: { lte: new Date(t.getTime() + 7 * DAY_MS) } } }),
-    prisma.leaveCase.count({ where: { ...base, status: 'REQUESTED' } }),
-    prisma.leaveCase.count({
-      where: { ...base, status: 'APPROVED', actualReturnDate: null, OR: [{ expectedReturnDate: { lte: new Date(t.getTime() + 7 * DAY_MS) } }, { expectedReturnDate: null, endDate: { lte: new Date(t.getTime() + 7 * DAY_MS) } }] },
-    }),
+    lens('on-leave'),
+    lens('certs-due'),
+    lens('notices'),
+    lens('returning'),
   ]);
   res.json({ open, onLeave, certificationsDueThisWeek: certDue, noticesOwed: noticeOwed, returningThisWeek: returning, asOf: now.toISOString() });
 });
 
 const ListQuery = z.object({
-  status: z.enum(['open', 'all', 'REQUESTED', 'PENDING_CERTIFICATION', 'APPROVED', 'DENIED', 'RETURNED', 'CLOSED', 'CANCELLED']).default('open'),
+  status: z
+    .enum(['open', 'all', 'REQUESTED', 'PENDING_CERTIFICATION', 'APPROVED', 'DENIED', 'RETURNED', 'CLOSED', 'CANCELLED', 'on-leave', 'notices', 'certs-due', 'returning'])
+    .default('open'),
   type: z.enum(['FMLA', 'STATE_PFML', 'MILITARY_USERRA', 'ADA_ACCOMMODATION', 'PERSONAL', 'COMPANY']).optional(),
   q: z.string().trim().max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),
@@ -231,7 +252,13 @@ const ListQuery = z.object({
 leaveRouter.get('/leave/cases', MANAGE, async (req, res) => {
   const q = ListQuery.parse(req.query);
   const statusFilter: Prisma.LeaveCaseWhereInput =
-    q.status === 'open' ? { status: { in: ['REQUESTED', 'PENDING_CERTIFICATION', 'APPROVED', 'RETURNED'] } } : q.status === 'all' ? {} : { status: q.status as LeaveStatus };
+    q.status === 'open'
+      ? { status: { in: ['REQUESTED', 'PENDING_CERTIFICATION', 'APPROVED', 'RETURNED'] } }
+      : q.status === 'all'
+        ? {}
+        : q.status === 'on-leave' || q.status === 'notices' || q.status === 'certs-due' || q.status === 'returning'
+          ? lensWhere(q.status, today())
+          : { status: q.status as LeaveStatus };
   const where = scopeWhere<Prisma.LeaveCaseWhereInput>(
     { tenantId: tenantIdForWrite() },
     { associate: scopeActiveAssociates(req.user!, { former: true }) },

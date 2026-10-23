@@ -5,12 +5,12 @@ import { safeHref } from '@alto-people/shared';
 import { Heart, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
   decideVolunteerEntry,
-  getVtoPolicy,
   getVolunteerSummary,
+  getVtoPolicy,
   listMyVolunteer,
   listVolunteerQueue,
   matchVolunteerEntry,
@@ -42,9 +42,10 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
-import { downloadCsv } from '@/lib/csv';
 import { ListTemplate } from '@/components/templates';
 import { StatusBadge } from '@/lib/status';
 import { VtoPolicyEditor } from './VtoPolicyEditor';
@@ -54,13 +55,21 @@ import { VtoPolicyEditor } from './VtoPolicyEditor';
 // the shared status vocabulary.
 const VTO_STATUS_TONES = { MATCHED: 'success' } as const;
 
+const VTO_TABS = ['mine', 'queue', 'policy'] as const;
+const VTO_STATUSES = ['PENDING', 'APPROVED', 'MATCHED', 'REJECTED', 'ALL'] as const;
+
 export function VtoHome() {
   const { user } = useAuth();
+  // The tenant's word for the people who log hours (a hotel says "team member").
+  const workerWord = useTerm()('worker');
   const canManage = user
     ? hasCapability(user.role, 'manage:performance')
     : false;
-  const [tab, setTab] = useState<'mine' | 'queue' | 'policy'>('mine');
-  const [statusFilter, setStatusFilter] = useState<VtoStatus | 'ALL'>('PENDING');
+  // Reviewers land on the queue; the view and its status filter live in
+  // the URL (?tab=mine, ?status=APPROVED).
+  const [tabParam, setTab] = useUrlParam<'mine' | 'queue' | 'policy'>('tab', canManage ? 'queue' : 'mine', VTO_TABS, { history: 'push' });
+  const tab = canManage ? tabParam : 'mine';
+  const [statusFilter, setStatusFilter] = useUrlParam<VtoStatus | 'ALL'>('status', 'PENDING', VTO_STATUSES);
   const [showNew, setShowNew] = useState(false);
   const [openMine, setOpenMine] = useState<MyVolunteerEntry | null>(null);
   const [openQueueId, setOpenQueueId] = useState<string | null>(null);
@@ -120,6 +129,11 @@ export function VtoHome() {
       : 'Failed to load the summary.'
     : null;
   const refreshSummary = () => void summaryQuery.refetch();
+  // An annual cap of 0 means the program isn't set up: say so instead of
+  // "0 / 0" and "up to 0 hours per year".
+  const policyQuery = useQuery({ queryKey: ['vto', 'policy', null], queryFn: () => getVtoPolicy(), enabled: canManage });
+  const companyCapUnset = canManage && policyQuery.data !== undefined && Number(policyQuery.data.effective.annualHoursCap) === 0;
+  const notOffered = mine !== null && mine.capHours === 0;
 
   // Memoized: these four passes over the full queue used to re-run on
   // EVERY render — including each keystroke in the search box.
@@ -173,37 +187,6 @@ export function VtoHome() {
     }
   };
 
-  const exportCsv = () => {
-    if (!filteredQueue) return;
-    downloadCsv(`volunteer-queue-${ymdLocal()}.csv`, [
-      [
-        'Associate',
-        'Email',
-        'Date',
-        'Hours',
-        'Organization',
-        'Cause',
-        'Status',
-        'Match requested',
-        'Match amount',
-        'Currency',
-        'Reviewer notes',
-      ],
-      ...filteredQueue.map((e) => [
-        e.associateName,
-        e.associateEmail,
-        e.activityDate,
-        e.hours,
-        e.organization,
-        e.cause ?? '',
-        e.status,
-        e.matchRequested ? 'yes' : 'no',
-        e.matchAmount ?? '',
-        e.matchCurrency,
-        e.reviewerNotes ?? '',
-      ]),
-    ]);
-  };
 
   const openQueueRow =
     openQueueId && queue
@@ -215,10 +198,24 @@ export function VtoHome() {
     <ListTemplate
         title="Volunteer time"
         subtitle="Log volunteer hours and request employer match. Approved hours roll into your annual cap."
-        breadcrumbs={[{ label: 'Me' }, { label: 'Volunteer' }]}
     >
 
+      {companyCapUnset && tab !== 'policy' && (
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-medium text-ink">Volunteer time isn&apos;t set up</div>
+              <div className="text-sm text-silver">Set an annual cap so people can log volunteer hours.</div>
+            </div>
+            <Button size="sm" onClick={() => setTab('policy')}>
+              Set an annual cap
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex items-center justify-between">
+        {canManage ? (
         <SegmentedControl<'mine' | 'queue' | 'policy'>
           options={[
             { value: 'mine', label: 'My hours' },
@@ -245,6 +242,9 @@ export function VtoHome() {
           onChange={setTab}
           ariaLabel="Volunteer time view"
         />
+        ) : (
+          <span />
+        )}
         <div className="flex gap-2">
           {canManage && tab === 'queue' && (
             <Select
@@ -262,7 +262,7 @@ export function VtoHome() {
               <option value="REJECTED">Rejected</option>
             </Select>
           )}
-          {tab === 'mine' && (
+          {tab === 'mine' && !notOffered && (
             <Button onClick={() => setShowNew(true)}>
               <Plus className="mr-2 h-4 w-4" /> Log hours
             </Button>
@@ -270,24 +270,17 @@ export function VtoHome() {
         </div>
       </div>
 
-      {tab === 'queue' && queue !== null && (
+      {/* No search box over an empty queue. */}
+      {tab === 'queue' && queue !== null && (queue.length > 0 || search !== '') && (
         <div className="flex flex-wrap items-center gap-2">
           <SearchInput
             wrapperClassName="w-56"
             className="h-8 text-xs"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search associate name…"
-            aria-label="Search by associate name"
+            placeholder={`Search ${workerWord.toLowerCase()} name…`}
+            aria-label={`Search by ${workerWord.toLowerCase()} name`}
           />
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={exportCsv}
-            disabled={!filteredQueue || filteredQueue.length === 0}
-          >
-            Export CSV
-          </Button>
           {selected.size > 0 && (
             <>
               <span className="text-xs text-silver">
@@ -351,7 +344,7 @@ export function VtoHome() {
         </ErrorBanner>
       )}
 
-      {tab === 'mine' && mine && (
+      {tab === 'mine' && mine && !notOffered && (
         <Card>
           <CardContent>
             <div className="flex justify-between items-baseline mb-2">
@@ -382,18 +375,17 @@ export function VtoHome() {
       )}
 
       {tab === 'queue' && summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <MetricStrip label="Volunteer time this year">
           <MetricCard
             label="Pending review"
             value={summary.pendingCount}
-            accent={summary.pendingCount > 0}
+            tone={summary.pendingCount > 0 ? 'warning' : 'default'}
+            onClick={() => setStatusFilter('PENDING')}
+            selected={statusFilter === 'PENDING'}
           />
-          <MetricCard label="Hours YTD" value={summary.hoursYtd} />
-          <MetricCard
-            label="Matched $ YTD"
-            value={fmtMoney(summary.matchedAmountYtd)}
-          />
-        </div>
+          <MetricCard label="Hours this year" value={summary.hoursYtd} hint="Approved and matched" />
+          <MetricCard label="Matched this year" value={fmtMoney(summary.matchedAmountYtd)} hint="Employer match paid out" />
+        </MetricStrip>
       )}
 
       {tab === 'policy' && canManage && <VtoPolicyEditor />}
@@ -419,6 +411,12 @@ export function VtoHome() {
                   <SkeletonRows count={3} />
                 </div>
               )
+            ) : notOffered && mine.entries.length === 0 ? (
+              <EmptyState
+                icon={Heart}
+                title="Volunteer time isn't offered yet"
+                description={canManage ? 'Set an annual cap on the Policy tab and people can log hours here.' : 'When your employer offers paid volunteer time, you can log your hours here.'}
+              />
             ) : mine.entries.length === 0 ? (
               <EmptyState
                 icon={Heart}
@@ -480,11 +478,11 @@ export function VtoHome() {
             ) : !filteredQueue || filteredQueue.length === 0 ? (
               <EmptyState
                 icon={Heart}
-                title={term ? 'No matches' : 'Queue is empty'}
+                title={term ? 'No matches' : 'Nothing to review'}
                 description={
                   term
                     ? `No entries match “${search.trim()}”.`
-                    : 'Nothing pending.'
+                    : 'Volunteer hours people log land here for approval and match.'
                 }
               />
             ) : (
@@ -502,7 +500,7 @@ export function VtoHome() {
                 columns={[
                   {
                     key: 'associate',
-                    header: 'Associate',
+                    header: workerWord,
                     accessor: (e) => e.associateName,
                     sortable: true,
                     primary: true,

@@ -117,7 +117,9 @@ describe('<AccessCertificationPage>', () => {
     expect(await screen.findByRole('heading', { name: 'Q4 staff access' })).toBeInTheDocument();
     expect(screen.getByText('Rae Report')).toBeInTheDocument();
     expect(screen.getByText(/never signed in/)).toBeInTheDocument();
-    expect(screen.getByText('2 waiting on you')).toBeInTheDocument();
+    // What is owed sits in the header's facts.
+    expect(screen.getByText('Waiting on you').nextElementSibling).toHaveTextContent('2');
+    expect(screen.getByText('Decided').nextElementSibling).toHaveTextContent('0 of 2');
 
     // Closing is held while rows are undecided.
     expect(screen.getByRole('button', { name: /close certification/i })).toBeDisabled();
@@ -136,5 +138,73 @@ describe('<AccessCertificationPage>', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /^keep$/i })[0]!);
     await waitFor(() => expect(decided).toHaveLength(2));
     expect(decided[1]!.body).toEqual({ decision: 'KEEP' });
+  });
+
+  it('keeps many at once, filters to what waits on me, and lists findings to apply after close', async () => {
+    const items = [
+      { id: 'i1', subject: person('u-rae', 'rae@example.com', 'Rae Report'), reviewer: person('u-owner', 'owner@example.com'), snapshot: { role: 'INTERNAL_RECRUITER' }, decision: null, note: null, decidedBy: null, decidedAt: null, mine: true },
+      { id: 'i2', subject: person('u-mia', 'mia@example.com', 'Mia Manager'), reviewer: person('u-other', 'other@example.com', 'Oli Other'), snapshot: { role: 'MANAGER' }, decision: null, note: null, decidedBy: null, decidedAt: null, mine: false },
+      { id: 'i3', subject: { ...person('u-gus', 'gus@example.com', 'Gus Gone'), status: 'DISABLED' }, reviewer: person('u-owner', 'owner@example.com'), snapshot: { role: 'MANAGER' }, decision: null, note: null, decidedBy: null, decidedAt: null, mine: true },
+    ];
+    const detail = { ...summary, runs: false, items };
+    const decided: string[] = [];
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path === '/admin/access-certifications/c1') return detail;
+      if (typeof path === 'string' && path.includes('/decide')) decided.push(path);
+      return undefined;
+    });
+    renderAt('/admin/access-certifications/c1', ['view:dashboard']);
+    expect(await screen.findByText('Rae Report')).toBeInTheDocument();
+    // A status in words, never the enum lower-cased.
+    expect(screen.getByText('Disabled')).toBeInTheDocument();
+    // Not mine and I don't run access: nothing to press on Mia's row.
+    expect(screen.getByText('Waiting on reviewer')).toBeInTheDocument();
+    // "Waiting on me" narrows to my two.
+    fireEvent.click(screen.getByRole('button', { name: 'Waiting on me 2' }));
+    await waitFor(() => expect(screen.queryByText('Mia Manager')).not.toBeInTheDocument());
+    // Bulk keep the selection.
+    fireEvent.click(screen.getByRole('checkbox', { name: /select every account you can decide/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /keep selected/i }));
+    await waitFor(() => expect(decided.sort()).toEqual(['/admin/access-certifications/c1/items/i1/decide', '/admin/access-certifications/c1/items/i3/decide']));
+  });
+
+  it('after close, each revoke or change links to the account in Users & access', async () => {
+    const detail = {
+      ...summary,
+      status: 'CLOSED',
+      closedAt: '2026-10-20T00:00:00.000Z',
+      revoke: 1,
+      runs: true,
+      items: [
+        { id: 'i1', subject: person('u-rae', 'rae@example.com', 'Rae Report'), reviewer: person('u-owner', 'owner@example.com'), snapshot: {}, decision: 'REVOKE', note: 'Left the desk.', decidedBy: person('u-owner', 'owner@example.com'), decidedAt: '2026-10-19T00:00:00.000Z', mine: false },
+        { id: 'i2', subject: person('u-mia', 'mia@example.com', 'Mia Manager'), reviewer: person('u-owner', 'owner@example.com'), snapshot: {}, decision: 'KEEP', note: null, decidedBy: person('u-owner', 'owner@example.com'), decidedAt: '2026-10-19T00:00:00.000Z', mine: false },
+      ],
+    };
+    fetchMock.mockImplementation(async (path: string) => (path === '/admin/access-certifications/c1' ? detail : undefined));
+    renderAt('/admin/access-certifications/c1');
+    const findings = await screen.findByRole('list', { name: 'Findings to apply' });
+    expect(findings).toHaveTextContent('Rae Report');
+    expect(findings).not.toHaveTextContent('Mia Manager');
+    expect(screen.getByRole('link', { name: 'Apply' })).toHaveAttribute('href', '/admin/users?status=all&user=u-rae');
+  });
+});
+
+describe('<AccessCertifications> — the access review home', () => {
+  it('holds the access report as a tab for HR administration, linked as ?tab=report', async () => {
+    fetchMock.mockImplementation(async (path: string) => {
+      if (path === '/admin/access-certifications') return { runs: true, certifications: [summary] };
+      if (path === '/admin/users/access-report') return { generatedAt: '2026-10-13T12:00:00.000Z', counts: { totalAccounts: 0, byStatus: { ACTIVE: 0, INVITED: 0, DISABLED: 0 }, byRole: {}, activeAssociates: 0, flaggedAccounts: 0, byFlag: {} }, rows: [] };
+      return undefined;
+    });
+    renderAt('/admin/access-certifications?tab=report');
+    expect(await screen.findByRole('tab', { name: 'Access report', selected: true })).toBeInTheDocument();
+    expect(await screen.findByText('Flagged accounts')).toBeInTheDocument();
+  });
+
+  it('a reviewer without HR administration sees campaigns only', async () => {
+    fetchMock.mockResolvedValue({ runs: false, certifications: [] });
+    renderAt('/admin/access-certifications?tab=report', ['view:dashboard']);
+    expect(await screen.findByText('No certification yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Access report' })).not.toBeInTheDocument();
   });
 });

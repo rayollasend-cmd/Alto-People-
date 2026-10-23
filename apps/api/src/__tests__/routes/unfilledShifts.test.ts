@@ -93,6 +93,48 @@ describe('past OPEN shifts are unfilled, not open', () => {
   });
 });
 
+describe('"Open" and "Went unfilled" are two lists', () => {
+  it('GET /scheduling/shifts?status=OPEN&ended= splits not-over from over, and rejects anything else', async () => {
+    const client = await createClient('Split Co');
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const gone = await openAt(client.id, site.id, -30);
+    const running = await openAt(client.id, site.id, -2); // started, not over: still open
+    const ahead = await openAt(client.id, site.id, 6);
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const upcoming = await a.get('/scheduling/shifts?status=OPEN&ended=false');
+    expect(upcoming.status).toBe(200);
+    expect(upcoming.body.shifts.map((s: { id: string }) => s.id)).toEqual([running.id, ahead.id]);
+
+    const unfilled = await a.get('/scheduling/shifts?status=OPEN&ended=true');
+    expect(unfilled.body.shifts.map((s: { id: string }) => s.id)).toEqual([gone.id]);
+
+    // Without the param, both.
+    expect((await a.get('/scheduling/shifts?status=OPEN')).body.shifts).toHaveLength(3);
+    expect((await a.get('/scheduling/shifts?ended=maybe')).status).toBe(400);
+  });
+
+  it('close-out with shiftIds closes only that row (and only if it is an ended OPEN shift)', async () => {
+    const client = await createClient('Row Co');
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const one = await openAt(client.id, site.id, -30);
+    const two = await openAt(client.id, site.id, -40);
+    const ahead = await openAt(client.id, site.id, 6);
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.post('/scheduling/shifts/close-out-unfilled').send({ shiftIds: [one.id, ahead.id] });
+    expect(res.status).toBe(200);
+    // The future one is not unfilled, so it stays open.
+    expect(res.body).toEqual({ closed: 1, shiftIds: [one.id] });
+    expect((await prisma.shift.findUniqueOrThrow({ where: { id: one.id } })).cancellationReason).toBe('UNFILLED');
+    expect((await prisma.shift.findUniqueOrThrow({ where: { id: two.id } })).status).toBe('OPEN');
+    expect((await prisma.shift.findUniqueOrThrow({ where: { id: ahead.id } })).status).toBe('OPEN');
+    expect((await a.post('/scheduling/shifts/close-out-unfilled').send({ shiftIds: ['nope'] })).status).toBe(400);
+  });
+});
+
 describe('GET /scheduling/last-shift', () => {
   it('answers the newest non-cancelled shift at the site, for the new-shift prefill', async () => {
     const client = await createClient('Prefill Co');

@@ -109,11 +109,14 @@ describe('the workflow builder', () => {
     expect(screen.getAllByText('Waiting on approval').length).toBeGreaterThan(0);
   });
 
-  it('the Tasks tab finishes what a workflow handed over', async () => {
+  it('the "To-dos from workflows" tab finishes what a workflow handed over (never called "Tasks", the floor board)', async () => {
     vi.mocked(listWorkflowTasks).mockResolvedValue({ tasks: [{ id: 't1', title: 'Welcome Ana on day one', details: null, assigneeUserId: null, assigneeRole: 'HR_ADMINISTRATOR', entityType: null, entityId: null, linkUrl: null, dueAt: null, status: 'OPEN', doneAt: null, createdAt: new Date().toISOString() }] });
     vi.mocked(finishWorkflowTask).mockResolvedValue({} as never);
     renderAt(<WorkflowsHome />, '/workflows?tab=tasks');
     expect((await screen.findAllByText('Welcome Ana on day one')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('tab', { name: /To-dos from workflows/ })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /^Tasks$/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Automate the follow-ups/)).toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: /^done$/i })[0]);
     await waitFor(() => expect(finishWorkflowTask).toHaveBeenCalledWith('t1'));
   });
@@ -162,5 +165,13 @@ describe('the approval record', () => {
     expect(card).toHaveTextContent('$29.00/h');
     expect(card).toHaveTextContent('Approved and applied');
     expect(card).toHaveTextContent('Dana Reyes');
+  });
+
+  it('an empty record shows the empty state alone — no filters until there is something to filter (F500 G4)', async () => {
+    vi.mocked(listApprovalRequests).mockResolvedValue({ requests: [] });
+    renderAt(<ApprovalRecord />, '/audit/approvals');
+    expect(await screen.findByText('No requests yet')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Filter by kind')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Asked on or after')).not.toBeInTheDocument();
   });
 });

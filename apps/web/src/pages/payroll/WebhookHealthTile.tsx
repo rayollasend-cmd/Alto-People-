@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { useAuth } from '@/lib/auth';
+import { Button } from '@/components/ui/Button';
 import { AlertTriangle, ArrowRight, CheckCircle2, CircleDashed, Info, ServerCrash, ShieldAlert } from 'lucide-react';
 import {
   getDisbursementWebhookStatus,
@@ -85,7 +87,10 @@ export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'banking' 
     );
   }
 
-  if (surface === 'banking' && (data.health === 'healthy' || data.health === 'idle' || data.health === 'unconfigured' || data.health === 'stub')) return null;
+  if (surface === 'banking') {
+    if (data.health === 'erroring' || data.health === 'stale') return <PayoutsDown data={data} />;
+    return null;
+  }
   if (surface === 'payroll') {
     if (data.health === 'healthy' || data.health === 'idle' || data.health === 'unconfigured') return null;
     if (data.health === 'erroring' || data.health === 'stale') {
@@ -152,7 +157,7 @@ export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'banking' 
           <Badge variant={style.badge} size="sm">
             {style.label}
           </Badge>
-          {data.health !== 'stub' && <span className="text-xs text-silver">· {data.provider}</span>}
+          {data.health !== 'stub' && <span className="text-xs text-silver">· {PROVIDER_NAME[data.provider] ?? data.provider}</span>}
         </div>
         <p className="mt-0.5 text-silver">{data.detail}</p>
         {data.health === 'erroring' && data.latestError?.notes && (
@@ -169,6 +174,61 @@ export function WebhookHealthTile({ surface }: { surface: 'payroll' | 'banking' 
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+
+/** The provider refused our credentials (a revoked or expired token), as opposed to an outage on its side. */
+export function isSignInFailure(notes: string | null | undefined): boolean {
+  return !!notes && /\b401\b|\b403\b|token|unauthori[sz]ed|forbidden|credential|api key|sign[- ]?in/i.test(notes);
+}
+
+/**
+ * Payroll banking, when payouts are stuck: what happened in plain words,
+ * what it stops, and the one thing that fixes it — reconnecting the provider
+ * in Integrations, or, for someone who can't manage integrations, who to ask.
+ * The provider's raw error ("HTTP 401: Invalid token") stays on Integrations,
+ * where the person reconnecting it reads it.
+ */
+function PayoutsDown({ data }: { data: DisbursementWebhookStatus }) {
+  const { can } = useAuth();
+  const name = PROVIDER_NAME[data.provider] ?? data.provider;
+  const failing = data.health === 'erroring';
+  const when = failing ? data.latestError?.at : data.lastEventAt;
+  const on = when ? ` on ${fmtDate(when)}` : '';
+  const since = when ? ` since ${fmtDate(when)}` : '';
+  const sentence = failing
+    ? isSignInFailure(data.latestError?.notes)
+      ? `${name} rejected our sign-in${on}. Payouts can’t go out until someone reconnects it.`
+      : `${name} has been refusing payouts${since}. Payouts can’t go out until the connection is fixed.`
+    : `We haven’t heard from ${name}${since}. Payouts may be stuck; check the connection.`;
+  const canFix = can('manage:integrations');
+  return (
+    <div
+      role="alert"
+      className={cn(
+        'flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-start',
+        failing ? 'border-alert/40 bg-alert/[0.06]' : 'border-warning/40 bg-warning/[0.06]',
+      )}
+      data-testid="payouts-down"
+    >
+      {failing ? <ServerCrash className="mt-0.5 h-5 w-5 shrink-0 text-alert" aria-hidden="true" /> : <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden="true" />}
+      <div className="min-w-0 flex-1 text-sm">
+        <p className="font-medium text-ink">{failing ? 'Payouts can’t go out' : `No word from ${name}`}</p>
+        <p className="mt-0.5 text-ink-muted">{sentence}</p>
+        {data.pendingFinalizedItems > 0 && (
+          <p className="mt-0.5 text-ink-muted">
+            {fmtCount(data.pendingFinalizedItems, 'paycheck')} {data.pendingFinalizedItems === 1 ? 'is' : 'are'} waiting to pay out.
+          </p>
+        )}
+        {!canFix && <p className="mt-0.5 text-ink-muted">Ask an administrator to reconnect {name} in Settings &amp; trust › Integrations.</p>}
+      </div>
+      {canFix && (
+        <Button asChild className="shrink-0">
+          <Link to="/integrations">{`Reconnect ${name}`}</Link>
+        </Button>
+      )}
     </div>
   );
 }

@@ -18,6 +18,11 @@ vi.mock('@/lib/timeApi', () => ({
   exportTimeEntries: vi.fn(),
   exportTimeSummary: vi.fn(),
   getActiveDashboard: vi.fn(async () => ({ entries: [] })),
+  getTimeExceptions: vi.fn(async () => ({
+    missedPunches: { count: 0, oldestAt: null },
+    lateToday: { count: 0, dayFrom: '', dayTo: '' },
+    overtimeRisk: { count: 0, thresholdHours: 36, weekStart: '2026-06-27', weekEnd: '2026-07-03', people: [] },
+  })),
   listAdminTimeEntries: vi.fn(async () => ({ entries: [] })),
   listPayPeriods: vi.fn(),
   rejectTimeEntry: vi.fn(),
@@ -47,9 +52,11 @@ import {
   approveTimeEntry,
   exportTimeEntries,
   getActiveDashboard,
+  getTimeExceptions,
   listAdminTimeEntries,
   listPayPeriods,
 } from '@/lib/timeApi';
+import { ymdToIsoEndExclusive, ymdToIsoStart } from '@/lib/format';
 import { listDirectory } from '@/lib/directoryApi';
 import { listSchedulingAssociates, listShifts } from '@/lib/schedulingApi';
 import { AdminTimeView, defaultQueuePeriod } from '@/pages/time/AdminTimeView';
@@ -106,6 +113,18 @@ function renderQueueTab() {
   return renderAtPath('/');
 }
 
+/** Downloads live in one "Export & payroll" menu (F500 G2: five buttons in the filter row). */
+async function exportAs(user: ReturnType<typeof userEvent.setup>, item: RegExp) {
+  await user.click(await screen.findByRole('button', { name: /export & payroll/i }));
+  await user.click(await screen.findByRole('menuitem', { name: item }));
+}
+
+/** The queue's last read window, as ISO instants. */
+const lastWindow = () => {
+  const q = vi.mocked(listAdminTimeEntries).mock.calls.at(-1)?.[0] as { from?: string; to?: string } | undefined;
+  return { from: q?.from, to: q?.to };
+};
+
 beforeEach(() => {
   // The status filter persists; a leaked value would change which chips render.
   localStorage.clear();
@@ -127,54 +146,66 @@ describe('<AdminTimeView> pay-period picker', () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
+    // One picker owns the window: the pay periods, the quick ranges, and
+    // "Custom range…" (F500 G2: no "· N pending" suffix cut off at 1440).
     const select = await screen.findByLabelText(/pay period/i);
     const labels = [...select.querySelectorAll('option')].map((o) => o.textContent);
     expect(labels).toEqual([
-      'Custom range',
       'Jun 29 – Jul 5 · current',
       'Jun 22 – Jun 28 · paid',
+      'Today',
+      'This week',
+      'Last week',
+      'Last 14 days',
+      'Custom range…',
     ]);
   });
 
-  it('choosing a period drives the From/To dates and refetches', async () => {
+  it('choosing a period sets the queue window and refetches (no date fields)', async () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
     const select = await screen.findByLabelText(/pay period/i);
-    const callsBefore = vi.mocked(listAdminTimeEntries).mock.calls.length;
     await user.selectOptions(select, '2026-06-22|2026-06-28');
 
-    expect(screen.getByDisplayValue('2026-06-22')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('2026-06-28')).toBeInTheDocument();
     await waitFor(() =>
-      expect(vi.mocked(listAdminTimeEntries).mock.calls.length).toBeGreaterThan(callsBefore),
+      expect(lastWindow()).toEqual({ from: ymdToIsoStart('2026-06-22'), to: ymdToIsoEndExclusive('2026-06-28') }),
     );
+    // The period owns the dates: no From/To fields beside it.
+    expect(screen.queryByLabelText(/^from$/i)).not.toBeInTheDocument();
   });
 
-  it('hand-editing a date drops back to Custom range', async () => {
+  it('"Custom range…" shows From/To on the current window, and editing a date keeps it custom', async () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
     const select = await screen.findByLabelText<HTMLSelectElement>(/pay period/i);
     await user.selectOptions(select, '2026-06-22|2026-06-28');
-    expect(select.value).toBe('2026-06-22|2026-06-28');
-
-    fireEvent.change(screen.getByDisplayValue('2026-06-22'), {
-      target: { value: '2026-06-20' },
-    });
-    expect(select.value).toBe('');
-    expect(screen.getByDisplayValue('2026-06-20')).toBeInTheDocument();
+    await user.selectOptions(select, 'CUSTOM');
+    expect(select.value).toBe('CUSTOM');
     // The chosen dates stay — dropping to custom must not reset the range.
-    expect(screen.getByDisplayValue('2026-06-28')).toBeInTheDocument();
+    expect(screen.getByLabelText(/^from$/i)).toHaveValue('2026-06-22');
+    expect(screen.getByLabelText(/^to$/i)).toHaveValue('2026-06-28');
+
+    fireEvent.change(screen.getByLabelText(/^from$/i), { target: { value: '2026-06-20' } });
+    expect(select.value).toBe('CUSTOM');
+    await waitFor(() => expect(lastWindow().from).toBe(ymdToIsoStart('2026-06-20')));
   });
 
-  it('hides the picker when no periods exist (no schedule, no runs)', async () => {
+  it('offers the quick ranges alone when no periods exist (no schedule, no runs)', async () => {
     vi.mocked(listPayPeriods).mockResolvedValue({ periods: [] });
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
     await screen.findByRole('button', { name: /anomalies only/i }); // filter row rendered
-    expect(screen.queryByLabelText(/pay period/i)).not.toBeInTheDocument();
+    const select = await screen.findByLabelText(/pay period/i);
+    expect([...select.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+      'Today',
+      'This week',
+      'Last week',
+      'Last 14 days',
+      'Custom range…',
+    ]);
   });
 });
 
@@ -333,23 +364,11 @@ describe('<AdminTimeView> export scope', () => {
   // The download used to send only {from, to, status}. Narrowing the queue to
   // one person and hitting CSV handed back every associate in the range — a
   // file that looked like the filtered list but wasn't.
-  async function pickMaria(user: ReturnType<typeof renderQueueTab>) {
-    vi.mocked(listDirectory).mockResolvedValue({
-      associates: [{ id: 'a-maria', firstName: 'Maria', lastName: 'Lopez' }],
-    } as never);
-    await user.type(
-      await screen.findByPlaceholderText(/all associates/i),
-      'mar',
-    );
-    await user.click(await screen.findByRole('button', { name: 'Maria Lopez' }));
-  }
+  it('scopes the CSV to the person in focus', async () => {
+    const user = renderAtPath('/?associate=a-maria&name=Maria%20Lopez');
+    expect(await screen.findByText(/maria lopez — timesheet/i)).toBeInTheDocument();
 
-  it('scopes the CSV to the picked associate', async () => {
-    const user = renderQueueTab();
-    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
-    await pickMaria(user);
-
-    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+    await exportAs(user, /^csv$/i);
 
     await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
     const [format, body] = vi.mocked(exportTimeEntries).mock.calls.at(-1)!;
@@ -361,7 +380,7 @@ describe('<AdminTimeView> export scope', () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
-    await user.type(screen.getByPlaceholderText(/associate name/i), 'lopez');
+    await user.type(screen.getByPlaceholderText(/search associates/i), 'lopez');
     // The queue debounces the term at 300ms; the export must send the same
     // applied value, not the raw keystrokes.
     await waitFor(() =>
@@ -370,7 +389,7 @@ describe('<AdminTimeView> export scope', () => {
       ).toMatchObject({ search: 'lopez' }),
     );
 
-    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+    await exportAs(user, /^csv$/i);
 
     await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
     expect(vi.mocked(exportTimeEntries).mock.calls.at(-1)![1].search).toBe('lopez');
@@ -381,7 +400,7 @@ describe('<AdminTimeView> export scope', () => {
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
     await user.click(screen.getByRole('button', { name: /anomalies only/i }));
-    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+    await exportAs(user, /^csv$/i);
 
     await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
     expect(
@@ -393,7 +412,7 @@ describe('<AdminTimeView> export scope', () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
-    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+    await exportAs(user, /^csv$/i);
 
     await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
     const body = vi.mocked(exportTimeEntries).mock.calls.at(-1)![1];
@@ -495,7 +514,7 @@ describe('<AdminTimeView> shift-window filter', () => {
     await screen.findAllByText('Ben Afternoon');
 
     await user.selectOptions(screen.getByLabelText(/^shift$/i), '360-840');
-    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+    await exportAs(user, /^csv$/i);
 
     await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
     expect(
@@ -681,7 +700,7 @@ describe('<AdminTimeView> individual timesheet (focus mode)', () => {
   });
 });
 
-describe('<AdminTimeView> quick-range chips', () => {
+describe('<AdminTimeView> quick ranges', () => {
   /** Local Saturday that starts the org Sat→Fri week containing `d`. */
   const satWeekStart = (d: Date) => {
     const x = new Date(d);
@@ -690,42 +709,33 @@ describe('<AdminTimeView> quick-range chips', () => {
     return x;
   };
 
-  it('"Last week" fills the previous Sat→Fri window; a manual edit clears the chip', async () => {
+  it('"Last week" reads the previous Sat→Fri window; "Custom range…" shows it as dates', async () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
 
-    await user.click(await screen.findByRole('button', { name: /^last week$/i }));
+    const select = await screen.findByLabelText<HTMLSelectElement>(/pay period/i);
+    await user.selectOptions(select, 'LAST_WEEK');
 
     const lastSat = satWeekStart(new Date());
     lastSat.setDate(lastSat.getDate() - 7);
     const lastFri = new Date(lastSat);
     lastFri.setDate(lastFri.getDate() + 6);
-    expect(screen.getByDisplayValue(localDateStr(lastSat))).toBeInTheDocument();
-    expect(screen.getByDisplayValue(localDateStr(lastFri))).toBeInTheDocument();
+    await waitFor(() =>
+      expect(lastWindow()).toEqual({ from: ymdToIsoStart(localDateStr(lastSat)), to: ymdToIsoEndExclusive(localDateStr(lastFri)) }),
+    );
+    expect(select.value).toBe('LAST_WEEK');
 
-    const chip = screen.getByRole('button', { name: /^last week$/i });
-    expect(chip).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.change(screen.getByDisplayValue(localDateStr(lastSat)), {
-      target: { value: '2026-01-01' },
-    });
-    expect(chip).toHaveAttribute('aria-pressed', 'false');
+    await user.selectOptions(select, 'CUSTOM');
+    expect(screen.getByLabelText(/^from$/i)).toHaveValue(localDateStr(lastSat));
+    expect(screen.getByLabelText(/^to$/i)).toHaveValue(localDateStr(lastFri));
   });
 
-  it('picking a pay period clears the active chip', async () => {
+  it('"Today" is one day: from and to are both today', async () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
-    await user.click(await screen.findByRole('button', { name: /^this week$/i }));
-    expect(
-      screen.getByRole('button', { name: /^this week$/i }),
-    ).toHaveAttribute('aria-pressed', 'true');
-
-    await user.selectOptions(
-      await screen.findByLabelText(/pay period/i),
-      '2026-06-22|2026-06-28',
-    );
-    expect(
-      screen.getByRole('button', { name: /^this week$/i }),
-    ).toHaveAttribute('aria-pressed', 'false');
+    await user.selectOptions(await screen.findByLabelText(/pay period/i), 'TODAY');
+    const today = localDateStr(new Date());
+    await waitFor(() => expect(lastWindow()).toEqual({ from: ymdToIsoStart(today), to: ymdToIsoEndExclusive(today) }));
   });
 });
 
@@ -934,8 +944,7 @@ describe('<AdminTimeView> queue opens on the pay period', () => {
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
     const select = await screen.findByLabelText<HTMLSelectElement>(/pay period/i);
     await waitFor(() => expect(select.value).toBe('2026-06-29|2026-07-05'));
-    expect(screen.getByDisplayValue('2026-06-29')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('2026-07-05')).toBeInTheDocument();
+    await waitFor(() => expect(lastWindow()).toEqual({ from: ymdToIsoStart('2026-06-29'), to: ymdToIsoEndExclusive('2026-07-05') }));
     // The first read already asks for that window — no 14-day read first.
     const froms = vi.mocked(listAdminTimeEntries).mock.calls.map((c) => (c[0] as { from?: string }).from);
     expect(froms.length).toBeGreaterThan(0);
@@ -945,8 +954,8 @@ describe('<AdminTimeView> queue opens on the pay period', () => {
   it('remembers the window picked last time ("Last week") on the next visit', async () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
-    await screen.findByLabelText(/pay period/i);
-    await user.click(await screen.findByRole('button', { name: /^last week$/i }));
+    const select = await screen.findByLabelText(/pay period/i);
+    await user.selectOptions(select, 'LAST_WEEK');
     expect(localStorage.getItem('alto:list.time.range.v1')).toContain('LAST_WEEK');
   });
 });
@@ -980,5 +989,121 @@ describe('<AdminTimeView> queue keyboard', () => {
     await waitFor(() => expect(document.querySelector('#time-row-k1')?.className).toMatch(/inset_3px/));
     await user.keyboard('a');
     await waitFor(() => expect(approveTimeEntry).toHaveBeenCalledWith('k1'));
+  });
+});
+
+describe('<AdminTimeView> exception tiles are the filter (F500 G2)', () => {
+  const today = localDateStr(new Date());
+  const at = (h: number, m = 0) => {
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d.toISOString();
+  };
+  const base = {
+    clientId: null,
+    clientName: 'Walmart',
+    notes: null,
+    rejectionReason: null,
+    approvedById: null,
+    approverEmail: null,
+    approvedAt: null,
+    minutesElapsed: 240,
+    netMinutes: 240,
+    anomalies: [] as string[],
+  };
+  const ROWS = [
+    { ...base, id: 'late', associateId: 'a1', associateName: 'Lena Late', status: 'COMPLETED' as const, clockInAt: at(6, 12), clockOutAt: at(10), shiftStartsAt: at(6), shiftEndsAt: at(10) },
+    { ...base, id: 'grace', associateId: 'a2', associateName: 'Gail Grace', status: 'COMPLETED' as const, clockInAt: at(6, 4), clockOutAt: at(10), shiftStartsAt: at(6), shiftEndsAt: at(10) },
+    { ...base, id: 'rej', associateId: 'a3', associateName: 'Rex Rejected', status: 'REJECTED' as const, clockInAt: at(6, 30), clockOutAt: at(10), shiftStartsAt: at(6), shiftEndsAt: at(10) },
+    { ...base, id: 'forgot', associateId: 'a4', associateName: 'Fran Forgot', status: 'COMPLETED' as const, clockInAt: at(1), clockOutAt: at(5), anomalies: ['FORGOT_CLOCKOUT'] },
+    { ...base, id: 'nobreak', associateId: 'a5', associateName: 'Nell NoBreak', status: 'COMPLETED' as const, clockInAt: at(1), clockOutAt: at(5), anomalies: ['NO_BREAK'] },
+  ];
+  const EXC = {
+    missedPunches: { count: 1, oldestAt: new Date(Date.now() - 3 * 86_400_000).toISOString() },
+    lateToday: { count: 1, dayFrom: '', dayTo: '' },
+    overtimeRisk: {
+      count: 1,
+      thresholdHours: 36,
+      weekStart: '2026-06-27',
+      weekEnd: '2026-07-03',
+      people: [{ associateId: 'a-ot', name: 'Olga Over', photoUrl: null, workedMinutes: 32 * 60, scheduledMinutes: 7 * 60, projectedMinutes: 39 * 60 }],
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: ROWS } as never);
+    vi.mocked(getTimeExceptions).mockClear();
+    vi.mocked(getTimeExceptions).mockResolvedValue(EXC as never);
+  });
+
+  const tile = (name: RegExp) => screen.findByRole('button', { name });
+
+  it('shows the counts the server sent, read for the reader’s today', async () => {
+    renderAtPath('/?tab=queue');
+    expect(await tile(/missed punches\s*1/i)).toBeInTheDocument();
+    expect(await tile(/late today\s*1/i)).toBeInTheDocument();
+    expect(await tile(/overtime risk\s*1/i)).toBeInTheDocument();
+    const args = vi.mocked(getTimeExceptions).mock.calls.at(-1)![0];
+    expect(args.dayFrom).toBe(ymdToIsoStart(today));
+    expect(args.dayTo).toBe(ymdToIsoEndExclusive(today));
+  });
+
+  it('Missed punches lists the forgotten clock-outs waiting for review, from the oldest', async () => {
+    const user = renderAtPath('/?tab=queue');
+    await screen.findAllByText('Nell NoBreak');
+    const missed = await tile(/missed punches/i);
+    await user.click(missed);
+    expect(missed).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => {
+      const q = vi.mocked(listAdminTimeEntries).mock.calls.at(-1)![0] as { status?: string; from?: string };
+      expect(q.status).toBe('COMPLETED');
+      expect(q.from).toBe(ymdToIsoStart(localDateStr(new Date(EXC.missedPunches.oldestAt))));
+    });
+    await waitFor(() => expect(screen.queryByText('Nell NoBreak')).not.toBeInTheDocument());
+    expect(screen.getAllByText('Fran Forgot').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /forgot clock-out \(1\)/i })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('Late today lists today’s late punches — past the 5-minute grace, rejected ones aside', async () => {
+    const user = renderAtPath('/?tab=queue');
+    await screen.findAllByText('Gail Grace');
+    await user.click(await tile(/late today/i));
+    await waitFor(() => {
+      const q = vi.mocked(listAdminTimeEntries).mock.calls.at(-1)![0] as { status?: string; from?: string; to?: string };
+      expect(q.status).toBeUndefined();
+      expect(q.from).toBe(ymdToIsoStart(today));
+      expect(q.to).toBe(ymdToIsoEndExclusive(today));
+    });
+    await waitFor(() => expect(screen.queryByText('Gail Grace')).not.toBeInTheDocument());
+    expect(screen.getAllByText('Lena Late').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Rex Rejected')).not.toBeInTheDocument();
+    expect(screen.queryByText('Fran Forgot')).not.toBeInTheDocument();
+
+    // The lens says so, and clearing it puts the status back.
+    await user.click(screen.getByRole('button', { name: /late arrivals only/i }));
+    await waitFor(() => expect((vi.mocked(listAdminTimeEntries).mock.calls.at(-1)![0] as { status?: string }).status).toBe('COMPLETED'));
+  });
+
+  it('Overtime risk opens the list of people, and a name opens their week', async () => {
+    const user = renderAtPath('/?tab=queue');
+    await screen.findAllByText('Gail Grace');
+    await user.click(await tile(/overtime risk/i));
+    const panel = await screen.findByTestId('ot-risk-panel');
+    expect(within(panel).getByText('Olga Over')).toBeInTheDocument();
+    expect(within(panel).getByText(/32h worked · 7h still scheduled/)).toBeInTheDocument();
+    expect(within(panel).getByText('39h')).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: /olga over/i }));
+    expect(await screen.findByText(/olga over — timesheet/i)).toBeInTheDocument();
+    await waitFor(() => expect((vi.mocked(listAdminTimeEntries).mock.calls.at(-1)![0] as { associateId?: string }).associateId).toBe('a-ot'));
+  });
+
+  it('the bulk bar shows only once something is selected', async () => {
+    const user = renderAtPath('/?tab=queue');
+    await screen.findAllByText('Gail Grace');
+    expect(screen.queryByTestId('bulk-bar')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /select clean \(2\)/i }));
+    const bar = await screen.findByTestId('bulk-bar');
+    expect(bar.textContent).toMatch(/^2 selected/);
+    expect(within(bar).getByRole('button', { name: /approve 2/i })).toBeInTheDocument();
   });
 });

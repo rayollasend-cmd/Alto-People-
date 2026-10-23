@@ -43,6 +43,21 @@ const TENURE_BANDS: Array<{ label: string; minDays: number; maxDays: number | nu
   { label: '3 years and more', minDays: 3 * 365, maxDays: null },
 ];
 
+/** The id every closed site's row shares: one "Inactive sites" row, not ten rows of the same old name. */
+export const INACTIVE_SITES_KEY = 'inactive';
+
+/**
+ * The site a person is counted under, as a report row names it. An active
+ * site is its own row, labelled "Client · Site" so two clients' same-named
+ * stores read apart. Every inactive site folds into one "Inactive sites"
+ * row (F500 G4: "The Grand Hotel" eight times over, each a closed site).
+ */
+function siteOf(loc: { id: string; name: string; isActive: boolean; client: { id: string; name: string } | null } | null) {
+  if (!loc) return null;
+  if (!loc.isActive) return { id: INACTIVE_SITES_KEY, name: 'Inactive sites', label: 'Inactive sites', inactive: true, siteId: loc.id };
+  return { id: loc.id, name: loc.name, label: loc.client ? `${loc.client.name} · ${loc.name}` : loc.name, inactive: false, siteId: loc.id };
+}
+
 peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
   const months = z.coerce.number().int().min(3).max(36).default(12).parse(req.query.months);
   const now = new Date();
@@ -66,7 +81,7 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
         separatedAt: true,
         managerId: true,
         manager: { select: { firstName: true, lastName: true } },
-        assignments: { orderBy: { startedAt: 'asc' }, take: 1, select: { location: { select: { id: true, name: true, client: { select: { id: true, name: true } } } } } },
+        assignments: { orderBy: { startedAt: 'asc' }, take: 1, select: { location: { select: { id: true, name: true, isActive: true, client: { select: { id: true, name: true } } } } } },
       },
       take: 20_000,
     }),
@@ -109,7 +124,7 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
       reason: reasonBy.get(a.id) ?? null,
       managerId: a.managerId,
       managerName: a.manager ? `${a.manager.firstName} ${a.manager.lastName}`.trim() : null,
-      site: a.assignments[0]?.location ? { id: a.assignments[0].location.id, name: a.assignments[0].location.name } : null,
+      site: siteOf(a.assignments[0]?.location ?? null),
       client: a.assignments[0]?.location?.client ?? null,
       /** On the books today (hired, not separated): the base every headcount here counts. */
       onBooks: isOnTheBooks(s.status),
@@ -149,8 +164,14 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
       if (r.separatedAt !== null && r.separatedAt >= since) g.separations += 1;
       m.set(k, g);
     }
-    return [...m.values()].map((g) => ({ ...g, annualizedTurnoverPct: annualize(g.separations, g.headcount + g.separations / 2) })).sort((a, b) => (b.annualizedTurnoverPct ?? -1) - (a.annualizedTurnoverPct ?? -1));
+    return [...m.values()]
+      // A row with no one on the books and no one leaving in the window says nothing.
+      .filter((g) => g.headcount > 0 || g.separations > 0)
+      .map((g) => ({ ...g, annualizedTurnoverPct: annualize(g.separations, g.headcount + g.separations / 2) }))
+      .sort((a, b) => (b.annualizedTurnoverPct ?? -1) - (a.annualizedTurnoverPct ?? -1));
   };
+  /** How many closed sites the "Inactive sites" row holds. */
+  const inactiveSiteCount = new Set(rows.filter((r) => r.site?.inactive).map((r) => r.site!.siteId)).size;
   const tenureDays = (r: (typeof rows)[number]) => ((r.separatedAt ?? now).getTime() - r.hired.getTime()) / DAY;
   const byTenure = TENURE_BANDS.map((b) => {
     const inBand = rows.filter((r) => {
@@ -230,7 +251,8 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
   // Headcount by store, month by month (the store someone was hired into), top stores by today's people.
   const storeRows = new Map<string, { storeId: string; storeName: string; clientName: string | null; current: number }>();
   for (const r of rows) {
-    if (!r.site) continue;
+    // The trend draws the stores people work at today; closed sites stay in the tables.
+    if (!r.site || r.site.inactive) continue;
     const g = storeRows.get(r.site.id) ?? { storeId: r.site.id, storeName: r.site.name, clientName: r.client?.name ?? null, current: 0 };
     if (r.onBooks) g.current += 1;
     storeRows.set(r.site.id, g);
@@ -253,10 +275,15 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
     { key: 'months2to3', label: 'Months 2–3', min: 28, max: 90 },
     { key: 'later', label: '3 months and more', min: 90, max: Infinity },
   ] as const;
-  const grid = new Map<string, { storeId: string; storeName: string; clientName: string | null; hires: number; separations: number; bands: number[] }>();
+  const grid = new Map<string, { storeId: string; storeName: string; clientName: string | null; inactive: boolean; siteCount: number; hires: number; separations: number; bands: number[] }>();
+  const gridSites = new Map<string, Set<string>>();
   for (const r of rows) {
     if (!r.site) continue;
-    const g = grid.get(r.site.id) ?? { storeId: r.site.id, storeName: r.site.name, clientName: r.client?.name ?? null, hires: 0, separations: 0, bands: [0, 0, 0, 0] };
+    const g = grid.get(r.site.id) ?? { storeId: r.site.id, storeName: r.site.name, clientName: r.site.inactive ? null : r.client?.name ?? null, inactive: r.site.inactive, siteCount: 0, hires: 0, separations: 0, bands: [0, 0, 0, 0] };
+    const seen = gridSites.get(r.site.id) ?? new Set<string>();
+    seen.add(r.site.siteId);
+    gridSites.set(r.site.id, seen);
+    g.siteCount = seen.size;
     if (r.hired >= since) g.hires += 1;
     if (r.separatedAt !== null && r.separatedAt >= since) {
       g.separations += 1;
@@ -268,7 +295,8 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
   }
   const turnoverGrid = {
     bands: EARLY_BANDS.map((b) => ({ key: b.key, label: b.label })),
-    rows: [...grid.values()].filter((g) => g.separations > 0 || g.hires > 0).sort((a, b) => (a.clientName ?? '').localeCompare(b.clientName ?? '') || b.separations - a.separations).slice(0, 40),
+    // The inactive roll-up sorts last: it is history, not a store to manage.
+    rows: [...grid.values()].filter((g) => g.separations > 0 || g.hires > 0).sort((a, b) => Number(a.inactive) - Number(b.inactive) || (a.clientName ?? '').localeCompare(b.clientName ?? '') || b.separations - a.separations).slice(0, 40),
   };
 
   // The first 90 days, cohort by cohort: the share still here at each week.
@@ -308,7 +336,7 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
       hires: overall.hires,
       averageHeadcount: Math.round(overall.averageOnTheBooks),
       byTenure,
-      bySite: group((r) => r.site?.id ?? null, (_k, r) => r.site?.name ?? '—'),
+      bySite: group((r) => r.site?.id ?? null, (_k, r) => r.site?.label ?? '—').map((g) => (g.key === INACTIVE_SITES_KEY ? { ...g, inactive: true, siteCount: inactiveSiteCount } : g)),
       byManager: group((r) => r.managerId, (_k, r) => r.managerName ?? '—'),
     },
     cohorts,

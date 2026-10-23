@@ -31,8 +31,19 @@ vi.mock('@/lib/timeApi', () => ({
 vi.mock('@/lib/schedulingApi', () => ({
   listMyShifts: vi.fn().mockResolvedValue({ shifts: [] }),
 }));
+vi.mock('@/components/EarningsCard', () => ({ useMyEarnings: vi.fn(() => ({ data: undefined })) }));
+vi.mock('@/lib/laborLiveApi', () => ({
+  getMyCorrections: vi.fn(),
+  getMyOtOffers: vi.fn().mockResolvedValue({ offers: [] }),
+  answerMyOtOffer: vi.fn(),
+  finishPromptedCorrection: vi.fn(),
+  submitCorrection: vi.fn(),
+  withdrawCorrection: vi.fn(),
+}));
 
 import { TimeHome } from '@/pages/time/TimeHome';
+import { getMyCorrections } from '@/lib/laborLiveApi';
+import userEvent from '@testing-library/user-event';
 
 function renderAt(url: string, role: Role = 'SHIFT_SUPERVISOR') {
   const caps = ROLE_CAPABILITIES[role];
@@ -92,5 +103,32 @@ describe('<TimeHome> — the floor supervisor punches at the tablet only', () =>
     expect(screen.getByText(/clock in and out at the store tablet/)).toBeInTheDocument();
     expect(screen.queryByText('personal full')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /the floor/i })).toHaveAttribute('href', '/time-attendance');
+  });
+});
+
+describe('<TimeHome> — the associate\u2019s My time leads with the week, not the chrome (F500 G2)', () => {
+  it('no empty "Your requests" box, the explainer is one line, and "Fix a punch" is the header action', async () => {
+    vi.mocked(getMyCorrections).mockResolvedValue({ requests: [], entries: [], sites: [] } as never);
+    renderAt('/time-attendance', 'ASSOCIATE');
+    expect(await screen.findByText('my timesheet')).toBeInTheDocument();
+    // The how-to sits behind a disclosure.
+    expect(screen.getByText('How punching works').closest('summary')).not.toBeNull();
+    // Nothing requested yet: no section, no "No requests yet" box.
+    await vi.waitFor(() => expect(getMyCorrections).toHaveBeenCalled());
+    expect(screen.queryByText('Your requests')).not.toBeInTheDocument();
+    expect(screen.queryByText(/no requests yet/i)).not.toBeInTheDocument();
+    // The header's "Fix a punch" opens the request.
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Fix a punch' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('shows "Your requests" once there is one', async () => {
+    vi.mocked(getMyCorrections).mockResolvedValue({
+      requests: [{ id: 'r1', kind: 'MISSED_CLOCK_OUT', status: 'SUBMITTED', workDate: '2026-10-20', decisionReason: null, timeEntryId: null }],
+      entries: [],
+      sites: [],
+    } as never);
+    renderAt('/time-attendance', 'ASSOCIATE');
+    expect(await screen.findByText('Your requests')).toBeInTheDocument();
   });
 });

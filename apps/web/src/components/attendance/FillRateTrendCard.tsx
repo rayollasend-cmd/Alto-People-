@@ -1,4 +1,4 @@
-import { Area, CartesianGrid, ComposedChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CalendarCheck } from 'lucide-react';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { ChartTooltipContent, PALETTE, TICK } from '@/components/ui/charts';
@@ -22,7 +22,7 @@ export function FillRateTrendCard({ siteId, className }: { siteId?: string; clas
   const { weeks, fillTargetPct } = q.data;
   // Every week stays on the axis: a week with nothing scheduled is a gap
   // in the line, never a slope drawn across it.
-  const all = weeks.map((w) => ({ week: weekLabel(w.weekStart), weekStart: w.weekStart, fill: w.fillRatePct, filled: w.filledShifts, scheduled: w.scheduledShifts, inProgress: w.inProgress ? t('floorUi.yes') : '' }));
+  const all = weeks.map((w) => ({ week: weekLabel(w.weekStart), weekStart: w.weekStart, fill: w.fillRatePct, filled: w.filledShifts, scheduled: w.scheduledShifts, inProgress: w.inProgress ? t('floorUi.yes') : '', partial: w.inProgress }));
   const rows = all.filter((r) => r.fill !== null);
   const lowest = rows.reduce((m, r) => Math.min(m, r.fill ?? 100), 100);
   const floor = Math.max(0, Math.min(80, Math.floor((lowest - 5) / 10) * 10));
@@ -61,7 +61,7 @@ export function FillRateTrendCard({ siteId, className }: { siteId?: string; clas
         empty={<EmptyState size="sm" icon={CalendarCheck} title={t('floorUi.nothingScheduledYet')} description={t('floorUi.fillLineStarts')} />}
       >
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={all} margin={{ top: 12, right: 12, bottom: 0, left: 0 }}>
+          <ComposedChart data={all.map((r) => ({ ...r, noShifts: r.fill === null ? floor : null }))} margin={{ top: 12, right: 12, bottom: 0, left: 0 }}>
             <CartesianGrid stroke={PALETTE.grid} vertical={false} />
             <XAxis dataKey="week" tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} minTickGap={12} />
             {/* The target is always on the scale, however the weeks went. */}
@@ -80,7 +80,48 @@ export function FillRateTrendCard({ siteId, className }: { siteId?: string; clas
               }
             />
             <ReferenceLine y={fillTargetPct} ifOverflow="extendDomain" stroke={PALETTE.ref} strokeDasharray="4 3" label={{ value: t('floorUi.pctTarget', { pct: fillTargetPct }), position: 'insideBottomRight', fill: TICK.fill, fontSize: 10 }} />
-            <Area type="linear" dataKey="fill" name={t('portal.chartFillPct')} connectNulls={false} stroke={PALETTE.primary} strokeWidth={2} fill={PALETTE.primary} fillOpacity={0.12} isAnimationActive={false} dot={{ r: 3, fill: PALETTE.primary, strokeWidth: 0 }} activeDot={{ r: 4, stroke: PALETTE.surface, strokeWidth: 2 }} />
+            {/* A line, not a filled area (two points with a fill read as a bar).
+                Every week with data carries a dot; the week in progress is a
+                hollow dot at full contrast, so its "so far" value is findable;
+                a week with nothing scheduled says so at the foot of the axis. */}
+            <Line
+              type="linear"
+              dataKey="fill"
+              name={t('portal.chartFillPct')}
+              connectNulls={false}
+              stroke={PALETTE.primary}
+              strokeWidth={2}
+              isAnimationActive={false}
+              activeDot={{ r: 5, stroke: PALETTE.surface, strokeWidth: 2 }}
+              dot={(props: { cx?: number; cy?: number; index?: number; payload?: { partial?: boolean; fill: number | null } }) => {
+                const { cx, cy, index, payload } = props;
+                const key = `dot-${index ?? 0}`;
+                // No shifts that week: no dot (the "no shifts" mark below says so).
+                if (cx === undefined || cy === undefined || payload?.fill === null || payload?.fill === undefined) return <g key={key} />;
+                return payload.partial ? (
+                  <circle key={key} data-testid="fill-dot-partial" cx={cx} cy={cy} r={4.5} fill={PALETTE.surface} stroke={PALETTE.primary} strokeWidth={2} />
+                ) : (
+                  <circle key={key} data-testid="fill-dot" cx={cx} cy={cy} r={3.5} fill={PALETTE.primary} />
+                );
+              }}
+            />
+            <Line
+              type="linear"
+              dataKey="noShifts"
+              stroke="none"
+              isAnimationActive={false}
+              legendType="none"
+              activeDot={false}
+              dot={(props: { cx?: number; cy?: number; index?: number; payload?: { noShifts?: number | null } }) => {
+                const { cx, cy, index, payload } = props;
+                if (cx === undefined || cy === undefined || payload?.noShifts == null) return <g key={`ns-${index ?? 0}`} />;
+                return (
+                  <text key={`ns-${index ?? 0}`} data-testid="fill-no-shifts" x={cx} y={cy - 6} textAnchor="middle" fontSize={10} fill={TICK.fill}>
+                    {t('floorUi.noShiftsShort')}
+                  </text>
+                );
+              }}
+            />
           </ComposedChart>
         </ResponsiveContainer>
       </ChartFrame>

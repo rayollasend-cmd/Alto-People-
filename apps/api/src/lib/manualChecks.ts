@@ -331,13 +331,13 @@ async function postSickPayLiabilities(db: PrismaClient, sickPayId: string, payDa
   }
 }
 
-export async function voidThirdPartySickPay(db: PrismaClient, input: { id: string; actorUserId: string }): Promise<void> {
+export async function voidThirdPartySickPay(db: PrismaClient, input: { id: string; actorUserId: string; reason?: string | null }): Promise<void> {
   const row = await db.thirdPartySickPay.findFirst({ where: { id: input.id, voidedAt: null } });
   if (!row) throw new HttpError(404, 'sick_pay_not_found', 'Sick pay record not found');
   await db.thirdPartySickPay.update({ where: { id: row.id }, data: { voidedAt: new Date() } });
   await db.taxLiability.deleteMany({ where: { payrollRunId: null, status: 'OPEN', breakdown: { path: ['thirdPartySickPayId'], equals: row.id } } });
   await recordCriticalAudit(
-    { actorUserId: input.actorUserId, action: 'payroll.third_party_sick_pay.voided', entityType: 'ThirdPartySickPay', entityId: row.id, metadata: {} },
+    { actorUserId: input.actorUserId, action: 'payroll.third_party_sick_pay.voided', entityType: 'ThirdPartySickPay', entityId: row.id, metadata: input.reason ? { reason: input.reason } : {} },
     'manualChecks.sickPayVoid',
   );
 }

@@ -1,5 +1,5 @@
 import type { BudgetVsActual } from '@alto-people/shared';
-import { fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { fmtMoneyCompact, fmtMoneyWhole } from '@/lib/format';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, StackedBarChart } from '@/components/ui/charts';
 
@@ -9,7 +9,8 @@ import { PALETTE, StackedBarChart } from '@/components/ui/charts';
  */
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const money = (v: unknown) => fmtMoney(Number(v));
+/** Whole dollars, like the rest of the budget page. */
+const money = (v: unknown) => fmtMoneyWhole(Number(v));
 const isIncome = (key: string) => key === 'income' || key === 'otherIncome';
 
 export function BudgetCharts({ report: r }: { report: BudgetVsActual }) {
@@ -38,7 +39,7 @@ export function BudgetCharts({ report: r }: { report: BudgetVsActual }) {
       <ChartFrame
         title="Year to date, by section"
         description="Budget beside actual."
-        summary={off ? `Year to date, ${off.label.toLowerCase()} is furthest from budget: ${fmtMoney(off.ytd.actual)} against ${fmtMoney(off.ytd.budget)}.` : 'No sections.'}
+        summary={off ? `Year to date, ${off.label.toLowerCase()} is furthest from budget: ${fmtMoneyWhole(off.ytd.actual)} against ${fmtMoneyWhole(off.ytd.budget)}.` : 'No sections.'}
         columns={[...cols('Section', 'section'), { key: 'variance', label: 'Variance', numeric: true, format: money }]}
         rows={sections}
         csvName="budget-vs-actual-sections"

@@ -128,6 +128,17 @@ vi.mock('@/lib/auditApi', async (importOriginal) => ({
   searchAuditLogs: vi.fn(async () => ({ entries: [], nextBefore: null })),
   auditCsvUrl: vi.fn(() => '/api/audit.csv'),
 }));
+// Integrations is the business connections now (F500 G4): providers and HR/VMS systems.
+vi.mock('@/lib/providersApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/providersApi')>()),
+  listProviderConnections: vi.fn(async () => ({ kinds: [] })),
+  providerCatalog: vi.fn(async () => ({ providers: [] })),
+}));
+vi.mock('@/lib/integrationsApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/integrationsApi')>()),
+  listIntegrationConnections: vi.fn(async () => ({ connections: [] })),
+  listIntegrationVendors: vi.fn(async () => ({ vendors: [] })),
+}));
 
 // Page imports come after the mock declarations (vi.mock is hoisted, but
 // keeping the visual order honest).
@@ -229,13 +240,15 @@ describe('axe pages — insights / compliance / misc long tail', () => {
 
   it('<IntegrationsHome> has no axe violations', async () => {
     const { container } = renderPage(<IntegrationsHome />);
-    await screen.findByText('No API apps');
+    await screen.findByText('No HR or VMS system connected');
     await expectNoViolations(container);
   });
 
   it('<TemplatesHome> has no axe violations', async () => {
     const { container } = renderPage(<TemplatesHome />);
-    await screen.findByText('No templates');
+    // The empty state now carries the starter gallery (F500 G4).
+    await screen.findByText('No templates yet');
+    await screen.findByText('Start from a starter');
     await expectNoViolations(container);
   });
 
@@ -253,7 +266,7 @@ describe('axe pages — insights / compliance / misc long tail', () => {
 
   it('<LearningPathsHome> has no axe violations', async () => {
     const { container } = renderPage(<LearningPathsHome />);
-    await screen.findByText('No learning paths');
+    await screen.findByText('No learning paths yet');
     await expectNoViolations(container);
   });
 
@@ -265,9 +278,10 @@ describe('axe pages — insights / compliance / misc long tail', () => {
 
   it('<VaccinationsHome> has no axe violations', async () => {
     const { container } = renderPage(<VaccinationsHome />);
-    await screen.findByText('No records');
-    // Coverage card resolves separately from the records table.
-    await screen.findByText(/Coverage across/);
+    await screen.findByText('No vaccination records yet');
+    // Coverage resolves separately from the records table; with no one
+    // Working it is one honest line, not seven 0% tiles (F500 G1).
+    await screen.findByText(/no one counts as Working right now/);
     await expectNoViolations(container);
   });
 
@@ -285,15 +299,15 @@ describe('axe pages — insights / compliance / misc long tail', () => {
 
   it('<HotlineAdmin> has no axe violations', async () => {
     const { container } = renderPage(<HotlineAdmin />);
-    await screen.findByText('No reports');
-    // Summary strip resolves via its own query.
-    await screen.findByText('Overdue');
+    // A hotline nobody has used yet: the empty state hands HR the link.
+    await screen.findByText('No reports filed yet');
+    await screen.findByRole('button', { name: 'Copy the reporting link' });
     await expectNoViolations(container);
   });
 
   it('<AuditHome> has no axe violations', async () => {
     const { container } = renderPage(<AuditHome />);
-    await screen.findByText('No audit rows match these filters');
+    await screen.findByText('No events in this window');
     await expectNoViolations(container);
   });
 });

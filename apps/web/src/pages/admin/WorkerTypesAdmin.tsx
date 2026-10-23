@@ -1,12 +1,16 @@
+import * as React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookUser, Bot, Plus, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  WORK_STATUSES,
   WORKER_CAPABILITIES,
   WORKER_STATUS_LABELS,
   WORKER_TYPE_LABELS,
+  type WorkStatus,
+  type WorkStatusCounts,
   type WorkerStatus,
   type WorkerSummary,
   type WorkerType,
@@ -15,6 +19,8 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { useUrlParam, useUrlWriter } from '@/lib/useUrlState';
 import { fmtDate } from '@/lib/format';
 import { associatePhotoUrl, userPhotoUrl } from '@/lib/photoUrl';
 import { listAdminUsers } from '@/lib/usersAdminApi';
@@ -26,13 +32,14 @@ import {
   ensurePersonWorkers,
   listWorkers,
   updateWorker,
-  type WorkerFilters,
 } from '@/lib/workersApi';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { PageHeader, type PageAction } from '@/components/ui/PageHeader';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { PeopleStatusBadge, isWorkStatus, workStatusKeys } from '@/components/ui/PeopleStatusBadge';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Field } from '@/components/ui/Field';
@@ -61,10 +68,10 @@ import {
 
 type TypeFilter = 'ALL' | WorkerType;
 const TYPE_OPTIONS: { value: TypeFilter; label: string }[] = [
-  { value: 'ALL', label: 'All' },
   { value: 'PERSON', label: 'People' },
   { value: 'AGENT', label: 'Agents' },
   { value: 'ROBOT', label: 'Robots' },
+  { value: 'ALL', label: 'All' },
 ];
 const STATUSES: WorkerStatus[] = ['ONBOARDING', 'ACTIVE', 'SUSPENDED', 'OFFBOARDED'];
 const STATUS_VARIANT: Record<WorkerStatus, 'pending' | 'success' | 'destructive' | 'outline'> = {
@@ -99,9 +106,19 @@ const GROUP_NONE = '\u0000none';
 
 /** "2 onboarding · 1 suspended" — everything that is not ACTIVE and not zero. */
 function otherStatusesHint(counts: Record<WorkerStatus, number> | undefined): string {
-  if (!counts) return 'Active now';
+  if (!counts) return '';
   const parts = STATUSES.filter((s) => s !== 'ACTIVE' && counts[s] > 0).map((s) => `${counts[s]} ${WORKER_STATUS_LABELS[s].toLowerCase()}`);
-  return parts.length ? parts.join(' · ') : 'Active now';
+  return parts.length ? parts.join(' · ') : 'All active';
+}
+
+/**
+ * The photo the API says is on file (null: none — initials, no request for a
+ * photo that isn't there); an older response without the field falls back
+ * to guessing the URL.
+ */
+function photoOf(fromApi: string | null | undefined, guess: () => string | undefined): string | undefined {
+  if (fromApi === undefined) return guess();
+  return fromApi ?? undefined;
 }
 
 /** A person's face and name, opening their record when they have one. */
@@ -123,24 +140,60 @@ function Person({ name, email, photo, to }: { name: string; email?: string | nul
   );
 }
 
-const TYPE_PARAM: Record<string, TypeFilter> = { PERSON: 'PERSON', AGENT: 'AGENT', ROBOT: 'ROBOT' };
+const TYPE_KEYS = ['PERSON', 'AGENT', 'ROBOT', 'ALL'] as const satisfies readonly TypeFilter[];
+const GROUP_KEYS = ['store', 'client', 'type', 'none'] as const satisfies readonly GroupBy[];
+/** One `?status=` param: a person's work status on People, an account status on Agents / Robots / All. */
+const STATUS_KEYS: readonly string[] = [...new Set<string>([...WORK_STATUSES, ...STATUSES])];
+
+/**
+ * "0 working · 8 paused" — the part of "on the books" worth a glance, in the
+ * People page's words. Both are inside the on-the-books number; onboarding
+ * people are not (they aren't hired yet), so they stay out of this line.
+ */
+function peopleHint(p: WorkStatusCounts | undefined, t: (k: MessageKey) => string): string {
+  if (!p) return '';
+  const parts = [`${p.ACTIVE.toLocaleString()} ${t('people.ws.ACTIVE').toLowerCase()}`];
+  if (p.DEACTIVATED > 0) parts.push(`${p.DEACTIVATED.toLocaleString()} ${t('people.ws.DEACTIVATED').toLowerCase()}`);
+  return parts.join(' · ');
+}
+
+/** Every worker of a type, any status — 0 means the type has none at all (not "0 active"). */
+function totalOf(counts: Record<WorkerStatus, number> | undefined): number {
+  return counts ? STATUSES.reduce((n, s) => n + counts[s], 0) : 0;
+}
 
 export function WorkerTypesAdmin() {
   const { can } = useAuth();
+  const { t } = useI18n();
   const tenant = useTenant();
   const term = useTerm();
   const canManage = can('manage:org');
+  const canInvite = can('manage:onboarding') || can('invite:onboarding');
+  const robotics = !!tenant.modules.robotics;
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  // ?type=ROBOT preselects the chip (the Robots page links here); ?add=1 opens the robot form.
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>(() => TYPE_PARAM[searchParams.get('type') ?? ''] ?? 'ALL');
+  // People › Workforce roster opens on people: ?type=AGENT / ROBOT (the Agents
+  // and Robots pages link here) or ALL shows the rest. Agents and robots are
+  // created only from their own type, so the header never offers "Add robot"
+  // over a list of people.
+  const typeKeys = robotics ? TYPE_KEYS : TYPE_KEYS.filter((k) => k !== 'ROBOT');
+  const [typeFilter] = useUrlParam<TypeFilter>('type', 'PERSON', typeKeys);
   // A staffing roster reads by where people work: group by client or store.
   const hasClients = tenant.modules.clientPortal;
-  const [groupBy, setGroupBy] = useState<GroupBy>(() => {
-    const g = searchParams.get('group');
-    return g === 'client' || g === 'store' || g === 'type' || g === 'none' ? g : 'store';
-  });
-  const [statusFilter, setStatusFilter] = useState<'' | WorkerStatus>('');
+  const [groupBy, setGroupBy] = useUrlParam<GroupBy>('group', 'store', GROUP_KEYS);
+  const [statusParam, setStatusParam] = useUrlParam<string>('status', '', STATUS_KEYS);
+  const writeUrl = useUrlWriter();
+  /** A new type clears the status: the two types read different status words. */
+  const setTypeFilter = (next: TypeFilter) =>
+    writeUrl((p) => {
+      if (next === 'PERSON') p.delete('type');
+      else p.set('type', next);
+      p.delete('status');
+    });
+  const personView = typeFilter === 'PERSON';
+  const statusFilter = personView
+    ? ((WORK_STATUSES as readonly string[]).includes(statusParam) ? (statusParam as WorkStatus) : '')
+    : ((STATUSES as readonly string[]).includes(statusParam) ? (statusParam as WorkerStatus) : '');
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [ensuring, setEnsuring] = useState(false);
@@ -154,19 +207,25 @@ export function WorkerTypesAdmin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addTarget, canManage]);
 
-  const filters: WorkerFilters = useMemo(
-    () => ({ type: typeFilter === 'ALL' ? undefined : typeFilter, status: statusFilter || undefined }),
-    [typeFilter, statusFilter],
-  );
-  // The headline numbers come from the unfiltered read so a filter never
-  // changes the hero; the grid reads with the filters applied.
-  const totals = useQuery({ queryKey: ['workers', 'list', {}], queryFn: () => listWorkers({}) });
-  const workers = useQuery({ queryKey: ['workers', 'list', filters], queryFn: () => listWorkers(filters) });
+  // One read: the roster is capped server-side and the counts, the tiles and
+  // every filter below come from it (a second, filtered read fetched the
+  // same rows again).
+  const roster = useQuery({ queryKey: ['workers', 'list', {}], queryFn: () => listWorkers({}) });
 
-  const withoutOwner = totals.data?.withoutOwner.length ?? 0;
-  const counts = totals.data?.counts;
-  const peopleMissing = totals.data?.associatesWithoutWorker ?? 0;
-  const rows = workers.data?.workers ?? [];
+  const withoutOwner = roster.data?.withoutOwner.length ?? 0;
+  const counts = roster.data?.counts;
+  const people = roster.data?.people;
+  const peopleMissing = roster.data?.associatesWithoutWorker ?? 0;
+  const allRows = roster.data?.workers;
+  const rows = useMemo(
+    () =>
+      (allRows ?? []).filter((w) => {
+        if (typeFilter !== 'ALL' && w.type !== typeFilter) return false;
+        if (!statusFilter) return true;
+        return personView ? w.workStatus === statusFilter : w.status === statusFilter;
+      }),
+    [allRows, typeFilter, statusFilter, personView],
+  );
   // UX upgrade §5.6: the roster carries each agent's scorecard (the last seven days)
   // the way its record does. Agents are few; one small read each.
   const agentRows = rows.filter((w) => w.type === 'AGENT' && w.status !== 'OFFBOARDED');
@@ -174,7 +233,7 @@ export function WorkerTypesAdmin() {
     queries: agentRows.map((w) => ({ queryKey: ['agents', 'scorecard', w.id, 7], queryFn: () => getAgentScorecard(w.id, 7), staleTime: 60_000 })),
   });
   const scorecardById = new Map(agentRows.map((w, i) => [w.id, scorecards[i]?.data ?? null]));
-  const editing = editingId ? (rows.find((w) => w.id === editingId) ?? totals.data?.workers.find((w) => w.id === editingId) ?? null) : null;
+  const editing = editingId ? (allRows?.find((w) => w.id === editingId) ?? null) : null;
 
   const refetchAll = () => qc.invalidateQueries({ queryKey: ['workers'] });
 
@@ -191,31 +250,39 @@ export function WorkerTypesAdmin() {
     }
   };
 
+  const showsAgents = typeFilter === 'AGENT' || typeFilter === 'ALL';
+  const hasAgents = rows.some((w) => w.type === 'AGENT');
+  const windowDays = people?.windowDays ?? 14;
+
   const columns = useMemo<GridColumn<WorkerSummary>[]>(
     () => [
       {
         key: 'name',
-        header: 'Worker',
+        header: typeFilter === 'PERSON' ? term('worker') : 'Worker',
         accessor: (w) => w.name,
         primary: true,
         sortable: true,
         searchable: true,
+        width: '15rem',
         // The row opens the record behind it: a person in People, an agent in
         // Agents (UX upgrade step 5: one roster, the records where they live).
         cell: (w) => {
           const to = w.type === 'PERSON' && w.associateId ? `/people/${w.associateId}` : w.type === 'AGENT' ? `/agents/${w.id}` : w.type === 'ROBOT' ? `/robots/${w.id}` : null;
           return (
-            <span className="inline-flex items-center gap-2">
+            <span className="inline-flex min-w-0 items-center gap-2 whitespace-nowrap">
               {to ? (
-                <Link to={to} className="inline-block py-0.5 font-medium text-ink underline decoration-line underline-offset-2 hover:text-accent">
+                <Link to={to} className="inline-block truncate py-0.5 font-medium text-ink underline decoration-line underline-offset-2 hover:text-accent">
                   {w.name}
                 </Link>
               ) : (
-                <span className="font-medium text-ink">{w.name}</span>
+                <span className="truncate font-medium text-ink">{w.name}</span>
               )}
-              <Badge variant={TYPE_VARIANT[w.type]} size="sm">
-                {WORKER_TYPE_LABELS[w.type]}
-              </Badge>
+              {/* The type only says something when the list mixes them. */}
+              {typeFilter === 'ALL' && (
+                <Badge variant={TYPE_VARIANT[w.type]} size="sm">
+                  {WORKER_TYPE_LABELS[w.type]}
+                </Badge>
+              )}
             </span>
           );
         },
@@ -230,12 +297,13 @@ export function WorkerTypesAdmin() {
         sortable: true,
         searchable: true,
         cardMeta: true,
+        width: '13rem',
         cell: (w) => {
           if (w.type === 'PERSON') {
-            return w.manager ? <Person name={w.manager.name} photo={associatePhotoUrl(w.manager.associateId)} to={`/people/${w.manager.associateId}`} /> : <span className="text-silver/60">—</span>;
+            return w.manager ? <Person name={w.manager.name} photo={photoOf(w.manager.photoUrl, () => associatePhotoUrl(w.manager!.associateId))} to={`/people/${w.manager.associateId}`} /> : <span className="text-silver/60">—</span>;
           }
           return w.owner ? (
-            <Person name={w.owner.name || w.owner.email} email={w.owner.email} photo={userPhotoUrl(w.owner.id)} to={w.owner.associateId ? `/people/${w.owner.associateId}` : null} />
+            <Person name={w.owner.name || w.owner.email} email={w.owner.email} photo={photoOf(w.owner.photoUrl, () => userPhotoUrl(w.owner!.id))} to={w.owner.associateId ? `/people/${w.owner.associateId}` : null} />
           ) : (
             <Badge variant="destructive" size="sm">No owner</Badge>
           );
@@ -244,20 +312,30 @@ export function WorkerTypesAdmin() {
       },
       {
         key: 'status',
-        // The worker's account (Active / Suspended), not where a person stands
-        // at work — that is the People directory's status (Working, No recent
-        // shifts, …; apps/api/src/lib/peopleStatus.ts). One word, one meaning.
-        header: 'Account',
-        accessor: (w) => WORKER_STATUS_LABELS[w.status],
+        // A person's status is where they stand at work — the People
+        // directory's word (Working, No recent shifts, Paused…; one rule,
+        // apps/api/src/lib/peopleStatus.ts), never their worker account,
+        // which only mirrors the record. An agent's or a robot's status is
+        // its account (Active, Suspended…).
+        header: typeFilter === 'AGENT' || typeFilter === 'ROBOT' ? 'Account' : 'Status',
+        accessor: (w) => (w.type === 'PERSON' && isWorkStatus(w.workStatus) ? t(workStatusKeys(w.workStatus).label) : WORKER_STATUS_LABELS[w.status]),
         sortable: true,
         cardMeta: true,
-        cell: (w) => <Badge variant={STATUS_VARIANT[w.status]}>{WORKER_STATUS_LABELS[w.status]}</Badge>,
+        width: '10rem',
+        cell: (w) =>
+          w.type === 'PERSON' && isWorkStatus(w.workStatus) ? (
+            <PeopleStatusBadge status={w.workStatus} windowDays={windowDays} />
+          ) : (
+            <Badge variant={STATUS_VARIANT[w.status]}>{WORKER_STATUS_LABELS[w.status]}</Badge>
+          ),
       },
       {
         key: 'capabilities',
         header: 'Capabilities',
         accessor: (w) => w.capabilities.map(capLabel).join(', '),
         searchable: true,
+        // Most people have none: shown on request (the column chooser).
+        defaultHidden: true,
         cell: (w) =>
           w.capabilities.length ? (
             <span className="flex flex-wrap gap-1">
@@ -271,56 +349,66 @@ export function WorkerTypesAdmin() {
             <span className="text-silver/60">—</span>
           ),
       },
-      {
-        key: 'sites',
-        header: `Current ${term('label.stores').toLowerCase()}`,
-        accessor: (w) => currentSites(w).map((s) => (hasClients ? `${s.clientName} — ${s.siteName}` : s.siteName)).join(', '),
-        searchable: true,
-        cell: (w) => {
-          const sites = currentSites(w);
-          return sites.length ? (
-            <span className="flex flex-col">
-              {sites.map((s) => (
-                <span key={`${s.locationId}-${s.startedAt}`}>
-                  {s.siteName}
-                  {hasClients && <span className="text-xs text-silver"> · {s.clientName}</span>}
-                </span>
-              ))}
-            </span>
-          ) : (
-            <span className="text-silver/60">—</span>
-          );
-        },
-      },
-      { key: 'upcoming', header: 'Upcoming shifts', accessor: (w) => w.upcomingShifts, sortable: true, align: 'right' },
-      {
-        key: 'scorecard',
-        header: 'Scorecard (7 days)',
-        accessor: (w) => scorecardById.get(w.id)?.tasksCompleted ?? -1,
-        sortable: true,
-        align: 'right',
-        csv: (w) => {
-          const s = scorecardById.get(w.id);
-          return s ? `${s.tasksCompleted} tasks, ${s.errors} errors, ${s.exceptionsEscalated} escalated` : '';
-        },
-        cell: (w) => {
-          if (w.type !== 'AGENT') return <span className="text-silver/60">—</span>;
-          const s = scorecardById.get(w.id);
-          if (!s) return <span className="text-silver/60">…</span>;
-          return (
-            <Link to={`/agents/${w.id}?tab=scorecard`} className="inline-flex items-center gap-1.5 tabular-nums hover:text-accent" onClick={(e) => e.stopPropagation()} title={`${s.tasksCompleted} tasks, ${s.errors} errors, ${s.exceptionsEscalated} escalated`}>
-              <span>{s.tasksCompleted} tasks</span>
-              <Badge variant={s.errorRatePct == null ? 'outline' : s.errorRatePct > 10 ? 'destructive' : 'success'} size="sm">
-                {s.errorRatePct == null ? 'no errors measured' : `${s.errorRatePct}% errors`}
-              </Badge>
-            </Link>
-          );
-        },
-      },
-      { key: 'created', header: 'Created', accessor: (w) => w.createdAt, sortable: true, cell: (w) => fmtDate(w.createdAt) },
+      // Grouped by store, the group heading already names the store.
+      ...(groupBy === 'store'
+        ? []
+        : [
+            {
+              key: 'sites',
+              header: `Current ${term('label.stores').toLowerCase()}`,
+              accessor: (w: WorkerSummary) => currentSites(w).map((s) => (hasClients ? `${s.clientName} — ${s.siteName}` : s.siteName)).join(', '),
+              searchable: true,
+              width: '16rem',
+              cell: (w: WorkerSummary) => {
+                const sites = currentSites(w);
+                if (!sites.length) return <span className="text-silver/60">—</span>;
+                const first = sites[0]!;
+                const title = sites.map((s) => (hasClients ? `${s.siteName} · ${s.clientName}` : s.siteName)).join('\n');
+                return (
+                  <span className="block truncate whitespace-nowrap" title={title}>
+                    {first.siteName}
+                    {hasClients && groupBy !== 'client' && <span className="text-xs text-silver"> · {first.clientName}</span>}
+                    {sites.length > 1 && <span className="text-xs text-silver"> +{sites.length - 1}</span>}
+                  </span>
+                );
+              },
+            } satisfies GridColumn<WorkerSummary>,
+          ]),
+      { key: 'upcoming', header: 'Upcoming shifts', accessor: (w) => w.upcomingShifts, sortable: true, align: 'right', width: '9rem', className: 'tabular-nums' },
+      // An agent's last seven days — only where agents are listed.
+      ...(showsAgents && hasAgents
+        ? [
+            {
+              key: 'scorecard',
+              header: 'Scorecard (7 days)',
+              accessor: (w: WorkerSummary) => scorecardById.get(w.id)?.tasksCompleted ?? -1,
+              sortable: true,
+              align: 'right',
+              width: '12rem',
+              csv: (w: WorkerSummary) => {
+                const s = scorecardById.get(w.id);
+                return s ? `${s.tasksCompleted} tasks, ${s.errors} errors, ${s.exceptionsEscalated} escalated` : '';
+              },
+              cell: (w: WorkerSummary) => {
+                if (w.type !== 'AGENT') return <span className="text-silver/60">—</span>;
+                const s = scorecardById.get(w.id);
+                if (!s) return <span className="text-silver/60">…</span>;
+                return (
+                  <Link to={`/agents/${w.id}?tab=scorecard`} className="inline-flex items-center gap-1.5 whitespace-nowrap tabular-nums hover:text-accent" onClick={(e) => e.stopPropagation()} title={`${s.tasksCompleted} tasks, ${s.errors} errors, ${s.exceptionsEscalated} escalated`}>
+                    <span>{s.tasksCompleted} tasks</span>
+                    <Badge variant={s.errorRatePct == null ? 'outline' : s.errorRatePct > 10 ? 'destructive' : 'success'} size="sm">
+                      {s.errorRatePct == null ? 'no errors measured' : `${s.errorRatePct}% errors`}
+                    </Badge>
+                  </Link>
+                );
+              },
+            } satisfies GridColumn<WorkerSummary>,
+          ]
+        : []),
+      { key: 'created', header: 'Created', accessor: (w) => w.createdAt, sortable: true, defaultHidden: true, width: '8rem', cell: (w) => fmtDate(w.createdAt) },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [typeFilter, term, hasClients, scorecards.map((q) => q.dataUpdatedAt).join(',')],
+    [typeFilter, groupBy, term, t, hasClients, showsAgents, hasAgents, windowDays, scorecards.map((q) => q.dataUpdatedAt).join(',')],
   );
 
   // Where a row sits when grouped: its first current site (or "not placed"), or its type.
@@ -332,7 +420,11 @@ export function WorkerTypesAdmin() {
   };
   const groupHeader = (key: string, list: WorkerSummary[]) => {
     const n = `${list.length} ${list.length === 1 ? 'worker' : 'workers'}`;
-    if (key === GROUP_NONE) return <span>Not placed at a {term('label.store').toLowerCase()} · {n}</span>;
+    // Not "Not placed": that is a people status (hired, placed nowhere), and
+    // someone hired through an application with no store assignment yet
+    // reads "No recent shifts" on the People page. This heading only says
+    // the roster has no store on record for them.
+    if (key === GROUP_NONE) return <span>No {term('label.store').toLowerCase()} assignment · {n}</span>;
     if (groupBy === 'type') return <span>{key === 'PERSON' ? 'People' : key === 'AGENT' ? 'Agents' : 'Robots'} · {n}</span>;
     const site = currentSites(list[0]!)[0]!;
     return groupBy === 'client' ? (
@@ -347,43 +439,77 @@ export function WorkerTypesAdmin() {
     );
   };
 
+  // One primary, and only the create that fits the list on screen.
+  const inviteAction: PageAction | null = canInvite ? { label: `Invite ${term('workers').toLowerCase()}`, icon: Plus, to: '/onboarding?new=invite', primary: true } : null;
+  const registerAction: PageAction | null = canManage ? { label: 'Register agent', icon: Bot, to: '/agents?register=1', primary: true } : null;
+  const robotAction: PageAction | null = canManage && robotics ? { label: 'Add robot', icon: Plus, onSelect: () => setCreating(true), primary: true } : null;
+  const createAction = typeFilter === 'AGENT' ? registerAction : typeFilter === 'ROBOT' ? robotAction : inviteAction;
+
+  const statusOptions = personView
+    ? WORK_STATUSES.map((s) => ({ value: s as string, label: t(workStatusKeys(s).label) }))
+    : STATUSES.map((s) => ({ value: s as string, label: WORKER_STATUS_LABELS[s] }));
+
+  const emptyFor: { title: string; description: string; action?: React.ReactNode } =
+    typeFilter === 'AGENT'
+      ? { title: 'No agents registered', description: 'Register an agent on the Agents page to see it here, with the owner who answers for it.', action: registerAction ? <Button asChild><Link to="/agents?register=1"><Bot className="h-4 w-4" aria-hidden="true" /> Register agent</Link></Button> : undefined }
+      : typeFilter === 'ROBOT'
+        ? { title: 'No robots yet', description: 'Add a robot with the owner who answers for it and the site it works.', action: robotAction ? <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" aria-hidden="true" /> Add robot</Button> : undefined }
+        : { title: `No ${term('workers').toLowerCase()} on the roster yet`, description: `Everyone you invite gets a row here once their record exists.`, action: inviteAction ? <Button asChild><Link to="/onboarding?new=invite"><Plus className="h-4 w-4" aria-hidden="true" /> Invite {term('workers').toLowerCase()}</Link></Button> : undefined };
+
+  /** A tile that is the type filter: tapping the selected one goes back to people. */
+  const pickType = (next: TypeFilter) => setTypeFilter(typeFilter === next ? 'PERSON' : next);
+  const loading = roster.isLoading;
+
   return (
     <div className="space-y-6" data-template="list">
       <PageHeader
         title="Workforce roster"
-        subtitle={`Everyone and everything that works, grouped by where they work. Agents and robots show the owner who answers for them. Each row opens the record behind it.`}
-        breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Workforce roster' }]}
-        primaryAction={
-          canManage && tenant.modules.robotics ? (
-            <Button onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4" aria-hidden="true" /> Add robot
-            </Button>
-          ) : undefined
-        }
-        secondaryActions={
-          canManage ? (
-            <Button asChild variant="outline">
-              <Link to="/agents?register=1">
-                <Bot className="h-4 w-4" aria-hidden="true" /> Register agent
-              </Link>
-            </Button>
-          ) : undefined
-        }
+        subtitle="People, agents and robots, grouped by where they work. Agents and robots show the owner who answers for them. Each row opens the record behind it."
+        actions={createAction ? [createAction] : undefined}
       />
 
-      {totals.error && <QueryError what="workers" query={totals} />}
+      {roster.error && <QueryError what="workers" query={roster} />}
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <MetricStrip label="The roster at a glance">
+        {/* People: the People page's own number (on the books — hired and
+            not separated), so this roster, /people and Headcount agree. */}
         <MetricCard
+          key="people"
+          label={`${term('nav.people')} on the books`}
+          value={loading || !people ? '—' : people.onTheBooks}
+          hint={peopleHint(people, t)}
+          valueTitle={t('people.onTheBooksDef')}
+          onClick={() => setTypeFilter('PERSON')}
+          selected={typeFilter === 'PERSON'}
+        />
+        <MetricCard
+          key="agents"
+          label="Agents"
+          value={loading ? '—' : (counts?.AGENT.ACTIVE ?? 0)}
+          hint={otherStatusesHint(counts?.AGENT)}
+          nothing={!loading && counts && totalOf(counts.AGENT) === 0 ? 'No agents registered' : undefined}
+          onClick={() => pickType('AGENT')}
+          selected={typeFilter === 'AGENT'}
+        />
+        {robotics && (
+          <MetricCard
+            key="robots"
+            label="Robots"
+            value={loading ? '—' : (counts?.ROBOT.ACTIVE ?? 0)}
+            hint={otherStatusesHint(counts?.ROBOT)}
+            nothing={!loading && counts && totalOf(counts.ROBOT) === 0 ? 'No robots yet' : undefined}
+            onClick={() => pickType('ROBOT')}
+            selected={typeFilter === 'ROBOT'}
+          />
+        )}
+        <MetricCard
+          key="owner"
           label="Without an owner"
-          value={totals.isLoading ? '—' : String(withoutOwner)}
-          accent={withoutOwner > 0}
+          value={loading ? '—' : withoutOwner}
+          tone={withoutOwner > 0 ? 'alert' : undefined}
           hint={withoutOwner > 0 ? 'Must be zero — every worker needs an owner' : 'Every worker is owned'}
         />
-        <MetricCard label="People" value={totals.isLoading ? '—' : String(counts?.PERSON.ACTIVE ?? 0)} hint={otherStatusesHint(counts?.PERSON)} />
-        <MetricCard label="Agents" value={totals.isLoading ? '—' : String(counts?.AGENT.ACTIVE ?? 0)} hint={otherStatusesHint(counts?.AGENT)} />
-        <MetricCard label="Robots" value={totals.isLoading ? '—' : String(counts?.ROBOT.ACTIVE ?? 0)} hint={otherStatusesHint(counts?.ROBOT)} />
-      </div>
+      </MetricStrip>
 
       {peopleMissing > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
@@ -402,12 +528,13 @@ export function WorkerTypesAdmin() {
       <DataGrid
         id="workers"
         caption="Workers"
-        rows={rows}
+        noun={typeFilter === 'AGENT' ? { one: 'agent', many: 'agents' } : typeFilter === 'ROBOT' ? { one: 'robot', many: 'robots' } : typeFilter === 'PERSON' ? { one: term('worker').toLowerCase(), many: term('workers').toLowerCase() } : { one: 'worker', many: 'workers' }}
+        rows={allRows ? rows : undefined}
         rowKey={(w) => w.id}
-        loading={workers.isLoading}
-        error={workers.error ? errorMessage(workers.error, 'Could not load workers.') : null}
-        onRetry={() => workers.refetch()}
-        search={{ placeholder: 'Search workers, owners, sites…' }}
+        loading={loading}
+        error={roster.error ? errorMessage(roster.error, 'Could not load workers.') : null}
+        onRetry={() => roster.refetch()}
+        search={{ placeholder: 'Search names, owners, sites…' }}
         urlState
         exportCsv={{ filename: 'workers' }}
         columnChooser
@@ -416,53 +543,34 @@ export function WorkerTypesAdmin() {
         rowActionLabel={(w) => `Open ${w.name}`}
         defaultSort={{ key: 'name', direction: 'asc' }}
         groupBy={groupBy === 'none' ? undefined : { key: groupKey, header: groupHeader }}
+        activeFilters={statusFilter ? 1 : 0}
+        onClearFilters={() => setStatusParam('')}
         filters={
           <div className="flex flex-wrap items-center gap-3">
+            <SegmentedControl ariaLabel="Worker type" options={TYPE_OPTIONS.filter((o) => robotics || o.value !== 'ROBOT')} value={typeFilter} onChange={setTypeFilter} />
+            <label className="flex items-center gap-2 text-sm text-silver">
+              <span className="sr-only">Status</span>
+              <Select size="sm" value={statusFilter} onChange={(e) => setStatusParam(e.target.value)} aria-label="Status">
+                <option value="">Any status</option>
+                {statusOptions.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
             <label className="flex items-center gap-2 text-sm text-silver">
               <span className="sr-only">Group by</span>
-              <Select
-                size="sm"
-                value={groupBy}
-                aria-label="Group by"
-                onChange={(e) => {
-                  const g = e.target.value as GroupBy;
-                  setGroupBy(g);
-                  const next = new URLSearchParams(searchParams);
-                  if (g === 'store') next.delete('group');
-                  else next.set('group', g);
-                  setSearchParams(next, { replace: true });
-                }}
-              >
+              <Select size="sm" value={groupBy} aria-label="Group by" onChange={(e) => setGroupBy(e.target.value as GroupBy)}>
                 <option value="store">Group by {term('label.store').toLowerCase()}</option>
                 {hasClients && <option value="client">Group by {term('label.client').toLowerCase()}</option>}
                 <option value="type">Group by type</option>
                 <option value="none">No grouping</option>
               </Select>
             </label>
-            <SegmentedControl ariaLabel="Worker type" options={tenant.modules.robotics ? TYPE_OPTIONS : TYPE_OPTIONS.filter((o) => o.value !== 'ROBOT')} value={typeFilter} onChange={setTypeFilter} />
-            <label className="flex items-center gap-2 text-sm text-silver">
-              <span className="sr-only">Status</span>
-              <Select size="sm" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as '' | WorkerStatus)} aria-label="Status">
-                <option value="">Any status</option>
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {WORKER_STATUS_LABELS[s]}
-                  </option>
-                ))}
-              </Select>
-            </label>
           </div>
         }
-        empty={{
-          icon: BookUser,
-          title: 'No workers match',
-          description:
-            typeFilter === 'PERSON'
-              ? 'People appear here once the sweep has mirrored each associate.'
-              : typeFilter === 'AGENT'
-                ? 'Register an agent on the Agents page to see it here.'
-                : 'Add a robot, or register an agent on the Agents page, to see it here.',
-        }}
+        empty={{ icon: BookUser, ...emptyFor }}
       />
 
       {creating && (
@@ -746,9 +854,14 @@ function EditWorkerDialog({ worker, canManage, onClose, onSaved }: { worker: Wor
               <Badge variant={TYPE_VARIANT[worker.type]} size="sm">
                 {WORKER_TYPE_LABELS[worker.type]}
               </Badge>
-              <Badge variant={STATUS_VARIANT[worker.status]} size="sm">
-                {WORKER_STATUS_LABELS[worker.status]}
-              </Badge>
+              {/* A person: where they stand at work (the People page's word), not the account it mirrors. */}
+              {isPerson && isWorkStatus(worker.workStatus) ? (
+                <PeopleStatusBadge status={worker.workStatus} size="sm" />
+              ) : (
+                <Badge variant={STATUS_VARIANT[worker.status]} size="sm">
+                  {WORKER_STATUS_LABELS[worker.status]}
+                </Badge>
+              )}
             </span>
           </DialogTitle>
           <DialogDescription>

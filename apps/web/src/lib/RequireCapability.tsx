@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Navigate } from 'react-router-dom';
 import { isClientBoundedRole, type Capability } from '@alto-people/shared';
 import { useAuth } from './auth';
 import { NoAccess } from '@/components/ui/NoAccess';
@@ -25,6 +26,7 @@ export function RequireCapability({
   cap,
   anyOf,
   notClientBounded = false,
+  selfService,
   children,
 }: {
   cap: Capability;
@@ -34,6 +36,10 @@ export function RequireCapability({
    *  capability — for org-level pages like Labor costs, which the
    *  supervisor's manage:scheduling would otherwise unlock. */
   notClientBounded?: boolean;
+  /** Someone with their own record (an associate) who can't open the page
+   *  is sent to their own version of it instead of the access page — the
+   *  org's Expirations sends them to "My credentials". */
+  selfService?: string;
   children: ReactNode;
 }) {
   const { can, user } = useAuth();
@@ -41,6 +47,7 @@ export function RequireCapability({
     (can(cap) || (anyOf?.some(can) ?? false)) &&
     !(notClientBounded && user && isClientBoundedRole(user.role));
   if (!ok) {
+    if (selfService && user?.associateId) return <Navigate to={selfService} replace />;
     return <NoAccess />;
   }
   return <>{children}</>;

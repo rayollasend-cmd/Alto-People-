@@ -9,6 +9,7 @@ import { colorForPosition } from '@/lib/positionColor';
 import { fmtDayHeaderTz, fmtShiftTz, zonedDayKey } from '@/lib/format';
 import { isOpenShift, wentUnfilled } from '@alto-people/shared';
 import { associatePhotoUrl } from '@/lib/photoUrl';
+import { workweekStart } from '@/lib/workweek';
 
 /** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
 function ymd(d: Date): string {
@@ -132,13 +133,14 @@ export function MobileScheduleList({
   const openCount = todayShifts.filter((s) => isOpenShift(s)).length;
   const unfilledCount = todayShifts.filter((s) => wentUnfilled(s)).length;
 
-  // The week around the anchored day, Monday first — the sticky strip a
-  // phone pages with (role walk, ops 14 / floor 9). Shift counts per day
-  // come from whatever is loaded, so a day outside the fetched window
-  // shows no dot rather than a wrong zero.
+  // The workweek around the anchored day, Saturday first — the org week
+  // payroll, the desktop grid and the time pages run on (lib/workweek; a
+  // Monday-first strip sat under a Sat–Fri week). The sticky strip a phone
+  // pages with (role walk, ops 14 / floor 9). Shift counts per day come
+  // from whatever is loaded, so a day outside the fetched window shows no
+  // dot rather than a wrong zero.
   const strip = useMemo(() => {
-    const mondayOffset = (dayAnchor.getDay() + 6) % 7;
-    const monday = addDays(dayAnchor, -mondayOffset);
+    const saturday = workweekStart(dayAnchor);
     const todayKey = ymd(new Date());
     const anchorKey = ymd(dayAnchor);
     const counts = new Map<string, number>();
@@ -148,7 +150,7 @@ export function MobileScheduleList({
       counts.set(k, (counts.get(k) ?? 0) + 1);
     }
     return Array.from({ length: 7 }, (_, i) => {
-      const d = addDays(monday, i);
+      const d = addDays(saturday, i);
       const key = ymd(d);
       return { d, key, label: WD[d.getDay()]!, day: d.getDate(), count: counts.get(key) ?? 0, isToday: key === todayKey, isAnchor: key === anchorKey };
     });

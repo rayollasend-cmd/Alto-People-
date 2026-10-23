@@ -119,15 +119,7 @@ export function PolicyCampaignsHome() {
     <ListTemplate
       title="Policy campaigns"
       subtitle="Send one policy to everyone it applies to, remind until it is signed, and see who has not."
-      breadcrumbs={[{ label: 'Compliance' }, { label: 'Policy campaigns' }]}
-      primaryAction={
-        canManage ? (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="h-4 w-4" />
-            New campaign
-          </Button>
-        ) : undefined
-      }
+      actions={canManage ? [{ label: 'New campaign', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
       <Card>
         <CardContent className="p-0">
@@ -141,12 +133,22 @@ export function PolicyCampaignsHome() {
               error={error}
               onRetry={() => void query.refetch()}
               search={{ placeholder: 'Policy, template…' }}
-              urlState={false}
+              urlKey="campaigns"
               exportCsv={{ filename: 'policy-campaigns' }}
               onRowClick={(r) => setOpenId(r.id)}
               rowActionLabel={(r) => `Open ${r.name}`}
               columns={columns}
-              empty={{ icon: Megaphone, title: 'No policy campaigns yet', description: 'Publish a template version, then send it to an audience with a due date.' }}
+              empty={{
+                icon: Megaphone,
+                title: 'No policy campaigns yet',
+                description: 'Pick a policy, choose who must sign, set a due date.',
+                action: canManage ? (
+                  <Button size="sm" variant="outline" onClick={() => setShowNew(true)}>
+                    <Plus className="h-4 w-4" />
+                    New campaign
+                  </Button>
+                ) : undefined,
+              }}
             />
           </div>
         </CardContent>

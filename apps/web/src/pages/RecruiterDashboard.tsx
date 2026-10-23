@@ -24,9 +24,9 @@ import {
 } from 'lucide-react';
 import type { RecruiterHome } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useAuth, useRoleLabel } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtRelativeDate, fmtTime } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtDayShort, fmtRelativeDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { getRecruiterHome } from '@/lib/recruitingApi';
@@ -40,6 +40,8 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { LiveNow } from '@/components/ui/LiveNow';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { HomeMeta } from '@/components/home/HomeMeta';
 import { SectionTitle as KitSectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
@@ -250,10 +252,10 @@ function waitingOnYouTotal(home: RecruiterHome): number {
 }
 
 /** `headless`: the home's template titles the section and carries the count. */
-function WaitingOnYou({ home, headless = false }: { home: RecruiterHome; headless?: boolean }) {
+function WaitingOnYou({ home, headless = false, gaps = [] }: { home: RecruiterHome; headless?: boolean; gaps?: Gap[] }) {
   const { t } = useI18n();
   const w = home.waitingOnYou;
-  const total = waitingOnYouTotal(home);
+  const total = waitingOnYouTotal(home) + gaps.length;
   return (
     <section aria-labelledby={headless ? 'home-decisions' : 'waiting-on-you'}>
       {!headless && (
@@ -269,6 +271,21 @@ function WaitingOnYou({ home, headless = false }: { home: RecruiterHome; headles
         </Card>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {gaps.length > 0 && (
+            // The one real action on a quiet day: a short store nobody is hiring for.
+            <WaitCard icon={Briefcase} tone="attention" title={t('recruiterHome.gapsWaiting', { count: gaps.length })}>
+              {gaps.slice(0, 3).map((g) => (
+                <li key={g.storeId} className="text-sm">
+                  <a href="#open-demand-section" className="text-ink hover:text-gold hover:underline">
+                    {g.storeName}
+                  </a>
+                  <span className="block text-xs tabular-nums text-alert">
+                    {t('recruiterHome.gapsShort', { n: g.short, date: g.from ? fmtDateOnly(g.from, { year: 'auto' }) : '—' })}
+                  </span>
+                </li>
+              ))}
+            </WaitCard>
+          )}
           {w.readyToHire.length > 0 && (
             <WaitCard icon={UserCheck} title={`Signed — ready to hire (${w.readyToHire.length})`}>
               {w.readyToHire.map((o) => (
@@ -519,7 +536,8 @@ function PipelineAndPostings({ home }: { home: RecruiterHome }) {
   const { t } = useI18n();
   const stages = ['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER'] as const;
   return (
-    <div className="grid gap-3 lg:grid-cols-3">
+    // items-start: the stage strip no longer stretches to the postings card's height.
+    <div className="grid items-start gap-3 lg:grid-cols-3">
       <Card>
         <CardContent>
           <SectionTitle action={<MoreLink to="/recruiting">{t('recruiterHome.board')}</MoreLink>}>{t('recruiterHome.pipeline')}</SectionTitle>
@@ -603,61 +621,131 @@ const REQ_STATUS: Record<string, { label: string; variant: 'pending' | 'success'
   FROZEN: { label: 'On hold', variant: 'info' },
 };
 
+type Gap = ReturnType<typeof gapsWithoutPosting>[number];
+
+/** Stores the staffing plan says are short with no open posting hiring for them (null while loading). */
+function useStaffingGaps(): { gaps: Gap[] | null; isError: boolean } {
+  const plan = useQuery({ queryKey: ['headcount', 'staffing-plan', 12, ''], queryFn: () => getStaffingPlan({ weeks: 12 }), staleTime: 5 * 60_000 });
+  const postings = useQuery({ queryKey: ['recruiting', 'postings'], queryFn: () => listJobPostings(), staleTime: 60_000 });
+  const gaps = plan.data && postings.data ? gapsWithoutPosting(plan.data, postings.data.postings) : null;
+  return { gaps, isError: plan.isError };
+}
+
+/** A new posting for an approved requisition, filled in from it. */
+const postingForReqHref = (r: { title: string; clientName: string | null; fteAuthorized: number }) => {
+  const sp = new URLSearchParams({ tab: 'postings', new: '1', title: r.title, openings: String(Math.max(1, Math.min(500, Math.ceil(r.fteAuthorized)))) });
+  if (r.clientName) sp.set('location', r.clientName);
+  return `/recruiting/extras?${sp.toString()}`;
+};
+
 /**
- * The requisitions behind the pipeline: what the recruiter is hiring
- * against and what is still waiting on an approver (named), beside the
- * postings, with the budget each seat carries.
+ * OPEN DEMAND — what the pipeline is hiring against, in one card: the
+ * stores the headcount plan says are short with no posting, then the
+ * requisitions. It replaced a Requisitions card that said "hiring against
+ * nothing" right above a "23 short" staffing gap.
  */
-function Requisitions({ reqs }: { reqs: NonNullable<RecruiterHome['requisitions']> }) {
-  const waiting = reqs.byStatus.PLANNED ?? 0;
+function OpenDemand({
+  reqs,
+  gaps,
+  gapsError = false,
+  canPost,
+}: {
+  reqs?: NonNullable<RecruiterHome['requisitions']>;
+  gaps: Gap[];
+  gapsError?: boolean;
+  canPost: boolean;
+}) {
+  const { t } = useI18n();
+  const items = reqs?.items ?? [];
+  const waiting = reqs?.byStatus.PLANNED ?? 0;
+  const total = gaps.length + items.length;
   return (
-    <section aria-labelledby="requisitions">
-      <SectionTitle count={reqs.total} action={<MoreLink to="/headcount">Headcount</MoreLink>}>
-        <span id="requisitions">Requisitions</span>
+    <section aria-labelledby="open-demand" id="open-demand-section" className="scroll-mt-20">
+      <SectionTitle count={total} action={<MoreLink to="/headcount/plan">{t('recruiterHome.gapsPlan')}</MoreLink>}>
+        <span id="open-demand">{t('recruiterHome.openDemand')}</span>
       </SectionTitle>
-      {reqs.items.length === 0 ? (
-        <Card>
-          <CardContent className="text-sm text-silver">Every position is filled or closed — the pipeline is hiring against nothing right now.</CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardContent>
-            {waiting > 0 && (
-              <p className="mb-2 text-xs text-warning">
-                {waiting} requisition{waiting === 1 ? '' : 's'} still waiting on approval — hiring against {waiting === 1 ? 'it' : 'them'} starts when it lands.
-              </p>
-            )}
-            <ul className="divide-y divide-navy-secondary/60">
-              {reqs.items.map((r) => {
-                const s = REQ_STATUS[r.status] ?? { label: r.status, variant: 'outline' as const };
-                return (
-                  <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 first:pt-0 last:pb-0 text-sm">
-                    <span className="min-w-0 flex-1 truncate text-ink">
-                      {r.title}
-                      <span className="text-silver">
-                        {' '}
-                        · {r.code}
-                        {r.clientName ? ` · ${r.clientName}` : ''}
-                      </span>
+      <Card>
+        <CardContent className="space-y-4">
+          {total === 0 && <p className="text-sm text-silver">{t('recruiterHome.demandNone')}</p>}
+          {gaps.length > 0 && (
+            <div>
+              <h3 className="text-xs font-medium uppercase tracking-wider text-alert">{t('recruiterHome.gapsTitle')}</h3>
+              <ul className="mt-1 divide-y divide-line">
+                {gaps.slice(0, 6).map((g) => (
+                  <li key={g.storeId} className="flex flex-col gap-1 py-2 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
+                    {/* The store's name wraps on a phone ("Front Beac…" was cut). */}
+                    <span className="min-w-0 text-ink sm:flex-1 sm:truncate">
+                      {g.storeName}
+                      {g.clientName ? <span className="text-ink-muted"> · {g.clientName}</span> : null}
                     </span>
-                    <span className="text-xs tabular-nums text-silver">
-                      {r.fteAuthorized} FTE{r.targetStartDate ? ` · starts ${fmtDate(r.targetStartDate)}` : ''}
-                      {r.budgetAmount != null ? ` · ${fmtBudget(r.budgetAmount)}${r.budgetPeriod === 'MONTHLY' ? '/mo' : '/yr'}` : ''}
+                    <span className="text-xs tabular-nums text-alert">
+                      {t('recruiterHome.gapsShort', { n: g.short, date: g.from ? fmtDateOnly(g.from, { year: 'auto' }) : '—' })}
                     </span>
-                    {r.waitingOn && (
-                      <span className="w-full text-xs text-silver md:w-auto">
-                        Waiting on {r.waitingOn}
-                        {r.requestedAt ? ` since ${fmtDate(r.requestedAt.slice(0, 10))}` : ''}
-                      </span>
+                    {canPost && (
+                      <Button asChild size="sm" variant="outline" className="self-start">
+                        <Link to={postingForGapHref({ clientId: g.clientId, storeName: g.storeName, openings: g.short })}>
+                          <Briefcase className="h-3.5 w-3.5" aria-hidden="true" />
+                          {t('recruiterHome.gapsOpen', { n: g.short })}
+                        </Link>
+                      </Button>
                     )}
-                    <Badge variant={s.variant}>{s.label}</Badge>
                   </li>
-                );
-              })}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
+                ))}
+              </ul>
+            </div>
+          )}
+          {items.length > 0 && (
+            <div>
+              <h3 className="flex flex-wrap items-baseline justify-between gap-2 text-xs font-medium uppercase tracking-wider text-silver">
+                <span>Requisitions</span>
+                <MoreLink to="/headcount">Headcount</MoreLink>
+              </h3>
+              {waiting > 0 && (
+                <p className="mt-1 text-xs text-warning">
+                  {waiting} requisition{waiting === 1 ? '' : 's'} still waiting on approval — hiring against {waiting === 1 ? 'it' : 'them'} starts when it lands.
+                </p>
+              )}
+              <ul className="mt-1 divide-y divide-navy-secondary/60">
+                {items.map((r) => {
+                  const st = REQ_STATUS[r.status] ?? { label: r.status, variant: 'outline' as const };
+                  return (
+                    <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm">
+                      <span className="min-w-0 flex-1 text-ink">
+                        {r.title}
+                        <span className="text-silver">
+                          {' '}
+                          · {r.code}
+                          {r.clientName ? ` · ${r.clientName}` : ''}
+                        </span>
+                      </span>
+                      <span className="text-xs tabular-nums text-silver">
+                        {r.fteAuthorized} FTE{r.targetStartDate ? ` · starts ${fmtDateOnly(r.targetStartDate, { year: 'auto' })}` : ''}
+                        {r.budgetAmount != null ? ` · ${fmtBudget(r.budgetAmount)}${r.budgetPeriod === 'MONTHLY' ? '/mo' : '/yr'}` : ''}
+                      </span>
+                      {r.waitingOn && (
+                        <span className="w-full text-xs text-silver md:w-auto">
+                          Waiting on {r.waitingOn}
+                          {r.requestedAt ? ` since ${fmtDateOnly(r.requestedAt.slice(0, 10), { year: 'auto' })}` : ''}
+                        </span>
+                      )}
+                      <Badge variant={st.variant}>{st.label}</Badge>
+                      {canPost && r.status === 'OPEN' && (
+                        <Button asChild size="sm" variant="outline">
+                          <Link to={postingForReqHref(r)}>
+                            <Briefcase className="h-3.5 w-3.5" aria-hidden="true" />
+                            {t('recruiterHome.reqOpenPosting')}
+                          </Link>
+                        </Button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+          {gapsError && <p className="text-xs text-ink-muted">{t('recruiterHome.gapsError')}</p>}
+        </CardContent>
+      </Card>
     </section>
   );
 }
@@ -665,50 +753,16 @@ function Requisitions({ reqs }: { reqs: NonNullable<RecruiterHome['requisitions'
 /**
  * Stores the staffing plan says are short, with no open posting hiring for
  * them — the gap the pipeline should be filling, one click from a posting.
- * Quiet when every short store already has one.
+ * Quiet when every short store already has one. (The home shows them in
+ * OpenDemand beside the requisitions; this stays for the pages that only
+ * want the gaps.)
  */
 export function StaffingGaps({ canPost }: { canPost: boolean }) {
   const { t } = useI18n();
-  const plan = useQuery({ queryKey: ['headcount', 'staffing-plan', 12, ''], queryFn: () => getStaffingPlan({ weeks: 12 }), staleTime: 5 * 60_000 });
-  const postings = useQuery({ queryKey: ['recruiting', 'postings'], queryFn: () => listJobPostings(), staleTime: 60_000 });
-  if (plan.isError) {
-    return <p className="text-xs text-ink-muted">{t('recruiterHome.gapsError')}</p>;
-  }
-  if (!plan.data || !postings.data) return null;
-  const gaps = gapsWithoutPosting(plan.data, postings.data.postings);
-  if (gaps.length === 0) return null;
-  return (
-    <section aria-labelledby="staffing-gaps">
-      <SectionTitle count={gaps.length} action={<MoreLink to="/headcount/plan">{t('recruiterHome.gapsPlan')}</MoreLink>}>
-        <span id="staffing-gaps">{t('recruiterHome.gapsTitle')}</span>
-      </SectionTitle>
-      <Card>
-        <CardContent>
-          <ul className="divide-y divide-line">
-            {gaps.slice(0, 6).map((g) => (
-              <li key={g.storeId} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm first:pt-0 last:pb-0">
-                <span className="min-w-0 flex-1 truncate text-ink">
-                  {g.storeName}
-                  {g.clientName ? <span className="text-ink-muted"> · {g.clientName}</span> : null}
-                </span>
-                <span className="text-xs tabular-nums text-alert">
-                  {t('recruiterHome.gapsShort', { n: g.short, date: g.from ? fmtDate(g.from) : '—' })}
-                </span>
-                {canPost && (
-                  <Button asChild size="sm" variant="outline">
-                    <Link to={postingForGapHref({ clientId: g.clientId, storeName: g.storeName, openings: g.short })}>
-                      <Briefcase className="h-3.5 w-3.5" aria-hidden="true" />
-                      {t('recruiterHome.gapsOpen', { n: g.short })}
-                    </Link>
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-    </section>
-  );
+  const { gaps, isError } = useStaffingGaps();
+  if (isError) return <p className="text-xs text-ink-muted">{t('recruiterHome.gapsError')}</p>;
+  if (!gaps || gaps.length === 0) return null;
+  return <OpenDemand gaps={gaps} canPost={canPost} />;
 }
 
 function Numbers({ home }: { home: RecruiterHome }) {
@@ -719,7 +773,7 @@ function Numbers({ home }: { home: RecruiterHome }) {
       <SectionTitle action={<MoreLink to="/recruiting/analytics">{t('recruiterHome.analytics')}</MoreLink>}>
         <span id="numbers">{t('recruiterHome.numbers')}</span>
       </SectionTitle>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <MetricStrip label={t('recruiterHome.numbers')}>
         <MetricCard label={t('recruiterHome.hiresThisMonth')} value={n.hiresThisMonth} hint={t('recruiterHome.nLastMonth', { n: n.hiresLastMonth })} />
         <MetricCard
           label={t('recruiterHome.medianTimeToHire')}
@@ -731,12 +785,7 @@ function Numbers({ home }: { home: RecruiterHome }) {
           value={n.offerAcceptancePct === null ? '—' : `${n.offerAcceptancePct}%`}
           hint={n.offersDecided ? `${plural(n.offersDecided, 'offer')} decided, last 90 days` : 'No offers decided in 90 days'}
         />
-        <MetricCard
-          label={t('recruiterHome.inPipeline')}
-          value={home.pipeline.APPLIED + home.pipeline.SCREENING + home.pipeline.INTERVIEW + home.pipeline.OFFER}
-          hint={t('recruiterHome.nAtOffer', { n: home.pipeline.OFFER })}
-        />
-      </div>
+      </MetricStrip>
     </section>
   );
 }
@@ -784,8 +833,7 @@ function Activity({ home }: { home: RecruiterHome }) {
 }
 
 export function RecruiterDashboard() {
-  const roleLabel = useRoleLabel();
-  const { user, role, can } = useAuth();
+  const { user, can } = useAuth();
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
@@ -796,6 +844,11 @@ export function RecruiterDashboard() {
     refetchOnWindowFocus: true,
   });
   const home = q.data;
+  const { gaps, isError: gapsError } = useStaffingGaps();
+  const canPost = can('manage:recruiting');
+  // No interviews today: the hero is one line, and the open demand (short
+  // stores, requisitions) takes its place at the top instead of 1,250px down.
+  const quietDay = !!home && home.interviewsToday.length === 0;
   const greet = useGreeting();
   const name = greetingName(user, '');
 
@@ -820,19 +873,7 @@ export function RecruiterDashboard() {
         }
         topbarTitle="Home"
         subtitle={t('recruiterHome.subtitle')}
-        meta={
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-2 text-xs2 uppercase tracking-[0.18em] text-ink-muted">
-              <Calendar className="h-3 w-3" aria-hidden="true" />
-              <LiveNow render={(now) => fmtDate(now)} />
-            </span>
-            {role && (
-              <Badge variant="accent" caps className="tracking-[0.18em]">
-                {roleLabel(role)}
-              </Badge>
-            )}
-          </div>
-        }
+        meta={<HomeMeta items={[<LiveNow key="today" render={(now) => fmtDayShort(now)} />]} />}
         actions={
           <div className="flex flex-wrap gap-2">
             <RecruiterCalendarFeed />
@@ -852,7 +893,24 @@ export function RecruiterDashboard() {
         }
         hero={
           home ? (
-            <Today home={home} />
+            quietDay ? (
+              <div className="space-y-[var(--d-stack-lg)]">
+                <Card>
+                  <CardContent className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3" data-testid="no-interviews-line">
+                    <span className="flex items-center gap-2 text-sm text-silver">
+                      <CalendarClock className="h-4 w-4 text-gold" aria-hidden="true" />
+                      {t('recruiterHome.noInterviews')}
+                    </span>
+                    <MoreLink to="/recruiting?view=list&stage=SCREENING">{t('recruiterHome.inScreening')}</MoreLink>
+                  </CardContent>
+                </Card>
+                {(gaps?.length ?? 0) + (home.requisitions?.items.length ?? 0) > 0 && (
+                  <OpenDemand reqs={home.requisitions} gaps={gaps ?? []} gapsError={gapsError} canPost={canPost} />
+                )}
+              </div>
+            ) : (
+              <Today home={home} />
+            )
           ) : q.isError ? (
             <EmptyState
               icon={CalendarClock}
@@ -872,10 +930,10 @@ export function RecruiterDashboard() {
             ? {
                 title: t('recruiterHome.waitingOnYou'),
                 queue: true,
-                count: waitingOnYouTotal(home),
+                count: waitingOnYouTotal(home) + (gaps?.length ?? 0),
                 content: (
                   <>
-                    <WaitingOnYou home={home} headless />
+                    <WaitingOnYou home={home} headless gaps={gaps ?? []} />
                     <RoleDecisionQueue title={t('recruiterHome.otherApprovals')} hideWhenEmpty />
                   </>
                 ),
@@ -908,8 +966,10 @@ export function RecruiterDashboard() {
             <NewApplicants home={home} />
             <WaitingOnOthers home={home} />
             <PipelineAndPostings home={home} />
-            {home.requisitions && <Requisitions reqs={home.requisitions} />}
-            <StaffingGaps canPost={can('manage:recruiting')} />
+            {/* Open demand sits here on a day with interviews (on a quiet day it is up top). */}
+            {!(quietDay && (gaps?.length ?? 0) + (home.requisitions?.items.length ?? 0) > 0) && (home.requisitions || (gaps?.length ?? 0) > 0) && (
+              <OpenDemand reqs={home.requisitions} gaps={gaps ?? []} gapsError={gapsError} canPost={canPost} />
+            )}
             <Numbers home={home} />
             <Activity home={home} />
           </>

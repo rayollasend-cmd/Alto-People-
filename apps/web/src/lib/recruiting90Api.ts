@@ -406,7 +406,12 @@ export interface PublicOfferLetter {
   expiresAt: string | null;
   signedName: string | null;
   signedAt: string | null;
+  /** Who sent it — named on every state of the page (F500 G5). Absent from an older server. */
+  recruiter?: { name: string | null; email: string; phone: string | null } | null;
 }
+
+/** A copy of the letter to keep before deciding (on letterhead, unsigned). */
+export const offerLetterPdfHref = (token: string) => `/api/offer-letters/${encodeURIComponent(token)}/letter.pdf`;
 
 export const getOfferLetter = (token: string) =>
   apiFetch<PublicOfferLetter>(`/offer-letters/${encodeURIComponent(token)}`);

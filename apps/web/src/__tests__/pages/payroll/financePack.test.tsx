@@ -189,23 +189,30 @@ describe('the cash forecast from the books (audit #18, finance walk 2)', () => {
     expect(screen.getByText('Cash today').parentElement).toHaveTextContent('$5,000.00');
     expect(screen.getAllByText('Low point')[0]!.parentElement).toHaveTextContent('$1,139.80');
     expect(screen.getByRole('status')).toHaveTextContent('under the $2,000.00 floor');
-    expect(screen.getAllByText('Vendor bill · Past due').length).toBe(1);
+    // Past due is a badge beside the amount (F500 G6), said once.
+    const late = screen.getByText('Shell Fleet — invoice F-0 (past due)').closest('a')!;
+    expect(within(late).getByText('Past due')).toBeInTheDocument();
+    expect(screen.getAllByText('Past due').length).toBe(1);
     expect(screen.getByText(/0 people on schedule — the last run’s net/)).toBeInTheDocument();
     // The sum shown equals the sum of the rows: money out is every line out, and each week's balance is cash today plus its running total.
     expect(lines.reduce((s, l) => s + l.amount, 0)).toBeCloseTo(-3860.2, 2);
-    expect(screen.getAllByText('Out')[0]!.parentElement).toHaveTextContent('$3,860.20');
+    expect(within(screen.getByRole('group', { name: 'Cash at a glance' })).getByText('Money out').parentElement).toHaveTextContent('$3,860.20');
     for (const w of weeks) expect(w.balance).toBeCloseTo(5000 + w.cumulative, 2);
   });
 });
 
 describe("Finance's earned-wage desk", () => {
-  it('shows the exposure, every advance, and saves the policy', async () => {
+  it('shows the exposure, every advance, the working numbers, and edits the policy in a dialog (F500 G3)', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path: string, opts?: { method?: string }) => {
       if (path.startsWith('/payroll/earned-wage/settings') && opts?.method === 'PATCH') return { enabled: true, capPct: 40, fee: 0, maxPerPeriod: 1000 } as never;
       if (path.startsWith('/payroll/earned-wage'))
         return {
           settings: { enabled: true, capPct: 50, fee: 0, maxPerPeriod: 1000 },
           outstanding: { count: 1, amount: 50 },
+          thisPeriod: { count: 1, amount: 50 },
+          lastRecovery: { runId: 'run9', on: '2026-10-09', amount: 120, advances: 3 },
+          rolledOver: { count: 1, amount: 31 },
+          people: 4,
           advances: [
             { id: 'a', periodStart: '2026-10-10', periodEnd: '2026-10-23', amount: 50, fee: 0, status: 'PAID', provider: 'STUB', failureReason: null, requestedAt: '2026-10-15T12:00:00Z', paidAt: '2026-10-15T12:00:01Z', recovered: 0, recoveredAt: null, associate: { id: 'p', name: 'Lena Osei' } },
           ],
@@ -216,7 +223,15 @@ describe("Finance's earned-wage desk", () => {
     expect((await screen.findAllByText('Lena Osei')).length).toBeGreaterThan(0);
     expect(screen.getByText('Out until payday')).toBeInTheDocument();
     expect(screen.getAllByText('$50.00').length).toBeGreaterThan(0);
-    fireEvent.change(screen.getByLabelText('Cap (% of earned net)'), { target: { value: '40' } });
+    // What's happening, not the policy restated as tiles.
+    expect(screen.getByText('Recovered on the last payroll')).toBeInTheDocument();
+    expect(screen.getByText('Rolled to the next check')).toBeInTheDocument();
+    expect(screen.queryByText('Cap')).toBeNull();
+    // The policy is one line; the form opens from "Edit policy".
+    expect(screen.getByTestId('ewa-policy-line')).toHaveTextContent('Offered · up to 50% of earned net · at most $1,000.00 a pay period · no fee');
+    expect(screen.queryByLabelText('Cap (% of earned net)')).toBeNull();
+    fireEvent.click(within(screen.getByTestId('ewa-policy-line')).getByRole('button', { name: 'Edit policy' }));
+    fireEvent.change(await screen.findByLabelText('Cap (% of earned net)'), { target: { value: '40' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save policy' }));
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith('/payroll/earned-wage/settings', { method: 'PATCH', body: { enabled: true, capPct: 40, fee: 0, maxPerPeriod: 1000 } }),

@@ -270,7 +270,8 @@ describe('GET /client-portal/overview', () => {
     expect(live?.clockInAt).toBeTruthy();
 
     // Tomorrow: 1 confirmed, 1 awaiting, 1 open.
-    expect(res.body.tomorrow).toEqual({ confirmed: 1, unconfirmed: 1, open: 1, coverInFlight: 0 });
+    // No staffing target at this store: tomorrow's contracted headcount is null, not 0 (F500 G5).
+    expect(res.body.tomorrow).toEqual({ confirmed: 1, unconfirmed: 1, open: 1, coverInFlight: 0, target: null });
 
     // Statements: FINAL only, newest first, totals surfaced, DRAFT hidden.
     expect(res.body.statements).toHaveLength(2);
@@ -575,9 +576,12 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     expect(res.body.leads.people).toHaveLength(1);
     expect(res.body.leads.people[0].name).toBe('Dana Reyes');
     expect(res.body.leads.people[0].phone).toBe('850-555-0101');
+    // No photo on file: an explicit null, so the page shows initials instead of requesting a photo that 404s (F500 G5).
+    expect(res.body.leads.people[0]).toHaveProperty('photoUrl', null);
 
-    // Clearance is counts only: 2 on the crew, 1 I-9 complete, 1 check in flight.
-    expect(res.body.clearance).toEqual({ total: 2, i9Complete: 1, checksInFlight: 1, flagged: 0 });
+    // Clearance is counts only: 2 on the crew, 1 I-9 complete, 1 check in flight —
+    // and 1 cleared (I-9 done, nothing in flight), counted per person (F500 G5).
+    expect(res.body.clearance).toEqual({ total: 2, i9Complete: 1, checksInFlight: 1, flagged: 0, cleared: 1 });
 
     // Reliability: 4 completed weeks + this one; this week has 2 filled shifts.
     expect(res.body.reliability.weeks).toHaveLength(5);
@@ -629,6 +633,14 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     expect(positions.length).toBeGreaterThanOrEqual(1);
     expect(positions.every((p: string) => p === 'StoreAOnly')).toBe(true);
     expect(JSON.stringify(sched.body)).not.toContain('payRate');
+    // Store A has a total target only (no windows): no windowed targets on the week.
+    expect(sched.body.targets).toEqual([]);
+    // A contracted Morning window at store A rides along, headcount only (F500 G5).
+    await prisma.staffingTarget.create({
+      data: { locationId: s.storeA.id, targetCount: 8, effectiveFrom: new Date('2020-01-01'), label: 'Morning', startMinute: 360, endMinute: 840 },
+    });
+    const withWindow = await agent.get('/client-portal/schedule');
+    expect(withWindow.body.targets).toEqual([{ locationId: s.storeA.id, label: 'Morning', startMinute: 360, endMinute: 840, headcount: 8 }]);
     expect((await agent.get('/client-portal/schedule?week=nope')).status).toBe(400);
 
     // The statement covers every store on the account, so the STORE
@@ -754,6 +766,15 @@ describe('the historical lenses — a day, and a range', () => {
     expect(today.body.summary.onFloor).toBe(1);
     expect(today.body.roster[0].state).toBe('on-floor');
 
+    // A day with nothing scheduled names the next shift (F500 G2): ten
+    // days back at store A, the next one is yesterday's StoreAOnly shift.
+    const quiet = await store.get(`/client-portal/day?date=${dayKeyPlus(yesterday, -10)}`);
+    expect(quiet.body.roster).toEqual([]);
+    expect(quiet.body.nextShift).toMatchObject({ position: 'StoreAOnly' });
+    expect(quiet.body.nextShift.startsAt.slice(0, 10) <= yesterday).toBe(true);
+    // A day that has shifts carries no nextShift.
+    expect(day.body.nextShift).toBeUndefined();
+
     // Bad dates are refused; a foreign store is not found.
     expect((await store.get('/client-portal/day?date=nope')).status).toBe(400);
     expect(
@@ -781,6 +802,17 @@ describe('the historical lenses — a day, and a range', () => {
     });
     expect(hist.body.totals.workedHours).toBe(4);
     expect(hist.body.totals.scheduledHours).toBe(8);
+    // Worked under the schedule: nothing off-schedule (F500 G5 names the overage when there is one).
+    expect(hist.body.totals.offScheduleHours).toBe(0);
+    // Six unscheduled hours at store A yesterday morning: worked (uncapped)
+    // passes scheduled, and the overage is a number of its own.
+    const yNoon = new Date(utcInstantOfLocalMidnight(yesterday, 'America/New_York').getTime() + 12 * HOUR);
+    const extra = await createAssociate({ firstName: 'Walk', lastName: 'In' });
+    await prisma.timeEntry.create({
+      data: { associateId: extra.id, clientId: s.client.id, locationId: s.storeA.id, clockInAt: new Date(yNoon.getTime() - 6 * HOUR), clockOutAt: yNoon, status: 'APPROVED' },
+    });
+    const over = await market.get(`/client-portal/history?from=${from}&to=${yesterday}`);
+    expect(over.body.totals).toMatchObject({ workedHours: 10, scheduledHours: 8, offScheduleHours: 2 });
     // Statement #7 closed inside a wider range and carries its PDF link.
     const wide = await market.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -20)}&to=${yesterday}`);
     expect(wide.body.statements.map((x: { number: number }) => x.number)).toContain(7);

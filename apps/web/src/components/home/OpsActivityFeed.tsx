@@ -36,7 +36,7 @@ export function OpsActivityFeed({ auditLink }: { auditLink: boolean }) {
         description="The last seven days: call-outs, schedules published, swaps decided, incidents."
         trailing={
           auditLink ? (
-            <Link to="/audit" className="inline-flex items-center gap-1 text-xs text-accent hover:underline">
+            <Link to="/audit" className="inline-flex min-h-6 items-center gap-1 text-xs text-accent hover:underline">
               Audit log <ArrowRight className="h-3 w-3" aria-hidden="true" />
             </Link>
           ) : undefined
@@ -65,8 +65,9 @@ export function OpsActivityFeed({ auditLink }: { auditLink: boolean }) {
                     <Link to={i.href} className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-raised">
                       <Icon className={`h-4 w-4 shrink-0 ${TONE[i.kind]}`} aria-hidden="true" />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm text-ink">{i.title}</span>
-                        {i.detail && <span className="block truncate text-xs text-ink-muted">{i.detail}</span>}
+                        {/* Two lines on a phone so who, what and where keep their words. */}
+                        <span className="block line-clamp-2 text-sm text-ink sm:line-clamp-1">{i.title}</span>
+                        {i.detail && <span className="block line-clamp-2 text-xs text-ink-muted sm:line-clamp-1">{i.detail}</span>}
                       </span>
                       <span className="shrink-0 text-xs tabular-nums text-ink-muted">{fmtRelativeDate(i.at)}</span>
                     </Link>

@@ -161,4 +161,35 @@ describe('AgentGovernance', () => {
     expect(screen.queryByRole('button', { name: /Suspend all agents/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add policy' })).not.toBeInTheDocument();
   });
+
+  it('opens on status (F500 G4): five numbers first, then the policies as a table, with Add policy in a dialog', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const strip = await screen.findByRole('group', { name: 'Agent governance at a glance' });
+    await waitFor(() => {
+      expect(within(strip).getByRole('link', { name: /^Agents live/ })).toHaveTextContent(/Agents live2/);
+      expect(within(strip).getByRole('link', { name: /^Certified/ })).toHaveTextContent('1 of 2');
+      expect(within(strip).getByRole('link', { name: /^Live credentials/ })).toHaveTextContent(/Live credentials1/);
+      expect(within(strip).getByRole('link', { name: /^Gates in force/ })).toHaveTextContent(/Gates in force1/);
+      expect(within(strip).getByRole('link', { name: /^Stop switch/ })).toHaveTextContent(/Stop switchOff/);
+    }, { timeout: 4000 });
+    const gates = screen.getByTestId('agent-gates');
+    expect(strip.compareDocumentPosition(gates) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // No inline form: the policies are a table; the form is a dialog.
+    expect(within(gates).getByRole('table', { name: 'Gate policies' })).toBeInTheDocument();
+    expect(within(gates).queryByLabelText('Who decides')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Add policy' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Who decides')).toBeInTheDocument();
+    // The section's description is said once, not repeated inside the panel.
+    expect(screen.getAllByText(/A platform approval \(pay, separations/)).toHaveLength(1);
+  });
+
+  it('names each MCP tool in words, with the key an agent calls beside it', async () => {
+    renderPage();
+    const mcp = await screen.findByTestId('mcp-catalog');
+    const item = await within(mcp).findByText('Read schedules');
+    expect(item.closest('li')).toHaveTextContent('schedule_read');
+    expect(screen.queryByText(/What the MCP server at/)).not.toBeInTheDocument();
+  });
 });

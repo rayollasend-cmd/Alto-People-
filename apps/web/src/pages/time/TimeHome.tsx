@@ -161,6 +161,14 @@ function AssociateKioskOnlyView({
   headerActions,
 }: { title?: string; body?: string; headerActions?: ReactNode } = {}) {
   const { t } = useI18n();
+  const [params, setParams] = useSearchParams();
+  // "Fix a punch" is the page's action; PunchFixes opens its request on
+  // ?fix=1 (the same link the inbox and MyWeekHours use).
+  const openFix = () => {
+    const next = new URLSearchParams(params);
+    next.set('fix', '1');
+    setParams(next);
+  };
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
@@ -169,27 +177,27 @@ function AssociateKioskOnlyView({
         // floor's title.
         title={title ?? t('time.myTime')}
         subtitle={t('time.subtitle')}
+        actions={[{ key: 'fix', label: t('timefix.title'), onSelect: openFix }]}
         secondaryActions={headerActions}
     >
-      {/* A shift they forgot to clock out of, extra hours offered, and asking
-          to fix a punch (attested) — before the week, because each needs them. */}
-      <PunchFixes />
-      {/* The week first: worked against scheduled, and the 40h line. */}
+      {/* What needs them first — a shift they forgot to clock out of, extra
+          hours offered, and their open requests (only when they have one;
+          F500 G2: an empty "No requests yet" box led every visit). */}
+      <PunchFixes quiet />
+      {/* The week: worked against scheduled, and the 40h line. */}
       <MyWeekHours />
-      {/* Compact kiosk note — the "how punches happen" explainer stays,
-          but the timesheet below is the primary content of this page,
-          not a dead end. */}
-      <div className="rounded-lg border border-navy-secondary bg-navy/40 p-4 mb-6 flex items-start gap-3">
-        <ScanLine className="h-5 w-5 text-gold shrink-0 mt-0.5" aria-hidden="true" />
-        <div className="min-w-0">
-          <h2 className="text-white text-sm font-medium">
-            {t('time.kioskHeading')}
-          </h2>
-          <p className="text-silver text-xs leading-relaxed mt-0.5">
-            {body ?? t('time.kioskBody')}
-          </p>
-        </div>
-      </div>
+      {/* How punches happen, as one line; the explainer behind a disclosure
+          instead of a 120px card on every visit. */}
+      <details className="group mb-5 rounded-lg border border-navy-secondary bg-navy/40 px-4 py-2.5 text-sm">
+        <summary className="flex cursor-pointer list-none items-center gap-2 text-silver marker:hidden [&::-webkit-details-marker]:hidden">
+          <ScanLine className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-white">{t('time.kioskHeading')}</span>
+          <span className="shrink-0 text-xs text-gold underline-offset-2 group-open:hidden hover:underline">
+            {t('time.howPunching')}
+          </span>
+        </summary>
+        <p className="mt-2 text-xs leading-relaxed text-silver">{body ?? t('time.kioskBody')}</p>
+      </details>
       {/* The receipt side: every kiosk punch with in/out times, net
           hours, and review status — the page the dashboard's
           "My timesheet" quick link promises. */}

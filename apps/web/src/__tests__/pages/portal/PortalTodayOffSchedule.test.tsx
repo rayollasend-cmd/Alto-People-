@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -18,7 +18,7 @@ import { PortalToday } from '@/pages/portal/PortalToday';
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const at = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
 
-function renderToday() {
+function renderToday(entry = '/today') {
   const today = ymdLocal();
   vi.mocked(apiFetch).mockResolvedValue({
     client: { id: 'c1', name: 'Coastal' },
@@ -55,7 +55,7 @@ function renderToday() {
           can: (c: Capability) => caps.has(c),
         }}
       >
-        <MemoryRouter initialEntries={['/today']}>
+        <MemoryRouter initialEntries={[entry]}>
           <PortalToday />
         </MemoryRouter>
       </AuthContext.Provider>
@@ -64,9 +64,17 @@ function renderToday() {
 }
 
 describe('<PortalToday> — everyone on the floor has a face', () => {
-  it('counts every clock-in and shows the ones outside a scheduled shift', async () => {
-    const user = userEvent.setup();
+  it('counts every clock-in and lists the ones outside a scheduled shift as rows (F500 G2)', async () => {
     renderToday();
+    expect(await screen.findByText(/2 on the floor now/)).toBeInTheDocument();
+    const rows = screen.getByTestId('off-schedule-rows');
+    expect(within(rows).getByText('Wes Park')).toBeInTheDocument();
+    expect(within(rows).queryByText('Ann Lee')).not.toBeInTheDocument();
+  });
+
+  it('in the optional face mode, everyone on the floor has a face', async () => {
+    const user = userEvent.setup();
+    renderToday('/today?view=faces');
     expect(await screen.findByText(/2 on the floor now/)).toBeInTheDocument();
     expect(screen.getByText('On the floor outside a scheduled shift')).toBeInTheDocument();
     // Only the walk-in is in that group — Ann is on her shift's wave.

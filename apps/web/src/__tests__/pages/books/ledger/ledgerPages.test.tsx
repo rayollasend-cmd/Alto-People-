@@ -40,6 +40,7 @@ import { AccountsPage } from '@/pages/books/ledger/AccountsPage';
  */
 
 const acct = (o: Partial<LedgerAccountRow>): LedgerAccountRow => ({
+  activityYtd: 0,
   id: '00000000-0000-4000-8000-000000000001',
   code: '1000',
   name: 'Operating checking',
@@ -82,7 +83,7 @@ describe('the Books overview', () => {
     expect((await screen.findAllByText('$7,500.00')).length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: /1 bill waits for approval/ })).toHaveAttribute('href', '/books/bills?tab=approve');
     expect(screen.getByText('$1,200.00 over 90 days')).toBeInTheDocument();
-    expect(screen.getByText('2 of 8 close steps done')).toBeInTheDocument();
+    expect(screen.getByText(/^2 of 8 close steps done/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Connect QuickBooks' })).toHaveAttribute('href', '/books/quickbooks');
     expect(screen.getByRole('link', { name: /Journal entry/ })).toBeInTheDocument();
     // The profit chart says what it shows.
@@ -111,7 +112,7 @@ describe('the Books overview', () => {
     // The card shows the same total, and its buckets add up to it.
     expect(screen.getByText('$5,760.00 on finalized statements, by how late it is')).toBeInTheDocument();
     expect(Object.values(aging).reduce((a, b) => a + b, 0)).toBe(5760);
-    expect(screen.getByText('5 of 10 close steps done')).toBeInTheDocument();
+    expect(screen.getByText(/^5 of 10 close steps done/)).toBeInTheDocument();
     expect(screen.getByText('From the ledger — no bank connected yet')).toBeInTheDocument();
     expect(screen.getByText('Nothing has posted to income or expenses in the last six months.')).toBeInTheDocument();
     // No NaN sparkline, ever.
@@ -154,8 +155,7 @@ describe('the financial statements', () => {
     const rentLink = screen.getAllByRole('link').find((a) => a.getAttribute('href')?.startsWith(`/books/accounts/${RENT.id}`));
     expect(rentLink?.getAttribute('href')).toBe(`/books/accounts/${RENT.id}?from=2026-01-01&to=2026-10-19`);
     expect(api.getProfitAndLoss).toHaveBeenCalledWith(expect.objectContaining({ from: '2026-01-01', to: '2026-10-19', columns: 'none' }));
-    await user.click(screen.getByRole('button', { name: 'Download' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'PDF' }));
+    await user.click(screen.getByRole('button', { name: 'Download PDF' }));
     await waitFor(() => expect(api.downloadReport).toHaveBeenCalledWith('profit-and-loss', 'pdf', expect.objectContaining({ from: '2026-01-01' })));
   });
 
@@ -202,7 +202,8 @@ describe('the chart of accounts', () => {
     const user = userEvent.setup();
     renderAs('FINANCE_ACCOUNTANT', <AccountsPage />, '/books/accounts');
     expect(await screen.findByText('Operating checking')).toBeInTheDocument();
-    expect(screen.getByText('Assets')).toBeInTheDocument();
+    // Grouped by type: the group's heading row.
+    expect(screen.getAllByRole('row').some((r) => r.textContent?.startsWith('Assets'))).toBe(true);
     await user.click(screen.getByRole('button', { name: 'More for Rent' }));
     expect(screen.queryByRole('menuitem', { name: /Delete/ })).toBeNull();
     await user.keyboard('{Escape}');

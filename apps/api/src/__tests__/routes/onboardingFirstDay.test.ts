@@ -117,11 +117,15 @@ describe('first day', () => {
     expect(open.map((o) => o.locationId)).toEqual([second.id]);
   });
 
-  it('only HR with manage:onboarding', async () => {
+  it('only the onboarding desk (manage:onboarding)', async () => {
     const { app } = await setup();
-    const { user } = await createUser({ role: 'INTERNAL_RECRUITER' });
+    // An executive reads onboarding but doesn't run it.
+    const { user } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
     const r = await loginAs(agent(), user.email);
     expect((await r.get(`/onboarding/applications/${app.id}/first-day`)).status).toBe(403);
+    // The recruiter owns onboarding from the first invite through the kiosk code (owner, 2026-10-22).
+    const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER' });
+    expect((await (await loginAs(agent(), recruiter.email)).get(`/onboarding/applications/${app.id}/first-day`)).status).toBe(200);
   });
 });
 

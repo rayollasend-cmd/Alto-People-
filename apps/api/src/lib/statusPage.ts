@@ -5,6 +5,7 @@ import {
   type PublicStatus,
   type StatusComponentKey,
   type StatusComponentPublic,
+  type StatusDayPublic,
   type StatusIncidentPublic,
   type StatusState,
 } from '@alto-people/shared';
@@ -45,8 +46,12 @@ interface Measure {
   note: string;
 }
 
+/** A component's own reading of each measured day (UTC 'YYYY-MM-DD'), the one the 90-day % counts. */
+type Daily = Map<string, { state: StatusState; pct: number }>;
+const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+
 /** Today and yesterday from the daily route rollup: the API's own error rate. */
-async function apiMeasure(db: Db, now: Date): Promise<Measure & { uptime90d: number | null }> {
+async function apiMeasure(db: Db, now: Date): Promise<Measure & { uptime90d: number | null; daily: Daily }> {
   const from = new Date(now.getTime() - WINDOW_DAYS * DAY_MS);
   const rows = await db.routeUsageDaily.groupBy({
     by: ['day'],
@@ -60,6 +65,13 @@ async function apiMeasure(db: Db, now: Date): Promise<Measure & { uptime90d: num
   const measuredDays = perDay.filter((d) => d.requests >= MIN_REQUESTS);
   const goodDays = measuredDays.filter((d) => d.serverError / d.requests < 0.05);
   const uptime90d = measuredDays.length > 0 ? Math.round((goodDays.length / measuredDays.length) * 1000) / 10 : null;
+  // The same days, one by one: a bad day (≥5% errors) is an outage, ≥1% degraded.
+  const daily: Daily = new Map(
+    measuredDays.map((d) => {
+      const rate = d.serverError / d.requests;
+      return [dayKey(d.day), { state: rate >= 0.05 ? 'OUTAGE' : rate >= 0.01 ? 'DEGRADED' : 'OPERATIONAL', pct: Math.round((1 - rate) * 1000) / 10 }] as const;
+    }),
+  );
 
   const recentFrom = new Date(now.getTime() - 2 * DAY_MS);
   const recent = perDay.filter((d) => d.day >= recentFrom);
@@ -68,15 +80,15 @@ async function apiMeasure(db: Db, now: Date): Promise<Measure & { uptime90d: num
   if (requests < MIN_REQUESTS) {
     // The API answered this very request; the rollup just has too little
     // in it to grade. Say so rather than inventing a rate.
-    return { state: 'OPERATIONAL', note: 'Answering requests; too little traffic in the last two days to compute an error rate.', uptime90d };
+    return { state: 'OPERATIONAL', note: 'Answering requests; too little traffic in the last two days to compute an error rate.', uptime90d, daily };
   }
   const rate = errors / requests;
   const state: StatusState = rate >= 0.05 ? 'OUTAGE' : rate >= 0.01 ? 'DEGRADED' : 'OPERATIONAL';
-  return { state, note: `${pct(1 - rate)} of requests succeeded over the last two days.`, uptime90d };
+  return { state, note: `${pct(1 - rate)} of requests succeeded over the last two days.`, uptime90d, daily };
 }
 
 /** Punches the kiosk refused are wrong PINs and stale clocks, not outages: at worst DEGRADED. */
-async function kioskMeasure(db: Db, now: Date, api: StatusState): Promise<Measure & { uptime90d: number | null }> {
+async function kioskMeasure(db: Db, now: Date, api: StatusState): Promise<Measure & { uptime90d: number | null; daily: Daily }> {
   const from = new Date(now.getTime() - WINDOW_DAYS * DAY_MS);
   const days = await db.$queryRaw<Array<{ day: Date; total: bigint; rejected: bigint }>>(
     Prisma.sql`SELECT date_trunc('day', "createdAt") AS day, count(*)::bigint AS total, count(*) FILTER (WHERE action::text = 'REJECTED')::bigint AS rejected FROM "KioskPunch" WHERE "createdAt" >= ${from} GROUP BY 1`,
@@ -84,19 +96,26 @@ async function kioskMeasure(db: Db, now: Date, api: StatusState): Promise<Measur
   const measured = days.filter((d) => Number(d.total) >= 10);
   const good = measured.filter((d) => 1 - Number(d.rejected) / Number(d.total) >= 0.9);
   const uptime90d = measured.length > 0 ? Math.round((good.length / measured.length) * 1000) / 10 : null;
+  const daily: Daily = new Map(
+    measured.map((d) => {
+      const accepted = 1 - Number(d.rejected) / Number(d.total);
+      return [dayKey(new Date(d.day)), { state: accepted >= 0.9 ? 'OPERATIONAL' : 'DEGRADED', pct: Math.round(accepted * 1000) / 10 }] as const;
+    }),
+  );
 
   const dayAgo = new Date(now.getTime() - DAY_MS);
   const [total, rejected] = await Promise.all([
     db.kioskPunch.count({ where: { createdAt: { gte: dayAgo } } }),
     db.kioskPunch.count({ where: { createdAt: { gte: dayAgo }, action: 'REJECTED' } }),
   ]);
-  if (api === 'OUTAGE') return { state: 'OUTAGE', note: 'The kiosk cannot reach the platform while the API is down.', uptime90d };
-  if (total < 10) return { state: 'UNMEASURED', note: 'Fewer than ten punches in the last 24 hours; nothing to grade.', uptime90d };
+  if (api === 'OUTAGE') return { state: 'OUTAGE', note: 'The kiosk cannot reach the platform while the API is down.', uptime90d, daily };
+  if (total < 10) return { state: 'UNMEASURED', note: 'Fewer than ten punches in the last 24 hours; nothing to grade.', uptime90d, daily };
   const accepted = 1 - rejected / total;
   return {
     state: accepted >= 0.9 ? worse('OPERATIONAL', api) : 'DEGRADED',
     note: `${pct(accepted)} of punches accepted in the last 24 hours.`,
     uptime90d,
+    daily,
   };
 }
 
@@ -174,14 +193,31 @@ export async function computePublicStatus(db: Db = defaultPrisma, now: Date = ne
   ]);
   const kiosk = await kioskMeasure(db, now, api.state);
 
-  const measures: Record<StatusComponentKey, Measure & { uptime90d: number | null }> = {
+  const none: Daily = new Map();
+  const measures: Record<StatusComponentKey, Measure & { uptime90d: number | null; daily: Daily }> = {
     API: api,
     // The web app ships with the API on the same deployment.
-    WEB: { state: api.state, note: api.state === 'OPERATIONAL' ? 'Served with the API; loading normally.' : 'Served with the API and affected with it.', uptime90d: api.uptime90d },
+    WEB: { state: api.state, note: api.state === 'OPERATIONAL' ? 'Served with the API; loading normally.' : 'Served with the API and affected with it.', uptime90d: api.uptime90d, daily: api.daily },
     KIOSK: kiosk,
-    MESSAGING: { ...messaging, uptime90d: null },
-    PAYROLL_WEBHOOK: { ...payroll, uptime90d: null },
-    EMAIL: { ...email, uptime90d: null },
+    MESSAGING: { ...messaging, uptime90d: null, daily: none },
+    PAYROLL_WEBHOOK: { ...payroll, uptime90d: null, daily: none },
+    EMAIL: { ...email, uptime90d: null, daily: none },
+  };
+
+  // The 90 cells: each day's measure, worsened by any incident open that day.
+  const dayKeys = Array.from({ length: WINDOW_DAYS }, (_, i) => dayKey(new Date(now.getTime() - (WINDOW_DAYS - 1 - i) * DAY_MS)));
+  const daysFor = (key: StatusComponentKey): StatusDayPublic[] => {
+    const hits = incidentRows.filter((i) => i.component === key);
+    return dayKeys.map((date) => {
+      const m = measures[key].daily.get(date);
+      let state: StatusState = m?.state ?? 'UNMEASURED';
+      for (const i of hits) {
+        const from = dayKey(i.startedAt);
+        const to = dayKey(i.resolvedAt ?? now);
+        if (date >= from && date <= to) state = state === 'UNMEASURED' ? i.impact : worse(state, i.impact);
+      }
+      return { date, state, pct: m?.pct ?? null };
+    });
   };
 
   // An open incident makes its component at least as bad as its impact
@@ -200,6 +236,7 @@ export async function computePublicStatus(db: Db = defaultPrisma, now: Date = ne
     state: measures[c.key].state,
     note: measures[c.key].note,
     uptime90d: measures[c.key].uptime90d,
+    days: daysFor(c.key),
   }));
   const overall = components.reduce<StatusState>((acc, c) => (c.state === 'UNMEASURED' ? acc : worse(acc, c.state)), 'OPERATIONAL');
 

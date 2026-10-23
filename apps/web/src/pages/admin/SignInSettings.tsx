@@ -28,6 +28,9 @@ import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { SecurityPolicyCard } from '@/components/admin/SecurityPolicyCard';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
+import { DirectoryGroups } from './DirectoryGroups';
+import { TwoStepSection } from './TwoStepSection';
 
 /**
  * Brief 2-3 step 2 — Sign-in: the organization's own identity provider
@@ -190,6 +193,8 @@ export function SignInSettings() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['identity'], queryFn: () => getIdentity() });
   const [editing, setEditing] = useState<IdentityConnectionRow | 'new' | 'new-saml' | null>(null);
+  // "Add identity provider" asks which kind first: one button, not "+ SAML" beside "+ New sign-in".
+  const [choosing, setChoosing] = useState(false);
   const [domain, setDomain] = useState('');
   const [tokenName, setTokenName] = useState('');
   const [issued, setIssued] = useState<string | null>(null);
@@ -209,18 +214,9 @@ export function SignInSettings() {
     <div className="space-y-6">
       <PageHeader
         title="Sign-in"
-        subtitle="Your organization’s own sign-in, the email domains that lead to it, and directory provisioning."
-        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Sign-in' }]}
-        primaryAction={
-          <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={() => setEditing('new-saml')}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" /> SAML
-            </Button>
-            <Button size="sm" onClick={() => setEditing('new')}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" /> New sign-in
-            </Button>
-          </div>
-        }
+        subtitle="How people sign in: two-step, your organization’s own identity provider and the domains that lead to it, sessions, and directory provisioning."
+        actions={[{ label: 'Add identity provider', icon: Plus, primary: true, onSelect: () => setChoosing(true) }]}
+        related={[{ label: 'Users & access', to: '/admin/users' }]}
       />
       {q.isError ? (
         <QueryError what="sign-in settings" query={q} />
@@ -254,6 +250,11 @@ export function SignInSettings() {
               </CardContent>
             </Card>
           </section>
+
+          <TwoStepSection />
+
+          {/* Access pack: sessions, networks, devices and the break-glass switch. */}
+          <SecurityPolicyCard />
 
           <section aria-labelledby="dom-title" className="space-y-2">
             <h2 id="dom-title" className="text-base font-semibold text-white">Email domains</h2>
@@ -306,7 +307,7 @@ export function SignInSettings() {
             </Card>
           </section>
 
-          <section aria-labelledby="scim-title" className="space-y-2">
+          <section aria-labelledby="scim-title" className="scroll-mt-20 space-y-2" id="directory">
             <h2 id="scim-title" className="text-base font-semibold text-white">Directory provisioning (SCIM)</h2>
             <p className="text-sm text-silver">
               Your directory creates, updates and deactivates accounts at <code className="text-white">{`${window.location.origin}/api/scim/v2`}</code> with a token from here. Deactivation signs the person out everywhere within a minute.
@@ -358,11 +359,41 @@ export function SignInSettings() {
                 </ul>
               </CardContent>
             </Card>
+            <DirectoryGroups />
           </section>
 
-          {/* Access pack: sessions, networks, devices and the break-glass switch. */}
-          <SecurityPolicyCard />
         </>
+      )}
+      {choosing && (
+        <Dialog open onOpenChange={(o) => !o && setChoosing(false)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add identity provider</DialogTitle>
+              <DialogDescription>Which way does your identity provider speak? Okta, Entra ID and Google do both; use what your IT team set up.</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(
+                [
+                  ['new', 'OpenID Connect (OIDC)', 'An issuer URL, a client ID and a secret.'],
+                  ['new-saml', 'SAML', 'A sign-on URL, an issuer and a signing certificate.'],
+                ] as const
+              ).map(([kind, label, hint]) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => {
+                    setChoosing(false);
+                    setEditing(kind);
+                  }}
+                  className="rounded-md border border-line p-3 text-left hover:border-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                >
+                  <span className="block text-sm font-medium text-ink">{label}</span>
+                  <span className="mt-0.5 block text-xs text-ink-muted">{hint}</span>
+                </button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
       {editing && (editing === 'new-saml' || (editing !== 'new' && editing.kind === 'SAML')) ? (
         <SamlDrawer existing={editing === 'new-saml' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refresh(); }} />

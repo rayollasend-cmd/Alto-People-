@@ -31,6 +31,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { TaxYearSelect } from '@/components/ui/TaxYearSelect';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -470,8 +472,14 @@ function StateDialog({ s, participants, onClose, onSaved }: { s: StateFiling | n
 
 /* ----- Year-end ------------------------------------------------------------------------ */
 
-export function YearEndTab() {
-  const [year, setYear] = useState(new Date().getFullYear() - (new Date().getMonth() < 3 ? 1 : 0));
+/**
+ * The contractors' 1099 summary for a tax year. On the Year-end page's Forms
+ * tab the page's tax-year picker drives it (`year`); there is no second
+ * year box here (F500 G3: the tax-year picker existed three ways).
+ */
+export function YearEndTab({ year: fixedYear }: { year?: number } = {}) {
+  const [ownYear, setYear] = useState(new Date().getFullYear() - (new Date().getMonth() < 3 ? 1 : 0));
+  const year = fixedYear ?? ownYear;
   const q = useQuery({ queryKey: ['contractors', 'year-end', year], queryFn: () => getYearEnd(year) });
   const columns: GridColumn<YearEndRow>[] = [
     { key: 'name', header: 'Contractor', primary: true, accessor: (r) => r.name, cell: (r) => <span className="font-medium text-ink">{r.name}</span> },
@@ -490,7 +498,7 @@ export function YearEndTab() {
       key: 'ready',
       header: 'Ready to file',
       accessor: (r) => r.issues.length,
-      cell: (r) => (r.issues.length ? <Badge variant="destructive">{r.issues.join(', ')}</Badge> : r.needsNec || r.needsMisc ? <Badge variant="success">Ready</Badge> : null),
+      cell: (r) => (r.issues.length ? <span className="text-sm text-alert">{r.issues.join(', ')}</span> : r.needsNec || r.needsMisc ? <Badge variant="success">Ready</Badge> : null),
     },
   ];
   const t = q.data?.totals;
@@ -498,18 +506,17 @@ export function YearEndTab() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-xl text-sm text-ink-muted">{q.data ? `Everyone paid as a contractor in ${q.data.taxYear}, from payroll and contractor payment runs. A 1099-NEC is owed at ${fmtMoney(q.data.threshold)} or more, or any backup withholding.` : ''}</p>
-        <Field label="Tax year" className="w-32">
-          <Input type="number" value={year} min={2020} max={2100} onChange={(e) => setYear(Number(e.target.value))} />
-        </Field>
+        {fixedYear === undefined && <TaxYearSelect value={year} onChange={setYear} since={2020} span={5} />}
       </div>
       {q.isError ? <QueryError what="the year-end summary" query={q} /> : null}
       {t ? (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        // No one paid as a contractor in the year: four zeros say nothing; the empty list says it once.
+        <MetricStrip label={`1099s for ${year}`} empty={(q.data?.rows.length ?? 0) === 0}>
           <MetricCard label="1099-NEC forms" value={String(t.necForms)} />
           <MetricCard label="1099-MISC forms" value={String(t.miscForms)} />
           <MetricCard label="Backup withheld" value={fmtMoney(t.backupWithheld)} />
-          <MetricCard label="Not ready" value={String(t.withIssues)} hint="Missing a TIN, W-9 or address" accent={t.withIssues > 0} />
-        </div>
+          <MetricCard label="Not ready" value={String(t.withIssues)} hint="Missing a TIN, W-9 or address" tone={t.withIssues > 0 ? 'alert' : 'default'} />
+        </MetricStrip>
       ) : null}
       {t && t.withIssues > 0 ? (
         <Card className="border-warning/30 bg-warning/5">

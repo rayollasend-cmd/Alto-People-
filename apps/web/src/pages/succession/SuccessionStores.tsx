@@ -37,11 +37,14 @@ import {
   Field,
   FilterChip,
   MetricCard,
+  MetricStrip,
   Select,
   SectionTitle,
   SkeletonRows,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
+import { DataGrid } from '@/components/ui/DataGrid';
+import { useUrlParam } from '@/lib/useUrlState';
 
 /**
  * Succession for the seats that run a store, and the 9-box.
@@ -56,6 +59,7 @@ import { cn } from '@/lib/cn';
 
 const READINESS_ORDER: BenchReadiness[] = ['READY_NOW', 'READY_6_MONTHS', 'READY_12_MONTHS'];
 const READINESS_VARIANT: Record<BenchReadiness, 'success' | 'pending' | 'outline'> = { READY_NOW: 'success', READY_6_MONTHS: 'pending', READY_12_MONTHS: 'outline' };
+const BENCH_FILTERS = ['all', 'covered', 'thin', 'empty'] as const;
 const STRENGTH: Record<StoreBench['strength'], { label: string; variant: 'success' | 'pending' | 'destructive' }> = {
   covered: { label: 'Covered', variant: 'success' },
   thin: { label: 'Thin', variant: 'pending' },
@@ -67,7 +71,8 @@ export function SuccessionByStore() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
   const qc = useQueryClient();
-  const [filter, setFilter] = useState<'all' | StoreBench['strength']>('all');
+  // The bench filter lives in the URL (?bench=empty); the tiles are the filter.
+  const [filter, setFilter] = useUrlParam<'all' | StoreBench['strength']>('bench', 'all', BENCH_FILTERS);
   const [adding, setAdding] = useState<StoreBench | null>(null);
   const q = useQuery({ queryKey: ['succession', 'stores'], queryFn: () => listStoreBench() });
   const stores = useMemo(() => (q.data?.stores ?? []).filter((s) => filter === 'all' || s.strength === filter), [q.data, filter]);
@@ -87,107 +92,157 @@ export function SuccessionByStore() {
   if (q.isError) return <QueryError what="the bench by store" query={q} />;
   if (q.isPending) return <SkeletonRows count={5} />;
   const sum = q.data.summary;
+  const benchEditor = (s: StoreBench) =>
+    s.bench.length === 0 ? (
+      <p className="text-xs text-ink-muted">Nobody named to step in.</p>
+    ) : (
+      <ul className="space-y-1.5">
+        {s.bench.map((b) => (
+          <li key={b.id} className="flex items-center gap-2 text-sm">
+            <Avatar src={b.photoUrl} name={b.name} size="xs" />
+            <AssociateLink associateId={b.associateId} className="min-w-0 flex-1 truncate text-ink">
+              {b.name}
+            </AssociateLink>
+            {canManage ? (
+              <>
+                <label htmlFor={`ready-${b.id}`} className="sr-only">
+                  Readiness for {b.name}
+                </label>
+                <Select id={`ready-${b.id}`} size="sm" value={b.readiness} onChange={(e) => change.mutate({ id: b.id, readiness: e.target.value as BenchReadiness })}>
+                  {READINESS_ORDER.map((r) => (
+                    <option key={r} value={r}>
+                      {BENCH_READINESS_LABELS[r]}
+                    </option>
+                  ))}
+                </Select>
+                <Button size="icon-sm" variant="ghost" aria-label={`Take ${b.name} off the bench`} onClick={() => remove.mutate(b.id)}>
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
+              </>
+            ) : (
+              <Badge size="sm" variant={READINESS_VARIANT[b.readiness]}>
+                {BENCH_READINESS_LABELS[b.readiness]}
+              </Badge>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label={`Every ${storeWord}`} value={sum.stores} hint={sum.withoutLead ? `${sum.withoutLead} with no lead placed` : 'All have a lead'} />
-        <MetricCard label="Covered" value={sum.covered} hint="Someone could step in today" />
-        <MetricCard label="Thin" value={sum.thin} hint="Only someone in 6–12 months" />
-        <MetricCard label="No bench" value={sum.empty} accent={sum.empty > 0} hint="Nobody named yet" />
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {(['all', 'empty', 'thin', 'covered'] as const).map((f) => (
-          <FilterChip key={f} active={filter === f} onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : STRENGTH[f].label}
-          </FilterChip>
-        ))}
-      </div>
-      {stores.length === 0 ? (
+      {/* The tiles are the filter (F500 G1): one row, not tiles plus chips. */}
+      <MetricStrip label={`Bench by ${storeWord}`}>
+        <MetricCard
+          label={`Every ${storeWord}`}
+          value={sum.stores}
+          hint={sum.withoutLead ? `${sum.withoutLead} with no lead placed` : 'All have a lead'}
+          onClick={() => setFilter('all')}
+          selected={filter === 'all'}
+        />
+        <MetricCard label="Covered" value={sum.covered} hint="Someone could step in today" onClick={() => setFilter('covered')} selected={filter === 'covered'} />
+        <MetricCard label="Thin" value={sum.thin} hint="Only someone in 6–12 months" tone={sum.thin > 0 ? 'warning' : 'default'} onClick={() => setFilter('thin')} selected={filter === 'thin'} />
+        <MetricCard label="No bench" value={sum.empty} hint="Nobody named yet" tone={sum.empty > 0 ? 'alert' : 'default'} onClick={() => setFilter('empty')} selected={filter === 'empty'} />
+      </MetricStrip>
+      {sum.stores === 0 ? (
         <Card>
           <CardContent className="p-0">
-            <EmptyState icon={Store} title={`No ${storeWord}s here`} description={`Change the filter, or add ${storeWord}s under Sites.`} />
+            <EmptyState icon={Store} title={`No ${storeWord}s yet`} description={`Add ${storeWord}s under Sites, and their leads and bench appear here.`} />
           </CardContent>
         </Card>
       ) : (
-        <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {stores.map((s) => (
-            <li key={s.id}>
-              <Card className="h-full">
-                <CardContent className="space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-ink">{s.name}</div>
-                      {s.clientName && <div className="truncate text-xs text-ink-muted">{s.clientName}</div>}
-                    </div>
-                    <Badge size="sm" variant={STRENGTH[s.strength].variant}>
-                      {STRENGTH[s.strength].label}
-                    </Badge>
-                  </div>
-                  <div>
-                    <div className="mb-1 text-2xs font-medium uppercase tracking-wider text-ink-muted">Leads today</div>
-                    {s.leads.length === 0 ? (
-                      <p className="text-xs text-warning">No lead placed at this {storeWord}.</p>
-                    ) : (
-                      <ul className="space-y-1">
-                        {s.leads.map((l) => (
-                          <li key={l.userId} className="flex items-center gap-2 text-sm">
-                            <Avatar src={l.photoUrl} name={l.name} size="xs" />
-                            <span className="truncate text-ink">{l.name}</span>
-                            <span className="truncate text-xs text-ink-muted">{ROLE_LABELS[l.role]}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <div className="mb-1 text-2xs font-medium uppercase tracking-wider text-ink-muted">Bench</div>
-                    {s.bench.length === 0 ? (
-                      <p className="text-xs text-ink-muted">Nobody named to step in.</p>
-                    ) : (
-                      <ul className="space-y-1.5">
-                        {s.bench.map((b) => (
-                          <li key={b.id} className="flex items-center gap-2 text-sm">
-                            <Avatar src={b.photoUrl} name={b.name} size="xs" />
-                            <AssociateLink associateId={b.associateId} className="min-w-0 flex-1 truncate text-ink">
-                              {b.name}
-                            </AssociateLink>
-                            {canManage ? (
-                              <>
-                                <label htmlFor={`ready-${b.id}`} className="sr-only">
-                                  Readiness for {b.name}
-                                </label>
-                                <Select id={`ready-${b.id}`} size="sm" value={b.readiness} onChange={(e) => change.mutate({ id: b.id, readiness: e.target.value as BenchReadiness })}>
-                                  {READINESS_ORDER.map((r) => (
-                                    <option key={r} value={r}>
-                                      {BENCH_READINESS_LABELS[r]}
-                                    </option>
-                                  ))}
-                                </Select>
-                                <Button size="icon-sm" variant="ghost" aria-label={`Take ${b.name} off the bench`} onClick={() => remove.mutate(b.id)}>
-                                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                                </Button>
-                              </>
-                            ) : (
-                              <Badge size="sm" variant={READINESS_VARIANT[b.readiness]}>
-                                {BENCH_READINESS_LABELS[b.readiness]}
-                              </Badge>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  {canManage && (
-                    <Button size="sm" variant="outline" onClick={() => setAdding(s)}>
-                      <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                      Name someone
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            </li>
-          ))}
-        </ul>
+        <DataGrid<StoreBench>
+          id="succession-stores"
+          caption={`Bench by ${storeWord}`}
+          noun={{ one: storeWord, many: `${storeWord}s` }}
+          rows={stores}
+          rowKey={(s) => s.id}
+          search={{ placeholder: `Search ${storeWord}s or people…` }}
+          urlKey="stores"
+          activeFilters={filter === 'all' ? 0 : 1}
+          onClearFilters={() => setFilter('all')}
+          expandable={{ render: (s) => <div className="px-3 py-2">{benchEditor(s)}</div>, label: (s) => `Bench at ${s.name}` }}
+          columns={[
+            {
+              key: 'store',
+              header: term('label.store'),
+              accessor: (s) => `${s.name} ${s.clientName ?? ''}`,
+              csv: (s) => s.name,
+              sortable: true,
+              primary: true,
+              cell: (s) => (
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-ink">{s.name}</div>
+                  {s.clientName && <div className="truncate text-xs text-ink-muted">{s.clientName}</div>}
+                </div>
+              ),
+            },
+            {
+              key: 'leads',
+              header: 'Lead today',
+              accessor: (s) => s.leads.map((l) => l.name).join(', '),
+              sortable: true,
+              cardMeta: true,
+              cell: (s) =>
+                s.leads.length === 0 ? (
+                  <span className="text-xs text-warning">No lead placed</span>
+                ) : (
+                  <span className="text-sm text-ink">
+                    {s.leads.map((l) => l.name).join(', ')}
+                    <span className="ml-1 text-xs text-ink-muted">{ROLE_LABELS[s.leads[0]!.role]}</span>
+                  </span>
+                ),
+            },
+            {
+              key: 'bench',
+              header: 'Bench',
+              accessor: (s) => s.bench.map((b) => b.name).join(', '),
+              csv: (s) => s.bench.map((b) => `${b.name} (${BENCH_READINESS_LABELS[b.readiness]})`).join('; '),
+              sortable: true,
+              cardMeta: true,
+              cell: (s) =>
+                s.bench.length === 0 ? (
+                  <span className="text-xs text-ink-muted">Nobody named</span>
+                ) : (
+                  <span className="text-sm text-ink">
+                    {s.bench.slice(0, 2).map((b) => b.name).join(', ')}
+                    {s.bench.length > 2 && <span className="text-ink-muted"> +{s.bench.length - 2}</span>}
+                  </span>
+                ),
+            },
+            {
+              key: 'readiness',
+              header: 'Readiness',
+              accessor: (s) => ({ empty: 0, thin: 1, covered: 2 })[s.strength],
+              csv: (s) => STRENGTH[s.strength].label,
+              sortable: true,
+              searchable: false,
+              cell: (s) => (
+                <Badge size="sm" variant={STRENGTH[s.strength].variant}>
+                  {STRENGTH[s.strength].label}
+                </Badge>
+              ),
+            },
+            ...(canManage
+              ? [
+                  {
+                    key: 'act',
+                    header: '',
+                    accessor: () => null,
+                    csv: () => '',
+                    searchable: false,
+                    align: 'right' as const,
+                    stopRowClick: true,
+                    cell: (s: StoreBench) => (
+                      <Button size="sm" variant="outline" onClick={() => setAdding(s)}>
+                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        Name someone
+                      </Button>
+                    ),
+                  },
+                ]
+              : []),
+          ]}
+        />
       )}
       <AddToBenchDialog store={adding} onClose={() => setAdding(null)} onDone={refresh} />
     </div>

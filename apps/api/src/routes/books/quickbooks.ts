@@ -356,7 +356,7 @@ booksQuickbooksRouter.post('/conflicts/:id/resolve', MANAGE, async (req: Request
   try {
     const { keep } = QboResolveInputSchema.parse(req.body);
     const done = await resolveConflict(prisma, z.string().uuid().parse(req.params.id), keep, req.user!.id);
-    enqueueAudit({ actorUserId: req.user!.id, action: 'books.quickbooks.conflict_resolved', entityType: 'QboSyncConflict', entityId: done.id, metadata: { keep, localType: done.localType, localId: done.localId, summary: `Kept ${keep === 'SITE' ? 'the site' : keep === 'QUICKBOOKS' ? 'QuickBooks' : 'both as they are'}: ${done.summary}` } }, 'books.quickbooks');
+    enqueueAudit({ actorUserId: req.user!.id, action: 'books.quickbooks.conflict_resolved', entityType: 'QboSyncConflict', entityId: done.id, metadata: { keep, localType: done.localType, localId: done.localId, summary: `Kept ${keep === 'SITE' ? 'the version here' : keep === 'QUICKBOOKS' ? 'QuickBooks' : 'both as they are'}: ${done.summary}` } }, 'books.quickbooks');
     res.json(await conflictRow(done));
   } catch (err) {
     next(err);

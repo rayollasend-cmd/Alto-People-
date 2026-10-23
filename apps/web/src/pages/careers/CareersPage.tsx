@@ -1,8 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Briefcase, CheckCircle2, MapPin } from 'lucide-react';
-import { ApiError } from '@/lib/api';
+import { ArrowLeft, Briefcase, CheckCircle2, MapPin, Search } from 'lucide-react';
+import { ApiError, apiFetch } from '@/lib/api';
+import { useUrlParam } from '@/lib/useUrlState';
+import { FilterChip } from '@/components/ui/FilterBar';
 import {
   applyToPosting,
   getCareerPosting,
@@ -142,9 +144,21 @@ export function CareersListPage() {
   const source = search.get('source');
   const q = useQuery({ queryKey: ['careers', 'postings'], queryFn: listCareerPostings });
   const brandQuery = useQuery({ queryKey: ['careers', 'brand'], queryFn: getCareersBrand, retry: false });
+  // An empty board still gives a way to reach a recruiter: the organization's published address.
+  const contactQ = useQuery({
+    queryKey: ['support', 'config'],
+    queryFn: () => apiFetch<{ contact?: { email: string } }>('/support/config'),
+    retry: false,
+    staleTime: 60 * 60_000,
+  });
   const brand = brandQuery.data ?? null;
   const postings = q.data?.postings ?? null;
+  const orgName = q.data?.orgName ?? null;
   const error = q.error ? (q.error instanceof ApiError ? q.error.message : 'Could not load open jobs.') : null;
+  // Search and the Location / Schedule chips live in the URL, so a filtered list can be shared (F500 G5).
+  const [text, setText] = useUrlParam<string>('q', '');
+  const [where, setWhere] = useUrlParam<string>('location', '');
+  const [schedule, setSchedule] = useUrlParam<string>('schedule', '');
 
   useEffect(() => {
     document.title = 'Open jobs';
@@ -154,15 +168,81 @@ export function CareersListPage() {
     recordCareersView(null, source);
   }, [source]);
 
+  const locations = useMemo(
+    () => [...new Set((postings ?? []).map((p) => p.location?.trim()).filter((l): l is string => !!l))].sort((a, b) => a.localeCompare(b)),
+    [postings],
+  );
+  const schedules = useMemo(
+    () => (Object.keys(SCHEDULE_WORD) as Array<keyof typeof SCHEDULE_WORD>).filter((k) => (postings ?? []).some((p) => p.schedule === k)),
+    [postings],
+  );
+  const shown = useMemo(() => {
+    const needle = text.trim().toLowerCase();
+    return (postings ?? [])
+      .filter((p) => !where || p.location?.trim() === where)
+      .filter((p) => !schedule || p.schedule === schedule)
+      .filter((p) => !needle || [p.title, p.location, p.clientName].some((v) => v?.toLowerCase().includes(needle)))
+      // Newest first (the API's order, said here so a filter can't shuffle it).
+      .sort((a, b) => (b.openedAt ?? '').localeCompare(a.openedAt ?? ''));
+  }, [postings, text, where, schedule]);
+  const filtering = !!(text.trim() || where || schedule);
+  const contactEmail = contactQ.data?.contact?.email ?? null;
+
   return (
     <Shell>
       <h1 className="font-display text-3xl md:text-4xl text-white">{brand?.headline || 'Work with us'}</h1>
       <p className="mt-2 text-silver">
-        {brand?.intro || 'Open jobs at stores across the Florida Panhandle. Apply in a couple of minutes — a recruiter will get back to you.'}
+        {brand?.intro ||
+          `Open jobs${orgName ? ` at ${orgName}` : ''}. Apply in a couple of minutes — a recruiter will get back to you.`}
       </p>
       <BrandBlock brand={brand} />
 
-      <div className="mt-8 space-y-3">
+      {postings && postings.length > 0 && (
+        <div className="mt-8 space-y-3" data-testid="careers-filters">
+          <label className="relative block">
+            <span className="sr-only">Search jobs</span>
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-silver/70" aria-hidden="true" />
+            <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Search by job, place or company" className="pl-9" />
+          </label>
+          {(locations.length > 1 || schedules.length > 1) && (
+            <div className="flex flex-wrap gap-1.5">
+              {locations.length > 1 &&
+                locations.map((l) => (
+                  <FilterChip key={l} active={where === l} onClick={() => setWhere(where === l ? '' : l)}>
+                    {l}
+                  </FilterChip>
+                ))}
+              {schedules.length > 1 &&
+                schedules.map((k) => (
+                  <FilterChip key={k} active={schedule === k} onClick={() => setSchedule(schedule === k ? '' : k)}>
+                    {SCHEDULE_WORD[k]}
+                  </FilterChip>
+                ))}
+            </div>
+          )}
+          <p className="text-sm text-silver" data-testid="careers-count">
+            {shown.length === 1 ? '1 open job' : `${shown.length} open jobs`}
+            {filtering && (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  className="text-gold underline underline-offset-2 hover:text-gold-bright"
+                  onClick={() => {
+                    setText('');
+                    setWhere('');
+                    setSchedule('');
+                  }}
+                >
+                  Show all
+                </button>
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
+      <div className="mt-4 space-y-3">
         {error && <ErrorBanner>{error}</ErrorBanner>}
         {postings === null && !error &&
           Array.from({ length: 3 }).map((_, i) => (
@@ -172,11 +252,26 @@ export function CareersListPage() {
             </div>
           ))}
         {postings?.length === 0 && (
-          <div className="rounded-lg border border-navy-secondary bg-navy/60 p-6 text-center text-silver">
-            There are no open jobs right now. Check back soon.
+          // Not a dead end: who to write to while nothing is open.
+          <div className="rounded-lg border border-navy-secondary bg-navy/60 p-6 text-center text-silver" data-testid="careers-empty">
+            <p className="text-ink">There are no open jobs right now.</p>
+            {contactEmail ? (
+              <p className="mt-2 text-sm">
+                Write to{' '}
+                <a href={`mailto:${contactEmail}?subject=${encodeURIComponent('Looking for work')}`} className="text-gold underline underline-offset-2">
+                  {contactEmail}
+                </a>{' '}
+                with the kind of work and the places you’re after, and a recruiter will keep you in mind. New jobs are posted here first.
+              </p>
+            ) : (
+              <p className="mt-2 text-sm">New jobs are posted here first — check back soon.</p>
+            )}
           </div>
         )}
-        {postings?.map((p) => (
+        {postings && postings.length > 0 && shown.length === 0 && (
+          <div className="rounded-lg border border-navy-secondary bg-navy/60 p-6 text-center text-silver">No open job matches that. Try another search or show all.</div>
+        )}
+        {shown.map((p) => (
           <Link
             key={p.slug}
             to={`/careers/${p.slug}${source ? `?source=${encodeURIComponent(source)}` : ''}`}
@@ -205,6 +300,7 @@ export function CareerPostingPage() {
     retry: (n, err) => !(err instanceof ApiError && err.status === 404) && n < 2,
   });
   const posting = q.data ?? null;
+  const applyRef = useRef<HTMLDivElement>(null);
   const missing = q.error instanceof ApiError && q.error.status === 404;
   const loadError =
     q.error && !missing ? (q.error instanceof ApiError ? q.error.message : 'Could not load this job.') : null;
@@ -246,7 +342,15 @@ export function CareerPostingPage() {
             <Meta p={posting} />
           </div>
           <div className="mt-6 whitespace-pre-wrap leading-relaxed text-silver">{posting.description}</div>
-          <ApplyForm slug={posting.slug} title={posting.title} source={source} />
+          <div ref={applyRef} className="scroll-mt-6">
+            <ApplyForm slug={posting.slug} title={posting.title} source={source} />
+          </div>
+          {/* On a phone the form is far below the description: one tap takes you there (F500 G5). */}
+          <div className="sticky bottom-0 -mx-4 mt-6 border-t border-navy-secondary bg-navy/95 px-4 py-3 backdrop-blur sm:hidden" data-testid="careers-sticky-apply">
+            <Button className="w-full" onClick={() => applyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+              Apply for this job
+            </Button>
+          </div>
           <JobPostingStructuredData posting={posting} />
         </>
       )}

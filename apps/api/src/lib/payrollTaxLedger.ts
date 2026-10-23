@@ -465,28 +465,50 @@ export interface RegistrationNeed {
 }
 
 function stepsFor(kind: TaxAgencyKind, jurisdiction: string): string[] {
+  if (kind === 'FEDERAL_WITHHOLDING') return ['Get the company’s EIN from the IRS if it has none.', 'Enroll in EFTPS to make federal deposits.', 'Enter the deposit schedule the IRS assigned (monthly or semiweekly).'];
+  if (kind === 'FEDERAL_UNEMPLOYMENT') return ['Use the same EIN and EFTPS enrollment as federal withholding.', 'Add the federal unemployment account so FUTA deposits and Form 940 are tracked.'];
   const state = STATE_NAMES[jurisdiction.split(':')[0] ?? ''] ?? jurisdiction;
   if (kind === 'STATE_WITHHOLDING') return [`Register for a withholding account with ${state}’s revenue department.`, 'Enter the account number and the deposit schedule the state assigns.', 'Re-check the state certificate for each person working there.'];
   if (kind === 'STATE_UNEMPLOYMENT') return [`Register with ${state}’s workforce (unemployment insurance) agency.`, 'Enter the account number and this year’s assigned rate and wage base.', 'Post the state’s unemployment poster at the work site.'];
   return [`Register with the local tax collector for ${jurisdiction.split(':')[1] ?? jurisdiction}.`, 'Enter the account number and how often it wants deposits.'];
 }
 
-/** States and locals where tax is owed or people work, with no account yet. */
-export async function registrationsNeeded(db: Db): Promise<RegistrationNeed[]> {
+/**
+ * Every tax account the company still has to register — the one list the
+ * Agencies tab, the overview and the go-live checklist read (F500 G3: the
+ * desk listed only Florida's unemployment account while go-live said the
+ * federal 941/940 accounts were missing too). Federal withholding and
+ * unemployment first, then each state where tax is owed or people live or
+ * worked in the last 120 days, then accounts waiting on registration.
+ */
+export async function registrationsNeeded(db: Db, now: Date = new Date()): Promise<RegistrationNeed[]> {
   const tenantId = tenantIdForWrite();
   const pending = await db.taxAgencyAccount.findMany({ where: { tenantId, status: 'PENDING_REGISTRATION' }, orderBy: [{ kind: 'asc' }, { jurisdiction: 'asc' }] });
-  const out: RegistrationNeed[] = pending.map((a) => ({ kind: a.kind, jurisdiction: a.jurisdiction, agencyName: a.agencyName, accountId: a.id, reason: 'Tax is owed here and the account is not set up yet.', steps: stepsFor(a.kind, a.jurisdiction) }));
-  // Where people work today with no account at all (before the first payroll there).
-  const states = await db.associate.findMany({
+  const out: RegistrationNeed[] = [];
+  const have = await db.taxAgencyAccount.findMany({ where: { tenantId, kind: { in: ['FEDERAL_WITHHOLDING', 'FEDERAL_UNEMPLOYMENT', 'STATE_WITHHOLDING', 'STATE_UNEMPLOYMENT'] }, status: { not: 'CLOSED' } }, select: { kind: true, jurisdiction: true } });
+  // Federal: every employer needs both before its first payroll.
+  for (const kind of ['FEDERAL_WITHHOLDING', 'FEDERAL_UNEMPLOYMENT'] as const) {
+    if (have.some((h) => h.kind === kind)) continue;
+    out.push({ kind, jurisdiction: 'US', agencyName: agencyNameFor(kind, 'US'), accountId: null, reason: kind === 'FEDERAL_WITHHOLDING' ? 'Every employer needs it: federal withholding, Social Security and Medicare (Form 941).' : 'Every employer needs it: federal unemployment (Form 940).', steps: stepsFor(kind, 'US') });
+  }
+  out.push(...pending.map((a) => ({ kind: a.kind, jurisdiction: a.jurisdiction, agencyName: a.agencyName, accountId: a.id, reason: 'Tax is owed here and the account is not set up yet.', steps: stepsFor(a.kind, a.jurisdiction) })));
+  // Where people live, or worked in the last 120 days, with no account at all (before the first payroll there) —
+  // the same states the go-live checklist checks.
+  const homes = await db.associate.findMany({
     where: { tenantId, deletedAt: null, deactivatedAt: null, state: { not: null } },
     select: { state: true },
     distinct: ['state'],
   });
-  const have = await db.taxAgencyAccount.findMany({ where: { tenantId, kind: { in: ['STATE_WITHHOLDING', 'STATE_UNEMPLOYMENT'] }, status: { not: 'CLOSED' } }, select: { kind: true, jurisdiction: true } });
+  const worked = await db.timeEntry.findMany({
+    where: { tenantId, clockInAt: { gte: new Date(now.getTime() - 120 * 86_400_000) }, location: { state: { not: null } } },
+    select: { location: { select: { state: true } } },
+    distinct: ['locationId'],
+  });
+  const states = [...homes.map((h) => h.state), ...worked.map((w) => w.location?.state ?? null)].map((s) => ({ state: s }));
   const key = (k: string, j: string) => `${k}|${j}`;
   const seen = new Set([...have.map((h) => key(h.kind, h.jurisdiction)), ...out.map((o) => key(o.kind, o.jurisdiction))]);
   for (const s of states) {
-    const st = (s.state ?? '').toUpperCase();
+    const st = (s.state ?? '').trim().toUpperCase();
     if (!STATE_NAMES[st]) continue;
     for (const kind of ['STATE_WITHHOLDING', 'STATE_UNEMPLOYMENT'] as const) {
       if (kind === 'STATE_WITHHOLDING' && NO_INCOME_TAX_STATES.has(st)) continue;

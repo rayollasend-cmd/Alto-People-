@@ -32,6 +32,7 @@ import {
 } from '@/lib/leaveApi';
 import { apiFetch } from '@/lib/api';
 import { DeskTemplate } from '@/components/templates';
+import { useUrlParam } from '@/lib/useUrlState';
 import {
   AssociatePicker,
   Avatar,
@@ -47,9 +48,9 @@ import {
   DialogTitle,
   EmptyState,
   Field,
-  FilterChip,
   Input,
   MetricCard,
+  MetricStrip,
   SearchInput,
   SectionTitle,
   SegmentedControl,
@@ -79,12 +80,18 @@ const statusMetaOf = (k: string) => known(STATUS_META, k, () => ({ label: enumWo
  * tells the leads; the person record shows the job-protection flag.
  */
 
-const STATUS_FILTERS: Array<{ value: string; label: string }> = [
-  { value: 'open', label: 'Open' },
-  { value: 'PENDING_CERTIFICATION', label: 'Waiting on certification' },
-  { value: 'APPROVED', label: 'On leave' },
-  { value: 'all', label: 'All' },
-];
+/** The desk's lens: open or all cases, or one of the four tiles (the API's
+ *  summary counts and list filter share each tile's definition). */
+type Lens = 'open' | 'all' | 'on-leave' | 'notices' | 'certs-due' | 'returning';
+const LENSES: readonly Lens[] = ['open', 'all', 'on-leave', 'notices', 'certs-due', 'returning'];
+const LENS_LABEL: Record<Lens, string> = {
+  open: 'Open cases',
+  all: 'All cases',
+  'on-leave': 'On leave today',
+  notices: 'Notices to send',
+  'certs-due': 'Certifications due',
+  returning: 'Returning',
+};
 
 export function LeaveHome() {
   const { can } = useAuth();
@@ -96,7 +103,8 @@ function LeaveDesk() {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const openId = params.get('case');
-  const [status, setStatus] = useState('open');
+  // The lens is in ?status= so a notification can open "Notices to send".
+  const [status, setStatus] = useUrlParam<Lens>('status', 'open', LENSES);
   const [type, setType] = useState('');
   const [q, setQ] = useState('');
   const [opening, setOpening] = useState(false);
@@ -113,21 +121,37 @@ function LeaveDesk() {
   const refresh = () => void qc.invalidateQueries({ queryKey: ['leave'] });
 
   const s = summary.data;
+  // A tile is the filter (F500 G2: tiles and a chip row said the same
+  // things); tapping the picked tile again goes back to every open case.
+  const tile = (lens: Lens) => ({
+    onClick: () => setStatus(status === lens ? 'open' : lens),
+    selected: status === lens,
+  });
   // On a phone with an item open, the item takes the screen: the counts and filters step aside.
   const filters = (
     <div className={cn('space-y-3', openId && 'hidden lg:block')}>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="On leave today" value={s?.onLeave ?? '—'} hint={s ? `${s.open} open cases` : undefined} />
-        <MetricCard label="Notices to send" value={s?.noticesOwed ?? '—'} hint="Due within 5 business days of a request" />
-        <MetricCard label="Certifications due" value={s?.certificationsDueThisWeek ?? '—'} hint="In the next 7 days" />
-        <MetricCard label="Returning" value={s?.returningThisWeek ?? '—'} hint="Expected back within 7 days" />
-      </div>
+      <MetricStrip label="Leave cases by next step">
+        <MetricCard label="On leave today" value={s?.onLeave ?? '—'} hint={s ? `${s.open} open cases` : undefined} {...tile('on-leave')} />
+        <MetricCard
+          label="Notices to send"
+          value={s?.noticesOwed ?? '—'}
+          hint="Due within 5 business days of a request"
+          tone={s && s.noticesOwed > 0 ? 'warning' : 'default'}
+          {...tile('notices')}
+        />
+        <MetricCard label="Certifications due" value={s?.certificationsDueThisWeek ?? '—'} hint="In the next 7 days" {...tile('certs-due')} />
+        <MetricCard label="Returning" value={s?.returningThisWeek ?? '—'} hint="Expected back within 7 days" {...tile('returning')} />
+      </MetricStrip>
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter cases">
-        {STATUS_FILTERS.map((f) => (
-          <FilterChip key={f.value} active={status === f.value} onClick={() => setStatus(f.value)}>
-            {f.label}
-          </FilterChip>
-        ))}
+        <SegmentedControl<Lens>
+          ariaLabel="Which cases"
+          value={status === 'all' ? 'all' : 'open'}
+          onChange={setStatus}
+          options={[
+            { value: 'open', label: status !== 'open' && status !== 'all' ? LENS_LABEL[status] : 'Open' },
+            { value: 'all', label: 'All' },
+          ]}
+        />
         <label htmlFor="leave-type" className="sr-only">
           Leave type
         </label>
@@ -147,6 +171,17 @@ function LeaveDesk() {
   );
 
   const cases = list.data?.cases ?? null;
+  // On a wide screen the most urgent case opens beside the queue instead of
+  // "Pick a case" (F500 G2); a phone keeps the list until a tap.
+  const firstId = cases?.[0]?.id ?? null;
+  useEffect(() => {
+    if (openId || !firstId) return;
+    if (typeof window === 'undefined' || !window.matchMedia?.('(min-width: 1024px)').matches) return;
+    const next = new URLSearchParams(params);
+    next.set('case', firstId);
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstId, openId]);
   const queue = list.isError ? (
     <QueryError what="leave cases" query={list} />
   ) : cases === null ? (
@@ -154,7 +189,7 @@ function LeaveDesk() {
   ) : cases.length === 0 ? (
     <EmptyState
       icon={Stethoscope}
-      title={status === 'open' ? 'No open leave' : 'No cases match'}
+      title={status === 'open' ? 'No open leave' : status === 'all' ? 'No cases match' : `Nothing under “${LENS_LABEL[status]}”`}
       description={status === 'open' ? 'When someone asks for leave — from their phone or through you — the case lands here with its next step.' : 'Try another filter.'}
       action={status === 'open' ? <Button onClick={() => setOpening(true)}>Open a case</Button> : undefined}
       className="py-8"
@@ -218,16 +253,10 @@ function LeaveDesk() {
       <DeskTemplate
         title="Leave of absence"
         subtitle="FMLA, state paid leave, military and accommodation leave — from the request to the return to work."
-        breadcrumbs={[{ label: 'Compliance', to: '/compliance' }, { label: 'Leave of absence' }]}
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setSettings(true)}>
-              <Settings2 className="h-4 w-4" aria-hidden="true" />
-              Settings
-            </Button>
-            <Button onClick={() => setOpening(true)}>Open a case</Button>
-          </div>
-        }
+        actions={[
+          { key: 'open', label: 'Open a case', primary: true, onSelect: () => setOpening(true) },
+          { key: 'settings', label: 'Settings', icon: Settings2, onSelect: () => setSettings(true) },
+        ]}
         filters={filters}
         queue={queue}
         item={item}

@@ -94,7 +94,14 @@ export function RoleDecisionQueue({
   hideWhenEmpty = false,
   scopeLabel,
   excludeKeyPrefix,
+  footer,
 }: {
+  /**
+   * The page's own "needs you" rows (a home's counted cards), drawn inside
+   * the queue's card under its rows — one list, not a card grid beside it.
+   * With an empty queue they keep a card of their own.
+   */
+  footer?: React.ReactNode;
   /**
    * Leave out items whose key starts with this — the page already shows
    * them as its own card (the supervisor's coverage-gap notice and the
@@ -266,10 +273,22 @@ export function RoleDecisionQueue({
   // Client-portal viewers have no queue at all — even a "nominal" chip would be noise.
   if (user?.role === 'CLIENT_PORTAL') return null;
   // A failed load says so, with Retry — never a "Needs you" that silently isn't there.
+  // The page's own rows keep a card when the queue has none to share.
+  const footerCard = footer ? (
+    <Card>
+      <CardContent>{footer}</CardContent>
+    </Card>
+  ) : null;
   if (decisionsQuery.isError && rows === null) {
-    return <QueryError what={t('rdq.what')} query={decisionsQuery} />;
+    return (
+      <>
+        <QueryError what={t('rdq.what')} query={decisionsQuery} />
+        {footerCard}
+      </>
+    );
   }
   if (rows !== null && rows.length === 0) {
+    if (footerCard) return footerCard;
     if (hideWhenEmpty) return null;
     return (
       <div className="flex items-center gap-2 rounded-md border border-success/20 bg-success/[0.06] px-3 py-2 text-sm text-silver">
@@ -483,12 +502,13 @@ export function RoleDecisionQueue({
         {rest.length > 3 && (
           <button
             type="button"
-            className="mt-2 w-full text-center text-2xs text-silver/70 hover:text-gold"
+            className="mt-2 min-h-6 w-full text-center text-2xs text-silver/70 hover:text-gold"
             onClick={() => setShowAll((s) => !s)}
           >
             {showAll ? t('rdq.showLess') : t('rdq.showAll', { n: rows?.length ?? 0 })}
           </button>
         )}
+        {footer && <div className="mt-3 border-t border-line pt-3">{footer}</div>}
 
         <DecisionRoom
           itemKey={roomKey}

@@ -6,7 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireCapability } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
-import { assertClientInScope, effectiveClientIdFilter, scopeClients } from '../lib/scope.js';
+import { assertClientInScope, effectiveClientIdFilter, scopeClients, scopeWhere } from '../lib/scope.js';
 
 /**
  * Phase 86 — Projects, premium pay rules, tip pools.
@@ -41,6 +41,35 @@ const MANAGE_TIME = requireCapability('manage:time');
 // (premium rules, tip pools, project rates).
 const VIEW_PAY = requireCapability('process:payroll');
 const PROCESS_PAY = requireCapability('process:payroll');
+
+/**
+ * GET /pay-rules/summary — every client in the caller's reach with its
+ * active project codes, active premium-pay rules and open tip pools, for
+ * the "All clients" view of Pay rules (the page used to open on whichever
+ * client sorted first, ignoring the top bar).
+ */
+projectsAndPayRouter.get('/pay-rules/summary', VIEW_PAY, async (req, res) => {
+  const tenantId = tenantIdForWrite();
+  const clients = await prisma.client.findMany({
+    where: scopeWhere<Prisma.ClientWhereInput>({ tenantId }, scopeClients(req.user!)),
+    select: { id: true, name: true },
+    orderBy: { name: 'asc' },
+    take: 2000,
+  });
+  const ids = clients.map((c) => c.id);
+  const [projects, rules, pools] = await Promise.all([
+    prisma.project.groupBy({ by: ['clientId'], where: { clientId: { in: ids }, isActive: true }, _count: { _all: true } }),
+    prisma.premiumPayRule.groupBy({ by: ['clientId'], where: { clientId: { in: ids }, isActive: true }, _count: { _all: true } }),
+    prisma.tipPool.groupBy({ by: ['clientId'], where: { clientId: { in: ids }, status: 'OPEN' }, _count: { _all: true } }),
+  ]);
+  const count = (rows: Array<{ clientId: string; _count: { _all: number } }>) => new Map(rows.map((r) => [r.clientId, r._count._all]));
+  const p = count(projects);
+  const r = count(rules);
+  const t = count(pools);
+  res.json({
+    clients: clients.map((c) => ({ clientId: c.id, clientName: c.name, projects: p.get(c.id) ?? 0, premiumRules: r.get(c.id) ?? 0, openTipPools: t.get(c.id) ?? 0 })),
+  });
+});
 
 // ----- Projects ----------------------------------------------------------
 

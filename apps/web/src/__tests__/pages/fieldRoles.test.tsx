@@ -121,7 +121,9 @@ describe('the supervisor corps', () => {
     vi.mocked(placeSupervisor).mockResolvedValue({ userId: 'u2', clientId: 'c2', locationId: 'l2', windowsDropped: false });
     renderAs('WORKFORCE_MANAGER', <SupervisorCorps />);
     expect(await screen.findByText('Dana Reyes')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Not placed (1)' })).toBeInTheDocument();
+    // The filter is the kit's pill row; each card says what its count is.
+    expect(screen.getByRole('radio', { name: 'Not placed (1)' })).toBeInTheDocument();
+    expect(screen.getAllByTestId('corps-count').map((n) => n.textContent)).toEqual(['1 not placed', '1 placed']);
     expect(screen.getByText('Overnight')).toBeInTheDocument();
 
     const user = userEvent.setup();

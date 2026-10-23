@@ -1,14 +1,18 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRight, Banknote, FileText, HeartPulse, Landmark, PiggyBank, Receipt, Scale } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtCount, fmtDate, fmtMoney } from '@/lib/format';
+import { useUrlParam } from '@/lib/useUrlState';
 import { cn } from '@/lib/cn';
 import { ListTemplate } from '@/components/templates';
-import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
+import { FilterChip } from '@/components/ui/FilterBar';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { QueryError } from '@/components/ui/QueryError';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -52,26 +56,54 @@ const CONFIDENCE_LABEL: Record<CashLine['confidence'], string> = {
   overdue: 'Past due',
 };
 
+type Horizon = '4' | '8' | '13';
+type KindFilter = 'all' | 'in' | CashLine['kind'];
+const KINDS = Object.keys(KIND_LABEL) as Array<CashLine['kind']>;
+
+/**
+ * The lines in weeks counted from the forecast's first day (the same weeks
+ * as the chart), each week once, in date order. Past-due lines are dated
+ * today by the API, so they sit in the first week.
+ */
+export function weekGroups(from: string, lines: CashLine[]): Array<{ weekStart: string; lines: CashLine[] }> {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const groups = new Map<string, CashLine[]>();
+  for (const l of lines) {
+    const days = Math.max(0, Math.floor((Date.parse(`${l.date}T00:00:00Z`) - start) / 86_400_000));
+    const ws = new Date(start + Math.floor(days / 7) * 7 * 86_400_000).toISOString().slice(0, 10);
+    groups.set(ws, [...(groups.get(ws) ?? []), l]);
+  }
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([weekStart, ls]) => ({ weekStart, lines: ls }));
+}
+
 export function CashForecastPage() {
   const { t } = useI18n();
-  const [weeks, setWeeks] = useState<'4' | '8' | '13'>('4');
+  // The horizon and the kind filter are in the URL, so a link is this view.
+  const [weeks, setWeeks] = useUrlParam<Horizon>('weeks', '4', ['4', '8', '13']);
+  const [kind, setKind] = useUrlParam<KindFilter>('kind', 'all', ['all', 'in', ...KINDS]);
   const q = useQuery({
     queryKey: ['finance', 'cash-forecast', weeks],
     queryFn: () => apiFetch<CashForecast>(`/finance/cash-forecast?weeks=${weeks}`),
   });
   const data = q.data;
+  // A balance is only a balance when the books hold one. Bank accounts with
+  // nothing posted read "Cash today $0.00" and drew a "low point" below
+  // zero from it — then this page shows the net movement instead.
+  const booked = !!data?.opening && data.opening.onFile !== false;
+  const notPosted = !!data?.opening && data.opening.onFile === false;
+  const lines = (data?.lines ?? []).filter((l) => kind === 'all' || (kind === 'in' ? l.amount > 0 : l.kind === kind));
+  const kindsHere = KINDS.filter((k) => (data?.lines ?? []).some((l) => l.kind === k));
 
   return (
     <ListTemplate
       title="Cash forecast"
       topbarTitle="Cash forecast"
       subtitle={t('fin.cashSub')}
-      breadcrumbs={[{ label: t('fin.title'), to: '/' }, { label: 'Cash forecast' }]}
-      secondaryActions={
+      filters={
         <SegmentedControl
           ariaLabel="Horizon"
           value={weeks}
-          onChange={(v) => setWeeks(v as typeof weeks)}
+          onChange={setWeeks}
           options={[
             { value: '4', label: '4 weeks' },
             { value: '8', label: '8 weeks' },
@@ -81,131 +113,134 @@ export function CashForecastPage() {
       }
       summary={
         data ? (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat
+          <MetricStrip label="Cash at a glance">
+            <MetricCard
               label="Cash today"
-              value={data.opening ? fmtMoney(data.opening.balance) : '—'}
-              tone="text-ink"
-              hint={data.opening ? <Link to="/books/bank" className="hover:text-accent hover:underline">From the books · {data.opening.accounts} bank and card {data.opening.accounts === 1 ? 'account' : 'accounts'}</Link> : <Link to="/books" className="hover:text-accent hover:underline">No bank account in the books yet — movement only</Link>}
+              value={booked ? fmtMoney(data.opening!.balance) : '—'}
+              tone="neutral"
+              href={booked ? '/books/bank' : '/books'}
+              hint={booked ? `From the books · ${fmtCount(data.opening!.accounts, 'bank and card account')}` : undefined}
+              nothing={booked ? undefined : notPosted ? 'Cash not in the books yet' : 'No bank account in the books yet'}
             />
-            <Stat label={t('fin.cashIn')} value={fmtMoney(data.totals.inflow)} tone="text-success" />
-            <Stat label={t('fin.cashOut')} value={fmtMoney(data.totals.outflow)} tone="text-ink" />
-            <Stat
-              label={data.opening ? 'Low point' : t('fin.cashNet')}
-              value={data.opening && data.lowest ? fmtMoney(data.lowest.balance) : fmtMoney(data.totals.net)}
-              tone={(data.opening && data.lowest ? data.lowest.balance < 0 || data.lowest.belowMinimum : data.totals.net < 0) ? 'text-alert' : 'text-success'}
-              hint={
-                data.opening && data.lowest
-                  ? `Week of ${fmtDate(data.lowest.weekStart)}${data.minimumCash !== null ? (data.lowest.belowMinimum ? ` · under the ${fmtMoney(data.minimumCash)} floor` : ` · above the ${fmtMoney(data.minimumCash)} floor`) : ''}`
-                  : undefined
-              }
-            />
-          </div>
+            <MetricCard label="Money in" value={fmtMoney(data.totals.inflow)} tone="good" onClick={() => setKind(kind === 'in' ? 'all' : 'in')} selected={kind === 'in'} nothing={data.totals.inflow ? undefined : 'Nothing coming in'} />
+            <MetricCard label="Money out" value={fmtMoney(data.totals.outflow)} tone="neutral" nothing={data.totals.outflow ? undefined : 'Nothing going out'} />
+            {booked && data.lowest ? (
+              <MetricCard
+                label="Low point"
+                value={fmtMoney(data.lowest.balance)}
+                tone={data.lowest.balance < 0 || data.lowest.belowMinimum ? 'alert' : 'good'}
+                hint={`Week of ${fmtDate(data.lowest.weekStart)}${data.minimumCash !== null ? (data.lowest.belowMinimum ? ` · under the ${fmtMoney(data.minimumCash)} floor` : ` · above the ${fmtMoney(data.minimumCash)} floor`) : ''}`}
+              />
+            ) : (
+              <MetricCard label="Net movement" value={fmtMoney(data.totals.net)} tone={data.totals.net < 0 ? 'alert' : 'good'} hint={`Over ${weeks} weeks, before any cash on hand`} />
+            )}
+          </MetricStrip>
         ) : (
           <Skeleton className="h-20" />
         )
       }
     >
-      {q.isError && (
-        <EmptyState
-          title="Could not load the forecast"
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void q.refetch()}>
-              Retry
-            </Button>
-          }
-        />
-      )}
+      {q.isError && <QueryError what="the cash forecast" query={q} />}
       {data && (
         <div className="space-y-4">
-          {data.lowest?.belowMinimum && data.minimumCash !== null && (
+          {notPosted && (
+            <p className="flex flex-wrap items-start gap-x-2 gap-y-1 rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink" role="status">
+              <Landmark className="mt-0.5 h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                Cash isn’t in the books yet, so this shows the net movement — money in less money out — not a balance.{' '}
+                <Link to="/books" className="text-accent underline-offset-2 hover:underline">
+                  Post history in Books
+                </Link>
+              </span>
+            </p>
+          )}
+          {booked && data.lowest?.belowMinimum && data.minimumCash !== null && (
             <p className="flex items-start gap-2 rounded-lg border border-alert/30 bg-alert/[0.06] px-3 py-2 text-sm text-ink" role="status">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-alert" aria-hidden="true" />
               Cash dips to {fmtMoney(data.lowest.balance)} in the week of {fmtDate(data.lowest.weekStart)} — under the {fmtMoney(data.minimumCash)} floor.
             </p>
           )}
-          <CashChart weeks={data.weeks} withBalance={!!data.opening} minimumCash={data.minimumCash} />
-          <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-2xs uppercase tracking-wider text-ink-muted">
-                  <tr>
-                    <th className="px-4 py-2 text-left">Week</th>
-                    <th className="px-4 py-2 text-right">{t('fin.cashIn')}</th>
-                    <th className="px-4 py-2 text-right">{t('fin.cashOut')}</th>
-                    <th className="px-4 py-2 text-right">{t('fin.cashNet')}</th>
-                    <th className="px-4 py-2 text-right">{data.opening ? t('fin.cashBalance') : t('fin.cashRunning')}</th>
-                  </tr>
-                </thead>
-                <tbody className="tabular-nums">
-                  {data.weeks.map((w) => (
-                    <tr key={w.weekStart} className="border-t border-line">
-                      <td className="px-4 py-2 text-ink">{t('fin.cashWeek', { date: fmtDate(w.weekStart) })}</td>
-                      <td className="px-4 py-2 text-right text-success">{w.inflow ? fmtMoney(w.inflow) : '—'}</td>
-                      <td className="px-4 py-2 text-right text-ink">{w.outflow ? fmtMoney(w.outflow) : '—'}</td>
-                      <td className={cn('px-4 py-2 text-right', w.net >= 0 ? 'text-success' : 'text-alert')}>{fmtMoney(w.net)}</td>
-                      {(() => {
-                        const shown = data.opening ? (w.balance ?? w.cumulative) : w.cumulative;
-                        const under = shown < 0 || (data.opening !== null && data.minimumCash !== null && shown < data.minimumCash);
-                        return <td className={cn('px-4 py-2 text-right font-medium', under ? 'text-alert' : 'text-ink')}>{fmtMoney(shown)}</td>;
-                      })()}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
-            </CardContent>
-          </Card>
+          {/* The chart's own Table switch is the week-by-week table. */}
+          <CashChart weeks={data.weeks} withBalance={booked} minimumCash={data.minimumCash} />
 
           {data.lines.length === 0 ? (
             <EmptyState title={t('fin.cashEmpty')} />
           ) : (
-            <Card>
-              <CardContent className="p-0">
-                <ul className="divide-y divide-line" aria-label={t('fin.cashOpen')}>
-                  {data.lines.map((l, i) => {
-                    const Icon = KIND_ICON[l.kind];
-                    return (
-                      <li key={`${l.date}-${l.kind}-${i}`}>
-                        <Link to={l.linkUrl} className="group flex items-center gap-3 px-4 py-2.5 hover:bg-surface-raised">
-                          <Icon className={cn('h-4 w-4 shrink-0', l.amount > 0 ? 'text-success' : 'text-ink-muted')} aria-hidden="true" />
-                          <span className="w-24 shrink-0 text-xs tabular-nums text-ink-muted">{fmtDate(l.date)}</span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm text-ink">{l.label}</span>
-                            <span className="block text-2xs text-ink-muted">
-                              {KIND_LABEL[l.kind]} · {CONFIDENCE_LABEL[l.confidence]}
-                              {l.warning && <span className="text-warning"> · {l.warning}</span>}
-                            </span>
-                          </span>
-                          <span className={cn('shrink-0 text-sm tabular-nums', l.amount > 0 ? 'text-success' : 'text-ink', l.confidence === 'overdue' && 'text-alert')}>
-                            {l.amount > 0 ? '+' : '−'}
-                            {fmtMoney(Math.abs(l.amount))}
-                          </span>
-                          <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-muted group-hover:text-accent" aria-hidden="true" />
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </CardContent>
-            </Card>
+            <section className="space-y-3" aria-label={t('fin.cashOpen')}>
+              <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Kind">
+                <FilterChip active={kind === 'all'} onClick={() => setKind('all')}>
+                  All
+                </FilterChip>
+                {kindsHere.map((k) => (
+                  <FilterChip key={k} active={kind === k} onClick={() => setKind(kind === k ? 'all' : k)}>
+                    {KIND_LABEL[k]}
+                  </FilterChip>
+                ))}
+              </div>
+              {lines.length === 0 ? (
+                <p className="text-sm text-ink-muted">Nothing of this kind in the next {weeks} weeks.</p>
+              ) : (
+                weekGroups(data.from, lines).map((w) => {
+                  const mine = w.lines;
+                  const inSum = mine.filter((l) => l.amount > 0).reduce((s2, l) => s2 + l.amount, 0);
+                  const outSum = mine.filter((l) => l.amount < 0).reduce((s2, l) => s2 - l.amount, 0);
+                  return (
+                    <Card key={w.weekStart}>
+                      <CardContent className="p-0">
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-line px-4 py-2.5">
+                          <h3 className="text-sm font-medium text-ink">{t('fin.cashWeek', { date: fmtDate(w.weekStart) })}</h3>
+                          <p className="text-xs tabular-nums text-ink-muted">
+                            {inSum > 0 && <span className="text-success">+{fmtMoney(inSum)} in</span>}
+                            {inSum > 0 && outSum > 0 && ' · '}
+                            {outSum > 0 && <span>−{fmtMoney(outSum)} out</span>}
+                          </p>
+                        </div>
+                        <ul className="divide-y divide-line">
+                          {mine.map((l, i) => {
+                            const Icon = KIND_ICON[l.kind];
+                            const incoming = l.amount > 0;
+                            return (
+                              <li key={`${l.date}-${l.kind}-${i}`}>
+                                <Link to={l.linkUrl} className="group flex items-center gap-3 px-4 py-2.5 hover:bg-surface-raised">
+                                  <Icon className={cn('h-4 w-4 shrink-0', incoming ? 'text-success' : 'text-ink-muted')} aria-hidden="true" />
+                                  <span className="hidden w-24 shrink-0 text-xs tabular-nums text-ink-muted sm:block">{fmtDate(l.date)}</span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block text-sm text-ink sm:truncate">{l.label}</span>
+                                    <span className="block text-2xs text-ink-muted">
+                                      <span className="sm:hidden">{fmtDate(l.date)} · </span>
+                                      {KIND_LABEL[l.kind]}
+                                      {l.confidence !== 'overdue' && ` · ${CONFIDENCE_LABEL[l.confidence]}`}
+                                      {l.warning && <span className="text-warning"> · {l.warning}</span>}
+                                    </span>
+                                  </span>
+                                  <span className="flex shrink-0 flex-col items-end gap-0.5">
+                                    {/* Money coming in stays green even when it's late — late is the badge's to say. */}
+                                    <span className={cn('text-sm tabular-nums', incoming ? 'text-success' : 'text-ink')}>
+                                      {incoming ? '+' : '−'}
+                                      {fmtMoney(Math.abs(l.amount))}
+                                    </span>
+                                    {l.confidence === 'overdue' && (
+                                      <Badge size="sm" variant={incoming ? 'pending' : 'destructive'}>
+                                        {CONFIDENCE_LABEL.overdue}
+                                      </Badge>
+                                    )}
+                                  </span>
+                                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-muted group-hover:text-accent" aria-hidden="true" />
+                                </Link>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  );
+                })
+              )}
+            </section>
           )}
         </div>
       )}
     </ListTemplate>
-  );
-}
-
-function Stat({ label, value, tone, hint }: { label: string; value: string; tone: string; hint?: React.ReactNode }) {
-  return (
-    <Card>
-      <CardContent>
-        <div className="text-2xs font-medium uppercase tracking-[0.14em] text-ink-muted">{label}</div>
-        <div className={cn('mt-2 font-display text-2xl leading-none tabular-nums', tone)}>{value}</div>
-        {hint && <div className="mt-2 text-xs text-ink-muted">{hint}</div>}
-      </CardContent>
-    </Card>
   );
 }
 

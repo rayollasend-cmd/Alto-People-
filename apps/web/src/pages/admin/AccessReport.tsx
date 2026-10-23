@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, RefreshCw, ShieldAlert, UserX } from 'lucide-react';
+import { Download, ShieldAlert, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useRoleLabel } from '@/lib/auth';
@@ -34,6 +34,9 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { FilterChip } from '@/components/ui/FilterBar';
+import { useUrlParam } from '@/lib/useUrlState';
 
 const STATUS_LABEL: Record<UserStatus, string> = { ACTIVE: 'Active', INVITED: 'Invited', DISABLED: 'Disabled' };
 const DAY_MS = 86_400_000;
@@ -55,7 +58,8 @@ export function AccessReport() {
   const canManage = can('manage:org');
   const confirm = useConfirm();
   const queryClient = useQueryClient();
-  const [flag, setFlag] = useState<AccessFlag | ''>('');
+  // The flag in the URL (?flag=), so a review can be linked and survives Back.
+  const [flag, setFlag] = useUrlParam<AccessFlag | ''>('flag', '', ['', ...ACCESS_FLAGS]);
   const [deactivating, setDeactivating] = useState<{ ids: string[]; clear: () => void } | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -189,39 +193,26 @@ export function AccessReport() {
   return (
     <div className="space-y-5">
       {report && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <MetricCard label="Accounts" value={report.counts.totalAccounts} hint={`${report.counts.byStatus.ACTIVE} active · ${report.counts.byStatus.INVITED} invited · ${report.counts.byStatus.DISABLED} disabled`} />
-          <MetricCard label="Active associates" value={report.counts.activeAssociates} hint="The one definition of active" />
+        <MetricStrip label="Accounts at a glance">
+          <MetricCard label="Accounts" value={report.counts.totalAccounts} hint={`${report.counts.byStatus.ACTIVE} active · ${report.counts.byStatus.INVITED} invited · ${report.counts.byStatus.DISABLED} disabled`} href="/admin/users?status=all" />
+          <MetricCard label="Associates working" value={report.counts.activeAssociates} hint="Worked or scheduled recently: the Working count on People" />
           <MetricCard label="Flagged accounts" value={report.counts.flaggedAccounts} accent={report.counts.flaggedAccounts > 0} hint="Review before anyone is deactivated" />
-        </div>
+        </MetricStrip>
       )}
 
       {report && (
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setFlag('')}
-            aria-pressed={flag === ''}
-            className={`min-h-[44px] rounded-md border px-3 text-xs ${flag === '' ? 'border-gold text-white' : 'border-navy-secondary text-silver hover:border-silver/40'}`}
-          >
-            All {report.counts.totalAccounts}
-          </button>
-          {ACCESS_FLAGS.map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFlag(flag === f ? '' : f)}
-              aria-pressed={flag === f}
-              className={`min-h-[44px] rounded-md border px-3 text-xs ${flag === f ? 'border-gold text-white' : 'border-navy-secondary text-silver hover:border-silver/40'}`}
-            >
-              {ACCESS_FLAG_LABEL[f]} <span className="tabular-nums text-white">{report.counts.byFlag[f]}</span>
-            </button>
-          ))}
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Flags">
+            <FilterChip active={flag === ''} count={report.counts.totalAccounts} onClick={() => setFlag('')}>
+              All
+            </FilterChip>
+            {ACCESS_FLAGS.map((f) => (
+              <FilterChip key={f} active={flag === f} count={report.counts.byFlag[f]} onClick={() => setFlag(flag === f ? '' : f)}>
+                {ACCESS_FLAG_LABEL[f]}
+              </FilterChip>
+            ))}
+          </div>
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={query.isFetching}>
-              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${query.isFetching ? 'animate-spin' : ''}`} aria-hidden="true" />
-              Refresh
-            </Button>
             <Button
               variant="secondary"
               size="sm"

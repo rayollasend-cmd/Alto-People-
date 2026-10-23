@@ -1,20 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  ArrowLeft,
   Building2,
   CalendarDays,
   CheckCircle2,
+  ChevronRight,
   ClipboardCheck,
   FileText,
   HardHat,
   Mail,
   MapPin,
-  History,
   MessageSquare,
+  MessageSquarePlus,
   Phone,
   ShieldCheck,
+  UserCheck,
   Users,
 } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
@@ -22,11 +25,14 @@ import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import {
   fmtDate,
+  fmtDateOnly,
+  fmtDateOnlyRange,
   fmtHours,
   fmtMoney,
   fmtShiftRangeTz,
   fmtStatementNo,
   fmtTime,
+  fmtTimeTz,
   parseYmd,
   zonedDayKey,
   zonedMinutesOfDay,
@@ -39,12 +45,15 @@ import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { downloadStatementFile } from '@/pages/clients/statementsShared';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import type { PageAction } from '@/components/ui/PageHeader';
+import { HomeMeta } from '@/components/home/HomeMeta';
+import { OpenBalance, StatementRow, type PortalStatement } from './PortalStatements';
 import { PortalRequests, type RequestPrefill } from './PortalRequests';
 import { groupWaves, wavePresent } from './waves';
 import { PushPrompt } from '@/components/PushPrompt';
@@ -166,10 +175,21 @@ interface PortalOverview {
     fillRatePct: number | null;
     hours: number;
     workedHours: number;
+    /** Contracted person-hours for the whole week; null without windowed targets. */
+    contractedHours?: number | null;
   };
-  tomorrow: { confirmed: number; unconfirmed: number; open: number; coverInFlight: number };
+  tomorrow: {
+    confirmed: number;
+    unconfirmed: number;
+    open: number;
+    coverInFlight: number;
+    /** Tomorrow's contracted headcount (each window summed); null without a target. Absent from an older server. */
+    target?: number | null;
+  };
   leads: {
     people: Array<{
+      /** The lead's photo; null when none is on file. Absent from an older server. */
+      photoUrl?: string | null;
       userId: string;
       name: string;
       phone: string | null;
@@ -208,22 +228,32 @@ interface PortalOverview {
     /** contract = delivered vs the floor target; schedule = no target set. */
     basis: 'contract' | 'schedule' | null;
   };
-  clearance: { total: number; i9Complete: number; checksInFlight: number; flagged: number };
-  statements: Array<{
-    id: string;
-    number: number | null;
-    periodStart: string;
-    periodEnd: string;
+  clearance: {
+    total: number;
+    i9Complete: number;
+    checksInFlight: number;
+    flagged: number;
+    /** I-9 done, nothing flagged or in flight — per person. Absent from an older server. */
+    cleared?: number;
+  };
+  statements: Array<PortalStatement & { finalizedAt: string | null }>;
+  /** Every unpaid statement (not only the four shown). */
+  balance?: {
+    count: number;
     amount: number | null;
-    hours: number | null;
-    storeHours: number | null;
-    storeAmount: number | null;
-    finalizedAt: string | null;
-    paidAt: string | null;
-    /** null for store accounts — the statement covers the whole client. */
-    pdfUrl: string | null;
-    reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
-  }>;
+    pastDue: number;
+    pastDueAmount: number | null;
+    oldestDaysPastDue: number | null;
+    pastDueIds: string[];
+  };
+  candidatesWaiting?: number;
+  requests?: { overdue: number; overdueDays: number | null; overdueId: string | null; answered: number; answeredId: string | null };
+  /** Nothing filed today: the next checklist still to start, and whether the store ever ran one. */
+  opsPlan?: {
+    everRan: boolean;
+    next: { department: string; windowLabel: string; startsAt: string } | null;
+    missedToday: number;
+  } | null;
   coverage: {
     weekStart: string;
     noCallNoShows: number;
@@ -236,8 +266,23 @@ interface PortalOverview {
     weekStart: string;
     url: string;
     reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
+    /** Anything scheduled that week — an empty week's report is not a task. */
+    hadShifts?: boolean;
   };
 }
+
+/** One row of the store's "Needs you" — what to do, and the link that does it. */
+interface NeedRow {
+  key: string;
+  tone: 'alert' | 'warning' | 'gold';
+  icon: ComponentType<{ className?: string }>;
+  title: string;
+  sub?: string;
+  to?: string;
+  href?: string;
+  action?: ReactNode;
+}
+const NEED_TONE: Record<NeedRow['tone'], string> = { alert: 'text-alert', warning: 'text-warning', gold: 'text-gold' };
 
 /** "Reviewed by Dana · Sep 3" — the client's own mark on a document. */
 function ReviewedMark({
@@ -298,6 +343,12 @@ export function ClientPortalHome() {
   const { user, can } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const isPortal = user?.role === 'CLIENT_PORTAL';
+  // A region account (the command center) opens a store to read it; the
+  // request desk, "reviewed" marks and statement questions are a client
+  // account's own acts, and the API refuses them from a region account.
+  const isRegionAccount = isPortal && !user?.clientId && !!user?.regionId;
+  const canAct = isPortal && !!user?.clientId;
+  const location = useLocation();
   const canPreview = can('view:executive') || can('manage:org');
   const previewId = searchParams.get('clientId');
   const qs = scopeQuery(searchParams, isPortal);
@@ -330,6 +381,11 @@ export function ClientPortalHome() {
     placeholderData: (prev) => prev,
   });
   const data = query.data;
+  // The Inbox links here with a #section (#portal-statements): land on it.
+  useEffect(() => {
+    if (!data || !location.hash) return;
+    document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: 'start' });
+  }, [data, location.hash]);
   // An alert, a reply or a statement rings the bell; the page catches up.
   useEffect(
     () => onLiveEvent('notification', () => void queryClient.invalidateQueries({ queryKey: ['clientPortal', 'overview'] })),
@@ -378,11 +434,24 @@ export function ClientPortalHome() {
               <EmptyState
                 icon={Building2}
                 title={t('portal.onFloorNow')}
-                description={t('portal.loadFailed')}
+                description={query.error instanceof ApiError && query.error.message ? query.error.message : t('portal.loadFailed')}
                 action={
-                  <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
-                    {t('common.retry')}
-                  </Button>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {isRegionAccount && (
+                      <Button size="sm" asChild>
+                        <Link to="/region">
+                          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                          {t('portal.backToRegion')}
+                        </Link>
+                      </Button>
+                    )}
+                    {/* Retrying a 4xx ("Pick a store in your region") never helps. */}
+                    {!(query.error instanceof ApiError && query.error.status >= 400 && query.error.status < 500) && (
+                      <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+                        {t('common.retry')}
+                      </Button>
+                    )}
+                  </div>
                 }
               />
         }
@@ -458,7 +527,9 @@ export function ClientPortalHome() {
     data.ops?.yesterdayKey ?? ''
   }&period=OVERNIGHT`;
   const cl = data.clearance;
-  const clearedCount = cl.total - cl.flagged - cl.checksInFlight;
+  // Cleared = I-9 done and nothing flagged or in flight, per person (the API
+  // counts it). "2 of 2 cleared" sat beside "1 I-9 pending" before.
+  const clearedCount = cl.cleared ?? Math.max(0, cl.total - cl.flagged - cl.checksInFlight - (cl.total - cl.i9Complete));
   const clearancePct = cl.total > 0 ? Math.round((clearedCount / cl.total) * 100) : null;
   const clearanceClean =
     cl.total > 0 && cl.flagged === 0 && cl.checksInFlight === 0 && cl.i9Complete === cl.total;
@@ -468,6 +539,112 @@ export function ClientPortalHome() {
     part(t, cl.total - cl.i9Complete, 'portal.clI9One', 'portal.clI9'),
   ].filter(Boolean) as string[];
   const weekDays = data.week.days.map((d) => ({ ...d, day: dayInitial(d.date) }));
+  // The contract, said where it bites: nothing scheduled today against it.
+  const scheduledToday = data.today.roster.filter((r) => r.state !== 'open').length;
+  const nothingScheduled = target !== null && scheduledToday === 0;
+  const windowName = data.now.targetLabel ?? t('portal.heroContracted');
+  const requestCoverage = (when: 'today' | 'tomorrow') => {
+    const day = when === 'today' ? data.today.date : shiftDays(data.today.date, 1);
+    setPrefill({
+      kind: 'STAFFING',
+      subject: t('portal.coverageSubject', { date: fmtDateOnly(day, { weekday: true, year: 'auto' }) }),
+      body: when === 'today' && target !== null ? t('portal.coverageBody', { window: windowName, target }) : '',
+      nonce: Date.now(),
+    });
+  };
+  const hasCurve = curve.some((p) => p.scheduled + p.open > 0);
+  const contracted = data.week.contractedHours ?? null;
+  const tomorrowTarget = data.tomorrow.target ?? null;
+  const tomorrowScheduled = data.tomorrow.confirmed + data.tomorrow.unconfirmed;
+  const tomorrowShort = tomorrowTarget !== null && tomorrowScheduled < tomorrowTarget;
+  const deliveredHours = sum((w) => w.delivered);
+  const contractedHours4w = sum((w) => w.contracted);
+
+  // ---- Needs you: what the store manager has to do, each with its link ----
+  const bal = data.balance;
+  const needs: NeedRow[] = [];
+  if (bal && bal.pastDue > 0) {
+    needs.push({
+      key: 'statements',
+      tone: 'alert',
+      icon: FileText,
+      title: t('portal.needStatements', { count: bal.pastDue }),
+      sub: [
+        bal.pastDueAmount !== null ? fmtMoney(bal.pastDueAmount) : null,
+        bal.oldestDaysPastDue !== null ? t('portal.needOldest', { count: bal.oldestDaysPastDue }) : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      href: '#portal-statements',
+    });
+  }
+  if (canAct && data.serviceReport.hadShifts !== false && !data.serviceReport.reviewed) {
+    needs.push({
+      key: 'report',
+      tone: 'gold',
+      icon: ClipboardCheck,
+      title: t('portal.needReport', { range: fmtDateOnlyRange(data.serviceReport.weekStart, shiftDays(data.serviceReport.weekStart, 6)) }),
+      action: (
+        <span className="flex flex-wrap items-center gap-1">
+          <Button size="xs" variant="secondary" onClick={() => setReportOpen(true)}>
+            <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+            {t('portal.needReportOpen')}
+          </Button>
+          <ReviewedMark
+            reviewed={data.serviceReport.reviewed}
+            onMark={() => void markReviewed('SERVICE_REPORT', data.serviceReport.weekStart)}
+            t={t}
+            busy={marking === `SERVICE_REPORT:${data.serviceReport.weekStart}`}
+          />
+        </span>
+      ),
+    });
+  }
+  if ((data.candidatesWaiting ?? 0) > 0) {
+    needs.push({
+      key: 'candidates',
+      tone: 'gold',
+      icon: UserCheck,
+      title: t('portal.needCandidates', { count: data.candidatesWaiting ?? 0 }),
+      to: `/portal/candidates${qs}`,
+    });
+  }
+  if (canAct && data.requests && data.requests.overdue > 0) {
+    needs.push({
+      key: 'requests-overdue',
+      tone: 'warning',
+      icon: MessageSquare,
+      title: t('portal.needReqOverdue', { count: data.requests.overdue }),
+      sub: data.requests.overdueDays !== null ? t('portal.reqReplyOverdue', { count: data.requests.overdueDays }) : undefined,
+      to: data.requests.overdueId ? `/portal/requests?id=${data.requests.overdueId}` : '/portal/requests',
+    });
+  }
+  if (canAct && data.requests && data.requests.answered > 0) {
+    needs.push({
+      key: 'requests-answered',
+      tone: 'gold',
+      icon: CheckCircle2,
+      title: t('portal.needReqAnswered', { count: data.requests.answered }),
+      to: data.requests.answeredId ? `/portal/requests?id=${data.requests.answeredId}` : '/portal/requests',
+    });
+  }
+  const headerActions: PageAction[] = [
+    ...(canAct
+      ? [
+          {
+            key: 'request',
+            label: t('portal.requestCoverage'),
+            icon: MessageSquarePlus,
+            primary: true,
+            onSelect: () => requestCoverage('today'),
+            // The hero carries it when nothing is scheduled — said once.
+            hidden: nothingScheduled,
+          },
+        ]
+      : []),
+    { key: 'report', label: t('portal.svcReport'), icon: FileText, primary: !canAct || nothingScheduled, onSelect: () => setReportOpen(true), hint: t('portal.svcReportHint') },
+    { key: 'schedule', label: t('portal.openSchedule'), icon: CalendarDays, to: scheduleTo },
+  ];
   const relWeeks = data.reliability.weeks.map((w) => ({
     ...w,
     label: w.current ? t('portal.relNowShort') : fmtDate(parseYmd(w.start)).replace(/,.*$/, ''),
@@ -483,63 +660,45 @@ export function ClientPortalHome() {
         title={data.store ? data.store.name : data.client.name}
         topbarTitle={t('portal.title')}
         subtitle={
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            {data.store ? (
-              <>
-                <span>{data.client.name}</span>
-                {data.store.address && (
-                  <span className="flex items-center gap-1 text-silver/70">
-                    <MapPin className="h-3 w-3" aria-hidden="true" />
-                    {data.store.address}
-                  </span>
-                )}
-              </>
-            ) : (
-              <span>{t('portal.subtitle')}</span>
-            )}
-            <span className="flex items-center gap-1.5 text-xs text-silver/60">
-              <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
-              </span>
-              {t('portal.asOf', { time: fmtTime(data.generatedAt) })}
+          data.store ? (
+            <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <span>{data.client.name}</span>
+              {data.store.address && (
+                // One line on a phone (it wrapped to two above the hero).
+                <span className="flex min-w-0 max-w-full items-center gap-1 text-silver/70">
+                  <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{data.store.address}</span>
+                </span>
+              )}
             </span>
-          </span>
+          ) : (
+            <span>{t('portal.subtitle')}</span>
+          )
         }
-        waysIn={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => setReportOpen(true)} title={t('portal.svcReportHint')}>
-              <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.svcReport')}
-            </Button>
-            <Button size="sm" variant="outline" className="print:hidden" asChild>
-              <Link to={`/portal/history${qs}`}>
-                <History className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                {t('portal.historyNav')}
-              </Link>
-            </Button>
-            <ServiceReportDialog
-              open={reportOpen}
-              onClose={() => setReportOpen(false)}
-              scope={new URLSearchParams(qs)}
-              initial={{ kind: 'range', from: data.serviceReport.weekStart, to: shiftDays(data.serviceReport.weekStart, 6) }}
-            />
-            <ReviewedMark
-              reviewed={data.serviceReport.reviewed}
-              onMark={isPortal ? () => void markReviewed('SERVICE_REPORT', data.serviceReport.weekStart) : null}
-              t={t}
-              busy={marking === `SERVICE_REPORT:${data.serviceReport.weekStart}`}
-            />
-          </div>
+        meta={
+          <HomeMeta
+            items={[
+              <span key="live" className="inline-flex items-center gap-1.5">
+                <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+                </span>
+                {t('portal.asOf', { time: fmtTime(data.generatedAt) })}
+              </span>,
+              // Last week's report: its review state lives up here, not at the foot of the page.
+              data.serviceReport.reviewed ? (
+                <span key="report" className="text-success">
+                  {data.serviceReport.reviewed.reviewedBy
+                    ? t('portal.reportReviewedBy', { name: data.serviceReport.reviewed.reviewedBy, date: fmtDate(data.serviceReport.reviewed.reviewedAt) })
+                    : t('portal.reportReviewed', { date: fmtDate(data.serviceReport.reviewed.reviewedAt) })}
+                </span>
+              ) : data.serviceReport.hadShifts !== false ? (
+                <span key="report" className="text-warning">{t('portal.reportNotReviewed')}</span>
+              ) : null,
+            ]}
+          />
         }
-        actions={
-          <Button size="sm" asChild>
-            <Link to={scheduleTo}>
-              <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.openSchedule')}
-            </Link>
-          </Button>
-        }
+        actions={headerActions}
         hero={
       <Card
         className={cn(
@@ -580,22 +739,29 @@ export function ClientPortalHome() {
                   <span className="text-2xl font-semibold text-silver/60">/ {target}</span>
                 )}
               </div>
-              <p className="mt-2 text-sm text-silver">
+              <p className="mt-2 text-sm text-silver" data-testid="portal-hero-line">
                 {target !== null
-                  ? short
-                    ? t('portal.heroShort', {
-                        missing: target - onFloor.length,
-                        window: data.now.targetLabel ?? t('portal.heroContracted'),
-                      })
-                    : t('portal.heroMet', {
-                        window: data.now.targetLabel ?? t('portal.heroContracted'),
-                      })
+                  ? nothingScheduled
+                    ? // The real problem, said: nothing scheduled against the contract.
+                      t('portal.heroNothingScheduled', { window: windowName, target })
+                    : short
+                      ? t('portal.heroShort', {
+                          missing: target - onFloor.length,
+                          window: windowName,
+                        })
+                      : t('portal.heroMet', { window: windowName })
                   : data.now.scheduledNow > 0
                     ? t('portal.onOfSched', { on: onFloor.length, sched: data.now.scheduledNow })
                     : onFloor.length > 0
                       ? t('portal.onPlain', { on: onFloor.length })
                       : t('portal.nobodyNow')}
               </p>
+              {canAct && nothingScheduled && (
+                <Button size="sm" className="mt-3 print:hidden" onClick={() => requestCoverage('today')}>
+                  <MessageSquarePlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  {t('portal.requestCoverage')}
+                </Button>
+              )}
               {onFloor.length > 0 && (
                 <div className="mt-3 flex items-center -space-x-2">
                   {onFloor.slice(0, 8).map((p) => (
@@ -614,7 +780,8 @@ export function ClientPortalHome() {
                 </div>
               )}
             </div>
-            <div className="md:col-span-8">
+            {/* An empty day's curve is a blank box on a phone: there it waits under Details. */}
+            <div className={cn('md:col-span-8', !hasCurve && 'hidden sm:block')}>
               <SectionTitle
                 size="sm"
                 className="mb-0"
@@ -650,9 +817,80 @@ export function ClientPortalHome() {
         </CardContent>
       </Card>
         }
-        banners={isPortal ? <PushPrompt /> : undefined}
+        banners={
+          isPortal ? (
+            <>
+              {/* A region account opened one of its stores: back is the command
+                  center (/portal with no store is "Pick a store in your region"). */}
+              {isRegionAccount && (
+                <Link to="/region" className="inline-flex min-h-8 items-center gap-1 text-sm text-gold underline-offset-2 hover:underline print:hidden">
+                  <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t('portal.backToRegion')}
+                </Link>
+              )}
+              <PushPrompt />
+            </>
+          ) : undefined
+        }
+        decisions={{
+          title: t('home.needsYou'),
+          count: needs.length,
+          content:
+            needs.length === 0 ? (
+              <p className="text-sm text-silver/70" id="portal-needs-you">{t('portal.needNothing')}</p>
+            ) : (
+              <Card id="portal-needs-you" className="scroll-mt-20">
+                <CardContent className="py-1">
+                  <ul className="divide-y divide-navy-secondary/60" aria-label={t('home.needsYou')}>
+                    {needs.map((n) => {
+                      const Icon = n.icon;
+                      const text = (
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm text-white">{n.title}</span>
+                          {n.sub && <span className={cn('block text-xs tabular-nums', n.tone === 'alert' ? 'text-alert' : 'text-silver')}>{n.sub}</span>}
+                        </span>
+                      );
+                      const linkCls =
+                        'group -mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2.5 hover:bg-navy-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright';
+                      return (
+                        <li key={n.key} className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid={`need-${n.key}`}>
+                          {n.to || n.href ? (
+                            n.to ? (
+                              <Link to={n.to} className={linkCls}>
+                                <Icon className={cn('h-4 w-4 shrink-0', NEED_TONE[n.tone])} />
+                                {text}
+                                <ChevronRight className="h-4 w-4 shrink-0 text-silver/50 group-hover:text-gold" aria-hidden="true" />
+                              </Link>
+                            ) : (
+                              <a href={n.href} className={linkCls}>
+                                <Icon className={cn('h-4 w-4 shrink-0', NEED_TONE[n.tone])} />
+                                {text}
+                                <ChevronRight className="h-4 w-4 shrink-0 text-silver/50 group-hover:text-gold" aria-hidden="true" />
+                              </a>
+                            )
+                          ) : (
+                            <span className="flex min-w-0 flex-1 items-center gap-3 py-2.5">
+                              <Icon className={cn('h-4 w-4 shrink-0', NEED_TONE[n.tone])} />
+                              {text}
+                            </span>
+                          )}
+                          {n.action && <span className="pb-2 sm:pb-0">{n.action}</span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </CardContent>
+              </Card>
+            ),
+        }}
         assistant={<HugoSeat />}
       >
+      <ServiceReportDialog
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        scope={new URLSearchParams(qs)}
+        initial={{ kind: 'range', from: data.serviceReport.weekStart, to: shiftDays(data.serviceReport.weekStart, 6) }}
+      />
       {/* ---- Per-store strip for market managers ------------------------ */}
       {data.stores.length > 1 && !data.store && (
         <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 animate-enter">
@@ -692,7 +930,7 @@ export function ClientPortalHome() {
           })}
         </div>
       )}
-      {data.store && data.stores.length === 0 && !user?.locationId && (
+      {!isRegionAccount && data.store && data.stores.length === 0 && !user?.locationId && (
         <button
           type="button"
           onClick={() => drillTo(null)}
@@ -702,8 +940,8 @@ export function ClientPortalHome() {
         </button>
       )}
 
-      {/* ---- KPI strip ------------------------------------------------------ */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-enter" style={enterStagger(1)}>
+      {/* ---- KPI strip: one tile kit, two across on a phone -------------- */}
+      <MetricStrip label={t('portal.kpiStrip')} className="animate-enter">
         <StatTile
           label={t('portal.kpiFill')}
           value={data.week.fillRatePct !== null ? `${data.week.fillRatePct}%` : '—'}
@@ -723,55 +961,86 @@ export function ClientPortalHome() {
           }
           sub={t('portal.kpiFillSub', { filled: data.week.filled, total: data.week.filled + data.week.open })}
         />
-        <StatTile
+        {/* The grade explains itself: the person-hours behind the letter (as History says). */}
+        <MetricCard
           label={t('portal.kpiGrade')}
+          href={`/portal/history${qs}`}
           value={
             <span className={data.reliability.grade ? GRADE_STYLE[data.reliability.grade] : 'text-silver/50'}>
               {data.reliability.grade ?? '—'}
             </span>
           }
-          delta={data.reliability.score !== null ? t('portal.relScore', { score: data.reliability.score }) : null}
-          sub={
-            pastWeeks.some((w) => w.total > 0)
-              ? t('portal.kpiGradeSub', { ncns: sum((w) => w.noCallNoShows), replaced: sum((w) => w.replaced) })
-              : t('portal.relNoHistory')
+          valueTitle={data.reliability.grade ?? undefined}
+          deltaText={data.reliability.score !== null ? { text: t('portal.relScore', { score: data.reliability.score }), tone: 'neutral' } : null}
+          hint={
+            contractedHours4w > 0
+              ? t('portal.kpiDeliveredSub', {
+                  delivered: Math.round(deliveredHours).toLocaleString('en-US'),
+                  contracted: Math.round(contractedHours4w).toLocaleString('en-US'),
+                })
+              : pastWeeks.some((w) => w.total > 0)
+                ? t('portal.kpiGradeSub', { ncns: sum((w) => w.noCallNoShows), replaced: sum((w) => w.replaced) })
+                : t('portal.relNoHistory')
           }
         />
-        <StatTile
-          label={t('portal.kpiHours')}
-          value={fmtHours(data.week.workedHours)}
-          meter={hoursPct !== null ? { percent: hoursPct, tone: 'primary' } : null}
-          sub={t('portal.kpiHoursSub', { scheduled: fmtHours(data.week.hours) })}
+        {/* Scheduled against the contract, this week — the gap the page used never to say. */}
+        <MetricCard
+          label={contracted !== null ? t('portal.kpiSchedVsContract') : t('portal.kpiHours')}
+          value={contracted !== null ? fmtHours(data.week.hours) : fmtHours(data.week.workedHours)}
+          unit={contracted !== null ? `/ ${fmtHours(contracted)}` : undefined}
+          tone={contracted !== null && data.week.hours < contracted ? 'warning' : 'default'}
+          meter={
+            contracted !== null
+              ? { percent: Math.min(100, Math.round((data.week.hours / Math.max(contracted, 1)) * 100)), tone: data.week.hours < contracted ? 'warn' : 'good' }
+              : hoursPct !== null
+                ? { percent: hoursPct, tone: 'primary' }
+                : null
+          }
+          hint={
+            contracted !== null
+              ? t('portal.kpiSchedVsContractSub', { worked: fmtHours(data.week.workedHours) })
+              : t('portal.kpiHoursSub', { scheduled: fmtHours(data.week.hours) })
+          }
+          href={scheduleTo}
         />
-        <StatTile
+        <MetricCard
           label={t('portal.kpiTomorrow')}
-          value={tomorrowTotal === 0 ? '—' : data.tomorrow.confirmed}
+          value={tomorrowTotal === 0 ? (tomorrowTarget !== null ? 0 : '—') : data.tomorrow.confirmed}
           unit={tomorrowTotal === 0 ? undefined : `/ ${tomorrowTotal}`}
+          tone={tomorrowShort ? 'warning' : 'default'}
           meter={
             tomorrowTotal > 0
               ? {
                   percent: Math.round((data.tomorrow.confirmed / tomorrowTotal) * 100),
-                  tone: data.tomorrow.open > 0 ? 'warn' : 'good',
+                  tone: data.tomorrow.open > 0 || tomorrowShort ? 'warn' : 'good',
                 }
               : null
           }
-          sub={
-            tomorrowTotal === 0
-              ? t('portal.tomorrowNone')
-              : [
-                  data.tomorrow.open > 0 && t('portal.openCount', { count: data.tomorrow.open }),
-                  data.tomorrow.unconfirmed > 0 &&
-                    t('portal.awaiting', { count: data.tomorrow.unconfirmed }),
-                  data.tomorrow.coverInFlight > 0 &&
-                    t('portal.coverInFlightShort', { count: data.tomorrow.coverInFlight }),
-                ]
-                  .filter(Boolean)
-                  .join(' · ') || t('portal.tomorrowAllSet')
+          hint={
+            <>
+              {tomorrowShort && (
+                <span className="block text-warning" data-testid="tomorrow-vs-contract">
+                  {t('portal.tomorrowVsContract', { scheduled: tomorrowScheduled, target: tomorrowTarget ?? 0 })}
+                </span>
+              )}
+              {tomorrowTotal === 0
+                ? tomorrowShort
+                  ? null
+                  : t('portal.tomorrowNone')
+                : [
+                    data.tomorrow.open > 0 && t('portal.openCount', { count: data.tomorrow.open }),
+                    data.tomorrow.unconfirmed > 0 && t('portal.awaiting', { count: data.tomorrow.unconfirmed }),
+                    data.tomorrow.coverInFlight > 0 && t('portal.coverInFlightShort', { count: data.tomorrow.coverInFlight }),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || t('portal.tomorrowAllSet')}
+            </>
           }
         />
-      </div>
+      </MetricStrip>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
+      {/* items-start: a short card no longer stretches to its tall neighbour (200px of nothing). */}
+      <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-12">
         {/* ---- Today by shift (the full list lives on /portal/today) ---- */}
         <Card className="animate-enter xl:col-span-5" style={enterStagger(2)}>
           <CardContent>
@@ -857,10 +1126,19 @@ export function ClientPortalHome() {
               <ul className="mt-3 space-y-3">
                 {data.leads.people.map((p) => (
                   <li key={p.email} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                    <Avatar src={userPhotoUrl(p.userId)} name={p.name} email={p.email} size="sm" />
+                    {/* The API's photoUrl: null means no photo on file — initials, no request that 404s. */}
+                    <Avatar src={p.photoUrl !== undefined ? (p.photoUrl ?? undefined) : userPhotoUrl(p.userId)} name={p.name} email={p.email} size="sm" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-sm font-medium text-white">
                         <span className="truncate">{p.name}</span>
+                        <a
+                          href={`mailto:${p.email}`}
+                          aria-label={t('portal.emailPerson', { name: p.name })}
+                          title={p.email}
+                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/70 hover:text-gold print:hidden"
+                        >
+                          <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                        </a>
                         {p.onFloor && (
                           <span className="relative flex h-2 w-2" aria-hidden="true">
                             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
@@ -876,8 +1154,8 @@ export function ClientPortalHome() {
                       </div>
                     </div>
                     {/* Actions take their own row on a phone so the name never squeezes. */}
-                    <div className="flex w-full flex-wrap items-center gap-1 print:hidden sm:w-auto">
-                      {isPortal && (
+                    <div className="flex w-full flex-wrap items-center gap-1 pl-11 print:hidden">
+                      {canAct && (
                         <Button size="sm" variant="secondary" asChild>
                           <Link to={`/messages?to=${p.userId}`} aria-label={`${t('portal.messageLead')} ${p.name}`}>
                             <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -893,11 +1171,6 @@ export function ClientPortalHome() {
                           </a>
                         </Button>
                       )}
-                      <Button size="sm" variant="ghost" asChild>
-                        <a href={`mailto:${p.email}`} aria-label={t('portal.emailPerson', { name: p.name })}>
-                          <Mail className="h-4 w-4" aria-hidden="true" />
-                        </a>
-                      </Button>
                     </div>
                   </li>
                 ))}
@@ -942,7 +1215,24 @@ export function ClientPortalHome() {
               }
             />
             {!opsDay ? (
-              <p className="mt-3 text-sm text-silver/60">{t('portal.opsNone')}</p>
+              <div className="mt-3 text-sm text-silver/70" data-testid="portal-ops-plan">
+                {data.opsPlan?.next ? (
+                  <p>
+                    {t('portal.opsNextUp', {
+                      department: data.opsPlan.next.department,
+                      window: data.opsPlan.next.windowLabel,
+                      time: fmtTimeTz(data.opsPlan.next.startsAt, storeTz),
+                    })}
+                  </p>
+                ) : data.opsPlan?.everRan ? (
+                  <p>{t('portal.opsNothingYet')}</p>
+                ) : (
+                  <p className="text-silver/60">{t('portal.opsNone')}</p>
+                )}
+                {(data.opsPlan?.missedToday ?? 0) > 0 && (
+                  <p className="mt-1 text-xs text-warning">{t('portal.opsMissedToday', { count: data.opsPlan?.missedToday ?? 0 })}</p>
+                )}
+              </div>
             ) : (
               <>
                 <div className="mt-3 flex items-center gap-4">
@@ -1196,7 +1486,6 @@ export function ClientPortalHome() {
                 </div>
               </div>
             )}
-            <p className="mt-3 text-2xs text-silver/50">{t('portal.clFootnote')}</p>
           </CardContent>
         </Card>
 
@@ -1217,67 +1506,23 @@ export function ClientPortalHome() {
           </CardContent>
         </Card>
 
-        {/* ---- Statements ------------------------------------------------ */}
-        <Card className="animate-enter xl:col-span-4" style={enterStagger(9)}>
+        {/* ---- Statements: money, due dates, how late — one row kit with History ---- */}
+        <Card className="animate-enter scroll-mt-20 xl:col-span-4" style={enterStagger(9)} id="portal-statements">
           <CardContent>
-            <SectionTitle size="sm" className="mb-0" title={t('portal.statements')} />
+            <SectionTitle size="sm" className="mb-0" title={t('portal.statements')} trailing={<OpenBalance balance={data.balance} />} />
             {data.statements.length === 0 ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.stNone')}</p>
             ) : (
               <ul className="mt-3 divide-y divide-navy-secondary/60">
-                {data.statements.slice(0, 4).map((s) => {
-                  const amount = data.store && s.storeAmount !== null ? s.storeAmount : s.amount;
-                  const hours = data.store && s.storeHours !== null ? s.storeHours : s.hours;
-                  return (
-                    <li key={s.id} className="py-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-white tabular-nums">
-                            {s.number !== null ? t('portal.stNumber', { n: fmtStatementNo(s.number) }) : t('portal.statements')}
-                            {data.store && s.storeAmount !== null && (
-                              <span className="ml-1.5 text-2xs font-normal text-silver/50">
-                                {t('portal.stStoreShare')}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-xs text-silver/70 tabular-nums">
-                            {fmtDate(parseYmd(s.periodStart))} – {fmtDate(parseYmd(s.periodEnd))}
-                            {hours !== null && ` · ${fmtHours(hours)}`}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          {amount !== null && (
-                            <span className="text-sm font-semibold tabular-nums text-white">
-                              {fmtMoney(amount)}
-                            </span>
-                          )}
-                          {s.paidAt ? (
-                            <Badge variant="success" size="sm">{t('portal.paidOn', { date: fmtDate(s.paidAt) })}</Badge>
-                          ) : (
-                            <Badge variant="pending" size="sm">{t('portal.due')}</Badge>
-                          )}
-                        </div>
-                      </div>
-                      <div className="mt-1.5 flex flex-wrap gap-1 print:hidden">
-                        {s.pdfUrl !== null && (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            onClick={() => {
-                              const url = s.pdfUrl;
-                              if (url) {
-                                void downloadStatementFile(
-                                  url,
-                                  `statement-${s.periodStart}.pdf`,
-                                );
-                              }
-                            }}
-                          >
-                            <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                            {t('portal.stPdf')}
-                          </Button>
-                        )}
-                        {isPortal && (
+                {data.statements.slice(0, 4).map((s) => (
+                  <StatementRow
+                    key={s.id}
+                    s={s}
+                    inStore={!!data.store}
+                    actions={
+                      s.paidAt ? null : (
+                      <>
+                        {canAct && (
                           <Button
                             size="xs"
                             variant="ghost"
@@ -1296,14 +1541,15 @@ export function ClientPortalHome() {
                         )}
                         <ReviewedMark
                           reviewed={s.reviewed}
-                          onMark={isPortal ? () => void markReviewed('STATEMENT', s.id) : null}
+                          onMark={canAct ? () => void markReviewed('STATEMENT', s.id) : null}
                           t={t}
                           busy={marking === `STATEMENT:${s.id}`}
                         />
-                      </div>
-                    </li>
-                  );
-                })}
+                      </>
+                      )
+                    }
+                  />
+                ))}
               </ul>
             )}
           </CardContent>
@@ -1311,7 +1557,8 @@ export function ClientPortalHome() {
       </div>
 
       {/* ---- Requests: the client in the loop -------------------------- */}
-      {isPortal && <PortalRequests prefill={prefill} refetchMs={180_000} />}
+      {/* The request desk is a client account's own (a region account reads; the API refuses it). */}
+      {canAct && <PortalRequests prefill={prefill} refetchMs={180_000} />}
     </HomeTemplate>
   );
 }

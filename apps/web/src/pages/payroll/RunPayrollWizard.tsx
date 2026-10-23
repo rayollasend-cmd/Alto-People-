@@ -56,7 +56,7 @@ import {
 } from '@/lib/payrollApi';
 import { getPayScheduleCalendarForFlow, listPaySchedulesForFlow, PAY_SCHEDULES_FLOW_KEY, type FlowSchedule } from '@/lib/payScheduleFlowApi';
 import { ApiError } from '@/lib/api';
-import { EXCEPTION_COPY, ExceptionStrip, SeverityDot } from './PayrollExceptionStrip';
+import { EXCEPTION_COPY, ExceptionStrip, SeverityDot, fixHref } from './PayrollExceptionStrip';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -103,6 +103,8 @@ interface Props {
    * the generic "New run" entry points, which keep the full flow.
    */
   seed?: RunPayrollSeed | null;
+  /** The run type an unseeded open starts on: the header's "Off-cycle run" opens on Off-cycle. */
+  initialKind?: RunKind;
 }
 
 type Step = 1 | 2 | 3 | 4;
@@ -114,9 +116,17 @@ const STEP_TITLES: Record<Step, string> = {
   4: 'Approve & submit',
 };
 
+/** The step rail's labels: short enough that four fit the dialog (the long ones crossed its edge at 1440). */
+const STEP_RAIL: Record<Step, string> = {
+  1: 'Schedule',
+  2: 'Hours',
+  3: 'Wages',
+  4: 'Approve',
+};
+
 type RunKind = 'REGULAR' | 'OFF_CYCLE';
 
-export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props) {
+export function RunPayrollWizard({ open, onOpenChange, onCreated, seed, initialKind = 'REGULAR' }: Props) {
   const [step, setStep] = useState<Step>(1);
   const [runKind, setRunKind] = useState<RunKind>('REGULAR');
   const schedulesQuery = useQuery({
@@ -162,7 +172,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
   // or the unseeded "New run" button — starts fresh.
   const seedKey = seed
     ? `${seed.scheduleId}|${seed.periodStart}|${seed.periodEnd}|${seed.missedPayday ? 'missed' : ''}`
-    : '';
+    : `|${initialKind}`;
   // Paying a missed payday's hours: an off-cycle run built from the period's approved time.
   const missedPayday = !!seed?.missedPayday;
   const ledgerRun = missedPayday ? ({ kind: 'OFF_CYCLE', includesApprovedTime: true } as const) : {};
@@ -176,7 +186,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     if (sessionKeyRef.current === seedKey) return; // accidental close → resume as-is
     sessionKeyRef.current = seedKey;
     setStep(1);
-    setRunKind('REGULAR');
+    setRunKind(seed ? 'REGULAR' : initialKind);
     setNotes('');
     setSubmitting(false);
     setPreview(null);
@@ -185,8 +195,10 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     setOverrideBlocking(false);
     // One schedule in the company: it is the one. (Seeded runs keep theirs.)
     setScheduleId(seed?.scheduleId ?? (schedules?.length === 1 ? schedules[0]!.id : ''));
-    setPeriodStart(seed?.periodStart ?? '');
-    setPeriodEnd(seed?.periodEnd ?? '');
+    // An off-cycle run starts on today's date (editable), as choosing Off-cycle does.
+    const offCycleStart = !seed && initialKind === 'OFF_CYCLE' ? ymdLocal() : '';
+    setPeriodStart(seed?.periodStart ?? offCycleStart);
+    setPeriodEnd(seed?.periodEnd ?? offCycleStart);
     seededPeriodRef.current = !!seed;
     periodDefaultedForRef.current = '';
     setQuickReview(!!seed);
@@ -214,6 +226,26 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     [flowQuery.data],
   );
   const activeSchedules = useMemo(() => (schedules ?? []).filter((s) => s.isActive), [schedules]);
+  // One schedule: it is the choice — picked for the person (F500 G3), never over a seed or their own pick.
+  useEffect(() => {
+    if (!open || seed || runKind !== 'REGULAR' || scheduleId || activeSchedules.length !== 1) return;
+    setScheduleId(activeSchedules[0]!.id);
+    // seed is read only to skip a seeded open; seedKey tracks it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, runKind, scheduleId, activeSchedules]);
+  // Who on the chosen schedule has no hourly rate on file (the scan's MISSING_COMP_RECORD), so step 1
+  // says "N people have no rate on file → Fix" instead of asking everyone for a fallback rate.
+  const noRateQuery = useQuery({
+    queryKey: ['payroll', 'exceptions', 'no-rate', scheduleId, activeSchedule?.clientId ?? null, periodStart, periodEnd],
+    queryFn: () => listPayrollExceptions({ clientId: activeSchedule?.clientId ?? null, periodStart, periodEnd, payrollScheduleId: scheduleId }),
+    enabled: open && runKind === 'REGULAR' && !!scheduleId && !!periodStart && !!periodEnd,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const noRate = useMemo(
+    () => (noRateQuery.data?.exceptions ?? []).filter((e) => (e.kind as string) === 'MISSING_COMP_RECORD'),
+    [noRateQuery.data],
+  );
   const flow = scheduleId ? (flowById.get(scheduleId) ?? null) : null;
   const peopleOnSchedule: number | null = !scheduleId ? null : flow ? flow.people : (activeSchedule?.associateCount ?? null);
   const calendarQuery = useQuery({
@@ -531,20 +563,21 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
           <DialogDescription>
             {quickReview
               ? 'Review & create'
-              : `${STEP_TITLES[step]} (${step} of 4)`}
+              : `Step ${step} of 4: ${STEP_TITLES[step]}`}
           </DialogDescription>
         </DialogHeader>
 
+        {/* The rail on wider screens; a phone reads "Step 1 of 4: …" above instead. */}
         {!quickReview && (
           <Stepper
             current={step}
             steps={[
-              { label: STEP_TITLES[1] },
-              { label: STEP_TITLES[2] },
-              { label: STEP_TITLES[3] },
-              { label: STEP_TITLES[4] },
+              { label: STEP_RAIL[1] },
+              { label: STEP_RAIL[2] },
+              { label: STEP_RAIL[3] },
+              { label: STEP_RAIL[4] },
             ]}
-            className="mb-4"
+            className="mb-4 hidden sm:flex"
           />
         )}
 
@@ -590,6 +623,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
               setPeriodEnd={setPeriodEnd}
               defaultRate={defaultRate}
               setDefaultRate={setDefaultRate}
+              noRate={noRate}
             />
           )}
           {!quickReview && step === 2 && (
@@ -768,8 +802,11 @@ function Step1(props: {
   setPeriodEnd: (v: string) => void;
   defaultRate: string;
   setDefaultRate: (v: string) => void;
+  /** People on the schedule with no hourly rate on file (the scan's MISSING_COMP_RECORD). */
+  noRate?: PayrollException[];
 }) {
   const offCycle = props.runKind === 'OFF_CYCLE';
+  const noRate = props.noRate ?? [];
   const term = useTerm();
   const today = ymdLocal();
   const [customDates, setCustomDates] = useState(false);
@@ -788,13 +825,13 @@ function Step1(props: {
               key={k}
               className={cn(
                 'flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-sm transition-colors',
-                props.runKind === k ? 'border-gold bg-gold/5' : 'border-navy-secondary hover:border-silver/40',
+                props.runKind === k ? 'border-gold bg-gold/5' : 'border-line hover:border-ink-muted/40',
               )}
             >
               <input type="radio" name="run-kind" className="mt-1 accent-gold" checked={props.runKind === k} onChange={() => props.onRunKindChange(k)} />
               <span>
                 <span className="block font-medium text-ink">{label}</span>
-                <span className="block text-xs text-silver/80">{hint}</span>
+                <span className="block text-xs text-ink-muted">{hint}</span>
               </span>
             </label>
           ))}
@@ -805,11 +842,11 @@ function Step1(props: {
         <legend className="mb-1.5 text-sm font-medium text-ink">Pay schedule</legend>
         {props.loadingSchedules ? (
           <div className="space-y-2">
-            <div className="h-16 animate-pulse rounded-lg bg-navy-secondary/40" />
-            <div className="h-16 animate-pulse rounded-lg bg-navy-secondary/40" />
+            <div className="h-16 animate-pulse rounded-lg bg-surface-raised" />
+            <div className="h-16 animate-pulse rounded-lg bg-surface-raised" />
           </div>
         ) : props.schedules.length === 0 ? (
-          <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-silver">
+          <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-ink-muted">
             No pay schedules yet. A regular run pays the people on a schedule —{' '}
             <Link to="/payroll/schedules" className="text-gold underline underline-offset-2">set one up</Link>.
           </div>
@@ -863,7 +900,7 @@ function Step1(props: {
                     key={key}
                     className={cn(
                       'flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm transition-colors',
-                      key === periodKey ? 'border-gold bg-gold/5' : 'border-navy-secondary hover:border-silver/40',
+                      key === periodKey ? 'border-gold bg-gold/5' : 'border-line hover:border-ink-muted/40',
                     )}
                   >
                     <input
@@ -878,7 +915,7 @@ function Step1(props: {
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block tabular-nums text-ink">{fmtPeriod(p.periodStart, p.periodEnd)}</span>
-                      <span className="block text-xs text-silver/80">
+                      <span className="block text-xs text-ink-muted">
                         Paid {fmtPayday(p.payDate)}
                         {p.adjustedFor && ` (moved earlier for ${p.adjustedFor})`}
                       </span>
@@ -894,7 +931,7 @@ function Step1(props: {
             </div>
           )}
           {!offCycle && props.scheduleId && props.periodsLoading && (
-            <div className="h-24 animate-pulse rounded-lg bg-navy-secondary/40" />
+            <div className="h-24 animate-pulse rounded-lg bg-surface-raised" />
           )}
           {showDateInputs && !(!offCycle && props.periodsLoading) && (
             <div className="grid grid-cols-2 gap-3">
@@ -914,22 +951,49 @@ function Step1(props: {
         </fieldset>
       )}
 
+      {/* The exception, not a field everyone fills: who has no rate, and where to fix it. */}
+      {!offCycle && noRate.length > 0 && (
+        <div role="status" className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm" data-testid="wizard-no-rate">
+          <p className="text-ink">
+            {noRate.length === 1 ? '1 person has no hourly rate on file.' : `${noRate.length} people have no hourly rate on file.`}{' '}
+            <span className="text-ink-muted">{`They'd be paid the fallback rate of $${props.defaultRate || '0'}/hour (under Advanced).`}</span>
+          </p>
+          <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            {noRate.slice(0, 5).map((e) => (
+              <li key={e.associateId}>
+                <Link to={fixHref(e) ?? `/people/${e.associateId}?tab=compensation`} className="text-accent underline underline-offset-2">
+                  {`Fix ${e.associateName}`}
+                </Link>
+              </li>
+            ))}
+            {noRate.length > 5 && <li className="text-ink-muted">{`and ${noRate.length - 5} more`}</li>}
+          </ul>
+        </div>
+      )}
       {!offCycle && (
-        <Field
-          label="Default hourly rate"
-          hint={`Falls back to this only for ${term('workers').toLowerCase()} without an hourly rate set on their Compensation record. Everyone with a rate on file is paid that rate.`}
-        >
-          {(p) => (
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              value={props.defaultRate}
-              onChange={(e) => props.setDefaultRate(e.target.value)}
-              {...p}
-            />
-          )}
-        </Field>
+        <details className="group text-sm">
+          <summary className="cursor-pointer list-none text-ink-muted [&::-webkit-details-marker]:hidden">
+            <span className="underline underline-offset-2">Advanced</span>
+            <span className="ml-2 text-xs">{`Fallback hourly rate: $${props.defaultRate || '0'}`}</span>
+          </summary>
+          <div className="mt-2">
+            <Field
+              label="Fallback hourly rate"
+              hint={`Used only for ${term('workers').toLowerCase()} with no hourly rate on their compensation record. Everyone with a rate on file is paid that rate.`}
+            >
+              {(p) => (
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={props.defaultRate}
+                  onChange={(e) => props.setDefaultRate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+          </div>
+        </details>
       )}
     </div>
   );
@@ -959,15 +1023,16 @@ function ScheduleChoice({
   return (
     <label
       className={cn(
-        'flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors',
-        selected ? 'border-gold bg-gold/5' : 'border-navy-secondary hover:border-silver/40',
+        // min-w-0: the card shrinks to the sheet instead of bleeding past its edge on a phone.
+        'flex min-w-0 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors',
+        selected ? 'border-gold bg-gold/5' : 'border-line hover:border-ink-muted/40',
       )}
     >
       <input type="radio" name="run-schedule" className="mt-1 accent-gold" checked={selected} onChange={onSelect} aria-label={title} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-ink">{title}</span>
+        <span className="block break-words text-sm font-medium text-ink">{title}</span>
         {lines.map((l) => (
-          <span key={l} className="block text-xs text-silver/80">
+          <span key={l} className="block break-words text-xs text-ink-muted">
             {l}
           </span>
         ))}
@@ -978,7 +1043,7 @@ function ScheduleChoice({
             <Users className="h-3.5 w-3.5" aria-hidden="true" />
             {people}
           </span>
-          <span className="block text-2xs text-silver/70">{people === 1 ? 'person' : 'people'}</span>
+          <span className="block text-2xs text-ink-muted">{people === 1 ? 'person' : 'people'}</span>
           {blocked > 0 && <span className="block text-2xs text-alert">{blocked} blocked</span>}
         </span>
       )}
@@ -1061,7 +1126,7 @@ function RunTruthPanel({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
           <span className="min-w-0 flex-1">
             <span className="block font-medium text-ink">{EMPTY_SCHEDULE}</span>
-            <span className="block text-xs text-silver/80">A run pays only the people on its schedule. Add people to {truth.scheduleName ?? 'it'}, then run payroll.</span>
+            <span className="block text-xs text-ink-muted">A run pays only the people on its schedule. Add people to {truth.scheduleName ?? 'it'}, then run payroll.</span>
           </span>
           <Link to={withReturn(`/payroll/schedules/${truth.scheduleId}`, back)} className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2">
             <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1076,7 +1141,7 @@ function RunTruthPanel({
             <span className="block font-medium text-ink">
               {truth.people} {truth.people === 1 ? 'person is' : 'people are'} on this schedule, but none has approved time in this period
             </span>
-            <span className="block text-xs text-silver/80">Approve their time for {fmtPeriod(periodStart, periodEnd)}, or check the period.</span>
+            <span className="block text-xs text-ink-muted">Approve their time for {fmtPeriod(periodStart, periodEnd)}, or check the period.</span>
           </span>
           <Link to={withReturn(`/time-attendance?tab=queue&from=${periodStart}&to=${periodEnd}`, back)} className="text-xs text-gold underline underline-offset-2">
             Approve time
@@ -1084,7 +1149,7 @@ function RunTruthPanel({
         </div>
       )}
       {truth.people === null && preview && preview.items.length === 0 && (
-        <div className="rounded-lg border border-silver/15 bg-black/30 p-3 text-xs text-silver/80">
+        <div className="rounded-lg border border-line bg-surface-raised p-3 text-xs text-ink-muted">
           No approved time falls in this period, so there is nothing to pay.
         </div>
       )}
@@ -1105,10 +1170,10 @@ function RunTruthPanel({
 
 function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="min-w-0 rounded-lg border border-navy-secondary px-3 py-2">
-      <div className="text-2xs uppercase tracking-widest text-silver/70">{label}</div>
+    <div className="min-w-0 rounded-lg border border-line px-3 py-2">
+      <div className="text-2xs uppercase tracking-widest text-ink-muted">{label}</div>
       <div className="mt-0.5 break-words text-sm text-ink tabular-nums">{value}</div>
-      {hint && <div className="break-words text-2xs text-silver/70">{hint}</div>}
+      {hint && <div className="break-words text-2xs text-ink-muted">{hint}</div>}
     </div>
   );
 }
@@ -1145,7 +1210,7 @@ function PreviewStateBanner({
 }) {
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-xs text-silver/70 py-3">
+      <div className="flex items-center gap-2 text-xs text-ink-muted py-3">
         <Loader2 className="h-4 w-4 animate-spin" />
         Computing projection from approved time entries…
       </div>
@@ -1157,7 +1222,7 @@ function PreviewStateBanner({
         <AlertCircle className="h-4 w-4 text-alert shrink-0 mt-0.5" />
         <div className="flex-1">
           <div className="text-alert font-medium">Preview failed</div>
-          <div className="text-silver/70 mt-0.5">{error}</div>
+          <div className="text-ink-muted mt-0.5">{error}</div>
         </div>
         <button
           type="button"
@@ -1171,7 +1236,7 @@ function PreviewStateBanner({
   }
   if (emptyMessage) {
     return (
-      <div className="rounded border border-silver/15 bg-black/30 p-3 text-xs text-silver/70">
+      <div className="rounded border border-line bg-surface-raised p-3 text-xs text-ink-muted">
         {emptyMessage}
       </div>
     );
@@ -1216,12 +1281,12 @@ function PaycheckCard({
   return (
     <div
       className={cn(
-        'rounded border bg-black/30 transition-colors',
+        'rounded border bg-surface-raised transition-colors',
         blockingCount > 0
           ? 'border-alert/40'
           : exceptions.length > 0
           ? 'border-warning/30'
-          : 'border-silver/15 hover:border-silver/30'
+          : 'border-line hover:border-ink-muted/40'
       )}
     >
       <button
@@ -1232,13 +1297,13 @@ function PaycheckCard({
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {expanded ? (
-            <ChevronDown className="h-4 w-4 text-silver/70 shrink-0" />
+            <ChevronDown className="h-4 w-4 text-ink-muted shrink-0" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-silver/70 shrink-0" />
+            <ChevronRight className="h-4 w-4 text-ink-muted shrink-0" />
           )}
           <div className="min-w-0">
-            <div className="text-sm text-white truncate">{item.associateName}</div>
-            <div className="text-xs2 text-silver/70 truncate">
+            <div className="text-sm text-ink truncate">{item.associateName}</div>
+            <div className="text-xs2 text-ink-muted truncate">
               {item.taxState ?? '—'} · {item.payFrequency.toLowerCase()}
               {item.overtimeHours > 0 && (
                 <> · <span className="text-gold">{item.overtimeHours.toFixed(1)}h OT</span></>
@@ -1289,15 +1354,15 @@ function PaycheckCard({
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-silver/10 px-3 py-3 text-xs2 space-y-3">
+        <div className="border-t border-line px-3 py-3 text-xs2 space-y-3">
           {variant === 'hours' ? (
             <HoursDrillDown item={item} />
           ) : (
             <TaxDrillDown item={item} />
           )}
           {exceptions.length > 0 && (
-            <div className="border-t border-silver/10 pt-2">
-              <div className="text-2xs uppercase tracking-widest text-silver/70 mb-1">
+            <div className="border-t border-line pt-2">
+              <div className="text-2xs uppercase tracking-widest text-ink-muted mb-1">
                 Exceptions
               </div>
               <ul className="space-y-1">
@@ -1308,8 +1373,8 @@ function PaycheckCard({
                   >
                     <SeverityDot severity={e.severity} />
                     <div>
-                      <span className="text-silver">{EXCEPTION_COPY[e.kind]?.label ?? e.kind}</span>
-                      <span className="text-silver/70"> — {e.message}</span>
+                      <span className="text-ink-muted">{EXCEPTION_COPY[e.kind]?.label ?? e.kind}</span>
+                      <span className="text-ink-muted"> — {e.message}</span>
                     </div>
                   </li>
                 ))}
@@ -1333,10 +1398,10 @@ function CardStat({
 }) {
   return (
     <div>
-      <div className="text-2xs uppercase tracking-widest text-silver/70">
+      <div className="text-2xs uppercase tracking-widest text-ink-muted">
         {label}
       </div>
-      <div className={cn('tabular-nums text-sm', highlight ? 'text-gold' : 'text-white')}>
+      <div className={cn('tabular-nums text-sm', highlight ? 'text-gold' : 'text-ink')}>
         {value}
       </div>
     </div>
@@ -1377,14 +1442,14 @@ function InfoTip({ text }: { text: string }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label="What is this?"
-        className="inline-flex items-center justify-center p-1 coarse:p-2 -m-1 coarse:-m-2 text-silver/70 hover:text-silver focus:outline-none focus-visible:text-gold"
+        className="inline-flex items-center justify-center p-1 coarse:p-2 -m-1 coarse:-m-2 text-ink-muted hover:text-ink-muted focus:outline-none focus-visible:text-gold"
       >
         <HelpCircle className="h-3 w-3" />
       </button>
       {open && (
         <span
           role="note"
-          className="absolute left-1/2 top-full z-50 mt-1.5 block w-64 max-w-[80vw] -translate-x-1/2 rounded-md border border-navy-secondary bg-navy p-2.5 text-left text-xs2 font-normal leading-relaxed text-silver normal-case tracking-normal elev-3"
+          className="absolute left-1/2 top-full z-50 mt-1.5 block w-64 max-w-[80vw] -translate-x-1/2 rounded-md border border-line bg-navy p-2.5 text-left text-xs2 font-normal leading-relaxed text-ink-muted normal-case tracking-normal elev-3"
         >
           {text}
         </span>
@@ -1516,10 +1581,10 @@ function TaxDrillDown({ item }: { item: PayrollRunPreviewItem }) {
             <span>
               Van rides ({item.rideCharges.rides} rides, {item.rideCharges.noShows} missed)
               {item.rideCharges.deferred > 0 && (
-                <span className="ml-2 text-xs text-silver/60">+{fmtMoney(item.rideCharges.deferred)} deferred by the minimum-wage guard</span>
+                <span className="ml-2 text-xs text-ink-subtle">+{fmtMoney(item.rideCharges.deferred)} deferred by the minimum-wage guard</span>
               )}
               {item.rideCharges.unauthorized > 0 && (
-                <span className="ml-2 text-xs text-silver/60">{fmtMoney(item.rideCharges.unauthorized)} not authorized — not deducted</span>
+                <span className="ml-2 text-xs text-ink-subtle">{fmtMoney(item.rideCharges.unauthorized)} not authorized — not deducted</span>
               )}
             </span>
           }
@@ -1556,12 +1621,12 @@ function DrillRow({
 }) {
   return (
     <div className="flex justify-between gap-2">
-      <span className="text-silver/70 inline-flex items-center">{label}</span>
+      <span className="text-ink-muted inline-flex items-center">{label}</span>
       <span
         className={cn(
           'tabular-nums',
           bold ? 'font-medium' : '',
-          accent ? 'text-gold' : 'text-white'
+          accent ? 'text-gold' : 'text-ink'
         )}
       >
         {amount}
@@ -1593,7 +1658,7 @@ function Step2({
         <Pill icon={<Calendar className="h-3.5 w-3.5" />}>
           {fmtPeriod(periodStart, periodEnd)} · off-cycle
         </Pill>
-        <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-silver/80">
+        <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-ink-muted">
           Nothing to review yet — off-cycle runs don't pull hours from time
           entries. The run is created empty; paychecks come from add-on earning
           lines (bonus, severance, retro pay) you add on the run page after
@@ -1615,7 +1680,7 @@ function Step2({
 
       <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} error={exceptionsError} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} period={{ start: periodStart, end: periodEnd, ...runCut }} onTimeApproved={onRetry} />
 
-      <p className="text-silver/70 text-xs">
+      <p className="text-ink-muted text-xs">
         Hours come from <strong>APPROVED</strong> time entries in this period.
         PENDING / REJECTED entries are excluded — fix those in <strong>Time</strong> if a paystub looks short.
       </p>
@@ -1669,7 +1734,7 @@ function Step3({
   if (offCycle) {
     return (
       <div className="space-y-3 text-sm">
-        <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-silver/80">
+        <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-ink-muted">
           No wages or deductions to review yet — this off-cycle run starts
           empty. Taxes and deductions are computed when you add earning lines
           on the run page after creating.
@@ -1719,15 +1784,15 @@ function Step3({
             ))}
           </div>
 
-          <p className="text-2xs text-silver/70">
+          <p className="text-2xs text-ink-muted">
             Withholding follows IRS Pub 15-T 2026 and each state’s 2026 method; a state without a reviewed method blocks the run instead of guessing.
           </p>
         </>
       )}
 
       {truth.payDate && (
-        <p className="text-xs text-silver/70">
-          Paid on <strong className="text-silver/80">{fmtPayday(truth.payDate)}</strong>.
+        <p className="text-xs text-ink-muted">
+          Paid on <strong className="text-ink-muted">{fmtPayday(truth.payDate)}</strong>.
         </p>
       )}
     </div>
@@ -1832,8 +1897,8 @@ function QuickReview({
           </div>
 
           {truth.payDate && (
-            <p className="text-xs text-silver/70">
-              Paid on <strong className="text-silver/80">{fmtPayday(truth.payDate)}</strong>.
+            <p className="text-xs text-ink-muted">
+              Paid on <strong className="text-ink-muted">{fmtPayday(truth.payDate)}</strong>.
             </p>
           )}
         </>
@@ -1858,11 +1923,11 @@ function QuickReview({
 
 function Stat({ label, value, highlight }: { label: React.ReactNode; value: string; highlight?: boolean }) {
   return (
-    <div className={cn('rounded border border-silver/15 bg-black/30 px-3 py-2', highlight && 'border-gold/40 bg-gold/5')}>
-      <div className={cn('text-2xs uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-silver/70')}>
+    <div className={cn('rounded border border-line bg-surface-raised px-3 py-2', highlight && 'border-gold/40 bg-gold/5')}>
+      <div className={cn('text-2xs uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-ink-muted')}>
         {label}
       </div>
-      <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-white')}>{value}</div>
+      <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-ink')}>{value}</div>
     </div>
   );
 }
@@ -1917,7 +1982,7 @@ function Step4({
           <FileText className="h-4 w-4" />
           <span className="font-medium uppercase tracking-wide">Ready to create</span>
         </div>
-        <ul className="space-y-1 text-silver/80">
+        <ul className="space-y-1 text-ink-muted">
           <li>• Period {fmtPeriod(periodStart, periodEnd)}</li>
           {offCycle && (
             <li>
@@ -1942,42 +2007,42 @@ function Step4({
       </div>
 
       {preview && taxBreakdown && (
-        <div className="rounded border border-silver/20 bg-black/30 p-3 text-xs">
-          <div className="font-medium uppercase tracking-wide text-silver/80 mb-2">
+        <div className="rounded border border-line bg-surface-raised p-3 text-xs">
+          <div className="font-medium uppercase tracking-wide text-ink-muted mb-2">
             Withholding breakdown (employee side)
           </div>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
             <div>
-              <dt className="text-silver/70">Federal income tax</dt>
-              <dd className="text-silver">{fmtMoney(taxBreakdown.fit)}</dd>
+              <dt className="text-ink-muted">Federal income tax</dt>
+              <dd className="text-ink-muted">{fmtMoney(taxBreakdown.fit)}</dd>
             </div>
             <div>
-              <dt className="text-silver/70">FICA (6.2%)</dt>
-              <dd className="text-silver">{fmtMoney(taxBreakdown.fica)}</dd>
+              <dt className="text-ink-muted">FICA (6.2%)</dt>
+              <dd className="text-ink-muted">{fmtMoney(taxBreakdown.fica)}</dd>
             </div>
             <div>
-              <dt className="text-silver/70">Medicare (1.45%)</dt>
-              <dd className="text-silver">{fmtMoney(taxBreakdown.medicare)}</dd>
+              <dt className="text-ink-muted">Medicare (1.45%)</dt>
+              <dd className="text-ink-muted">{fmtMoney(taxBreakdown.medicare)}</dd>
             </div>
             <div>
-              <dt className="text-silver/70">State income tax</dt>
-              <dd className="text-silver">{fmtMoney(taxBreakdown.sit)}</dd>
+              <dt className="text-ink-muted">State income tax</dt>
+              <dd className="text-ink-muted">{fmtMoney(taxBreakdown.sit)}</dd>
             </div>
             <div>
-              <dt className="text-silver/70">Pre-tax deductions</dt>
-              <dd className="text-silver">{fmtMoney(taxBreakdown.preTax)}</dd>
+              <dt className="text-ink-muted">Pre-tax deductions</dt>
+              <dd className="text-ink-muted">{fmtMoney(taxBreakdown.preTax)}</dd>
             </div>
             <div>
-              <dt className="text-silver/70">Post-tax deductions</dt>
-              <dd className="text-silver">{fmtMoney(taxBreakdown.postTax)}</dd>
+              <dt className="text-ink-muted">Post-tax deductions</dt>
+              <dd className="text-ink-muted">{fmtMoney(taxBreakdown.postTax)}</dd>
             </div>
             <div>
-              <dt className="text-silver/70">Garnishments</dt>
-              <dd className="text-silver">{fmtMoney(preview.totals.totalGarnishments)}</dd>
+              <dt className="text-ink-muted">Garnishments</dt>
+              <dd className="text-ink-muted">{fmtMoney(preview.totals.totalGarnishments)}</dd>
             </div>
             <div>
-              <dt className="text-silver/70">Total employee tax</dt>
-              <dd className="text-silver font-semibold">
+              <dt className="text-ink-muted">Total employee tax</dt>
+              <dd className="text-ink-muted font-semibold">
                 {fmtMoney(preview.totals.totalEmployeeTax)}
               </dd>
             </div>
@@ -1993,13 +2058,13 @@ function Step4({
               {blocking} blocking {blocking === 1 ? 'issue' : 'issues'}
             </span>
           </div>
-          <p className="text-silver/70">
+          <p className="text-ink-muted">
             Blocking issues mean a paycheck will be wrong (e.g. no W-4 to
             withhold against). Resolve them in the previous step, OR
             acknowledge below to proceed anyway — those associates will be
             included in the run with degraded math.
           </p>
-          <label className="flex items-start gap-2 cursor-pointer text-silver/80">
+          <label className="flex items-start gap-2 cursor-pointer text-ink-muted">
             <input
               type="checkbox"
               className="mt-0.5"
@@ -2030,7 +2095,7 @@ function Step4({
 
 function Pill({ children, icon }: { children: React.ReactNode; icon?: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-silver/20 bg-black/30 px-2.5 py-1 text-xs text-silver/80">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-raised px-2.5 py-1 text-xs text-ink-muted">
       {icon}
       {children}
     </span>

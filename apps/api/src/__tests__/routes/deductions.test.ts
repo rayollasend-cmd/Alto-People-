@@ -359,6 +359,46 @@ describe('benefit carriers: EDI 834 full and change files', () => {
   });
 });
 
+describe('benefit carriers: how each feed is doing (F500 G6)', () => {
+  it('people in the feed, changes waiting since the last file, and the last file’s delivery — exact, per carrier', async () => {
+    const { a } = await admin();
+    const client = await createClient();
+    const ppo = await prisma.benefitsPlan.create({ data: { clientId: client.id, kind: 'HEALTH_MEDICAL', name: 'PPO 500' } });
+    const dental = await prisma.benefitsPlan.create({ data: { clientId: client.id, kind: 'DENTAL', name: 'Dental' } });
+    const other = await prisma.benefitsPlan.create({ data: { clientId: client.id, kind: 'VISION', name: 'Vision' } });
+    const ann = await person('Ann', 'Lee', '111223333');
+    const bo = await person('Bo', 'Ray', '222334444');
+    const cy = await person('Cy', 'Day', '333445555');
+    const enroll = (associateId: string, planId: string, extra: Record<string, unknown> = {}) =>
+      prisma.benefitsEnrollment.create({ data: { associateId, planId, electedAmountCentsPerPeriod: 5000, effectiveDate: new Date('2026-01-01'), ...extra } });
+    await enroll(ann.id, ppo.id);
+    await enroll(ann.id, dental.id); // the same person on two plans counts once
+    await enroll(bo.id, ppo.id);
+    await enroll(cy.id, ppo.id, { terminationDate: new Date('2025-12-31'), effectiveDate: new Date('2025-01-01') }); // ended: not in the feed
+    await enroll(cy.id, other.id); // another carrier's plan
+    const blue = (await a.post('/benefit-carriers').send({ name: 'Blue Cross', receiverId: 'BCBSTX', receiverQualifier: 'ZZ', senderId: 'ALTOHR', senderQualifier: 'ZZ', usageIndicator: 'T', transport: 'DOWNLOAD' })).body.carrier.id;
+    const eye = (await a.post('/benefit-carriers').send({ name: 'Eye Co', receiverId: 'EYECO', receiverQualifier: 'ZZ', senderId: 'ALTOHR', senderQualifier: 'ZZ', usageIndicator: 'T', transport: 'DOWNLOAD' })).body.carrier.id;
+    await a.put(`/benefit-carriers/${blue}/plans`).send({ plans: [{ planId: ppo.id }, { planId: dental.id }] });
+
+    const before = (await a.get('/benefit-carriers')).body.carriers as Array<{ id: string; health: { people: number; changesWaiting: number | null; lastFile: unknown } }>;
+    expect(before.find((c) => c.id === blue)!.health).toEqual({ people: 2, changesWaiting: null, lastFile: null });
+    expect(before.find((c) => c.id === eye)!.health).toEqual({ people: 0, changesWaiting: null, lastFile: null });
+
+    const full = (await a.post(`/benefit-carriers/${blue}/files`).send({ mode: 'FULL' })).body.file;
+    // One change after the file: Bo's PPO election.
+    await new Promise((r) => setTimeout(r, 20));
+    await prisma.benefitsEnrollment.updateMany({ where: { associateId: bo.id, planId: ppo.id }, data: { electedAmountCentsPerPeriod: 6000 } });
+    const after = (await a.get('/benefit-carriers')).body.carriers.find((c: { id: string }) => c.id === blue).health;
+    expect(after).toMatchObject({ people: 2, changesWaiting: 1, lastFile: { mode: 'FULL', status: 'GENERATED', controlNumber: full.controlNumber, memberCount: 2, sentAt: null, error: null } });
+    // A failed send is still the last file, with its error.
+    const send = await a.post(`/benefit-files/${full.id}/send`);
+    expect(send.status).toBe(502);
+    const failed = (await a.get('/benefit-carriers')).body.carriers.find((c: { id: string }) => c.id === blue).health.lastFile;
+    expect(failed.status).toBe('FAILED');
+    expect(failed.error).toMatch(/download/);
+  });
+});
+
 describe('sealing payee bank details', () => {
   it('refuses a bad routing number and never stores the account in the clear', () => {
     expect(() => sealPayeeBank('011000016', '1234')).toThrow(/check digit/);

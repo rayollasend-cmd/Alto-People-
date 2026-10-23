@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowRight,
+  CalendarDays,
   CheckCircle2,
   Circle,
   Clock,
@@ -18,7 +19,7 @@ import type {
 import { getApplication, getEeoSelfIdStatus, submitEeoSelfId } from '@/lib/onboardingApi';
 import { EeoSelfIdCard } from './EeoSelfIdCard';
 import { listMyDocuments } from '@/lib/documentsApi';
-import { ApiError } from '@/lib/api';
+import { fmtDateOnly, parseYmd } from '@/lib/format';
 import { ProgressBar } from '@/components/ProgressBar';
 import { Button } from '@/components/ui/Button';
 import {
@@ -28,7 +29,7 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { Celebrate } from '@/components/ui/Celebrate';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { usePublishPageTitle } from '@/lib/pageTitle';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
@@ -184,7 +185,9 @@ function rejectionByTask(
   docs: DocumentRecord[]
 ): Map<string, string> {
   const out = new Map<string, string>();
-  const kinds = new Set<string>(tasks.map((task) => task.kind));
+  // A step HR marked not needed can't be opened, so it can't carry the
+  // "replace it here" line — the I-9 row takes it instead.
+  const kinds = new Set<string>(tasks.filter((task) => task.status !== 'SKIPPED').map((task) => task.kind));
   const grouped = new Map<string, DocumentRecord[]>();
   for (const d of docs) {
     if (d.status !== 'REJECTED') continue;
@@ -214,6 +217,37 @@ function rejectionByTask(
 }
 
 const NO_DOCS: DocumentRecord[] = [];
+
+/**
+ * The first-day facts under the welcome — "Starts Mon, Oct 27 at Front
+ * Beach 218 · Finish by Fri, Oct 24" — from the start date and store the
+ * application already carries. "Finish by" is the earliest due date among
+ * the steps still open (each task is due N days before the start); it is
+ * left out when no open step has a due date. Null when there's no start
+ * date: nothing is said rather than a guess.
+ */
+export function firstDayFacts(
+  t: Translate,
+  detail: Pick<ApplicationDetail, 'startDate' | 'locationName' | 'tasks'>,
+): string | null {
+  const start = parseYmd(detail.startDate);
+  if (!start) return null;
+  const startText = fmtDateOnly(start, { weekday: true, year: 'auto' });
+  const parts = [
+    detail.locationName
+      ? t('ob.check.startsAt', { date: startText, place: detail.locationName })
+      : t('ob.check.starts', { date: startText }),
+  ];
+  const offsets = detail.tasks
+    .filter((task) => task.status !== 'DONE' && task.status !== 'SKIPPED' && task.dueOffsetDays != null)
+    .map((task) => task.dueOffsetDays as number);
+  if (offsets.length > 0) {
+    const due = new Date(start);
+    due.setDate(due.getDate() - Math.max(...offsets));
+    parts.push(t('ob.check.finishBy', { date: fmtDateOnly(due, { weekday: true, year: 'auto' }) }));
+  }
+  return parts.join(' · ');
+}
 
 export function AssociateChecklist() {
   const { t } = useI18n();
@@ -255,16 +289,6 @@ export function AssociateChecklist() {
     () => rejectedQuery.data?.documents.filter((d) => d.status === 'REJECTED') ?? NO_DOCS,
     [rejectedQuery.data],
   );
-  const error = appQuery.error
-    ? appQuery.error instanceof ApiError
-      ? appQuery.error.message
-      : t('ob.check.loadFailed')
-    : null;
-  const { refetch: refetchApp } = appQuery;
-  const { refetch: refetchRejected } = rejectedQuery;
-  const refresh = useCallback(async () => {
-    await Promise.all([refetchApp(), refetchRejected()]);
-  }, [refetchApp, refetchRejected]);
 
   // Each fresh read of the application drives the progress choreography
   // (bar travel, just-done flips, confetti) before it lands in state.
@@ -313,27 +337,21 @@ export function AssociateChecklist() {
     }
   }, [appQuery.data, applicationId]);
 
-  if (error) {
+  if (appQuery.isError && !detail) {
     // A new hire's primary surface must never dead-end: the single fetch
     // used to fail (cold backend, flaky signal) into a bare banner with
-    // no way back except knowing to hard-reload the browser.
+    // no way back except knowing to hard-reload the browser. QueryError
+    // says it plainly, with Retry, in their language.
     return (
-      <div className="mx-auto space-y-4">
-        <ErrorBanner>{error}</ErrorBanner>
-        <Button
-          onClick={() => {
-            void refresh();
-          }}
-        >
-          {t('common.retry')}
-        </Button>
+      <div className="mx-auto max-w-3xl">
+        <QueryError what={t('ob.check.what')} query={appQuery} />
       </div>
     );
   }
 
   if (!detail) {
     return (
-      <div className="mx-auto space-y-4">
+      <div className="mx-auto max-w-3xl space-y-4">
         <Skeleton className="h-10 w-72" />
         <Skeleton className="h-24" />
         {Array.from({ length: 5 }).map((_, i) => (
@@ -353,9 +371,11 @@ export function AssociateChecklist() {
   // their application sits in HR's pipeline. DRAFT shows nothing — the
   // checklist below is self-explanatory while they're still filling it out.
   const statusBanner = STATUS_BANNER[detail.status] ?? null;
+  const facts = allDone ? null : firstDayFacts(t, detail);
 
   return (
-    <div className="mx-auto">
+    // A checklist reads at a list's width — at 1440 each row ran ~1,100px.
+    <div className="mx-auto max-w-3xl">
       <header className="mb-6">
         <h1 className="font-display text-3xl md:text-4xl text-white mb-1.5 leading-tight">
           {allDone
@@ -367,6 +387,12 @@ export function AssociateChecklist() {
           <span className="text-white">{detail.clientName}</span>
           {detail.position && ` · ${detail.position}`}
         </p>
+        {facts && (
+          <p className="mt-1.5 flex items-start gap-1.5 text-sm text-ink" data-testid="first-day-facts">
+            <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden />
+            <span>{facts}</span>
+          </p>
+        )}
       </header>
 
       {statusBanner && (
@@ -483,12 +509,14 @@ const STATUS_TONE: Record<
     label: 'ob.check.status.done',
     labelCx: 'text-success',
   },
+  // HR took the step off this hire's list — nothing for them to do, so it
+  // says "Not needed" and offers no action (it offered "Review / edit").
   SKIPPED: {
     icon: MinusCircle,
     iconCx: 'text-silver',
     border: 'border-silver/30',
     bg: 'bg-navy',
-    label: 'ob.check.status.skipped',
+    label: 'ob.check.status.notNeeded',
     labelCx: 'text-silver',
   },
   IN_PROGRESS: {
@@ -537,18 +565,55 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, justComplete
   // Every task kind has its own page. Completed tasks stay linkable until
   // HR settles the application — each task page hydrates what's on file,
   // so revisiting means reviewing and correcting, not retyping. The server
-  // enforces the same boundary.
-  const linkable = !isComplete || canRevisit;
+  // enforces the same boundary. A step HR marked not needed has nothing to
+  // open.
+  const linkable = task.status !== 'SKIPPED' && (!isComplete || canRevisit);
   const linkTo = `/onboarding/me/${applicationId}/tasks/${task.kind.toLowerCase()}`;
 
   const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
   const Icon = tone.icon;
 
+  // Title and action share the first line; the description and any alert
+  // run the full width under them — beside a "Done · Review / edit" pair a
+  // 390px screen cut the description to "shown next to your nam…".
+  const action = isComplete ? (
+    <span className="flex items-center gap-2">
+      <span
+        className={cn(
+          'text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded whitespace-nowrap',
+          tone.bg === 'bg-navy' ? 'bg-silver/15' : 'bg-success/15',
+          tone.labelCx
+        )}
+        data-status={task.status}
+      >
+        {t(tone.label)}
+      </span>
+      {linkable && (
+        <span className="inline-flex items-center gap-1 coarse:min-h-11 text-xs text-gold group-hover:text-gold-bright whitespace-nowrap">
+          <span className="sr-only sm:not-sr-only">{t('ob.check.reviewEdit')}</span>
+          <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" aria-hidden />
+        </span>
+      )}
+    </span>
+  ) : (
+    // One look for every step's button: the progress card above already
+    // carries the gold "Continue with …", so the next row doesn't repeat it.
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 px-3 py-1.5 coarse:min-h-11 rounded-md text-sm font-semibold transition-colors whitespace-nowrap',
+        'border border-gold/60 text-gold group-hover:bg-gold/10'
+      )}
+    >
+      {t('ob.check.start')}
+      <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />
+    </span>
+  );
+
   const inner = (
-    <div className="flex items-center gap-3">
+    <div className="flex items-start gap-3">
       <Icon
         className={cn(
-          'h-5 w-5 shrink-0',
+          'mt-0.5 h-5 w-5 shrink-0 coarse:mt-3',
           tone.iconCx,
           // The checkmark springs in on the row that just completed.
           justCompleted && 'animate-check-pop',
@@ -556,8 +621,11 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, justComplete
         aria-hidden
       />
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-white">
-          {taskLabel(t, task)}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 font-medium text-white coarse:py-2.5">
+            {taskLabel(t, task)}
+          </div>
+          <div className="flex shrink-0 items-center coarse:min-h-11">{action}</div>
         </div>
         {task.description && (
           <div className="text-xs text-silver mt-1 line-clamp-2">
@@ -569,40 +637,6 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, justComplete
             <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" aria-hidden />
             <span>{attention}</span>
           </div>
-        )}
-      </div>
-      <div className="shrink-0 flex items-center gap-2">
-        {isComplete ? (
-          <>
-            <span
-              className={cn(
-                'text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded',
-                tone.bg === 'bg-navy' ? 'bg-silver/15' : 'bg-success/15',
-                tone.labelCx
-              )}
-              data-status={task.status}
-            >
-              {t(tone.label)}
-            </span>
-            {linkable && (
-              <span className="inline-flex items-center gap-1 coarse:min-h-11 text-xs text-gold group-hover:text-gold-bright whitespace-nowrap">
-                {t('ob.check.reviewEdit')}
-                <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-              </span>
-            )}
-          </>
-        ) : (
-          <span
-            className={cn(
-              'inline-flex items-center gap-1.5 px-3 py-1.5 coarse:min-h-11 rounded-md text-sm font-semibold transition-colors whitespace-nowrap',
-              isNext
-                ? 'bg-gold text-navy group-hover:bg-gold-bright'
-                : 'border border-gold/60 text-gold group-hover:bg-gold/10'
-            )}
-          >
-            {isNext ? t('ob.check.startNow') : t('ob.check.start')}
-            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-          </span>
         )}
       </div>
     </div>

@@ -112,21 +112,39 @@ describe('<TasksBoard>', () => {
     expect(screen.getByLabelText('Day')).toHaveValue('2026-10-16');
   });
 
-  it('lists live tasks with who holds them, and the counts above', async () => {
+  it('lists live tasks with who holds them, and the counts above come from the same day (F500 G2)', async () => {
     renderBoard();
     expect(await screen.findByText('Unload the morning truck')).toBeInTheDocument();
     expect(screen.getByText('Cal Ortega')).toBeInTheDocument();
+    // The window reads on the site's clock (14:00Z is 9 AM in Chicago), not UTC's 2 PM.
+    expect(screen.getByText(/^9:00\sAM – 1:00\sPM/)).toBeInTheDocument();
     // The queued task is not live; it waits under its own state.
     expect(screen.queryByText('Scan aisle 7 shelves')).not.toBeInTheDocument();
-    expect(await screen.findByText('Done · 24h')).toBeInTheDocument();
+    // The tiles count the day's list the grid reads — not a rolling 24h summary.
+    expect(getTaskSummary).not.toHaveBeenCalled();
+    const live = screen.getByRole('button', { name: /Live/ });
+    expect(live).toHaveAttribute('aria-pressed', 'true');
+    expect(live).toHaveTextContent('1');
+    expect(screen.getByRole('button', { name: /Waiting for a person/ })).toHaveTextContent('1');
+    expect(screen.getByRole('button', { name: /Exceptions/ })).toHaveTextContent('0');
+    expect(screen.getByRole('button', { name: /^Done/ })).toHaveTextContent('0');
   });
 
-  it('shows why a queued task waits for a person', async () => {
+  it('the Waiting tile is the filter: it shows why a queued task waits for a person, and keeps it in the URL', async () => {
     renderBoard();
     await screen.findByText('Unload the morning truck');
-    await userEvent.click(screen.getByRole('radio', { name: 'Waiting for a person' }));
+    expect(screen.queryByRole('radio', { name: 'Waiting for a person' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Waiting for a person/ }));
     expect(await screen.findByText('Scan aisle 7 shelves')).toBeInTheDocument();
     expect(screen.getByText('No certified worker is free in the window (6 weighed)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Waiting for a person/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('reads site, day and state from the URL (F500 G2)', async () => {
+    renderBoard('/tasks?site=loc-1&day=2026-10-15&status=queued');
+    await waitFor(() => expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ locationId: 'loc-1', day: '2026-10-15' })));
+    expect(await screen.findByText('Scan aisle 7 shelves')).toBeInTheDocument();
+    expect(screen.queryByText('Unload the morning truck')).not.toBeInTheDocument();
   });
 
   it('opens the task from the URL and reads the assignment’s reasons', async () => {
@@ -134,7 +152,7 @@ describe('<TasksBoard>', () => {
     const drawer = await screen.findByRole('dialog');
     expect(await within(drawer).findByText('Certified for unloading')).toBeInTheDocument();
     expect(within(drawer).getByText('High-risk work: a person may hold it')).toBeInTheDocument();
-    expect(within(drawer).getByText(/Assigned by the engine/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/Assigned automatically/)).toBeInTheDocument();
     // A person holds it, so there is nothing to hand off.
     expect(within(drawer).queryByRole('button', { name: /Hand to a person/ })).not.toBeInTheDocument();
     expect(within(drawer).getByRole('button', { name: /Done/ })).toBeInTheDocument();

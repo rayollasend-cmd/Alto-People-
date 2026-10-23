@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { nextInQueue, prevInQueue } from '@/lib/queueNext';
 import { withReturn } from '@/lib/returnPath';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
@@ -6,7 +6,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Avatar } from '@/components/ui/Avatar';
 import { associatePhotoUrl } from '@/lib/photoUrl';
-import { Download, Lock, MessageCircle, Plus, Tag } from 'lucide-react';
+import { Lock, MessageCircle, Plus, Tag, Timer } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -29,12 +29,7 @@ import {
   type MyCaseRow,
   type QueueCaseRow,
 } from '@/lib/hrCases123Api';
-
-// The URL's ?status= and ?category= are validated against these before they
-// become state (a typo in a link falls back to the defaults).
-const CASE_STATUS_VALUES: readonly CaseStatus[] = ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE', 'RESOLVED', 'CLOSED'];
-const CASE_CATEGORY_VALUES: readonly CaseCategory[] = ['BENEFITS', 'PAYROLL', 'TIME_OFF', 'PERSONAL_INFO', 'WORKPLACE_CONCERN', 'HARASSMENT', 'PERFORMANCE', 'OTHER'];
-import { useAuth, useTerm } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { statusTone } from '@/lib/status';
@@ -57,7 +52,6 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  SearchInput,
   SegmentedControl,
   type SegmentedControlOption,
   Select,
@@ -65,8 +59,13 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { QueryError } from '@/components/ui/QueryError';
+import { FilterChip } from '@/components/ui/FilterBar';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import type { PageAction } from '@/components/ui/PageHeader';
+import { urlBoolean, useUrlFilters, useUrlParam, useUrlState } from '@/lib/useUrlState';
 import { Label } from '@/components/ui/Label';
-import { downloadCsv } from '@/lib/csv';
 import { ListTemplate } from '@/components/templates';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { SlaChip, SlaTargetsDialog } from './SlaTargetsDialog';
@@ -116,8 +115,22 @@ const casePriorityLabel = (
   p: CasePriority,
 ): string => t(('hrc.priority.' + p) as MessageKey);
 
+const TABS = ['mine', 'queue'] as const;
+type Tab = (typeof TABS)[number];
+/** The queue's status filter: every case still being worked (the default), one status, or all. */
+type StatusFilter = 'OPEN_ALL' | CaseStatus | 'ALL';
+const STATUS_FILTERS: readonly StatusFilter[] = ['OPEN_ALL', 'ALL', ...(Object.keys(STATUS_LABELS) as CaseStatus[])];
+const CATEGORY_FILTERS: readonly (CaseCategory | 'ALL')[] = ['ALL', ...(Object.keys(CATEGORY_LABELS) as CaseCategory[])];
+const SLA_FILTERS = ['', 'breached'] as const;
+const FILTER_KEYS = ['status', 'category', 'mine', 'sla', 'unassigned'] as const;
+
+/** "4 h", "1.5 d" — the median first reply. */
+function fmtReplyHours(h: number): string {
+  if (h < 48) return `${h.toLocaleString('en-US', { maximumFractionDigits: 1 })} h`;
+  return `${(h / 24).toLocaleString('en-US', { maximumFractionDigits: 1 })} d`;
+}
+
 export function HrCasesHome() {
-  const term = useTerm();
   const { user } = useAuth();
   const { t } = useI18n();
   // The case desk: manage:onboarding works every case; process:payroll
@@ -130,32 +143,26 @@ export function HrCasesHome() {
     ? !hasCapability(user.role, 'manage:onboarding') &&
       hasCapability(user.role, 'process:payroll')
     : false;
+  // Filters live in the URL (?status=, ?category=, ?mine=1, ?sla=breached,
+  // ?unassigned=1), so the Inbox's ?sla=breached link lands filtered and a
+  // filtered queue can be shared.
+  const [statusFilter, setStatusFilter] = useUrlParam<StatusFilter>('status', 'OPEN_ALL', STATUS_FILTERS);
+  const [categoryFilter, setCategoryFilter] = useUrlParam<CaseCategory | 'ALL'>('category', 'ALL', CATEGORY_FILTERS);
+  const [assignedToMe, setAssignedToMe] = useUrlState('mine', false, urlBoolean);
+  const [sla, setSla] = useUrlParam<(typeof SLA_FILTERS)[number]>('sla', '', SLA_FILTERS);
+  const [unassignedOnly, setUnassignedOnly] = useUrlState('unassigned', false, urlBoolean);
+  const breachedOnly = canManage && sla === 'breached';
+  const { active: activeFilters, clear: clearFilters } = useUrlFilters(FILTER_KEYS);
   // Desk staff without an associate record have no "mine" — land on the
-  // queue instead of an empty tab.
-  // ?tab=&status=&category=&assigned=me — the Finance home's payroll-case
-  // button and the inbox name the slice they counted; open on it.
-  const initial = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
-  const [tab, setTab] = useState<'mine' | 'queue'>(
-    initial.get('tab') === 'queue' && canManage ? 'queue' : canManage && !user?.associateId ? 'queue' : 'mine',
-  );
+  // queue instead of an empty tab; a deep link to past-SLA cases does too.
+  const [tabParam, setTab] = useUrlParam<Tab>('tab', canManage && (!user?.associateId || breachedOnly) ? 'queue' : 'mine', TABS, { history: 'push' });
+  const tab: Tab = canManage ? tabParam : 'mine';
   const [showNew, setShowNew] = useState(false);
   // HR opens a case for someone who called or walked in (HR walk 13).
   // The whole-desk role only — Finance works the payroll desk, it doesn't file.
   const canFileOnBehalf = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [showOnBehalf, setShowOnBehalf] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<CaseStatus | 'ALL'>(() => {
-    const s = initial.get('status');
-    return s && (CASE_STATUS_VALUES as readonly string[]).includes(s) ? (s as CaseStatus) : s === 'ALL' ? 'ALL' : 'OPEN';
-  });
-  const [categoryFilter, setCategoryFilter] = useState<CaseCategory | 'ALL'>(() => {
-    const c = initial.get('category');
-    return c && (CASE_CATEGORY_VALUES as readonly string[]).includes(c) ? (c as CaseCategory) : 'ALL';
-  });
-  const [assignedToMe, setAssignedToMe] = useState(initial.get('assigned') === 'me');
-  const [search, setSearch] = useState('');
-  // ?sla=breached (the Inbox's deep link): only open cases past their target.
-  const [breachedOnly, setBreachedOnly] = useState(false);
   const [showSla, setShowSla] = useState(false);
 
   // Notification deep-link: ?case=<id> opens that case's drawer directly
@@ -164,14 +171,6 @@ export function HrCasesHome() {
   // on People — so back/refresh don't re-open a drawer the user closed.
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
-    if (searchParams.get('sla') !== 'breached' || !canManage) return;
-    setBreachedOnly(true);
-    setTab('queue');
-    const next = new URLSearchParams(searchParams);
-    next.delete('sla');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams, canManage]);
-  useEffect(() => {
     const caseParam = searchParams.get('case');
     if (!caseParam) return;
     setOpenId(caseParam);
@@ -179,6 +178,17 @@ export function HrCasesHome() {
     next.delete('case');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+  // ?new=1 — other desks' "Open an HR case" links: open the New case form
+  // (the person's own, or the desk's for-someone form when they have no
+  // record of their own). Consumed once, like ?case=.
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return;
+    if (user?.associateId) setShowNew(true);
+    else if (canFileOnBehalf) setShowOnBehalf(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('new');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, user?.associateId, canFileOnBehalf]);
 
   // Each tab reads its own list; a tab or filter change is a new key and
   // shows the skeleton, while a refetch after a mutation (drawer close,
@@ -192,14 +202,16 @@ export function HrCasesHome() {
   // Paged on the server: "Show more" reads on instead of the queue
   // silently stopping at the first hundred.
   const queueQuery = useInfiniteQuery({
-    queryKey: ['hrCases', 'queue', { status: statusFilter, category: categoryFilter, assignedToMe, breachedOnly }],
+    queryKey: ['hrCases', 'queue', { status: statusFilter, category: categoryFilter, assignedToMe, breachedOnly, unassignedOnly }],
     queryFn: ({ pageParam }) =>
       listCaseQueue(
         {
-          status: breachedOnly || statusFilter === 'ALL' ? undefined : statusFilter,
+          status: breachedOnly || statusFilter === 'ALL' || statusFilter === 'OPEN_ALL' ? undefined : statusFilter,
+          state: !breachedOnly && statusFilter === 'OPEN_ALL' ? 'open' : undefined,
           category: categoryFilter === 'ALL' ? undefined : categoryFilter,
           assignedToMe: assignedToMe || undefined,
           sla: breachedOnly ? 'breached' : undefined,
+          unassigned: unassignedOnly || undefined,
         },
         pageParam,
       ),
@@ -210,16 +222,8 @@ export function HrCasesHome() {
   const mine: MyCaseRow[] | null = mineQuery.data?.cases ?? null;
   const queue: QueueCaseRow[] | null = queueQuery.data ? queueQuery.data.pages.flatMap((p) => p.cases) : null;
   const queueTotal = queueQuery.data?.pages[0]?.total ?? null;
-  const mineError = mineQuery.error
-    ? mineQuery.error instanceof ApiError
-      ? mineQuery.error.message
-      : t('hrc.loadMineFailed')
-    : null;
-  const queueError = queueQuery.error
-    ? queueQuery.error instanceof ApiError
-      ? queueQuery.error.message
-      : 'Failed to load the queue.'
-    : null;
+  // The drawer's previous / next walk the list as filtered (the filters are the URL's).
+  const visibleQueue = queue ?? [];
   const refresh = (_opts?: { soft?: boolean }) => {
     void (tab === 'mine' ? mineQuery.refetch() : queueQuery.refetch());
   };
@@ -234,187 +238,87 @@ export function HrCasesHome() {
     canManage && !summaryQuery.isError ? (summaryQuery.data ?? null) : null;
   const refreshSummary = () => void summaryQuery.refetch();
 
-  const visibleQueue = useMemo(() => {
-    const rows = queue ?? [];
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (c) =>
-        c.subject.toLowerCase().includes(q) ||
-        c.associateName.toLowerCase().includes(q) ||
-        c.associateEmail.toLowerCase().includes(q),
-    );
-  }, [queue, search]);
-
   // The queue segment only exists for HR; building the option list up front
   // keeps the conditional out of the JSX and the generic parameter explicit
   // (inference would otherwise narrow to 'mine').
-  const tabOptions: SegmentedControlOption<'mine' | 'queue'>[] = [
+  const tabOptions: SegmentedControlOption<Tab>[] = [
     { value: 'mine', label: t('hrc.tabMine') },
+    { value: 'queue', label: 'Queue', count: summary?.openTotal },
   ];
-  if (canManage) {
-    tabOptions.push({
-      value: 'queue',
-      label: (
-        <>
-          Queue
-          {summary && summary.openTotal > 0 && (
-            <Badge variant="destructive" className="ml-2">
-              {summary.openTotal}
-            </Badge>
-          )}
-        </>
-      ),
+
+  // One "New case": the desk files for someone (or, for desk staff with an
+  // associate record, for themselves from My cases); an associate files their own.
+  const actions: PageAction[] = [];
+  if (canFileOnBehalf) {
+    actions.push({
+      key: 'on-behalf',
+      label: user?.associateId ? t('hrc.onBehalf.button') : t('hrc.newCase'),
+      icon: Plus,
+      primary: !user?.associateId || tab === 'queue',
+      onSelect: () => setShowOnBehalf(true),
     });
   }
+  if (user?.associateId) {
+    actions.push({ key: 'new', label: t('hrc.newCase'), icon: Plus, primary: !canFileOnBehalf || tab === 'mine', onSelect: () => setShowNew(true) });
+  }
+  if (canManage) {
+    actions.push({ key: 'sla', label: 'SLA targets', icon: Timer, overflow: true, onSelect: () => setShowSla(true) });
+  }
 
-  const exportQueueCsv = () => {
-    downloadCsv(`hr-cases-queue-${ymdLocal()}.csv`, [
-      [
-        'Subject',
-        'Associate',
-        'Email',
-        'Category',
-        'Priority',
-        'Status',
-        'Assigned to',
-        'Replies',
-        'Created',
-        'Updated',
-      ],
-      ...visibleQueue.map((c) => [
-        c.subject,
-        c.associateName,
-        c.associateEmail,
-        CATEGORY_LABELS[c.category],
-        PRIORITY_LABELS[c.priority],
-        caseStatusLabel(t, c.status),
-        c.assignedToEmail ?? '',
-        c.commentCount,
-        fmtDate(c.createdAt),
-        fmtDate(c.updatedAt),
-      ]),
-    ]);
+  const onlyOpen = () => {
+    clearFilters();
   };
+  const firstReply = summary?.firstReply;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
-    <ListTemplate
-        title={t('hrc.title')}
-        subtitle={t('hrc.subtitle')}
-        breadcrumbs={[{ label: term('nav.compliance') }, { label: term('nav.hrCases') }]}
-    >
+    <ListTemplate title={t('hrc.title')} subtitle={t('hrc.subtitle')} actions={actions}>
+      {canManage && (
+        // Only desk staff have two views; an associate's one-option switch said nothing.
+        <SegmentedControl<Tab> ariaLabel="Case view" value={tab} onChange={setTab} options={tabOptions} />
+      )}
 
-      {/* Phone: the view switch, then the filters full width. Desktop: one row. */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <SegmentedControl<'mine' | 'queue'>
-          ariaLabel="Case view"
-          value={tab}
-          onChange={setTab}
-          options={tabOptions}
-        />
-        <div className="flex flex-wrap items-center gap-2 md:justify-end">
-          {canManage && tab === 'queue' && (
-            <>
-              <SearchInput
-                aria-label={`Search subject or ${term('worker').toLowerCase()}`}
-                className="h-8 w-full text-xs sm:w-52"
-                placeholder={`Search subject/${term('worker').toLowerCase()}`}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              <Select
-                size="sm"
-                aria-label="Filter by status"
-                value={statusFilter}
-                onChange={(e) =>
-                  setStatusFilter(e.target.value as CaseStatus | 'ALL')
-                }
-              >
-                <option value="ALL">All statuses</option>
-                {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((s) => (
-                  <option key={s} value={s}>
-                    {caseStatusLabel(t, s)}
-                  </option>
-                ))}
-              </Select>
-              {/* Finance's queue is PAYROLL-only server-side; the filter
-                  would be a row of dead options. */}
-              {!payrollDeskOnly && (
-                <Select
-                  size="sm"
-                  aria-label="Filter by category"
-                  value={categoryFilter}
-                  onChange={(e) =>
-                    setCategoryFilter(e.target.value as CaseCategory | 'ALL')
-                  }
-                >
-                  <option value="ALL">All categories</option>
-                  {(Object.keys(CATEGORY_LABELS) as CaseCategory[]).map((k) => (
-                    <option key={k} value={k}>
-                      {CATEGORY_LABELS[k]}
-                    </option>
-                  ))}
-                </Select>
-              )}
-              <Button
-                size="sm"
-                variant={assignedToMe ? 'primary' : 'secondary'}
-                aria-pressed={assignedToMe}
-                onClick={() => setAssignedToMe((v) => !v)}
-              >
-                Assigned to me
-              </Button>
-              <Button
-                size="sm"
-                variant={breachedOnly ? 'primary' : 'secondary'}
-                aria-pressed={breachedOnly}
-                onClick={() => setBreachedOnly((v) => !v)}
-              >
-                Past SLA{summary && summary.sla?.breached ? ` · ${summary.sla.breached}` : ''}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setShowSla(true)}>
-                SLA targets
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={exportQueueCsv}
-                disabled={visibleQueue.length === 0}
-              >
-                <Download className="mr-2 h-4 w-4" /> Export CSV
-              </Button>
-            </>
-          )}
-          {/* Filing needs an associate record — desk-only staff (Finance)
-              work cases, they don't file them. */}
-          {canFileOnBehalf && (
-            <Button variant={user?.associateId ? 'secondary' : 'primary'} onClick={() => setShowOnBehalf(true)}>
-              <Plus className="mr-2 h-4 w-4" /> {user?.associateId ? t('hrc.onBehalf.button') : t('hrc.newCase')}
-            </Button>
-          )}
-          {user?.associateId && (
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> {t('hrc.newCase')}
-            </Button>
-          )}
-        </div>
-      </div>
+      {canManage && tab === 'queue' && summary && (
+        // A desk that has never had a case gets the empty state below, not four zeros.
+        <MetricStrip label="The case desk" empty={summary.openTotal === 0 && (summary.firstReply?.filed ?? 0) === 0 && (summary.byStatus?.RESOLVED ?? 0) + (summary.byStatus?.CLOSED ?? 0) === 0}>
+          <MetricCard
+            label="Open"
+            value={summary.openTotal}
+            hint="Open, in progress or waiting on the person"
+            onClick={onlyOpen}
+            selected={activeFilters === 0}
+          />
+          <MetricCard
+            label="Past SLA"
+            value={summary.sla?.breached ?? 0}
+            hint={(summary.sla?.atRisk ?? 0) > 0 ? `${summary.sla.atRisk.toLocaleString('en-US')} more due within 4 hours` : 'Open cases past their target'}
+            tone={(summary.sla?.breached ?? 0) > 0 ? 'alert' : 'default'}
+            onClick={() => setSla(breachedOnly ? '' : 'breached')}
+            selected={breachedOnly}
+          />
+          <MetricCard
+            label="Unassigned"
+            value={summary.unassigned ?? 0}
+            hint="Open with no one on it"
+            tone={(summary.unassigned ?? 0) > 0 ? 'warning' : 'default'}
+            onClick={() => setUnassignedOnly(!unassignedOnly)}
+            selected={unassignedOnly}
+          />
+          <MetricCard
+            label="Median first reply"
+            value={firstReply && firstReply.medianHours !== null ? fmtReplyHours(firstReply.medianHours) : '—'}
+            hint={firstReply ? `Cases filed in the last ${firstReply.days} days · ${firstReply.replied.toLocaleString('en-US')} of ${firstReply.filed.toLocaleString('en-US')} answered` : undefined}
+            nothing={!firstReply || firstReply.medianHours === null ? 'No replies in the last 90 days' : undefined}
+          />
+        </MetricStrip>
+      )}
 
       {tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
-            {mineError ? (
-              <div className="p-6">
-                <ErrorBanner
-                  action={
-                    <Button size="sm" variant="secondary" onClick={() => refresh()}>
-                      {t('hrc.retry')}
-                    </Button>
-                  }
-                >
-                  {mineError}
-                </ErrorBanner>
+            {mineQuery.error ? (
+              <div className="p-4">
+                <QueryError what={t('hrc.tabMine').toLowerCase()} query={mineQuery} />
               </div>
             ) : mine === null ? (
               <div className="p-6">
@@ -425,11 +329,6 @@ export function HrCasesHome() {
                 icon={MessageCircle}
                 title={t('hrc.emptyTitle')}
                 description={t('hrc.emptyDesc')}
-                action={
-                  <Button onClick={() => setShowNew(true)}>
-                    <Plus className="mr-2 h-4 w-4" /> {t('hrc.fileACase')}
-                  </Button>
-                }
               />
             ) : (
               <div className="divide-y divide-navy-secondary">
@@ -460,131 +359,160 @@ export function HrCasesHome() {
             )}
           </CardContent>
         </Card>
+      ) : queueQuery.error ? (
+        <QueryError what="the case queue" query={queueQuery} />
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            {queueError ? (
-              <div className="p-6">
-                <ErrorBanner
-                  action={
-                    <Button size="sm" variant="secondary" onClick={() => refresh()}>
-                      Retry
-                    </Button>
-                  }
+        <>
+          <DataGrid<QueueCaseRow>
+            id="hr-cases"
+            caption="HR case queue"
+            noun={{ one: 'case', many: 'cases' }}
+            rows={queue}
+            loading={queue === null}
+            rowKey={(c) => c.id}
+            search={{ placeholder: 'Subject or person…' }}
+            urlKey="cases"
+            total={queueTotal ?? undefined}
+            exportCsv={{ filename: `hr-cases-queue-${ymdLocal()}` }}
+            activeFilters={activeFilters}
+            onClearFilters={clearFilters}
+            filters={
+              <>
+                <Select
+                  size="sm"
+                  aria-label="Filter by status"
+                  value={breachedOnly ? 'OPEN_ALL' : statusFilter}
+                  disabled={breachedOnly}
+                  onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
                 >
-                  {queueError}
-                </ErrorBanner>
-              </div>
-            ) : queue === null ? (
-              <div className="p-6">
-                <SkeletonRows count={4} />
-              </div>
-            ) : visibleQueue.length === 0 ? (
-              <EmptyState
-                icon={MessageCircle}
-                title={
-                  search.trim() ? 'No matching cases' : 'Queue is empty'
-                }
-                description={
-                  search.trim()
-                    ? 'No cases match your search.'
-                    : 'Nothing pending. Nice.'
-                }
-              />
-            ) : (
-              <DataGrid<(typeof visibleQueue)[number]>
-                id="hr-cases"
-                caption="HR case queue"
-                rows={visibleQueue}
-                rowKey={(c) => c.id}
-                search={false}
-                urlState={false}
-                exportCsv={{ filename: 'hr-cases' }}
-                onRowClick={(c) => setOpenId(c.id)}
-                rowActionLabel={(c) => `Open case ${c.subject}`}
-                columns={[
-                  {
-                    key: 'subject',
-                    header: 'Subject',
-                    accessor: (c) => c.subject,
-                    sortable: true,
-                    primary: true,
-                    cell: (c) => (
-                      <>
-                        <div className="font-medium text-white">{c.subject}</div>
-                        {(c.channel || c.commentCount > 0) && (
-                          <div className="flex items-center gap-1.5 text-xs text-silver">
-                            {c.channel && (
-                              <Badge size="sm" variant="outline" title={c.filedByEmail ? `Taken by ${c.filedByEmail}` : undefined}>
-                                {t(`hrc.channel.${c.channel}` as MessageKey)}
-                              </Badge>
-                            )}
-                            {c.commentCount > 0 && <span>{c.commentCount} replies</span>}
-                          </div>
-                        )}
-                      </>
-                    ),
-                  },
-                  {
-                    key: 'associate',
-                    header: 'Associate',
-                    accessor: (c) => c.associateName,
-                    sortable: true,
-                    cardMeta: true,
-                    cell: (c) => (
-                      <div className="flex items-center gap-2">
-                        <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} email={c.associateEmail} size="sm" />
-                        <div className="min-w-0">
-                          <div className="text-sm">
-                            <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
-                          </div>
-                          <div className="text-xs text-silver">{c.associateEmail}</div>
-                        </div>
-                      </div>
-                    ),
-                  },
-                  { key: 'category', header: 'Category', accessor: (c) => CATEGORY_LABELS[c.category], sortable: true, cardMeta: true, className: 'text-sm text-silver' },
-                  {
-                    key: 'priority',
-                    header: 'Priority',
-                    accessor: (c) => PRIORITY_LABELS[c.priority],
-                    sortable: true,
-                    cell: (c) => <Badge variant={PRIORITY_VARIANT[c.priority]}>{PRIORITY_LABELS[c.priority]}</Badge>,
-                  },
-                  {
-                    key: 'status',
-                    header: 'Status',
-                    accessor: (c) => caseStatusLabel(t, c.status),
-                    sortable: true,
-                    cell: (c) => <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>{caseStatusLabel(t, c.status)}</Badge>,
-                  },
-                  {
-                    key: 'sla',
-                    header: 'SLA',
-                    // Overdue first when sorted ascending: minutes left, paused/done last.
-                    accessor: (c) => c.sla?.minutesLeft ?? Number.MAX_SAFE_INTEGER,
-                    csv: (c) => c.sla?.dueAt ?? '',
-                    sortable: true,
-                    searchable: false,
-                    cell: (c) => (c.sla ? <SlaChip sla={c.sla} /> : null),
-                  },
-                  { key: 'updated', header: 'Updated', accessor: (c) => c.updatedAt, sortable: true, searchable: false, className: 'text-xs text-silver', cell: (c) => fmtDate(c.updatedAt) },
-                ]}
-              />
-            )}
-            {queue && queueQuery.hasNextPage && (
-              <div className="mt-3 flex items-center justify-center gap-3 text-xs text-ink-muted">
-                <span>
-                  Showing {queue.length}
-                  {queueTotal !== null ? ` of ${queueTotal}` : ''}
-                </span>
-                <Button size="sm" variant="outline" onClick={() => void queueQuery.fetchNextPage()} loading={queueQuery.isFetchingNextPage}>
-                  Show more
+                  <option value="OPEN_ALL">Open cases</option>
+                  <option value="ALL">All statuses</option>
+                  {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((st) => (
+                    <option key={st} value={st}>
+                      {caseStatusLabel(t, st)}
+                    </option>
+                  ))}
+                </Select>
+                {/* Finance's queue is PAYROLL-only server-side; the filter
+                    would be a row of dead options. */}
+                {!payrollDeskOnly && (
+                  <Select
+                    size="sm"
+                    aria-label="Filter by category"
+                    value={categoryFilter}
+                    onChange={(e) => setCategoryFilter(e.target.value as CaseCategory | 'ALL')}
+                  >
+                    <option value="ALL">All categories</option>
+                    {(Object.keys(CATEGORY_LABELS) as CaseCategory[]).map((k) => (
+                      <option key={k} value={k}>
+                        {CATEGORY_LABELS[k]}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+                <FilterChip active={assignedToMe} onClick={() => setAssignedToMe(!assignedToMe)}>
+                  Assigned to me
+                </FilterChip>
+                <FilterChip active={breachedOnly} onClick={() => setSla(breachedOnly ? '' : 'breached')} count={summary?.sla?.breached || undefined}>
+                  Past SLA
+                </FilterChip>
+              </>
+            }
+            empty={{
+              icon: MessageCircle,
+              title: 'No open cases',
+              description: 'Questions, paycheck disputes and concerns people file land here.',
+              action: canFileOnBehalf ? (
+                <Button size="sm" variant="outline" onClick={() => setShowOnBehalf(true)}>
+                  <Plus className="mr-2 h-4 w-4" /> {user?.associateId ? t('hrc.onBehalf.button') : t('hrc.newCase')}
                 </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              ) : undefined,
+            }}
+            onRowClick={(c) => setOpenId(c.id)}
+            rowActionLabel={(c) => `Open case ${c.subject}`}
+            columns={[
+              {
+                key: 'subject',
+                header: 'Subject',
+                accessor: (c) => c.subject,
+                sortable: true,
+                primary: true,
+                cell: (c) => (
+                  <>
+                    <div className="font-medium text-white">{c.subject}</div>
+                    {(c.channel || c.commentCount > 0) && (
+                      <div className="flex items-center gap-1.5 text-xs text-silver">
+                        {c.channel && (
+                          <Badge size="sm" variant="outline" title={c.filedByEmail ? `Taken by ${c.filedByEmail}` : undefined}>
+                            {t(`hrc.channel.${c.channel}` as MessageKey)}
+                          </Badge>
+                        )}
+                        {c.commentCount > 0 && <span>{c.commentCount === 1 ? '1 reply' : `${c.commentCount} replies`}</span>}
+                      </div>
+                    )}
+                  </>
+                ),
+              },
+              {
+                key: 'associate',
+                header: 'Associate',
+                accessor: (c) => `${c.associateName} ${c.associateEmail}`,
+                csv: (c) => c.associateName,
+                sortable: true,
+                cardMeta: true,
+                cell: (c) => (
+                  <div className="flex items-center gap-2">
+                    <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} email={c.associateEmail} size="sm" />
+                    <div className="min-w-0">
+                      <div className="text-sm">
+                        <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
+                      </div>
+                      <div className="text-xs text-silver">{c.associateEmail}</div>
+                    </div>
+                  </div>
+                ),
+              },
+              { key: 'category', header: 'Category', accessor: (c) => CATEGORY_LABELS[c.category], sortable: true, cardMeta: true, className: 'text-sm text-silver' },
+              {
+                key: 'priority',
+                header: 'Priority',
+                accessor: (c) => PRIORITY_LABELS[c.priority],
+                sortable: true,
+                cell: (c) => <Badge variant={PRIORITY_VARIANT[c.priority]}>{PRIORITY_LABELS[c.priority]}</Badge>,
+              },
+              {
+                key: 'status',
+                header: 'Status',
+                accessor: (c) => caseStatusLabel(t, c.status),
+                sortable: true,
+                cell: (c) => <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>{caseStatusLabel(t, c.status)}</Badge>,
+              },
+              { key: 'owner', header: 'Assigned to', accessor: (c) => c.assignedToEmail ?? '', sortable: true, defaultHidden: true, className: 'text-xs text-silver', cell: (c) => c.assignedToEmail ?? 'Nobody yet' },
+              {
+                key: 'sla',
+                header: 'SLA',
+                // Overdue first when sorted ascending: minutes left, paused/done last.
+                accessor: (c) => c.sla?.minutesLeft ?? Number.MAX_SAFE_INTEGER,
+                csv: (c) => c.sla?.dueAt ?? '',
+                sortable: true,
+                searchable: false,
+                cell: (c) => (c.sla ? <SlaChip sla={c.sla} /> : null),
+              },
+              { key: 'updated', header: 'Updated', accessor: (c) => c.updatedAt, csv: (c) => fmtDate(c.updatedAt), sortable: true, searchable: false, className: 'text-xs text-silver', cell: (c) => fmtDate(c.updatedAt) },
+            ]}
+          />
+          {queue && queueQuery.hasNextPage && (
+            <div className="flex items-center justify-center gap-3 text-xs text-ink-muted">
+              <span>
+                Showing {queue.length}
+                {queueTotal !== null ? ` of ${queueTotal}` : ''}
+              </span>
+              <Button size="sm" variant="outline" onClick={() => void queueQuery.fetchNextPage()} loading={queueQuery.isFetchingNextPage}>
+                Show more
+              </Button>
+            </div>
+          )}
+        </>
       )}
 
       {canManage && <SlaTargetsDialog open={showSla} canManage={user ? hasCapability(user.role, 'manage:org') : false} onClose={() => setShowSla(false)} />}

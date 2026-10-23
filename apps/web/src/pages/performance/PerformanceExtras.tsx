@@ -1,8 +1,12 @@
-import { useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useUrlParam } from '@/lib/useUrlState';
+import { QueryError } from '@/components/ui/QueryError';
+import { FilterBar } from '@/components/ui/FilterBar';
+import { ViewToggle } from '@/components/ui/ViewToggle';
 import { GoalCascade } from './GoalCascade';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CalendarPlus, Download, Heart, Plus, Target } from 'lucide-react';
+import { AlertTriangle, CalendarPlus, Download, Heart, Network, Plus, Rows3, Target } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   closeReview360,
@@ -63,7 +67,6 @@ import {
   Input,
   SearchInput,
   Select,
-  SegmentedControl,
   SkeletonRows,
   Tabs,
   TabsContent,
@@ -131,29 +134,6 @@ function queryErrorMessage(error: unknown, fallback: string): string | null {
   return error instanceof ApiError ? error.message : fallback;
 }
 
-/** Load failure for a react-query-backed tab: message + Retry. */
-function QueryError({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="p-6">
-      <ErrorBanner
-        action={
-          <Button size="sm" variant="secondary" onClick={onRetry}>
-            Retry
-          </Button>
-        }
-      >
-        {message}
-      </ErrorBanner>
-    </div>
-  );
-}
-
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -198,48 +178,76 @@ const perfKeys = {
     [...perfKeys.all, 'timeline', associateId] as const,
 };
 
+const TABS: readonly Tab[] = ['goals', 'kudos', 'one-on-ones', 'pips', 'reviews360', 'timeline'];
+
+/** Plain names for each tab — "PIPs", "360s" and "OKRs" were jargon — and its primary action. */
+const TAB_LABEL: Record<Tab, string> = {
+  goals: 'Goals',
+  kudos: 'Recognition',
+  'one-on-ones': '1:1s',
+  pips: 'Improvement plans',
+  reviews360: '360 reviews',
+  timeline: 'Timeline',
+};
+
 export function PerformanceExtras() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
-  // The tab lives in the URL, so a view (say, the 360s) can be linked to.
-  const [params, setParams] = useSearchParams();
-  const TABS: Tab[] = ['goals', 'kudos', 'one-on-ones', 'pips', 'reviews360', 'timeline'];
-  const raw = params.get('tab') as Tab | null;
-  const tab: Tab = raw && TABS.includes(raw) ? raw : 'goals';
-  const setTab = (v: Tab) => {
-    const next = new URLSearchParams(params);
-    if (v === 'goals') next.delete('tab');
-    else next.set('tab', v);
-    setParams(next, { replace: true });
+  // The tab lives in the URL (?tab=pips), so a view can be linked to and Back returns to it.
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'goals', TABS, { history: 'push' });
+  // The header's primary action follows the tab; a bump opens that tab's form.
+  const [createTick, setCreateTick] = useState<{ tab: Tab; n: number }>({ tab, n: 0 });
+  const signal = (t: Tab) => (createTick.tab === t ? createTick.n : 0);
+  const create = (t: Tab) => () => setCreateTick((c) => ({ tab: t, n: c.tab === t ? c.n + 1 : 1 }));
+  const primary: Partial<Record<Tab, { label: string; manageOnly: boolean }>> = {
+    goals: { label: 'New goal', manageOnly: false },
+    kudos: { label: 'Send kudo', manageOnly: false },
+    'one-on-ones': { label: 'Schedule 1:1', manageOnly: true },
+    pips: { label: 'New improvement plan', manageOnly: true },
+    reviews360: { label: 'New 360 review', manageOnly: true },
   };
+  const action = primary[tab];
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Goals, 1:1s & feedback"
-        subtitle="Goals and OKRs from the company down to each person, 1:1s, kudos, improvement plans and 360 reviews."
-        breadcrumbs={[{ label: 'Performance', to: '/performance' }, { label: 'Goals, 1:1s & feedback' }]}
+      title="Goals, 1:1s & feedback"
+      subtitle="Goals from the company down to each person, 1:1s, recognition, improvement plans and 360 reviews."
+      related={[
+        { label: 'Reviews', to: '/performance' },
+        ...(canManage ? [{ label: 'Calibration', to: '/performance/calibration' }] : []),
+      ]}
+      actions={action && (!action.manageOnly || canManage) ? [{ key: 'create', label: action.label, icon: Plus, primary: true, onSelect: create(tab) }] : undefined}
     >
-
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
-          <TabsTrigger value="goals">Goals & OKRs</TabsTrigger>
-          <TabsTrigger value="kudos">Kudos</TabsTrigger>
-          <TabsTrigger value="one-on-ones">1:1s</TabsTrigger>
-          <TabsTrigger value="pips">PIPs</TabsTrigger>
-          <TabsTrigger value="reviews360">360s</TabsTrigger>
-          <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          {TABS.map((t) => (
+            <TabsTrigger key={t} value={t}>
+              {TAB_LABEL[t]}
+            </TabsTrigger>
+          ))}
         </TabsList>
-        <TabsContent value="goals"><GoalsTab /></TabsContent>
-        <TabsContent value="kudos"><KudosTab /></TabsContent>
-        <TabsContent value="one-on-ones"><OneOnOnesTab /></TabsContent>
-        <TabsContent value="pips"><PipsTab canManage={canManage} /></TabsContent>
-        <TabsContent value="reviews360"><Reviews360Tab canManage={canManage} /></TabsContent>
+        <TabsContent value="goals"><GoalsTab createSignal={signal('goals')} /></TabsContent>
+        <TabsContent value="kudos"><KudosTab createSignal={signal('kudos')} /></TabsContent>
+        <TabsContent value="one-on-ones"><OneOnOnesTab createSignal={signal('one-on-ones')} /></TabsContent>
+        <TabsContent value="pips"><PipsTab canManage={canManage} createSignal={signal('pips')} /></TabsContent>
+        <TabsContent value="reviews360"><Reviews360Tab canManage={canManage} createSignal={signal('reviews360')} /></TabsContent>
         <TabsContent value="timeline"><TimelineTab /></TabsContent>
       </Tabs>
     </ListTemplate>
   );
 }
+
+/** Opens a tab's form each time the header's primary action bumps the signal. */
+function useCreateSignal(signal: number | undefined, open: () => void) {
+  useEffect(() => {
+    if (signal) open();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signal]);
+}
+
+const GOAL_FILTERS = ['ALL', 'DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const;
+type GoalFilter = (typeof GOAL_FILTERS)[number];
 
 // ============ Goals ============
 
@@ -255,7 +263,7 @@ type GoalDraft = {
   periodEnd: string;
 };
 
-function GoalsTab() {
+function GoalsTab({ createSignal }: { createSignal?: number }) {
   const { user } = useAuth();
   const term = useTerm();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
@@ -264,9 +272,10 @@ function GoalsTab() {
   const [draft, setDraft] = useState<GoalDraft | null>(null);
   const [pipDraft, setPipDraft] = useState<PipDraft | null>(null);
   const [assocFilter, setAssocFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<GoalStatus | 'ALL'>('ALL');
+  // The status filter and the layout live in the URL, so Back and a shared link keep them.
+  const [statusFilter, setStatusFilter] = useUrlParam<GoalFilter>('goalStatus', 'ALL', GOAL_FILTERS);
   const [krGoalId, setKrGoalId] = useState<string | null>(null);
-  const [view, setView] = useState<'cascade' | 'table'>('cascade');
+  const [view, setView] = useUrlParam<'cascade' | 'table'>('goalView', 'cascade', ['cascade', 'table']);
 
   const q = useQuery({
     queryKey: perfKeys.goals(),
@@ -336,7 +345,7 @@ function GoalsTab() {
       [term('worker'), 'Kind', 'Title', 'Period start', 'Period end', 'Status', 'Progress %'],
       ...filtered.map((g) => [
         g.associateName ?? '',
-        g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal',
+        g.kind === 'OBJECTIVE' ? 'Objective' : 'Goal',
         g.title,
         g.periodStart,
         g.periodEnd,
@@ -345,6 +354,24 @@ function GoalsTab() {
       ]),
     ]);
   };
+
+  const newGoal = () =>
+    setDraft({
+      scope: 'PERSON',
+      parentGoalId: null,
+      associate: null,
+      kind: 'GOAL',
+      title: '',
+      description: '',
+      periodStart: todayYmd(),
+      periodEnd: `${new Date().getFullYear()}-12-31`,
+    });
+  useCreateSignal(createSignal, newGoal);
+  const counts = useMemo(() => {
+    const c: Record<GoalFilter, number> = { ALL: rows?.length ?? 0, DRAFT: 0, ACTIVE: 0, AT_RISK: 0, COMPLETED: 0, CANCELLED: 0 };
+    for (const g of rows ?? []) c[g.status] += 1;
+    return c;
+  }, [rows]);
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Delete this goal?', destructive: true }))) return;
@@ -358,65 +385,49 @@ function GoalsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {(['ALL', 'DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const).map(
-          (s) => (
-            <FilterChip
-              key={s}
-              active={statusFilter === s}
-              onClick={() => setStatusFilter(s)}
-              className="uppercase tracking-wider"
-            >
-              {s === 'ALL' ? 'All' : GOAL_STATUS_LABELS[s]}
+      {/* One filter row: search, the status chips (in a sheet on a phone),
+          and the layout toggle; the tab's primary action is in the header. */}
+      {rows && rows.length > 0 && (
+        <FilterBar
+          search={
+            <SearchInput
+              value={assocFilter}
+              onChange={(e) => setAssocFilter(e.target.value)}
+              placeholder="Name or title…"
+              aria-label="Filter goals by person or title"
+            />
+          }
+          activeFilters={statusFilter === 'ALL' ? 0 : 1}
+          onClearFilters={() => setStatusFilter('ALL')}
+          actions={
+            <>
+              <ViewToggle<'cascade' | 'table'>
+                value={view}
+                onChange={setView}
+                ariaLabel="How to show goals"
+                options={[
+                  { value: 'cascade', label: 'Cascade', icon: Network },
+                  { value: 'table', label: 'Table', icon: Rows3 },
+                ]}
+              />
+              <Button variant="outline" size="sm" onClick={onExportCsv} disabled={!filtered || filtered.length === 0} aria-label="Export goals as CSV">
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline">Export CSV</span>
+              </Button>
+            </>
+          }
+        >
+          {GOAL_FILTERS.map((st) => (
+            <FilterChip key={st} active={statusFilter === st} onClick={() => setStatusFilter(st)} count={counts[st]}>
+              {st === 'ALL' ? 'All' : GOAL_STATUS_LABELS[st]}
             </FilterChip>
-          ),
-        )}
-        <SegmentedControl
-          ariaLabel="How to show goals"
-          value={view}
-          onChange={setView}
-          options={[
-            { value: 'cascade', label: 'Cascade' },
-            { value: 'table', label: 'Table' },
-          ]}
-        />
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <SearchInput
-            wrapperClassName="w-52 max-w-full"
-            value={assocFilter}
-            onChange={(e) => setAssocFilter(e.target.value)}
-            placeholder="Filter by name or title…"
-            aria-label="Filter goals by person or title"
-          />
-          <Button
-            variant="outline"
-            onClick={onExportCsv}
-            disabled={!filtered || filtered.length === 0}
-          >
-            <Download className="mr-2 h-4 w-4" /> Export CSV
-          </Button>
-          <Button
-            onClick={() =>
-              setDraft({
-                scope: 'PERSON',
-                parentGoalId: null,
-                associate: null,
-                kind: 'GOAL',
-                title: '',
-                description: '',
-                periodStart: todayYmd(),
-                periodEnd: `${new Date().getFullYear()}-12-31`,
-              })
-            }
-          >
-            <Plus className="mr-2 h-4 w-4" /> New goal
-          </Button>
-        </div>
-      </div>
+          ))}
+        </FilterBar>
+      )}
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+            <div className="p-6"><QueryError what="goals" query={q} /></div>
           ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : filtered.length === 0 ? (
@@ -425,8 +436,19 @@ function GoalsTab() {
               title={rows && rows.length > 0 ? 'No goals match your filters' : 'No goals yet'}
               description={
                 rows && rows.length > 0
-                  ? 'Try a different status chip or associate filter.'
+                  ? 'Try a different status or name.'
                   : 'Start with a company goal, align team goals under it, and give each person goals that ladder up — each with measurable key results.'
+              }
+              action={
+                rows && rows.length > 0 ? (
+                  <Button variant="outline" onClick={() => { setStatusFilter('ALL'); setAssocFilter(''); }}>
+                    Clear filters
+                  </Button>
+                ) : (
+                  <Button onClick={newGoal}>
+                    <Plus className="mr-2 h-4 w-4" /> New goal
+                  </Button>
+                )
               }
             />
           ) : view === 'cascade' ? (
@@ -434,7 +456,7 @@ function GoalsTab() {
           ) : (
             <DataGrid<NonNullable<typeof filtered>[number]>
               id="goals"
-              caption="Goals and OKRs"
+              caption="Goals"
               rows={filtered}
               rowKey={(g) => g.id}
               search={false}
@@ -443,7 +465,7 @@ function GoalsTab() {
               columns={[
                 { key: 'title', header: 'Title', accessor: (g) => g.title, sortable: true, primary: true, className: 'font-medium text-white' },
                 { key: 'associate', header: term('worker'), accessor: (g) => g.associateName, sortable: true, cardMeta: true, cell: (g) => g.associateName ?? '—' },
-                { key: 'kind', header: 'Kind', accessor: (g) => (g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'), sortable: true, cardMeta: true },
+                { key: 'kind', header: 'Kind', accessor: (g) => (g.kind === 'OBJECTIVE' ? 'Objective' : 'Goal'), sortable: true, cardMeta: true },
                 { key: 'period', header: 'Period', accessor: (g) => g.periodStart, csv: (g) => `${fmtYmd(g.periodStart)} – ${fmtYmd(g.periodEnd)}`, sortable: true, searchable: false, className: 'whitespace-nowrap', cell: (g) => `${fmtYmd(g.periodStart)} – ${fmtYmd(g.periodEnd)}` },
                 {
                   key: 'status',
@@ -1073,9 +1095,10 @@ function PipFromGoalDrawer({
 
 // ============ Kudos ============
 
-function KudosTab() {
+function KudosTab({ createSignal }: { createSignal?: number }) {
   const qc = useQueryClient();
   const [showCompose, setShowCompose] = useState(false);
+  useCreateSignal(createSignal, () => setShowCompose(true));
   const [toAssociate, setToAssociate] = useState<PickedAssociate | null>(null);
   const [message, setMessage] = useState('');
   const [tags, setTags] = useState('');
@@ -1119,15 +1142,10 @@ function KudosTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={() => setShowCompose(true)}>
-          <Heart className="mr-2 h-4 w-4" /> Send kudo
-        </Button>
-      </div>
       {loadError ? (
         <Card>
           <CardContent className="p-0">
-            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+            <div className="p-6"><QueryError what="recognition" query={q} /></div>
           </CardContent>
         </Card>
       ) : rows === null ? (
@@ -1207,7 +1225,7 @@ function KudosTab() {
 
 // ============ 1:1s ============
 
-function OneOnOnesTab() {
+function OneOnOnesTab({ createSignal }: { createSignal?: number }) {
   const { user } = useAuth();
   const term = useTerm();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
@@ -1215,6 +1233,7 @@ function OneOnOnesTab() {
   const qc = useQueryClient();
   const [showSchedule, setShowSchedule] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  useCreateSignal(createSignal, () => setShowSchedule(true));
 
   const q = useQuery({
     queryKey: perfKeys.oneOnOnes(),
@@ -1254,11 +1273,10 @@ function OneOnOnesTab() {
 
   return (
     <div className="space-y-4">
-      {scheduleButton && <div className="flex justify-end">{scheduleButton}</div>}
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+            <div className="p-6"><QueryError what="1:1s" query={q} /></div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
@@ -1447,12 +1465,13 @@ function ScheduleOneOnOneDrawer({
 
 // ============ PIPs ============
 
-function PipsTab({ canManage }: { canManage: boolean }) {
+function PipsTab({ canManage, createSignal }: { canManage: boolean; createSignal?: number }) {
   const qc = useQueryClient();
   const term = useTerm();
   const prompt = usePrompt();
   const navigate = useNavigate();
   const [showNew, setShowNew] = useState(false);
+  useCreateSignal(createSignal, () => setShowNew(true));
   const [assocFilter, setAssocFilter] = useState('');
   const [reviewBusyId, setReviewBusyId] = useState<string | null>(null);
 
@@ -1461,7 +1480,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
     queryFn: async () => (await listPips()).pips,
   });
   const rows = q.data ?? null;
-  const loadError = queryErrorMessage(q.error, 'Could not load PIPs.');
+  const loadError = queryErrorMessage(q.error, 'Could not load improvement plans.');
 
   const filtered = useMemo(() => {
     if (!rows) return null;
@@ -1517,29 +1536,26 @@ function PipsTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <SearchInput
-          wrapperClassName="w-52 max-w-full"
-          value={assocFilter}
-          onChange={(e) => setAssocFilter(e.target.value)}
-          placeholder="Filter by associate…"
-          aria-label="Filter PIPs by associate"
-        />
-        {canManage && (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New PIP
-          </Button>
-        )}
-      </div>
+      {rows && rows.length > 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <SearchInput
+            wrapperClassName="w-52 max-w-full"
+            value={assocFilter}
+            onChange={(e) => setAssocFilter(e.target.value)}
+            placeholder="Filter by associate…"
+            aria-label="Filter improvement plans by associate"
+          />
+        </div>
+      )}
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+            <div className="p-6"><QueryError what="improvement plans" query={q} /></div>
           ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : filtered.length === 0 ? (
             <EmptyState
-              title={rows && rows.length > 0 ? 'No PIPs match your filter' : 'No active PIPs'}
+              title={rows && rows.length > 0 ? 'No improvement plans match your filter' : 'No active improvement plans'}
               description={
                 rows && rows.length > 0
                   ? 'Try a different associate name.'
@@ -1705,10 +1721,11 @@ function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
 
 // ============ 360 reviews ============
 
-function Reviews360Tab({ canManage }: { canManage: boolean }) {
+function Reviews360Tab({ canManage, createSignal }: { canManage: boolean; createSignal?: number }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [showNew, setShowNew] = useState(false);
+  useCreateSignal(createSignal, () => setShowNew(true));
   const [feedbackFor, setFeedbackFor] = useState<Review360 | null>(null);
   const [resultsFor, setResultsFor] = useState<Review360 | null>(null);
 
@@ -1734,17 +1751,10 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New 360
-          </Button>
-        </div>
-      )}
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+            <div className="p-6"><QueryError what="360 reviews" query={q} /></div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (

@@ -30,6 +30,49 @@ export class WhatsAppNotRoutedError extends Error {
   }
 }
 
+/** True when an email can actually leave: a provider key and a From address are set. */
+export function emailConfigured(): boolean {
+  return Boolean(env.RESEND_API_KEY && env.RESEND_FROM);
+}
+
+/**
+ * The external reference a stubbed email gets (no provider connected: the
+ * body went to the server log). Callers store it and mark the row SENT so
+ * the flow behind it continues; anything reading the log back asks
+ * isLoggedOnlyEmail() so it never says "Sent" for a message that went nowhere.
+ */
+export const STUB_EMAIL_REF_PREFIX = 'STUB-EMAIL-';
+
+export function isLoggedOnlyEmail(row: { channel: string; externalRef: string | null }): boolean {
+  return row.channel === 'EMAIL' && !!row.externalRef?.startsWith(STUB_EMAIL_REF_PREFIX);
+}
+
+/**
+ * A bare link and the few words that introduce it ("Open it: https://…",
+ * "Pick up where you left off: https://…", a URL alone on its line) — only
+ * where it starts a sentence or a line, so a link inside a sentence stays.
+ */
+const LINK_WITH_LEAD_IN = /(^|[.!?][ \t]+|\n)(?:[^\n.!?:]{1,60}:[ \t]*)?https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/g;
+
+/**
+ * An in-app notification's words without the app links it was written with.
+ * The same body goes out by email, where "Open it: https://…" is the way in;
+ * in the app the row's Open button carries `linkUrl`, so the URL is noise
+ * ("http://localhost:5173/compliance?tab=scorecard" in the middle of a
+ * card). A body with no `linkUrl` keeps its URLs — there they are the only
+ * way to follow the message.
+ */
+export function inAppBody(body: string, linkUrl: string | null): string {
+  if (!linkUrl || !/https?:\/\//.test(body)) return body;
+  const words = body
+    .replace(LINK_WITH_LEAD_IN, '$1')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  // A body that was nothing but the link keeps it: an empty card says less.
+  return words || body;
+}
+
 /** True when at least one push transport can reach a device. */
 export function anyPushConfigured(): boolean {
   return pushConfigured() || apnsConfigured() || fcmConfigured();
@@ -321,7 +364,7 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
   const to = input.recipient.email;
   if (!to) {
     return {
-      externalRef: `STUB-EMAIL-no-recipient-${Math.random().toString(36).slice(2, 8)}`,
+      externalRef: `${STUB_EMAIL_REF_PREFIX}no-recipient-${Math.random().toString(36).slice(2, 8)}`,
       providerMessageId: null,
     };
   }
@@ -347,7 +390,7 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
     );
     throw new EmailSuppressedError(to, suppression.reason);
   }
-  if (!env.RESEND_API_KEY || !env.RESEND_FROM) {
+  if (!emailConfigured()) {
     // Stubbed mode — print to the API console so the developer can copy
     // the magic link from there. Never log raw secrets in production.
     const attachmentsLine =
@@ -363,7 +406,7 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
         .join('\n')}\n  (Set RESEND_API_KEY + RESEND_FROM in apps/api/.env to send for real.)\n`
     );
     return {
-      externalRef: `STUB-EMAIL-${Math.random().toString(36).slice(2, 10)}`,
+      externalRef: `${STUB_EMAIL_REF_PREFIX}${Math.random().toString(36).slice(2, 10)}`,
       providerMessageId: null,
     };
   }

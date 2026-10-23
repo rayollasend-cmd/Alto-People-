@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -6,10 +6,13 @@ import { AlertTriangle, ArrowRight, Check, Circle, MinusCircle } from 'lucide-re
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { ListTemplate } from '@/components/templates';
+import { RunPageShell, type RunSubPageProps } from './RunPageShell';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { QueryError } from '@/components/ui/QueryError';
+import { useMediaQuery } from '@/lib/useViewport';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -122,8 +125,19 @@ const STATE_LABEL: Record<StepState, string> = {
   skip: 'Not applicable',
 };
 
-export function PayrollClosePage() {
-  const { id } = useParams<{ id: string }>();
+/** The step a person should act on now: blocked first, then the current one, then one that needs a look. */
+export function openStep(steps: CloseStep[]): CloseStep | null {
+  return steps.find((s) => s.state === 'blocked') ?? steps.find((s) => s.state === 'current') ?? steps.find((s) => s.state === 'warn') ?? null;
+}
+
+/** A step that is "done" only because the run moved past it: a paid run whose review was never signed. */
+function skipped(s: CloseStep, data: PayrollClose): boolean {
+  return s.key === 'review' && s.state === 'done' && !!data.review?.required && !data.review.signedAt;
+}
+
+export function PayrollClosePage({ runId, embedded = false }: RunSubPageProps = {}) {
+  const params = useParams<{ id: string }>();
+  const id = runId ?? params.id;
   const q = useQuery({
     queryKey: ['payroll', 'close', id],
     queryFn: () => apiFetch<PayrollClose>(`/payroll/runs/${id}/close`),
@@ -131,33 +145,39 @@ export function PayrollClosePage() {
     refetchInterval: 30_000,
   });
   const data = q.data;
+  const phone = !useMediaQuery('(min-width: 640px)');
+  const firstOpenRef = useRef<HTMLLIElement | null>(null);
+  const scrolledRef = useRef(false);
+  const crumbs = [{ label: 'Payroll', to: '/payroll' }, { label: 'Run', to: `/payroll/runs/${id}` }, { label: 'Close' }];
+  useEffect(() => {
+    // On a phone the finished steps used to fill the first screen: go to the one that needs you.
+    if (!phone || !data || scrolledRef.current || !firstOpenRef.current) return;
+    scrolledRef.current = true;
+    firstOpenRef.current.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  }, [phone, data]);
   if (q.isError) {
     return (
-      <ListTemplate title="Guided close" breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Close' }]}>
-        <EmptyState
-          title="Could not load this run"
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void q.refetch()}>
-              Retry
-            </Button>
-          }
-        />
-      </ListTemplate>
+      <RunPageShell embedded={embedded} title="Guided close" breadcrumbs={crumbs}>
+        <QueryError what="this run" query={q} />
+      </RunPageShell>
     );
   }
   if (!data) {
     return (
-      <ListTemplate title="Guided close" breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Close' }]}>
+      <RunPageShell embedded={embedded} title="Guided close" breadcrumbs={crumbs}>
         <Skeleton className="h-64" />
-      </ListTemplate>
+      </RunPageShell>
     );
   }
   const r = data.run;
   const blockers = data.steps.reduce((s, x) => s + x.blockers, 0);
-  const current = data.steps.find((s) => s.state === 'current' || s.state === 'blocked');
+  const current = openStep(data.steps);
+  const paychecks = data.items.pending + data.items.disbursed + data.items.held + data.items.failed;
+  const firstOpenKey = data.steps.find((s) => s.state !== 'done' && s.state !== 'skip')?.key ?? null;
 
   return (
-    <ListTemplate
+    <RunPageShell
+      embedded={embedded}
       title={`Close payroll · ${fmtDate(r.periodStart)} – ${fmtDate(r.periodEnd)}`}
       topbarTitle="Guided close"
       subtitle={
@@ -166,67 +186,99 @@ export function PayrollClosePage() {
           <RunStatusBadge status={r.status} />
         </span>
       }
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Close' }]}
-      primaryAction={
-        current ? (
-          <Button asChild>
-            <Link to={current.to}>
-              {current.state === 'blocked' ? `Clear ${current.blockers} blocker${current.blockers === 1 ? '' : 's'}` : current.label}
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-            </Link>
-          </Button>
-        ) : undefined
+      breadcrumbs={crumbs}
+      // The step to act on is the header's primary, whether it's blocked, up next or needs a look.
+      // As the run record's tab, the record's own primary is that step already: not a second gold button.
+      actions={
+        current && !embedded
+          ? [
+              {
+                key: 'open-step',
+                label: current.state === 'blocked' ? `Clear ${current.blockers} blocker${current.blockers === 1 ? '' : 's'}` : current.label,
+                to: current.to,
+                icon: ArrowRight,
+                primary: true,
+              },
+            ]
+          : undefined
       }
       summary={
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-ink-muted">
-            <span>Gross {fmtMoney(r.totalGross)}</span>
-            <span>Net {fmtMoney(r.totalNet)}</span>
-            <span>Employer tax {fmtMoney(r.totalEmployerTax)}</span>
-            <span>{data.items.pending + data.items.disbursed + data.items.held + data.items.failed} paychecks</span>
-            {blockers > 0 && <span className="text-alert">{blockers} blocking</span>}
-          </div>
+        <div className="space-y-3">
           <RunTotalsMismatch check={r} />
+          {/* The run's numbers: the record's header has them when this is its tab. */}
+          {!embedded && (
+            <MetricStrip label="Run totals">
+              <MetricCard label="Gross" value={fmtMoney(r.totalGross)} />
+              <MetricCard label="Net" value={fmtMoney(r.totalNet)} />
+              <MetricCard label="Employer tax" value={fmtMoney(r.totalEmployerTax)} />
+              <MetricCard label="Paychecks" value={String(paychecks)} hint={blockers > 0 ? `${blockers} blocking` : undefined} tone={blockers > 0 ? 'alert' : 'default'} />
+            </MetricStrip>
+          )}
         </div>
       }
     >
       <div className="mb-3">
         <RunFundingCard runId={r.id} runFinalized={r.status === 'FINALIZED'} />
       </div>
-      <ol className="space-y-3" aria-label="Close steps">
-        {data.steps.map((s, i) => (
-          <li key={s.key}>
-            <Card className={cn(s.state === 'blocked' && 'border-alert/40', s.state === 'current' && 'border-accent/50')}>
-              <CardContent className="flex items-start gap-3">
-                <StepIcon state={s.state} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <h3 className="text-sm font-medium text-ink">
-                      {i + 1}. {s.label}
-                    </h3>
-                    <span className={cn('text-2xs uppercase tracking-wider', s.state === 'blocked' ? 'text-alert' : s.state === 'done' ? 'text-success' : 'text-ink-muted')}>
-                      {STATE_LABEL[s.state]}
-                      {s.blockers > 0 && ` · ${s.blockers} blocking`}
-                      {s.warnings > 0 && ` · ${s.warnings} to check`}
-                    </span>
+      <ol className="space-y-2" aria-label="Close steps">
+        {data.steps.map((s, i) => {
+          const isSkipped = skipped(s, data);
+          const finished = (s.state === 'done' && !isSkipped) || s.state === 'skip';
+          if (finished) {
+            // A finished step is one line: what it was, that it's done, and when.
+            return (
+              <li key={s.key}>
+                <Link to={s.to} className="flex items-center gap-3 rounded-lg border border-line px-4 py-2.5 text-sm hover:bg-surface-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                  <StepIcon state={s.state} />
+                  <span className="min-w-0 flex-1 text-ink">
+                    {i + 1}. {s.label}
+                  </span>
+                  <span className="shrink-0 text-xs text-ink-muted">{doneWhen(s, data) ?? STATE_LABEL[s.state]}</span>
+                </Link>
+              </li>
+            );
+          }
+          return (
+            <li key={s.key} ref={s.key === firstOpenKey ? firstOpenRef : undefined}>
+              <Card className={cn(s.state === 'blocked' && 'border-alert/40', s.state === 'current' && 'border-accent/50')}>
+                <CardContent className="flex items-start gap-3">
+                  <StepIcon state={isSkipped ? 'warn' : s.state} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      {/* The title is the link: no separate "Open" under every step. */}
+                      <h3 className="text-sm font-medium">
+                        <Link to={s.to} className="text-ink hover:text-accent hover:underline">
+                          {i + 1}. {s.label}
+                        </Link>
+                      </h3>
+                      <span className={cn('text-2xs uppercase tracking-wider', s.state === 'blocked' ? 'text-alert' : isSkipped ? 'text-warning' : 'text-ink-muted')}>
+                        {isSkipped ? 'Skipped' : STATE_LABEL[s.state]}
+                        {s.blockers > 0 && ` · ${s.blockers} blocking`}
+                        {s.warnings > 0 && ` · ${s.warnings} to check`}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-ink-muted">{STEP_HINT[s.key]}</p>
+                    {s.note && <p className="mt-1 text-xs text-alert">{s.note}</p>}
+                    <StepDetail step={s} data={data} />
                   </div>
-                  <p className="mt-0.5 text-xs text-ink-muted">{STEP_HINT[s.key]}</p>
-                  {s.note && <p className="mt-1 text-xs text-alert">{s.note}</p>}
-                  <StepDetail step={s} data={data} />
-                  {s.state !== 'skip' && (
-                    <Link to={s.to} className="mt-2 inline-flex items-center gap-1 text-xs text-accent underline underline-offset-2">
-                      Open
-                      <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                    </Link>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </li>
-        ))}
+                </CardContent>
+              </Card>
+            </li>
+          );
+        })}
       </ol>
-    </ListTemplate>
+    </RunPageShell>
   );
+}
+
+/** When a finished step finished, when the run says. */
+function doneWhen(s: CloseStep, data: PayrollClose): string | null {
+  const r = data.run;
+  if (s.key === 'approve') return r.finalizedAt ? `Finalized ${fmtDate(r.finalizedAt)}` : 'Finalized';
+  if (s.key === 'review' && data.review?.signedAt) return `Signed ${fmtDate(data.review.signedAt)}`;
+  if (s.key === 'disburse' && r.disbursedAt) return `Paid ${fmtDate(r.disbursedAt)}`;
+  if (s.key === 'deposits' && data.deposit?.status === 'PAID') return 'Deposited';
+  return null;
 }
 
 function List({ items, max = 5 }: { items: string[]; max?: number }) {

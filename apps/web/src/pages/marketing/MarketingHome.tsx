@@ -1,13 +1,14 @@
 import { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Gift, Link2, Megaphone, Palette, Users } from 'lucide-react';
+import { Megaphone, Users } from 'lucide-react';
 import { useGreeting, greetingName } from '@/lib/greeting';
 import { useAuth } from '@/lib/auth';
 import { getMarketingOverview } from '@/lib/marketingApi';
 import { fmtDate, ymdLocal } from '@/lib/format';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
+import { HomeMeta } from '@/components/home/HomeMeta';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LiveNow } from '@/components/ui/LiveNow';
@@ -66,18 +67,20 @@ export function MarketingHome() {
 
   return (
     <HomeTemplate
-      title={
-        <>
-          <LiveNow render={(now) => greet(now.getHours())} />
-          {name && <>, <span className="text-accent">{name}</span></>}.
-        </>
-      }
+      // The page's name is the heading; the greeting is the quiet line under it (F500 G4).
+      title="Marketing"
       topbarTitle="Marketing"
       subtitle="The top of the funnel: who sees the jobs, who applies, who gets hired and from where."
       meta={
-        <span className="text-xs2 uppercase tracking-[0.18em] text-ink-muted">
-          {fmtDate(range.from)} – {fmtDate(range.to)}
-        </span>
+        <HomeMeta
+          items={[
+            <>
+              <LiveNow render={(now) => greet(now.getHours())} />
+              {name ? `, ${name}` : ''}
+            </>,
+            `${fmtDate(range.from)} – ${fmtDate(range.to)}`,
+          ]}
+        />
       }
       actions={<SegmentedControl ariaLabel="Range" options={PRESETS} value={preset} onChange={(v) => setParam('range', v)} />}
       hero={
@@ -143,10 +146,6 @@ export function MarketingHome() {
               The careers site
             </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setParam('tab', 'postings')}>
-            <Link2 className="h-4 w-4" aria-hidden="true" />
-            Postings &amp; boards
-          </Button>
           <Button asChild variant="outline" size="sm">
             <Link to="/recruiting">
               <Users className="h-4 w-4" aria-hidden="true" />
@@ -164,14 +163,8 @@ export function MarketingHome() {
           <TabsTrigger value="funnel">Funnel</TabsTrigger>
           <TabsTrigger value="postings">Postings &amp; boards</TabsTrigger>
           <TabsTrigger value="sources">Source of hire</TabsTrigger>
-          <TabsTrigger value="brand">
-            <Palette className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            Employer brand
-          </TabsTrigger>
-          <TabsTrigger value="campaigns">
-            <Gift className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            Referral campaigns
-          </TabsTrigger>
+          <TabsTrigger value="brand">Employer brand</TabsTrigger>
+          <TabsTrigger value="campaigns">Referral campaigns</TabsTrigger>
         </TabsList>
         <TabsContent value="funnel">
           {o ? (

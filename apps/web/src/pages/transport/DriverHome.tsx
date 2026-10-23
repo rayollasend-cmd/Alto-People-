@@ -23,6 +23,8 @@ import {
   ShieldAlert,
   Store,
   UserX,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ShiftMapDrawer, type TripKey } from './ShiftMap';
@@ -44,6 +46,7 @@ import {
   type DriverAccessStatus,
   getDriverRunLive,
   getDriverToday,
+  getDriverShifts,
   getDriverWeek,
   getDriverRuns,
   logFuel,
@@ -65,7 +68,7 @@ import { replayQueuedWrites } from '@/lib/offlineQueue';
 import { onPendingMarks, pendingFor, tapArrived, tapBoard, tapBoardAll, tapComplete, tapNoShow, tapUndo, type PendingMark } from '@/lib/offlineTransport';
 import { Input } from '@/components/ui/Input';
 import { useConfirm, usePrompt } from '@/lib/confirm';
-import { SoundToggle } from '@/components/transport/SoundToggle';
+import { useRideSounds } from '@/lib/rideAlerts';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
 import { LiveNow } from '@/components/ui/LiveNow';
@@ -279,6 +282,7 @@ export function DriverHome() {
   // The safety sheet (undefined: closed; null: open without a run) and the
   // incident report it can hand on to.
   const [safetyRun, setSafetyRun] = useState<RideRun | null | undefined>(undefined);
+  const [soundsOn, setSoundsOn] = useRideSounds();
   const [incidentRun, setIncidentRun] = useState<RideRun | null | undefined>(undefined);
   const [fueling, setFueling] = useState(false);
   const marks = usePendingMarks();
@@ -363,25 +367,15 @@ export function DriverHome() {
         }
         topbarTitle={t('drive.title')}
         subtitle={t('drive.subtitle')}
-        actions={
-          <div className="flex items-center gap-1">
-            <SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} />
-            <Button variant="ghost" size="sm" onClick={() => setSafetyRun(heroRun ?? null)}>
-              <ShieldAlert className="h-4 w-4" />
-              {t('drive.safety')}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setReporting(heroRun?.id ?? heroNext?.id ?? null)}>
-              <AlertTriangle className="h-4 w-4" />
-              {t('ride.report')}
-            </Button>
-            {fuelVan && (
-              <Button variant="ghost" size="sm" onClick={() => setFueling(true)}>
-                <Fuel className="h-4 w-4" />
-                {t('drive.logFuel')}
-              </Button>
-            )}
-          </div>
-        }
+        // The header's actions as one list: "Report a problem" stays in view
+        // (phones too); Safety, Log fuel and the labelled sound switch go in
+        // "More" / the phone sheet — the row ran off a 390px screen.
+        actions={[
+          { key: 'report', label: t('ride.report'), icon: AlertTriangle, primary: true, onSelect: () => setReporting(heroRun?.id ?? heroNext?.id ?? null) },
+          { key: 'safety', label: t('drive.safety'), icon: ShieldAlert, onSelect: () => setSafetyRun(heroRun ?? null) },
+          { key: 'fuel', label: t('drive.logFuel'), icon: Fuel, onSelect: () => setFueling(true), hidden: !fuelVan },
+          { key: 'sounds', label: soundsOn ? t('drive.soundsOnShort') : t('drive.soundsOffShort'), icon: soundsOn ? Volume2 : VolumeX, onSelect: () => setSoundsOn(!soundsOn), hint: soundsOn ? t('ride.soundsOn') : t('ride.soundsOff') },
+        ]}
         banners={
           setupBanner || marks.length > 0 ? (
             <div className="space-y-2">
@@ -410,8 +404,8 @@ export function DriverHome() {
         {restDone.map((run) => (
           <Finished key={run.id} run={run} />
         ))}
-        <DriverClients />
         <DriverWeekCalendar onRider={setRider} />
+        <DriverClients />
       </HomeTemplate>
       {reporting !== undefined && (
         <DriverReportDialog
@@ -460,6 +454,8 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
   const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const today = zonedDayKey(new Date(), localTz);
   const q = useQuery({ queryKey: ['transport', 'driver', 'week', today], queryFn: () => getDriverWeek(today, 7), refetchInterval: 60_000 });
+  // The driver's own shifts, day by day — the one schedule view (the Today card keeps only today's).
+  const shiftsQ = useQuery({ queryKey: ['transport', 'driver', 'shifts', 7, today], queryFn: () => getDriverShifts(today, 7), refetchInterval: 5 * 60_000 });
   const [picked, setPicked] = useState(today);
   if (q.isError) return <QueryError what="your week" query={q} />;
   if (q.isPending) return <Skeleton className="h-28 w-full rounded-lg" />;
@@ -467,6 +463,7 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
   const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(`${today}T12:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10));
   const runsOn = (d: string) => q.data.runs.filter((r) => r.serviceDate === d);
   const askingOn = (d: string) => q.data.asking.filter((a) => a.serviceDate === d);
+  const shiftsOn = (d: string) => (shiftsQ.data?.shifts ?? []).filter((sh) => zonedDayKey(new Date(sh.startsAt), localTz) === d);
   const label = (d: string) => {
     const at = parseYmd(d)!;
     return {
@@ -484,7 +481,7 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
           <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
           {t('drive.week')}
         </h2>
-        <div className="-mx-1 mt-3 flex gap-1.5 overflow-x-auto px-1 pb-1 scrollbar-none" role="tablist" aria-label={t('drive.week')}>
+        <div className="mt-3 grid grid-cols-7 gap-1" role="tablist" aria-label={t('drive.week')}>
           {days.map((d) => {
             const n = runsOn(d).length;
             const ask = askingOn(d).reduce((m, a) => m + a.count, 0);
@@ -499,13 +496,14 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
                 aria-label={l.long}
                 onClick={() => setPicked(d)}
                 className={cn(
-                  'flex w-12 shrink-0 flex-col items-center rounded-lg border py-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  'flex min-w-0 flex-col items-center rounded-lg border py-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
                   on ? 'border-gold ring-1 ring-gold/60' : 'border-navy-secondary hover:border-silver/40',
                 )}
               >
                 <span className={cn('text-2xs uppercase', on ? 'text-gold' : 'text-silver')}>{l.dow}</span>
                 <span className={cn('text-base font-semibold tabular-nums', on ? 'text-white' : 'text-silver')}>{l.num}</span>
                 <span className="mt-1 flex h-1.5 gap-0.5" aria-hidden="true">
+                  {shiftsOn(d).length > 0 && <span className="h-1.5 w-1.5 rounded-sm bg-silver" />}
                   {Array.from({ length: Math.min(3, n) }, (_, i) => (
                     <span key={i} className="h-1.5 w-1.5 rounded-full bg-gold" />
                   ))}
@@ -516,8 +514,17 @@ function DriverWeekCalendar({ onRider }: { onRider: (associateId: string) => voi
           })}
         </div>
         <div className="mt-3 text-xs font-medium text-silver">{label(picked).long}</div>
-        {runs.length === 0 && asking.length === 0 && <p className="py-3 text-sm text-silver/70">{t('drive.weekNone')}</p>}
+        {runs.length === 0 && asking.length === 0 && shiftsOn(picked).length === 0 && <p className="py-3 text-sm text-silver/70">{t('drive.weekNone')}</p>}
         <ul className="mt-2 space-y-3">
+          {shiftsOn(picked).map((sh) => (
+            <li key={sh.id} className="flex items-center gap-2 rounded-lg border border-navy-secondary bg-navy-secondary/20 px-3 py-2 text-sm" data-testid="week-shift">
+              <Clock className="h-3.5 w-3.5 shrink-0 text-silver" aria-hidden="true" />
+              <span className="text-silver">{t('drive.myShiftLine')}</span>
+              <span className="tabular-nums text-white">
+                {fmtTimeTz(sh.startsAt, localTz)}–{fmtTimeTz(sh.endsAt, localTz)}
+              </span>
+            </li>
+          ))}
           {runs.map((run) => (
             <li key={run.id} className="rounded-lg border border-navy-secondary p-3">
               <div className="flex items-start justify-between gap-3">
@@ -736,6 +743,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
   const q = useQuery({ queryKey: ['transport', 'driver', 'requests'], queryFn: getSeatRequests, refetchInterval: 30_000 });
   const [busy, setBusy] = useState<string | null>(null);
   const requests = q.data?.requests ?? [];
+  // Accepting needs a van (it shows in the Today card's header now).
   const van = q.data?.van ?? null;
   // A new seat request: buzz, chime — the ride-share "ding".
   useNewKeys(q.data ? requests.map((r) => `req:${r.id}`) : null, () => rideAlert('request'));
@@ -779,21 +787,6 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
 
   return (
     <div className="space-y-3">
-      {van ? (
-        <div className="flex items-center gap-3 rounded-lg border border-navy-secondary bg-navy px-3.5 py-2.5 text-sm">
-          <Bus className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">
-            <span className="text-silver">{t('drive.yourVan')} · </span>
-            <span className="font-medium text-white">{van.name}</span>
-            {van.look && <span className="text-silver"> · {van.look}</span>}
-          </span>
-          {van.plate && (
-            <span className="shrink-0 rounded-md border border-silver/40 bg-white px-2 py-0.5 font-mono text-xs font-bold tracking-wider text-on-accent">
-              {van.plate}
-            </span>
-          )}
-        </div>
-      ) : null}
       {requests.length === 0 ? (
         <p className="text-sm text-silver">{t('drive.requestsNone')}</p>
       ) : (
@@ -933,6 +926,10 @@ function DriverClients() {
   };
   const box =
     'h-4 w-4 shrink-0 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 disabled:opacity-60';
+  // Driving for every client limits nothing and leaves nothing to ask: the
+  // daily home doesn't carry the setting then (it shows when it narrows the
+  // runs, or a request waits).
+  if (allApproved && waiting.length === 0 && !open) return null;
   return (
     <section aria-label={t('drive.clients')} className="rounded-lg border border-navy-secondary bg-navy px-3.5 py-3">
       <div className="flex items-start gap-3">

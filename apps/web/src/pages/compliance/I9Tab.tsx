@@ -5,7 +5,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import { DeadlineStrip, matchesDeadlineDay } from './DeadlineStrip';
-import type { I9DocumentList, I9ListResponse, I9Verification } from '@alto-people/shared';
+import type { I9DocumentList, I9ListResponse, I9NotStarted, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
 import {
   listI9Documents,
@@ -25,7 +25,7 @@ import {
   IDENTITY_DOC_KINDS,
 } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useStoreScope } from '@/lib/storeScope';
@@ -109,6 +109,9 @@ const WORK_AUTH_WINDOW_DAYS = 90;
 
 const I9_FILTERS = [
   { value: 'pending', label: 'Pending' },
+  // Placed people with no I-9 record at all — the scorecard counts them
+  // missing, so the list carries them too.
+  { value: 'not_started', label: 'No I-9 on file' },
   // The KPI strip counts Section-2-overdue rows; this chip makes that
   // number a reachable view instead of just an alarm.
   { value: 'overdue', label: 'Overdue' },
@@ -138,6 +141,30 @@ const DOC_LIST_LABELS: Record<I9DocumentList, string> = {
   LIST_B_AND_C: 'Lists B + C',
 };
 type I9Filter = (typeof I9_FILTERS)[number]['value'];
+
+/** A placed person with no I-9 record, as a row the list and the drawer
+ *  can show: nothing done yet, Section 2 due from the hire date. The
+ *  drawer's paper-I-9 form creates the record on save. */
+export function notStartedRow(n: I9NotStarted): I9Verification {
+  return {
+    id: n.associateId,
+    associateId: n.associateId,
+    associateName: n.associateName,
+    associateEmail: n.associateEmail ?? '',
+    applicationId: null,
+    section1CompletedAt: null,
+    section2CompletedAt: null,
+    section2VerifierUserId: null,
+    section2VerifierEmail: null,
+    documentList: null,
+    supportingDocIds: [],
+    startDate: n.hireDate,
+    clientId: n.clientId,
+    clientName: n.clientName,
+    placed: true,
+    photoUrl: n.photoUrl,
+  };
+}
 
 export function I9Tab({ canManage }: { canManage: boolean }) {
   const term = useTerm();
@@ -225,7 +252,20 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     // the KPI strip must count the whole population, not one slice.
     queryFn: () => listI9s('all'),
   });
-  const rows: I9Verification[] | null = rowsQuery.data?.i9s ?? null;
+  // The I-9 records plus the placed people who have none: one population
+  // with the scorecard (everyone hired and placed), so "I-9 complete" reads
+  // the same number on both.
+  const notStartedIds = useMemo(
+    () => new Set((rowsQuery.data?.notStarted ?? []).map((n) => n.associateId)),
+    [rowsQuery.data],
+  );
+  const rows: I9Verification[] | null = useMemo(
+    () =>
+      rowsQuery.data
+        ? [...rowsQuery.data.i9s, ...(rowsQuery.data.notStarted ?? []).map(notStartedRow)]
+        : null,
+    [rowsQuery.data],
+  );
   // Past retention lives outside the working list: those people have left,
   // so the server answers them on their own (?status=retention).
   const retentionQuery = useQuery({
@@ -308,6 +348,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     let list = filter === 'retention' ? retentionRows : rows;
     if (dueDay) list = list.filter((r) => i9DueDates(r).some((d) => matchesDeadlineDay(d, dueDay)));
     if (filter === 'pending') list = list.filter((r) => !r.section2CompletedAt);
+    if (filter === 'not_started') list = list.filter((r) => notStartedIds.has(r.id));
     if (filter === 'complete') list = list.filter((r) => !!r.section2CompletedAt);
     if (filter === 'overdue') {
       // Mirrors the KPI: Section 2 not done and its 3-business-day
@@ -351,7 +392,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     });
     // retentionRows is derived from the retention query each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, filter, started, clientFilter, search, dueDay, retentionQuery.data]);
+  }, [rows, filter, started, clientFilter, search, dueDay, retentionQuery.data, notStartedIds]);
 
   // Distinct clients present in the list, for the dropdown — derived from
   // the rows themselves so no extra fetch (and no /clients dependency).
@@ -367,11 +408,16 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   // Whole-population stats (rows is always the full list).
   const kpi = useMemo(() => {
     const all = rows ?? [];
+    const records = all.filter((r) => !notStartedIds.has(r.id));
+    const placed = all.filter((r) => r.placed);
     const pending2 = all.filter((r) => !r.section2CompletedAt);
     return {
-      total: all.length,
-      pendingS1: all.filter((r) => !r.section1CompletedAt).length,
-      pendingS2: pending2.length,
+      // The scorecard's population and its I-9 line, the same rule.
+      placed: placed.length,
+      placedComplete: placed.filter((r) => !!r.section1CompletedAt && !!r.section2CompletedAt).length,
+      notStarted: notStartedIds.size,
+      pendingS1: records.filter((r) => !r.section1CompletedAt).length,
+      pendingS2: records.filter((r) => !r.section2CompletedAt).length,
       overdue: pending2.filter((r) => {
         const due = section2DueDate(r.startDate);
         return due !== null && due.getTime() < Date.now();
@@ -383,7 +429,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
       ).length,
     };
-  }, [rows]);
+  }, [rows, notStartedIds]);
   const deadlineDates = useMemo(() => (rows ?? []).flatMap(i9DueDates), [rows]);
 
   return (
@@ -397,7 +443,18 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       {rows && rows.length > 0 && (
         <KpiStrip>
           {/* The numbers that have a view are that view's filter. */}
-          <Kpi label="Associates" value={kpi.total} onClick={() => setFilter('all')} active={filter === 'all'} />
+          {/* "I-9 complete" is the scorecard's I-9 line: placed people
+              with both sections done, out of everyone placed. */}
+          <Kpi label="I-9 complete" value={kpi.placedComplete} of={kpi.placed} />
+          {kpi.notStarted > 0 && (
+            <Kpi
+              label="No I-9 on file"
+              value={kpi.notStarted}
+              tone="text-alert"
+              onClick={() => setFilter('not_started')}
+              active={filter === 'not_started'}
+            />
+          )}
           <Kpi
             label="Section 1 pending"
             value={kpi.pendingS1}
@@ -417,7 +474,6 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             onClick={() => setFilter('overdue')}
             active={filter === 'overdue'}
           />
-          <Kpi label="Complete" value={kpi.complete} tone="text-success" onClick={() => setFilter('complete')} active={filter === 'complete'} />
           <Kpi
             label={`Reverify ≤ ${WORK_AUTH_WINDOW_DAYS}d`}
             value={kpi.workAuth}
@@ -446,7 +502,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       )}
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        {I9_FILTERS.map((f) => (
+        {I9_FILTERS.filter((f) => f.value !== 'not_started' || kpi.notStarted > 0).map((f) => (
           <FilterChip
             key={f.value}
             active={filter === f.value}
@@ -533,7 +589,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                   <CardContent>
                     <div className="flex items-center justify-between gap-4 flex-wrap">
                       <div className="flex items-center gap-3 min-w-0">
-                        <Avatar src={associatePhotoUrl(r.associateId)} name={r.associateName} email={r.associateEmail} size="md" />
+                        <Avatar src={personPhotoUrl(r)} name={r.associateName} email={r.associateEmail} size="md" />
                         <div className="min-w-0">
                           <div className="text-white font-medium truncate">
                             {r.associateName}
@@ -546,8 +602,15 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                       </div>
                       <div className="flex items-center gap-4 flex-wrap">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <SectionBadge label="Sec 1" done={sec1Done} />
-                          <SectionBadge label="Sec 2" done={sec2Done} />
+                          {notStartedIds.has(r.id) ? (
+                            <Badge variant="destructive">No I-9 on file</Badge>
+                          ) : (
+                            <>
+                              <SectionBadge label="Sec 1" done={sec1Done} />
+                              <SectionBadge label="Sec 2" done={sec2Done} />
+                            </>
+                          )}
+                          {r.placed === false && <Badge variant="outline">Onboarding</Badge>}
                           {r.documentList && (
                             <Badge variant="outline">
                               {DOC_LIST_LABELS[r.documentList]}
@@ -693,7 +756,7 @@ function I9DetailPanel({
       <DrawerHeader>
         <div className="flex items-center gap-3">
           <Avatar
-            src={associatePhotoUrl(current.associateId)}
+            src={personPhotoUrl(current)}
             name={current.associateName}
             email={current.associateEmail}
             size="md"

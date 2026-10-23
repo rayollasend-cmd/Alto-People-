@@ -138,10 +138,10 @@ describe('the finance cockpit', () => {
     renderDashboard(overview());
     const today = await screen.findByRole('list', { name: 'Today' });
     const items = within(today).getAllByRole('link');
-    expect(items[0]).toHaveTextContent('Enter in Fieldglass — 2 to go');
+    expect(items[0]).toHaveTextContent('Enter in the VMS — 2 to go');
     expect(items[0]).toHaveAttribute('href', expect.stringContaining('/time-attendance/timesheets?week='));
     expect(within(today).getByRole('link', { name: /Rejected timesheets to fix and resubmit: 2/ })).toBeInTheDocument();
-    expect(within(today).getByRole('link', { name: /Fieldglass setup: 4 waiting/ })).toHaveAttribute('href', '/fieldglass');
+    expect(within(today).getByRole('link', { name: /VMS setup: 4 waiting/ })).toHaveAttribute('href', '/fieldglass');
     expect(within(today).getByRole('link', { name: /Past due, to collect: \$2,880\.00/ })).toBeInTheDocument();
     expect(within(today).getByRole('link', { name: /Client statements to finalize: 1/ })).toBeInTheDocument();
   });
@@ -156,14 +156,74 @@ describe('the finance cockpit', () => {
     // The app's date, not the API's "09/18/2026" (three date formats sat on this home).
     expect(screen.getByText('Billing · week ending Fri, Sep 18')).toBeInTheDocument();
     expect(screen.getByText('Plus 1 rejected in earlier weeks — $720.00 waiting')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Enter in Fieldglass \(3\)/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Enter in the VMS \(3\)/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /^Revenue, wages & margin:/ })).toBeInTheDocument();
     expect(screen.getByText('1 paid at the $15.00 fallback — no hourly pay on file')).toBeInTheDocument();
     expect(screen.getByText('31–60 days')).toBeInTheDocument();
     // One aging definition: the five buckets add up to the total the card shows.
-    const card = screen.getByText('Receivables').closest('div.h-full, [class*="h-full"]') as HTMLElement;
+    const card = screen.getByTestId('receivables-card');
     expect(within(card).getByText('Not yet due')).toBeInTheDocument();
     expect(within(card).getAllByText('$5,760.00').length).toBeGreaterThan(0);
+  });
+
+  it('missed paydays lead the hero; no hours is said, not "0h of 0h · all approved"; payday is said once (F500)', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+      if (path === '/finance/overview') {
+        return overview({
+          payCycle: { periodStart: ymd(-7), periodEnd: ymd(6), payDate: ymd(13), schedule: 'Biweekly', hours: { approved: 0, pending: 0 }, run: null },
+        }) as never;
+      }
+      if (path.startsWith('/me/inbox')) {
+        return { total: 2, sources: [{ key: 'payroll-missed-paydays', label: 'Paydays with no run', count: 2, urgency: 'money', description: '2 paydays passed with no run.', path: '/payroll', dueAt: null }] } as never;
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    const caps = ROLE_CAPABILITIES.FINANCE_ACCOUNTANT;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AuthContext.Provider
+          value={{
+            isInitializing: false,
+            isOffline: false,
+            user: { id: 'u', email: 'fin@altohr.com', role: 'FINANCE_ACCOUNTANT', status: 'ACTIVE' as const, clientId: null, associateId: null },
+            role: 'FINANCE_ACCOUNTANT',
+            capabilities: new Set<Capability>(caps),
+            signIn: vi.fn(),
+            signOut: vi.fn(),
+            can: (c: Capability) => caps.has(c),
+          }}
+        >
+          <MemoryRouter>
+            <FinanceDashboard />
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+    const missed = await screen.findByTestId('missed-paydays');
+    expect(missed).toHaveTextContent('2 paydays passed with no run');
+    expect(missed).toHaveTextContent('Run them now');
+    expect(missed).toHaveAttribute('href', '/payroll');
+    const cycle = screen.getByRole('list', { name: 'Pay cycle' });
+    expect(within(cycle).getByText('No hours clocked yet this period')).toBeInTheDocument();
+    expect(within(cycle).queryByText('all approved')).toBeNull();
+    // 40.6h waits from earlier periods (the close chase counts them all).
+    expect(within(cycle).getByTestId('hours-earlier')).toHaveTextContent('+ 40.6h from earlier periods');
+    // The fourth step says whether payday is paid; the headline says when.
+    expect(within(cycle).getByText('Paid')).toBeInTheDocument();
+    expect(within(cycle).getByText('Not yet paid')).toBeInTheDocument();
+    expect(within(cycle).queryByText('Payday')).toBeNull();
+  });
+
+  it('no bank balance on file is said, not "Cash today $0.00" (F500)', async () => {
+    renderDashboard(
+      overview({
+        cash: { from: ymd(0), to: ymd(28), weeks: [{ weekStart: ymd(0), inflow: 100, outflow: 50, net: 50, cumulative: 50, balance: 50 }] as never, totals: { inflow: 100, outflow: 50, net: 50 }, opening: { balance: 0, accounts: 2, asOf: ymd(0), onFile: false }, lowest: null, minimumCash: null },
+      }),
+    );
+    const line = await screen.findByTestId('cash-no-balance');
+    expect(line).toHaveTextContent('No bank balance on file yet.');
+    expect(within(line).getByRole('link', { name: 'Set today’s cash balance' })).toHaveAttribute('href', '/books/accounts');
+    expect(screen.queryByText(/Cash today \$0\.00/)).toBeNull();
   });
 
   it('all clear says so', async () => {

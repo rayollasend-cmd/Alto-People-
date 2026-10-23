@@ -1,47 +1,48 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Role } from '@alto-people/shared';
+import { capabilityLabel, type Role } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth, useRoleLabel } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { listAdminUsers } from '@/lib/usersAdminApi';
-import {
-  assignTenantRole,
-  createTenantRole,
-  deleteTenantRole,
-  getScimGroups,
-  getTenantRoles,
-  mapScimGroup,
-  unmapScimGroup,
-  updateTenantRole,
-  type TenantRoleRow,
-} from '@/lib/tenantRolesApi';
+import { assignTenantRole, createTenantRole, deleteTenantRole, getTenantRoles, updateTenantRole, type TenantRoleRow } from '@/lib/tenantRolesApi';
+import { useDeskItem } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 
 /**
- * Brief 2-3 step 3 — Roles & permissions. The built-in roles are read-only;
- * a custom role starts from one of them and can only take capabilities
- * away (it still behaves as that role everywhere else: client scope, portal,
- * two-step sign-in class). Changes reach holders on their next request and
- * are recorded in the audit log with before and after.
+ * Brief 2-3 step 3, at the F500 bar (G4) — Roles & permissions.
+ *
+ * Opens on every role at once: built-in or custom, who holds it (linked to
+ * those accounts), how much it can do. A row opens the role (?role= in the
+ * URL): what it may do in words ("Run payroll", the key underneath), as a
+ * read-only list for a built-in role and as switches for a custom one.
+ *
+ * The built-in roles are read-only; a custom role starts from one of them
+ * and can only take capabilities away (it still behaves as that role
+ * everywhere else: client scope, portal, two-step sign-in class). Changes
+ * reach holders on their next request and are recorded in the audit log.
+ * Directory groups that grant roles live with SCIM on Sign-in.
  */
 
 const message = (err: unknown) => (err instanceof ApiError ? err.message : 'Something went wrong.');
 
-/** `manage:team-time` → `team time`; ASN keys group together. */
+/** `manage:team-time` → "Team time"; ASN keys group together. */
 function areaOf(cap: string): string {
   const [head, ...rest] = cap.split(':');
-  return (head === 'asn' ? 'asn' : rest.join(':') || head!).replace(/[-:]/g, ' ');
+  const area = (head === 'asn' ? 'ASN integration' : rest.join(':') || head!).replace(/[-:]/g, ' ');
+  return area.charAt(0).toUpperCase() + area.slice(1);
 }
 
 function grouped(caps: string[]): Array<[string, string[]]> {
@@ -50,18 +51,42 @@ function grouped(caps: string[]): Array<[string, string[]]> {
   return [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-function CapabilityGrid({ all, ceiling, held, onToggle }: { all: string[]; ceiling: Set<string>; held: Set<string>; onToggle?: (cap: string) => void }) {
+/** A read-only role: what it may do, as a list (no disabled checkboxes). */
+function CapabilityList({ caps }: { caps: string[] }) {
   return (
-    <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-      {grouped(all.filter((c) => ceiling.has(c))).map(([area, caps]) => (
+    <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+      {grouped(caps).map(([area, list]) => (
         <div key={area}>
-          <div className="text-xs uppercase tracking-wide text-silver">{area}</div>
+          <div className="text-xs uppercase tracking-wide text-ink-muted">{area}</div>
+          <ul className="mt-1 space-y-1">
+            {list.map((c) => (
+              <li key={c} className="text-sm text-ink" title={c}>
+                {capabilityLabel(c)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A custom role's switches: everything its built-in role holds, ticked or not. */
+function CapabilityGrid({ ceiling, held, onToggle, disabled }: { ceiling: string[]; held: Set<string>; onToggle: (cap: string) => void; disabled?: boolean }) {
+  return (
+    <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+      {grouped(ceiling).map(([area, caps]) => (
+        <div key={area}>
+          <div className="text-xs uppercase tracking-wide text-ink-muted">{area}</div>
           <ul className="mt-1 space-y-1">
             {caps.map((c) => (
               <li key={c}>
-                <label className="flex items-center gap-2 text-sm text-white">
-                  <input type="checkbox" checked={held.has(c)} disabled={!onToggle} onChange={() => onToggle?.(c)} />
-                  <code className="text-xs">{c}</code>
+                <label className="flex items-start gap-2 text-sm text-ink" title={c}>
+                  <input type="checkbox" className="mt-0.5" checked={held.has(c)} disabled={disabled} onChange={() => onToggle(c)} />
+                  <span>
+                    {capabilityLabel(c)}
+                    <code className="block text-2xs text-ink-muted">{c}</code>
+                  </span>
                 </label>
               </li>
             ))}
@@ -72,14 +97,14 @@ function CapabilityGrid({ all, ceiling, held, onToggle }: { all: string[]; ceili
   );
 }
 
-function NewRoleDrawer({ roles, all, onClose, onSaved }: { roles: TenantRoleRow[]; all: string[]; onClose: () => void; onSaved: (id: string) => void }) {
+function NewRoleDrawer({ roles, onClose, onSaved }: { roles: TenantRoleRow[]; onClose: () => void; onSaved: (id: string) => void }) {
   const roleLabel = useRoleLabel();
   const systems = roles.filter((r) => r.system && r.offered);
   const [archetype, setArchetype] = useState<Role>(systems[0]?.archetype ?? 'MANAGER');
-  const ceiling = useMemo(() => new Set(roles.find((r) => r.id === `system:${archetype}`)?.capabilities ?? []), [roles, archetype]);
+  const ceiling = useMemo(() => roles.find((r) => r.id === `system:${archetype}`)?.capabilities ?? [], [roles, archetype]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [held, setHeld] = useState<Set<string>>(ceiling);
+  const [held, setHeld] = useState<Set<string>>(() => new Set(ceiling));
   const [saving, setSaving] = useState(false);
   const pick = (r: Role) => {
     setArchetype(r);
@@ -98,7 +123,7 @@ function NewRoleDrawer({ roles, all, onClose, onSaved }: { roles: TenantRoleRow[
     }
   };
   return (
-    <Drawer open onOpenChange={(o) => !o && onClose()}>
+    <Drawer open onOpenChange={(o) => !o && onClose()} width="max-w-2xl" confirmDiscard={() => name.trim().length > 0}>
       <DrawerHeader>
         <DrawerTitle>New custom role</DrawerTitle>
         <DrawerDescription>Start from a built-in role and untick what this one should not do. It cannot add anything the built-in role lacks.</DrawerDescription>
@@ -115,11 +140,11 @@ function NewRoleDrawer({ roles, all, onClose, onSaved }: { roles: TenantRoleRow[
             </Select>
           )}
         </Field>
-        <CapabilityGrid all={all} ceiling={ceiling} held={held} onToggle={(c) => setHeld((s) => { const n = new Set(s); if (n.has(c)) n.delete(c); else n.add(c); return n; })} />
+        <CapabilityGrid ceiling={ceiling} held={held} onToggle={(c) => setHeld((s) => { const n = new Set(s); if (n.has(c)) n.delete(c); else n.add(c); return n; })} />
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button disabled={saving || !name.trim()} onClick={() => void save()}>{saving ? 'Saving…' : 'Create role'}</Button>
+        <Button loading={saving} disabled={saving || !name.trim()} onClick={() => void save()}>Create role</Button>
       </DrawerFooter>
     </Drawer>
   );
@@ -146,12 +171,12 @@ function Holders({ role, canManage }: { role: TenantRoleRow; canManage: boolean 
   return (
     <div className="space-y-2">
       {holders.length === 0 ? (
-        <p className="text-sm text-silver">Nobody holds this role yet.</p>
+        <p className="text-sm text-ink-muted">Nobody holds this role yet.</p>
       ) : (
-        <ul className="divide-y divide-navy-secondary/60">
+        <ul className="divide-y divide-line">
           {holders.map((u) => (
-            <li key={u.id} className="flex items-center justify-between gap-2 py-1.5 text-sm text-white">
-              <span className="min-w-0 truncate">{u.email}</span>
+            <li key={u.id} className="flex items-center justify-between gap-2 py-1.5 text-sm text-ink">
+              <span className="min-w-0 truncate">{u.associateName ?? u.email}</span>
               {canManage && <Button size="sm" variant="ghost" onClick={() => void assign(u.id, null)}>Remove</Button>}
             </li>
           ))}
@@ -161,10 +186,10 @@ function Holders({ role, canManage }: { role: TenantRoleRow; canManage: boolean 
         <div className="flex flex-wrap items-end gap-2">
           <Field label="Give this role to">
             {(p) => (
-              <Select {...p} value={pick} onChange={(e) => setPick(e.target.value)} className="w-72">
+              <Select {...p} value={pick} onChange={(e) => setPick(e.target.value)} className="w-72 max-w-full">
                 <option value="">Choose a person…</option>
                 {candidates.map((u) => (
-                  <option key={u.id} value={u.id}>{u.email}</option>
+                  <option key={u.id} value={u.id}>{u.associateName ?? u.email}</option>
                 ))}
               </Select>
             )}
@@ -176,91 +201,90 @@ function Holders({ role, canManage }: { role: TenantRoleRow; canManage: boolean 
   );
 }
 
-function ScimGroups({ roles }: { roles: TenantRoleRow[] }) {
+/** One role, opened from the table: what it may do, who holds it, and (custom) its edits. */
+function RoleDrawer({ role, roles, canManage, onClose }: { role: TenantRoleRow; roles: TenantRoleRow[]; canManage: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const roleLabel = useRoleLabel();
-  const q = useQuery({ queryKey: ['tenant-roles', 'scim-groups'], queryFn: getScimGroups });
-  const [groupName, setGroupName] = useState('');
-  const [target, setTarget] = useState('');
-  const options = roles.filter((r) => r.offered && r.archetype !== 'CLIENT_PORTAL');
-  const add = async () => {
-    const r = roles.find((x) => x.id === target);
-    if (!r) return;
+  const ceiling = useMemo(() => roles.find((r) => r.id === `system:${role.archetype}`)?.capabilities ?? [], [roles, role.archetype]);
+  const [draft, setDraft] = useState<Set<string> | null>(null);
+  const [saving, setSaving] = useState(false);
+  const held = draft ?? new Set(role.capabilities);
+  const editable = canManage && !role.system;
+  const save = async () => {
+    if (!draft || saving) return;
+    setSaving(true);
     try {
-      await mapScimGroup({ groupName: groupName.trim(), archetype: r.archetype, tenantRoleId: r.system ? null : r.id });
-      setGroupName('');
-      setTarget('');
-      toast.success('Mapped. Members take the role now.');
+      await updateTenantRole(role.id, { capabilities: [...draft] });
+      toast.success(role.holders ? `Saved. ${role.holders} ${role.holders === 1 ? 'person has' : 'people have'} the new set on their next click.` : 'Saved.');
+      setDraft(null);
+      await qc.invalidateQueries({ queryKey: ['tenant-roles'] });
+    } catch (err) {
+      toast.error(message(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const remove = async () => {
+    if (!(await confirm({ title: `Delete “${role.name}”?`, description: 'Only a role nobody holds can be deleted.', confirmLabel: 'Delete', destructive: true }))) return;
+    try {
+      await deleteTenantRole(role.id);
+      onClose();
       await qc.invalidateQueries({ queryKey: ['tenant-roles'] });
     } catch (err) {
       toast.error(message(err));
     }
   };
-  const remove = async (m: { id: string; groupName: string; archetype: Role; tenantRoleName?: string | null }, members: number | null) => {
-    const roleName = m.tenantRoleName ?? roleLabel(m.archetype);
-    const holders = members === null ? 'People who hold it today keep it' : `The ${members} ${members === 1 ? 'person' : 'people'} in the group keep it`;
-    const ok = await confirm({
-      title: `Remove the mapping for ${m.groupName}?`,
-      description: `The directory stops granting ${roleName} to this group. ${holders} until an admin changes their role.`,
-      confirmLabel: 'Remove mapping',
-      destructive: true,
-    });
-    if (!ok) return;
-    try {
-      await unmapScimGroup(m.id);
-      toast.success(`Mapping removed. ${m.groupName} no longer grants ${roleName}.`);
-      await qc.invalidateQueries({ queryKey: ['tenant-roles'] });
-    } catch (err) {
-      toast.error(message(err));
-    }
-  };
+  const title = role.system ? roleLabel(role.archetype) : role.name;
   return (
-    <Card>
-      <CardContent className="space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-white">Directory groups</h3>
-          <p className="text-xs text-silver">A member of a mapped group holds its role. Leaving every mapped group changes nothing; deactivate in your directory instead.</p>
-        </div>
-        {q.isLoading ? (
-          <SkeletonRows count={2} />
-        ) : q.isError ? (
-          <QueryError what="directory groups" query={q} />
-        ) : (
-          <ul className="divide-y divide-navy-secondary/60">
-            {(q.data?.mappings ?? []).map((m) => {
-              const pushed = q.data?.groups.find((g) => g.displayName === m.groupName);
-              return (
-                <li key={m.id} className="flex items-center justify-between gap-2 py-1.5 text-sm text-white">
-                  <span className="min-w-0 truncate">
-                    {m.groupName} → {m.tenantRoleName ?? roleLabel(m.archetype)}
-                    <span className="ml-2 text-xs text-silver">{pushed ? `${pushed.members} in the group` : 'not pushed yet'}</span>
-                  </span>
-                  <Button size="sm" variant="ghost" aria-label={`Remove mapping for ${m.groupName}`} onClick={() => void remove(m, pushed ? pushed.members : null)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </li>
-              );
-            })}
-            {q.data?.mappings.length === 0 && <li className="py-1.5 text-sm text-silver">No groups mapped.</li>}
-          </ul>
+    <Drawer open onOpenChange={(o) => !o && onClose()} width="max-w-2xl" confirmDiscard={() => draft !== null}>
+      <DrawerHeader>
+        <DrawerTitle>{title}</DrawerTitle>
+        <DrawerDescription>
+          {role.system ? 'Built-in, read-only.' : `Custom, behaves as ${roleLabel(role.archetype)}.`} {role.system ? `${role.capabilities.length} capabilities` : `${held.size} of ${ceiling.length} capabilities`} ·{' '}
+          <Link to={`/admin/users?role=${role.archetype}&status=all`} className="text-accent underline-offset-2 hover:underline">
+            {role.holders} {role.holders === 1 ? 'holder' : 'holders'}
+          </Link>
+        </DrawerDescription>
+        {!role.offered && (
+          <div className="mt-2">
+            <Badge variant="pending">Module off</Badge>
+          </div>
         )}
-        <div className="flex flex-wrap items-end gap-2">
-          <Field label="Group name">{(p) => <Input {...p} value={groupName} onChange={(e) => setGroupName(e.target.value)} maxLength={200} placeholder="Alto Store Leads" className="w-60" />}</Field>
-          <Field label="Role">
-            {(p) => (
-              <Select {...p} value={target} onChange={(e) => setTarget(e.target.value)} className="w-60">
-                <option value="">Choose a role…</option>
-                {options.map((r) => (
-                  <option key={r.id} value={r.id}>{r.system ? roleLabel(r.archetype) : `${r.name} (${roleLabel(r.archetype)})`}</option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Button size="sm" disabled={!groupName.trim() || !target} onClick={() => void add()}>Map group</Button>
-        </div>
-      </CardContent>
-    </Card>
+      </DrawerHeader>
+      <DrawerBody className="space-y-6">
+        {role.description && <p className="text-sm text-ink-muted">{role.description}</p>}
+        <section aria-label="What this role may do" className="space-y-2">
+          <SectionTitle title="What it may do" as="h3" size="sm" />
+          {editable ? (
+            <CapabilityGrid ceiling={ceiling} held={held} onToggle={(c) => setDraft(() => { const n = new Set(held); if (n.has(c)) n.delete(c); else n.add(c); return n; })} />
+          ) : (
+            <CapabilityList caps={role.capabilities} />
+          )}
+        </section>
+        {!role.system && (
+          <section aria-label="People with this role" className="space-y-2">
+            <SectionTitle title="People with this role" as="h3" size="sm" />
+            <Holders role={role} canManage={canManage} />
+          </section>
+        )}
+      </DrawerBody>
+      {editable && (
+        <DrawerFooter>
+          <Button variant="ghost" className="mr-auto text-negative" onClick={() => void remove()} disabled={draft !== null}>
+            Delete role
+          </Button>
+          {draft && (
+            <Button variant="ghost" onClick={() => setDraft(null)} disabled={saving}>
+              Discard
+            </Button>
+          )}
+          <Button onClick={() => void save()} loading={saving} disabled={!draft}>
+            Save changes
+          </Button>
+        </DrawerFooter>
+      )}
+    </Drawer>
   );
 }
 
@@ -282,8 +306,8 @@ function CompareBuiltIns({ roles }: { roles: TenantRoleRow[] }) {
   const onlyA = ra.capabilities.filter((c) => !sb.has(c)).sort();
   const onlyB = rb.capabilities.filter((c) => !sa.has(c)).sort();
   const shared = ra.capabilities.filter((c) => sb.has(c)).length;
-  const pick = (v: string, set: (x: string) => void) => (
-    <Select value={v} onChange={(e) => set(e.target.value)} className="w-56">
+  const pick = (v: string, set: (x: string) => void, label: string) => (
+    <Select value={v} onChange={(e) => set(e.target.value)} className="w-56 max-w-full" aria-label={label}>
       {systems.map((r) => (
         <option key={r.id} value={r.id}>{roleLabel(r.archetype)}</option>
       ))}
@@ -293,14 +317,11 @@ function CompareBuiltIns({ roles }: { roles: TenantRoleRow[] }) {
     <Card>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-ink">What changed between built-ins</h3>
-            <p className="text-xs text-ink-muted">Two roles side by side: what each holds that the other does not. {shared} in common.</p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            {pick(a, setA)}
+          <SectionTitle title="Compare two built-in roles" description={`What each holds that the other does not. ${shared} in common.`} wrap size="sm" />
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            {pick(a, setA, 'First role')}
             <span className="text-xs text-ink-muted">vs</span>
-            {pick(b, setB)}
+            {pick(b, setB, 'Second role')}
           </div>
         </div>
         {onlyA.length === 0 && onlyB.length === 0 ? (
@@ -313,10 +334,10 @@ function CompareBuiltIns({ roles }: { roles: TenantRoleRow[] }) {
                 {list.length === 0 ? (
                   <p className="mt-1 text-sm text-ink-muted">Holds no capability the other lacks.</p>
                 ) : (
-                  <ul className="mt-1 flex flex-wrap gap-1">
+                  <ul className="mt-1 space-y-0.5">
                     {list.map((c) => (
-                      <li key={c}>
-                        <Badge variant="info" size="sm"><code>{c}</code></Badge>
+                      <li key={c} className="text-sm text-ink" title={c}>
+                        {capabilityLabel(c)}
                       </li>
                     ))}
                   </ul>
@@ -330,134 +351,108 @@ function CompareBuiltIns({ roles }: { roles: TenantRoleRow[] }) {
   );
 }
 
-export function RolesMatrix() {
+export function RolesMatrix({ creating, onCreatingChange }: { creating: boolean; onCreatingChange: (v: boolean) => void }) {
   const { can } = useAuth();
   const canManage = can('manage:org');
   const qc = useQueryClient();
-  const confirm = useConfirm();
   const roleLabel = useRoleLabel();
   const q = useQuery({ queryKey: ['tenant-roles'], queryFn: getTenantRoles });
-  const [selected, setSelected] = useState<string>('');
-  const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState<Set<string> | null>(null);
-  const [saving, setSaving] = useState(false);
+  const desk = useDeskItem('role');
   const roles = q.data?.roles ?? [];
-  const role = roles.find((r) => r.id === selected) ?? roles.find((r) => !r.system) ?? roles[0];
-  const ceiling = useMemo(() => new Set(roles.find((r) => role && r.id === `system:${role.archetype}`)?.capabilities ?? []), [roles, role]);
+  const open = roles.find((r) => r.id === desk.openId) ?? null;
 
-  if (q.isLoading) return <SkeletonRows count={6} />;
-  if (q.isError || !q.data || !role) return <QueryError what="roles" query={q} />;
+  if (q.isPending) return <SkeletonRows count={6} />;
+  if (q.isError || !q.data) return <QueryError what="roles" query={q} />;
 
-  const held = draft ?? new Set(role.capabilities);
-  const editable = canManage && !role.system;
-  const choose = (id: string) => {
-    setSelected(id);
-    setDraft(null);
-  };
-  const save = async () => {
-    if (!draft || saving) return;
-    setSaving(true);
-    try {
-      await updateTenantRole(role.id, { capabilities: [...draft] });
-      toast.success(role.holders ? `Saved. ${role.holders} ${role.holders === 1 ? 'person has' : 'people have'} the new set on their next click.` : 'Saved.');
-      setDraft(null);
-      await qc.invalidateQueries({ queryKey: ['tenant-roles'] });
-    } catch (err) {
-      toast.error(message(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-  const remove = async () => {
-    if (!(await confirm({ title: `Delete “${role.name}”?`, description: 'Only a role nobody holds can be deleted.', confirmLabel: 'Delete', destructive: true }))) return;
-    try {
-      await deleteTenantRole(role.id);
-      setSelected('');
-      await qc.invalidateQueries({ queryKey: ['tenant-roles'] });
-    } catch (err) {
-      toast.error(message(err));
-    }
-  };
+  const nameOf = (r: TenantRoleRow) => (r.system ? roleLabel(r.archetype) : r.name);
+  const ceilingOf = (r: TenantRoleRow) => roles.find((x) => x.id === `system:${r.archetype}`)?.capabilities.length ?? r.capabilities.length;
+  const columns: GridColumn<TenantRoleRow>[] = [
+    {
+      key: 'role',
+      header: 'Role',
+      primary: true,
+      sortable: true,
+      accessor: nameOf,
+      cell: (r) => (
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-ink">
+            {nameOf(r)}
+            {!r.offered && <Badge variant="pending" size="sm">Module off</Badge>}
+          </div>
+          {!r.system && <div className="text-xs text-ink-muted">Behaves as {roleLabel(r.archetype)}</div>}
+        </div>
+      ),
+    },
+    { key: 'kind', header: 'Type', sortable: true, cardMeta: true, accessor: (r) => (r.system ? 'Built-in' : 'Custom'), className: 'text-ink-muted' },
+    {
+      key: 'holders',
+      header: 'Holders',
+      sortable: true,
+      align: 'right',
+      accessor: (r) => r.holders,
+      stopRowClick: true,
+      cell: (r) =>
+        r.holders > 0 ? (
+          <Link to={`/admin/users?role=${r.archetype}&status=all`} className="tabular-nums text-ink underline-offset-2 hover:text-accent hover:underline">
+            {r.holders}
+          </Link>
+        ) : (
+          <span className="tabular-nums text-ink-muted">0</span>
+        ),
+    },
+    {
+      key: 'caps',
+      header: 'Can do',
+      sortable: true,
+      align: 'right',
+      accessor: (r) => r.capabilities.length,
+      csv: (r) => r.capabilities.length,
+      className: 'tabular-nums text-ink-muted',
+      cell: (r) => (r.system ? `${r.capabilities.length} things` : `${r.capabilities.length} of ${ceilingOf(r)}`),
+    },
+  ];
+  // Custom roles first (they are this organization's own), then the built-ins.
+  const ordered = [...roles].sort((a, b) => Number(a.system) - Number(b.system));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <Card>
-        <CardContent className="flex flex-wrap items-end gap-3">
-          <Field label="Role">
-            {(p) => (
-              <Select {...p} value={role.id} onChange={(e) => choose(e.target.value)} className="w-72">
-                <optgroup label="Custom">
-                  {roles.filter((r) => !r.system).map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="Built-in">
-                  {roles.filter((r) => r.system).map((r) => (
-                    <option key={r.id} value={r.id}>{roleLabel(r.archetype)}{r.offered ? '' : ' (module off)'}</option>
-                  ))}
-                </optgroup>
-              </Select>
-            )}
-          </Field>
-          {canManage && (
-            <Button size="sm" variant="secondary" onClick={() => setCreating(true)}>
-              <Plus className="mr-1 h-4 w-4" /> New custom role
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h3 className="text-base font-semibold text-white">{role.system ? roleLabel(role.archetype) : role.name}</h3>
-              <p className="text-xs text-silver">
-                {role.system ? 'Built-in, read-only.' : `Behaves as ${roleLabel(role.archetype)}.`} {held.size} of {ceiling.size} capabilities · {role.holders} {role.holders === 1 ? 'holder' : 'holders'}
-              </p>
-              {role.description && <p className="mt-1 text-sm text-silver">{role.description}</p>}
-            </div>
-            <div className="flex items-center gap-2">
-              {!role.offered && <Badge variant="pending">Module off</Badge>}
-              {editable && draft && (
-                <>
-                  <Button size="sm" variant="ghost" onClick={() => setDraft(null)} disabled={saving}>Discard</Button>
-                  <Button size="sm" onClick={() => void save()} loading={saving}>Save changes</Button>
-                </>
-              )}
-              {editable && !draft && (
-                <Button size="sm" variant="ghost" onClick={() => void remove()}>Delete</Button>
-              )}
-            </div>
-          </div>
-          <CapabilityGrid
-            all={q.data.capabilities}
-            ceiling={ceiling}
-            held={held}
-            onToggle={editable ? (c) => setDraft(() => { const n = new Set(held); if (n.has(c)) n.delete(c); else n.add(c); return n; }) : undefined}
+        <CardContent className="p-0">
+          <DataGrid<TenantRoleRow>
+            id="roles"
+            caption="Roles"
+            noun={{ one: 'role', many: 'roles' }}
+            rows={ordered}
+            columns={columns}
+            rowKey={(r) => r.id}
+            urlKey="roles"
+            search={{ placeholder: 'Find a role' }}
+            exportCsv={{ filename: 'roles' }}
+            onRowClick={(r) => desk.open(r.id)}
+            rowActionLabel={(r) => `Open ${nameOf(r)}`}
+            rowClassName={(r) => (r.id === desk.openId ? 'bg-surface-raised/60' : undefined)}
           />
-          {!role.system && (
-            <div className="border-t border-navy-secondary/60 pt-3">
-              <h4 className="mb-2 text-sm font-semibold text-white">People with this role</h4>
-              <Holders role={role} canManage={canManage} />
-            </div>
-          )}
         </CardContent>
       </Card>
 
       <CompareBuiltIns roles={roles} />
 
-      {canManage && <ScimGroups roles={roles} />}
+      <p className="text-sm text-ink-muted">
+        Directory groups that grant a role are mapped with your directory on{' '}
+        <Link to="/admin/sign-in#directory" className="text-accent underline-offset-2 hover:underline">
+          Sign-in › Directory provisioning
+        </Link>
+        .
+      </p>
 
+      {open && <RoleDrawer key={open.id} role={open} roles={roles} canManage={canManage} onClose={desk.close} />}
       {creating && (
         <NewRoleDrawer
           roles={roles}
-          all={q.data.capabilities}
-          onClose={() => setCreating(false)}
+          onClose={() => onCreatingChange(false)}
           onSaved={(id) => {
-            setCreating(false);
-            choose(id);
-            void qc.invalidateQueries({ queryKey: ['tenant-roles'] });
+            onCreatingChange(false);
+            void qc.invalidateQueries({ queryKey: ['tenant-roles'] }).then(() => desk.open(id));
           }}
         />
       )}

@@ -20,3 +20,8 @@ export const listStatusIncidents = () => apiFetch<{ incidents: StatusIncidentAdm
 export const postStatusIncident = (body: StatusIncidentCreate) => apiFetch<StatusIncidentAdmin>('/status/incidents', { method: 'POST', body });
 export const updateStatusIncident = (id: string, body: StatusIncidentUpdateInput) =>
   apiFetch<StatusIncidentAdmin>(`/status/incidents/${id}/updates`, { method: 'POST', body });
+
+/** Incident updates by email (double opt-in): ask, confirm from the emailed link, stop from any update. */
+export const subscribeToStatus = (email: string) => apiFetch<{ ok: true }>('/status/subscribe', { method: 'POST', body: { email } });
+export const confirmStatusSubscription = (token: string) => apiFetch<{ ok: true }>('/status/subscribe/confirm', { method: 'POST', body: { token } });
+export const unsubscribeFromStatus = (token: string) => apiFetch<{ ok: true }>('/status/unsubscribe', { method: 'POST', body: { token } });

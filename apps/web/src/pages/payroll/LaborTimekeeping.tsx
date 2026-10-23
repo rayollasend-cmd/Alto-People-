@@ -39,7 +39,6 @@ const describeRounding = (mode: RoundingMode, inc: number) => (mode === 'NONE' ?
 
 function RoundingCard({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
-  const term = useTerm();
   const q = useQuery({ queryKey: ['labor-rules', 'timekeeping'], queryFn: getTimekeeping });
   const [mode, setMode] = useState<RoundingMode>('NONE');
   const [inc, setInc] = useState(15);
@@ -105,9 +104,9 @@ function RoundingCard({ canManage }: { canManage: boolean }) {
         </div>
 
         <div className="space-y-2 border-t border-line pt-4">
-          <h4 className="text-sm font-semibold text-ink">{term('label.stores')} with their own rounding</h4>
+          <h4 className="text-sm font-semibold text-ink">Sites with their own rounding</h4>
           {d.siteRounding.length === 0 ? (
-            <p className="text-sm text-ink-muted">Every {term('label.store').toLowerCase()} uses the organization’s rounding.</p>
+            <p className="text-sm text-ink-muted">Every site uses the organization’s rounding.</p>
           ) : (
             <ul className="divide-y divide-line">
               {d.siteRounding.map((r) => (
@@ -127,7 +126,7 @@ function RoundingCard({ canManage }: { canManage: boolean }) {
           )}
           {canManage && free.length > 0 && (
             <div className="flex flex-wrap items-end gap-2">
-              <Field label={term('label.store')} className="min-w-[12rem] flex-1">
+              <Field label="Site" className="min-w-[12rem] flex-1">
                 {(p) => (
                   <Select {...p} value={siteId} onChange={(e) => setSiteId(e.target.value)}>
                     <option value="">Pick one…</option>
@@ -278,7 +277,6 @@ function statusOf(r: ScheduleChangeRow): { label: string; variant: 'success' | '
 }
 
 export function LaborScheduleChangesTab() {
-  const term = useTerm();
   const { can } = useAuth();
   const canExcuse = can('manage:org') || can('process:payroll');
   const [excusing, setExcusing] = useState<ScheduleChangeRow | null>(null);
@@ -291,12 +289,12 @@ export function LaborScheduleChangesTab() {
       <SectionTitle
         icon={CalendarClock}
         title="Predictability pay"
-        description={`Late changes to a published schedule where a fair-workweek law applies. ${owed.length === 0 ? 'Nothing owed right now.' : `${owed.length} premium${owed.length === 1 ? '' : 's'} will be paid on the next run.`} Changes made while the state is in shadow are kept as a record, not paid.`}
+        description={`Late changes to a published schedule where a fair-workweek law applies. ${owed.length === 0 ? 'Nothing owed right now.' : `${owed.length} premium${owed.length === 1 ? '' : 's'} will be paid on the next run.`} Changes made while the state’s rules are still being tested are kept as a record, not paid.`}
       />
       {q.data.changes.length === 0 ? (
         <Card>
           <CardContent className="p-0">
-            <EmptyState icon={CalendarClock} title="No late schedule changes" description={`When a published shift is added, moved, cut or cancelled inside the notice window at a ${term('label.store').toLowerCase()} with a fair-workweek law, it shows here.`} />
+            <EmptyState icon={CalendarClock} title="No late schedule changes" description={`When a published shift is added, moved, cut or cancelled inside the notice window at a site with a fair-workweek law, it shows here.`} />
           </CardContent>
         </Card>
       ) : (
@@ -315,7 +313,7 @@ export function LaborScheduleChangesTab() {
                 { key: 'what', header: 'Change', accessor: (r) => CHANGE_LABEL[r.change], sortable: true, cardMeta: true },
                 { key: 'when', header: 'Shift on', accessor: (r) => r.workDate, sortable: true, cell: (r) => fmtDate(parseYmd(r.workDate)) },
                 { key: 'notice', header: 'Notice', accessor: (r) => r.noticeDays, sortable: true, searchable: false, cell: (r) => `${r.noticeDays.toFixed(1)} days` },
-                { key: 'where', header: term('label.store'), accessor: (r) => r.siteName ?? '', sortable: true },
+                { key: 'where', header: 'Site', accessor: (r) => r.siteName ?? '', sortable: true },
                 { key: 'owed', header: 'Premium', accessor: (r) => r.premiumCents + r.premiumHours * 100, sortable: true, searchable: false, cell: premiumText },
                 { key: 'status', header: 'Status', accessor: (r) => statusOf(r).label, sortable: true, cell: (r) => <Badge variant={statusOf(r).variant} size="sm">{statusOf(r).label}</Badge> },
                 ...(canExcuse

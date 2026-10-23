@@ -119,7 +119,34 @@ describe('<CallOutsDesk>', () => {
   it('?callout=<id> rings that call-out, widening to the week when it is later', async () => {
     vi.mocked(listCallOuts).mockImplementation(async (range) => (range === 'today' ? list([]) : list([item({ id: 'co-9' })])));
     renderDesk('/call-outs?callout=co-9');
-    await waitFor(() => expect(listCallOuts).toHaveBeenCalledWith('week'));
+    await waitFor(() => expect(listCallOuts).toHaveBeenCalledWith('week', null));
     await waitFor(() => expect(document.getElementById('callout-co-9')?.className).toMatch(/ring-gold/));
+  });
+
+  // F500 G4: a quiet day says what the week held instead of four zero tiles.
+  it('a quiet range is one line with the last seven days\' record, not a row of zeros', async () => {
+    vi.mocked(listCallOuts).mockResolvedValue({ ...list([]), last7Days: { total: 3, covered: 3, coveredPct: 100, medianMinutesToCover: 42 } });
+    renderDesk();
+    expect(await screen.findByText('No call-outs today or tomorrow · last 7 days: 3 call-outs, 100% covered, median 42 min to cover.')).toBeInTheDocument();
+    expect(screen.queryByText('Looking for cover')).not.toBeInTheDocument();
+  });
+
+  it('the range and site live in the URL; 30 days adds the time to cover and names the repeat callers', async () => {
+    vi.mocked(listCallOuts).mockResolvedValue({
+      ...list([item({ cover: { state: 'covered', by: 'Ben', steps: [] } })]),
+      range: '30d',
+      covered: 1,
+      looking: 0,
+      sites: [{ id: 's1', name: 'Back Bay' }, { id: 's2', name: 'Front Beach' }],
+      medianMinutesToCover: 95,
+      repeatCallers: [{ associateId: 'a-out', name: 'Ana Reyes', count: 3 }],
+    });
+    const user = renderDesk('/call-outs?range=30d');
+    await waitFor(() => expect(listCallOuts).toHaveBeenCalledWith('30d', null));
+    expect(await screen.findByText('1 h 35 min')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Ana Reyes' })).toHaveAttribute('href', '/people/a-out');
+    expect(screen.getByText('3 call-outs')).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Site' }), 's1');
+    await waitFor(() => expect(listCallOuts).toHaveBeenCalledWith('30d', 's1'));
   });
 });

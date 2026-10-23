@@ -51,6 +51,9 @@ function registryTenant(tenantId?: string | null): string {
  * (OrgSetting.assistantName), computed here at read time; the stored
  * Worker.name is the platform's seed and is never shown as is.
  */
+
+/** What a built-in agent registered automatically says about itself (F500 G2: it said "Registered by the boot sweep (Brief 1D-2)…"). */
+export const AUTO_REGISTERED_NOTE = 'Added automatically. Confirm the owner.';
 export function agentDisplayName(name: string, builtInKey: string | null | undefined, tenantId?: string | null): string {
   if (builtInKey !== 'whatsapp-assistant') return name;
   return `${getBrandingSync(tenantId ?? registryTenant()).assistantName} on WhatsApp`;
@@ -296,7 +299,7 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma, tenantIdArg?: 
         ownerUserId: owner,
         status: b.status,
         capabilities: [...b.capabilities],
-        notes: 'Registered by the boot sweep (Brief 1D-2). Owner defaulted to the first org admin; confirm.',
+        notes: AUTO_REGISTERED_NOTE,
         agent: {
           create: {
             tenantId,

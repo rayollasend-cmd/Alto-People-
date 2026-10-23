@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BadgeCheck, Plus, Search, Sparkles, ShieldCheck, Trash2, UserRound } from 'lucide-react';
+import { BadgeCheck, BarChart3, Plus, Search, Sparkles, ShieldCheck, Trash2, UserRound } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -13,6 +14,8 @@ import {
   searchSkills,
   verifyAssociateSkill,
   listPendingSkillClaims,
+  getSkillsOverview,
+  type SkillsOverview,
   type PendingSkillClaim,
   type AssociateSkillEntry,
   type SkillCatalogEntry,
@@ -37,6 +40,8 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
+  MetricCard,
+  MetricStrip,
   Select,
   SkeletonRows,
   Tabs,
@@ -45,6 +50,8 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { QueryError } from '@/components/ui/QueryError';
+import { useUrlParam } from '@/lib/useUrlState';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
@@ -65,10 +72,17 @@ function distinctCategories(entries: SkillCatalogEntry[]): string[] {
   ).sort();
 }
 
+const TABS = ['overview', 'search', 'people', 'catalog', 'claims'] as const;
+type SkillsTab = (typeof TABS)[number];
+
 export function SkillsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [tab, setTab] = useState<'search' | 'people' | 'catalog' | 'claims'>('search');
+  // The tab lives in the URL (?tab=claims), so Back returns to it and a link sends it.
+  const [tab, setTab] = useUrlParam<SkillsTab>('tab', 'overview', TABS, { history: 'push' });
+  // ?q= opens Find people on that skill (the overview's top skills link there).
+  const [params] = useSearchParams();
+  const initialQuery = params.get('q') ?? '';
   // Skills people added themselves, waiting on a verifier (manage:org).
   const claims = useQuery({ queryKey: ['skills', 'pending-claims'], queryFn: listPendingSkillClaims, enabled: canManage });
   const claimCount = claims.data?.claims.length ?? 0;
@@ -76,12 +90,14 @@ export function SkillsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Skills"
-        subtitle="Find people by what they know — or browse the catalog and add new competencies."
-        breadcrumbs={[{ label: 'Skills' }]}
+      title="Skills"
+      subtitle="What your people can do, who has checked it, and who to call for a skill."
     >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'search' | 'people' | 'catalog' | 'claims')}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as SkillsTab)}>
         <TabsList>
+          <TabsTrigger value="overview">
+            <BarChart3 className="mr-2 h-4 w-4" /> Overview
+          </TabsTrigger>
           <TabsTrigger value="search">
             <Search className="mr-2 h-4 w-4" /> Find people
           </TabsTrigger>
@@ -93,11 +109,17 @@ export function SkillsHome() {
           </TabsTrigger>
           {canManage && (
             <TabsTrigger value="claims">
-              <BadgeCheck className="mr-2 h-4 w-4" /> {claimCount > 0 ? `To verify (${claimCount})` : 'To verify'}
+              <BadgeCheck className="mr-2 h-4 w-4" /> To verify
+              {claimCount > 0 && (
+                <Badge variant="pending" className="ml-1.5">
+                  {claimCount}
+                </Badge>
+              )}
             </TabsTrigger>
           )}
         </TabsList>
-        <TabsContent value="search"><SearchTab canManage={canManage} /></TabsContent>
+        <TabsContent value="overview"><OverviewTab canManage={canManage} onTab={setTab} /></TabsContent>
+        <TabsContent value="search"><SearchTab canManage={canManage} initialQuery={initialQuery} /></TabsContent>
         <TabsContent value="people"><PersonSkillsTab canManage={canManage} /></TabsContent>
         <TabsContent value="catalog"><CatalogTab canManage={canManage} /></TabsContent>
         {canManage && (
@@ -107,6 +129,83 @@ export function SkillsHome() {
         )}
       </Tabs>
     </ListTemplate>
+  );
+}
+
+/** The first screen: the catalog in numbers and the skills most people hold. */
+function OverviewTab({ canManage, onTab }: { canManage: boolean; onTab: (t: SkillsTab) => void }) {
+  const q = useQuery({ queryKey: ['skills', 'overview'], queryFn: getSkillsOverview });
+  if (q.error) return <QueryError what="the skills overview" query={q} />;
+  const o = q.data;
+  if (!o) return <SkeletonRows count={3} />;
+  if (o.catalog === 0) {
+    return (
+      <EmptyState
+        icon={Sparkles}
+        title="No skills in the catalog yet"
+        description="Add the skills your work needs — forklift, ServSafe, Spanish — then record who has them."
+        action={
+          canManage ? (
+            <Button onClick={() => onTab('catalog')}>
+              <Plus className="mr-2 h-4 w-4" /> Add a skill
+            </Button>
+          ) : undefined
+        }
+      />
+    );
+  }
+  const n = (v: number) => v.toLocaleString('en-US');
+  return (
+    <div className="space-y-4">
+      <MetricStrip label="Skills at a glance">
+        <MetricCard label="Skills in the catalog" value={o.catalog} hint="Browse and add in the catalog" onClick={() => onTab('catalog')} />
+        <MetricCard
+          label="People with a verified skill"
+          value={o.peopleWithVerified}
+          hint={`${n(o.peopleWithSkill)} with any skill on record`}
+          nothing={o.peopleWithSkill === 0 ? 'No one has a skill on record yet' : undefined}
+          onClick={() => onTab('people')}
+        />
+        {canManage && (
+          <MetricCard
+            label="To verify"
+            value={o.toVerify}
+            hint={o.toVerify > 0 ? 'Skills people added themselves' : 'Nothing waiting'}
+            tone={o.toVerify > 0 ? 'warning' : 'default'}
+            onClick={() => onTab('claims')}
+          />
+        )}
+      </MetricStrip>
+      <DataGrid<SkillsOverview['top'][number]>
+        id="skills-top"
+        caption="Most held skills"
+        noun={{ one: 'skill', many: 'skills' }}
+        rows={o.top}
+        rowKey={(r) => r.id}
+        search={false}
+        exportCsv={false}
+        columnChooser={false}
+        urlState={false}
+        empty={{ icon: Sparkles, title: 'No one has a skill on record yet', description: 'Record skills on a person under One person, or let people add their own.' }}
+        footnote="The five skills most people hold. Open one to see who."
+        columns={[
+          {
+            key: 'name',
+            header: 'Skill',
+            accessor: (r) => r.name,
+            primary: true,
+            cell: (r) => (
+              <Link to={`/skills?tab=search&q=${encodeURIComponent(r.name)}`} className="font-medium text-ink hover:text-gold">
+                {r.name}
+                {r.category && <span className="ml-1.5 text-xs text-ink-muted">{r.category}</span>}
+              </Link>
+            ),
+          },
+          { key: 'people', header: 'People', accessor: (r) => r.people, align: 'right', className: 'tabular-nums' },
+          { key: 'verified', header: 'Verified', accessor: (r) => r.verified, align: 'right', className: 'tabular-nums', cardMeta: true, cell: (r) => `${n(r.verified)} of ${n(r.people)}` },
+        ]}
+      />
+    </div>
   );
 }
 
@@ -151,8 +250,8 @@ function ClaimsTab({ claims, loading, onChanged }: { claims: PendingSkillClaim[]
   );
 }
 
-function SearchTab({ canManage }: { canManage: boolean }) {
-  const [q, setQ] = useState('');
+function SearchTab({ canManage, initialQuery = '' }: { canManage: boolean; initialQuery?: string }) {
+  const [q, setQ] = useState(initialQuery);
   const [minLevel, setMinLevel] = useState<SkillLevel | ''>('');
   const [clientId, setClientId] = useState('');
   const [locationId, setLocationId] = useState('');
@@ -210,6 +309,15 @@ function SearchTab({ canManage }: { canManage: boolean }) {
     }
   };
 
+  // Arriving with ?q= (a top skill on the overview): run that search once.
+  const ranInitial = useRef(false);
+  useEffect(() => {
+    if (!initialQuery || ranInitial.current) return;
+    ranInitial.current = true;
+    void runSearch(initialQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery]);
+
   const associates = useMemo(() => data?.associates ?? [], [data]);
   return (
     <div className="space-y-4">
@@ -223,7 +331,7 @@ function SearchTab({ canManage }: { canManage: boolean }) {
               <Input
                 id="skills-search-query"
                 className="mt-1"
-                placeholder="Python, forklift, Spanish…"
+                placeholder="Forklift, ServSafe, Spanish…"
                 value={q}
                 autoComplete="off"
                 onChange={(e) => {
@@ -795,7 +903,7 @@ function NewSkillDrawer({
             className="mt-1"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Python, forklift, Spanish…"
+            placeholder="Forklift, ServSafe, Spanish…"
           />
         </div>
         <div>

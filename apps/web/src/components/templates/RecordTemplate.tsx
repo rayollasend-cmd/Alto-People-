@@ -81,7 +81,10 @@ export function RecordTemplate({ breadcrumbs, identity, title, subtitle, status,
         </div>
       )}
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 items-start gap-4">
+        {/* A readable minimum, as PageHeader keeps (not min-w-0): on a phone
+            the actions beside a long title squeezed it to four lines and its
+            facts to "Shell …"; with a floor the actions wrap below instead. */}
+        <div className="flex min-w-[min(16rem,100%)] flex-1 items-start gap-4">
           {identity && <div className="shrink-0">{identity}</div>}
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

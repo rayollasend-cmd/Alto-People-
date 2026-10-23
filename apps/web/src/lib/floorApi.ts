@@ -115,3 +115,20 @@ export interface CoverStep {
 export function coverShift(shiftId: string, input: { release?: boolean; reason?: string } = {}): Promise<{ shiftId: string; steps: CoverStep[] }> {
   return apiFetch(`/floor/cover/${shiftId}`, { method: 'POST', body: input });
 }
+
+/** The windows I lead, contracted vs scheduled, over the next `days` days (GET /floor/coverage-ahead). */
+export interface CoverageAhead {
+  days: number;
+  /** Contracted headcount nobody is scheduled as (sum over window-days). */
+  shortOfContract: number;
+  windowsShort: number;
+  /** Posted open shifts in those windows. */
+  openPosted: number;
+  /** Window-days counted (0: I lead no contracted window). */
+  windows: number;
+  byDay: Array<{ date: string; locationId: string; label: string; target: number; scheduled: number; open: number; short: number }>;
+}
+
+export function getCoverageAhead(days = 7): Promise<CoverageAhead> {
+  return apiFetch<CoverageAhead>(`/floor/coverage-ahead?days=${days}`);
+}

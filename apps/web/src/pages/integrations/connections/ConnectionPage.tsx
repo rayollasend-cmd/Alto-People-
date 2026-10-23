@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -7,7 +7,7 @@ import { INTEGRATION_CAPABILITY_LABELS, type IntegrationCapability, type Integra
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { useConfirm } from '@/lib/confirm';
+import { useUrlParam } from '@/lib/useUrlState';
 import { fmtDateTime } from '@/lib/format';
 import {
   deleteIntegrationConnection,
@@ -22,11 +22,16 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { DataGrid } from '@/components/ui/DataGrid';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
+import { FilterBar, FilterChip } from '@/components/ui/FilterBar';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
-import { StatTile } from '@/pages/portal/portalCharts';
 import { ConnectDrawer } from './ConnectDrawer';
 import { connectionStatus, runStatus } from './shared';
 
@@ -35,21 +40,36 @@ import { connectionStatus, runStatus } from './shared';
  * sync now, pause, edit, disconnect), and the sync log — every run with
  * its counts, and the per-record errors of a run behind a click.
  */
+const RUN_FILTERS = ['all', 'FAILED', 'PARTIAL', 'SUCCEEDED'] as const;
+type RunFilter = (typeof RUN_FILTERS)[number];
+const RUN_FILTER_LABELS: Record<RunFilter, string> = { all: 'All runs', FAILED: 'Failed', PARTIAL: 'Partial', SUCCEEDED: 'Succeeded' };
+
+const triggerLabel = (r: IntegrationSyncRunSummary) => (r.trigger === 'sandbox-test' ? 'Sandbox test' : r.trigger === 'event' ? `Event · ${r.eventType ?? ''}` : r.trigger === 'schedule' ? 'Schedule' : 'Manual');
+
+/**
+ * One connection (Brief 3-5; F500 G4): its state in four numbers, the one
+ * action that matters — Sync now — with the sandbox test beside it and the
+ * rest (pause, edit, disconnect) in More, and the sync log as a list you
+ * can filter to the runs that failed. Every run's per-record errors are a
+ * click away.
+ */
 export function ConnectionPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  const confirm = useConfirm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:integrations') : false;
   const q = useQuery({ queryKey: ['integrations', 'connection', id], queryFn: () => getIntegrationConnection(id), enabled: !!id });
   const [editing, setEditing] = useState(false);
-  const [capability, setCapability] = useState<IntegrationCapability | ''>('');
+  const [choosing, setChoosing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [errorsFor, setErrorsFor] = useState<IntegrationSyncRunSummary | null>(null);
+  const [runFilter, setRunFilter] = useUrlParam<RunFilter>('runs', 'all', RUN_FILTERS);
 
   const c = q.data?.connection ?? null;
   const vendor = q.data?.vendor ?? null;
-  const runs = q.data?.runs ?? [];
+  const runs = useMemo(() => q.data?.runs ?? [], [q.data]);
+  const shownRuns = useMemo(() => (runFilter === 'all' ? runs : runs.filter((r) => r.status === runFilter)), [runs, runFilter]);
+  const caps = vendor?.capabilities ?? [];
 
   const act = async (key: string, fn: () => Promise<unknown>, done: string) => {
     setBusy(key);
@@ -63,6 +83,10 @@ export function ConnectionPage() {
       setBusy(null);
     }
   };
+  const syncNow = (capability: IntegrationCapability) => {
+    if (!c) return;
+    void act('sync', () => syncIntegrationConnection(c.id, { capability }), `${INTEGRATION_CAPABILITY_LABELS[capability]} ran.`);
+  };
 
   const title = c?.name ?? 'Connection';
   const status = c ? connectionStatus(c) : null;
@@ -71,141 +95,157 @@ export function ConnectionPage() {
   return (
     <ListTemplate
       title={title}
-      subtitle={c && vendor ? `${vendor.label} · ${c.sandbox ? 'sandbox' : 'live'}${c.hasCredentials ? ' · credentials on file' : ''}` : ' '}
-      breadcrumbs={[{ label: 'Settings' }, { label: 'Integrations', to: '/integrations' }, { label: title }]}
-      secondaryActions={
-        c && canManage ? (
-          <>
-            <Button variant="ghost" size="sm" loading={busy === 'test'} onClick={() => void act('test', () => testIntegrationConnection(c.id), 'Sandbox test ran; the log is below.')}>
-              <FlaskConical className="h-4 w-4" /> Sandbox test
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              loading={busy === 'pause'}
-              onClick={() => void act('pause', () => patchIntegrationConnection(c.id, { status: c.status === 'PAUSED' ? 'CONNECTED' : 'PAUSED' }), c.status === 'PAUSED' ? 'Resumed.' : 'Paused.')}
-            >
-              {c.status === 'PAUSED' ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />} {c.status === 'PAUSED' ? 'Resume' : 'Pause'}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
-              <Pencil className="h-4 w-4" /> Edit
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-alert hover:bg-alert/10"
-              onClick={async () => {
-                if (!(await confirm({ title: `Disconnect ${c.name}?`, description: 'The sync log goes with it. The vendor keeps what was already sent.', confirmLabel: 'Disconnect', destructive: true }))) return;
-                await act('delete', () => deleteIntegrationConnection(c.id), 'Disconnected.');
-                navigate('/integrations');
-              }}
-            >
-              <Trash2 className="h-4 w-4" /> Disconnect
-            </Button>
-          </>
-        ) : undefined
+      subtitle={c && vendor ? `${vendor.label} · ${c.sandbox ? 'sandbox: the vendor is never called' : 'live'}${c.hasCredentials ? ' · credentials on file' : ''}` : undefined}
+      status={status ? <Badge variant={status.variant}>{status.label}</Badge> : undefined}
+      actions={
+        c && canManage
+          ? [
+              {
+                label: 'Sync now',
+                icon: RefreshCw,
+                primary: true,
+                loading: busy === 'sync',
+                disabled: caps.length === 0 || c.status === 'PAUSED',
+                hint: c.status === 'PAUSED' ? 'Resume the connection first.' : undefined,
+                onSelect: () => (caps.length === 1 ? syncNow(caps[0]!) : setChoosing(true)),
+              },
+              { label: 'Sandbox test', icon: FlaskConical, loading: busy === 'test', onSelect: () => void act('test', () => testIntegrationConnection(c.id), 'Sandbox test ran; the log is below.') },
+              {
+                label: c.status === 'PAUSED' ? 'Resume' : 'Pause',
+                icon: c.status === 'PAUSED' ? Play : Pause,
+                overflow: true,
+                onSelect: () => void act('pause', () => patchIntegrationConnection(c.id, { status: c.status === 'PAUSED' ? 'CONNECTED' : 'PAUSED' }), c.status === 'PAUSED' ? 'Resumed.' : 'Paused.'),
+              },
+              { label: 'Edit', icon: Pencil, overflow: true, onSelect: () => setEditing(true) },
+              {
+                label: 'Disconnect',
+                icon: Trash2,
+                destructive: true,
+                confirm: { title: `Disconnect ${c.name}?`, description: 'The sync log goes with it. The vendor keeps what was already sent.', confirmLabel: 'Disconnect', destructive: true },
+                onSelect: () =>
+                  void act('delete', () => deleteIntegrationConnection(c.id), 'Disconnected.').then(() => navigate('/integrations')),
+              },
+            ]
+          : undefined
       }
       summary={
         c ? (
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <StatTile label="State" value={<Badge variant={status!.variant}>{status!.label}</Badge>} sub={c.lastError ?? (c.eventDriven ? 'Runs on events' : 'Manual and scheduled only')} />
-            <StatTile label="Last sync" value={c.lastSyncAt ? fmtDateTime(c.lastSyncAt) : '—'} sub={c.lastRun ? `${INTEGRATION_CAPABILITY_LABELS[c.lastRun.capability]} · ${runStatus(c.lastRun.status).label}` : 'No run yet'} />
-            <StatTile label="Next sync" value={c.nextSyncAt && c.status === 'CONNECTED' ? fmtDateTime(c.nextSyncAt) : '—'} sub={c.scheduleMinutes ? `Every ${c.scheduleMinutes >= 60 ? `${c.scheduleMinutes / 60} h` : `${c.scheduleMinutes} min`}` : 'No schedule'} />
-            <StatTile label="Rejected · last 10 runs" value={rejected} sub={rejected ? 'Open a run for the records' : 'Every record accepted'} className={rejected ? 'border-alert/40' : undefined} />
-          </div>
+          <MetricStrip label="Connection at a glance">
+            <MetricCard label="Last sync" value={c.lastSyncAt ? fmtDateTime(c.lastSyncAt) : 'Never'} hint={c.lastRun ? `${INTEGRATION_CAPABILITY_LABELS[c.lastRun.capability]} · ${runStatus(c.lastRun.status).label}` : 'No run yet'} compact />
+            <MetricCard label="Next sync" value={c.nextSyncAt && c.status === 'CONNECTED' ? fmtDateTime(c.nextSyncAt) : '—'} hint={c.scheduleMinutes ? `Every ${c.scheduleMinutes >= 60 ? `${c.scheduleMinutes / 60} h` : `${c.scheduleMinutes} min`}` : c.eventDriven ? 'On events only' : 'Manual only'} compact />
+            <MetricCard label="Rejected · last 10 runs" value={rejected} tone={rejected > 0 ? 'alert' : 'neutral'} hint={rejected ? 'Filter to the failed runs below' : 'Every record accepted'} onClick={rejected ? () => setRunFilter('FAILED') : undefined} compact />
+            <MetricCard label="Latest error" value={c.lastError ? 'Yes' : 'None'} tone={c.lastError ? 'alert' : 'neutral'} hint={c.lastError ?? 'The last run reported no error'} compact />
+          </MetricStrip>
         ) : undefined
       }
       filters={
-        c && canManage ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Select size="sm" aria-label="Capability to run" value={capability} onChange={(e) => setCapability(e.target.value as IntegrationCapability | '')}>
-              <option value="">Run now…</option>
-              {(vendor?.capabilities ?? []).map((cap) => (
-                <option key={cap} value={cap}>{INTEGRATION_CAPABILITY_LABELS[cap]}</option>
-              ))}
-            </Select>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!capability}
-              loading={busy === 'sync'}
-              onClick={() => capability && void act('sync', () => syncIntegrationConnection(c.id, { capability }), `${INTEGRATION_CAPABILITY_LABELS[capability]} ran.`)}
-            >
-              <RefreshCw className="h-4 w-4" /> Sync now
-            </Button>
-            {c.sandbox && <span className="text-xs text-ink-muted">Sandbox: the vendor is never called.</span>}
-          </div>
+        runs.length > 0 ? (
+          <FilterBar urlKey="runs" onClearFilters={() => setRunFilter('all')}>
+            {RUN_FILTERS.map((f) => (
+              <FilterChip key={f} active={runFilter === f} onClick={() => setRunFilter(f)} count={f === 'all' ? runs.length : runs.filter((r) => r.status === f).length}>
+                {RUN_FILTER_LABELS[f]}
+              </FilterChip>
+            ))}
+          </FilterBar>
         ) : undefined
       }
       drawer={
         <>
           {c && vendor && <ConnectDrawer open={editing} onOpenChange={setEditing} vendors={[vendor]} existing={c} onSaved={() => q.refetch()} />}
           <RunErrorsDrawer run={errorsFor} onClose={() => setErrorsFor(null)} />
+          <SyncChooser open={choosing} capabilities={caps} onClose={() => setChoosing(false)} onRun={(cap) => { setChoosing(false); syncNow(cap); }} />
         </>
       }
     >
       {q.isError ? (
-        <ErrorBanner action={<Button size="sm" variant="secondary" onClick={() => q.refetch()}>Retry</Button>}>Couldn’t load this connection.</ErrorBanner>
+        <QueryError what="this connection" query={q} />
       ) : !c ? (
         <Card><CardContent><SkeletonRows count={4} /></CardContent></Card>
-      ) : runs.length === 0 ? (
-        <Card>
-          <CardContent className="p-0">
-            <EmptyState icon={RefreshCw} title="No runs yet" description="Run the sandbox test, or sync one capability now. Every run leaves a row here with what it sent and what the vendor rejected." />
-          </CardContent>
-        </Card>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <caption className="sr-only">Sync log</caption>
-              <thead>
-                <tr className="border-b border-line text-left text-xs2 uppercase tracking-[0.14em] text-ink-muted">
-                  <th className="px-4 py-2 font-medium">When</th>
-                  <th className="px-4 py-2 font-medium">What</th>
-                  <th className="hidden px-4 py-2 font-medium md:table-cell">Trigger</th>
-                  <th className="px-4 py-2 text-right font-medium">Records</th>
-                  <th className="px-4 py-2 font-medium">Result</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((r) => {
-                  const s = runStatus(r.status);
-                  const summary = r.summary ?? {};
-                  const note = runNote(summary);
-                  return (
-                    <tr key={r.id} className="border-b border-line last:border-0">
-                      <td className="px-4 py-2.5 align-top tabular-nums text-ink-muted">{fmtDateTime(r.startedAt)}</td>
-                      <td className="px-4 py-2.5 align-top">
-                        <span className="block text-ink">{INTEGRATION_CAPABILITY_LABELS[r.capability]}</span>
-                        {note && <span className="block text-xs text-ink-muted">{note}</span>}
-                      </td>
-                      <td className="hidden px-4 py-2.5 align-top text-ink-muted md:table-cell">{r.trigger === 'sandbox-test' ? 'Sandbox test' : r.trigger === 'event' ? `Event · ${r.eventType ?? ''}` : r.trigger === 'schedule' ? 'Schedule' : 'Manual'}</td>
-                      <td className="px-4 py-2.5 text-right align-top tabular-nums">
-                        <span className="text-ink">{r.succeeded}</span>
-                        <span className="text-ink-muted"> / {r.total}</span>
-                      </td>
-                      <td className="px-4 py-2.5 align-top">
-                        {r.failed > 0 ? (
-                          <button type="button" className="inline-flex items-center gap-2 text-left" onClick={() => setErrorsFor(r)}>
-                            <Badge variant={s.variant} size="sm">{s.label}</Badge>
-                            <span className="text-xs text-alert underline underline-offset-2">{r.failed} rejected</span>
-                          </button>
-                        ) : (
-                          <Badge variant={s.variant} size="sm">{s.label}</Badge>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>
-          </CardContent>
-        </Card>
+        <DataGrid<IntegrationSyncRunSummary>
+          id="sync-log"
+          caption="Sync log"
+          noun={{ one: 'run', many: 'runs' }}
+          rows={shownRuns}
+          rowKey={(r) => r.id}
+          search={false}
+          urlState={false}
+          exportCsv={false}
+          activeFilters={runFilter === 'all' ? 0 : 1}
+          onClearFilters={() => setRunFilter('all')}
+          empty={{ icon: RefreshCw, title: 'No runs yet', description: 'Run the sandbox test, or sync now. Every run leaves a row here with what it sent and what the vendor rejected.' }}
+          onRowClick={(r) => (r.failed > 0 ? setErrorsFor(r) : undefined)}
+          rowActionLabel={(r) => `${INTEGRATION_CAPABILITY_LABELS[r.capability]}, ${fmtDateTime(r.startedAt)}`}
+          columns={[
+            { key: 'when', header: 'When', accessor: (r) => r.startedAt, sortable: true, className: 'whitespace-nowrap tabular-nums text-ink-muted', cell: (r) => fmtDateTime(r.startedAt) },
+            {
+              key: 'what',
+              header: 'What',
+              accessor: (r) => INTEGRATION_CAPABILITY_LABELS[r.capability],
+              primary: true,
+              cell: (r) => {
+                const note = runNote(r.summary ?? {});
+                return (
+                  <span className="block min-w-0">
+                    <span className="block text-ink">{INTEGRATION_CAPABILITY_LABELS[r.capability]}</span>
+                    {note && <span className="block text-xs text-ink-muted">{note}</span>}
+                  </span>
+                );
+              },
+            },
+            { key: 'trigger', header: 'Trigger', accessor: (r) => triggerLabel(r), cardMeta: true, className: 'text-ink-muted' },
+            { key: 'records', header: 'Records', accessor: (r) => r.total, align: 'right', cell: (r) => <span className="tabular-nums"><span className="text-ink">{r.succeeded}</span><span className="text-ink-muted"> / {r.total}</span></span> },
+            {
+              key: 'result',
+              header: 'Result',
+              accessor: (r) => runStatus(r.status).label,
+              sortable: true,
+              cardMeta: true,
+              cell: (r) => {
+                const st = runStatus(r.status);
+                return (
+                  <span className="inline-flex items-center gap-2">
+                    <Badge variant={st.variant} size="sm">{st.label}</Badge>
+                    {r.failed > 0 && <span className="text-xs text-alert underline underline-offset-2">{r.failed} rejected</span>}
+                  </span>
+                );
+              },
+            },
+          ]}
+        />
       )}
     </ListTemplate>
+  );
+}
+
+/** Which capability to run now, when the vendor offers more than one. */
+function SyncChooser({ open, capabilities, onClose, onRun }: { open: boolean; capabilities: IntegrationCapability[]; onClose: () => void; onRun: (c: IntegrationCapability) => void }) {
+  const [cap, setCap] = useState<IntegrationCapability | ''>('');
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Sync now</DialogTitle>
+          <DialogDescription>Run one of the vendor’s capabilities now. The run lands in the sync log with what it sent and what was rejected.</DialogDescription>
+        </DialogHeader>
+        <Field label="What to run">
+          {(fp) => (
+            <Select {...fp} value={cap} onChange={(e) => setCap(e.target.value as IntegrationCapability | '')}>
+              <option value="">Choose…</option>
+              {capabilities.map((k) => (
+                <option key={k} value={k}>{INTEGRATION_CAPABILITY_LABELS[k]}</option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button disabled={!cap} onClick={() => cap && onRun(cap)}>
+            <RefreshCw className="h-4 w-4" aria-hidden="true" /> Run
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

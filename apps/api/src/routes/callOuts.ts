@@ -23,6 +23,8 @@ import {
  *   POST /me/call-outs     { shiftId, reason, note? } — "I can't make it" on the shift card
  *   GET  /me/call-outs     the worker's own call-outs in the coming days (so the card says so)
  *   GET  /call-outs        today's and tomorrow's call-outs within reach, with how cover is going
+ *                          (?range=today|week|30d, ?siteId= one site; plus the last 7 days'
+ *                          record, the median time to cover and the repeat callers)
  *   POST /call-outs        { associateId, shiftId, reason, note? } — a lead records one taken by phone
  */
 
@@ -86,22 +88,43 @@ callOutsRouter.get('/me/call-outs', requireAuth, async (req, res) => {
   });
 });
 
-const ListQuery = z.object({ range: z.enum(['today', 'week']).default('today') });
+const ListQuery = z.object({ range: z.enum(['today', 'week', '30d']).default('today'), siteId: z.string().uuid().optional() });
+
+const MINUTE = 60_000;
+const median = (xs: number[]): number | null => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid]! : Math.round((s[mid - 1]! + s[mid]!) / 2);
+};
+
+/**
+ * Minutes from the call-out to the shift being someone else's: the cover's
+ * assignedAt. Null when it isn't covered by a person (cancelled, still
+ * open) or the assignment predates the call-out record.
+ */
+function minutesToCover(r: { associateId: string; createdAt: Date; shift: { assignedAssociateId: string | null; assignedAt: Date | null } }): number | null {
+  const s = r.shift;
+  if (!s.assignedAssociateId || s.assignedAssociateId === r.associateId || !s.assignedAt) return null;
+  const m = Math.round((s.assignedAt.getTime() - r.createdAt.getTime()) / MINUTE);
+  return m >= 0 ? m : null;
+}
 
 callOutsRouter.get('/call-outs', requireAnyCapability('manage:scheduling', 'view:scheduling'), async (req, res) => {
   const user = req.user!;
   // A worker reads their own at /me/call-outs; a store's portal account is not a lead's desk.
   if (user.role === 'ASSOCIATE' || user.role === 'CLIENT_PORTAL') throw new HttpError(403, 'forbidden', 'Call-outs are for the people who lead the floor.');
-  const { range } = ListQuery.parse(req.query);
+  const { range, siteId } = ListQuery.parse(req.query);
   const now = new Date();
-  const from = new Date(now.getTime() - 12 * 3_600_000);
+  const from = new Date(now.getTime() - (range === '30d' ? 30 * 24 : 12) * 3_600_000);
   const to = new Date(now.getTime() + (range === 'week' ? 7 * 24 : 36) * 3_600_000);
+  // Everyone the caller may see — a lead their floor, a regional manager their sites.
+  const reach = { associate: scopeActiveAssociates(user, { former: true }) };
   const rows = await prisma.callOut.findMany({
     where: {
       AND: [
         { tenantId: tenantIdForWrite(), status: 'CONFIRMED', shift: { startsAt: { gte: from, lte: to } } },
-        // Everyone the caller may see — a lead their floor, a regional manager their sites.
-        { associate: scopeActiveAssociates(user, { former: true }) },
+        reach,
       ],
     },
     orderBy: { shift: { startsAt: 'asc' } },
@@ -128,14 +151,50 @@ callOutsRouter.get('/call-outs', requireAnyCapability('manage:scheduling', 'view
           endsAt: true,
           status: true,
           assignedAssociateId: true,
-          locationRel: { select: { name: true, timezone: true } },
+          assignedAt: true,
+          locationId: true,
+          locationRel: { select: { id: true, name: true, timezone: true } },
           client: { select: { name: true } },
           assignedAssociate: { select: { firstName: true, lastName: true } },
         },
       },
     },
   });
-  const items = rows.map((r) => {
+  // The site filter's options: every site in this range's call-outs (before the filter narrows them).
+  const siteNames = new Map<string, string>();
+  for (const r of rows) if (r.shift.locationRel) siteNames.set(r.shift.locationRel.id, r.shift.locationRel.name);
+  const inSite = siteId ? rows.filter((r) => r.shift.locationId === siteId) : rows;
+  // Who called out more than once in the range — a conversation to have, named.
+  const byPerson = new Map<string, { associateId: string; name: string; count: number }>();
+  for (const r of inSite) {
+    const g = byPerson.get(r.associateId) ?? { associateId: r.associateId, name: `${r.associate.firstName} ${r.associate.lastName}`.trim(), count: 0 };
+    g.count += 1;
+    byPerson.set(r.associateId, g);
+  }
+  const repeatCallers = [...byPerson.values()].filter((g) => g.count >= 2).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, 10);
+
+  // The last seven days' record, for the line a quiet day shows ("All clear ·
+  // last 7 days: 3 call-outs, 100% covered, median 42 min to cover").
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 3_600_000);
+  const recent = await prisma.callOut.findMany({
+    where: {
+      AND: [
+        { tenantId: tenantIdForWrite(), status: 'CONFIRMED', shift: { startsAt: { gte: weekAgo, lte: now }, ...(siteId ? { locationId: siteId } : {}) } },
+        reach,
+      ],
+    },
+    take: 2000,
+    select: { associateId: true, createdAt: true, shift: { select: { assignedAssociateId: true, assignedAt: true, startsAt: true, status: true } } },
+  });
+  const recentCovered = recent.filter((r) => coverStateOf(r, now) === 'covered');
+  const last7Days = {
+    total: recent.length,
+    covered: recentCovered.length,
+    coveredPct: recent.length ? Math.round((recentCovered.length / recent.length) * 100) : null,
+    medianMinutesToCover: median(recent.map(minutesToCover).filter((m): m is number => m !== null)),
+  };
+
+  const items = inSite.map((r) => {
     const state = coverStateOf(r, now);
     return {
       id: r.id,
@@ -168,6 +227,11 @@ callOutsRouter.get('/call-outs', requireAnyCapability('manage:scheduling', 'view
   });
   res.json({
     range,
+    siteId: siteId ?? null,
+    sites: [...siteNames.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
+    medianMinutesToCover: median(inSite.map(minutesToCover).filter((m): m is number => m !== null)),
+    repeatCallers,
+    last7Days,
     total: items.length,
     covered: items.filter((i) => i.cover.state === 'covered').length,
     looking: items.filter((i) => i.cover.state === 'looking').length,

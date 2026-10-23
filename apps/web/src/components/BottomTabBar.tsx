@@ -14,6 +14,7 @@ import {
   CalendarOff,
   ClipboardList,
   DollarSign,
+  CheckCheck,
   Inbox,
   Menu,
   Rocket,
@@ -107,7 +108,7 @@ const FINANCE_TABS: TabDef[] = [
 const SCHEDULER_TABS: TabDef[] = [
   HOME_TAB,
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
-  { path: '/approvals', labelKey: 'tabs.approvals', icon: Inbox, requires: 'manage:scheduling', badge: 'approvals' },
+  { path: '/approvals', labelKey: 'tabs.approvals', icon: CheckCheck, requires: 'manage:scheduling', badge: 'approvals' },
   { path: '/time-attendance', labelKey: 'tabs.time', icon: Timer, requires: 'view:time' },
 ];
 
@@ -127,7 +128,7 @@ const HR_TABS: TabDef[] = [
  *  the scheduling desk, which is a supervisor's queue. */
 const MANAGER_TABS: TabDef[] = [
   HOME_TAB,
-  { path: '/team', labelKey: 'tabs.approvals', icon: Inbox, requires: 'view:my-team' },
+  { path: '/team', labelKey: 'tabs.approvals', icon: CheckCheck, requires: 'view:my-team' },
   { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
   { path: '/time-off', labelKey: 'tabs.timeOff', icon: CalendarOff, requires: 'view:time' },
 ];
@@ -149,7 +150,7 @@ const SUPERVISOR_TABS: TabDef[] = [
   { path: DASHBOARD_NAV.path, labelKey: 'floor.title', icon: Store, requires: null },
   { path: '/today', labelKey: 'portal.todayNav', icon: Users, requires: null },
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
-  { path: '/approvals', labelKey: 'tabs.approvals', icon: Inbox, requires: 'manage:scheduling', badge: 'approvals' },
+  { path: '/approvals', labelKey: 'tabs.approvals', icon: CheckCheck, requires: 'manage:scheduling', badge: 'approvals' },
 ];
 
 /** Marketing: their funnel (home), the pipeline it feeds, messages. */

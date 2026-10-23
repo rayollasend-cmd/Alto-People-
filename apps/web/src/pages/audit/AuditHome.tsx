@@ -1,574 +1,437 @@
-import { Suspense, lazy, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { Download, FileSearch, Filter, RefreshCw, Search } from 'lucide-react';
-import type { AuditSearchEntry } from '@alto-people/shared';
+import { ChevronDown, Download, FileSearch, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import {
-  auditCsvUrl,
-  searchAuditLogs,
-  type AuditFilters,
-} from '@/lib/auditApi';
-import { ApiError } from '@/lib/api';
-import { listDirectory } from '@/lib/directoryApi';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-} from '@/components/ui/Card';
-import {
-  AssociatePicker,
-  type PickedAssociate,
-} from '@/components/ui/AssociatePicker';
-import {
-  Drawer,
-  DrawerBody,
-  DrawerHeader,
-  DrawerTitle,
-} from '@/components/ui/Drawer';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { Field } from '@/components/ui/Field';
-import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { DataGrid } from '@/components/ui/DataGrid';
-import { fmtDateOnly, fmtDateTime } from '@/lib/format';
-
-// Brief 2-3 step 4: the chain, retention and SIEM panel, in its own chunk.
-const AuditIntegrity = lazy(() => import('./AuditIntegrity').then((m) => ({ default: m.AuditIntegrity })));
-
+  AUDIT_CATEGORIES,
+  AUDIT_CATEGORY_DEFS,
+  auditActionLabel,
+  auditEntityTypeLabel,
+  type AuditCategory,
+  type AuditSearchEntry,
+} from '@alto-people/shared';
+import { AUDIT_ARCHIVE_URL, auditCsvUrl, searchAuditLogs, type AuditFilters } from '@/lib/auditApi';
+import { useAuth } from '@/lib/auth';
+import { useDebouncedValue } from '@/lib/useDebouncedValue';
+import { urlBoolean, urlDay, useUrlParam, useUrlState, useUrlWriter } from '@/lib/useUrlState';
+import { fmtCount, fmtDateOnly, fmtDateTime, ymdToIsoEndExclusive, ymdToIsoStart } from '@/lib/format';
 import { dayHeading, dayKey, fmtTimeOnly, isRelativeDayHeading } from '@/lib/dayGroup';
+import { SavedViewsMenu } from '@/components/SavedViewsMenu';
+import { Button } from '@/components/ui/Button';
+import { DataGrid } from '@/components/ui/DataGrid';
+import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
+import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { Input } from '@/components/ui/Input';
+import { QueryError } from '@/components/ui/QueryError';
+import { Select } from '@/components/ui/Select';
 import { ListTemplate } from '@/components/templates';
+import { ActorPicker } from './ActorPicker';
+
+// Brief 2-3 step 4: the chain's status line and the trail's settings, in their own chunk.
+const AuditIntegrityLine = lazy(() => import('./AuditIntegrity').then((m) => ({ default: m.AuditIntegrityLine })));
+const AuditSettings = lazy(() => import('./AuditIntegrity').then((m) => ({ default: m.AuditSettings })));
 
 const PAGE_SIZE = 100;
 
-/**
- * Entity types the app actually writes audit rows for. Kept as a Select so
- * HR doesn't have to guess exact casing; "Other…" opens a free-text escape
- * for anything not listed here yet.
- */
-const KNOWN_ENTITY_TYPES = [
-  'Application',
-  'User',
-  'Associate',
-  'PayrollRun',
-  'Agreement',
-  'DocumentRecord',
-  'TimeEntry',
-  'Shift',
-  'Client',
-] as const;
+/** The windows a review starts from. An unbounded first query on years of rows is slow and nobody reads it. */
+const RANGES = ['24h', '7d', '30d', '90d', '1y'] as const;
+type Range = (typeof RANGES)[number];
+const RANGE_HOURS: Record<Range, number> = { '24h': 24, '7d': 7 * 24, '30d': 30 * 24, '90d': 90 * 24, '1y': 365 * 24 };
+const RANGE_LABELS: Record<Range, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days', '1y': 'Last 12 months' };
 
-const ENTITY_OTHER = '__other__';
+/** Record types the app writes audit rows for, as a reviewer says them. */
+const KNOWN_ENTITY_TYPES = ['User', 'Associate', 'Application', 'PayrollRun', 'Agreement', 'DocumentRecord', 'TimeEntry', 'Shift', 'Client', 'Location', 'OrgUnit', 'Tenant'] as const;
 
-function sinceDaysAgo(days: number): string {
-  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-}
-
-/** Default window: last 7 days. An unbounded first query on years of audit
- *  rows is slow AND useless — nobody reviews "all history" first. */
-function defaultFilters(): AuditFilters {
-  return { limit: PAGE_SIZE, since: sinceDaysAgo(7) };
-}
+/** Every filter the page keeps in its URL — counted, cleared and saved as one. */
+const FILTER_KEYS = ['q', 'actor', 'cat', 'range', 'from', 'to', 'system', 'type', 'id', 'action'] as const;
 
 function metaPreview(m: Record<string, unknown> | null): string {
   if (!m) return '';
   const parts: string[] = [];
   for (const [k, v] of Object.entries(m)) {
     if (k === 'ip' || k === 'userAgent') continue;
-    const str =
-      typeof v === 'string' ? v : v === null ? 'null' : JSON.stringify(v);
-    parts.push(`${k}=${str}`);
+    parts.push(`${k}=${typeof v === 'string' ? v : v === null ? 'null' : JSON.stringify(v)}`);
     if (parts.join(' · ').length > 140) break;
   }
   const joined = parts.join(' · ');
   return joined.length > 160 ? `${joined.slice(0, 157)}…` : joined;
 }
 
+const shortId = (id: string) => (id.length > 13 ? `${id.slice(0, 8)}…` : id);
+/** What a row's record is called: its name, or its kind and a short id; a sign-in's account is the actor's own. */
+const recordName = (e: AuditSearchEntry) =>
+  e.entityType === 'User' && e.actorUserId && e.entityId === e.actorUserId ? 'Own account' : (e.entityLabel ?? `${auditEntityTypeLabel(e.entityType)} ${shortId(e.entityId)}`);
+const actorOf = (e: AuditSearchEntry) => e.actorName ?? e.actorEmail ?? null;
+
 /**
- * Phase 40 — global audit-log search. AuditLog rows have been written
- * since Phase 6 across auth / onboarding / time / payroll / shifts /
- * documents / compliance, but the only viewer until now was the
- * per-application timeline. This page lets HR/Exec slice by action,
- * entity, actor, and time window, and export the result as CSV for
- * external compliance work.
+ * The audit log (Phase 40; F500 G4): status first — one line on the hash
+ * chain — then the log, filtered the way a reviewer asks ("what did Maria
+ * do last week", "every export this month"), with the settings at the
+ * foot. Every filter lives in the URL, so an investigation can be linked,
+ * reloaded and saved as a view.
  */
 export function AuditHome() {
-  const [filters, setFilters] = useState<AuditFilters>(defaultFilters);
-  const [appliedFilters, setAppliedFilters] = useState<AuditFilters>(defaultFilters);
-  // "Other…" free-text mode for the entity-type filter.
-  const [entityOther, setEntityOther] = useState(false);
-  // Associate helper next to the raw actor-ID input (see the Field hint).
-  const [helperAssociate, setHelperAssociate] = useState<PickedAssociate | null>(null);
-  // Row detail drawer.
+  const { can } = useAuth();
+  const location = useLocation();
+  const write = useUrlWriter();
+  const [q, setQ] = useUrlParam<string>('q', '');
+  const [actor, setActor] = useUrlParam<string>('actor', '');
+  const [cat, setCat] = useUrlParam<AuditCategory | ''>('cat', '', ['', ...AUDIT_CATEGORIES]);
+  const [range] = useUrlParam<Range>('range', '7d', RANGES);
+  const [from, setFrom] = useUrlState('from', '', urlDay);
+  const [to, setTo] = useUrlState('to', '', urlDay);
+  const [showSystem, setShowSystem] = useUrlState('system', false, urlBoolean);
+  const [entityType, setEntityType] = useUrlParam<string>('type', '');
+  const [entityId, setEntityId] = useUrlParam<string>('id', '');
+  const [action, setAction] = useUrlParam<string>('action', '');
+  const [moreOpen, setMoreOpen] = useState(() => !!(entityType || entityId || action || from || to));
   const [detail, setDetail] = useState<AuditSearchEntry | null>(null);
 
-  // A cursor-paged list is what useInfiniteQuery is for. The pages are
-  // one cache entry keyed by the applied filters, so Back restores the
-  // whole scrolled-through log instantly, "Load more" appends a page
-  // rather than re-implementing append, and a failed page retries. This
-  // is the shape every other "Load more" list in the app should copy.
+  // The search box types freely; the URL (and the query) follow a beat later.
+  const [typed, setTyped] = useState<string>(q);
+  const debounced = useDebouncedValue(typed.trim(), 300);
+  useEffect(() => setTyped(q), [q]);
+  useEffect(() => {
+    if (debounced !== q) setQ(debounced);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debounced]);
+
+  // The window: explicit days win over the preset. `since` is fixed when the
+  // preset changes, so the query key (and the cache) holds still meanwhile.
+  const since = useMemo(
+    () => (from ? ymdToIsoStart(from) : new Date(Date.now() - RANGE_HOURS[range] * 3_600_000).toISOString()),
+    [from, range],
+  );
+  const applied = useMemo<AuditFilters>(
+    () => ({
+      limit: PAGE_SIZE,
+      since,
+      before: to ? ymdToIsoEndExclusive(to) : undefined,
+      q: q || undefined,
+      actorUserId: actor || undefined,
+      category: cat || undefined,
+      hideSystem: showSystem ? undefined : '1',
+      entityType: entityType || undefined,
+      entityId: entityId || undefined,
+      action: action || undefined,
+    }),
+    [since, to, q, actor, cat, showSystem, entityType, entityId, action],
+  );
+
+  // A cursor-paged list: one cache entry per applied filter set, so Back
+  // restores the scrolled-through log and "Load older" appends a page.
   const auditQuery = useInfiniteQuery({
-    queryKey: ['audit', 'logs', appliedFilters],
-    queryFn: ({ pageParam }) =>
-      searchAuditLogs(pageParam ? { ...appliedFilters, before: pageParam } : appliedFilters),
+    queryKey: ['audit', 'logs', applied],
+    queryFn: ({ pageParam }) => searchAuditLogs(pageParam ? { ...applied, before: pageParam } : applied),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextBefore ?? undefined,
   });
-  const entries = auditQuery.data ? auditQuery.data.pages.flatMap((pg) => pg.entries) : null;
-  const nextBefore = auditQuery.hasNextPage;
-  const loading = auditQuery.isPending;
-  const loadingMore = auditQuery.isFetchingNextPage;
-  const error = auditQuery.error
-    ? auditQuery.error instanceof ApiError
-      ? auditQuery.error.message
-      : 'Could not load.'
-    : null;
-  const loadMore = () => {
-    if (auditQuery.hasNextPage && !auditQuery.isFetchingNextPage) void auditQuery.fetchNextPage();
-  };
+  const entries = useMemo(() => (auditQuery.data ? auditQuery.data.pages.flatMap((pg) => pg.entries) : []), [auditQuery.data]);
 
-  const apply = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAppliedFilters({ ...filters, limit: PAGE_SIZE });
-  };
+  const params = new URLSearchParams(location.search);
+  const viewQuery = Object.fromEntries(FILTER_KEYS.filter((k) => params.get(k)).map((k) => [k, params.get(k)!]));
+  const activeFilters = Object.keys(viewQuery).length;
+  const clearFilters = () =>
+    write((p) => {
+      for (const k of [...FILTER_KEYS, 'sv']) p.delete(k);
+    });
+  const applySavedView = (id: string | null, query: Record<string, string>) =>
+    write((p) => {
+      for (const k of [...FILTER_KEYS, 'sv']) p.delete(k);
+      for (const [k, v] of Object.entries(query)) if ((FILTER_KEYS as readonly string[]).includes(k)) p.set(k, v);
+      if (id) p.set('sv', id);
+    });
 
-  const reset = () => {
-    const empty = defaultFilters();
-    setFilters(empty);
-    setAppliedFilters(empty);
-    setEntityOther(false);
-    setHelperAssociate(null);
-  };
+  const windowWords = from || to ? `${from ? fmtDateOnly(from) : 'the start'} to ${to ? fmtDateOnly(to) : 'now'}` : RANGE_LABELS[range].toLowerCase();
 
-  // Quick time-window chips — set `since` and search immediately.
-  const applyPreset = (hours: number) => {
-    const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-    const next = { ...filters, since, before: undefined, limit: PAGE_SIZE };
-    setFilters(next);
-    setAppliedFilters(next);
-  };
-
-  // The audit table keys actors by *user* ID, which isn't searchable by
-  // name from the web app (the directory only exposes associate IDs). The
-  // picker instead fills the associate's email into the Entity ID filter —
-  // auth/onboarding rows are keyed by email there, so it still finds their
-  // trail without pasting UUIDs.
-  const onPickHelperAssociate = (v: PickedAssociate | null) => {
-    setHelperAssociate(v);
-    if (!v) return;
-    listDirectory({ q: v.name })
-      .then((r) => {
-        const email = r.associates.find((a) => a.id === v.id)?.email;
-        setFilters((f) => ({ ...f, entityId: email ?? v.id }));
-      })
-      .catch(() => {
-        // Directory lookup failed — the associate id is still a valid
-        // entity-ID for Associate-typed rows.
-        setFilters((f) => ({ ...f, entityId: v.id }));
-      });
-  };
-
-  const csvHref = useMemo(() => auditCsvUrl(appliedFilters), [appliedFilters]);
+  const exportMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="secondary">
+          <Download className="h-4 w-4" aria-hidden="true" />
+          Export
+          <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[15rem]">
+        <DropdownMenuItem asChild>
+          <a href={auditCsvUrl(applied)} download>
+            <span className="flex flex-col">
+              <span>This view (CSV)</span>
+              <span className="text-xs text-silver">The rows these filters find, up to 50,000</span>
+            </span>
+          </a>
+        </DropdownMenuItem>
+        {can('manage:org') && (
+          <DropdownMenuItem asChild>
+            <a href={AUDIT_ARCHIVE_URL} download>
+              <span className="flex flex-col">
+                <span>Full archive (CSV)</span>
+                <span className="text-xs text-silver">Every row, with the chain’s hashes</span>
+              </span>
+            </a>
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Audit log"
-        subtitle="Every authentication, onboarding, payroll, scheduling, and document event in one searchable feed. Used for SOC 2, compliance reviews, and incident forensics."
-        primaryAction={
-          <Button asChild variant="secondary">
-            <a href={csvHref} download>
-              <Download className="h-4 w-4" />
-              Export CSV
-            </a>
-          </Button>
-        }
-    >
-
-      <Suspense fallback={null}>
-        <AuditIntegrity />
-      </Suspense>
-
-      <Card className="mb-4">
-        <CardHeader>
-          {/* h2, not CardTitle's h3: this heading sits directly under the
-              page h1, and an h1 → h3 jump trips axe's heading-order rule.
-              Classes match CardTitle + the old overrides exactly. */}
-          <h2 className="text-white leading-tight flex items-center gap-2 text-base">
-            <Filter className="h-4 w-4 text-silver/80" />
-            Filters
-          </h2>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={apply} className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              <Field label="Action contains">
-                {(p) => (
-                  <Input
-                    value={filters.q ?? ''}
-                    onChange={(e) =>
-                      setFilters((f) => ({ ...f, q: e.target.value || undefined }))
-                    }
-                    placeholder="e.g. payroll, login_failed"
-                    {...p}
-                  />
-                )}
-              </Field>
-              <Field label="Entity type">
-                {(p) => (
-                  <div className="space-y-2">
-                    <Select
-                      value={
-                        entityOther ? ENTITY_OTHER : (filters.entityType ?? '')
-                      }
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === ENTITY_OTHER) {
-                          setEntityOther(true);
-                          setFilters((f) => ({ ...f, entityType: undefined }));
-                        } else {
-                          setEntityOther(false);
-                          setFilters((f) => ({
-                            ...f,
-                            entityType: v || undefined,
-                          }));
-                        }
-                      }}
-                      {...p}
-                    >
-                      <option value="">Any entity type</option>
-                      {KNOWN_ENTITY_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                      <option value={ENTITY_OTHER}>Other…</option>
-                    </Select>
-                    {entityOther && (
-                      <Input
-                        value={filters.entityType ?? ''}
-                        onChange={(e) =>
-                          setFilters((f) => ({
-                            ...f,
-                            entityType: e.target.value || undefined,
-                          }))
-                        }
-                        placeholder="Exact entity type, e.g. KioskDevice"
-                        aria-label="Entity type (free text)"
-                      />
-                    )}
-                  </div>
-                )}
-              </Field>
-              <Field label="Entity ID">
-                {(p) => (
-                  <Input
-                    value={filters.entityId ?? ''}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        entityId: e.target.value || undefined,
-                      }))
-                    }
-                    placeholder="UUID or email"
-                    {...p}
-                  />
-                )}
-              </Field>
-              <Field label="Actor user ID">
-                {(p) => (
-                  <Input
-                    value={filters.actorUserId ?? ''}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        actorUserId: e.target.value || undefined,
-                      }))
-                    }
-                    placeholder="UUID"
-                    {...p}
-                  />
-                )}
-              </Field>
-              <Field
-                label="Find associate"
-                hint="Audit rows key actors by user ID (not searchable by name), so picking someone here fills their email into Entity ID — the key auth and onboarding events are logged under."
-              >
-                {() => (
-                  <AssociatePicker
-                    value={helperAssociate}
-                    onChange={onPickHelperAssociate}
-                    placeholder="Search by name…"
-                  />
-                )}
-              </Field>
-              <Field label="Since">
-                {(p) => (
-                  <div className="space-y-2">
-                    <Input
-                      type="datetime-local"
-                      value={isoToLocal(filters.since)}
-                      onChange={(e) =>
-                        setFilters((f) => ({
-                          ...f,
-                          since: localToIso(e.target.value),
-                        }))
-                      }
-                      {...p}
-                    />
-                    <div className="flex gap-1.5">
-                      {[
-                        { label: 'Last 24h', hours: 24 },
-                        { label: '7 days', hours: 7 * 24 },
-                        { label: '30 days', hours: 30 * 24 },
-                      ].map((preset) => (
-                        <Button
-                          key={preset.hours}
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => applyPreset(preset.hours)}
-                        >
-                          {preset.label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </Field>
-              <Field label="Before">
-                {(p) => (
-                  <Input
-                    type="datetime-local"
-                    value={isoToLocal(filters.before)}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        before: localToIso(e.target.value),
-                      }))
-                    }
-                    {...p}
-                  />
-                )}
-              </Field>
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={reset}>
-                Reset
-              </Button>
-              <Button type="submit" loading={loading}>
-                <Search className="h-4 w-4" />
-                Search
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
-
-      <Card>
-        <CardContent className="p-0">
-          {loading && !entries && (
-            <div className="p-4 space-y-2">
-              <Skeleton className="h-10" />
-              <Skeleton className="h-10" />
-              <Skeleton className="h-10" />
-            </div>
-          )}
-          {entries && entries.length === 0 && !loading && (
-            <EmptyState
-              icon={FileSearch}
-              title="No audit rows match these filters"
-              description="Loosen the date range, clear the entity-type filter, or reset the search to see recent activity."
-              action={
-                <Button variant="ghost" onClick={reset}>
-                  <RefreshCw className="h-4 w-4" />
-                  Reset filters
-                </Button>
+      title="Audit log"
+      subtitle="Every sign-in, change, export and payroll event, on a chain you can verify. For SOC 2, compliance reviews and investigations."
+      secondaryActions={exportMenu}
+      summary={
+        <Suspense fallback={null}>
+          <AuditIntegrityLine />
+        </Suspense>
+      }
+      filters={
+        <FilterBar
+          urlKey={FILTER_KEYS as unknown as string[]}
+          onClearFilters={clearFilters}
+          search={<SearchInput value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Search events, people, IDs…" aria-label="Search the audit log" className="h-8 text-xs" wrapperClassName="min-w-0 w-full" />}
+          actions={<SavedViewsMenu scope="audit.log" current={viewQuery} activeId={params.get('sv')} onApply={applySavedView} allLabel="Saved views" />}
+          sheetDescription="Narrow the log by who, what and when."
+        >
+          <ActorPicker value={actor || null} onChange={(id) => setActor(id ?? '')} className="w-full sm:w-56" />
+          <Select size="sm" aria-label="Category" value={cat} onChange={(e) => setCat(e.target.value as AuditCategory | '')} className="w-full sm:w-48">
+            <option value="">Every category</option>
+            {AUDIT_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {AUDIT_CATEGORY_DEFS[c].label}
+              </option>
+            ))}
+          </Select>
+          <Select
+            size="sm"
+            aria-label="When"
+            value={from || to ? 'custom' : range}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === 'custom') {
+                setMoreOpen(true);
+                return;
               }
-            />
-          )}
-          {entries && entries.length > 0 && (
-            <div className="p-3">
-              {/* One grid, grouped by day, instead of one table per
-                  <details> — a screen reader hears one log with sections,
-                  and the page gains what the per-day tables never had: a
-                  search across the loaded page, sort within a day, a
-                  metadata column the chooser can hide, and an export. */}
-              <DataGrid<AuditSearchEntry>
-                id="audit-log"
-                caption="Audit log"
-                rows={entries}
-                rowKey={(e) => e.id}
-                search={{ placeholder: 'Action, actor, entity…' }}
-                urlState={false}
-                exportCsv={{ filename: 'audit-log' }}
-                onRowClick={(e) => setDetail(e)}
-                rowActionLabel={(e) => `Open ${e.action} on ${e.entityType}`}
-                groupBy={{
-                  key: (e) => dayKey(e.createdAt),
-                  header: (key, rows) => (
-                    <span className="flex items-center gap-2">
-                      <span>{dayHeading(key)}</span>
-                      {isRelativeDayHeading(dayHeading(key)) && <span className="text-xs font-normal text-silver/70">· {fmtDateOnly(key)}</span>}
-                      <span className="ml-auto text-xs font-normal text-silver">
-                        {rows.length} event{rows.length === 1 ? '' : 's'}
-                      </span>
-                    </span>
-                  ),
-                }}
-                columns={[
-                  {
-                    key: 'time',
-                    header: 'Time',
-                    accessor: (e) => e.createdAt,
-                    csv: (e) => e.createdAt,
-                    sortable: true,
-                    searchable: false,
-                    className: 'text-silver text-xs whitespace-nowrap tabular-nums w-24',
-                    cell: (e) => <span title={fmtDateTime(e.createdAt)}>{fmtTimeOnly(e.createdAt, { seconds: true })}</span>,
-                  },
-                  {
-                    key: 'action',
-                    header: 'Action',
-                    accessor: (e) => e.action,
-                    sortable: true,
-                    primary: true,
-                    cell: (e) => (
-                      <Badge variant="outline" className="font-mono text-xs2">
-                        {e.action}
-                      </Badge>
-                    ),
-                  },
-                  {
-                    key: 'actor',
-                    header: 'Actor',
-                    accessor: (e) => e.actorEmail ?? 'system',
-                    sortable: true,
-                    cardMeta: true,
-                    className: 'text-silver text-xs truncate max-w-[16ch]',
-                    cell: (e) => e.actorEmail ?? <span className="text-silver/70">system</span>,
-                  },
-                  {
-                    key: 'entity',
-                    header: 'Entity',
-                    accessor: (e) => `${e.entityType} ${e.entityId}`,
-                    csv: (e) => `${e.entityType}:${e.entityId}`,
-                    sortable: true,
-                    cardMeta: true,
-                    className: 'text-silver text-xs',
-                    cell: (e) => (
-                      <>
-                        <div className="text-white">{e.entityType}</div>
-                        <div className="font-mono text-2xs text-silver/70 truncate max-w-[20ch]">{e.entityId}</div>
-                      </>
-                    ),
-                  },
-                  {
-                    key: 'metadata',
-                    header: 'Metadata',
-                    accessor: (e) => metaPreview(e.metadata),
-                    defaultHidden: true,
-                    className: 'text-silver text-xs font-mono truncate max-w-[44ch]',
-                  },
-                ]}
-              />
+              write((p) => {
+                p.delete('from');
+                p.delete('to');
+                if (v === '7d') p.delete('range');
+                else p.set('range', v);
+              });
+            }}
+            className="w-full sm:w-44"
+          >
+            {RANGES.map((r) => (
+              <option key={r} value={r}>
+                {RANGE_LABELS[r]}
+              </option>
+            ))}
+            <option value="custom">Pick dates…</option>
+          </Select>
+          <FilterChip active={!showSystem} aria-pressed={!showSystem} onClick={() => setShowSystem(!showSystem)} title="The API’s own request trail (http.post, http.patch…)">
+            Hide system requests
+          </FilterChip>
+          <FilterChip active={moreOpen} aria-expanded={moreOpen} aria-controls="audit-more-filters" onClick={() => setMoreOpen((o) => !o)}>
+            <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+            More filters
+          </FilterChip>
+          {moreOpen && (
+            <div id="audit-more-filters" className="flex w-full flex-wrap items-center gap-2 border-t border-line pt-2">
+              <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+                From
+                <Input type="date" className="h-8 w-36 text-xs" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+                To
+                <Input type="date" className="h-8 w-36 text-xs" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+              </label>
+              <Select size="sm" aria-label="Record type" value={entityType} onChange={(e) => setEntityType(e.target.value)} className="w-full sm:w-44">
+                <option value="">Any record type</option>
+                {KNOWN_ENTITY_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {auditEntityTypeLabel(t)}
+                  </option>
+                ))}
+              </Select>
+              <Input aria-label="Record ID" placeholder="Record ID or email" className="h-8 w-full text-xs sm:w-56" value={entityId} onChange={(e) => setEntityId(e.target.value.trim())} />
+              <Input aria-label="Exact event key" placeholder="Event key, e.g. auth.login" className="h-8 w-full font-mono text-xs sm:w-56" value={action} onChange={(e) => setAction(e.target.value.trim())} />
             </div>
           )}
-        </CardContent>
-      </Card>
+        </FilterBar>
+      }
+      drawer={
+        <Drawer open={detail !== null} onOpenChange={(o) => !o && setDetail(null)} width="max-w-lg">
+          {detail && <AuditDetail entry={detail} />}
+        </Drawer>
+      }
+    >
+      {auditQuery.isError ? (
+        <QueryError what="the audit log" query={auditQuery} />
+      ) : (
+        <DataGrid<AuditSearchEntry>
+          id="audit-log"
+          caption="Audit log"
+          noun={{ one: 'event', many: 'events' }}
+          rows={auditQuery.data ? entries : null}
+          loading={auditQuery.isPending}
+          rowKey={(e) => e.id}
+          search={false}
+          urlState={false}
+          exportCsv={false}
+          activeFilters={activeFilters}
+          onClearFilters={clearFilters}
+          empty={{ icon: FileSearch, title: 'No events in this window', description: `Nothing was recorded in the ${windowWords}. Pick a longer window to look further back.` }}
+          onRowClick={(e) => setDetail(e)}
+          rowActionLabel={(e) => `Open ${auditActionLabel(e.action)} on ${recordName(e)}`}
+          groupBy={{
+            key: (e) => dayKey(e.createdAt),
+            header: (key, rows) => (
+              <span className="flex items-center gap-2">
+                <span>{dayHeading(key)}</span>
+                {isRelativeDayHeading(dayHeading(key)) && <span className="text-xs font-normal text-silver/70">· {fmtDateOnly(key)}</span>}
+                <span className="ml-auto text-xs font-normal text-silver">{fmtCount(rows.length, 'event')}</span>
+              </span>
+            ),
+          }}
+          columns={[
+            {
+              key: 'time',
+              header: 'Time',
+              accessor: (e) => e.createdAt,
+              csv: (e) => e.createdAt,
+              sortable: true,
+              searchable: false,
+              className: 'text-silver text-xs whitespace-nowrap tabular-nums w-24',
+              cell: (e) => <span title={fmtDateTime(e.createdAt)}>{fmtTimeOnly(e.createdAt, { seconds: true })}</span>,
+            },
+            {
+              key: 'action',
+              header: 'Event',
+              accessor: (e) => auditActionLabel(e.action),
+              csv: (e) => e.action,
+              sortable: true,
+              primary: true,
+              cell: (e) => (
+                <span className="text-ink" title={e.action}>
+                  {auditActionLabel(e.action)}
+                </span>
+              ),
+            },
+            {
+              key: 'actor',
+              header: 'Who',
+              accessor: (e) => actorOf(e) ?? 'System',
+              csv: (e) => e.actorEmail ?? '',
+              sortable: true,
+              cardMeta: true,
+              className: 'text-xs',
+              cell: (e) =>
+                actorOf(e) ? (
+                  <span className="block max-w-[22ch] truncate text-ink" title={e.actorEmail ?? undefined}>
+                    {actorOf(e)}
+                  </span>
+                ) : (
+                  <span className="text-silver/70">System</span>
+                ),
+            },
+            {
+              key: 'entity',
+              header: 'Record',
+              accessor: (e) => recordName(e),
+              csv: (e) => `${e.entityType}:${e.entityId}`,
+              sortable: true,
+              cardMeta: true,
+              className: 'text-xs',
+              cell: (e) => (
+                <span className="block min-w-0">
+                  {e.entityHref ? (
+                    <Link to={e.entityHref} onClick={(ev) => ev.stopPropagation()} className="block max-w-[28ch] truncate text-ink underline-offset-2 hover:text-accent hover:underline">
+                      {recordName(e)}
+                    </Link>
+                  ) : (
+                    <span className="block max-w-[28ch] truncate text-ink">{recordName(e)}</span>
+                  )}
+                  <span className="block text-2xs text-silver/70">{auditEntityTypeLabel(e.entityType)}</span>
+                </span>
+              ),
+            },
+            {
+              key: 'metadata',
+              header: 'Details',
+              accessor: (e) => metaPreview(e.metadata),
+              defaultHidden: true,
+              className: 'text-silver text-xs font-mono truncate max-w-[44ch]',
+            },
+          ]}
+        />
+      )}
 
-      {nextBefore && (
-        <div className="mt-4 flex justify-center">
-          <Button variant="secondary" onClick={loadMore} loading={loadingMore}>
-            <RefreshCw className="h-4 w-4" />
-            Load older entries
+      {auditQuery.hasNextPage ? (
+        <div className="flex justify-center">
+          <Button variant="secondary" onClick={() => void auditQuery.fetchNextPage()} loading={auditQuery.isFetchingNextPage}>
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            Load older events
           </Button>
         </div>
-      )}
-      {entries && entries.length > 0 && !nextBefore && (
-        <p className="text-xs text-silver/70 mt-4 text-center">
-          End of results — {entries.length} row{entries.length === 1 ? '' : 's'}.
-        </p>
-      )}
+      ) : entries.length > 0 ? (
+        <p className="text-center text-xs text-silver/70">End of the {windowWords} · {fmtCount(entries.length, 'event')}.</p>
+      ) : null}
 
-      <Drawer
-        open={detail !== null}
-        onOpenChange={(o) => !o && setDetail(null)}
-        width="max-w-lg"
-      >
-        {detail && (
-          <>
-            <DrawerHeader>
-              <DrawerTitle className="font-mono text-base">
-                {detail.action}
-              </DrawerTitle>
-            </DrawerHeader>
-            <DrawerBody className="space-y-4 text-sm">
-              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-                <dt className="text-silver">When</dt>
-                <dd className="text-white">{fmtDateTime(detail.createdAt)}</dd>
-                <dt className="text-silver">Actor</dt>
-                <dd className="text-white break-all">
-                  {detail.actorEmail ?? (
-                    <span className="text-silver/70">system</span>
-                  )}
-                  {detail.actorUserId && (
-                    <div className="font-mono text-2xs text-silver/70">
-                      {detail.actorUserId}
-                    </div>
-                  )}
-                </dd>
-                <dt className="text-silver">Entity</dt>
-                <dd className="text-white break-all">
-                  {detail.entityType}
-                  <div className="font-mono text-2xs text-silver/70">
-                    {detail.entityId}
-                  </div>
-                </dd>
-                {detail.clientId && (
-                  <>
-                    <dt className="text-silver">Client ID</dt>
-                    <dd className="font-mono text-xs text-white break-all">
-                      {detail.clientId}
-                    </dd>
-                  </>
-                )}
-              </dl>
-              <div>
-                <div className="text-xs uppercase tracking-widest text-silver mb-1.5">
-                  Metadata
-                </div>
-                {detail.metadata ? (
-                  <pre className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-3 font-mono text-xs text-white overflow-x-auto whitespace-pre-wrap break-all">
-                    {JSON.stringify(detail.metadata, null, 2)}
-                  </pre>
-                ) : (
-                  <div className="text-silver/70 italic">
-                    No metadata recorded for this event.
-                  </div>
-                )}
-              </div>
-            </DrawerBody>
-          </>
-        )}
-      </Drawer>
+      <Suspense fallback={null}>
+        <AuditSettings />
+      </Suspense>
     </ListTemplate>
   );
 }
 
-function isoToLocal(iso: string | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function localToIso(local: string): string | undefined {
-  if (!local) return undefined;
-  const d = new Date(local);
-  return Number.isFinite(d.getTime()) ? d.toISOString() : undefined;
+function AuditDetail({ entry }: { entry: AuditSearchEntry }) {
+  return (
+    <>
+      <DrawerHeader>
+        <DrawerTitle className="text-base">{auditActionLabel(entry.action)}</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4 text-sm">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+          <dt className="text-silver">When</dt>
+          <dd className="text-ink">{fmtDateTime(entry.createdAt)}</dd>
+          <dt className="text-silver">Event key</dt>
+          <dd className="font-mono text-xs text-ink">{entry.action}</dd>
+          <dt className="text-silver">Who</dt>
+          <dd className="break-all text-ink">
+            {actorOf(entry) ?? <span className="text-silver/70">System</span>}
+            {entry.actorEmail && entry.actorEmail !== actorOf(entry) && <div className="text-xs text-silver">{entry.actorEmail}</div>}
+            {entry.actorUserId && <div className="font-mono text-2xs text-silver/70">{entry.actorUserId}</div>}
+          </dd>
+          <dt className="text-silver">Record</dt>
+          <dd className="break-all text-ink">
+            {entry.entityHref ? (
+              <Link to={entry.entityHref} className="underline underline-offset-2 hover:text-accent">
+                {recordName(entry)}
+              </Link>
+            ) : (
+              recordName(entry)
+            )}
+            <div className="text-xs text-silver">{auditEntityTypeLabel(entry.entityType)}</div>
+            <div className="font-mono text-2xs text-silver/70">{entry.entityId}</div>
+          </dd>
+          {entry.clientId && (
+            <>
+              <dt className="text-silver">Client ID</dt>
+              <dd className="break-all font-mono text-xs text-ink">{entry.clientId}</dd>
+            </>
+          )}
+        </dl>
+        <div>
+          <div className="mb-1.5 text-xs uppercase tracking-widest text-silver">Details</div>
+          {entry.metadata ? (
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-line bg-surface-raised p-3 font-mono text-xs text-ink">{JSON.stringify(entry.metadata, null, 2)}</pre>
+          ) : (
+            <div className="italic text-silver/70">No details recorded for this event.</div>
+          )}
+        </div>
+      </DrawerBody>
+    </>
+  );
 }

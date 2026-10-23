@@ -78,6 +78,8 @@ describe('the candidate page', () => {
     expect(page.body).toMatchObject({ firstName: 'Kim', position: 'Cashier', stage: 'APPLIED', stageLabel: 'Application received' });
     expect(page.body.interviews).toHaveLength(1);
     expect(page.body.interviews[0].location).toBe('Destin #1234');
+    // Who to ask, by name and address — not "your recruiter" (F500 G5).
+    expect(page.body.recruiter).toMatchObject({ email: rec.email });
 
     const ok = await request(app()).post(`/candidate-portal/${token}/interviews/${iv.body.id}/confirm`);
     expect(ok.status).toBe(200);
@@ -88,6 +90,12 @@ describe('the candidate page', () => {
     await a.post(`/recruiting/candidates/${candidateId}/portal-link`);
     expect((await request(app()).get(`/candidate-portal/${token}`)).status).toBe(404);
     expect((await request(app()).get('/candidate-portal/not-a-real-token')).status).toBe(404);
+    // A real link past its days is 410, and says whom to ask for a new one.
+    const fresh = tokenFromSent();
+    await prisma.candidate.update({ where: { id: candidateId }, data: { portalTokenExpiresAt: new Date(Date.now() - 60_000) } });
+    const stale = await request(app()).get(`/candidate-portal/${fresh}`);
+    expect(stale.status).toBe(410);
+    expect(stale.body.error.details.recruiter).toMatchObject({ email: rec.email });
   });
 
   it('a document asked for is uploaded on the page and reviewed by the recruiter; a rejection asks again', async () => {

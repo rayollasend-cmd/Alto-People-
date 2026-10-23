@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Bot, Cpu, Hand, OctagonX, Play, ShieldAlert, ShieldCheck, Users } from 'lucide-react';
+import { AlertTriangle, Bot, Cpu, Hand, ListChecks, OctagonX, Play, RefreshCw, ShieldAlert, ShieldCheck, Users } from 'lucide-react';
 import { ROBOT_STATUS_LABELS, WORKER_STATUS_LABELS, type ControlRoomException, type ControlRoomResponse, type ControlRoomRobot, type ControlRoomWaiting } from '@alto-people/shared';
 import { DeskTemplate } from '@/components/templates';
 import type { PageAction } from '@/components/ui/PageHeader';
@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Select } from '@/components/ui/Select';
@@ -39,23 +40,25 @@ const POLL_MS = 15_000;
  * tablet the two stack; every action has a 44px target and a confirmation.
  */
 export function ControlRoomPage() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canAct = can('manage:scheduling');
   const canSuspendAll = can('manage:org');
   const [searchParams, setSearchParams] = useSearchParams();
   const sites = useQuery({ queryKey: ['control-room', 'sites'], queryFn: listControlRoomSites, staleTime: 5 * 60_000 });
   const siteParam = searchParams.get('site') ?? '';
-  const locationId = siteParam || sites.data?.sites[0]?.id || '';
-  // The first site is the default once the list arrives; the URL carries the choice.
+  const defaultSite = sites.data ? pickDefaultSite(sites.data.sites, user?.locationId ?? null, readLastSite()) : '';
+  const locationId = siteParam || defaultSite;
+  // Once the list arrives the default goes into the URL, which carries the choice.
   useEffect(() => {
-    if (!siteParam && sites.data?.sites[0]) {
+    if (!siteParam && defaultSite) {
       const next = new URLSearchParams(searchParams);
-      next.set('site', sites.data.sites[0].id);
+      next.set('site', defaultSite);
       setSearchParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteParam, sites.data]);
+  }, [siteParam, defaultSite]);
   const pickSite = (id: string) => {
+    rememberSite(id);
     const next = new URLSearchParams(searchParams);
     next.set('site', id);
     setSearchParams(next);
@@ -74,18 +77,49 @@ export function ControlRoomPage() {
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ['control-room'] });
 
+  // A floor screen lists the agents that work the floor; the payroll,
+  // compliance and IT agents (a deploy workflow among them) live on /agents.
+  const floorAgents = (data?.agents ?? []).filter((a) => a.family != null && FLOOR_AGENT_FAMILIES.has(a.family));
+  const offFloorAgents = (data?.agents.length ?? 0) - floorAgents.length;
+
   const counts = data ? (
     <span className="text-xs text-ink-muted" aria-live="polite">
       Live · as of {fmtTime(data.asOf)} · every 15 s
     </span>
   ) : undefined;
 
+  // The strip reads across the top of both columns: four tiles squeezed
+  // into the left third clipped "EXCEPTIONS" and wrapped "WAITING FOR A
+  // PERSON" to three lines (F500 G2).
+  const strip = data ? (
+    <MetricStrip label="The floor right now">
+      <MetricCard
+        label="On the floor"
+        value={String(data.strip.onFloor)}
+        hint={`of ${data.strip.expectedNow} on shift now`}
+        nothing={data.strip.expectedNow === 0 ? 'No one on shift now' : undefined}
+        tone={data.strip.onFloor < data.strip.expectedNow ? 'warning' : 'default'}
+      />
+      {data.roboticsOn && (
+        <MetricCard
+          label="Robots working"
+          value={String(data.strip.robotsRunning)}
+          hint={`${data.strip.robotsOnShift} on shift`}
+          nothing={data.strip.robotsOnShift === 0 ? 'No robots on shift' : undefined}
+        />
+      )}
+      <MetricCard label="Exceptions" value={String(data.strip.exceptions)} tone={data.strip.exceptions > 0 ? 'alert' : 'default'} hint={data.strip.exceptions ? 'Need a hand' : 'None right now'} />
+      <MetricCard label="Waiting for a person" value={String(data.strip.waiting)} tone={data.strip.waiting > 0 ? 'warning' : 'default'} hint={data.strip.waiting ? 'Decisions queued' : 'Nothing queued'} />
+    </MetricStrip>
+  ) : null;
+
   const filters = (
+    <div className="space-y-[var(--d-stack)]">
     <div className="flex flex-wrap items-center gap-2">
       <label htmlFor="control-room-site" className="sr-only">
         Site
       </label>
-      <Select id="control-room-site" size="sm" value={locationId} onChange={(e) => pickSite(e.target.value)} className="w-64" disabled={!sites.data}>
+      <Select id="control-room-site" size="sm" value={locationId} onChange={(e) => pickSite(e.target.value)} className="w-full sm:w-72" disabled={!sites.data}>
         {(sites.data?.sites ?? []).map((s) => (
           <option key={s.id} value={s.id}>
             {s.name}
@@ -108,6 +142,8 @@ export function ControlRoomPage() {
         ))}
       </div>
     </div>
+    {strip}
+    </div>
   );
 
   // "Suspend all agents" stops every agent in the organization: it lives in
@@ -122,6 +158,19 @@ export function ControlRoomPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not resume the agents.'),
   });
   const actions: PageAction[] = [
+    {
+      key: 'tasks',
+      label: 'Open tasks',
+      icon: ListChecks,
+      to: locationId ? `/tasks?site=${encodeURIComponent(locationId)}` : '/tasks',
+    },
+    {
+      key: 'refresh',
+      label: 'Refresh',
+      icon: RefreshCw,
+      loading: room.isFetching && !!data,
+      onSelect: () => void refresh(),
+    },
     {
       key: 'resume',
       label: 'Resume all agents',
@@ -151,12 +200,6 @@ export function ControlRoomPage() {
     )
   ) : (
     <div className="space-y-[var(--d-stack)]">
-      <div className="grid grid-cols-2 gap-[var(--d-stack)] xl:grid-cols-4">
-        <MetricCard label="On the floor" value={String(data.strip.onFloor)} hint={`of ${data.strip.expectedNow} on shift now`} accent={data.strip.onFloor < data.strip.expectedNow} />
-        {data.roboticsOn && <MetricCard label="Robots working" value={String(data.strip.robotsRunning)} hint={`${data.strip.robotsOnShift} on shift`} />}
-        <MetricCard label="Exceptions" value={String(data.strip.exceptions)} accent={data.strip.exceptions > 0} hint={data.strip.exceptions ? 'Need a hand' : 'None right now'} />
-        <MetricCard label="Waiting for a person" value={String(data.strip.waiting)} accent={data.strip.waiting > 0} hint={data.strip.waiting ? 'Decisions queued' : 'Nothing queued'} />
-      </div>
 
       {data.agentsSuspended && (
         <p role="alert" className="flex items-center gap-2 rounded-md border border-alert/40 bg-alert/10 px-3 py-2 text-sm text-ink">
@@ -176,10 +219,18 @@ export function ControlRoomPage() {
 
       {data.roboticsOn && <SiteMap data={data} />}
 
+      {data.exceptions.length === 0 && data.waiting.length === 0 ? (
+        // Two dashed empty boxes said "nothing" twice: one line (F500 G2).
+        <p className="flex items-center gap-2 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-muted" data-testid="control-room-all-clear">
+          <ShieldCheck className="h-4 w-4 shrink-0 text-positive" aria-hidden="true" />
+          No exceptions · Nothing waiting for a person
+        </p>
+      ) : (
+      <>
       <section aria-labelledby="control-room-exceptions">
         <SectionTitle title="Exceptions" />
         {data.exceptions.length === 0 ? (
-          <EmptyState icon={ShieldCheck} title="Nothing is wrong" description="No exception on the floor right now." className="mt-2" />
+          <QuietLine icon={ShieldCheck}>No exception on the floor right now.</QuietLine>
         ) : (
           <ul className="mt-2 divide-y divide-line rounded-md border border-line">
             {data.exceptions.map((e) => (
@@ -192,7 +243,7 @@ export function ControlRoomPage() {
       <section aria-labelledby="control-room-waiting">
         <SectionTitle title="Waiting for a person" />
         {data.waiting.length === 0 ? (
-          <EmptyState icon={Hand} title="Nothing waits" description="No decision is queued for a person." className="mt-2" />
+          <QuietLine icon={Hand}>No decision is queued for a person.</QuietLine>
         ) : (
           <ul className="mt-2 divide-y divide-line rounded-md border border-line">
             {data.waiting.map((w) => (
@@ -201,6 +252,8 @@ export function ControlRoomPage() {
           </ul>
         )}
       </section>
+      </>
+      )}
     </div>
   );
 
@@ -210,7 +263,7 @@ export function ControlRoomPage() {
         <section aria-labelledby="control-room-people">
           <SectionTitle title={`People on shift (${data.people.length})`} />
           {data.people.length === 0 ? (
-            <EmptyState icon={Users} title="No one is on shift" description="Nobody is scheduled at this site right now." className="mt-2" />
+            <QuietLine icon={Users}>Nobody is scheduled at this site right now.</QuietLine>
           ) : (
             <ul className="mt-2 divide-y divide-line rounded-md border border-line">
               {data.people.map((p) => (
@@ -248,7 +301,7 @@ export function ControlRoomPage() {
         <section aria-labelledby="control-room-robots">
           <SectionTitle title={`Robots (${data.robots.length})`} />
           {data.robots.length === 0 ? (
-            <EmptyState icon={Cpu} title="No robots here" description="No robot is placed at this site or on shift here." className="mt-2" />
+            <QuietLine icon={Cpu}>No robot is placed at this site or on shift here.</QuietLine>
           ) : (
             <ul className="mt-2 divide-y divide-line rounded-md border border-line">
               {data.robots.map((r) => (
@@ -261,12 +314,12 @@ export function ControlRoomPage() {
 
       {(crew === 'all' || crew === 'agents') && (
         <section aria-labelledby="control-room-agents">
-          <SectionTitle title={`Agents (${data.agents.length})`} />
-          {data.agents.length === 0 ? (
-            <EmptyState icon={Bot} title="No agents" description="No agent is registered for this organization." className="mt-2" />
+          <SectionTitle title={`Agents on the floor (${floorAgents.length})`} />
+          {floorAgents.length === 0 ? (
+            <QuietLine icon={Bot}>No floor agent is working for this organization.</QuietLine>
           ) : (
             <ul className="mt-2 divide-y divide-line rounded-md border border-line">
-              {data.agents.map((a) => (
+              {floorAgents.map((a) => (
                 <li key={a.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
                   <AgentGlyph family={a.family} status={a.status} size="sm" />
                   <div className="min-w-0 flex-1">
@@ -290,6 +343,14 @@ export function ControlRoomPage() {
                 </li>
               ))}
             </ul>
+          )}
+          {offFloorAgents > 0 && (
+            <p className="mt-2 text-xs text-ink-muted">
+              {offFloorAgents === 1 ? '1 more agent works' : `${offFloorAgents} more agents work`} off the floor (payroll, compliance, IT).{' '}
+              <Link to="/agents" className="text-accent hover:underline">
+                All agents
+              </Link>
+            </p>
           )}
         </section>
       )}
@@ -561,5 +622,60 @@ function SiteMap({ data }: { data: ControlRoomResponse }) {
         </div>
       </div>
     </section>
+  );
+}
+
+/** Agent families that work the floor (shifts, robots, safety, self-service). */
+const FLOOR_AGENT_FAMILIES = new Set<string>([
+  'workforce',
+  'operations',
+  'robotics',
+  'safety',
+  'associate-self-service',
+  'manager-self-service',
+]);
+
+const LAST_SITE_KEY = 'alto.controlRoom.site';
+
+function readLastSite(): string | null {
+  try {
+    return localStorage.getItem(LAST_SITE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberSite(id: string): void {
+  try {
+    localStorage.setItem(LAST_SITE_KEY, id);
+  } catch {
+    // Private mode: the pick just isn't remembered.
+  }
+}
+
+/**
+ * The site the control room opens on (F500 G2): the viewer's own site, else
+ * the one they last picked, else the busiest floor right now, else the first.
+ * It used to be the alphabetically first ("Demo Store"), where nothing happens.
+ */
+export function pickDefaultSite(
+  sites: { id: string; onShiftNow?: number }[],
+  ownSiteId: string | null,
+  lastPicked: string | null,
+): string {
+  if (ownSiteId && sites.some((s) => s.id === ownSiteId)) return ownSiteId;
+  if (lastPicked && sites.some((s) => s.id === lastPicked)) return lastPicked;
+  let best: { id: string; onShiftNow?: number } | undefined;
+  for (const s of sites) if ((s.onShiftNow ?? 0) > (best?.onShiftNow ?? 0)) best = s;
+  return best?.id ?? sites[0]?.id ?? '';
+}
+
+/** An empty section in one quiet line, not a dashed box (F500 G2). */
+function QuietLine({ icon: Icon, children }: { icon: typeof Users; children: React.ReactNode }) {
+  return (
+    <p className="mt-2 flex items-center gap-2 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-muted">
+      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      {children}
+    </p>
   );
 }

@@ -47,6 +47,9 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { MetricCard, type TrendGood } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useMinWidth } from '@/lib/useViewport';
+import { OpsStoresToday } from '@/components/home/OpsStoresToday';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
@@ -202,6 +205,13 @@ export function AdminDashboard() {
 
   const greet = useGreeting();
   const greetingName = greetingNameOf(user, '');
+  // The operations manager runs the floor: their home is the stores today,
+  // not the HR home with one ops row added (F500 G5). No onboarding funnel,
+  // no generic snapshot — the floor row and the per-store board say it.
+  const isOps = role === 'OPERATIONS_MANAGER';
+  // A phone's first screen goes to what needs you, not to a sentence about
+  // the page (the greeting and the date line stay).
+  const wide = useMinWidth(640);
 
   return (
     <>
@@ -217,7 +227,7 @@ export function AdminDashboard() {
           </>
         }
         topbarTitle="Home"
-        subtitle={t((role && SUBTITLE_BY_ROLE[role]) ?? 'adminHome.subHr')}
+        subtitle={wide ? t((role && SUBTITLE_BY_ROLE[role]) ?? 'adminHome.subHr') : undefined}
         // One quiet line, the same on every home (HomeMeta): today, then the
         // company clock. No role pill — the account menu says who you are.
         meta={<HomeMeta items={[<LiveNow key="today" render={(now) => fmtDayShort(now)} />, ...clockParts]} />}
@@ -246,11 +256,11 @@ export function AdminDashboard() {
       >
         {/* HR admin and Ops manager no longer share one first row (HR pack 2026-10). */}
         <RoleFocusRow />
-        <KpiSection kpis={kpis} role={role} />
+        {isOps ? <OpsStoresToday /> : <KpiSection kpis={kpis} role={role} />}
         <MyPlanCard />
         {/* J-1 / H-2B dates coming due (Brief 1C-2). Quiet when nothing is. */}
         <ProgramAlertsCard />
-        {canSeeOnboarding && <OnboardingFunnel kpis={kpis} />}
+        {canSeeOnboarding && !isOps && <OnboardingFunnel kpis={kpis} />}
         {canSeeOps ? (
           <OpsActivityFeed auditLink={canSeeAudit} />
         ) : canSeeAudit && (
@@ -413,99 +423,72 @@ function NeedsYou({
           </>
         }
       />
-      {/* The role's decisions first. Its "nothing needs your decision"
-          line stays out while action cards are waiting (or loading), so
-          the section never says all clear above cards that disagree. */}
-      <RoleDecisionQueue title={null} hideWhenEmpty={total > 0 || loading} />
+      {/* ONE list: the role's decisions, then the page's own counted rows
+          (incidents to review, I-9s due…) inside the same card — a lone
+          card in a three-column grid used to leave two empty thirds. The
+          queue's "nothing needs your decision" line stays out while rows
+          are waiting (or loading), so the section never says all clear
+          above rows that disagree. */}
+      <RoleDecisionQueue
+        title={null}
+        hideWhenEmpty={total > 0 || loading}
+        footer={total > 0 ? <ActionRows items={items} /> : undefined}
+      />
       {loading && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent>
-                <Skeleton className="h-3 w-20 mb-3" />
-                <Skeleton className="h-7 w-1/2 mb-2" />
-                <Skeleton className="h-3 w-2/3" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-      {total > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {items.map((item) => (
-            <ActionCard key={item.to + item.label} item={item} />
-          ))}
-        </div>
+        <Card aria-busy="true">
+          <CardContent className="space-y-3">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <Skeleton className="h-6 w-8 rounded-full" />
+                <Skeleton className="h-4 flex-1" />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
     </section>
   );
 }
 
-function ActionCard({ item }: { item: ActionItem }) {
-  const Icon = item.icon;
-  const tone =
-    item.severity === 'urgent'
-      ? {
-          ring: 'border-alert/30 hover:border-alert/60',
-          dot: 'bg-alert/15 text-alert',
-          count: 'text-alert',
-        }
-      : item.severity === 'attention'
-        ? {
-            ring: 'border-warning/25 hover:border-warning/55',
-            dot: 'bg-warning/15 text-warning',
-            count: 'text-warning',
-          }
-        : {
-            ring: 'border-navy-secondary hover:border-gold/40',
-            dot: 'bg-gold/10 text-gold',
-            count: 'text-gold',
-          };
+const ROW_TONE: Record<ActionItem['severity'], string> = {
+  urgent: 'bg-alert/15 text-alert',
+  attention: 'bg-warning/15 text-warning',
+  info: 'bg-gold/10 text-gold',
+};
 
+/**
+ * The page's own "needs you" items as rows in the queue's card, the decision
+ * rows' grammar: the count, what it is, and where it's worked.
+ */
+function ActionRows({ items }: { items: ActionItem[] }) {
   return (
-    <Link
-      to={item.to}
-      className={cn(
-        // ActionCard sits on the dashboard elevation ladder: rests at
-        // elev-1 (same as other cards in the grid) and lifts to elev-2
-        // on hover plus a 1px vertical translate so the cue compounds.
-        // Matches the rest of the system instead of inventing a one-off
-        // elev-2 flourish.
-        'group flex flex-col rounded-lg border bg-navy p-5 elev-1 transition-all',
-        'hover:-translate-y-0.5 hover:elev-2',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
-        tone.ring,
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div
-          className={cn(
-            'h-10 w-10 rounded-lg grid place-items-center shrink-0',
-            tone.dot,
-          )}
-        >
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </div>
-        <div
-          className={cn(
-            'font-display text-3xl tabular-nums leading-none',
-            tone.count,
-          )}
-        >
-          {item.count}
-        </div>
-      </div>
-      <div className="mt-4 text-white font-medium leading-snug">
-        {item.label}
-      </div>
-      {item.hint && (
-        <div className="mt-1 text-xs text-silver">{item.hint}</div>
-      )}
-      <div className="mt-4 flex items-center gap-1 text-sm text-gold group-hover:text-gold-bright">
-        {item.cta}
-        <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
-      </div>
-    </Link>
+    <ul className="space-y-1" data-testid="needs-you-rows">
+      {items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <li key={item.to + item.label}>
+            <Link
+              to={item.to}
+              className="group/row flex items-center gap-3 rounded-md px-2 py-2 hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11"
+            >
+              <span className={cn('inline-flex h-7 min-w-9 shrink-0 items-center justify-center gap-1 rounded-full px-2 text-sm font-semibold tabular-nums', ROW_TONE[item.severity])}>
+                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                {item.count}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm text-white group-hover/row:text-gold">{item.label}</span>
+                {item.hint && <span className="block text-2xs text-silver line-clamp-2 sm:line-clamp-1">{item.hint}</span>}
+              </span>
+              <span className="hidden shrink-0 items-center gap-1 text-xs text-gold sm:inline-flex">
+                {item.cta}
+                <ArrowRight className="h-3 w-3" aria-hidden="true" />
+              </span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-silver sm:hidden" aria-hidden="true" />
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -535,29 +518,57 @@ function KpiSection({
 }) {
   const { t } = useI18n();
   const term = useTerm();
+  // On a phone the snapshot folds behind "More numbers": the first screens
+  // belong to what needs you and the desk row (F500 G5).
+  const wide = useMinWidth(640);
+  const [open, setOpen] = useState(false);
   const tiles = kpis ? buildKpis(kpis, role, term) : null;
+  const shown = wide || open;
   return (
     <section aria-label={t('adminHome.workforceSnapshot')} className="space-y-3">
-      <SectionTitle icon={Activity} title={t('adminHome.workforceSnapshot')} />
-      {/* Two across in the home's main column until xl: four tiles at lg
-          clipped their sparkline captions (second design walk). */}
-      <div className={cn('grid grid-cols-1 sm:grid-cols-2 gap-3', tiles && tiles.length >= 5 ? 'xl:grid-cols-3' : 'xl:grid-cols-4')}>
-        {tiles ? (
-          tiles.map((kpi) => (
-            <KpiTile key={kpi.label} kpi={kpi} />
-          ))
-        ) : (
-          Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent>
-                <Skeleton className="h-3 w-20 mb-3" />
-                <Skeleton className="h-9 w-1/2 mb-2" />
-                <Skeleton className="h-3 w-1/3" />
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
+      <SectionTitle
+        icon={Activity}
+        title={t('adminHome.workforceSnapshot')}
+        trailing={
+          wide ? undefined : (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              aria-controls="admin-snapshot"
+              className="inline-flex min-h-11 items-center gap-1 text-xs text-accent hover:underline"
+            >
+              {open ? 'Fewer numbers' : 'More numbers'}
+              {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />}
+            </button>
+          )
+        }
+      />
+      {shown && (
+        <div id="admin-snapshot">
+          {tiles ? (
+            // One strip: four across from lg, two on a phone, never an
+            // orphan; the tiles link to the list behind each number.
+            <MetricStrip label={t('adminHome.workforceSnapshot')}>
+              {tiles.map((kpi) => (
+                <KpiTile key={kpi.label} kpi={kpi} />
+              ))}
+            </MetricStrip>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4" aria-busy="true">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Card key={i}>
+                  <CardContent>
+                    <Skeleton className="h-3 w-20 mb-3" />
+                    <Skeleton className="h-9 w-1/2 mb-2" />
+                    <Skeleton className="h-3 w-1/3" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -595,14 +606,12 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
     {
       label: `Open shifts · next ${k.windowDays}d`,
       value: fmtInt(k.openShiftsNext30d),
-      hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : undefined,
+      hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : 'Still to fill',
       icon: CalendarPlus,
-      to: linkTo('/scheduling', 'view:scheduling'),
-      // Series is shifts scheduled per week (all non-cancelled statuses).
-      // The line counts shifts scheduled, not open ones — a proxy, so it
-      // stays neutral rather than calling more scheduling "good".
-      trend: withLabel(k.trends?.shiftsScheduled, 'shifts scheduled/wk'),
-      trendGood: 'neutral',
+      // The open ones, from today (the scheduling lens ?open=1).
+      to: linkTo('/scheduling?open=1', 'view:scheduling'),
+      // No sparkline: the weekly series the API has counts shifts SCHEDULED,
+      // not open ones — a line under this number measured something else.
     },
   ];
   // Hours worked: the last complete week as the figure, the week so far
@@ -643,8 +652,9 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
   // Money tiles (net paid + pending disbursement) only for payroll-capable
   // roles — the API clamps these to $0 for bounded roles, and rendering a
   // zeroed money tile reads as "nobody got paid", which is worse than
-  // rendering nothing.
-  if (has('view:payroll')) {
+  // rendering nothing. Not on the HR desk's home: payroll's number lives on
+  // payroll's home, and the snapshot stays four across (F500 G5).
+  if (has('view:payroll') && role !== 'HR_ADMINISTRATOR') {
     xs.push({
       label: `Net paid · last ${k.windowDays}d`,
       value: fmtMoney(k.netPaidLast30d),
@@ -659,7 +669,7 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
   return xs;
 }
 
-/** The kit's KPI tile; a destination makes it a link. */
+/** The kit's KPI tile; a destination makes it a link (no "View details" in a strip). */
 function KpiTile({ kpi }: { kpi: Kpi }) {
   return (
     <MetricCard
@@ -668,18 +678,7 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
       hint={kpi.hint}
       trend={kpi.trend}
       trendGood={kpi.trendGood}
-      wrap={
-        kpi.to
-          ? (card) => (
-              <Link
-                to={kpi.to!}
-                className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-              >
-                {card}
-              </Link>
-            )
-          : undefined
-      }
+      href={kpi.to}
     />
   );
 }
@@ -701,6 +700,9 @@ const PIPELINE_TONE: Record<(typeof PIPELINE_ORDER)[number], string> = {
   APPROVED: 'text-success',
   REJECTED: 'text-alert',
 };
+/** A stage's colour: only a non-zero count wears one ("Rejected 0" in red read as a problem). */
+const pipelineTone = (status: (typeof PIPELINE_ORDER)[number], count: number): string =>
+  count === 0 ? 'text-silver' : PIPELINE_TONE[status];
 
 function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
   const { t } = useI18n();
@@ -755,7 +757,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
           // "View all" means ALL — the explicit param beats the persisted
           // status chip, which could silently narrow the landing.
           to="/onboarding?status=ALL"
-          className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
+          className="text-xs text-gold hover:text-gold-bright inline-flex min-h-6 items-center gap-1"
         >
           View all
           <ArrowRight className="h-3 w-3" />
@@ -763,8 +765,9 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
       </div>
       <Card>
         <CardContent className="py-5">
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            {PIPELINE_ORDER.map((status) => {
+          {/* Two rows on a phone (three stages, then two), one row from md. */}
+          <div className="grid grid-cols-6 md:grid-cols-5 gap-4">
+            {PIPELINE_ORDER.map((status, i) => {
               const count = counts[status] ?? 0;
               const pct = total > 0 ? Math.round((count / total) * 100) : 0;
               return (
@@ -778,7 +781,10 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
                       ? 'ARCHIVED'
                       : status
                   }`}
-                  className="min-w-0 block rounded-md -m-1 p-1 hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                  className={cn(
+                    'min-w-0 block rounded-md -m-1 p-1 hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                    i < 3 ? 'col-span-2 md:col-span-1' : 'col-span-3 md:col-span-1',
+                  )}
                   title={`View ${PIPELINE_LABEL[status].toLowerCase()} applications`}
                 >
                   <div className="text-2xs uppercase tracking-widest text-silver">
@@ -787,7 +793,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
                   <div
                     className={cn(
                       'font-display text-3xl mt-1 tabular-nums',
-                      PIPELINE_TONE[status],
+                      pipelineTone(status, count),
                     )}
                   >
                     {count}

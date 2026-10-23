@@ -33,8 +33,6 @@ beforeEach(() => {
     makeShift({ id: FUTURE }),
   ];
   window.localStorage.clear();
-  // An unbounded list window, so the past shift is in range on any date.
-  window.localStorage.setItem('alto:scheduling.anchors.v1', JSON.stringify({ listFrom: '', listTo: '' }));
 });
 afterEach(() => {
   cleanup();
@@ -44,7 +42,9 @@ afterEach(() => {
 describe('past open shifts are unfilled', () => {
   it('reads Unfilled with no Assign, the open count separates upcoming from unfilled, and close-out cancels them', async () => {
     const user = userEvent.setup();
-    renderSchedule(<AdminSchedulingView canManage />, '/scheduling?view=list');
+    // The All chip over a window that holds both (this mock answers every
+    // query with both rows; the chips' own queries are schedulingListOpens).
+    renderSchedule(<AdminSchedulingView canManage />, '/scheduling?view=list&status=ALL&from=2020-01-01&to=2099-12-31');
 
     // The KPI line: "1 open · 1 unfilled", never "2 open".
     await waitFor(() => expect(screen.getByTestId('kpi-line')).toHaveTextContent('1 open · 1 unfilled'));

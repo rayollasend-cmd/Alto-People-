@@ -29,6 +29,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
@@ -159,18 +160,20 @@ export function PayScheduleDetailPage() {
           </>
         }
         summary={
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          // No hint that only repeats a zero ("0 · none", F500 G3); a zero is a plain zero.
+          <MetricStrip label={`${s.name} at a glance`}>
             <MetricCard label="Next payday" value={shortDay(s.nextPeriod.payDate)} hint={`${weekdayOf(s.nextPeriod.payDate)} · ${s.nextPeriod.adjustedFor ? `moved for ${s.nextPeriod.adjustedFor}` : `for ${periodRange(s.nextPeriod.periodStart, s.nextPeriod.periodEnd)}`}`} />
-            <MetricCard label="People" value={String(s.people)} hint={s.pendingJoins || s.pendingLeaves ? [s.pendingJoins && `${s.pendingJoins} joining`, s.pendingLeaves && `${s.pendingLeaves} leaving`].filter(Boolean).join(' · ') : 'on it today'} />
-            <MetricCard label="Won’t be paid correctly" value={String(blocked)} hint={blocked ? 'fix before their first check here' : 'none'} accent={blocked > 0} />
-            <MetricCard label="Need a look" value={String(attention)} hint={attention ? 'new hires, rate changes…' : 'none'} />
-          </div>
+            <MetricCard label="People" value={String(s.people)} hint={s.pendingJoins || s.pendingLeaves ? [s.pendingJoins && `${s.pendingJoins} joining`, s.pendingLeaves && `${s.pendingLeaves} leaving`].filter(Boolean).join(' · ') : s.people ? 'on it today' : undefined} />
+            <MetricCard label="Won’t be paid correctly" value={String(blocked)} hint={blocked ? 'fix before their first check here' : undefined} tone={blocked > 0 ? 'alert' : 'default'} />
+            <MetricCard label="Need a look" value={String(attention)} hint={attention ? 'new hires, rate changes…' : undefined} />
+          </MetricStrip>
         }
         activeTab={tab}
         onTabChange={setTab}
         tabs={[
           { key: 'people', label: 'People', count: everyone?.length ?? s.people + s.pendingJoins, content: <PeopleTab schedule={s} onAdd={() => setAdding(true)} /> },
-          { key: 'rules', label: 'Who’s on it', count: s.rules.length, content: <RulesTab schedule={s} onAdd={() => setAdding(true)} /> },
+          // "Rules": "People" and "Who’s on it" read as the same thing; this tab counts the rules (F500 G3).
+          { key: 'rules', label: 'Rules', count: s.rules.length, content: <RulesTab schedule={s} onAdd={() => setAdding(true)} /> },
           { key: 'calendar', label: 'Calendar', content: <CalendarTab schedule={s} /> },
           { key: 'history', label: 'History', content: <HistoryTab id={s.id} /> },
         ]}

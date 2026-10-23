@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { hourlyCoverage } from '@/pages/scheduling/weekGridFit';
 import { CoverageHeatStrip, worstGap } from '@/pages/scheduling/CoverageHeatStrip';
 import { WeekCalendarView } from '@/pages/scheduling/WeekCalendarView';
+import { MemoryRouter } from 'react-router-dom';
+import { ROLE_CAPABILITIES, type Capability } from '@alto-people/shared';
+import { AuthContext } from '@/lib/auth';
 
 /**
  * Role walk, ops 12: the week grid's footer knew each day's peak only; a
@@ -145,5 +148,42 @@ describe('<WeekCalendarView> coverage strip and past columns', () => {
     // Oct 19 2026 is long over: the column is dimmed and its open shift went unfilled.
     expect(document.querySelectorAll('[data-past="true"]').length).toBeGreaterThan(0);
     expect(screen.getByTestId('unfilled-tag')).toHaveTextContent('Unfilled');
+    // F500 G2: the tag is its own line inside the tile (it truncates there)
+    // instead of a pill pushed past the tile's edge.
+    const tag = screen.getByTestId('unfilled-tag');
+    expect(tag.className).toMatch(/truncate/);
+    expect(tag.closest('button')).not.toBeNull();
+    // Coverage rows read "Mon 19", one line; the full date is the tooltip.
+    const label = within(screen.getByTestId('coverage-heat-strip')).getByText('Mon 19');
+    expect(label.getAttribute('title')).toMatch(/Mon/);
+    expect(label.className).toMatch(/whitespace-nowrap/);
+  });
+
+  it('says what "off the roster" means, and offers someone who can place people the way to', () => {
+    const caps = ROLE_CAPABILITIES.HR_ADMINISTRATOR;
+    render(
+      <AuthContext.Provider value={{ can: (c: Capability) => caps.has(c) } as never}>
+        <MemoryRouter>
+          <WeekCalendarView
+            shifts={[shift({ startsAt: '2026-10-19T13:00:00.000Z', endsAt: '2026-10-19T21:00:00.000Z', assignedAssociateId: 'gone', assignedAssociateName: 'Maria Lopez' })]}
+            associates={associates}
+            weekStart={new Date(2026, 9, 18)}
+            canManage
+            onShiftClick={vi.fn()}
+            selectedIds={new Set()}
+            onCellCreate={vi.fn()}
+            onShiftMove={noop}
+            onShiftResize={noop}
+            quickActions={quickActions}
+            onTemplateDrop={vi.fn()}
+            showAllAssociates
+          />
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    );
+    const note = screen.getByTestId('off-roster');
+    expect(note).toHaveTextContent('Not on this store’s roster');
+    expect(note.getAttribute('title')).toMatch(/Not placed at this store/);
+    expect(screen.getByRole('link', { name: 'Place here' })).toHaveAttribute('href', '/people?associateId=gone&return=%2Fscheduling');
   });
 });

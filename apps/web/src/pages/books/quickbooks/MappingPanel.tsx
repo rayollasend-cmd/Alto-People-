@@ -13,7 +13,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { errMsg } from './qboWords';
 
-/** What on the site is what in QuickBooks — accounts, vendors and customers — with a way to point an account somewhere else. */
+/** What here is what in QuickBooks — accounts, vendors and customers — with a way to point an account somewhere else. */
 
 const KIND_WORDS: Record<QboMappingKind, { one: string; many: string }> = {
   accounts: { one: 'account', many: 'accounts' },
@@ -29,7 +29,7 @@ export function MappingPanel({ manage }: { manage: boolean }) {
   const columns: GridColumn<QboMappingRow>[] = [
     {
       key: 'site',
-      header: 'On the site',
+      header: 'Here',
       primary: true,
       sortable: true,
       accessor: (r) => r.siteName,
@@ -52,7 +52,7 @@ export function MappingPanel({ manage }: { manage: boolean }) {
       key: 'home',
       header: 'Made in',
       accessor: (r) => r.owner ?? '',
-      cell: (r) => (r.owner ? <Badge size="sm" variant={r.owner === 'SITE' ? 'info' : 'accent'}>{r.owner === 'SITE' ? 'The site' : 'QuickBooks'}</Badge> : '—'),
+      cell: (r) => (r.owner ? <Badge size="sm" variant={r.owner === 'SITE' ? 'info' : 'accent'}>{r.owner === 'SITE' ? 'Here' : 'QuickBooks'}</Badge> : '—'),
     },
     { key: 'synced', header: 'Last in step', accessor: (r) => r.lastSyncedAt ?? '', cell: (r) => (r.lastSyncedAt ? fmtDateTime(r.lastSyncedAt) : '—'), className: 'whitespace-nowrap' },
     ...(manage && kind === 'accounts'

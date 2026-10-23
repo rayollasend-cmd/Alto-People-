@@ -103,7 +103,7 @@ booksPayablesRouter.patch('/vendors/:id', MANAGE, async (req, res) => {
 booksPayablesRouter.get('/bills', async (req, res) => {
   const q = z
     .object({
-      tab: z.enum(['approve', 'unpaid', 'due', 'paid', 'draft', 'all']).optional(),
+      tab: z.enum(['approve', 'unpaid', 'late', 'due', 'paid', 'draft', 'all']).optional(),
       status: z.enum(['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PARTIALLY_PAID', 'PAID', 'VOID']).optional(),
       vendorId: z.string().uuid().optional(),
     })

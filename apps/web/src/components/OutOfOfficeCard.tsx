@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 
 /**
  * Settings → Out of office. A manager names who covers their team inbox
@@ -32,6 +33,8 @@ export function OutOfOfficeCard() {
   const [startsOn, setStartsOn] = useState(today());
   const [endsOn, setEndsOn] = useState(today());
   const [note, setNote] = useState('');
+  // The form is a dialog (F500 G5): it sat always open, prefilled today–today, on every visit.
+  const [formOpen, setFormOpen] = useState(false);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['delegations'] });
   const create = useMutation({
@@ -40,6 +43,7 @@ export function OutOfOfficeCard() {
       toast.success(`${r.delegation.to.name} covers your team ${fmtDate(parseYmd(r.delegation.startsOn))} – ${fmtDate(parseYmd(r.delegation.endsOn))}.`);
       setToUserId('');
       setNote('');
+      setFormOpen(false);
       void invalidate();
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not set cover.'),
@@ -107,28 +111,57 @@ export function OutOfOfficeCard() {
             .
           </p>
         )}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Who covers" className="sm:col-span-2">
-            {(p) => (
-              <Select value={toUserId} onChange={(e) => setToUserId(e.target.value)} {...p}>
-                <option value="">Choose a manager…</option>
-                {(candidates.data?.candidates ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} — {c.email}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="From">{(p) => <Input type="date" value={startsOn} min={today()} onChange={(e) => setStartsOn(e.target.value)} {...p} />}</Field>
-          <Field label="Through">{(p) => <Input type="date" value={endsOn} min={startsOn} onChange={(e) => setEndsOn(e.target.value)} {...p} />}</Field>
-          <Field label="Note (optional)" className="sm:col-span-2">
-            {(p) => <Input value={note} maxLength={200} placeholder="e.g. Vacation — back Monday" onChange={(e) => setNote(e.target.value)} {...p} />}
-          </Field>
+        {/* A status line, not a standing form: who covers (or nobody), and a way to set it. */}
+        <div className="flex flex-wrap items-center justify-between gap-3" data-testid="ooo-status">
+          <p className="text-sm text-silver">{given.length === 0 ? 'No cover set.' : given.length === 1 ? '1 cover set.' : `${given.length} covers set.`}</p>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              setStartsOn(today());
+              setEndsOn(today());
+              setFormOpen(true);
+            }}
+          >
+            Set cover…
+          </Button>
         </div>
-        <Button onClick={() => create.mutate()} loading={create.isPending} disabled={!valid || create.isPending}>
-          Set cover
-        </Button>
+        <Dialog open={formOpen} onOpenChange={(o) => !create.isPending && setFormOpen(o)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Set cover</DialogTitle>
+              <DialogDescription>Who covers your team inbox, and for which days.</DialogDescription>
+            </DialogHeader>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Who covers" className="sm:col-span-2">
+                {(p) => (
+                  <Select value={toUserId} onChange={(e) => setToUserId(e.target.value)} {...p}>
+                    <option value="">Choose a manager…</option>
+                    {(candidates.data?.candidates ?? []).map((c) => (
+                      // The name (or "Role · email" when no name is on file) — never the address twice.
+                      <option key={c.id} value={c.id}>
+                        {c.named === false || c.name.includes(c.email) ? c.name : `${c.name} — ${c.email}`}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label="From">{(p) => <Input type="date" value={startsOn} min={today()} onChange={(e) => setStartsOn(e.target.value)} {...p} />}</Field>
+              <Field label="Through">{(p) => <Input type="date" value={endsOn} min={startsOn} onChange={(e) => setEndsOn(e.target.value)} {...p} />}</Field>
+              <Field label="Note (optional)" className="sm:col-span-2">
+                {(p) => <Input value={note} maxLength={200} placeholder="e.g. Vacation — back Monday" onChange={(e) => setNote(e.target.value)} {...p} />}
+              </Field>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setFormOpen(false)} disabled={create.isPending}>
+                Cancel
+              </Button>
+              <Button onClick={() => create.mutate()} loading={create.isPending} disabled={!valid || create.isPending}>
+                Set cover
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

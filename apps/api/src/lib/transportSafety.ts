@@ -210,6 +210,23 @@ export function shareToken(runId: string, now = new Date()): { token: string; ex
   return { token: `${b64(payload)}.${sign(payload)}`, expiresAt };
 }
 
+/**
+ * Why a share link doesn't open, told apart (F500 G5): a genuine link past
+ * its six hours is 'expired' (410), anything else — a typo, a forged or
+ * truncated token — is 'invalid' (404). The page words them differently.
+ */
+export function shareTokenState(token: string, now = new Date()): { runId: string } | 'expired' | 'invalid' {
+  const dot = token.lastIndexOf('.');
+  if (dot <= 0) return 'invalid';
+  const payload = unb64(token.slice(0, dot));
+  const sig = token.slice(dot + 1);
+  const expected = sign(payload);
+  if (sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return 'invalid';
+  const [runId, exp] = payload.split('.');
+  if (!runId || !exp) return 'invalid';
+  return Number(exp) < now.getTime() ? 'expired' : { runId };
+}
+
 export function verifyShareToken(token: string, now = new Date()): string | null {
   const dot = token.lastIndexOf('.');
   if (dot <= 0) return null;

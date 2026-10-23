@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Check,
   Copy,
@@ -20,6 +22,7 @@ import { fmtDate, fmtDateTime } from '@/lib/format';
 import { StatusBadge } from '@/lib/status';
 import {
   fileAnonymousReport,
+  getHotlineOrg,
   lookupReportByCode,
   replyAsReporter,
   type PublicReport,
@@ -50,8 +53,30 @@ const HOTLINE_PUBLIC_STATUS_TONES = { TRIAGING: 'pending' } as const;
  * identify a logged-in reporter shoulder-surfing near a filing employee.
  */
 export function HotlinePage() {
+  // /hotline/:slug — the organization's own hotline (F500 G5). The server
+  // resolves the organization from the address and files the report there.
+  const { slug } = useParams<{ slug?: string }>();
+  const orgQ = useQuery({ queryKey: ['hotline', 'org', slug ?? ''], queryFn: () => getHotlineOrg(slug), retry: false, staleTime: 10 * 60_000 });
+  const orgName = orgQ.data?.org.name ?? null;
   const [mode, setMode] = useState<'file' | 'lookup'>('file');
   const [filed, setFiled] = useState<string | null>(null);
+
+  if (orgQ.isError && slug) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-midnight via-navy to-navy-secondary text-ink">
+        <div className="mx-auto max-w-2xl px-4 py-12 text-center md:px-6" data-testid="hotline-unknown">
+          <div className="mb-6 flex items-center justify-center">
+            <Logo size="lg" alt="Company logo" />
+          </div>
+          <p className="text-2xl text-ink" role="heading" aria-level={1}>We don’t recognise that hotline address</p>
+          <p className="mt-2 text-sm text-silver">Check the address on the poster or in your app, or use the hotline’s main page.</p>
+          <Link to="/hotline" className="mt-4 inline-block text-gold underline underline-offset-2">
+            Go to the hotline
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-midnight via-navy to-navy-secondary text-white">
@@ -65,11 +90,28 @@ export function HotlinePage() {
             Confidential Reporting
           </h1>
         </div>
-        <p className="text-sm text-silver mb-8">
+        <p className="text-sm text-silver mb-4">
+          {orgName ? (
+            <>
+              Reports go to <span className="font-medium text-ink" data-testid="hotline-org">{orgName}</span>’s ethics team.{' '}
+            </>
+          ) : null}
           Report concerns anonymously. We never see your identity unless you
           choose to share a contact email. You will receive a tracking code so
           you can follow up later.
         </p>
+        {/* What people look for before they file (F500 G5). */}
+        <ul className="mb-8 space-y-1.5 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-silver" data-testid="hotline-reassurance">
+          <li>
+            <span className="font-medium text-ink">No retaliation.</span> {orgName ?? 'Your employer'} forbids retaliation against anyone who reports a concern in good faith.
+          </li>
+          <li>
+            <span className="font-medium text-ink">Who reads it.</span> {orgName ? `${orgName}’s` : 'The'} ethics team reads every report and answers within 3 business days — follow up with your tracking code.
+          </li>
+          <li>
+            <span className="font-medium text-ink">In danger right now?</span> Call 911 first.
+          </li>
+        </ul>
 
         <div className="mb-6">
           <SegmentedControl
@@ -113,7 +155,7 @@ export function HotlinePage() {
               onAnother={() => setFiled(null)}
             />
           ) : (
-            <FileForm onFiled={setFiled} />
+            <FileForm onFiled={setFiled} org={slug} />
           )
         ) : (
           <LookupForm />
@@ -123,14 +165,19 @@ export function HotlinePage() {
   );
 }
 
-function FileForm({ onFiled }: { onFiled: (code: string) => void }) {
-  const [category, setCategory] = useState<ReportCategory>('HARASSMENT');
+function FileForm({ onFiled, org }: { onFiled: (code: string) => void; org?: string }) {
+  // No default: a skipped category filed reports as "Harassment" (F500 G5).
+  const [category, setCategory] = useState<ReportCategory | ''>('');
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
+    if (!category) {
+      toast.error('Choose a category.');
+      return;
+    }
     if (subject.trim().length < 3) {
       toast.error('Subject must be at least 3 characters.');
       return;
@@ -146,6 +193,7 @@ function FileForm({ onFiled }: { onFiled: (code: string) => void }) {
         subject: subject.trim(),
         description: description.trim(),
         contactEmail: contactEmail.trim() || null,
+        ...(org ? { org } : {}),
       });
       onFiled(r.trackingCode);
     } catch (err) {
@@ -172,9 +220,12 @@ function FileForm({ onFiled }: { onFiled: (code: string) => void }) {
         {(p) => (
           <Select
             value={category}
-            onChange={(e) => setCategory(e.target.value as ReportCategory)}
+            onChange={(e) => setCategory(e.target.value as ReportCategory | '')}
             {...p}
           >
+            <option value="" disabled>
+              Choose a category
+            </option>
             {(Object.keys(CATEGORY_LABELS) as ReportCategory[]).map((k) => (
               <option key={k} value={k}>
                 {CATEGORY_LABELS[k]}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CANDIDATE_REJECT_PRESETS, CANDIDATE_WITHDRAW_PRESETS } from '@/lib/reasonPresets';
 import { usePersistentState } from '@/lib/usePersistentState';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
   Award,
@@ -14,6 +14,7 @@ import {
   Link2,
   Plus,
   Rows3,
+  Trash2,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -68,11 +69,15 @@ import {
   Field,
   Input,
   Select,
-  Skeleton,
   SkeletonRows,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
-import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { QueryError } from '@/components/ui/QueryError';
+import { RecruitingHubNav } from './RecruitingHubNav';
+import { InfoTip } from './InfoTip';
 import { ListTemplate } from '@/components/templates';
 import { ViewToggle } from '@/components/ui/ViewToggle';
 
@@ -304,11 +309,6 @@ export function RecruitingHome() {
         outstandingOffers: summaryQuery.data.byStage.OFFER,
         hiredThisMonth: summaryQuery.data.hiredThisMonth,
       }
-    : null;
-  const kpiError = summaryQuery.error
-    ? summaryQuery.error instanceof ApiError
-      ? summaryQuery.error.message
-      : 'Failed to load pipeline stats.'
     : null;
 
   const boardQuery = useQuery({
@@ -711,126 +711,75 @@ export function RecruitingHome() {
   const clearFilters = () =>
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      for (const k of ['q', 'source', 'posting', 'stuck', 'sv']) next.delete(k);
+      for (const k of ['q', 'source', 'posting', 'stuck', 'sort', 'sv']) next.delete(k);
       return next;
     });
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Recruiting"
-        subtitle={
-          canManage
-            ? 'Manage candidates from application through hire.'
-            : 'Read-only view of the candidate pipeline.'
-        }
-        secondaryActions={
-          <>
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/recruiting/analytics">Analytics</Link>
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setRemovedOpen(true)}>
-              Recently removed
-            </Button>
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/recruiting/extras">Interviewing &amp; offers</Link>
-            </Button>
-          </>
-        }
-        primaryAction={
-          canManage ? (
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="h-4 w-4" />
-              New candidate
-            </Button>
-          ) : undefined
-        }
+      title="Recruiting"
+      subtitle={canManage ? 'Candidates from application through hire.' : 'Read-only view of the candidate pipeline.'}
+      actions={[
+        ...(canManage ? [{ key: 'new', label: 'New candidate', icon: Plus, primary: true, onSelect: () => setShowCreate(true) }] : []),
+        { key: 'export', label: 'Export CSV', icon: Download, onSelect: () => void onExportCsv(), loading: exporting, disabled: exporting },
+        { key: 'removed', label: 'Recently removed', icon: Trash2, overflow: true, onSelect: () => setRemovedOpen(true) },
+      ]}
     >
+      <RecruitingHubNav current="pipeline" />
 
-      {kpiError && !kpis ? (
-        <ErrorBanner
-          className="mb-6"
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void summaryQuery.refetch()}>
-              Retry
-            </Button>
-          }
-        >
-          {kpiError}
-        </ErrorBanner>
+      {summaryQuery.isError && !kpis ? (
+        <QueryError what="the pipeline counts" query={summaryQuery} />
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <KpiCard
-            icon={Users}
-            label="In funnel"
-            value={kpis ? String(kpis.inFunnel) : null}
-            tone="default"
-          />
-          <KpiCard
-            icon={Briefcase}
-            label="Interviewing"
-            value={kpis ? String(kpis.interviewing) : null}
-            tone="warning"
-          />
-          <KpiCard
-            icon={Award}
-            label="Open offers"
-            value={kpis ? String(kpis.outstandingOffers) : null}
-            tone="default"
-          />
-          <KpiCard
-            icon={CheckCircle2}
-            label="Hired this month"
-            value={kpis ? String(kpis.hiredThisMonth) : null}
-            tone="success"
-          />
-        </div>
+        // Each number opens the candidates behind it.
+        <MetricStrip label="Pipeline at a glance">
+          <MetricCard icon={Users} label="In funnel" value={kpis ? kpis.inFunnel : '—'} hint="Applied through offer" href="/recruiting?view=board" />
+          <MetricCard icon={Briefcase} label="Interviewing" value={kpis ? kpis.interviewing : '—'} href="/recruiting?view=list&stage=INTERVIEW" />
+          <MetricCard icon={Award} label="Open offers" value={kpis ? kpis.outstandingOffers : '—'} href="/recruiting?view=list&stage=OFFER" />
+          <MetricCard icon={CheckCircle2} label="Hired this month" value={kpis ? kpis.hiredThisMonth : '—'} href="/recruiting?view=list&stage=HIRED" />
+        </MetricStrip>
       )}
 
       <Card>
         <CardHeader className="pb-3 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <CardTitle className="text-base">Candidates</CardTitle>
-              <ViewToggle<ViewMode>
-                value={view}
-                onChange={setView}
-                ariaLabel="Switch between board and list view"
-                options={[
-                  { value: 'board', label: 'Board', icon: Kanban },
-                  { value: 'list', label: 'List', icon: Rows3 },
-                ]}
-              />
-              <SavedViewsMenu
-                scope="recruiting.candidates"
-                current={currentViewQuery}
-                activeId={savedViewId}
-                onApply={applySavedView}
-                allLabel="All candidates"
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <CardTitle className="text-base">Candidates</CardTitle>
+            <ViewToggle<ViewMode>
+              value={view}
+              onChange={setView}
+              ariaLabel="Switch between board and list view"
+              options={[
+                { value: 'board', label: 'Board', icon: Kanban },
+                { value: 'list', label: 'List', icon: Rows3 },
+              ]}
+            />
+            <SavedViewsMenu
+              scope="recruiting.candidates"
+              current={currentViewQuery}
+              activeId={savedViewId}
+              onApply={applySavedView}
+              allLabel="All candidates"
+            />
+            {view === 'board' && (
+              <InfoTip label="Keyboard shortcuts" className="hidden sm:inline-flex">
+                Arrow keys move between candidates · Enter opens one · M moves it to another stage.
+              </InfoTip>
+            )}
+          </div>
+          {/* One filter row; on a phone the filters fold into a sheet behind "Filters (n)". */}
+          <FilterBar
+            bare
+            search={
               <SearchInput
-                wrapperClassName="w-full sm:w-60"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name, email, phone, position…"
+                placeholder="Search candidates"
                 aria-label="Search candidates"
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void onExportCsv()}
-                loading={exporting}
-                disabled={exporting}
-              >
-                <Download className="h-3.5 w-3.5" />
-                Export CSV
-              </Button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+            }
+            activeFilters={[sourceFilter, postingFilter, stuckOnly ? '1' : '', sort !== 'newest' ? sort : ''].filter(Boolean).length}
+            onClearFilters={clearFilters}
+          >
             <Select
               aria-label="Source"
               className="h-8 w-auto text-xs2"
@@ -872,7 +821,7 @@ export function RecruitingHome() {
                 </option>
               ))}
             </Select>
-            <FilterChip active={stuckOnly} aria-pressed={stuckOnly} onClick={() => setParam('stuck', stuckOnly ? null : '1', { replace: true })}>
+            <FilterChip active={stuckOnly} onClick={() => setParam('stuck', stuckOnly ? null : '1', { replace: true })}>
               Stuck 7+ days
             </FilterChip>
             {filtered && (
@@ -880,7 +829,7 @@ export function RecruitingHome() {
                 Clear filters
               </Button>
             )}
-          </div>
+          </FilterBar>
           {view === 'list' && (
             <div className="flex flex-wrap gap-2">
               {(['ALL', ...STAGES] as Array<CandidateStage | 'ALL'>).map((s) => (
@@ -1410,40 +1359,6 @@ function CandidateActions({
         </>
       )}
     </div>
-  );
-}
-
-interface KpiCardProps {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string | null;
-  tone: 'success' | 'warning' | 'default' | 'silver';
-}
-
-const TONE_TEXT: Record<KpiCardProps['tone'], string> = {
-  success: 'text-success',
-  warning: 'text-warning',
-  default: 'text-gold',
-  silver: 'text-silver',
-};
-
-function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
-  return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between mb-1">
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-          {label}
-        </div>
-        <Icon className="h-3.5 w-3.5 text-silver/70" />
-      </div>
-      {value === null ? (
-        <Skeleton className="h-9 w-12 mt-1" />
-      ) : (
-        <div className={cn('text-3xl font-display tabular-nums', TONE_TEXT[tone])}>
-          {value}
-        </div>
-      )}
-    </Card>
   );
 }
 

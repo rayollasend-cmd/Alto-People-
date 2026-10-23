@@ -1,7 +1,7 @@
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { PayChangeContextPanel } from '@/components/payroll/PayChangeContextPanel';
 import { RejectDocumentDialog } from '@/components/RejectDocumentDialog';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { SavedViewsMenu } from '@/components/SavedViewsMenu';
 import { ProgramSection } from './ProgramSection';
 import { WhatsAppStatusLine } from './WhatsAppStatusLine';
@@ -12,14 +12,12 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import {
-  ArrowLeft,
   ArrowLeftRight,
   Briefcase,
   Building2,
-  CalendarDays,
   Camera,
   Check,
-  Clock,
+  Copy,
   Download,
   Eye,
   EyeOff,
@@ -43,8 +41,6 @@ import {
   Send,
   ShieldAlert,
   Upload,
-  UserCheck,
-  UserX,
   Users,
   X,
   type LucideIcon,
@@ -59,13 +55,15 @@ import type {
   DocumentVaultResponse,
   DocumentVaultSummary,
 } from '@alto-people/shared';
-import { directoryQuery, directorySummaryQuery, getDirectoryEntry, listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
+import { directoryQuery, directorySummaryQuery, listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
 import { PeopleStatusBadge, workStatusEnglish, workStatusKeys, workStatusOf } from '@/components/ui/PeopleStatusBadge';
 import { useI18n } from '@/lib/i18n';
-import { returnPathLabel, sanitizeReturnPath, withReturn } from '@/lib/returnPath';
+import { withReturn } from '@/lib/returnPath';
 import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtMoney, fmtPayRate, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtHours, fmtMoney, fmtPayRate, fmtPhone, parseYmd, phoneHref, ymdLocal } from '@/lib/format';
+import { useMinWidth } from '@/lib/useViewport';
+import { QueryError } from '@/components/ui/QueryError';
 import { proposePromotion } from '@/lib/approvalRequestsApi';
 import { downloadCsv } from '@/lib/csv';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
@@ -105,7 +103,6 @@ import { nudgeApplicant } from '@/lib/onboardingApi';
 import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import { PhotoStorageBanner } from '@/components/PhotoStorageBanner';
-import { WorkThreadPanel } from '@/components/WorkThreadPanel';
 import {
   assignOrgFields,
   deleteAssociatePhoto,
@@ -148,12 +145,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  Drawer,
-  DrawerBody,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
   EmptyState,
   ErrorBanner,
   Field,
@@ -162,21 +153,18 @@ import {
   Input,
   Label,
   MetricCard,
+  MetricStrip,
   SearchInput,
   Select,
   Skeleton,
   SkeletonRows,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
   Textarea,
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
-import { StatusBadge, statusLabel } from '@/lib/status';
+import { StatusBadge } from '@/lib/status';
 
 const PAY_TYPE_SUFFIX: Record<string, string> = {
   HOURLY: '/hr',
@@ -192,15 +180,6 @@ export function fmtPay(amount: string | null, type: string | null, currency: str
   return `${formatted}${type ? PAY_TYPE_SUFFIX[type] ?? '' : ''}`;
 }
 
-/**
- * Phase add-on — People directory.
- *
- * One-stop list of every associate Alto HR knows about. Each row carries the
- * "is this person showing up?" answers HR needs at a glance: status, current
- * workplace, pay rate, employment type, manager. Click a row to see the
- * full profile drawer with contact info, onboarding %, and links into the
- * detail pages (org structure, agreements, documents, comp history).
- */
 // Status values a ?workStatus= deep-link (or a saved view) is allowed to
 // seed: the one status (apps/api/src/lib/peopleStatus.ts). Guards against
 // junk in the URL turning into a filter the picker can't represent.
@@ -228,13 +207,62 @@ const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
   (typeof v === 'string' &&
     (EMPLOYMENT_TYPE_VALUES as readonly string[]).includes(v));
 
+/**
+ * The record tab an old profile-drawer link meant: /people?associateId=X
+ * &tab=compensation opened the drawer's Compensation tab, which is the
+ * record's Pay tab now.
+ */
+const LEGACY_DRAWER_TAB: Readonly<Record<string, string>> = {
+  profile: 'profile',
+  employment: 'employment',
+  compensation: 'pay',
+  payments: 'pay',
+  pay: 'pay',
+  time: 'time',
+  timeoff: 'timeoff',
+  performance: 'performance',
+  cases: 'cases',
+  documents: 'documents',
+  thread: 'thread',
+};
+
+/** Where a person lives: their record, on the tab a link asked for. */
+export function personRecordPath(associateId: string, tab?: string | null): string {
+  const mapped = tab ? LEGACY_DRAWER_TAB[tab] : undefined;
+  return `/people/${associateId}${mapped ? `?tab=${mapped}` : ''}`;
+}
+
+/**
+ * Phase add-on — People directory.
+ *
+ * One-stop list of every associate Alto HR knows about. Each row carries the
+ * "is this person showing up?" answers HR needs at a glance: where they
+ * stand, where they work, when they last worked, their hours in the active
+ * window and how to reach them. A row opens the person's record.
+ *
+ * One person has one home (F500 fix-up, G1): the record at /people/:id. The
+ * profile drawer this list used to open was a second copy of the record
+ * with different tab names, and the record had a "Quick view" button back
+ * into it. Every link that named a person here — notifications, the
+ * payroll readiness board, AssociateLink — carried ?associateId= (and
+ * sometimes &tab=); those URLs are a contract, so they land on the record.
+ */
 export function PeopleDirectory() {
+  const [searchParams] = useSearchParams();
+  const linked = searchParams.get('associateId');
+  if (linked && /^[0-9a-f-]{36}$/i.test(linked)) {
+    return <Navigate replace to={personRecordPath(linked, searchParams.get('tab'))} />;
+  }
+  return <DirectoryPage />;
+}
+
+function DirectoryPage() {
   const term = useTerm();
   // The client column (and its CSV header) exist only where there are clients.
   const hasClients = useTenant().moduleOn('clientPortal');
-  const queryClient = useQueryClient();
   const { user: viewer, can } = useAuth();
   const canManagePhotos = viewer ? hasCapability(viewer.role, 'manage:org') : false;
+  const wide = useMinWidth(640);
   // Persisted list filters — status / workplace / employment type survive
   // revisits ('' = All). Free-text search and the cascading location /
   // department facets deliberately stay per-session.
@@ -260,11 +288,11 @@ export function PeopleDirectory() {
   const [q, setQ] = useState(
     () => new URLSearchParams(window.location.search).get('q')?.trim() ?? '',
   );
-  // Seed the status filter from ?status= so dashboard tiles / cross-links can
-  // deep-link straight to a filtered directory (e.g. /people?status=ACTIVE).
-  // The deep link beats the persisted value. Applied during the first render
-  // (React's adjust-state-while-rendering pattern) so the initial fetch
-  // already carries the right filter.
+  // Seed the status filter from ?workStatus= (or the older ?status=) so
+  // dashboard tiles / cross-links can deep-link straight to a filtered
+  // directory. The deep link beats the persisted value. Applied during the
+  // first render (React's adjust-state-while-rendering pattern) so the
+  // initial fetch already carries the right filter.
   const urlSeedApplied = useRef(false);
   if (!urlSeedApplied.current) {
     urlSeedApplied.current = true;
@@ -306,37 +334,10 @@ export function PeopleDirectory() {
   // shows the previous list while the new one is being computed in the
   // background. The debounce below still throttles the server fetch.
   const deferredSearch = useDeferredValue(search);
-  const [target, setTarget] = useState<DirectoryEntry | null>(null);
-  // Deep-link support: /people?associateId=<uuid> auto-opens the drawer
-  // for that associate. Used by the payroll readiness dashboard so a
-  // red-X click lands on the right profile. We consume the param once
-  // (drop it on first match) so back-navigating doesn't re-open.
   const [searchParams, setSearchParams] = useSearchParams();
-  const deepLinkAssociateId = searchParams.get('associateId');
-  // ?return= rides along with ?associateId= (AssociateLink appends it) —
-  // the page the click came from. Captured into state once so it survives
-  // the URL cleanup below, then the drawer offers a "← Back to …" chip.
-  const [returnTo, setReturnTo] = useState<string | null>(() =>
-    sanitizeReturnPath(
-      new URLSearchParams(window.location.search).get('return'),
-    ),
-  );
-  // Consume the param — same replace pattern as associateId below, so
-  // refresh / back-forward don't re-arm a stale return leg. Value-guarded
-  // (not ref-guarded) so it converges even if another replace briefly
-  // restores it.
-  useEffect(() => {
-    if (!searchParams.has('return')) return;
-    const next = new URLSearchParams(searchParams);
-    next.delete('return');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams]);
 
   // Debounce the deferred search input. We search server-side to keep
-  // the row math (status derivation, comp lookup) honest with paging in
-  // the future. Using `deferredSearch` here means React can prioritise
-  // typing-into-the-input over kicking the timer forward, which keeps
-  // the field snappy under load.
+  // the row math (status derivation, comp lookup) honest with paging.
   useEffect(() => {
     const id = setTimeout(() => {
       // Same-value sets of a primitive are no-ops, so no churn guard needed.
@@ -346,10 +347,8 @@ export function PeopleDirectory() {
   }, [deferredSearch]);
 
   // Clients change rarely; the shared useClients() hook pins every picker
-  // in the app to one cached fetch (5-min staleTime, single query key —
-  // this also keeps the ['clients','list'] cache shape consistent with the
-  // other useClients() consumers). Failures are silent — the dropdown just
-  // shows "All clients" without specific options.
+  // in the app to one cached fetch. Failures are silent — the dropdown just
+  // shows "All workplaces" without specific options.
   const { clients } = useClients();
 
   // Departments for the directory facet. Same long cache / silent-failure
@@ -386,87 +385,26 @@ export function PeopleDirectory() {
 
   // keepPreviousData makes filter/search changes show the old rows
   // (faded by isFetching) until the new ones arrive instead of flashing
-  // a skeleton — much smoother on slow connections.
-  // Cursor-paged. The endpoint has always returned `nextCursor`; this
-  // page used to drop it on the floor, so associate #501 onward was
-  // invisible with no "load more" and no warning — the list simply
-  // ended. useInfiniteQuery consumes the cursor the server already sends.
+  // a skeleton. Cursor-paged: useInfiniteQuery consumes the server's
+  // nextCursor, and "Load more" fetches the next page.
   const {
     data: pages,
     error: rowsError,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
+    refetch,
   } = useInfiniteQuery({
     ...directoryQuery(filters),
     placeholderData: keepPreviousData,
-    // A minute of freshness: back-navigating to the directory (or re-
-    // applying a recent filter combo) renders instantly from cache instead
-    // of refetching every page.
+    // A minute of freshness: back-navigating to the directory renders
+    // instantly from cache instead of refetching every page.
     staleTime: 60_000,
   });
   const rows = useMemo(
     () => pages?.pages.flatMap((p) => p.associates),
     [pages],
   );
-
-  // Resolve the deep-link associateId. setTarget is the canonical
-  // drawer-open path so we get all the existing render logic for free.
-  // Strip the query param so the URL stays clean and a back-forward dance
-  // doesn't re-open the drawer after the user closed it.
-  //
-  // A loaded row is the cheap answer. Otherwise the person is fetched by
-  // id: the list is one page of 500 under the viewer's saved filters, so
-  // anyone past page one, or still onboarding behind an Active filter,
-  // simply isn't in it — and used to come back as "Couldn't find that
-  // person". Both run at once; whichever answers first opens the drawer.
-  const deepLinkRow = useMemo(
-    () =>
-      deepLinkAssociateId && rows
-        ? (rows.find((r) => r.id === deepLinkAssociateId) ?? null)
-        : null,
-    [deepLinkAssociateId, rows],
-  );
-  const deepLinkLookup = useQuery({
-    queryKey: ['directory', 'entry', deepLinkAssociateId],
-    queryFn: () => getDirectoryEntry(deepLinkAssociateId!),
-    enabled: Boolean(deepLinkAssociateId) && !deepLinkRow,
-    retry: false,
-  });
-  const deepLinkResolved = deepLinkRow ?? deepLinkLookup.data ?? null;
-  const deepLinkFailed = !deepLinkRow && deepLinkLookup.isError;
-  const deepLinkError = deepLinkLookup.error;
-  // One answer per link: the param is dropped in the same pass, but a
-  // StrictMode double-run or a rows refetch must not toast twice.
-  const deepLinkHandled = useRef<string | null>(null);
-  useEffect(() => {
-    if (!deepLinkAssociateId) {
-      deepLinkHandled.current = null;
-      return;
-    }
-    if (!deepLinkResolved && !deepLinkFailed) return; // still looking
-    if (deepLinkHandled.current === deepLinkAssociateId) return;
-    deepLinkHandled.current = deepLinkAssociateId;
-    if (deepLinkResolved) {
-      setTarget(deepLinkResolved);
-    } else {
-      toast.error(
-        deepLinkError instanceof ApiError && deepLinkError.status === 404
-          ? "Couldn't find that person in the directory — they may have been removed."
-          : "Couldn't open that profile right now. Try again in a moment.",
-      );
-    }
-    const next = new URLSearchParams(searchParams);
-    next.delete('associateId');
-    setSearchParams(next, { replace: true });
-  }, [
-    deepLinkAssociateId,
-    deepLinkResolved,
-    deepLinkFailed,
-    deepLinkError,
-    searchParams,
-    setSearchParams,
-  ]);
   const error = rowsError
     ? rowsError instanceof ApiError
       ? rowsError.message
@@ -476,10 +414,11 @@ export function PeopleDirectory() {
   // The tiles: exact counts for the whole filtered population (not the pages
   // loaded), from the same reading the Headcount screen shows.
   const { data: stats } = useQuery(directorySummaryQuery(filters));
+  const windowDays = stats?.windowDays ?? 14;
 
-  const hasActiveFilters = Boolean(
-    q || status || clientId || locationId || departmentId || employmentType,
-  );
+  // Filters other than status (status has its own tiles and chips).
+  const otherFilters = [q, clientId, locationId, departmentId, employmentType].filter(Boolean).length;
+  const hasActiveFilters = Boolean(status) || otherFilters > 0;
 
   // Saved views: the filters on screen as a named set (components/SavedViewsMenu).
   // The view applied rides in the URL (?sv=), so a reload keeps its name.
@@ -513,37 +452,24 @@ export function PeopleDirectory() {
     setEmploymentType(isEmploymentTypeFilter(v.employmentType) ? v.employmentType : '');
   };
 
-  const clearAllFilters = () => {
+  const clearOtherFilters = () => {
     setSavedViewId(null);
     setSearch('');
     setQ('');
-    setStatus('');
     setClientId('');
     setLocationId('');
     setDepartmentId('');
     setEmploymentType('');
   };
-
-  // Set when an in-drawer deactivation flips someone INACTIVE while the
-  // list is filtered to ACTIVE — the refetch removes them from the list
-  // under the open drawer. The drawer keeps showing the patched person;
-  // this explains the "gap" once it closes instead of leaving it silent.
-  const inactiveNoteOnClose = useRef(false);
-  const closeDrawer = () => {
-    setTarget(null);
-    // The return chip belongs to the deep-linked open only — a later,
-    // manually opened profile shouldn't inherit someone else's way back.
-    setReturnTo(null);
-    if (inactiveNoteOnClose.current) {
-      inactiveNoteOnClose.current = false;
-      toast('Now inactive — switch the status filter to see them.');
-    }
+  const clearAllFilters = () => {
+    clearOtherFilters();
+    setStatus('');
   };
+  const toggleStatus = (s: WorkStatus) => setStatus((cur) => (cur === s ? '' : s));
 
   // Serializes the ENTIRE filtered directory, not just the pages the
-  // admin happened to scroll through — the old version exported loaded
-  // rows only, so a headcount export from a >1-page directory silently
-  // missed everyone past the first page.
+  // admin happened to scroll through — exporting loaded rows only would
+  // silently miss everyone past the first page.
   const [exporting, setExporting] = useState(false);
   const exportCsv = async () => {
     if (exporting) return;
@@ -560,17 +486,7 @@ export function PeopleDirectory() {
         cursor = res.nextCursor ?? undefined;
       } while (cursor);
       if (all.length === 0) return;
-      downloadCsv(`people-${ymdLocal()}.csv`, [
-        ['Name', 'Status', 'Email', ...(hasClients ? ['Client'] : []), 'Type', 'Start date'],
-        ...all.map((r) => [
-          `${r.firstName} ${r.lastName}`,
-          workStatusEnglish(workStatusOf(r)),
-          r.email,
-          ...(hasClients ? [r.workplaceClientName ?? ''] : []),
-          EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
-          r.startDate ?? '',
-        ]),
-      ]);
+      downloadCsv(`people-${ymdLocal()}.csv`, directoryCsv(all, { hasClients, windowDays }));
     } catch {
       toast.error('Export failed — try again.');
     } finally {
@@ -578,118 +494,129 @@ export function PeopleDirectory() {
     }
   };
 
+  // The filtered population's real size (the summary counts every status
+  // for these filters), so the grid's count reads "212 people · 1–200
+  // shown" while more pages wait behind Load more.
+  const filteredTotal = stats ? (status ? stats[status] : stats.total) : undefined;
+
+  const statusTiles = stats ? (
+    <MetricStrip label="Where people stand" className="xl:grid-cols-6">
+      {WORK_STATUSES.map((s) => (
+        <MetricCard
+          key={s}
+          label={s === 'ACTIVE' ? t('people.workingWindow', { days: stats.windowDays }) : t(workStatusKeys(s).label)}
+          value={stats[s]}
+          // The definition is the tile's tooltip: six two-line definitions
+          // under six numbers made the strip taller than the list's first rows.
+          valueTitle={t(workStatusKeys(s).definition, { days: stats.windowDays })}
+          accent={s === 'ONBOARDING' && stats[s] > 0}
+          onClick={() => toggleStatus(s)}
+          selected={status === s}
+          compact
+          cta={false}
+        />
+      ))}
+    </MetricStrip>
+  ) : (
+    // Reserve the strip's height on first load so the filters and the list
+    // don't jump down when the counts arrive.
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6" aria-hidden="true">
+      {WORK_STATUSES.map((s) => (
+        <Skeleton key={s} className="h-[92px] rounded-lg" />
+      ))}
+    </div>
+  );
+
+  // A phone: the same six numbers as one row of chips that scrolls sideways
+  // (each is the filter), so the first person shows on the first screen.
+  const statusChips = (
+    <div
+      role="group"
+      aria-label="Where people stand"
+      className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      data-testid="people-status-chips"
+    >
+      <FilterChip active={status === ''} onClick={() => setStatus('')} count={stats?.total} className="shrink-0">
+        All
+      </FilterChip>
+      {WORK_STATUSES.map((s) => (
+        <FilterChip
+          key={s}
+          active={status === s}
+          onClick={() => toggleStatus(s)}
+          title={t(workStatusKeys(s).definition, { days: windowDays })}
+          count={stats?.[s]}
+          className="shrink-0"
+        >
+          {t(workStatusKeys(s).label)}
+        </FilterChip>
+      ))}
+    </div>
+  );
+
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
       returnLink={false}
-        title={term('nav.people')}
-        subtitle={`Every ${term('worker').toLowerCase()} on record — where they stand, where they work, their pay and contact — in one row.`}
-        breadcrumbs={[{ label: term('nav.people') }]}
-        primaryAction={
-          <Button asChild>
-            <Link to="/onboarding">
-              <Plus className="h-4 w-4" />
-              Invite {term('workers').toLowerCase()}
-            </Link>
-          </Button>
-        }
-        secondaryActions={
-          <>
-          {can('view:org') && (
-            <Button asChild variant="outline" title="People, agents and robots in one roster">
-              <Link to="/workers?type=PERSON">Workforce roster</Link>
-            </Button>
-          )}
-          {can('manage:org') && (
-            <Button asChild variant="outline">
-              <Link to="/people/mass-update">Mass update</Link>
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            onClick={exportCsv}
-            disabled={!rows || rows.length === 0 || exporting}
-            title="Download the current filtered list as CSV (all pages)"
-          >
-            <Download className="h-3.5 w-3.5" />
-            {exporting ? 'Exporting…' : 'Export CSV'}
-          </Button>
-          </>
-        }
-        summary={
-              <>
+      title={term('nav.people')}
+      subtitle={`Every ${term('worker').toLowerCase()} on record and where they stand.`}
+      facts={
+        wide && stats
+          ? [
+              { label: t('people.onTheBooks'), value: stats.onTheBooks.toLocaleString(), hint: t('people.onTheBooksDef') },
+              { label: 'On record', value: stats.total.toLocaleString(), hint: 'Everyone on file: on the books, onboarding and separated.' },
+            ]
+          : undefined
+      }
+      related={can('view:org') ? [{ label: 'Workforce roster', to: '/workers?type=PERSON' }] : undefined}
+      actions={[
+        {
+          key: 'invite',
+          label: `Invite ${term('workers').toLowerCase()}`,
+          icon: Plus,
+          to: '/onboarding',
+          primary: true,
+        },
+      ]}
+      summary={
+        <>
           {canManagePhotos && <PhotoStorageBanner />}
-          {/* KPI strip: exact counts for the filtered population, in the one
-              status vocabulary (apps/api/src/lib/peopleStatus.ts) — the same
-              numbers Headcount shows. Each status tile is the filter. */}
-          {stats && (
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <MetricCard
-                label={t('people.onTheBooks')}
-                value={stats.onTheBooks}
-                hint={t('people.onTheBooksDef')}
-                valueTitle={t('people.onTheBooksDef')}
-                onClick={() => setStatus('')}
-                selected={status === ''}
-                compact
-                cta={false}
-              />
-              {(['ACTIVE', 'PLACED_NOT_ACTIVE', 'ONBOARDING'] as const).map((s) => (
-                <MetricCard
-                  key={s}
-                  label={s === 'ACTIVE' ? t('people.workingWindow', { days: stats.windowDays }) : t(workStatusKeys(s).label)}
-                  value={stats[s]}
-                  hint={t(workStatusKeys(s).definition, { days: stats.windowDays })}
-                  valueTitle={t(workStatusKeys(s).definition, { days: stats.windowDays })}
-                  accent={s === 'ONBOARDING' && stats[s] > 0}
-                  onClick={() => setStatus((cur) => (cur === s ? '' : s))}
-                  selected={status === s}
-                  compact
-                  cta={false}
-                />
-              ))}
-            </div>
-          )}
-          {/* Reserve the strip's height on first load — the row used to be
-              absent and then shove the FilterBar + table ~90px down. */}
-          {!stats && (
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-[88px] rounded-lg" />
-              ))}
-            </div>
-          )}
-              </>
-        }
-        filters={
-          <FilterBar>
-            <div className="w-full sm:w-64">
-              <SearchInput
-                size="sm"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name or email"
-                aria-label="Search people"
-              />
-            </div>
-            <SavedViewsMenu
-              scope="people.directory"
-              current={viewQuery}
-              activeId={savedViewId}
-              onApply={applySavedView}
-              allLabel={`All ${term('nav.people').toLowerCase()}`}
+          {/* The one status vocabulary (apps/api/src/lib/peopleStatus.ts),
+              exact counts for the filtered population — the numbers
+              Headcount shows. Each tile (each chip on a phone) is the filter. */}
+          {wide ? statusTiles : statusChips}
+        </>
+      }
+      filters={
+        <FilterBar
+          search={
+            <SearchInput
+              size="sm"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or email"
+              aria-label="Search people"
             />
-            {WORK_STATUSES.map((s) => (
-              <FilterChip
-                key={s}
-                active={status === s}
-                onClick={() => setStatus(status === s ? '' : s)}
-                title={t(workStatusKeys(s).definition, { days: stats?.windowDays ?? 14 })}
-                count={stats?.[s]}
-              >
-                {t(workStatusKeys(s).label)}
-              </FilterChip>
-            ))}
+          }
+          activeFilters={otherFilters - (q ? 1 : 0)}
+          onClearFilters={clearOtherFilters}
+          actions={
+            hasActiveFilters && wide ? (
+              <Button variant="ghost" size="xs" onClick={clearAllFilters}>
+                <X className="h-3.5 w-3.5" />
+                Clear filters
+              </Button>
+            ) : undefined
+          }
+        >
+          <SavedViewsMenu
+            scope="people.directory"
+            current={viewQuery}
+            activeId={savedViewId}
+            onApply={applySavedView}
+            allLabel={`All ${term('nav.people').toLowerCase()}`}
+          />
+          {hasClients && (
             <Select
               size="sm"
               value={clientId}
@@ -700,7 +627,7 @@ export function PeopleDirectory() {
                 setLocationId('');
               }}
               aria-label="Filter by workplace"
-              className="w-auto"
+              className="w-auto max-w-full"
             >
               <option value="">All workplaces</option>
               {clients.map((c) => (
@@ -709,156 +636,105 @@ export function PeopleDirectory() {
                 </option>
               ))}
             </Select>
-            {clientId && locations.length > 0 && (
-              <Select
-                size="sm"
-                value={locationId}
-                onChange={(e) => setLocationId(e.target.value)}
-                aria-label="Filter by location"
-                className="w-auto"
-              >
-                <option value="">All locations</option>
-                {locations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </Select>
-            )}
-            {departments.length > 0 && (
-              <Select
-                size="sm"
-                value={departmentId}
-                onChange={(e) => setDepartmentId(e.target.value)}
-                aria-label="Filter by department"
-                className="w-auto"
-              >
-                <option value="">All departments</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </Select>
-            )}
+          )}
+          {clientId && locations.length > 0 && (
             <Select
               size="sm"
-              value={employmentType}
-              onChange={(e) =>
-                setEmploymentType(e.target.value as EmploymentTypeFilter | '')
-              }
-              aria-label="Filter by employment type"
-              className="w-auto"
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              aria-label="Filter by location"
+              className="w-auto max-w-full"
             >
-              <option value="">All employment types</option>
-              <option value="W2_EMPLOYEE">W-2</option>
-              <option value="CONTRACTOR_1099_INDIVIDUAL">1099 Individual</option>
-              <option value="CONTRACTOR_1099_BUSINESS">1099 Business</option>
+              <option value="">All locations</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
             </Select>
-            {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={clearAllFilters}
-                className="ml-auto"
-              >
-                <X className="h-3.5 w-3.5" />
-                Clear filters
-              </Button>
-            )}
-          </FilterBar>
-        }
-        drawer={
-          <Drawer
-            open={target !== null}
-            onOpenChange={(o) => !o && closeDrawer()}
-            width="max-w-2xl"
+          )}
+          {departments.length > 0 && (
+            <Select
+              size="sm"
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+              aria-label="Filter by department"
+              className="w-auto max-w-full"
+            >
+              <option value="">All departments</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+          )}
+          <Select
+            size="sm"
+            value={employmentType}
+            onChange={(e) =>
+              setEmploymentType(e.target.value as EmploymentTypeFilter | '')
+            }
+            aria-label="Filter by employment type"
+            className="w-auto max-w-full"
           >
-            {target && (
-              <DirectoryDrawer
-                associate={target}
-                returnTo={returnTo}
-                onClose={closeDrawer}
-                onAssociateChange={(patch) => {
-                  // Deactivated out of an ACTIVE-filtered list — remember to
-                  // explain on close (reactivation cancels the note).
-                  if (patch.status === 'INACTIVE' && status === 'ACTIVE') {
-                    inactiveNoteOnClose.current = true;
-                  } else if (patch.status === 'ACTIVE') {
-                    inactiveNoteOnClose.current = false;
-                  }
-                  const updated = { ...target, ...patch };
-                  setTarget(updated);
-                  // This key holds useInfiniteQuery's InfiniteData ({pages,
-                  // pageParams}), NOT a flat array — treating it as one threw
-                  // a TypeError inside the updater, which surfaced as a false
-                  // "Could not save/transfer" toast on writes that had already
-                  // succeeded server-side (and tempted a duplicate retry).
-                  queryClient.setQueryData<{
-                    pages: Array<{ associates: DirectoryEntry[] } & Record<string, unknown>>;
-                    pageParams: unknown[];
-                  }>(['directory', filters], (old) =>
-                    old
-                      ? {
-                          ...old,
-                          pages: old.pages.map((p) => ({
-                            ...p,
-                            associates: p.associates.map((r) =>
-                              r.id === updated.id ? updated : r,
-                            ),
-                          })),
-                        }
-                      : old,
-                  );
-                }}
-              />
-            )}
-          </Drawer>
-
-        }
-      >
-      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
-
-      {!rows && !error && <SkeletonRows count={8} rowHeight="h-14" />}
-
-      {rows && rows.length === 0 && (
-        <EmptyState
-          icon={Users}
-          title={
-            hasActiveFilters
-              ? `No ${term('workers').toLowerCase()} match these filters`
-              : `No ${term('workers').toLowerCase()} yet`
-          }
-          description={
-            hasActiveFilters
-              ? 'Loosen a filter or clear the search.'
-              : `Once you invite ${term('workers').toLowerCase()} through onboarding they show up here.`
-          }
-          action={
-            hasActiveFilters ? (
-              <Button variant="outline" size="sm" onClick={clearAllFilters}>
-                <X className="h-3.5 w-3.5" />
-                Clear all filters
-              </Button>
-            ) : (
-              <Button asChild size="sm">
-                <Link to="/onboarding">
-                  <Plus className="h-3.5 w-3.5" />
-                  Invite {term('workers').toLowerCase()}
-                </Link>
-              </Button>
-            )
-          }
-        />
-      )}
-
-      {rows && rows.length > 0 && (
-        /* One list for every viewport: the grid mounts the table on
-           desktops and the card stack on phones — never both. Columns
-           reveal as the viewport widens, and past VIRTUALIZE_THRESHOLD
-           rows it virtualizes so DOM size stays bounded regardless of
-           the list size. */
-        <DirectoryTable rows={rows} onSelect={setTarget} />
+            <option value="">All employment types</option>
+            <option value="W2_EMPLOYEE">W-2</option>
+            <option value="CONTRACTOR_1099_INDIVIDUAL">1099 Individual</option>
+            <option value="CONTRACTOR_1099_BUSINESS">1099 Business</option>
+          </Select>
+        </FilterBar>
+      }
+    >
+      {error && !rows ? (
+        <QueryError what={`the ${term('worker').toLowerCase()} directory`} query={{ error: rowsError, refetch, isFetching: false }} />
+      ) : (
+        <>
+          {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
+          {!rows && <SkeletonRows count={8} rowHeight="h-14" />}
+          {rows && rows.length === 0 && (
+            <EmptyState
+              icon={Users}
+              title={
+                hasActiveFilters
+                  ? `No ${term('workers').toLowerCase()} match these filters`
+                  : `No ${term('workers').toLowerCase()} yet`
+              }
+              description={
+                hasActiveFilters
+                  ? 'Loosen a filter or clear the search.'
+                  : `Once you invite ${term('workers').toLowerCase()} through onboarding they show up here.`
+              }
+              action={
+                hasActiveFilters ? (
+                  <Button variant="outline" size="sm" onClick={clearAllFilters}>
+                    <X className="h-3.5 w-3.5" />
+                    Clear all filters
+                  </Button>
+                ) : (
+                  <Button asChild size="sm">
+                    <Link to="/onboarding">
+                      <Plus className="h-3.5 w-3.5" />
+                      Invite {term('workers').toLowerCase()}
+                    </Link>
+                  </Button>
+                )
+              }
+            />
+          )}
+          {rows && rows.length > 0 && (
+            /* One list for every viewport: the grid mounts the table on
+               desktops and the card stack on phones — never both. Past
+               VIRTUALIZE_THRESHOLD rows it virtualizes so DOM size stays
+               bounded regardless of the list size. */
+            <DirectoryTable
+              rows={rows}
+              windowDays={windowDays}
+              total={filteredTotal}
+              onExport={() => void exportCsv()}
+            />
+          )}
+        </>
       )}
 
       {/* The list is capped per page. Without this control the directory
@@ -875,9 +751,41 @@ export function PeopleDirectory() {
           </Button>
         </div>
       )}
-
     </ListTemplate>
   );
+}
+
+/** The directory's CSV: the columns HR asks for, with pay only when the API sent it. */
+function directoryCsv(rows: DirectoryEntry[], opts: { hasClients: boolean; windowDays: number }): string[][] {
+  const withPay = rows.some((r) => r.payAmount !== undefined);
+  return [
+    [
+      'Name',
+      'Status',
+      'Email',
+      'Phone',
+      ...(opts.hasClients ? ['Client'] : []),
+      'Store',
+      'Last shift',
+      `Hours (${opts.windowDays} days)`,
+      'Type',
+      ...(withPay ? ['Pay rate'] : []),
+      'Start date',
+    ],
+    ...rows.map((r) => [
+      `${r.firstName} ${r.lastName}`,
+      workStatusEnglish(workStatusOf(r)),
+      r.email,
+      r.phone ?? '',
+      ...(opts.hasClients ? [r.workplaceClientName ?? ''] : []),
+      r.currentLocationName ?? '',
+      r.lastWorkedAt ? r.lastWorkedAt.slice(0, 10) : '',
+      r.recentMinutes != null ? String(Math.round((r.recentMinutes / 60) * 100) / 100) : '',
+      EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
+      ...(withPay ? [fmtPay(r.payAmount ?? null, r.payType ?? null, r.payCurrency ?? null)] : []),
+      r.startDate ?? '',
+    ]),
+  ];
 }
 
 // Above this row count the grid virtualizes. The threshold is empirical:
@@ -894,136 +802,248 @@ const EMPTY_CELL = (
   </span>
 );
 
-// Sort is over the page of rows the server returned (post-filter); the
-// third click on a header restores server order. Links inside a cell stop
-// the click so they do not also open the drawer.
-const DIRECTORY_COLUMNS: GridColumn<DirectoryEntry>[] = [
-  {
-    key: 'name',
-    header: 'Associate',
-    accessor: (r) => `${r.firstName} ${r.lastName}`,
-    sortable: true,
-    primary: true,
-    cell: (r) => (
-      <div className="flex items-center gap-2.5">
-        <Avatar src={r.photoUrl} name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
-        <div className="min-w-0">
-          {/* The name opens the person's record page; the rest of the row
-              still opens the drawer as a quick look. */}
-          <Link
-            to={`/people/${r.id}`}
-            onClick={(e) => e.stopPropagation()}
-            className="block truncate font-medium leading-6 text-white hover:text-gold-bright hover:underline"
-          >
-            {r.firstName} {r.lastName}
-          </Link>
-          <div className="text-xs text-silver truncate">{r.email}</div>
+/** Copy a phone or an email from the list (the retired Directory's affordance, F500 G4 note). */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className="inline-flex shrink-0 items-center rounded p-1 text-silver/60 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40"
+      onClick={(e) => {
+        e.stopPropagation();
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          })
+          .catch(() => toast.error('Could not copy.'));
+      }}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+    </button>
+  );
+}
+
+/**
+ * The directory's columns (F500 fix-up, G1). By default the answers HR
+ * reads a row for: who, where they stand, where they work, when they last
+ * worked, their hours in the active window and how to reach them. Position,
+ * type, pay, manager and start date are one click away in Columns — they
+ * were "—" for most people and pushed the useful columns off the row. Pay
+ * is a column only for a login the API sends pay to (view:comp).
+ */
+function directoryColumns(opts: {
+  hasClients: boolean;
+  workerWord: string;
+  managerWord: string;
+  siteWord: string;
+  windowDays: number;
+  withPay: boolean;
+}): GridColumn<DirectoryEntry>[] {
+  const cols: Array<GridColumn<DirectoryEntry> | null> = [
+    {
+      key: 'name',
+      header: opts.workerWord,
+      accessor: (r) => `${r.firstName} ${r.lastName}`,
+      sortable: true,
+      primary: true,
+      cell: (r) => (
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Avatar src={r.photoUrl} hasPhoto={r.photoUrl !== null} name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
+          <div className="min-w-0">
+            {/* The row opens the record; the name is the same link, for a
+                middle-click or a copied address. */}
+            <Link
+              to={`/people/${r.id}`}
+              onClick={(e) => e.stopPropagation()}
+              className="block truncate font-medium leading-6 text-white hover:text-gold-bright hover:underline"
+              title={`${r.firstName} ${r.lastName}`}
+            >
+              {r.firstName} {r.lastName}
+            </Link>
+            <div className="flex min-w-0 items-center gap-1 text-xs text-silver">
+              <a href={`mailto:${r.email}`} onClick={(e) => e.stopPropagation()} className="truncate hover:text-ink" title={r.email}>
+                {r.email}
+              </a>
+              <CopyButton text={r.email} label={`Copy ${r.email}`} />
+            </div>
+          </div>
+          {r.j1Status && (
+            <Badge variant="default" className="ml-1 text-2xs">
+              J-1
+            </Badge>
+          )}
         </div>
-        {r.j1Status && (
-          <Badge variant="default" className="ml-1 text-2xs">
-            J-1
-          </Badge>
-        )}
-      </div>
-    ),
-  },
-  {
-    key: 'status',
-    header: 'Status',
-    accessor: (r) => workStatusEnglish(workStatusOf(r)),
-    sortable: true,
-    cardMeta: true,
-    width: '9rem',
-    cell: (r) => (
-      <div className="flex items-center gap-2">
-        <PeopleStatusBadge status={workStatusOf(r)} />
-        {r.status === 'PENDING' && r.onboardingPercent !== null && (
-          <span className="text-2xs tabular-nums text-silver">{r.onboardingPercent}%</span>
-        )}
-      </div>
-    ),
-  },
-  {
-    key: 'workplace',
-    header: 'Client',
-    accessor: (r) => r.workplaceClientName,
-    sortable: true,
-    cardMeta: true,
-    className: 'text-silver',
-    cell: (r) =>
-      r.workplaceClientId && r.workplaceClientName ? (
-        <Link
-          to={`/clients/${r.workplaceClientId}`}
-          onClick={(e) => e.stopPropagation()}
-          className="hover:text-white inline-flex min-h-6 items-center gap-1.5"
-        >
-          <Building2 className="h-3.5 w-3.5" />
-          <span className="truncate">{r.workplaceClientName}</span>
-        </Link>
-      ) : (
-        EMPTY_CELL
       ),
-  },
-  {
-    key: 'position',
-    header: 'Position',
-    accessor: (r) => r.position,
-    sortable: true,
-    cardMeta: true,
-    className: 'text-silver',
-    cell: (r) => r.position ?? EMPTY_CELL,
-  },
-  {
-    key: 'type',
-    header: 'Type',
-    accessor: (r) => EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
-    sortable: true,
-    width: '6rem',
-    className: 'text-xs text-silver',
-  },
-  {
-    key: 'pay',
-    header: 'Pay rate',
-    accessor: (r) => {
-      const n = r.payAmount === null ? NaN : Number(r.payAmount);
-      return Number.isFinite(n) ? n : null;
     },
-    csv: (r) => fmtPay(r.payAmount, r.payType, r.payCurrency),
-    sortable: true,
-    searchable: false,
-    className: 'text-silver tabular-nums',
-    cell: (r) => fmtPay(r.payAmount, r.payType, r.payCurrency),
-  },
-  {
-    key: 'manager',
-    header: 'Manager',
-    accessor: (r) => r.managerName,
-    sortable: true,
-    className: 'text-silver',
-    cell: (r) =>
-      r.managerName ? (
-        r.managerId ? (
-          <Link to={`/people?associateId=${r.managerId}`} onClick={(e) => e.stopPropagation()} className="hover:text-white">
-            {r.managerName}
-          </Link>
-        ) : (
-          r.managerName
-        )
-      ) : (
-        EMPTY_CELL
+    {
+      key: 'status',
+      header: 'Status',
+      accessor: (r) => workStatusEnglish(workStatusOf(r)),
+      sortable: true,
+      cardMeta: true,
+      width: '10rem',
+      cell: (r) => (
+        <div className="flex items-center gap-2">
+          <PeopleStatusBadge status={workStatusOf(r)} windowDays={opts.windowDays} />
+          {r.status === 'PENDING' && r.onboardingPercent !== null && (
+            <span className="text-2xs tabular-nums text-silver">{r.onboardingPercent}%</span>
+          )}
+        </div>
       ),
-  },
-  {
-    key: 'start',
-    header: 'Start',
-    accessor: (r) => r.startDate,
-    sortable: true,
-    searchable: false,
-    width: '6rem',
-    className: 'text-silver text-xs tabular-nums',
-    cell: (r) => (r.startDate ? fmtDate(parseYmd(r.startDate) ?? r.startDate) : EMPTY_CELL),
-  },
-];
+    },
+    {
+      key: 'workplace',
+      header: opts.hasClients ? `Client · ${opts.siteWord}` : opts.siteWord,
+      accessor: (r) => [opts.hasClients ? r.workplaceClientName : null, r.currentLocationName].filter(Boolean).join(' · ') || null,
+      sortable: true,
+      cardMeta: true,
+      className: 'text-silver',
+      cell: (r) => {
+        const store = r.currentLocationName;
+        const client = opts.hasClients ? r.workplaceClientName : null;
+        if (!client && !store) return EMPTY_CELL;
+        return (
+          <div className="min-w-0 leading-5">
+            {client && r.workplaceClientId ? (
+              <Link
+                to={`/clients/${r.workplaceClientId}`}
+                onClick={(e) => e.stopPropagation()}
+                className="block truncate hover:text-white"
+                title={client}
+              >
+                {client}
+              </Link>
+            ) : client ? (
+              <span className="block truncate" title={client}>{client}</span>
+            ) : null}
+            {/* No store line for someone placed by an approved application
+                alone: the status already says whether they're placed. */}
+            {store && (
+              <span className={cn('block truncate', client && 'text-xs text-silver/80')} title={store}>{store}</span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'lastShift',
+      header: 'Last shift',
+      accessor: (r) => r.lastWorkedAt ?? null,
+      csv: (r) => (r.lastWorkedAt ? fmtDate(r.lastWorkedAt) : ''),
+      sortable: true,
+      searchable: false,
+      cardMeta: true,
+      width: '8rem',
+      className: 'tabular-nums text-silver whitespace-nowrap',
+      cell: (r) => (r.lastWorkedAt ? fmtDate(r.lastWorkedAt) : <span className="text-silver/70">Never</span>),
+    },
+    {
+      key: 'hours',
+      header: `Hours (${opts.windowDays} days)`,
+      accessor: (r) => r.recentMinutes ?? null,
+      csv: (r) => (r.recentMinutes != null ? fmtHours(r.recentMinutes / 60) : ''),
+      sortable: true,
+      searchable: false,
+      align: 'right',
+      width: '8rem',
+      className: 'tabular-nums',
+      cell: (r) =>
+        r.recentMinutes == null ? EMPTY_CELL : r.recentMinutes === 0 ? <span className="text-silver/70">0h</span> : fmtHours(Math.round((r.recentMinutes / 60) * 10) / 10),
+    },
+    {
+      key: 'phone',
+      header: 'Phone',
+      accessor: (r) => r.phone,
+      csv: (r) => r.phone ?? '',
+      searchable: false,
+      width: '10rem',
+      className: 'tabular-nums text-silver whitespace-nowrap',
+      cell: (r) => {
+        const href = phoneHref(r.phone);
+        return href ? (
+          <span className="inline-flex items-center gap-1">
+            <a href={href} onClick={(e) => e.stopPropagation()} className="hover:text-white">
+              {fmtPhone(r.phone)}
+            </a>
+            <CopyButton text={fmtPhone(r.phone)} label={`Copy ${fmtPhone(r.phone)}`} />
+          </span>
+        ) : (
+          EMPTY_CELL
+        );
+      },
+    },
+    {
+      key: 'position',
+      header: 'Position',
+      accessor: (r) => r.position,
+      sortable: true,
+      defaultHidden: true,
+      className: 'text-silver',
+      cell: (r) => (r.position ? <span className="line-clamp-2" title={r.position}>{r.position}</span> : EMPTY_CELL),
+    },
+    {
+      key: 'type',
+      header: 'Type',
+      accessor: (r) => EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
+      sortable: true,
+      defaultHidden: true,
+      width: '6rem',
+      className: 'text-xs text-silver',
+    },
+    opts.withPay
+      ? {
+          key: 'pay',
+          header: 'Pay rate',
+          accessor: (r) => {
+            const n = r.payAmount == null ? NaN : Number(r.payAmount);
+            return Number.isFinite(n) ? n : null;
+          },
+          csv: (r) => fmtPay(r.payAmount ?? null, r.payType ?? null, r.payCurrency ?? null),
+          sortable: true,
+          searchable: false,
+          defaultHidden: true,
+          className: 'text-silver tabular-nums',
+          cell: (r) => fmtPay(r.payAmount ?? null, r.payType ?? null, r.payCurrency ?? null),
+        }
+      : null,
+    {
+      key: 'manager',
+      header: opts.managerWord,
+      accessor: (r) => r.managerName,
+      sortable: true,
+      defaultHidden: true,
+      className: 'text-silver',
+      cell: (r) =>
+        r.managerName ? (
+          r.managerId ? (
+            <Link to={`/people/${r.managerId}`} onClick={(e) => e.stopPropagation()} className="hover:text-white">
+              {r.managerName}
+            </Link>
+          ) : (
+            r.managerName
+          )
+        ) : (
+          EMPTY_CELL
+        ),
+    },
+    {
+      key: 'start',
+      header: 'Start',
+      accessor: (r) => r.startDate,
+      sortable: true,
+      searchable: false,
+      defaultHidden: true,
+      width: '7rem',
+      className: 'text-silver text-xs tabular-nums',
+      cell: (r) => (r.startDate ? fmtDate(parseYmd(r.startDate) ?? r.startDate) : EMPTY_CELL),
+    },
+  ];
+  return cols.filter((c): c is GridColumn<DirectoryEntry> => c !== null);
+}
 
 // The page owns search (server-side, across every page) and the full
 // export; the grid sorts, hides columns and stacks cards for the rows on
@@ -1034,54 +1054,57 @@ const BroadcastDrawer = lazy(() => import('@/pages/dirComms/BroadcastDrawer').th
 
 function DirectoryTable({
   rows,
-  onSelect,
+  windowDays,
+  total,
+  onExport,
 }: {
   rows: DirectoryEntry[];
-  onSelect: (row: DirectoryEntry) => void;
+  windowDays: number;
+  /** The filtered population's size (more pages may wait behind Load more). */
+  total: number | undefined;
+  /** Exports every match, not just the loaded pages. */
+  onExport: () => void;
 }) {
   const term = useTerm();
   const { can } = useAuth();
   const navigate = useNavigate();
   const [messaging, setMessaging] = useState<Array<{ id: string; name: string }> | null>(null);
   const hasClients = useTenant().moduleOn('clientPortal');
-  const directoryColumns = useMemo(
+  const withPay = rows.some((r) => r.payAmount !== undefined);
+  const columns = useMemo(
     () =>
-      DIRECTORY_COLUMNS.filter((c) => hasClients || c.key !== 'workplace').map((c) =>
-        c.key === 'name' ? { ...c, header: term('worker') } : c,
-      ),
-    [term, hasClients],
+      directoryColumns({
+        hasClients,
+        workerWord: term('worker'),
+        managerWord: term('manager'),
+        siteWord: term('site'),
+        windowDays,
+        withPay,
+      }),
+    [term, hasClients, windowDays, withPay],
   );
   // Pick people, then act on just them (HR walk 7): mass update already
   // takes a list of ids, so five named people at five stores is one batch.
   const exportChosen = (ids: string[]) => {
     const chosen = rows.filter((r) => ids.includes(r.id));
-    downloadCsv(`people-selected-${ymdLocal()}.csv`, [
-      ['Name', 'Status', 'Email', ...(hasClients ? ['Client'] : []), 'Type', 'Start date'],
-      ...chosen.map((r) => [
-        `${r.firstName} ${r.lastName}`,
-        statusLabel(r.status),
-        r.email,
-        ...(hasClients ? [r.workplaceClientName ?? ''] : []),
-        EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
-        r.startDate ?? '',
-      ]),
-    ]);
+    downloadCsv(`people-selected-${ymdLocal()}.csv`, directoryCsv(chosen, { hasClients, windowDays }));
   };
   return (
     <Card className="p-3">
       <DataGrid<DirectoryEntry>
         id="people-directory"
         caption={`${term('worker')} directory`}
+        noun={{ one: term('worker').toLowerCase(), many: term('workers').toLowerCase() }}
         rows={rows}
         rowKey={(r) => r.id}
         search={false}
         urlState={false}
-        exportCsv={false}
-        onRowClick={onSelect}
+        server={{ total: total ?? rows.length, offset: 0, onExport }}
+        onRowClick={(r) => navigate(`/people/${r.id}`)}
         rowActionLabel={(r) => `Open ${r.firstName} ${r.lastName}`}
         virtualizeAfter={VIRTUALIZE_THRESHOLD}
         rowHeight={ROW_HEIGHT_PX}
-        columns={directoryColumns}
+        columns={columns}
         selectable={{
           actions: (ids) => (
             <>
@@ -1269,156 +1292,15 @@ export function ProfilePhoto({
   );
 }
 
-function DirectoryDrawer({
-  associate: a,
-  returnTo,
-  onClose,
-  onAssociateChange,
-}: {
-  associate: DirectoryEntry;
-  /** Validated ?return= path from the AssociateLink deep link, if any. */
-  returnTo: string | null;
-  onClose: () => void;
-  onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
-}) {
-  // ?tab= picks the landing tab, so /people?associateId=X&tab=documents
-  // deep-links straight into someone's document vault.
-  const [drawerParams] = useSearchParams();
-  const requestedDrawerTab = drawerParams.get('tab');
-  const [tab, setTab] = useState<
-    'profile' | 'employment' | 'compensation' | 'payments' | 'documents' | 'thread'
-  >(
-    requestedDrawerTab === 'compensation' ||
-      requestedDrawerTab === 'employment' ||
-      requestedDrawerTab === 'documents' ||
-      requestedDrawerTab === 'payments' ||
-      requestedDrawerTab === 'thread'
-      ? requestedDrawerTab
-      : 'profile',
-  );
-  const { user } = useAuth();
-  const canSeePayments = user ? hasCapability(user.role, 'process:payroll') : false;
-  return (
-    <>
-      <DrawerHeader>
-        {/* The return leg of the People round trip: the page whose
-            AssociateLink brought us here, one click away again. */}
-        {returnTo && (
-          <div className="mb-2">
-            <Link
-              to={returnTo}
-              className="inline-flex items-center gap-1.5 rounded-full border border-navy-secondary bg-navy-secondary/40 px-2.5 py-1 text-xs text-silver transition-colors hover:border-gold/60 hover:text-white"
-            >
-              <ArrowLeft className="h-3 w-3" />
-              Back to {returnPathLabel(returnTo)}
-            </Link>
-          </div>
-        )}
-        <div className="flex items-center gap-4">
-          <ProfilePhoto associate={a} onAssociateChange={onAssociateChange} />
-          <div className="min-w-0">
-            <DrawerTitle className="truncate">
-              {a.firstName} {a.lastName}
-            </DrawerTitle>
-            <DrawerDescription className="truncate flex items-center gap-2">
-              <PeopleStatusBadge status={workStatusOf(a)} className="text-2xs" />
-              <span>{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</span>
-              {a.j1Status && <Badge variant="default">J-1</Badge>}
-            </DrawerDescription>
-            {/* The drawer is the quick look; the record page holds every
-                facet (time, time off, performance, cases) on one URL. */}
-            <Link
-              to={`/people/${a.id}`}
-              className="mt-1 inline-flex min-h-6 items-center gap-1 text-xs text-gold hover:text-gold-bright"
-            >
-              <ExternalLink className="h-3 w-3" />
-              Open full record
-            </Link>
-          </div>
-        </div>
-      </DrawerHeader>
-      <DrawerBody>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-          <TabsList>
-            <TabsTrigger value="profile">Profile</TabsTrigger>
-            <TabsTrigger value="employment">Employment</TabsTrigger>
-            <TabsTrigger value="compensation">Compensation</TabsTrigger>
-            {canSeePayments && <TabsTrigger value="payments">Payments</TabsTrigger>}
-            <TabsTrigger value="documents">Documents</TabsTrigger>
-            <TabsTrigger value="thread">Thread</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="profile">
-            <ProfileTab
-              associate={a}
-              onAssociateChange={onAssociateChange}
-              onClose={onClose}
-            />
-          </TabsContent>
-          <TabsContent value="employment">
-            <EmploymentTab associateId={a.id} />
-          </TabsContent>
-          <TabsContent value="compensation">
-            <CompensationTab associate={a} />
-          </TabsContent>
-          {canSeePayments && (
-            <TabsContent value="payments">
-              <PaymentsTab associateId={a.id} />
-            </TabsContent>
-          )}
-          <TabsContent value="documents">
-            <DocumentsTab associateId={a.id} />
-          </TabsContent>
-          <TabsContent value="thread">
-            {/* The cross-department thread — notes with desk @mentions,
-                living on the record instead of in phone calls. */}
-            <WorkThreadPanel associateId={a.id} />
-          </TabsContent>
-        </Tabs>
-      </DrawerBody>
-      <DrawerFooter>
-        <Button variant="ghost" onClick={onClose}>
-          Close
-        </Button>
-        {/* One-click jumps to this person's slice of the two busiest
-            modules — the target pages read the ?associate= param. */}
-        <Button asChild variant="outline" size="sm">
-          <Link to={`/scheduling?associate=${a.id}`}>
-            <CalendarDays className="h-3.5 w-3.5" />
-            Schedule
-          </Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link
-            to={`/time-attendance?associate=${a.id}&name=${encodeURIComponent(`${a.firstName} ${a.lastName}`)}`}
-          >
-            <Clock className="h-3.5 w-3.5" />
-            Timesheet
-          </Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to={`/org?tab=people&associateId=${a.id}`}>
-            Edit org assignment
-          </Link>
-        </Button>
-      </DrawerFooter>
-    </>
-  );
-}
-
 export function ProfileTab({
   associate: a,
   onAssociateChange,
-  onClose,
 }: {
   associate: DirectoryEntry;
   onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
-  /** Closes the profile drawer (used after erasure — see DangerZone). */
-  onClose: () => void;
 }) {
   const [transferOpen, setTransferOpen] = useState(false);
   const canTransfer = Boolean(a.workplaceClientId);
-  const qc = useQueryClient();
   const term = useTerm();
   const { moduleOn } = useTenant();
   // A tenant without clients has no client to show on a person's workplace.
@@ -1539,38 +1421,11 @@ export function ProfileTab({
       <KioskPinSection associate={a} />
 
       {canTransfer && (
-        <TransferDialog
+        <PersonTransferDialog
           open={transferOpen}
           onOpenChange={setTransferOpen}
           associate={a}
-          onSaved={(r) => {
-            // A cross-client transfer re-points the kiosk PIN server-side;
-            // drop the drawer's cached copy so the section shows the new
-            // filing instead of a stale mismatch warning.
-            if (r.crossClient) {
-              void qc.invalidateQueries({ queryKey: ['kiosk-pin', a.id] });
-            }
-            onAssociateChange({
-              currentLocationId: r.locationId,
-              currentLocationName: r.locationName,
-              workplaceClientId: r.clientId,
-              workplaceClientName: r.clientName,
-              // A cross-client move clears the old client's org tree on
-              // the server — mirror it so the drawer doesn't show stale
-              // manager/department until the next refetch.
-              ...(r.crossClient
-                ? {
-                    managerId: null,
-                    managerName: null,
-                    departmentId: null,
-                    departmentName: null,
-                    jobProfileId: null,
-                    jobProfileTitle: null,
-                  }
-                : {}),
-            });
-            setTransferOpen(false);
-          }}
+          onAssociateChange={onAssociateChange}
         />
       )}
 
@@ -1641,24 +1496,7 @@ export function ProfileTab({
             }
           />
         )}
-        {!a.separatedAt && a.status === 'ACTIVE' && (
-          <InfoRow
-            label="Offboarding"
-            value={
-              <Link
-                to={`/separations?associateId=${a.id}`}
-                className="text-gold hover:text-gold-bright"
-              >
-                Start a separation to permanently offboard this {term('worker').toLowerCase()}
-              </Link>
-            }
-          />
-        )}
       </Section>
-
-      <DeactivationSection associate={a} onAssociateChange={onAssociateChange} />
-
-      <DangerZoneSection associate={a} onErased={onClose} />
     </div>
   );
 }
@@ -1668,31 +1506,37 @@ export function ProfileTab({
  * who leave for a couple of weeks or months and come back. Deactivate
  * takes them fully out of circulation (login disabled, kiosk clock-ins
  * rejected, out of the scheduling pool, future shifts released to open,
- * directory INACTIVE); Reactivate restores everything in one click with
+ * directory Paused); Reactivate restores everything in one click with
  * the whole record — I-9, E-Verify, banking, training, kiosk PIN —
  * intact. Nobody restarts onboarding after a short absence.
+ *
+ * The life-cycle moves live together in the record's header More menu
+ * (F500 fix-up, G1): Transfer, Promote, Deactivate, Separate and Erase used
+ * to be spread between the menu and two sections at the bottom of Profile.
  */
-function DeactivationSection({
+/** Who can be paused: on the books and not already paused. Someone still onboarding has nothing to pause. */
+export function canPause(a: DirectoryEntry): boolean {
+  const s = workStatusOf(a);
+  return !a.separatedAt && !a.deactivatedAt && (s === 'ACTIVE' || s === 'PLACED_NOT_ACTIVE' || s === 'NOT_PLACED');
+}
+
+export function DeactivateDialog({
   associate: a,
+  open,
+  onOpenChange,
   onAssociateChange,
 }: {
   associate: DirectoryEntry;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
 }) {
-  const { user } = useAuth();
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
-  const term = useTerm();
-
-  const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const isDeactivated = Boolean(a.deactivatedAt);
-  // Separated people are the separation flow's business (re-invite to
-  // rehire); people who never finished onboarding have nothing to pause.
-  if (!canManage || a.separatedAt || (!isDeactivated && a.status !== 'ACTIVE')) {
-    return null;
-  }
+  useEffect(() => {
+    if (open) setReason('');
+  }, [open]);
 
   const deactivate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1705,7 +1549,7 @@ function DeactivationSection({
           ? `Deactivated — login disabled, ${r.releasedShifts} upcoming shift${r.releasedShifts === 1 ? '' : 's'} released to open.`
           : 'Deactivated — login disabled and kiosk clock-ins blocked.',
       );
-      setOpen(false);
+      onOpenChange(false);
       onAssociateChange({
         status: 'INACTIVE',
         workStatus: 'DEACTIVATED',
@@ -1721,6 +1565,57 @@ function DeactivationSection({
     }
   };
 
+  return (
+    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)} confirmDiscard={() => reason.trim() !== ''}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Deactivate {a.firstName} {a.lastName}
+          </DialogTitle>
+          <DialogDescription>
+            For someone away for a while but expected back. Their login is
+            disabled, the kiosk rejects new clock-ins, and upcoming assigned
+            shifts are released back to open. Everything on their record is
+            kept — Reactivate restores them in one click, with no
+            re-onboarding.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={deactivate} className="grid gap-3">
+          <div className="grid gap-1">
+            <Label htmlFor="deactivate-reason">Reason (shown on the profile and in audit packets)</Label>
+            <Textarea
+              id="deactivate-reason"
+              autoFocus
+              required
+              minLength={3}
+              maxLength={300}
+              rows={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder='e.g. "Personal leave — expected back mid-October"'
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={busy} disabled={busy || reason.trim().length < 3}>
+              Deactivate
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Reactivate a paused person: login restored, back in the scheduling pool. */
+export function useReactivate(
+  a: DirectoryEntry,
+  onAssociateChange: (patch: Partial<DirectoryEntry>) => void,
+): { reactivate: () => Promise<void>; busy: boolean } {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
   const reactivate = async () => {
     if (busy) return;
     setBusy(true);
@@ -1742,133 +1637,41 @@ function DeactivationSection({
       setBusy(false);
     }
   };
-
-  return (
-    <Section title="Temporary deactivation">
-      {isDeactivated ? (
-        <>
-          <p className="text-xs text-silver/80">
-            Deactivated {fmtDate(a.deactivatedAt!)}
-            {a.deactivationReason ? ` — ${a.deactivationReason}` : ''}. Login is
-            disabled, the kiosk rejects new clock-ins, and they are out of the
-            scheduling pool. Their record — I-9, E-Verify, banking, training,
-            kiosk PIN — stays intact for their return.
-          </p>
-          <div className="pt-2">
-            <Button size="sm" onClick={() => void reactivate()} loading={busy} disabled={busy}>
-              <UserCheck className="mr-2 h-3.5 w-3.5" />
-              Reactivate
-            </Button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className="text-xs text-silver/80">
-            Away for a while but expected back? Deactivate instead of
-            separating: access pauses everywhere, nothing is lost, and
-            Reactivate brings them straight back — no re-onboarding.
-          </p>
-          <div className="pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setReason('');
-                setOpen(true);
-              }}
-            >
-              <UserX className="mr-2 h-3.5 w-3.5" />
-              Deactivate {term('worker').toLowerCase()}
-            </Button>
-          </div>
-
-          <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)} confirmDiscard={() => reason.trim() !== ''}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>
-                  Deactivate {a.firstName} {a.lastName}
-                </DialogTitle>
-                <DialogDescription>
-                  Their login is disabled, the kiosk rejects new clock-ins,
-                  upcoming assigned shifts are released back to open, and the
-                  directory shows them as Inactive. Everything on their record
-                  is kept — Reactivate restores them in one click.
-                </DialogDescription>
-              </DialogHeader>
-              <form onSubmit={deactivate} className="grid gap-3">
-                <div className="grid gap-1">
-                  <Label htmlFor="deactivate-reason">Reason (shown on the profile and in audit packets)</Label>
-                  <Textarea
-                    id="deactivate-reason"
-                    autoFocus
-                    required
-                    minLength={3}
-                    maxLength={300}
-                    rows={2}
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    placeholder='e.g. "Personal leave — expected back mid-October"'
-                  />
-                </div>
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setOpen(false)}
-                    disabled={busy}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    loading={busy}
-                    disabled={busy || reason.trim().length < 3}
-                  >
-                    Deactivate
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
-        </>
-      )}
-    </Section>
-  );
+  return { reactivate, busy };
 }
 
 /**
- * Danger zone — privacy erasure. Anonymizes the associate's identity and
- * scrubs credentials/ciphertext; payroll and tax history is legally
- * retained and stays. Gated on view:hr-admin, the same capability that
- * guards admin user management. The dialog demands a written reason and
- * retyping the associate's last name (the server 409s on a mismatch).
+ * Privacy erasure. Anonymizes the associate's identity and scrubs
+ * credentials/ciphertext; payroll and tax history is legally retained and
+ * stays. Offered to view:hr-admin (the capability that guards admin user
+ * management) from the record's More menu. The dialog demands a written
+ * reason and retyping the associate's last name (the server 409s on a
+ * mismatch) — the typed confirm is the guard, not a second "are you sure".
  */
-function DangerZoneSection({
+export function EraseDialog({
   associate: a,
+  open,
+  onOpenChange,
   onErased,
 }: {
   associate: DirectoryEntry;
-  /** Close the drawer — an erased (anonymized) profile must not keep rendering. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Leave the record — an erased (anonymized) profile must not keep rendering. */
   onErased: () => void;
 }) {
-  const { user } = useAuth();
   const term = useTerm();
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [confirmName, setConfirmName] = useState('');
   const [force, setForce] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  const canErase = user ? hasCapability(user.role, 'view:hr-admin') : false;
-  if (!canErase) return null;
-
-  const openDialog = () => {
+  useEffect(() => {
+    if (!open) return;
     setReason('');
     setConfirmName('');
     setForce(false);
-    setOpen(true);
-  };
+  }, [open]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1881,116 +1684,81 @@ function DangerZoneSection({
         ...(force ? { force: true } : {}),
       });
       toast.success('Personal data erased. Payroll history is retained.');
-      setOpen(false);
+      onOpenChange(false);
       void qc.invalidateQueries({ queryKey: ['directory'] });
-      // The drawer would keep rendering the pre-erasure identity from its
-      // local snapshot — close it instead of showing data that no longer
-      // exists.
       onErased();
     } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : 'Erasure failed. Nothing was changed.',
-      );
+      toast.error(err instanceof ApiError ? err.message : 'Erasure failed. Nothing was changed.');
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Section title="Danger zone">
-      <p className="text-xs text-silver/80">
-        Permanently anonymize this {term('worker').toLowerCase()}’s identity, delete their login
-        credentials, biometrics and document files. Pay and tax history is
-        kept, as required by law, under the anonymized record.
-      </p>
-      <div className="pt-2">
-        <Button variant="destructive" size="sm" onClick={openDialog}>
-          <ShieldAlert className="mr-2 h-3.5 w-3.5" />
-          Erase personal data
-        </Button>
-      </div>
-
-      <Dialog
-        open={open}
-        onOpenChange={(o) => !busy && setOpen(o)}
-        confirmDiscard={() => reason.trim() !== '' || confirmName.trim() !== ''}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Erase personal data — {a.firstName} {a.lastName}
-            </DialogTitle>
-            <DialogDescription>
-              This cannot be undone. Name, contact details, SSN, bank
-              details, documents, biometrics and login access are erased.
-              Time and payroll records are retained (IRS: 4 years, FLSA: 3
-              years) against the anonymized record.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={submit} className="grid gap-3">
-            <div className="grid gap-1">
-              <Label htmlFor="erase-reason">Reason (required, min 10 characters)</Label>
-              <Textarea
-                id="erase-reason"
-                autoFocus
-                required
-                minLength={10}
-                maxLength={500}
-                rows={3}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. GDPR/CCPA deletion request received 2026-07-20, ticket #1234"
-              />
-            </div>
-            <div className="grid gap-1">
-              <Label htmlFor="erase-confirm-name">
-                Type the {term('worker').toLowerCase()}’s last name (“{a.lastName}”) to confirm
-              </Label>
-              <Input
-                id="erase-confirm-name"
-                required
-                value={confirmName}
-                onChange={(e) => setConfirmName(e.target.value)}
-                placeholder={a.lastName}
-                autoComplete="off"
-              />
-            </div>
-            <label className="flex items-start gap-2 text-xs text-silver">
-              <input
-                type="checkbox"
-                checked={force}
-                onChange={(e) => setForce(e.target.checked)}
-                className="mt-0.5"
-              />
-              <span>
-                Erase even though this {term('worker').toLowerCase()} is not marked separated
-                (only needed when the server refuses with “not separated”).
-              </span>
-            </label>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setOpen(false)}
-                disabled={busy}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                variant="destructive"
-                loading={busy}
-                disabled={
-                  busy || reason.trim().length < 10 || confirmName.trim().length === 0
-                }
-              >
-                Erase permanently
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </Section>
+    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)} confirmDiscard={() => reason.trim() !== '' || confirmName.trim() !== ''}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Erase personal data — {a.firstName} {a.lastName}
+          </DialogTitle>
+          <DialogDescription>
+            This cannot be undone. Name, contact details, SSN, bank details,
+            documents, biometrics and login access are erased. Time and
+            payroll records are retained (IRS: 4 years, FLSA: 3 years)
+            against the anonymized record.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="grid gap-3">
+          <div className="grid gap-1">
+            <Label htmlFor="erase-reason">Reason (required, min 10 characters)</Label>
+            <Textarea
+              id="erase-reason"
+              autoFocus
+              required
+              minLength={10}
+              maxLength={500}
+              rows={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. GDPR/CCPA deletion request received 2026-07-20, ticket #1234"
+            />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor="erase-confirm-name">
+              Type the {term('worker').toLowerCase()}’s last name (“{a.lastName}”) to confirm
+            </Label>
+            <Input
+              id="erase-confirm-name"
+              required
+              value={confirmName}
+              onChange={(e) => setConfirmName(e.target.value)}
+              placeholder={a.lastName}
+              autoComplete="off"
+            />
+          </div>
+          <label className="flex items-start gap-2 text-xs text-silver">
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} className="mt-0.5" />
+            <span>
+              Erase even though this {term('worker').toLowerCase()} is not marked separated
+              (only needed when the server refuses with “not separated”).
+            </span>
+          </label>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="destructive"
+              loading={busy}
+              disabled={busy || reason.trim().length < 10 || confirmName.trim().length === 0}
+            >
+              Erase permanently
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2100,8 +1868,8 @@ function PhoneField({
         <div className="flex items-center gap-2 group">
           <span className="flex-1 min-w-0">
             {a.phone ? (
-              <a href={`tel:${a.phone}`} className="hover:text-white">
-                {a.phone}
+              <a href={phoneHref(a.phone) ?? `tel:${a.phone}`} className="hover:text-white">
+                {fmtPhone(a.phone)}
               </a>
             ) : (
               '—'
@@ -2402,6 +2170,8 @@ function ManagerField({
   onSaved: (managerId: string | null, managerName: string | null) => void;
 }) {
   const { can } = useAuth();
+  const term = useTerm();
+  const managerWord = term('manager');
   const canEdit = can('manage:org');
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2415,7 +2185,7 @@ function ManagerField({
     try {
       await assignOrgFields(a.id, { managerId: next?.id ?? null });
       onSaved(next?.id ?? null, next?.name ?? null);
-      toast.success(next ? `${next.name} is now ${a.firstName}’s manager.` : 'Manager removed.');
+      toast.success(next ? `${next.name} is now ${a.firstName}’s ${managerWord.toLowerCase()}.` : `${managerWord} removed.`);
       setEditing(false);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not save.');
@@ -2427,15 +2197,15 @@ function ManagerField({
     return (
       <div className="flex items-start gap-3 text-sm">
         <div className="w-32 text-silver text-xs flex items-center pt-2">
-          <span>Manager</span>
+          <span>{managerWord}</span>
         </div>
         <div className="flex-1 min-w-0 flex items-center gap-1">
           <div className="min-w-0 flex-1">
-            <AssociatePicker value={null} onChange={(v) => v && void save(v)} placeholder="Search for their manager…" className="h-8" />
+            <AssociatePicker value={null} onChange={(v) => v && void save(v)} placeholder={`Search for their ${managerWord.toLowerCase()}…`} className="h-8" />
           </div>
           {a.managerId && (
             <Button variant="ghost" size="xs" onClick={() => void save(null)} disabled={saving}>
-              No manager
+              No {managerWord.toLowerCase()}
             </Button>
           )}
           <Button variant="ghost" size="icon-sm" onClick={() => setEditing(false)} disabled={saving} aria-label="Cancel" title="Cancel">
@@ -2447,13 +2217,13 @@ function ManagerField({
   }
   return (
     <InfoRow
-      label="Manager"
+      label={managerWord}
       value={
         <div className="flex items-center gap-2 group">
           <span className="flex-1 min-w-0">
             {a.managerName ? (
               a.managerId ? (
-                <Link to={`/people?associateId=${a.managerId}`} className="text-gold hover:text-gold-bright">
+                <Link to={`/people/${a.managerId}`} className="text-gold hover:text-gold-bright">
                   {a.managerName}
                 </Link>
               ) : (
@@ -2463,7 +2233,7 @@ function ManagerField({
               '—'
             )}
           </span>
-          {canEdit && <EditPencil label="Edit manager" onClick={() => setEditing(true)} />}
+          {canEdit && <EditPencil label={`Edit ${managerWord.toLowerCase()}`} onClick={() => setEditing(true)} />}
         </div>
       }
     />
@@ -2788,7 +2558,7 @@ export function CompensationTab({ associate: a }: { associate: DirectoryEntry })
               <div className="text-3xl font-semibold tabular-nums text-white mt-1">
                 {current
                   ? fmtPay(current.amount, current.payType, current.currency)
-                  : fmtPay(a.payAmount, a.payType, a.payCurrency)}
+                  : fmtPay(a.payAmount ?? null, a.payType ?? null, a.payCurrency ?? null)}
               </div>
               {current && (
                 <div className="text-xs2 text-silver mt-1">
@@ -2948,7 +2718,7 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
   // reveal offers "Back to People", which lands on this same profile.
   const issueLink = `/time-attendance/kiosk?tab=pins&issue=${a.id}${
     a.workplaceClientId ? `&client=${a.workplaceClientId}` : ''
-  }&return=${encodeURIComponent(`/people?associateId=${a.id}`)}`;
+  }&return=${encodeURIComponent(`/people/${a.id}`)}`;
   // Kiosk admin won't list someone whose onboarding isn't approved, nor
   // anyone separated or paused — sending HR there only to find the name
   // missing was the complaint. Say why here, and point at the fix.
@@ -3075,6 +2845,60 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
         )}
       </div>
     </Section>
+  );
+}
+
+/**
+ * Transfer (or first placement) with the record patched as it saves — the
+ * Profile tab's button and the record header's "Transfer…" open the same
+ * dialog. A transfer needs a workplace client to start from.
+ */
+export function PersonTransferDialog({
+  open,
+  onOpenChange,
+  associate: a,
+  onAssociateChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  associate: DirectoryEntry;
+  onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
+}) {
+  const qc = useQueryClient();
+  return (
+    <TransferDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      associate={a}
+      onSaved={(r) => {
+        // A cross-client transfer re-points the kiosk PIN server-side;
+        // drop the cached copy so the kiosk section shows the new filing
+        // instead of a stale mismatch warning.
+        if (r.crossClient) {
+          void qc.invalidateQueries({ queryKey: ['kiosk-pin', a.id] });
+        }
+        onAssociateChange({
+          currentLocationId: r.locationId,
+          currentLocationName: r.locationName,
+          workplaceClientId: r.clientId,
+          workplaceClientName: r.clientName,
+          // A cross-client move clears the old client's org tree on the
+          // server — mirror it so the record doesn't show a stale manager
+          // or department until the next refetch.
+          ...(r.crossClient
+            ? {
+                managerId: null,
+                managerName: null,
+                departmentId: null,
+                departmentName: null,
+                jobProfileId: null,
+                jobProfileTitle: null,
+              }
+            : {}),
+        });
+        onOpenChange(false);
+      }}
+    />
   );
 }
 
@@ -3794,18 +3618,6 @@ function PersonalInfoSection({ associate: a }: { associate: DirectoryEntry }) {
             />
           )}
           <InfoRow
-            icon={<Mail className="h-3.5 w-3.5" />}
-            label="Email"
-            value={
-              <a
-                href={`mailto:${a.email}`}
-                className="text-gold hover:text-gold-bright"
-              >
-                {a.email}
-              </a>
-            }
-          />
-          <InfoRow
             label="Date of birth"
             value={
               data.dob ? (
@@ -3822,20 +3634,17 @@ function PersonalInfoSection({ associate: a }: { associate: DirectoryEntry }) {
             label="Home address"
             value={
               hasAddress ? (
+                // Only the lines on file: an empty first line used to print
+                // as a blank row above "Tallahassee, FL 32301".
                 <span>
-                  {data.addressLine1}
-                  {data.addressLine2 && (
-                    <>
-                      <br />
-                      {data.addressLine2}
-                    </>
-                  )}
-                  {cityLine && (
-                    <>
-                      <br />
-                      {cityLine}
-                    </>
-                  )}
+                  {[data.addressLine1, data.addressLine2, cityLine]
+                    .filter((line): line is string => Boolean(line && line.trim()))
+                    .map((line, i) => (
+                      <span key={i} className="block">
+                        {line}
+                      </span>
+                    ))}
+                  {!data.addressLine1 && <span className="block text-xs text-silver">No street address on file</span>}
                 </span>
               ) : (
                 <span className="text-silver">
@@ -5767,10 +5576,14 @@ export function InfoRow({
   label: string;
   value: React.ReactNode;
 }) {
+  // Baseline-aligned: a value that carries an edit button is taller than
+  // its text, and a top-aligned label sat ~20px above the value it names.
+  // The label is a plain block (an inline icon, then the words) so its
+  // baseline is its text's; the value's first line sets the row's.
   return (
-    <div className="flex items-start gap-3 text-sm">
-      <div className="w-32 text-silver text-xs flex items-center gap-1.5 pt-0.5">
-        {icon}
+    <div className="flex items-baseline gap-3 text-sm">
+      <div className="w-32 shrink-0 text-xs text-silver">
+        {icon && <span className="mr-1.5 inline-block align-[-2px]">{icon}</span>}
         <span>{label}</span>
       </div>
       <div className="flex-1 min-w-0 text-white">{value}</div>

@@ -127,12 +127,12 @@ describe('<PayScheduleDetailPage>', () => {
     await waitFor(() => expect(api.previewMove).toHaveBeenCalledWith(expect.objectContaining({ associateIds: ['a1', 'a2'], toScheduleId: 's2' })));
   });
 
-  it('Who’s on it reads the rules in plain words and ends one from a date', async () => {
+  it('Rules reads the rules in plain words and ends one from a date', async () => {
     const user = userEvent.setup();
     api.endScheduleRule.mockResolvedValue({ impact: impact({ leaves: 3, effectiveFrom: '2099-10-24' }) });
     open();
     await screen.findByRole('heading', { name: 'Biweekly Hourly' });
-    await user.click(screen.getByRole('tab', { name: /Who’s on it/ }));
+    await user.click(screen.getByRole('tab', { name: /^Rules/ }));
     expect(await screen.findByText('Everyone at Coastal Resort')).toBeInTheDocument();
     expect(screen.getByText('Except Lee Park')).toBeInTheDocument();
     expect(screen.getByText(/3 people · since/)).toBeInTheDocument();

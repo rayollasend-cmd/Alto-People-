@@ -23,7 +23,9 @@ import {
 } from '../lib/candidateOffers.js';
 import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js';
 import { panelOf, sendInterviewInvites, type InviteContext } from '../lib/interviewInvites.js';
-import { tenantIdForWrite } from '../lib/tenant.js';
+import { resolveTenantFrom, tenantIdForWrite } from '../lib/tenant.js';
+import { RECRUITER_USER_SELECT, candidateRecruiter, recruiterContactOf } from '../lib/recruiterContact.js';
+import { renderLetterPdf } from '../lib/letterPdf.js';
 import { effectiveClientIdFilter, internalSites } from '../lib/scope.js';
 import { currentRateCards } from '../lib/rateCards.js';
 import { proposeReferralBonus } from '../lib/marketing.js';
@@ -895,11 +897,15 @@ recruiting90Router.get('/offers/:id/signed.pdf', VIEW, async (req, res) => {
 /** The offer behind a link, if the link is real. An offer past its expiry
  *  is marked expired the first time its link is opened after. */
 async function offerByToken(raw: string) {
+  // The hash is unique across organizations: the request learns its tenant from it.
+  await resolveTenantFrom(() => prisma.offer.findUnique({ where: { acceptTokenHash: hashAcceptToken(raw) }, select: { tenantId: true } }).then((r) => r?.tenantId));
   const o = await prisma.offer.findUnique({
     where: { acceptTokenHash: hashAcceptToken(raw) },
     include: {
       candidate: { select: { id: true, firstName: true, lastName: true, email: true } },
       client: { select: { name: true } },
+      // Who sent it: the named human every state of the page points to (F500 G5).
+      createdBy: { select: RECRUITER_USER_SELECT },
     },
   });
   if (!o) throw new HttpError(404, 'not_found', 'This offer link is not valid.');
@@ -910,9 +916,23 @@ async function offerByToken(raw: string) {
   return o;
 }
 
+/** The letter as it reads before signing — the same text the signed copy carries. */
+function offerLetterText(o: { letterBody: string | null; jobTitle: string; client: { name: string } | null; startDate: Date; hourlyRate: Prisma.Decimal | null; salary: Prisma.Decimal | null; currency: string }): string {
+  return [
+    o.letterBody?.trim() || `We are pleased to offer you the position of ${o.jobTitle} at ${o.client?.name ?? getBrandingSync().orgName}.`,
+    '',
+    `Position: ${o.jobTitle}`,
+    `Client: ${o.client?.name ?? getBrandingSync().orgName}`,
+    `Start date: ${letterDate(o.startDate)}`,
+    `Pay: ${offerPay(o)}`,
+  ].join('\n');
+}
+
 recruiting90Router.get('/offer-letters/:token', offerLetterIpLimiter, async (req, res) => {
   const o = await offerByToken(req.params.token);
+  const recruiter = recruiterContactOf(o.createdBy) ?? (await candidateRecruiter(prisma, o.candidateId));
   res.json({
+    recruiter,
     candidateFirstName: o.candidate.firstName,
     candidateName: `${o.candidate.firstName} ${o.candidate.lastName}`,
     jobTitle: o.jobTitle,
@@ -925,6 +945,25 @@ recruiting90Router.get('/offer-letters/:token', offerLetterIpLimiter, async (req
     signedName: o.signedName,
     signedAt: o.signedAt?.toISOString() ?? null,
   });
+});
+
+/**
+ * A copy of the letter to keep before deciding (F500 G5) — on letterhead,
+ * unsigned. The link is the key, as for the page; once the offer is decided
+ * the link retires, and the signed copy goes out by email.
+ */
+recruiting90Router.get('/offer-letters/:token/letter.pdf', offerLetterIpLimiter, async (req, res) => {
+  const o = await offerByToken(req.params.token);
+  const pdf = await renderLetterPdf({
+    title: `Offer letter — ${o.jobTitle}`,
+    body: offerLetterText(o),
+    issuedAt: o.sentAt ?? o.createdAt,
+    issuedTo: `${o.candidate.firstName} ${o.candidate.lastName}`,
+  });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="offer-letter-${o.jobTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}.pdf"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.send(pdf);
 });
 
 const AcceptOfferSchema = z.object({
@@ -1364,13 +1403,18 @@ recruiting90Router.delete('/job-postings/:id', MANAGE, async (req, res) => {
 // ----- Careers (PUBLIC — no auth required) -------------------------------
 
 recruiting90Router.get('/careers', async (_req, res) => {
-  const rows = await prisma.jobPosting.findMany({
-    where: { status: 'OPEN' },
-    include: { client: { select: { name: true } } },
-    orderBy: { openedAt: 'desc' },
-    take: 100,
-  });
+  const [rows, branding] = await Promise.all([
+    prisma.jobPosting.findMany({
+      where: { status: 'OPEN' },
+      include: { client: { select: { name: true } } },
+      orderBy: { openedAt: 'desc' },
+      take: 100,
+    }),
+    ensureBrandingLoaded(prisma),
+  ]);
   res.json({
+    // Who is hiring: the page's fallback intro names the organization, not one tenant's geography (F500 G5).
+    orgName: branding.orgName,
     postings: rows.map((p) => ({
       slug: p.slug,
       title: p.title,

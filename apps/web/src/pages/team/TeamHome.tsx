@@ -1,11 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getMyDelegations } from '@/lib/delegationsApi';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Users } from 'lucide-react';
-import { ApiError } from '@/lib/api';
 import {
   approveTeamTimeOff,
   approveTeamTimesheet,
@@ -25,7 +24,7 @@ import {
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { fmtPunchDateTime } from '@/pages/time/punchFormat';
 import { downloadCsv } from '@/lib/csv';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
 import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import {
@@ -33,9 +32,8 @@ import {
   Badge,
   Button,
   EmptyState,
-  ErrorBanner,
   MetricCard,
-  SearchInput,
+  MetricStrip,
   SegmentedControl,
   SkeletonRows,
   Tabs,
@@ -44,6 +42,8 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { QueryError } from '@/components/ui/QueryError';
+import { useUrlParam } from '@/lib/useUrlState';
 import { OneOnOneCell } from '@/components/team/OneOnOneCell';
 import { toast } from 'sonner';
 import { removeFromLists, useOptimisticMutation } from '@/lib/optimistic';
@@ -63,15 +63,16 @@ const teamKeys = {
   timeoff: (status: string) => [...teamKeys.all, 'timeoff', status] as const,
 };
 
-type TeamTab = 'inbox' | 'overview' | 'timesheets' | 'timeoff';
-const TEAM_TABS: readonly TeamTab[] = ['inbox', 'overview', 'timesheets', 'timeoff'];
+const TABS = ['inbox', 'reports', 'timesheets', 'timeoff'] as const;
+type TeamTab = (typeof TABS)[number];
+
+const hoursText = (n: number) => `${n.toLocaleString('en-US', { maximumFractionDigits: 1 })} h`;
 
 export function TeamHome() {
-  // ?tab= — the manager home's cards name the queue they counted.
-  const [tab, setTab] = useState<TeamTab>(() => {
-    const t = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('tab');
-    return t && (TEAM_TABS as readonly string[]).includes(t) ? (t as TeamTab) : 'inbox';
-  });
+  // The tab lives in the URL (?tab=timesheets), so the inbox's own links
+  // (/team?tab=timesheets) land on it and Back returns to the last one.
+  const [tab, setTab] = useUrlParam<TeamTab>('tab', 'inbox', TABS, { history: 'push' });
+  const { can } = useAuth();
 
   const dashboardQ = useQuery({
     queryKey: teamKeys.dashboard(),
@@ -84,66 +85,117 @@ export function TeamHome() {
 
   const dashboard = dashboardQ.data;
   const error = dashboardQ.error ?? reportsQ.error;
+  const waiting = dashboard
+    ? dashboard.pendingTimesheets + dashboard.pendingTimeOff + dashboard.pendingReimbursements + dashboard.atRiskGoals
+    : 0;
+  const noReports = dashboard !== undefined && dashboard.directReports === 0;
+  const team = dashboard?.team;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="My team"
-        subtitle="Direct reports, pending timesheet reviews, and time-off decisions awaiting your sign-off."
-        breadcrumbs={[{ label: 'My team' }]}
+      title="My team"
+      subtitle="Who's working, hours against the schedule, and what's waiting on you."
+      facts={
+        dashboard && !noReports
+          ? [
+              { label: 'Direct reports', value: dashboard.directReports.toLocaleString('en-US'), to: '/team?tab=reports' },
+              { label: 'Waiting on you', value: waiting.toLocaleString('en-US'), to: '/team' },
+              ...(dashboard.onboardingInProgress > 0
+                ? [{ label: 'Onboarding', value: dashboard.onboardingInProgress.toLocaleString('en-US'), hint: 'Reports with an onboarding application in review' }]
+                : []),
+            ]
+          : undefined
+      }
     >
-
-      {dashboard && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <MetricCard label="Direct reports" value={dashboard.directReports} />
-          <MetricCard label="Timesheets" value={dashboard.pendingTimesheets} accent={dashboard.pendingTimesheets > 0} />
-          <MetricCard label="Time off" value={dashboard.pendingTimeOff} accent={dashboard.pendingTimeOff > 0} />
-          <MetricCard label="Reimbursements" value={dashboard.pendingReimbursements} accent={dashboard.pendingReimbursements > 0} />
-          <MetricCard label="At-risk goals" value={dashboard.atRiskGoals} accent={dashboard.atRiskGoals > 0} />
-          <MetricCard label="Onboarding" value={dashboard.onboardingInProgress} />
-        </div>
+      {team && !noReports && (
+        <MetricStrip label="Your team this week">
+          <MetricCard
+            label="On the clock"
+            value={team.onClockNow}
+            hint={`${team.scheduledToday.toLocaleString('en-US')} scheduled today`}
+            nothing={team.onClockNow === 0 && team.scheduledToday === 0 ? 'No shifts today' : undefined}
+            href="/team?tab=reports"
+          />
+          <MetricCard
+            label="Hours this week"
+            value={hoursText(team.hoursWorked)}
+            hint={`of ${hoursText(team.hoursScheduled)} scheduled`}
+            nothing={team.hoursWorked === 0 && team.hoursScheduled === 0 ? 'No hours this week' : undefined}
+            href="/team?tab=timesheets"
+          />
+          <MetricCard
+            label="Late or no-show · 7 days"
+            value={team.lateOrNoShow7d}
+            hint={
+              team.lateOrNoShow7d === 0
+                ? 'None in the last 7 days'
+                : `${team.lateOrNoShowPeople7d.toLocaleString('en-US')} ${team.lateOrNoShowPeople7d === 1 ? 'person' : 'people'}`
+            }
+            tone={team.lateOrNoShow7d > 0 ? 'warning' : 'default'}
+            href="/team?tab=reports"
+          />
+          <MetricCard
+            label="Overtime risk"
+            value={team.overtimeRisk}
+            hint={`On track for more than ${team.overtimeThresholdHours} h this week`}
+            tone={team.overtimeRisk > 0 ? 'warning' : 'default'}
+            href="/team?tab=reports"
+          />
+        </MetricStrip>
       )}
 
       {error && (
-        <ErrorBanner
-          action={
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                dashboardQ.refetch();
-                reportsQ.refetch();
-              }}
-            >
-              Retry
-            </Button>
-          }
-        >
-          {error instanceof ApiError ? error.message : 'Failed to load team.'}
-        </ErrorBanner>
+        <QueryError
+          what="your team"
+          query={{
+            error,
+            refetch: () => {
+              dashboardQ.refetch();
+              reportsQ.refetch();
+            },
+          }}
+        />
       )}
 
       <DelegationBanner />
-      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+      {noReports ? (
+        // Six zero tiles and "Inbox zero" told a manager with no reports that
+        // all was well; this says why the page is empty and what to do.
+        <EmptyState
+          icon={Users}
+          title="No one reports to you yet"
+          description={
+            can('manage:org')
+              ? 'Set who reports to you on the org chart. Approvals from across the company are in your Inbox.'
+              : 'Ask HR to set reporting lines. Approvals from across the company are in your Inbox.'
+          }
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              {can('manage:org') && (
+                <Button asChild>
+                  <Link to="/org/chart">Set reporting lines</Link>
+                </Button>
+              )}
+              <Button asChild variant={can('manage:org') ? 'outline' : 'primary'}>
+                <Link to="/inbox">Open Inbox</Link>
+              </Button>
+            </div>
+          }
+        />
+      ) : (
+      <Tabs value={tab} onValueChange={(v) => setTab(v as TeamTab)}>
         <TabsList>
           <TabsTrigger value="inbox">
             <Inbox className="h-3.5 w-3.5" />
             Inbox
-            {dashboard &&
-              dashboard.pendingTimesheets +
-                dashboard.pendingTimeOff +
-                dashboard.pendingReimbursements +
-                dashboard.atRiskGoals >
-                0 && (
-                <Badge variant="destructive" className="ml-1">
-                  {dashboard.pendingTimesheets +
-                    dashboard.pendingTimeOff +
-                    dashboard.pendingReimbursements +
-                    dashboard.atRiskGoals}
-                </Badge>
-              )}
+            {waiting > 0 && (
+              <Badge variant="destructive" className="ml-1">
+                {waiting}
+              </Badge>
+            )}
           </TabsTrigger>
-          <TabsTrigger value="overview">
+          <TabsTrigger value="reports">
             <Users className="h-3.5 w-3.5" />
             Reports
           </TabsTrigger>
@@ -169,8 +221,8 @@ export function TeamHome() {
         <TabsContent value="inbox">
           <InboxTab />
         </TabsContent>
-        <TabsContent value="overview">
-          <ReportsList reports={reportsQ.data ?? null} />
+        <TabsContent value="reports">
+          <ReportsList reports={reportsQ.data ?? null} thresholdHours={team?.overtimeThresholdHours ?? 40} />
         </TabsContent>
         <TabsContent value="timesheets">
           <TimesheetsTab />
@@ -179,6 +231,7 @@ export function TeamHome() {
           <TimeOffTab />
         </TabsContent>
       </Tabs>
+      )}
     </ListTemplate>
   );
 }
@@ -280,15 +333,7 @@ function InboxTab() {
 
   if (q.error) {
     return (
-      <ErrorBanner
-        action={
-          <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
-            Retry
-          </Button>
-        }
-      >
-        {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-      </ErrorBanner>
+      <QueryError what="your team’s inbox" query={q} />
     );
   }
   if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
@@ -296,8 +341,13 @@ function InboxTab() {
     return (
       <EmptyState
         icon={Inbox}
-        title="Inbox zero"
-        description="Nothing waiting on you. New approvals, time-off requests, reimbursements, and at-risk goals will land here."
+        title="Nothing from your team is waiting"
+        description="Timesheets, time off, reimbursements and at-risk goals from your reports land here. Everything else waiting on you is in your Inbox."
+        action={
+          <Button asChild variant="outline">
+            <Link to="/inbox">Open Inbox</Link>
+          </Button>
+        }
       />
     );
   }
@@ -397,28 +447,10 @@ function InboxTab() {
   );
 }
 
-function ReportsList({ reports }: { reports: DirectReport[] | null }) {
-  const [search, setSearch] = useState('');
+function ReportsList({ reports, thresholdHours }: { reports: DirectReport[] | null; thresholdHours: number }) {
   const term = useTerm();
 
-  const filtered = useMemo(() => {
-    if (!reports) return null;
-    const needle = search.trim().toLowerCase();
-    if (!needle) return reports;
-    return reports.filter((r) =>
-      [
-        `${r.firstName} ${r.lastName}`,
-        r.email,
-        r.jobTitle ?? '',
-        r.departmentName ?? '',
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(needle),
-    );
-  }, [reports, search]);
-
-  if (!reports || !filtered) return <SkeletonRows count={4} rowHeight="h-14" />;
+  if (!reports) return <SkeletonRows count={4} rowHeight="h-14" />;
   if (reports.length === 0) {
     return (
       <EmptyState
@@ -429,64 +461,94 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
     );
   }
   return (
-    <div className="space-y-3">
-      <SearchInput
-        value={search}
-        onChange={(ev) => setSearch(ev.target.value)}
-        placeholder="Search by name, email, title, or department…"
-        aria-label="Search direct reports"
-        wrapperClassName="max-w-sm"
-      />
-      {filtered.length === 0 ? (
-        <p className="text-sm text-silver">
-          No reports match “{search.trim()}”.
-        </p>
-      ) : (
-        <DataGrid<(typeof filtered)[number]>
-          id="team-reports"
-          caption="Direct reports"
-          rows={filtered}
-          rowKey={(r) => r.id}
-          search={false}
-          urlState={false}
-          exportCsv={{ filename: 'direct-reports' }}
-          columns={[
-            {
-              key: 'associate',
-              header: term('worker'),
-              accessor: (r) => `${r.firstName} ${r.lastName}`,
-              sortable: true,
-              primary: true,
-              className: 'font-medium',
-              cell: (r) => (
-                <Link
-                  to={`/people?associateId=${r.id}`}
-                  className="flex items-center gap-2.5 group focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 rounded"
-                >
-                  <Avatar src={associatePhotoUrl(r.id)} name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
-                  <div className="truncate group-hover:text-gold-bright transition-colors">
-                    {r.firstName} {r.lastName}
-                  </div>
-                </Link>
-              ),
-            },
-            { key: 'email', header: 'Email', accessor: (r) => r.email, sortable: true, cardMeta: true, className: 'text-silver' },
-            { key: 'title', header: 'Title', accessor: (r) => r.jobTitle, sortable: true, className: 'text-silver', cell: (r) => r.jobTitle ?? '—' },
-            { key: 'department', header: 'Department', accessor: (r) => r.departmentName, sortable: true, cardMeta: true, className: 'text-silver', cell: (r) => r.departmentName ?? '—' },
-            {
-              key: 'oneOnOne',
-              header: '1:1',
-              // Sort by how long since the last one — the longest gap first.
-              accessor: (r) => (r.lastOneOnOneAt ? Date.parse(r.lastOneOnOneAt) : 0),
-              sortable: true,
-              searchable: false,
-              cardMeta: true,
-              cell: (r) => <OneOnOneCell report={r} />,
-            },
-          ]}
-        />
-      )}
-    </div>
+    <DataGrid<DirectReport>
+      id="team-reports"
+      caption="Direct reports"
+      noun={{ one: 'report', many: 'reports' }}
+      rows={reports}
+      rowKey={(r) => r.id}
+      search={{ placeholder: 'Name, email, title or department…' }}
+      urlKey="reports"
+      exportCsv={{ filename: 'direct-reports' }}
+      columns={[
+        {
+          key: 'associate',
+          header: term('worker'),
+          accessor: (r) => `${r.firstName} ${r.lastName}`,
+          sortable: true,
+          primary: true,
+          className: 'font-medium',
+          cell: (r) => (
+            <Link
+              to={`/people/${r.id}`}
+              className="flex items-center gap-2.5 group focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 rounded"
+            >
+              <Avatar src={personPhotoUrl({ photoUrl: r.photoUrl, associateId: r.id })} name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
+              <div className="truncate group-hover:text-gold-bright transition-colors">
+                {r.firstName} {r.lastName}
+              </div>
+              {r.week?.onClock && (
+                <Badge variant="success" className="shrink-0">
+                  On the clock
+                </Badge>
+              )}
+            </Link>
+          ),
+        },
+        {
+          key: 'week',
+          header: 'Hours this week',
+          // Sort by where the week is heading, so overtime risk floats up.
+          accessor: (r) => r.week?.projectedHours ?? null,
+          csv: (r) => r.week?.workedHours ?? '',
+          sortable: true,
+          searchable: false,
+          align: 'right',
+          cardMeta: true,
+          cell: (r) => {
+            if (!r.week) return <span className="text-silver">—</span>;
+            const { workedHours, projectedHours } = r.week;
+            const over = projectedHours > thresholdHours;
+            return (
+              <span className="tabular-nums" title={`Worked ${hoursText(workedHours)} · on track for ${hoursText(projectedHours)}`}>
+                {hoursText(workedHours)}
+                {projectedHours > workedHours && (
+                  <span className={over ? 'text-warning' : 'text-silver'}> → {hoursText(projectedHours)}</span>
+                )}
+              </span>
+            );
+          },
+        },
+        {
+          key: 'late',
+          header: 'Late or no-show (7 days)',
+          accessor: (r) => r.week?.lateOrNoShow7d ?? null,
+          sortable: true,
+          searchable: false,
+          align: 'right',
+          cardMeta: true,
+          cell: (r) =>
+            r.week && r.week.lateOrNoShow7d > 0 ? (
+              <span className="tabular-nums text-warning">{r.week.lateOrNoShow7d}</span>
+            ) : (
+              <span className="tabular-nums text-silver">{r.week ? 0 : '—'}</span>
+            ),
+        },
+        { key: 'title', header: 'Title', accessor: (r) => r.jobTitle, sortable: true, className: 'text-silver', cell: (r) => r.jobTitle ?? '—' },
+        { key: 'department', header: 'Department', accessor: (r) => r.departmentName, sortable: true, defaultHidden: true, className: 'text-silver', cell: (r) => r.departmentName ?? '—' },
+        { key: 'email', header: 'Email', accessor: (r) => r.email, sortable: true, defaultHidden: true, className: 'text-silver' },
+        {
+          key: 'oneOnOne',
+          header: '1:1',
+          // Sort by how long since the last one — the longest gap first.
+          accessor: (r) => (r.lastOneOnOneAt ? Date.parse(r.lastOneOnOneAt) : 0),
+          sortable: true,
+          searchable: false,
+          cardMeta: true,
+          cell: (r) => <OneOnOneCell report={r} />,
+        },
+      ]}
+    />
   );
 }
 
@@ -682,15 +744,12 @@ function TimesheetsTab() {
           setSelected(new Set());
         }}
       />
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={exportCsv}
-        disabled={!entries || entries.length === 0}
-      >
-        <Download className="h-3.5 w-3.5" />
-        Export CSV
-      </Button>
+      {entries && entries.length > 0 && (
+        <Button size="sm" variant="outline" onClick={exportCsv}>
+          <Download className="h-3.5 w-3.5" />
+          Export CSV
+        </Button>
+      )}
     </div>
   );
 
@@ -698,15 +757,7 @@ function TimesheetsTab() {
     return (
       <div className="space-y-3">
         {toolbar}
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
-              Retry
-            </Button>
-          }
-        >
-          {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-        </ErrorBanner>
+        <QueryError what="timesheets" query={q} />
       </div>
     );
   }
@@ -994,15 +1045,7 @@ function TimeOffTab() {
 
   if (q.error) {
     return (
-      <ErrorBanner
-        action={
-          <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
-            Retry
-          </Button>
-        }
-      >
-        {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-      </ErrorBanner>
+      <QueryError what="time-off requests" query={q} />
     );
   }
   if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;

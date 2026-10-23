@@ -13,6 +13,7 @@ import { cents, ymd } from '../../lib/books/posting/common.js';
 import { accountByKey } from '../../lib/books/ledger.js';
 import { paymentFromDeposit } from '../../lib/books/bank/service.js';
 import { nextReminderOn } from '../../lib/statementDunning.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 
 /**
  * /books/receivables — what clients owe and the money they pay (contract:
@@ -52,7 +53,7 @@ const bucketsDto = (b: Record<string, number>) => ({
 booksReceivablesRouter.get('/', async (req, res, next) => {
   try {
     const q = z.object({ asOf: Ymd.optional() }).parse(req.query);
-    const r = await agingReport(prisma, q.asOf ?? ymd(new Date()));
+    const r = await agingReport(prisma, q.asOf ?? orgDateKey(new Date()));
     res.json({
       asOf: r.asOf,
       rows: r.rows.map((row) => ({ ...row, buckets: bucketsDto(row.buckets), open: dollars(row.open), unapplied: dollars(row.unapplied) })),
@@ -161,7 +162,7 @@ booksReceivablesRouter.delete('/payments/:id', MANAGE, async (req, res, next) =>
 booksReceivablesRouter.get('/worklist', async (_req, res, next) => {
   try {
     const tenantId = tenantIdForWrite();
-    const today = ymd(new Date());
+    const today = orgDateKey(new Date());
     const r = await agingReport(prisma, today);
     const ids = r.statements.map((s) => s.statementId);
     const clientIds = [...new Set(r.statements.map((s) => s.clientId))];
@@ -233,7 +234,29 @@ booksReceivablesRouter.get('/dso', async (req, res, next) => {
         collected: Math.round(mine.reduce((a, s) => a + Number((s.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount ?? 0), 0) * 100) / 100,
       });
     }
-    res.json({ months });
+    // The two numbers Receivables leads with: days to collect over the
+    // last 90 days (statements paid in that window, finalized → paid), and
+    // the cash clients paid this calendar month (payments not undone).
+    const since90 = new Date(now.getTime() - 90 * 86_400_000);
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const [paid90, received] = await Promise.all([
+      prisma.clientStatement.findMany({
+        where: { tenantId: tenantIdForWrite(), status: 'FINAL', paidAt: { gte: since90, lte: now }, finalizedAt: { not: null } },
+        select: { paidAt: true, finalizedAt: true },
+        take: 10_000,
+      }),
+      prisma.clientPayment.aggregate({
+        where: { tenantId: tenantIdForWrite(), voidedAt: null, receivedOn: { gte: monthStart, lte: now } },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+    ]);
+    const lags90 = paid90.map((s) => (s.paidAt!.getTime() - s.finalizedAt!.getTime()) / 86_400_000);
+    res.json({
+      months,
+      last90: { days: lags90.length ? Math.round(lags90.reduce((a, b) => a + b, 0) / lags90.length) : null, statements: lags90.length },
+      collectedThisMonth: { amount: Math.round(Number(received._sum.amount ?? 0) * 100) / 100, payments: received._count._all },
+    });
   } catch (err) {
     next(err);
   }
@@ -259,7 +282,7 @@ booksReceivablesRouter.get('/clients/:clientId', async (req, res, next) => {
     const clientId = z.string().uuid().parse(req.params.clientId);
     const client = await prisma.client.findFirst({ where: { id: clientId, tenantId: tenantIdForWrite() }, select: { id: true, name: true } });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found.');
-    const [aging, payments, unapplied] = await Promise.all([agingReport(prisma, ymd(new Date()), { clientId }), paymentRows({ clientId, voidedAt: null }), unappliedCredits(prisma, [clientId])]);
+    const [aging, payments, unapplied] = await Promise.all([agingReport(prisma, orgDateKey(new Date()), { clientId }), paymentRows({ clientId, voidedAt: null }), unappliedCredits(prisma, [clientId])]);
     const credit = unapplied.get(clientId) ?? 0;
     res.json({
       client,

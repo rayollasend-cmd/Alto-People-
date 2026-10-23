@@ -196,6 +196,44 @@ async function returnsChecklist(periodLabel: string) {
   });
 }
 
+/**
+ * Paid runs that withheld or owe tax and have no liability on this desk —
+ * paid before the ledger existed, or posted while it was down. Until they
+ * post, the overview's "paid up" and the quarter's returns leave them out,
+ * so the desk says so at the top. A run whose stored totals say it withheld
+ * tax but that has no paid paychecks to post from is told apart
+ * (`paychecksMissing`): posting can't fix that run; its record can.
+ */
+async function unpostedPaidRuns(tenantId: string) {
+  const runs = await prisma.payrollRun.findMany({
+    where: { tenantId, status: 'DISBURSED', taxLiabilities: { none: {} } },
+    select: { id: true, periodStart: true, periodEnd: true, disbursedAt: true, totalTax: true, totalEmployerTax: true },
+    orderBy: { disbursedAt: 'asc' },
+    take: 500,
+  });
+  if (runs.length === 0) return { count: 0, amount: 0, runs: [] as Array<{ id: string; periodStart: string | null; periodEnd: string | null; paidOn: string | null; amount: number; paychecksMissing: boolean }> };
+  const sums = await prisma.payrollItem.groupBy({
+    by: ['payrollRunId'],
+    where: { payrollRunId: { in: runs.map((r) => r.id) }, status: 'DISBURSED' },
+    _sum: { federalWithholding: true, fica: true, medicare: true, stateWithholding: true, localWithholding: true, employerFica: true, employerMedicare: true, employerFuta: true, employerSuta: true },
+    _count: { _all: true },
+  });
+  const byRun = new Map(sums.map((g) => [g.payrollRunId, g]));
+  const out = [];
+  for (const r of runs) {
+    const g = byRun.get(r.id);
+    const fromPaychecks = g
+      ? round2(Object.values(g._sum).reduce((a: number, v) => a + Number(v ?? 0), 0))
+      : 0;
+    const stored = round2(Number(r.totalTax) + Number(r.totalEmployerTax));
+    const paychecksMissing = !g && stored > 0;
+    const amount = paychecksMissing ? stored : fromPaychecks;
+    if (amount <= 0) continue;
+    out.push({ id: r.id, periodStart: ymd(r.periodStart), periodEnd: ymd(r.periodEnd), paidOn: ymd(r.disbursedAt), amount, paychecksMissing });
+  }
+  return { count: out.length, amount: round2(out.reduce((a, r) => a + r.amount, 0)), runs: out.slice(0, 20) };
+}
+
 payrollTaxesRouter.get(
   '/overview',
   h(async (_req, res) => {
@@ -219,12 +257,17 @@ payrollTaxesRouter.get(
     const dueSoon = all.filter((l) => l.dueDate >= ymd(now)! && l.dueDate <= ymd(in14)!);
     const currentQuarter = quarterLabel(now);
     const prevQuarter = quarterLabel(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1)));
-    const [registrations, openNotices, noticesDue, failedPayments] = await Promise.all([
+    const [registrations, openNotices, noticesDue, failedPayments, unposted, quarterSums, anyLiability] = await Promise.all([
       registrationsNeeded(prisma),
       prisma.agencyNotice.count({ where: { tenantId, status: { not: 'RESOLVED' } } }),
       prisma.agencyNotice.findMany({ where: { tenantId, status: { not: 'RESOLVED' }, responseDueAt: { not: null } }, orderBy: { responseDueAt: 'asc' }, take: 5, select: { id: true, agencyName: true, noticeType: true, responseDueAt: true, amountDue: true } }),
       prisma.taxPayment.count({ where: { tenantId, status: 'FAILED' } }),
+      unpostedPaidRuns(tenantId),
+      prisma.taxLiability.groupBy({ by: ['status'], where: { tenantId, periodLabel: currentQuarter, status: { not: 'VOID' } }, _sum: { amount: true } }),
+      prisma.taxLiability.findFirst({ where: { tenantId, status: { not: 'VOID' } }, select: { id: true } }),
     ]);
+    const quarterPosted = round2(quarterSums.reduce((a, g) => a + Number(g._sum.amount ?? 0), 0));
+    const quarterDeposited = round2(quarterSums.filter((g) => g.status === 'PAID').reduce((a, g) => a + Number(g._sum.amount ?? 0), 0));
     res.json({
       today: ymd(now),
       filing: {
@@ -240,6 +283,12 @@ payrollTaxesRouter.get(
         failedPayments,
         openNotices,
       },
+      // This quarter's taxes (withheld and the employer's share) as payroll posted them, and how much of it is deposited.
+      quarter: { periodLabel: currentQuarter, posted: quarterPosted, deposited: quarterDeposited },
+      // Whether payroll has ever posted a tax here: "you're paid up" means something only once it has.
+      hasLiabilities: anyLiability !== null,
+      // Paid payrolls whose taxes never reached this desk: every number above leaves them out until they post.
+      unposted,
       overdue,
       dueSoon,
       upcoming: all.filter((l) => l.dueDate > ymd(in14)!).slice(0, 10),

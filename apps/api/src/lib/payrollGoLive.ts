@@ -124,7 +124,7 @@ export async function payrollGoLive(db: Db, now: Date = new Date()): Promise<Pay
     stateChecks.push(
       problems.length === 0
         ? done(`state-${s}`, s, `${notes.join('; ')}.`.replace(/^./, (c) => c.toUpperCase()), toAgencies)
-        : missing(`state-${s}`, s, `${problems.join('; ')}.`.replace(/^./, (c) => c.toUpperCase()), !isStateTaxSupported(s) ? { label: 'Open state tax tables', to: '/payroll/state-tax' } : toAgencies),
+        : missing(`state-${s}`, s, `${problems.join('; ')}.`.replace(/^./, (c) => c.toUpperCase()), !isStateTaxSupported(s) ? { label: 'Open state tax tables', to: '/payroll/tax-tables?tab=state' } : toAgencies),
     );
   }
   const localStates = states.filter((s) => LOCAL_TAX_STATES.has(s));
@@ -132,8 +132,8 @@ export async function payrollGoLive(db: Db, now: Date = new Date()): Promise<Pay
     const local = accounts.filter((a) => a.kind === 'LOCAL');
     stateChecks.push(
       local.length > 0
-        ? done('local', 'Local taxes', `${plural(local.length, 'local account', 'local accounts')} on file for ${list(localStates)}. Check each city, county or school district people live or work in is covered.`, { label: 'Open local taxes', to: '/payroll/tax-jurisdictions' })
-        : warning('local', 'Local taxes', `People live or work in ${list(localStates)}, where cities, counties or school districts tax wages. No local tax account is on file.`, { label: 'Open local taxes', to: '/payroll/tax-jurisdictions' }),
+        ? done('local', 'Local taxes', `${plural(local.length, 'local account', 'local accounts')} on file for ${list(localStates)}. Check each city, county or school district people live or work in is covered.`, { label: 'Open local taxes', to: '/payroll/tax-tables?tab=local' })
+        : warning('local', 'Local taxes', `People live or work in ${list(localStates)}, where cities, counties or school districts tax wages. No local tax account is on file.`, { label: 'Open local taxes', to: '/payroll/tax-tables?tab=local' }),
     );
   }
   sections.push({ key: 'states', title: 'State and local taxes', checks: stateChecks });
@@ -261,7 +261,7 @@ export async function payrollGoLive(db: Db, now: Date = new Date()): Promise<Pay
   books.push(
     gaps.length === 0
       ? done('posting', 'Payroll posts to the books', 'Every run, payout and tax deposit last month is in the general ledger.', { label: 'Open the books', to: '/books' })
-      : warning('posting', 'Payroll posts to the books', `${plural(gaps.length, 'item', 'items')} from last month ${gaps.length === 1 ? 'isn’t' : 'aren’t'} in the books yet. Post history on Receivables brings them in.`, { label: 'Open receivables', to: '/books/receivables' }),
+      : warning('posting', 'Payroll posts to the books', `${plural(gaps.length, 'item', 'items')} from last month ${gaps.length === 1 ? 'isn’t' : 'aren’t'} in the books yet. Posting the history brings them in.`, { label: 'Post the history', to: '/books/receivables' }),
   );
   const qbo = await db.qboCompanyConnection.findFirst({ where: { tenantId }, select: { status: true, companyName: true } });
   books.push(

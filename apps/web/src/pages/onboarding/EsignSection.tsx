@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, ChevronUp, ExternalLink, FileSignature, Plus } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronUp, FileSignature, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChecklistTask } from '@alto-people/shared';
 import {
@@ -78,11 +78,10 @@ export function EsignSection({ applicationId, canManage, esignTasks, associateId
               Drafted by HR, signed by the associate. Each signature renders an
               audit-stamped PDF stored in the{' '}
               <Link
-                to={`/people?associateId=${associateId}&tab=documents`}
-                className="inline-flex items-center gap-0.5 text-gold hover:underline"
+                to={`/people/${associateId}?tab=documents`}
+                className="text-gold hover:underline"
               >
                 document vault
-                <ExternalLink className="h-3 w-3" aria-hidden />
               </Link>
               .
             </CardDescription>

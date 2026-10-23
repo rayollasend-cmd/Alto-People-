@@ -290,6 +290,8 @@ export async function runDueReportSchedules(
         where: { id: schedule.id },
         data: { lastRunAt: now, lastStatus, nextRunAt },
       });
+      // The report's own "last run" (the saved-reports list) counts a delivery too.
+      await prisma.report.update({ where: { id: report.id }, data: { lastRunAt: now } });
       enqueueAudit(
         {
           actorUserId: null,

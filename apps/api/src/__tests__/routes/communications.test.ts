@@ -75,7 +75,11 @@ describe('POST /communications/admin/send', () => {
     expect(res.body.externalRef).toBeNull();
     expect(res.body.failureReason).toMatch(/Texting isn’t connected/);
     const channels = await a.get('/communications/admin/channels');
-    expect(channels.body.channels.find((c: { channel: string }) => c.channel === 'SMS')).toMatchObject({ available: false, reason: expect.stringMatching(/TWILIO/) });
+    // The reason is for the person sending (plain words, who connects it);
+    // the setting names are the developer note, never the reason.
+    const sms = channels.body.channels.find((c: { channel: string }) => c.channel === 'SMS');
+    expect(sms).toMatchObject({ available: false, reason: expect.stringMatching(/Alto People support connects it/), developerNote: expect.stringMatching(/TWILIO/) });
+    expect(sms.reason).not.toMatch(/TWILIO|VAPID|RESEND/);
   });
 
   it('SMS with a provider → the Twilio message SID is the external ref and the row is SENT', async () => {

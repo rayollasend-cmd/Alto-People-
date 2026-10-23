@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { toast } from '@/components/ui/Toaster';
 import { useConfirm } from '@/lib/confirm';
@@ -87,30 +88,23 @@ export function FixedAssetsPage() {
     <ListTemplate
       title="Fixed assets"
       subtitle="Vehicles, equipment and build-outs on the books, depreciated every month."
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Fixed assets' }]}
-      primaryAction={
-        manage ? (
-          <Button onClick={() => setAdding({ from: null })}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            Add asset
-          </Button>
-        ) : undefined
-      }
-      secondaryActions={
-        manage && due > 0 ? (
-          <Button variant="secondary" onClick={() => void askRun()} loading={run.isPending}>
-            <CalendarClock className="h-4 w-4" aria-hidden="true" />
-            Post depreciation due
-          </Button>
-        ) : undefined
-      }
+      actions={[
+        { label: 'Add asset', icon: Plus, primary: true, hidden: !manage, onSelect: () => setAdding({ from: null }) },
+        { label: 'Post depreciation due', icon: CalendarClock, hidden: !manage || due === 0, loading: run.isPending, onSelect: () => void askRun() },
+      ]}
       summary={
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="Cost" value={fmtMoney(q.data?.totals.cost ?? 0)} />
-          <MetricCard label="Depreciated to date" value={fmtMoney(q.data?.totals.accumulated ?? 0)} />
+        // No $0 tiles over an empty register: the list says what to add.
+        <MetricStrip label="Fixed assets at a glance" empty={!q.isSuccess || assets.length === 0}>
+          <MetricCard label="Cost" value={fmtMoney(q.data?.totals.cost ?? 0)} tone="neutral" />
+          <MetricCard label="Depreciated to date" value={fmtMoney(q.data?.totals.accumulated ?? 0)} tone="neutral" />
           <MetricCard label="Book value" value={fmtMoney(q.data?.totals.netBookValue ?? 0)} />
-          <MetricCard label="Depreciation this month" value={fmtMoney(q.data?.totals.monthly ?? 0)} hint={due ? `${due} ${due === 1 ? 'month' : 'months'} due, not posted` : 'Up to date'} accent={due > 0} />
-        </div>
+          <MetricCard
+            label="Depreciation this month"
+            value={fmtMoney(q.data?.totals.monthly ?? 0)}
+            hint={due ? `${due} ${due === 1 ? 'month' : 'months'} due, not posted` : 'Up to date'}
+            tone={due > 0 ? 'warning' : 'neutral'}
+          />
+        </MetricStrip>
       }
     >
       {manage && (q.data?.suggestions.length ?? 0) > 0 && (
@@ -145,7 +139,17 @@ export function FixedAssetsPage() {
         columns={columns}
         rowKey={(a) => a.id}
         rowHref={(a) => `/books/assets/${a.id}`}
-        empty={{ icon: Warehouse, title: 'No fixed assets on the register', description: 'Add a vehicle, a fleet of tablets or an office build-out to depreciate it.' }}
+        empty={{
+          icon: Warehouse,
+          title: 'No fixed assets on the register',
+          description: 'Add a vehicle, a fleet of tablets or an office build-out to depreciate it.',
+          action: manage ? (
+            <Button onClick={() => setAdding({ from: null })}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add asset
+            </Button>
+          ) : undefined,
+        }}
       />
       <AddAssetDialog open={!!adding} onOpenChange={(o) => !o && setAdding(null)} from={adding?.from ?? null} onMade={(id) => navigate(`/books/assets/${id}`)} />
     </ListTemplate>

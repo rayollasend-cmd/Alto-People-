@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   ArrowLeft,
   BookOpen,
+  MessageSquare,
   Eye,
   Plus,
   ThumbsDown,
@@ -30,6 +32,7 @@ import {
   voteKbArticle,
 } from '@/lib/kb124Api';
 import { useAuth } from '@/lib/auth';
+import { useAssistant } from '@/lib/assistantContext';
 import { useConfirm } from '@/lib/confirm';
 import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
@@ -102,6 +105,7 @@ export function KbHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
+  const assistant = useAssistant();
   const [tab, setTab] = useState<'browse' | 'admin'>('browse');
 
   // Browse search is debounced ~250ms so each keystroke doesn't fire a
@@ -200,25 +204,30 @@ export function KbHome() {
     <ListTemplate
         title={t('kb.title')}
         subtitle={t('kb.subtitle')}
-        breadcrumbs={[{ label: t('kb.crumbSection') }, { label: t('kb.title') }]}
     >
 
-      <div className="flex items-center justify-between">
-        <SegmentedControl
-          ariaLabel={t('kb.viewAria')}
-          value={tab}
-          onChange={(v) => setTab(v)}
-          options={[
-            { value: 'browse' as const, label: t('kb.tab.browse') },
-            ...(canManage ? [{ value: 'admin' as const, label: t('kb.tab.admin') }] : []),
-          ]}
-        />
-        {canManage && tab === 'admin' && (
-          <Button onClick={() => setEditing('new')}>
-            <Plus className="mr-2 h-4 w-4" /> {t('kb.newArticle')}
-          </Button>
-        )}
-      </div>
+      {/* Browse / Manage only for the people who manage articles: a
+          one-option switch ("Browse") said nothing to everyone else. The
+          trail comes from the nav (Me › Help center), not a hand-written
+          "Workforce" crumb. */}
+      {canManage && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SegmentedControl
+            ariaLabel={t('kb.viewAria')}
+            value={tab}
+            onChange={(v) => setTab(v)}
+            options={[
+              { value: 'browse' as const, label: t('kb.tab.browse') },
+              { value: 'admin' as const, label: t('kb.tab.admin') },
+            ]}
+          />
+          {tab === 'admin' && (
+            <Button onClick={() => setEditing('new')}>
+              <Plus className="mr-2 h-4 w-4" /> {t('kb.newArticle')}
+            </Button>
+          )}
+        </div>
+      )}
 
       {tab === 'browse' ? (
         <>
@@ -270,11 +279,23 @@ export function KbHome() {
                         : t('kb.noArticlesDesc')
                   }
                   action={
-                    !q && canManage ? (
+                    q ? undefined : canManage ? (
                       <Button onClick={startCreate}>
                         <Plus className="mr-2 h-4 w-4" /> {t('kb.newArticle')}
                       </Button>
-                    ) : undefined
+                    ) : (
+                      // Nothing published: the next step is a person to ask.
+                      <span className="flex flex-wrap justify-center gap-2">
+                        {assistant.available && (
+                          <Button onClick={() => assistant.setOpen(true)}>
+                            <MessageSquare className="mr-2 h-4 w-4" /> {t('kb.askHugo')}
+                          </Button>
+                        )}
+                        <Button asChild variant={assistant.available ? 'outline' : 'primary'}>
+                          <Link to="/hr-cases">{t('kb.askHr')}</Link>
+                        </Button>
+                      </span>
+                    )
                   }
                 />
               ) : (

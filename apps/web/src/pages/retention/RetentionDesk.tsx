@@ -37,9 +37,11 @@ import {
   EmptyState,
   Field,
   MetricCard,
+  MetricStrip,
   SegmentedControl,
   SkeletonRows,
 } from '@/components/ui';
+import { useUrlParam } from '@/lib/useUrlState';
 
 /**
  * Retention: who might leave soon, why, and what to do about it this week.
@@ -54,7 +56,7 @@ export const PLAY_LABEL: Record<PlayKind, string> = {
   CHECK_IN: 'Check in with them',
   SCHEDULE_FIX: 'Fix their schedule',
   RIDE_HELP: 'Help with their ride',
-  RECOGNITION: 'Recognise their work',
+  RECOGNITION: 'Recognize their work',
   PAY_REVIEW: 'Review their pay',
 };
 
@@ -188,11 +190,14 @@ function PersonRow({ item, onPlay }: { item: RetentionItem; onPlay: (k: PlayKind
   );
 }
 
+const RISK_VIEWS = ['AT_RISK', 'HIGH', 'ALL'] as const;
+
 export function RetentionDesk() {
   const { can } = useAuth();
   const term = useTerm();
   const qc = useQueryClient();
-  const [band, setBand] = useState<'AT_RISK' | 'HIGH' | 'ALL'>('AT_RISK');
+  // ?risk=HIGH / ?risk=ALL — the view lives in the URL.
+  const [band, setBand] = useUrlParam<'AT_RISK' | 'HIGH' | 'ALL'>('risk', 'AT_RISK', RISK_VIEWS);
   const [playing, setPlaying] = useState<{ item: RetentionItem; kind: PlayKind } | null>(null);
   const list = useQuery({ queryKey: ['retention', 'list', band], queryFn: () => listRetention({ band: band === 'ALL' ? undefined : band }) });
   const summary = useQuery({ queryKey: ['retention', 'summary'], queryFn: getRetentionSummary });
@@ -211,7 +216,6 @@ export function RetentionDesk() {
     <ListTemplate
       title="Retention"
       subtitle={`Who might leave soon, why, and what you can do this week. Scores are a prompt for a conversation — never shown to the ${term('worker').toLowerCase()}, never used for discipline.`}
-      breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Retention' }]}
       secondaryActions={
         can('manage:org') ? (
           <Button variant="outline" size="sm" onClick={() => recompute.mutate()} loading={recompute.isPending}>
@@ -235,16 +239,17 @@ export function RetentionDesk() {
     >
       <div className="space-y-6">
         {s && (
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <MetricCard label="High risk" value={s.bands.HIGH} hint="Act this week" />
+          <MetricStrip label="Risk at a glance">
+            <MetricCard label="High risk" value={s.bands.HIGH} hint="Act this week" tone={s.bands.HIGH > 0 ? 'alert' : 'default'} onClick={() => setBand('HIGH')} selected={band === 'HIGH'} />
             <MetricCard label="Some risk" value={s.bands.MEDIUM} hint="Keep an eye on them" />
             <MetricCard label="Low risk" value={s.bands.LOW} hint="Steady" />
             <MetricCard
               label="Best play so far"
               value={bestPlay ? `${bestPlay.stayRate}%` : '—'}
-              hint={bestPlay ? `stayed after “${PLAY_LABEL[bestPlay.kind].toLowerCase()}”` : 'Shows once plays have 90-day outcomes'}
+              hint={bestPlay ? `stayed after “${PLAY_LABEL[bestPlay.kind].toLowerCase()}”` : undefined}
+              nothing={bestPlay ? undefined : 'Shows once plays have 90-day outcomes'}
             />
-          </div>
+          </MetricStrip>
         )}
         {s && s.stores.length > 0 && <RiskByPlace stores={s.stores} />}
         {list.isError ? (

@@ -35,9 +35,10 @@ const api = vi.hoisted(() => ({
   syncAca1095c: vi.fn(),
 }));
 vi.mock('@/lib/taxcompApi', async (orig) => ({ ...(await orig<typeof import('@/lib/taxcompApi')>()), ...api }));
-vi.mock('@/lib/onboardingApi', async (orig) => ({ ...(await orig<typeof import('@/lib/onboardingApi')>()), getApplication: vi.fn().mockResolvedValue({ tasks: [] }) }));
+// The checklist holds the WOTC task: a task page whose kind isn't on the checklist says "not part of your onboarding" instead.
+vi.mock('@/lib/onboardingApi', async (orig) => ({ ...(await orig<typeof import('@/lib/onboardingApi')>()), getApplication: vi.fn().mockResolvedValue({ tasks: [{ id: 't1', kind: 'WOTC_SCREENING', status: 'PENDING', title: 'Tax credit questions' }] }) }));
 
-import { StateTaxCoverage } from '@/pages/payroll/StateTaxCoverage';
+import { StateTaxTables } from '@/pages/payroll/StateTaxCoverage';
 import { WotcDesk } from '@/pages/payroll/WotcDesk';
 import { AcaHours } from '@/pages/benefits/AcaHours';
 import { WotcScreeningTask } from '@/pages/onboarding/tasks/WotcScreeningTask';
@@ -49,19 +50,22 @@ beforeEach(() => {
   api.calculateStateTax.mockResolvedValue({ state: 'DE', perPeriod: 59.35, coverage: 'awaiting_review' });
 });
 
-describe('<StateTaxCoverage>', () => {
+describe('Tax tables › State', () => {
   it('leads with what needs attention, and records a review only once it is confirmed', async () => {
     api.getStateCoverage.mockResolvedValue({
       counts: { verified: 27, acknowledged: 0, awaitingReview: 24, blockedPeople: 3 },
       states: [
         { state: 'DE', name: 'Delaware', coverage: 'awaiting_review', people: 3, taxYear: 2025, confidence: 'medium', source: 'Delaware Division of Revenue (2025)', notes: 'Standard deduction $3,250.', form: null, acknowledgment: null },
         { state: 'FL', name: 'Florida', coverage: 'verified', people: 9, taxYear: null, confidence: null, source: null, notes: null, form: null, acknowledgment: null },
+        // Awaiting review, but nobody works there: not anyone's to-do (F500 G3).
+        { state: 'VT', name: 'Vermont', coverage: 'awaiting_review', people: 0, taxYear: 2025, confidence: 'medium', source: null, notes: null, form: null, acknowledgment: null },
       ],
     });
     api.acknowledgeState.mockResolvedValue({ ok: true });
-    renderAs('HR_ADMINISTRATOR', <StateTaxCoverage />, '/payroll/state-tax');
+    renderAs('HR_ADMINISTRATOR', <StateTaxTables />, '/payroll/tax-tables?tab=state');
     expect(await screen.findByText('Delaware')).toBeInTheDocument();
     expect(screen.queryByText('Florida')).toBeNull(); // covered — not in "Needs attention"
+    expect(screen.queryByText('Vermont')).toBeNull(); // nobody there
     await userEvent.click(screen.getByRole('row', { name: 'Open Delaware' }));
     const drawer = await screen.findByRole('dialog');
     expect(within(drawer).getByText(/Delaware Division of Revenue/)).toBeInTheDocument();
@@ -130,7 +134,13 @@ describe('<WotcDesk>', () => {
     api.listWotcScreenings.mockResolvedValue({ screenings: [], truncated: false });
     api.getWotcSettings.mockResolvedValue({ enabled: false, designatedZips: 0 });
     renderAs('HR_ADMINISTRATOR', <WotcDesk />, '/payroll/wotc');
-    await userEvent.click(await screen.findByRole('button', { name: 'Turn on screening' }));
+    const turnOn = await screen.findByRole('button', { name: 'Turn on screening' });
+    // The banner explains every zero below it, so it comes before the numbers.
+    const firstTile = screen.getByText('Credit earned');
+    expect(turnOn.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // A plain label, not a form number in prime space.
+    expect(screen.getAllByText('Download Form 9061 data').length).toBeGreaterThan(0);
+    await userEvent.click(turnOn);
     const dialog = await screen.findByRole('dialog');
     await userEvent.type(within(dialog).getByLabelText(/designated zip codes/i), '1234 EZ');
     expect(within(dialog).getByRole('alert')).toHaveTextContent('isn’t a 5-digit ZIP');

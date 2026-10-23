@@ -137,12 +137,15 @@ export function ExpirationAtRisk({ filters, setFilters, onRenew }: { filters: Ri
     <div className="space-y-4">
       <RiskFilterBar data={data} filters={filters} setFilters={setFilters} />
       {data.truncated && <ErrorBanner severity="warning">Showing the first {data.items.length.toLocaleString()} expiring credentials. Narrow by {term('label.store').toLowerCase()} or credential to see the rest.</ErrorBanner>}
-      <p className="text-sm text-ink-muted" aria-live="polite">
-        {atRisk.length === 0
-          ? 'No scheduled shift is blocked by a lapsing credential.'
-          : `${atRisk.length} ${atRisk.length === 1 ? 'lapse blocks' : 'lapses block'} a scheduled shift — the soonest is ${shiftDay(atRisk[0]!.blockingShift!)}.`}
-        {others > 0 && ` ${others} more lapse within 30 days with no shift affected yet.`}
-      </p>
+      {/* The empty state below already says nobody is blocked; the line
+          only speaks when there is something to add. */}
+      {(atRisk.length > 0 || others > 0) && (
+        <p className="text-sm text-ink-muted" aria-live="polite">
+          {atRisk.length > 0 &&
+            `${atRisk.length} ${atRisk.length === 1 ? 'lapse blocks' : 'lapses block'} a scheduled shift — the soonest is ${shiftDay(atRisk[0]!.blockingShift!)}.`}
+          {others > 0 && `${atRisk.length > 0 ? ' ' : ''}${others} more ${others === 1 ? 'lapses' : 'lapse'} within 30 days with no shift affected yet.`}
+        </p>
+      )}
       {atRisk.length === 0 ? (
         <Card>
           <CardContent className="p-0">
@@ -244,6 +247,9 @@ export function ExpirationTimeline({ filters, setFilters, onRenew }: { filters: 
   return (
     <div className="space-y-4">
       <RiskFilterBar data={data} filters={filters} setFilters={setFilters} />
+      {/* No points, no chart: an empty axis says nothing the empty state
+          below doesn't. */}
+      {total > 0 && (
       <ChartFrame
         title="Lapsing each week"
         summary={`${total} credentials lapse over the next ${data.weeks.length} weeks; the busiest week has ${Math.max(0, ...perWeek.map((w) => w.lapsing))}.`}
@@ -265,6 +271,7 @@ export function ExpirationTimeline({ filters, setFilters, onRenew }: { filters: 
           </BarChart>
         </ResponsiveContainer>
       </ChartFrame>
+      )}
 
       {grid.length === 0 ? (
         <Card>

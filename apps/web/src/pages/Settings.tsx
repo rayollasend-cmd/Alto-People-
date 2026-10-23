@@ -27,7 +27,6 @@ import {
   requestEmailChange,
   revokeOtherSessions,
   startMfaEnrollment,
-  updateProfile,
   updateLanguage,
   updateTimezone,
   type LoginEvent,
@@ -92,15 +91,50 @@ export function Settings() {
       else next.add(k);
       return next;
     });
-  const jump = (k: SectionKey) => {
+  const jump = (k: SectionKey, smooth = true) => {
     setOpen((prev) => new Set(prev).add(k));
+    // The section is in the URL (#notifications), so a link from the bell
+    // or another page lands on it open — and Back returns to it (F500 G5).
+    try {
+      if (window.location.hash !== `#${k}`) window.history.replaceState(window.history.state, '', `#${k}`);
+    } catch {
+      /* no history in this environment */
+    }
     // After the fold opens, so the section's height is real.
-    requestAnimationFrame(() => document.getElementById(`settings-${k}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    requestAnimationFrame(() => document.getElementById(`settings-${k}`)?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }));
   };
+  // Arriving at /settings#notifications (or #settings-notifications): open it and go there.
+  useEffect(() => {
+    const k = sectionFromHash(typeof window === 'undefined' ? '' : window.location.hash);
+    if (k) jump(k, false);
+  }, []);
+  // Which section is on screen, for the nav's current link (scroll-spy).
+  const [active, setActive] = useState<SectionKey>(() => sectionFromHash(typeof window === 'undefined' ? '' : window.location.hash) ?? 'profile');
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return;
+    const seen = new Map<SectionKey, number>();
+    const io = new IntersectionObserver(
+      (items) => {
+        for (const it of items) {
+          const k = it.target.id.replace('settings-', '') as SectionKey;
+          seen.set(k, it.isIntersecting ? it.intersectionRatio : 0);
+        }
+        const top = SECTION_KEYS.find((k) => (seen.get(k) ?? 0) > 0);
+        if (top) setActive(top);
+      },
+      { rootMargin: '-80px 0px -50% 0px', threshold: [0, 0.01] },
+    );
+    for (const k of SECTION_KEYS) {
+      const el = document.getElementById(`settings-${k}`);
+      if (el) io.observe(el);
+    }
+    return () => io.disconnect();
+  }, []);
   const { t } = useI18n();
 
   return (
-    <div className="mx-auto space-y-6">
+    // One readable column (F500 G5): half-width cards beside empty space at 1440 read as gaps.
+    <div className="mx-auto max-w-3xl space-y-6">
       <PageHeader
         title={t('settingsPage.title')}
         subtitle={
@@ -125,13 +159,15 @@ export function Settings() {
           the page was twelve phone screens tall). A sticky row of links
           jumps between them; on a phone each section folds, and only
           Profile starts open. */}
-      <SettingsNav open={open} onJump={jump} hasAssociate={!!user?.associateId} />
+      <SettingsNav active={active} onJump={jump} hasAssociate={!!user?.associateId} />
 
       <SettingsSection id="profile" title={t('settings.sec.profile')} icon={UserIcon} open={open.has('profile')} onToggle={toggle}>
-        {user?.associateId && <ProfileCard />}
-        {/* Everyone gets a photo: an associate's headshot, or the photo on
-            a staff account (HR, recruiters, managers have no associate). */}
-        <ProfilePhotoCard />
+        {/* One home for personal data (F500 G5): an associate's name, photo,
+            phone and address live on My profile; this page keeps sign-in,
+            notifications, devices, language and time zone. */}
+        {user?.associateId && <ProfileOnMeCard />}
+        {/* A staff account's photo (HR, recruiters, managers have no associate). */}
+        {!user?.associateId && <ProfilePhotoCard />}
         <EmailCard />
         <TimezoneCard />
         <LanguageCard />
@@ -167,6 +203,11 @@ export function Settings() {
 
 type SectionKey = 'profile' | 'notifications' | 'security' | 'devices' | 'data';
 const SECTION_KEYS: SectionKey[] = ['profile', 'notifications', 'security', 'devices', 'data'];
+/** "#notifications" or "#settings-notifications" → the section. */
+function sectionFromHash(hash: string): SectionKey | null {
+  const k = hash.replace(/^#/, '').replace(/^settings-/, '') as SectionKey;
+  return SECTION_KEYS.includes(k) ? k : null;
+}
 const SECTION_LABEL: Record<SectionKey, MessageKey> = {
   profile: 'settings.sec.profile',
   notifications: 'settings.sec.notifications',
@@ -176,7 +217,7 @@ const SECTION_LABEL: Record<SectionKey, MessageKey> = {
 };
 
 /** The in-page section links, sticky under the top bar while the page scrolls. */
-function SettingsNav({ open, onJump }: { open: ReadonlySet<SectionKey>; onJump: (k: SectionKey) => void; hasAssociate: boolean }) {
+function SettingsNav({ active, onJump }: { active: SectionKey; onJump: (k: SectionKey) => void; hasAssociate: boolean }) {
   const { t } = useI18n();
   return (
     <nav
@@ -187,13 +228,17 @@ function SettingsNav({ open, onJump }: { open: ReadonlySet<SectionKey>; onJump: 
         {SECTION_KEYS.map((k) => (
           <li key={k}>
             <a
-              href={`#settings-${k}`}
+              href={`#${k}`}
               onClick={(e) => {
                 e.preventDefault();
                 onJump(k);
               }}
-              aria-current={open.has(k) ? 'true' : undefined}
-              className="inline-flex whitespace-nowrap rounded-md px-3 py-1.5 text-sm text-ink-muted hover:bg-surface-raised hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11 coarse:items-center"
+              // The section on screen, by scroll — not every section a phone has unfolded.
+              aria-current={active === k ? 'location' : undefined}
+              className={cn(
+                'inline-flex whitespace-nowrap rounded-md px-3 py-1.5 text-sm text-ink-muted hover:bg-surface-raised hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11 coarse:items-center',
+                active === k && 'bg-surface-raised font-medium text-ink',
+              )}
             >
               {t(SECTION_LABEL[k])}
             </a>
@@ -246,7 +291,8 @@ function SettingsSection({
       </div>
       <div
         id={`settings-${id}-body`}
-        className={cn('mt-3 gap-6', open ? 'grid' : 'hidden md:grid', wide ? 'grid-cols-1' : 'grid-cols-1 xl:grid-cols-2', '[&>*]:min-w-0 items-start')}
+        // One column: paired cards of unequal height left gaps at 1440 (F500 G5).
+        className={cn('mt-3 gap-6', open ? 'grid' : 'hidden md:grid', 'grid-cols-1', !wide && 'max-w-3xl', '[&>*]:min-w-0 items-start')}
       >
         {children}
       </div>
@@ -1089,11 +1135,10 @@ function NotificationsCard() {
     label: string,
   ) => (
     <label
-      className={`inline-flex flex-col items-center gap-1 ${
+      className={`inline-flex w-11 flex-col items-center gap-1 ${
         e.mandatory ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
       }`}
     >
-      <span className="text-[10px] uppercase tracking-wide text-silver">{label}</span>
       <input
         type="checkbox"
         className="sr-only peer"
@@ -1127,6 +1172,12 @@ function NotificationsCard() {
             <Skeleton className="h-10 w-3/4" />
           </div>
         ) : (
+          <>
+          {/* One header row names the columns (it repeated over all 14 rows). */}
+          <div className="flex items-end justify-end gap-3 border-b border-navy-secondary pb-1.5 text-2xs font-medium uppercase tracking-wide text-silver" data-testid="notif-columns">
+            <span className="w-11 text-center">{t('settingsPage.notif.bell')}</span>
+            <span className="w-11 text-center">{t('settingsPage.notif.email')}</span>
+          </div>
           <ul className="divide-y divide-navy-secondary">
             {entries.map((e) => (
               <li
@@ -1152,6 +1203,7 @@ function NotificationsCard() {
               </li>
             ))}
           </ul>
+          </>
         )}
 
         {/* Push — device-level, separate from the per-category email
@@ -1378,89 +1430,27 @@ function SessionsCard() {
   );
 }
 
-function ProfileCard() {
-  const { user, refreshUser } = useAuth();
+/** For an associate: where their name, photo, phone and address are kept now — read here, edited on My profile. */
+function ProfileOnMeCard() {
+  const { user } = useAuth();
   const { t } = useI18n();
-  const [firstName, setFirstName] = useState(user?.firstName ?? '');
-  const [lastName, setLastName] = useState(user?.lastName ?? '');
-  const [submitting, setSubmitting] = useState(false);
-
-  const dirty =
-    firstName.trim() !== (user?.firstName ?? '') ||
-    lastName.trim() !== (user?.lastName ?? '');
-
-  const submit = async () => {
-    const f = firstName.trim();
-    const l = lastName.trim();
-    if (!dirty) {
-      toast.error(t('settingsPage.profile.noChange'));
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const updated = await updateProfile({
-        firstName: f,
-        lastName: l,
-      });
-      toast.success(t('settingsPage.profile.updated'), {
-        description: t('settingsPage.profile.nowName', { name: `${updated.firstName} ${updated.lastName}` }),
-      });
-      // Re-fetch /auth/me so the chrome avatar/name update without reload.
-      await refreshUser();
-    } catch (err) {
-      toast.error(t('settingsPage.profile.updateFailed'), {
-        description: err instanceof Error ? err.message : t('common.wentWrong'),
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <UserIcon className="h-4 w-4 text-gold" />
-          {t('settingsPage.profile.title')}
-        </CardTitle>
-        <CardDescription>
-          {t('settingsPage.profile.desc')}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label={t('settingsPage.profile.firstName')}>
-            {(p) => (
-              <Input
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                maxLength={100}
-                {...p}
-              />
-            )}
-          </Field>
-          <Field label={t('settingsPage.profile.lastName')}>
-            {(p) => (
-              <Input
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                maxLength={100}
-                {...p}
-              />
-            )}
-          </Field>
+    <Card data-testid="settings-profile-on-me">
+      <CardContent className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium text-ink">{[user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.email}</div>
+          <p className="text-sm text-ink-muted">{t('settingsPage.profile.onMe')}</p>
         </div>
-        <div className="mt-4 flex justify-end">
-          <Button onClick={submit} loading={submitting} disabled={!dirty}>
-            {t('settingsPage.profile.save')}
-          </Button>
-        </div>
+        <Button asChild variant="secondary" size="sm">
+          <Link to="/me">{t('settingsPage.profile.openMe')}</Link>
+        </Button>
       </CardContent>
     </Card>
   );
 }
 
-function ProfilePhotoCard() {
+/** The profile photo uploader — Settings for a staff account, My profile for an associate. */
+export function ProfilePhotoCard() {
   const { user, refreshUser } = useAuth();
   const { t } = useI18n();
   const confirm = useConfirm();
@@ -1525,7 +1515,7 @@ function ProfilePhotoCard() {
           {t('settingsPage.photo.title')}
         </CardTitle>
         <CardDescription>
-          {t('settingsPage.photo.desc')}
+          {t(user?.role === 'CLIENT_PORTAL' ? 'settingsPage.photo.descPortal' : 'settingsPage.photo.desc')}
         </CardDescription>
       </CardHeader>
       <CardContent>

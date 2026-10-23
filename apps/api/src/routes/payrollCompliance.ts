@@ -287,7 +287,7 @@ payrollComplianceRouter.get('/pay-compliance/new-hire-reports', requireAuth, PRO
   });
   const today = new Date(new Date().toISOString().slice(0, 10));
   const { blocked } = await buildNewHireRecords(prisma, rows.filter((r) => r.status === 'DUE'));
-  const blockedBy = new Map(blocked.map((b) => [b.reportId, b.reasons]));
+  const blockedBy = new Map(blocked.map((b) => [b.reportId, b]));
   res.json({
     reports: rows.map((r) => ({
       id: r.id,
@@ -303,7 +303,10 @@ payrollComplianceRouter.get('/pay-compliance/new-hire-reports', requireAuth, PRO
       method: r.method,
       confirmation: r.confirmation,
       submittedAt: r.submittedAt?.toISOString() ?? null,
-      blockedBy: blockedBy.get(r.id) ?? [],
+      blockedBy: blockedBy.get(r.id)?.reasons ?? [],
+      // The same gaps, split: the person's to fix on their record, the employer's once for everyone it employs.
+      missing: { person: blockedBy.get(r.id)?.person ?? [], employer: blockedBy.get(r.id)?.employer ?? [] },
+      employer: blockedBy.get(r.id) ? { id: blockedBy.get(r.id)!.employerId, name: blockedBy.get(r.id)!.employerName } : null,
       filingService: providerForState(r.state)?.label ?? null,
     })),
     truncated: rows.length === 1000,

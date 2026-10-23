@@ -12,6 +12,7 @@ import { ListTemplate } from '@/components/templates';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
@@ -117,14 +118,32 @@ export function RobotsHome() {
     [],
   );
 
-  const providerLabel = FLEET_PROVIDERS.find((p) => p.key === q.data?.provider)?.label ?? 'Simulated fleet';
+  // The connection in plain words, as a status chip — not the adapter's name
+  // in the subtitle ("Connected to Simulated fleet").
+  const provider = q.data?.provider;
+  const fleetWords = !provider || provider === 'SIMULATED' ? 'demo (simulated)' : (FLEET_PROVIDERS.find((p) => p.key === provider)?.label ?? provider);
+  const addRobot = canManage ? (
+    <Button asChild>
+      <Link to="/workers?type=ROBOT&add=1">
+        <Cpu className="h-4 w-4" />
+        Add a robot
+      </Link>
+    </Button>
+  ) : undefined;
+  const hasRobots = (q.data?.robots.length ?? 0) > 0;
 
   return (
     // Design system §4.2: the List template. The fleet's numbers are the summary; the grid is the list.
     <ListTemplate
       title="Robots"
-      subtitle={`Every robot in the registry with its fleet reading. Connected to ${providerLabel}.`}
-      breadcrumbs={[{ label: 'Operations', to: '/control-room' }, { label: 'Robots' }]}
+      subtitle="Every robot in the registry with its fleet reading."
+      status={
+        q.data ? (
+          <Badge variant={provider && provider !== 'SIMULATED' ? 'success' : 'outline'} size="sm">
+            Fleet connection: {fleetWords}
+          </Badge>
+        ) : undefined
+      }
       secondaryActions={
         <span className="flex flex-wrap items-center gap-2">
           <Button asChild variant="outline" size="sm">
@@ -141,26 +160,19 @@ export function RobotsHome() {
           )}
         </span>
       }
-      primaryAction={
-        canManage ? (
-          <Button asChild>
-            <Link to="/workers?type=ROBOT&add=1">
-              <Cpu className="h-4 w-4" />
-              Add a robot
-            </Link>
-          </Button>
-        ) : undefined
-      }
+      primaryAction={addRobot}
       summary={
-        q.data ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        // Six tiles of "0" and "—" above "No robots yet" said nothing six
+        // times: the numbers appear with the first robot (F500 G2).
+        q.data && hasRobots ? (
+          <MetricStrip label="The fleet">
             <MetricCard label="Robots" value={q.data.counts.total} />
             <MetricCard label="Working" value={q.data.counts.working} />
             <MetricCard label="Charging" value={q.data.counts.charging} />
             <MetricCard label="Idle" value={q.data.counts.idle} />
-            <MetricCard label="Errors or stopped" value={q.data.counts.errors + q.data.counts.stopped} accent={q.data.counts.errors + q.data.counts.stopped > 0} />
+            <MetricCard label="Errors or stopped" value={q.data.counts.errors + q.data.counts.stopped} tone={q.data.counts.errors + q.data.counts.stopped > 0 ? 'alert' : 'default'} />
             <MetricCard label="Average battery" value={q.data.counts.avgBatteryPct === null ? '—' : `${q.data.counts.avgBatteryPct}%`} />
-          </div>
+          </MetricStrip>
         ) : null
       }
     >
@@ -169,7 +181,12 @@ export function RobotsHome() {
       ) : q.isPending ? (
         <Skeleton className="h-64" />
       ) : q.data.robots.length === 0 ? (
-        <EmptyState icon={Cpu} title="No robots yet" description="Add a robot on the Workforce roster; its profile, commissioning and checklist live here." />
+        <EmptyState
+          icon={Cpu}
+          title="No robots yet"
+          description="A robot's profile, commissioning and checklist live here once it is added."
+          action={addRobot}
+        />
       ) : (
         <DataGrid id="robots" caption="Robots" rows={q.data.robots} rowKey={(r) => r.id} columns={columns} rowHref={(r) => `/robots/${r.id}`} rowActionLabel={(r) => `Open ${r.name}`} />
       )}

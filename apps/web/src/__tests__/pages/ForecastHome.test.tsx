@@ -110,8 +110,33 @@ describe('<ForecastHome>', () => {
     expect(screen.getByText(/Truck schedule ×1\.20 \(Client truck schedule\)/)).toBeInTheDocument();
     // The scoring table.
     expect(screen.getByText('3.8%')).toBeInTheDocument();
-    // The weights, said plainly.
-    expect(screen.getByText(/Last year weighs 50%/)).toBeInTheDocument();
+    // The band, said as a range of the forecast — not "band -15% to +18%" on the filter row (F500 G4).
+    expect(screen.getByText(/Likely range: 0\.85× to 1\.18× the forecast/)).toBeInTheDocument();
+    expect(screen.queryByText(/Last year weighs/)).not.toBeInTheDocument();
+    // A year of history: no low-confidence warning.
+    expect(screen.queryByText(/Low confidence/)).not.toBeInTheDocument();
+  });
+
+  it('says plainly when the forecast stands on little history and has not been scored yet', async () => {
+    vi.mocked(listForecastSites).mockResolvedValue({ run, sites: [{ ...site, historyWeeks: 9, mapePct: null }] });
+    vi.mocked(getSiteForecast).mockResolvedValue({ ...detail, site: { ...site, historyWeeks: 9, mapePct: null } });
+    renderPage();
+    expect(await screen.findByText('Front Beach 218: hours by week')).toBeInTheDocument();
+    // On the chart and on the History tile.
+    expect(screen.getAllByText('Low confidence: 9 of 26 weeks of history')).toHaveLength(2);
+    // No "—" for the back-test error: it says why there is no number.
+    expect(screen.getByText('Not scored yet')).toBeInTheDocument();
+  });
+
+  it('says when a falling trend is held, so a flat forecast beside "falling" reads right', async () => {
+    vi.mocked(listForecastSites).mockResolvedValue(sitesWithRun);
+    vi.mocked(getSiteForecast).mockResolvedValue({
+      ...detail,
+      weeks: [week('2026-10-03', 0, 80), week('2026-10-10', 66, null, { lastYearScaled: null, recentMean: 83, trendPerWeek: -16, leadWeeks: 2 })],
+    });
+    renderPage();
+    // 20% of 83 h is 17 h: two weeks at −16 h would be −32 h, so the pull stops at 17 h below.
+    expect(await screen.findByText(/recent 83 h falling 16 h a week \(held to 17 h below\)/)).toBeInTheDocument();
   });
 
   it('a read-only role sees the forecast and no compute, signals or plan actions', async () => {

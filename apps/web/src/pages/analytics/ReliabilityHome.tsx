@@ -1,20 +1,23 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Bus, Gauge, HeartPulse, RefreshCw, ScanFace } from 'lucide-react';
 import type { ReliabilityIssueRow, ReliabilityRouteRow, ReliabilityWeekRow } from '@alto-people/shared';
 import { getReliability } from '@/lib/reliabilityApi';
-import { fmtDateOnlyRange, fmtDateTime } from '@/lib/format';
+import { fmtDateOnly, fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatusIncidentsPanel } from '@/components/status/StatusIncidentsPanel';
 import { ScheduledJobsCard } from '@/components/reliability/ScheduledJobsCard';
 import { useAuth, useTenant } from '@/lib/auth';
+import { useUrlParam } from '@/lib/useUrlState';
 import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
 
 /**
@@ -27,30 +30,44 @@ import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
  *
  * One hero — the error budget — and everything else behind it. Errors
  * come from Sentry when a read token is configured on the API; without
- * one the hero says so instead of pretending zero.
+ * one the hero says so instead of pretending zero. Written for the HR
+ * admin who opens it, not for the engineer who wired it: no env-var
+ * names, no "p95" without words.
  */
 
 const WINDOWS = [
   { value: '7', label: '7 days' },
   { value: '30', label: '30 days' },
   { value: '90', label: '90 days' },
-];
+] as const;
+const WINDOW_VALUES = WINDOWS.map((w) => w.value);
+type WindowValue = (typeof WINDOW_VALUES)[number];
 
 /** "97%", "97.5%" — a decimal only when there is one to show. */
 const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 1000) / 10}%`);
 const ms = (v: number | null) => (v === null ? '—' : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${v} ms`);
 const endpoint = (r: ReliabilityRouteRow) => `${r.method} ${r.route}`;
 
-/** "Jul 4 – Jul 10": the org week as people say it. */
 /**
- * "Oct 17 – 23, 2026". The org week is a Sat→Fri run of calendar days, sent
- * as UTC-midnight instants: read as calendar days (not instants in the
- * viewer's zone, which started every week on the Friday before).
+ * "Oct 17 – 23" (or "Oct 31 – Nov 6"; the year only when it isn't this
+ * one). The org week is a Sat→Fri run of calendar days: read from the
+ * week's YYYY-MM-DD keys, never as instants in the viewer's zone (which
+ * started every week on the Friday before).
  */
-function weekLabel(w: ReliabilityWeekRow): string {
-  const lastDay = new Date(new Date(w.weekEnd).getTime() - 86_400_000).toISOString().slice(0, 10);
-  return fmtDateOnlyRange(w.weekStart, lastDay);
+export function weekLabel(w: Pick<ReliabilityWeekRow, 'weekStart' | 'weekEnd'>, now: Date = new Date()): string {
+  const first = w.weekStart.slice(0, 10);
+  const last = new Date(new Date(w.weekEnd).getTime() - 86_400_000).toISOString().slice(0, 10);
+  const y1 = Number(first.slice(0, 4));
+  const y2 = Number(last.slice(0, 4));
+  const short = (ymd: string) => fmtDateOnly(ymd, { year: false });
+  const yearTail = y2 !== now.getFullYear() ? `, ${y2}` : '';
+  if (y1 !== y2) return `${fmtDateOnly(first)} – ${fmtDateOnly(last)}`;
+  if (first.slice(5, 7) === last.slice(5, 7)) return `${short(first)} – ${Number(last.slice(8, 10))}${yearTail}`;
+  return `${short(first)} – ${short(last)}${yearTail}`;
 }
+
+/** More API starts than this in a week is a problem (an OOM loop, a crash on boot), not a deploy. */
+export const RESTARTS_PER_WEEK_OK = 3;
 
 const ROUTE_COLUMNS = [
   {
@@ -68,7 +85,7 @@ const ROUTE_COLUMNS = [
   },
   {
     key: 'p95',
-    header: 'p95',
+    header: 'Slowest 5%',
     accessor: (r: ReliabilityRouteRow) => r.p95Ms ?? -1,
     csv: (r: ReliabilityRouteRow) => (r.p95Ms === null ? '' : `${r.p95Ms}ms`),
     sortable: true,
@@ -102,7 +119,7 @@ const ROUTE_COLUMNS = [
   },
   {
     key: 'errors',
-    header: '5xx',
+    header: 'Server errors',
     accessor: (r: ReliabilityRouteRow) => r.serverError,
     sortable: true,
     searchable: false,
@@ -114,7 +131,8 @@ const ROUTE_COLUMNS = [
 ];
 
 export function ReliabilityHome() {
-  const [window, setWindow] = useState('7');
+  // In the URL, so a link to the 30-day view stays the 30-day view.
+  const [window, setWindow] = useUrlParam<WindowValue>('window', '7', WINDOW_VALUES);
   const days = Number(window);
 
   const q = useQuery({
@@ -142,16 +160,36 @@ export function ReliabilityHome() {
   const thisWeek = data?.errors.thisWeek ?? null;
   const overBudget = data ? thisWeek !== null && thisWeek > data.budget : false;
 
-  if (q.isError) return <QueryError what="reliability" query={q} />;
+  const header = (
+    <PageHeader
+      title="Reliability"
+      subtitle="Errors against the weekly budget, where the app is slow, and whether punches and rides went through."
+      secondaryActions={
+        <SegmentedControl<WindowValue>
+          options={WINDOWS.map((w) => ({ ...w }))}
+          value={window}
+          onChange={setWindow}
+          ariaLabel="Reporting window"
+        />
+      }
+    />
+  );
+
+  if (q.isError) {
+    return (
+      <div className="space-y-5">
+        {header}
+        <QueryError what="reliability" query={q} />
+      </div>
+    );
+  }
+
+  // Restarts are deploys and crashes alike; more than a few a week is the problem.
+  const restartLimit = RESTARTS_PER_WEEK_OK * Math.max(1, Math.round(days / 7));
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-silver">
-          Errors against the budget, where the API is slow, and whether punches and rides went through.
-        </p>
-        <SegmentedControl options={WINDOWS} value={window} onChange={setWindow} ariaLabel="Reporting window" />
-      </div>
+      {header}
 
       {/* ---- The hero: this week's errors against the budget ---------- */}
       <Card>
@@ -161,8 +199,8 @@ export function ReliabilityHome() {
             Errors this week
           </CardTitle>
           <CardDescription>
-            Org week, Saturday to Friday. The budget is {data?.budget ?? 10} a week; the Phase 1 exit asks for eight
-            weeks in a row under it.
+            Org week, Saturday to Friday. The budget is {data?.budget ?? 10} errors a week; the goal is eight weeks in a
+            row under it.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -172,7 +210,7 @@ export function ReliabilityHome() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="md:col-span-2">
                 <MetricCard
-                  label="In Sentry so far"
+                  label="Errors so far"
                   value={thisWeek === null ? '—' : String(thisWeek)}
                   hint={
                     <span className="inline-flex items-center gap-2">
@@ -182,7 +220,7 @@ export function ReliabilityHome() {
                       <span>of {data.budget}</span>
                     </span>
                   }
-                  accent={overBudget}
+                  tone={overBudget ? 'alert' : 'default'}
                   trend={errorTrend}
                   deltaPositiveIsGood={false}
                 />
@@ -190,7 +228,8 @@ export function ReliabilityHome() {
               <MetricCard
                 label="Weeks under budget"
                 value={streak === null ? '—' : String(streak)}
-                hint={streak === null ? 'No closed week counted yet' : streak >= 8 ? 'Exit criterion met' : `${8 - streak} more to the exit`}
+                nothing={streak === null ? 'No full week counted yet' : undefined}
+                hint={streak !== null && streak >= 8 ? 'Eight in a row: the goal is met' : `${8 - (streak ?? 0)} more for eight in a row`}
               />
             </div>
           ) : (
@@ -198,11 +237,16 @@ export function ReliabilityHome() {
               <div className="md:col-span-2">
                 <EmptyState
                   icon={AlertTriangle}
-                  title="Sentry is not connected"
+                  title="Error tracking isn't connected"
                   description={
                     <>
-                      The error budget is a Sentry number. Set <code>SENTRY_AUTH_TOKEN</code>, <code>SENTRY_ORG</code>{' '}
-                      and <code>SENTRY_PROJECTS</code> on the API to count errors here and in the Saturday summary.
+                      Errors can&apos;t be counted against the budget until it is. Ask your Alto admin to connect error
+                      tracking.
+                      {operator && (
+                        <span className="mt-1 block text-xs">
+                          For the platform team: set SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECTS on the API.
+                        </span>
+                      )}
                     </>
                   }
                 />
@@ -210,55 +254,63 @@ export function ReliabilityHome() {
               <MetricCard
                 label="Server errors this week"
                 value={String(data.errors.serverErrorsThisWeek)}
-                hint="5xx responses, from the API's own count"
-                accent={data.errors.serverErrorsThisWeek > 0}
+                hint="Requests that failed on our side, from the app's own count"
+                tone={data.errors.serverErrorsThisWeek > 0 ? 'alert' : 'default'}
               />
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* ---- The other three measures, plus restarts ------------------ */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard
-          label="Slowest busy route"
-          value={q.isLoading || !data ? '—' : ms(slowestBusy?.p95Ms ?? null)}
-          hint={slowestBusy ? `p95 · ${endpoint(slowestBusy)}` : 'p95 needs a day of traffic'}
-          accent={Boolean(slowestBusy && (slowestBusy.p95Ms ?? 0) >= 2000)}
-        />
-        <MetricCard
-          label="Kiosk punches accepted"
-          value={q.isLoading || !data ? '—' : pct(data.kiosk.rate)}
-          hint={data ? `${data.kiosk.accepted.toLocaleString()} of ${data.kiosk.total.toLocaleString()}` : 'Clock-ins the kiosk took'}
-          accent={Boolean(data && data.kiosk.rate !== null && data.kiosk.rate < 0.95)}
-        />
-        <MetricCard
-          label="Rides completed"
-          value={q.isLoading || !data ? '—' : pct(data.rides.rate)}
-          hint={
-            data
-              ? `${data.rides.completed} of ${data.rides.total}${data.rides.noShow > 0 ? ` · ${data.rides.noShow} no-show` : ''}${data.rides.unresolved > 0 ? ` · ${data.rides.unresolved} never closed` : ''}`
-              : 'Seats past their pickup time'
-          }
-          accent={Boolean(data && data.rides.rate !== null && data.rides.rate < 0.9)}
-        />
-        <MetricCard
-          label="API restarts"
-          value={q.isLoading || !data ? '—' : String(data.restarts.count)}
-          hint={data?.restarts.lastBootAt ? `Last start ${fmtDateTime(data.restarts.lastBootAt)}` : 'In the window'}
-          accent={Boolean(data && data.restarts.count > 3)}
-        />
-      </div>
+      {/* ---- The other three measures, plus restarts when there were any. A
+          measure with nothing in the window says so in words: "— 0 of 0"
+          read as a fake zero. */}
+      {q.isLoading || !data ? (
+        <Skeleton className="h-24" />
+      ) : (
+        <MetricStrip label="Reliability measures">
+          <MetricCard
+            label="Slowest busy route"
+            value={ms(slowestBusy?.p95Ms ?? null)}
+            nothing={slowestBusy ? undefined : 'Needs a day of traffic'}
+            hint={slowestBusy ? `Slowest 5% of requests · ${endpoint(slowestBusy)}` : undefined}
+            tone={slowestBusy && (slowestBusy.p95Ms ?? 0) >= 2000 ? 'warning' : 'default'}
+          />
+          <MetricCard
+            label="Kiosk punches accepted"
+            value={pct(data.kiosk.rate)}
+            nothing={data.kiosk.total === 0 ? 'No kiosk punches in this window' : undefined}
+            hint={`${data.kiosk.accepted.toLocaleString()} of ${data.kiosk.total.toLocaleString()}`}
+            tone={data.kiosk.rate !== null && data.kiosk.rate < 0.95 ? 'warning' : 'default'}
+          />
+          <MetricCard
+            label="Rides completed"
+            value={pct(data.rides.rate)}
+            nothing={data.rides.total === 0 ? 'No rides in this window' : undefined}
+            hint={`${data.rides.completed} of ${data.rides.total}${data.rides.noShow > 0 ? ` · ${data.rides.noShow} no-show` : ''}${data.rides.unresolved > 0 ? ` · ${data.rides.unresolved} never closed` : ''}`}
+            tone={data.rides.rate !== null && data.rides.rate < 0.9 ? 'warning' : 'default'}
+          />
+          {data.restarts.count > 0 && (
+            <MetricCard
+              label="API restarts"
+              value={data.restarts.count.toLocaleString()}
+              tone={data.restarts.count > restartLimit ? 'warning' : 'default'}
+              hint={`${data.restarts.count > restartLimit ? `More than ${restartLimit} in ${days} days` : `Up to ${restartLimit} in ${days} days is normal`}${data.restarts.lastBootAt ? ` · last ${fmtDateTime(data.restarts.lastBootAt)}` : ''}`}
+            />
+          )}
+        </MetricStrip>
+      )}
 
-      {/* ---- Details -------------------------------------------------- */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      {/* ---- Details. Side by side only on a wide screen: beside the Settings
+          rail, two half-width tables clipped their last column. ---------- */}
+      <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Gauge className="h-4 w-4 text-gold" aria-hidden="true" />
               Busiest routes
             </CardTitle>
-            <CardDescription>The ten most-called endpoints and their 95th-percentile response time.</CardDescription>
+            <CardDescription>The ten most-called endpoints, and how long their slowest 5% of requests took.</CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             {q.isLoading || !data ? (
@@ -268,7 +320,7 @@ export function ReliabilityHome() {
             ) : (
               <DataGrid<ReliabilityRouteRow>
                 id="reliability-busiest"
-                caption="Busiest endpoints with p95"
+                caption="Busiest endpoints and their slowest 5% of requests"
                 rows={data.routes.busiest}
                 rowKey={endpoint}
                 search={false}
@@ -287,7 +339,7 @@ export function ReliabilityHome() {
               <RefreshCw className="h-4 w-4 text-warning" aria-hidden="true" />
               Slowest routes
             </CardTitle>
-            <CardDescription>The five slowest at p95 among endpoints with at least twenty calls.</CardDescription>
+            <CardDescription>The five slowest, judged by their slowest 5% of requests, among endpoints with at least twenty calls.</CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             {q.isLoading || !data ? (
@@ -295,13 +347,13 @@ export function ReliabilityHome() {
             ) : data.routes.slowest.length === 0 ? (
               <EmptyState
                 icon={RefreshCw}
-                title="No p95 yet"
+                title="No timings yet"
                 description="Response-time histograms accumulate from the first request after this shipped; a day of traffic fills this in."
               />
             ) : (
               <DataGrid<ReliabilityRouteRow>
                 id="reliability-slowest"
-                caption="Slowest endpoints by p95"
+                caption="Slowest endpoints by their slowest 5% of requests"
                 rows={data.routes.slowest}
                 rowKey={endpoint}
                 search={false}
@@ -315,26 +367,26 @@ export function ReliabilityHome() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-alert" aria-hidden="true" />
-              Open issues in Sentry
+              Open errors
             </CardTitle>
-            <CardDescription>Unresolved, most frequent first, in the window.</CardDescription>
+            <CardDescription>Unresolved errors from error tracking, most frequent first, in the window.</CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             {q.isLoading || !data ? (
               <Skeleton className="h-48" />
             ) : !data.sentry.configured ? (
-              <EmptyState icon={AlertTriangle} title="Sentry is not connected" description="" />
+              <EmptyState icon={AlertTriangle} title="Error tracking isn't connected" description="Open errors list here once it is." />
             ) : data.sentry.issues.length === 0 ? (
               <EmptyState icon={AlertTriangle} title="Nothing open" description="No unresolved issue was seen in the window." />
             ) : (
               <DataGrid<ReliabilityIssueRow>
                 id="reliability-issues"
-                caption="Open Sentry issues"
+                caption="Open errors"
                 rows={data.sentry.issues}
                 rowKey={(r) => r.shortId}
                 search={false}
@@ -399,7 +451,7 @@ export function ReliabilityHome() {
                     className: 'tabular-nums',
                     cell: (w) => (w.sentryErrors === null ? <span className="text-silver">—</span> : w.sentryErrors),
                   },
-                  { key: '5xx', header: '5xx', accessor: (w) => w.serverErrors, sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver' },
+                  { key: '5xx', header: 'Server errors', accessor: (w) => w.serverErrors, sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver' },
                   { key: 'calls', header: 'Calls', accessor: (w) => w.requests, sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver', cell: (w) => w.requests.toLocaleString() },
                   {
                     key: 'verdict',

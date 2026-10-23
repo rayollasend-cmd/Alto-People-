@@ -8,6 +8,7 @@ vi.mock('@/lib/recruiting90Api', () => ({
   getOfferLetter: vi.fn(),
   acceptOfferLetter: vi.fn(),
   declineOfferLetter: vi.fn(),
+  offerLetterPdfHref: (token: string) => `/api/offer-letters/${token}/letter.pdf`,
 }));
 
 import { ApiError } from '@/lib/api';
@@ -86,7 +87,26 @@ describe('/offer/:token', () => {
   it('a used or made-up link says what to do', async () => {
     vi.mocked(getOfferLetter).mockRejectedValue(new ApiError(404, 'not_found', 'This offer link is not valid.'));
     renderAt();
-    expect(await screen.findByRole('status')).toHaveTextContent(/already been used, or it isn't a real link/i);
+    expect(await screen.findByRole('status')).toHaveTextContent(/already been used, or it isn’t a real link/i);
+    expect(screen.getByTestId('link-problem')).toHaveAttribute('data-kind', 'invalid');
+  });
+
+  it('names the recruiter, offers the letter as a PDF, and puts "Respond by" with the facts (F500 G5)', async () => {
+    vi.mocked(getOfferLetter).mockResolvedValue({ ...OFFER, recruiter: { name: 'Rosa Recruiter', email: 'rosa@altohr.com', phone: '+18505550199' } });
+    renderAt();
+    expect(await screen.findByRole('heading', { name: 'Cashier' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Download letter \(PDF\)/ })).toHaveAttribute('href', '/api/offer-letters/tok-123/letter.pdf');
+    expect(screen.getByTestId('offer-respond-by')).toHaveTextContent(/Oct \d+, 2026/);
+    const contact = screen.getByTestId('contact-line');
+    expect(contact).toHaveTextContent('Rosa Recruiter');
+    expect(contact.querySelector('a[href="mailto:rosa@altohr.com"]')).not.toBeNull();
+    expect(contact.querySelector('a[href^="tel:"]')).not.toBeNull();
+  });
+
+  it('a decided offer still names who to talk to', async () => {
+    vi.mocked(getOfferLetter).mockResolvedValue({ ...OFFER, status: 'DECLINED' as never, recruiter: { name: 'Rosa Recruiter', email: 'rosa@altohr.com', phone: null } });
+    renderAt();
+    expect(await screen.findByRole('status')).toHaveTextContent('Rosa Recruiter');
   });
 
   it('an expired offer can no longer be signed', async () => {

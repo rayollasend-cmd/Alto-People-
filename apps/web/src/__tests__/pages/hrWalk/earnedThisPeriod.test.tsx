@@ -137,7 +137,19 @@ describe('<AssociateDashboard> — earned this pay period', () => {
   it('is hidden when there is no pay schedule to measure a period by', async () => {
     vi.mocked(getMyNextPayday).mockResolvedValue({ nextPayday: null });
     renderHome();
-    expect(await screen.findByText('Next 14 days')).toBeInTheDocument();
+    // No shifts ahead: the 14-day strip is one line (F500 G5) — the page has rendered.
+    expect(await screen.findByTestId('next-14-none')).toHaveTextContent('No shifts in the next 14 days.');
+    expect(screen.queryByTestId('earned-this-period')).not.toBeInTheDocument();
+  });
+
+  it('is hidden with nothing clocked this period — no "$0.00 · 0h" beside a day ring (F500 G5)', async () => {
+    vi.mocked(getMyNextPayday).mockResolvedValue({
+      nextPayday: { payDate: plus(9), periodStart: plus(-3), periodEnd: plus(10), schedule: 'Biweekly' },
+    });
+    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [] as never });
+    renderHome();
+    expect(await screen.findByTestId('next-14-none')).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByTestId('earned-this-period')).not.toBeInTheDocument();
   });
 });

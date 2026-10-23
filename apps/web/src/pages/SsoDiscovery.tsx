@@ -43,11 +43,9 @@ export default function SsoDiscovery({ email, slug, from, disabled }: { email: s
     staleTime: 5 * 60_000,
   });
 
-  // Brief 2-6 step 5 (decision 9): the hosted status page, linked from the sign-in page too.
-  const status = useQuery({ queryKey: ['support', 'config'], queryFn: () => apiFetch<{ statusPageUrl: string | null }>('/support/config'), retry: false, staleTime: 60 * 60_000 });
+  // The status page is the footer's one link (AuthShell, F500 G5), not a second one here.
   const found = q.data?.connections ?? [];
-  const statusUrl = status.data?.statusPageUrl ?? null;
-  if (!found.length && !statusUrl) return null;
+  if (!found.length) return null;
   return (
     <div className="space-y-3">
       {found.map((c) => (
@@ -65,13 +63,6 @@ export default function SsoDiscovery({ email, slug, from, disabled }: { email: s
           {c.label}
         </Button>
       ))}
-      {statusUrl && (
-        <p className="text-center text-2xs text-silver/70">
-          <a className="underline-offset-2 hover:underline" href={statusUrl} target="_blank" rel="noreferrer">
-            System status
-          </a>
-        </p>
-      )}
     </div>
   );
 }

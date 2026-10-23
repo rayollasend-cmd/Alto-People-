@@ -1,9 +1,11 @@
 import { Router } from 'express';
+import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { TENANT_SCOPED_MODELS, resetTenantObservations, tenancyMode, tenantObservations } from '../lib/tenantGuard.js';
 import { BUSINESS_MODELS, TENANT_MODULES, TENANT_MODULE_LABEL, TERM_KEYS, defaultModulesFor, defaultTerminologyFor } from '@alto-people/shared';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile, setTenantProfile } from '../lib/tenantProfile.js';
+import { workStatusCounts } from '../lib/peopleStatus.js';
 
 /**
  * Brief 2-1, step two — what the observe-mode wall has seen since boot:
@@ -39,9 +41,24 @@ tenancyRouter.post('/admin/tenancy/observations/reset', MANAGE, (_req, res) => {
 
 tenancyRouter.get('/admin/tenant/profile', requireCapability('view:hr-admin'), async (_req, res) => {
   const tenantId = tenantIdForWrite();
-  const profile = await loadTenantProfile(tenantId);
+  const [profile, tenant, people, sites] = await Promise.all([
+    loadTenantProfile(tenantId),
+    prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true, plan: true, createdAt: true } }),
+    workStatusCounts({ tenantId }),
+    prisma.site.count({ where: { tenantId, deletedAt: null, isActive: true } }),
+  ]);
   res.json({
     tenantId,
+    // The Organization page's header: what this organization is, at a glance.
+    // People counts "On the books" (lib/peopleStatus: hired, not separated),
+    // the same number Headcount and People show.
+    facts: {
+      name: tenant?.name ?? null,
+      plan: tenant?.plan ?? null,
+      createdAt: tenant?.createdAt.toISOString() ?? null,
+      onTheBooks: people.onTheBooks,
+      sites,
+    },
     profile,
     defaults: { modules: defaultModulesFor(profile.businessModel), terminology: defaultTerminologyFor(profile.businessModel) },
     catalog: { businessModels: BUSINESS_MODELS, modules: TENANT_MODULES.map((key) => ({ key, label: TENANT_MODULE_LABEL[key] })), termKeys: TERM_KEYS },

@@ -7,11 +7,26 @@ import { Select } from '@/components/ui/Select';
 
 /** Shared bits for the month-end close pages. */
 
+/** A month's close in one word: still running, not closed (it has ended), ready to sign off, closed. */
 export function CloseStatusBadge({ status, ended, size }: { status: ClosePeriodStatus; ended: boolean; size?: 'sm' | 'default' | 'lg' }) {
   if (status === 'CLOSED') return <Badge variant="success" size={size}>Closed</Badge>;
   if (status === 'READY') return <Badge variant="accent" size={size}>Ready to sign off</Badge>;
   if (!ended) return <Badge variant="default" size={size}>In progress</Badge>;
-  return <Badge variant="pending" size={size}>Open</Badge>;
+  return <Badge variant="pending" size={size}>Not closed</Badge>;
+}
+
+/** Whole days from a month's last day to `today` (YYYY-MM-DD); 0 or less while the month is running. */
+export function daysSinceMonthEnd(periodKey: string, today: string): number {
+  const [y, m] = periodKey.split('-').map(Number) as [number, number];
+  const end = Date.UTC(y, m, 0);
+  return Math.round((Date.parse(`${today}T00:00:00.000Z`) - end) / 86_400_000);
+}
+
+/** "22 days since month end" — how long an ended, unclosed month has waited. */
+export function sinceMonthEndWords(periodKey: string, today: string): string | null {
+  const d = daysSinceMonthEnd(periodKey, today);
+  if (d <= 0) return null;
+  return `${d} ${d === 1 ? 'day' : 'days'} since month end`;
 }
 
 export const pct = (done: number, total: number) => (total ? Math.round((done / total) * 100) : 0);

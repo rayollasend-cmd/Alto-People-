@@ -287,19 +287,6 @@ function PairPlaidDialog({ linked, onClose }: { linked: { itemId: string; accoun
 
 /* ---- Import a statement --------------------------------------------------- */
 
-export function ImportButton({ feedAccountId, variant = 'secondary' }: { feedAccountId: string; variant?: 'primary' | 'secondary' }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button variant={variant} onClick={() => setOpen(true)}>
-        <FileUp className="h-4 w-4" aria-hidden="true" />
-        Import a statement
-      </Button>
-      {open && <ImportDialog feedAccountId={feedAccountId} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
 const COLUMN_FIELDS: Array<{ key: keyof BankCsvMapping; label: string; optional?: boolean }> = [
   { key: 'dateColumn', label: 'Date' },
   { key: 'descriptionColumn', label: 'Description' },
@@ -309,7 +296,7 @@ const COLUMN_FIELDS: Array<{ key: keyof BankCsvMapping; label: string; optional?
   { key: 'referenceColumn', label: 'Check or reference', optional: true },
 ];
 
-function ImportDialog({ feedAccountId, onClose }: { feedAccountId: string; onClose: () => void }) {
+export function ImportDialog({ feedAccountId, onClose }: { feedAccountId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<{ name: string; content: string } | null>(null);

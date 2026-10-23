@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
 import { prisma } from '../db.js';
-import { tenantIdForWrite } from '../lib/tenant.js';
+import { ALTO_TENANT_ID, adoptTenant, resolveTenantFrom, tenantIdForWrite, withIdentityScope } from '../lib/tenant.js';
 import {
   anonReportFileLimiter,
   anonReportLookupLimiter,
@@ -76,10 +76,39 @@ const FileInputSchema = z.object({
   subject: z.string().min(3).max(200),
   description: z.string().min(20).max(20_000),
   contactEmail: z.string().email().max(200).optional().nullable(),
+  /** The organization's hotline address (/hotline/:slug). Absent: the default organization. */
+  org: z.string().trim().toLowerCase().regex(/^[a-z0-9-]{1,60}$/).optional(),
+});
+
+/**
+ * Which organization a public hotline request is for (F500 G5). A report
+ * used to take the database default (Alto HR) whatever company the worker
+ * was at; now /hotline/:slug names the organization, the server resolves it
+ * from the slug (a unique key, in the identity scope) and the report is
+ * written to that tenant. No slug: the default organization, as before.
+ */
+async function hotlineOrg(slug: string | undefined): Promise<{ id: string; name: string; slug: string }> {
+  const row = await withIdentityScope(() =>
+    slug
+      ? prisma.tenant.findUnique({ where: { slug }, select: { id: true, name: true, slug: true, status: true } })
+      : prisma.tenant.findUnique({ where: { id: ALTO_TENANT_ID }, select: { id: true, name: true, slug: true, status: true } }),
+  );
+  if (!row || row.status !== 'ACTIVE') throw new HttpError(404, 'org_not_found', 'We don’t recognise that hotline address.');
+  return { id: row.id, name: row.name, slug: row.slug };
+}
+
+/** The organization a hotline address belongs to — its public name only. */
+anonReport128Router.get('/anonymous-reports/org/:slug?', anonReportLookupLimiter, async (req, res) => {
+  const slug = req.params.slug ? z.string().trim().toLowerCase().regex(/^[a-z0-9-]{1,60}$/).parse(req.params.slug) : undefined;
+  const org = await hotlineOrg(slug);
+  res.json({ org: { name: org.name, slug: org.slug } });
 });
 
 anonReport128Router.post('/anonymous-reports', anonReportFileLimiter, async (req, res) => {
   const input = FileInputSchema.parse(req.body);
+  const org = await hotlineOrg(input.org);
+  // The rest of this anonymous request runs as that organization.
+  adoptTenant(org.id);
   // Try a few times in case of unique-collision (effectively never, but cheap).
   let trackingCode = generateTrackingCode();
   for (let i = 0; i < 3; i++) {
@@ -91,6 +120,7 @@ anonReport128Router.post('/anonymous-reports', anonReportFileLimiter, async (req
   }
   await prisma.anonymousReport.create({
     data: {
+      tenantId: org.id,
       trackingCode,
       category: input.category,
       subject: input.subject,
@@ -108,6 +138,8 @@ anonReport128Router.get(
   anonReportLookupLimiter,
   async (req, res) => {
     const code = z.string().min(8).max(64).parse(req.params.code);
+    // The code is unique across organizations: learn the report's tenant from it.
+    await resolveTenantFrom(() => prisma.anonymousReport.findUnique({ where: { trackingCode: code }, select: { tenantId: true } }).then((r) => r?.tenantId));
     const report = await prisma.anonymousReport.findUnique({
       where: { trackingCode: code },
       include: {
@@ -154,6 +186,7 @@ anonReport128Router.post(
   async (req, res) => {
     const code = z.string().min(8).max(64).parse(req.params.code);
     const input = ReporterReplySchema.parse(req.body);
+    await resolveTenantFrom(() => prisma.anonymousReport.findUnique({ where: { trackingCode: code }, select: { tenantId: true } }).then((r) => r?.tenantId));
     const report = await prisma.anonymousReport.findUnique({
       where: { trackingCode: code },
       select: { id: true, status: true },
@@ -170,6 +203,7 @@ anonReport128Router.post(
     }
     await prisma.anonymousReportUpdate.create({
       data: {
+        tenantId: tenantIdForWrite(),
         reportId: report.id,
         body: input.body,
         isFromReporter: true,
@@ -452,12 +486,13 @@ anonReport128Router.get(
   '/anonymous-reports-summary',
   MANAGE_PERF,
   async (_req, res) => {
-    const [received, triaging, investigating, resolved, openReports] =
+    const [received, triaging, investigating, resolved, closed, openReports] =
       await Promise.all([
         prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'RECEIVED' } }),
         prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'TRIAGING' } }),
         prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'INVESTIGATING' } }),
         prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'RESOLVED' } }),
+        prisma.anonymousReport.count({ where: { tenantId: tenantIdForWrite(), status: 'CLOSED' } }),
         prisma.anonymousReport.findMany({
           where: { tenantId: tenantIdForWrite(), status: { in: ['RECEIVED', 'TRIAGING', 'INVESTIGATING'] } },
           select: {
@@ -483,6 +518,10 @@ anonReport128Router.get(
       triagingCount: triaging,
       investigatingCount: investigating,
       resolvedCount: resolved,
+      closedCount: closed,
+      // Every report ever filed: zero means the hotline has never been
+      // used, which the page says differently from "nothing matches".
+      totalCount: received + triaging + investigating + resolved + closed,
       overdueCount,
     });
   },

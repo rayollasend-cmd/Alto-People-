@@ -36,7 +36,7 @@ vi.mock('@/lib/books/payablesApi', async (orig) => ({ ...(await orig<typeof impo
 const approvals = vi.hoisted(() => ({ decideApprovalRequest: vi.fn() }));
 vi.mock('@/lib/approvalRequestsApi', async (orig) => ({ ...(await orig<typeof import('@/lib/approvalRequestsApi')>()), ...approvals }));
 
-import { BillsPage } from '@/pages/books/payables/BillsPage';
+import { BillsPage, billsSummary, legacyBillsParams } from '@/pages/books/payables/BillsPage';
 import { BillDetailPage } from '@/pages/books/payables/BillDetailPage';
 import { VendorDetailPage } from '@/pages/books/payables/VendorDetailPage';
 
@@ -80,6 +80,8 @@ const vendor = (o: Partial<BooksVendor> = {}): BooksVendor => ({
   notes: null,
   isActive: true,
   balance: 500,
+  paidThisYear: 0,
+  lastPaidOn: null,
   pendingBankChange: null,
   createdAt: '2026-10-01T00:00:00.000Z',
   ...o,
@@ -227,6 +229,68 @@ describe('<BillsPage> — To approve', () => {
   });
 });
 
+describe('<BillsPage> — one meaning per number (F500)', () => {
+  const open = [
+    bill({ id: '00000000-0000-4000-8000-00000000c001', billNumber: 'SVR-311', total: 3310, balance: 2310, daysPastDue: 25, dueDate: '2026-09-24' }),
+    bill({ id: '00000000-0000-4000-8000-00000000c002', billNumber: 'SF-10422', total: 1840.55, balance: 1840.55, daysPastDue: 6, dueDate: '2026-10-13' }),
+    bill({ id: '00000000-0000-4000-8000-00000000c003', billNumber: 'RENT-NOV', total: 8500, balance: 8500, daysPastDue: -3, dueDate: '2026-10-22' }),
+    bill({ id: '00000000-0000-4000-8000-00000000c004', billNumber: 'HM-10', total: 6250, balance: 6250, daysPastDue: -13, dueDate: '2026-11-01' }),
+  ];
+  beforeEach(() => {
+    api.listBills.mockImplementation(async ({ tab }: { tab?: string }) => ({
+      bills: tab === 'approve' ? [] : tab === 'late' ? open.slice(0, 2) : tab === 'due' ? [open[2]!] : open,
+    }));
+  });
+
+  it('“Due in the next 7 days” leaves out the late bills — they are counted once, under Late', async () => {
+    renderPage(<BillsPage />, '/books/bills', '/books/bills');
+    const strip = await screen.findByRole('group', { name: 'Bills at a glance' });
+    const tile = (label: string) => within(strip).getByText(label).closest('a')!;
+    await waitFor(() => expect(tile('Late')).toHaveTextContent('$4,150.55'));
+    expect(tile('Due in the next 7 days')).toHaveTextContent('$8,500.00');
+    expect(tile('Due in the next 7 days')).toHaveTextContent('1 bill, none of them late');
+    expect(tile('Owed')).toHaveTextContent('$18,900.55');
+    // Each number opens the list behind it.
+    expect(tile('Late')).toHaveAttribute('href', '/books/bills?status=late');
+    expect(tile('Due in the next 7 days')).toHaveAttribute('href', '/books/bills?status=due');
+  });
+
+  it('billsSummary: late and due-in-7 never share a bill', () => {
+    const s = billsSummary(open);
+    expect(s.lateTotal).toBe(4150.55);
+    expect(s.dueSoonTotal).toBe(8500);
+    expect(s.owed).toBe(18900.55);
+    expect(s.late.filter((b) => s.dueSoon.includes(b))).toEqual([]);
+  });
+
+  it('status is a filter on one list; the unpaid lists drop the Status column (lateness is in Due)', async () => {
+    const user = userEvent.setup();
+    renderPage(<BillsPage />, '/books/bills', '/books/bills');
+    const table = await screen.findByRole('table', { name: /Bills/ });
+    expect(within(table).queryByRole('columnheader', { name: /Status/ })).toBeNull();
+    await user.click(screen.getByRole('radio', { name: /^Late/ }));
+    await waitFor(() => expect(api.listBills).toHaveBeenCalledWith({ tab: 'late' }));
+    expect(await screen.findByText('SVR-311')).toBeInTheDocument();
+    expect(screen.queryByText('RENT-NOV')).toBeNull();
+    await user.click(screen.getByRole('radio', { name: /^All$/ }));
+    expect(await screen.findByRole('columnheader', { name: /Status/ })).toBeInTheDocument();
+  });
+
+  it('old links land: ?tab=due is the due filter, ?tab=aging the Aging view, ?status=PENDING_APPROVAL the approval queue', () => {
+    expect(legacyBillsParams(new URLSearchParams('tab=due'))).toEqual({ status: 'due' });
+    expect(legacyBillsParams(new URLSearchParams('tab=aging'))).toEqual({ view: 'aging' });
+    expect(legacyBillsParams(new URLSearchParams('status=PENDING_APPROVAL'))).toEqual({ status: 'approve' });
+    expect(legacyBillsParams(new URLSearchParams('status=late'))).toBeNull();
+  });
+
+  it('opens an old ?tab=aging link on the Aging view', async () => {
+    api.apAging.mockResolvedValue({ asOf: '2026-10-19', totals: { current: 0, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0, total: 0, bills: 0 }, rows: [] });
+    renderPage(<BillsPage />, '/books/bills?tab=aging', '/books/bills');
+    expect(await screen.findByText('Nothing owed')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Aging' })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
 describe('<BillDetailPage>', () => {
   it('a new bill takes the vendor’s usual account and goes to a second person', async () => {
     api.createBill.mockResolvedValue({ bill: bill({ status: 'DRAFT' }) });
@@ -313,3 +377,44 @@ describe('<VendorDetailPage>', () => {
     expect(screen.getByRole('link', { name: 'Open the request' })).toHaveAttribute('href', '/approvals?tab=requests&approval=a9');
   });
 });
+
+describe('<VendorDetailPage> — the numbers first (F500)', () => {
+  it('owed now, paid this year, last payment and open bills; “paid by ACH” keeps its capitals', async () => {
+    api.getVendor.mockResolvedValue({
+      vendor: vendor({ balance: 300, paidThisYear: 1600, lastPaidOn: '2026-10-12' }),
+      bills: [bill()],
+      payments: [
+        { id: 'p1', vendorId: SHELL, vendorName: 'Shell Fleet', paidOn: '2026-10-12', method: 'CHECK', amount: 600, bankAccountId: CASH, bankAccountName: '1000 Operating checking', reference: null, checkNumber: 1042, achFileId: null, status: 'SENT', applications: [], createdAt: '2026-10-12T12:00:00.000Z' },
+        { id: 'p2', vendorId: SHELL, vendorName: 'Shell Fleet', paidOn: '2026-10-15', method: 'CHECK', amount: 250, bankAccountId: CASH, bankAccountName: '1000 Operating checking', reference: null, checkNumber: 1043, achFileId: null, status: 'VOID', applications: [], createdAt: '2026-10-15T12:00:00.000Z' },
+      ],
+    });
+    renderPage(<VendorDetailPage />, `/books/vendors/${SHELL}`, '/books/vendors/:id');
+    const strip = await screen.findByRole('group', { name: 'Shell Fleet at a glance' });
+    await waitFor(() => expect(within(strip).getByText('Paid this year').parentElement).toHaveTextContent('$1,600.00'));
+    expect(within(strip).getByText('Owed now').parentElement).toHaveTextContent('$300.00');
+    // The voided Oct 15 check isn't the last payment.
+    expect(within(strip).getByText('Last payment').parentElement).toHaveTextContent('$600.00');
+    expect(within(strip).getByText('Last payment').parentElement).toHaveTextContent('Oct 12, 2026');
+    await waitFor(() => expect(within(strip).getByText('Open bills').parentElement).toHaveTextContent('Open bills1'));
+    expect(screen.getByText(/paid by ACH to ••• 6789/)).toBeInTheDocument();
+  });
+});
+
+describe('<BillDetailPage> — one bill at a glance (F500)', () => {
+  it('names the vendor, due date and terms as facts; Void and Reopen sit in More; the invoice is beside the lines', async () => {
+    api.getBill.mockResolvedValue({ bill: bill({ hasAttachment: false }) });
+    const user = userEvent.setup();
+    renderPage(<BillDetailPage />, '/books/bills/b1', '/books/bills/:id');
+    expect(await screen.findByRole('link', { name: /Shell Fleet/ })).toHaveAttribute('href', `/books/vendors/${SHELL}`);
+    await waitFor(() => expect(screen.getByText('Net 15')).toBeInTheDocument());
+    // "3 days late" is said once — in the status badge, not again in the subtitle.
+    expect(screen.getAllByText('3 days late')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Void bill' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'The vendor’s invoice' })).toHaveTextContent('No invoice attached');
+    expect(screen.queryByRole('tab', { name: 'Invoice' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: /More/ }));
+    expect(await screen.findByRole('menuitem', { name: 'Void bill' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Reopen to change' })).toBeInTheDocument();
+  });
+});
+

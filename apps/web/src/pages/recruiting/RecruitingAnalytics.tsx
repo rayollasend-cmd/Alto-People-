@@ -28,7 +28,6 @@ import {
   DialogHeader,
   DialogTitle,
   EmptyState,
-  ErrorBanner,
   Field,
   Input,
   MetricCard,
@@ -47,6 +46,10 @@ import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, 
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
 import { ListTemplate } from '@/components/templates';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { QueryError } from '@/components/ui/QueryError';
+import { RecruitingHubNav } from './RecruitingHubNav';
+import { InfoTip } from './InfoTip';
 import { CANDIDATE_SOURCES, SOURCE_LABEL, STAGE_LABEL } from './recruitingLabels';
 
 /**
@@ -117,14 +120,15 @@ function Meter({ pct, label }: { pct: number | null; label: string }) {
   );
 }
 
+/** A section card. Its definition sits behind an ⓘ beside the title, not in a subtitle under it. */
 function Section({ title, hint, action, children }: { title: string; hint?: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <Card>
       <CardContent>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
             <h2 className="text-sm font-medium text-white">{title}</h2>
-            {hint && <p className="mt-0.5 text-xs text-silver">{hint}</p>}
+            {hint && <InfoTip label={`How “${title}” is counted`}>{hint}</InfoTip>}
           </div>
           {action}
         </div>
@@ -149,10 +153,11 @@ function Funnel({ funnel }: { funnel: Analytics['funnel'] }) {
     <ChartFrame
       title="Funnel"
       description={
-        <>
-          Everyone who applied in the range, and how far they got. Of {funnel.applicants}: {funnel.inProgress} still in progress, {funnel.rejected} rejected, {funnel.withdrawn}{' '}
-          withdrew.
-        </>
+        funnel.applicants > 0 ? (
+          <>
+            Of {funnel.applicants} who applied in the range: {funnel.inProgress} still in progress, {funnel.rejected} rejected, {funnel.withdrawn} withdrew.
+          </>
+        ) : undefined
       }
       summary={`${funnel.applicants} applied and ${hired} reached ${STAGE_LABEL[funnel.stages[funnel.stages.length - 1]?.stage ?? 'HIRED'].toLowerCase()}.`}
       csvName="hiring-funnel"
@@ -432,10 +437,8 @@ export function RecruitingAnalytics() {
         className="mx-auto max-w-6xl"
         title="Recruiting analytics"
         subtitle="How the pipeline converts, how fast roles fill, what each source costs, and who stays."
-        // The trail names this page (it published "Recruiting" to the top
-        // bar) and is the way back; the "← Pipeline" button was a second.
-        breadcrumbs={[{ label: 'Recruiting', to: '/recruiting' }, { label: 'Recruiting analytics' }]}
     >
+      <RecruitingHubNav current="analytics" />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SegmentedControl options={PRESETS} value={preset} onChange={setPreset} ariaLabel="Date range" />
@@ -445,15 +448,7 @@ export function RecruitingAnalytics() {
       </div>
 
       {q.isError && !data ? (
-        <ErrorBanner
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void q.refetch()}>
-              Retry
-            </Button>
-          }
-        >
-          {q.error instanceof ApiError ? q.error.message : 'Could not load recruiting analytics.'}
-        </ErrorBanner>
+        <QueryError what="recruiting analytics" query={q} />
       ) : !data ? (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -465,7 +460,7 @@ export function RecruitingAnalytics() {
         </div>
       ) : (
         <div className={q.isFetching ? 'space-y-4 opacity-70 transition-opacity' : 'space-y-4 transition-opacity'}>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MetricStrip label="Recruiting at a glance">
             <MetricCard label="Hires" value={data.speed.hires} hint={`${data.funnel.applicants} applied in this range`} />
             <MetricCard label="Median time to hire" value={days(data.speed.medianDaysToHire)} hint="Application to hire" />
             <MetricCard
@@ -506,7 +501,7 @@ export function RecruitingAnalytics() {
               value={data.funnel.inProgress}
               hint="Applicants from this range still in the pipeline"
             />
-          </div>
+          </MetricStrip>
 
           <div className="grid gap-4 2xl:grid-cols-5">
             <div className="2xl:col-span-2">

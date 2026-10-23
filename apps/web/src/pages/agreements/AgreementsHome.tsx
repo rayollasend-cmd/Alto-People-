@@ -10,6 +10,7 @@ import {
   expireAgreement,
   issueAgreement,
   KIND_LABELS,
+  getAgreementsSummary,
   listAgreements,
   listMyAgreements,
   signAgreement,
@@ -43,10 +44,12 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { ListTemplate } from '@/components/templates';
 import { FormHint, Label } from '@/components/ui/Label';
-import { useSearchParams } from 'react-router-dom';
 import { MyPolicies } from './MyPolicies';
 
 // Domain-only codes the shared vocabulary doesn't carry: PENDING_SIGNATURE
@@ -119,19 +122,24 @@ function statusText(
   }
 }
 
+const TABS = ['mine', 'policies', 'all'] as const;
+type Tab = (typeof TABS)[number];
+/** The All view's filter: one status, every status, or the rows behind a tile. */
+type ViewFilter = AgreementStatus | 'ALL' | 'SIGNED30' | 'EXPIRING30';
+const VIEW_FILTERS: readonly ViewFilter[] = ['ALL', 'PENDING_SIGNATURE', 'SIGNED', 'EXPIRED', 'SUPERSEDED', 'SIGNED30', 'EXPIRING30'];
+
 export function AgreementsHome() {
   const { t } = useI18n();
   const term = useTerm();
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:documents') : false;
-  // ?tab=policies — the Inbox's "Policies to sign" lands here.
-  const [params] = useSearchParams();
-  const [tab, setTab] = useState<'all' | 'mine' | 'policies'>(params.get('tab') === 'policies' ? 'policies' : 'mine');
+  // HR lands on every agreement (their own "mine" is rarely the job); the
+  // tab is in the URL — ?tab=policies is the Inbox's "Policies to sign".
+  const [tabParam, setTab] = useUrlParam<Tab>('tab', canManage ? 'all' : 'mine', TABS, { history: 'push' });
+  const tab: Tab = tabParam === 'all' && !canManage ? 'mine' : tabParam === 'policies' && !user?.associateId ? (canManage ? 'all' : 'mine') : tabParam;
 
-  const [statusFilter, setStatusFilter] = useState<AgreementStatus | 'ALL'>(
-    'PENDING_SIGNATURE',
-  );
+  const [statusFilter, setStatusFilter] = useUrlParam<ViewFilter>('status', 'ALL', VIEW_FILTERS);
   const [showNew, setShowNew] = useState(false);
   const [signRow, setSignRow] = useState<MyAgreement | null>(null);
   // Track which row's action is in flight so each Button shows its own
@@ -141,11 +149,17 @@ export function AgreementsHome() {
   const rowsQuery = useQuery({
     queryKey: ['AgreementsHome', 'rows', statusFilter],
     queryFn: () =>
-      listAgreements({
-        status: statusFilter === 'ALL' ? undefined : statusFilter,
-      }),
+      listAgreements(
+        statusFilter === 'SIGNED30'
+          ? { window: 'signed30' }
+          : statusFilter === 'EXPIRING30'
+            ? { window: 'expiring30' }
+            : { status: statusFilter === 'ALL' ? undefined : statusFilter },
+      ),
     enabled: tab === 'all',
   });
+  const summaryQuery = useQuery({ queryKey: ['AgreementsHome', 'summary'], queryFn: getAgreementsSummary, enabled: canManage && tab === 'all' });
+  const summary = summaryQuery.data;
   const mineQuery = useQuery({
     queryKey: ['AgreementsHome', 'mine'],
     queryFn: () => listMyAgreements(),
@@ -165,47 +179,51 @@ export function AgreementsHome() {
   const queryClient = useQueryClient();
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['AgreementsHome'] });
 
+  const tabOptions = [
+    { value: 'mine' as const, label: t('agr.tab.mine') },
+    ...(user?.associateId ? [{ value: 'policies' as const, label: t('agr.tab.policies') }] : []),
+    ...(canManage ? [{ value: 'all' as const, label: t('agreementsPage.tabAll') }] : []),
+  ];
+
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title={t('agr.title')}
-        subtitle={t('agr.subtitle')}
-        breadcrumbs={[{ label: t('agr.crumbSection') }, { label: t('agr.title') }]}
+      title={t('agr.title')}
+      // HR reads what the page holds; an associate reads what's asked of them.
+      subtitle={canManage ? t('agr.subtitle') : t('agr.subtitleMine')}
+      actions={canManage ? [{ label: t('agreementsPage.issueAgreement'), icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
+      {tabOptions.length > 1 && (
+        <SegmentedControl ariaLabel={t('agr.viewAria')} value={tab} onChange={(v) => setTab(v)} options={tabOptions} />
+      )}
 
-      <div className="flex items-center justify-between">
-        <SegmentedControl
-          ariaLabel={t('agr.viewAria')}
-          value={tab}
-          onChange={(v) => setTab(v)}
-          options={[
-            { value: 'mine' as const, label: t('agr.tab.mine') },
-            ...(user?.associateId ? [{ value: 'policies' as const, label: t('agr.tab.policies') }] : []),
-            ...(canManage ? [{ value: 'all' as const, label: t('agreementsPage.tabAll') }] : []),
-          ]}
-        />
-        {canManage && tab === 'all' && (
-          <div className="flex gap-2">
-            <Select
-              size="sm"
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as AgreementStatus | 'ALL')
-              }
-            >
-              <option value="ALL">{t('agreementsPage.allStatuses')}</option>
-              {(Object.keys(STATUS_LABELS) as AgreementStatus[]).map((s) => (
-                <option key={s} value={s}>
-                  {statusText(t, s)}
-                </option>
-              ))}
-            </Select>
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> {t('agreementsPage.issue')}
-            </Button>
-          </div>
-        )}
-      </div>
+      {canManage && tab === 'all' && summary && (
+        <MetricStrip label={t('agreementsPage.tilesAria')} empty={summary.awaitingSignature + summary.signed30d + summary.expiring30d === 0 && statusFilter === 'ALL' && rows !== null && rows.length === 0}>
+          <MetricCard
+            label={t('agreementsPage.tileAwaiting')}
+            value={summary.awaitingSignature}
+            hint={t('agreementsPage.tileAwaitingHint')}
+            tone={summary.awaitingSignature > 0 ? 'warning' : 'default'}
+            onClick={() => setStatusFilter(statusFilter === 'PENDING_SIGNATURE' ? 'ALL' : 'PENDING_SIGNATURE')}
+            selected={statusFilter === 'PENDING_SIGNATURE'}
+          />
+          <MetricCard
+            label={t('agreementsPage.tileSigned')}
+            value={summary.signed30d}
+            hint={t('agreementsPage.tileSignedHint')}
+            onClick={() => setStatusFilter(statusFilter === 'SIGNED30' ? 'ALL' : 'SIGNED30')}
+            selected={statusFilter === 'SIGNED30'}
+          />
+          <MetricCard
+            label={t('agreementsPage.tileExpiring')}
+            value={summary.expiring30d}
+            hint={t('agreementsPage.tileExpiringHint')}
+            tone={summary.expiring30d > 0 ? 'warning' : 'default'}
+            onClick={() => setStatusFilter(statusFilter === 'EXPIRING30' ? 'ALL' : 'EXPIRING30')}
+            selected={statusFilter === 'EXPIRING30'}
+          />
+        </MetricStrip>
+      )}
 
       {tab === 'policies' ? (
         <MyPolicies />
@@ -302,12 +320,31 @@ export function AgreementsHome() {
                 error={loadError}
                 onRetry={refresh}
                 search={{ placeholder: t('agreementsPage.searchPlaceholder', { worker: term('worker') }) }}
-                urlState={false}
+                urlKey="agreements"
                 exportCsv={{ filename: 'agreements' }}
+                activeFilters={statusFilter === 'ALL' ? 0 : 1}
+                onClearFilters={() => setStatusFilter('ALL')}
+                filters={
+                  <Select
+                    size="sm"
+                    aria-label={t('agreementsPage.colStatus')}
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as ViewFilter)}
+                  >
+                    <option value="ALL">{t('agreementsPage.allStatuses')}</option>
+                    {(Object.keys(STATUS_LABELS) as AgreementStatus[]).map((st) => (
+                      <option key={st} value={st}>
+                        {statusText(t, st)}
+                      </option>
+                    ))}
+                    <option value="SIGNED30">{t('agreementsPage.tileSigned')}</option>
+                    <option value="EXPIRING30">{t('agreementsPage.tileExpiring')}</option>
+                  </Select>
+                }
                 empty={{
                   icon: FileSignature,
                   title: t('agr.emptyTitle'),
-                  description: t('agreementsPage.noMatch'),
+                  description: t('agreementsPage.emptyAll'),
                 }}
                 columns={[
                   {

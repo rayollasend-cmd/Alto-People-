@@ -115,7 +115,7 @@ function anomalyLabel(pu: { anomalyKind: KioskPunchSummary['anomalyKind']; rejec
     case 'GEOFENCE':
       return 'Outside geofence';
     case 'FACE_ENROLLMENT':
-      return 'New face enrolled';
+      return 'First face photo — confirm it’s them';
     case 'NO_PHOTO':
       return 'No photo — confirm they were there';
     default:
@@ -183,7 +183,6 @@ export function KioskAdmin() {
       returnLink={false}
         title={term('nav.kiosk')}
         subtitle="Register tablets, issue 4-digit clock-in numbers, and review the punch log."
-        breadcrumbs={[{ label: 'Time & attendance', to: '/time-attendance' }, { label: term('nav.kiosk') }]}
     >
       {canManage && <PinHealthBanner onTab={() => setTab('pins')} bump={badgeBump} />}
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -214,7 +213,7 @@ export function KioskAdmin() {
             <Camera className="mr-2 h-4 w-4" /> Photos
           </TabsTrigger>
           <TabsTrigger value="faces">
-            <ScanFace className="mr-2 h-4 w-4" /> Face refs
+            <ScanFace className="mr-2 h-4 w-4" /> Face photos on file
           </TabsTrigger>
         </TabsList>
         <TabsContent value="devices"><DevicesTab canManage={canManage} onChanged={bumpBadges} /></TabsContent>
@@ -2883,7 +2882,7 @@ function FacesTab({ canManage }: { canManage: boolean }) {
           <div className="p-6">
             <ErrorBanner>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span>Couldn't load face references.</span>
+                <span>Couldn't load the face photos on file.</span>
                 <Button size="sm" variant="ghost" onClick={refresh}>
                   Retry
                 </Button>
@@ -2895,13 +2894,13 @@ function FacesTab({ canManage }: { canManage: boolean }) {
         ) : rows.length === 0 ? (
           <EmptyState
             icon={ScanFace}
-            title="No face references"
-            description="The first kiosk punch with face matching enabled enrolls each associate automatically."
+            title="No face photos on file"
+            description="With face matching on, each associate's first kiosk punch keeps their photo to match against."
           />
         ) : (
           <DataGrid<NonNullable<typeof rows>[number]>
             id="kiosk-face-templates"
-            caption="Enrolled face templates"
+            caption="Face photos on file"
             rows={rows}
             rowKey={(r) => r.id}
             search={{ placeholder: 'Name, email…' }}
@@ -2910,7 +2909,7 @@ function FacesTab({ canManage }: { canManage: boolean }) {
             columns={[
               { key: 'associate', header: 'Associate', accessor: (r) => r.associateName, sortable: true, primary: true, className: 'font-medium text-white' },
               { key: 'email', header: 'Email', accessor: (r) => r.associateEmail, sortable: true, cardMeta: true, className: 'text-silver' },
-              { key: 'enrolled', header: 'Enrolled', accessor: (r) => r.enrolledAt, sortable: true, searchable: false, cardMeta: true, className: 'text-xs', cell: (r) => fmtDateTime(r.enrolledAt) },
+              { key: 'enrolled', header: 'On file since', accessor: (r) => r.enrolledAt, sortable: true, searchable: false, cardMeta: true, className: 'text-xs', cell: (r) => fmtDateTime(r.enrolledAt) },
               { key: 'updated', header: 'Updated', accessor: (r) => r.updatedAt, sortable: true, searchable: false, className: 'text-xs text-silver', cell: (r) => fmtDate(r.updatedAt) },
               ...(canManage
                 ? [
@@ -2930,8 +2929,8 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                           onClick={async () => {
                             if (
                               !(await confirm({
-                                title: 'Reset this face reference?',
-                                description: 'The next kiosk punch will re-enroll.',
+                                title: 'Reset this face photo?',
+                                description: 'Their next kiosk punch takes a new one to match against.',
                                 destructive: true,
                               }))
                             )
@@ -2939,9 +2938,9 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                             try {
                               await resetKioskFaceReference(r.associateId);
                               refresh();
-                              toast.success('Reference cleared.');
+                              toast.success('Face photo reset.');
                             } catch (err) {
-                              toast.error(errorText(err, "Couldn't clear the face reference."));
+                              toast.error(errorText(err, "Couldn't reset the face photo."));
                             }
                           }}
                         >

@@ -32,6 +32,9 @@ export interface PullCtx {
 
 export const PULL_TYPES: QboType[] = ['Account', 'Vendor', 'Customer', 'JournalEntry', 'Purchase', 'Deposit', 'Transfer', 'Bill', 'BillPayment', 'Invoice', 'Payment'];
 const TXN_TYPES = new Set<QboType>(['JournalEntry', 'Purchase', 'Deposit', 'Transfer', 'Bill', 'BillPayment', 'Invoice', 'Payment']);
+/** "2026-08" → "August 2026", for the words a person reads. */
+const monthWords = (periodKey: string): string => new Date(`${periodKey}-15T12:00:00.000Z`).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
 /** The site record each QuickBooks transaction type is, when it was made on the site. */
 const SITE_TYPE_OF: Partial<Record<QboType, string>> = { JournalEntry: 'JournalEntry', Bill: 'Bill', BillPayment: 'BillPayment', Invoice: 'ClientStatement', Payment: 'ClientPayment' };
 
@@ -115,7 +118,7 @@ export async function upsertAccount(ctx: PullCtx, e: QboEntity): Promise<PullOut
     const sv = await siteVersion(ctx.db, 'LedgerAccount', link.localId);
     if (!sv) return { result: 'SKIPPED', message: 'The site account is gone.' };
     if (link.owner === 'SITE' && !ctx.force && link.localHash && fingerprint(sv.payload) !== link.localHash) {
-      await raiseConflict(ctx.db, { linkId: link.id, localType: 'LedgerAccount', localId: link.localId, summary: `The account “${sv.payload.name}” was changed on the site and in QuickBooks.`, siteVersion: sv.payload, qboVersion: { type: 'Account', id: e.Id, entity: e } });
+      await raiseConflict(ctx.db, { linkId: link.id, localType: 'LedgerAccount', localId: link.localId, summary: `The account “${sv.payload.name}” was changed here and in QuickBooks.`, siteVersion: sv.payload, qboVersion: { type: 'Account', id: e.Id, entity: e } });
       return { result: 'CONFLICT', message: 'Changed on both sides.', localType: 'LedgerAccount', localId: link.localId };
     }
     const acctNum = (e.AcctNum as string | undefined) ?? null;
@@ -154,7 +157,7 @@ export async function upsertVendor(ctx: PullCtx, e: QboEntity): Promise<PullOutc
     const sv = await siteVersion(ctx.db, 'Vendor', link.localId);
     if (!sv) return { result: 'SKIPPED', message: 'The site vendor is gone.' };
     if (link.owner === 'SITE' && !ctx.force && link.localHash && fingerprint(sv.payload) !== link.localHash) {
-      await raiseConflict(ctx.db, { linkId: link.id, localType: 'Vendor', localId: link.localId, summary: `The vendor “${sv.payload.name}” was changed on the site and in QuickBooks.`, siteVersion: sv.payload, qboVersion: { type: 'Vendor', id: e.Id, entity: e } });
+      await raiseConflict(ctx.db, { linkId: link.id, localType: 'Vendor', localId: link.localId, summary: `The vendor “${sv.payload.name}” was changed here and in QuickBooks.`, siteVersion: sv.payload, qboVersion: { type: 'Vendor', id: e.Id, entity: e } });
       return { result: 'CONFLICT', message: 'Changed on both sides.', localType: 'Vendor', localId: link.localId };
     }
     await ctx.db.vendor.update({ where: { id: link.localId }, data: fields });
@@ -177,7 +180,7 @@ async function upsertCustomer(ctx: PullCtx, e: QboEntity): Promise<PullOutcome> 
   }
   const name = String(e.DisplayName ?? '').trim();
   const client = name ? await ctx.db.client.findFirst({ where: { tenantId: tenantIdForWrite(), name: { equals: name, mode: 'insensitive' } }, select: { id: true } }) : null;
-  if (!client) return { result: 'SKIPPED', message: `QuickBooks customer “${name}” has no client of that name on the site; its transactions come over without a client.` };
+  if (!client) return { result: 'SKIPPED', message: `QuickBooks customer “${name}” has no client of that name here; its transactions come over without a client.` };
   await saveLink(ctx.db, { localType: 'Client', localId: client.id, qboType: 'Customer', qboId: e.Id, syncToken: e.SyncToken ?? null, owner: 'SITE', remoteHash: remoteFingerprint('Customer', e) });
   return { result: 'OK', message: `Linked QuickBooks customer “${name}” to the client.`, localType: 'Client', localId: client.id };
 }
@@ -310,11 +313,11 @@ async function applyQboMade(ctx: PullCtx, type: QboType, e: QboEntity): Promise<
       linkId: link?.id ?? existing?.id ?? pseudoId(type, e.Id),
       localType: 'JournalEntry',
       localId: existing?.id ?? pseudoId(type, e.Id),
-      summary: `QuickBooks ${existing ? 'changed' : 'added'} a ${describe(type, e)} in ${periodOf(date)}, which is closed on the site.`,
+      summary: `QuickBooks ${existing ? 'changed' : 'added'} a ${describe(type, e)} in ${monthWords(periodOf(date))}, which is closed in the books here.`,
       siteVersion: existing ? { number: existing.number, date: existing.entryDate.toISOString().slice(0, 10), total: Number(existing.totalDebit) } : {},
       qboVersion: { type, id: e.Id, entity: e, reason: 'SITE_PERIOD_CLOSED' },
     });
-    return { result: 'CONFLICT', message: `${periodOf(date)} is closed on the site.` };
+    return { result: 'CONFLICT', message: `${monthWords(periodOf(date))} is closed in the books here.` };
   }
   const lines = await linesOf(ctx, type, e);
   const entry = await postEntry(ctx.db, {
@@ -346,7 +349,7 @@ async function applyToSiteOwned(ctx: PullCtx, type: QboType, change: QboChange, 
   if (!sv) return { result: 'SKIPPED', message: 'The site record is gone.' };
   if (!e) {
     if (link.deletedAt || sv.gone) return { result: 'SKIPPED', message: 'Deleted on both sides.' };
-    await raiseConflict(ctx.db, { linkId: link.id, localType: link.localType, localId: link.localId, summary: `This ${labelOf(link.localType)} was deleted in QuickBooks but is still on the site.`, siteVersion: sv.payload, qboVersion: { type, id: link.qboId, entity: null, reason: 'DELETED_IN_QUICKBOOKS' } });
+    await raiseConflict(ctx.db, { linkId: link.id, localType: link.localType, localId: link.localId, summary: `This ${labelOf(link.localType)} was deleted in QuickBooks but is still in the books here.`, siteVersion: sv.payload, qboVersion: { type, id: link.qboId, entity: null, reason: 'DELETED_IN_QUICKBOOKS' } });
     return { result: 'CONFLICT', message: 'Deleted in QuickBooks.', localType: link.localType, localId: link.localId };
   }
   const siteChanged = !!link.localHash && fingerprint(sv.payload) !== link.localHash;
@@ -354,7 +357,7 @@ async function applyToSiteOwned(ctx: PullCtx, type: QboType, change: QboChange, 
   const entry = link.localType === 'JournalEntry' ? await ctx.db.journalEntry.findFirst({ where: { id: link.localId, tenantId: tenantIdForWrite() }, select: { source: true } }) : null;
   const ledgerOnly = entry?.source === 'MANUAL';
   if (ctx.force || (ledgerOnly && !siteChanged && !closed)) return applyQboVersion(ctx, type, e, link);
-  const why = closed ? `in ${periodOf(sv.date!)}, which is closed on the site` : siteChanged ? 'and on the site since they last matched' : 'but its truth lives on the site (payroll, bills, statements and payments come from their own records)';
+  const why = closed ? `in ${monthWords(periodOf(sv.date!))}, which is closed in the books here` : siteChanged ? 'and here since they last matched' : 'but its record lives here (payroll, bills, statements and payments come from their own records)';
   await raiseConflict(ctx.db, { linkId: link.id, localType: link.localType, localId: link.localId, summary: `This ${labelOf(link.localType)} was changed in QuickBooks ${why}.`, siteVersion: sv.payload, qboVersion: { type, id: link.qboId, entity: e } });
   return { result: 'CONFLICT', message: 'Waiting for a decision.', localType: link.localType, localId: link.localId };
 }
@@ -413,7 +416,7 @@ export async function applyQboVersion(ctx: PullCtx, type: QboType, e: QboEntity,
   }
   const sv = await siteVersion(ctx.db, link.localType, link.localId);
   await saveLink(ctx.db, { localType: link.localType, localId: link.localId, qboType: type, qboId: e.Id, syncToken: e.SyncToken ?? null, owner: link.owner as 'SITE' | 'QUICKBOOKS', localHash: sv ? fingerprint(sv.payload) : link.localHash, remoteHash: fp });
-  return { result: 'OK', message: diff.length ? `Posted a correction so the site matches QuickBooks’ ${describe(type, e)}.` : 'Already matched QuickBooks.', localType: link.localType, localId: link.localId };
+  return { result: 'OK', message: diff.length ? `Posted a correction so the books here match QuickBooks’ ${describe(type, e)}.` : 'Already matched QuickBooks.', localType: link.localType, localId: link.localId };
 }
 
 /* ---- One change ---------------------------------------------------------- */
@@ -430,7 +433,7 @@ export async function applyChange(ctx: PullCtx, change: QboChange): Promise<Pull
     const existing = await entryForKey(ctx.db, `qbo:${type}:${change.id}`);
     if (existing && existing.status === 'POSTED') await voidEntry(ctx.db, existing.id, { reason: 'Deleted in QuickBooks.' });
     if (link) await ctx.db.qboSyncLink.update({ where: { id: link.id }, data: { deletedAt: new Date(), lastSyncedAt: new Date() } });
-    return existing ? { result: 'OK', message: `Voided entry #${existing.number} — deleted in QuickBooks.`, localType: 'JournalEntry', localId: existing.id } : { result: 'SKIPPED', message: 'Deleted in QuickBooks; never on the site.' };
+    return existing ? { result: 'OK', message: `Voided entry #${existing.number} — deleted in QuickBooks.`, localType: 'JournalEntry', localId: existing.id } : { result: 'SKIPPED', message: 'Deleted in QuickBooks; never in the books here.' };
   }
   return applyQboMade(ctx, type, change.entity);
 }

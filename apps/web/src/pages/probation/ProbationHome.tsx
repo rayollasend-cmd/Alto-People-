@@ -12,6 +12,7 @@ import {
   startProbation,
   type ProbationRow,
   type ProbationStatus,
+  type ProbationWindow,
   type ProbationSummary,
 } from '@/lib/probation116Api';
 import { useAuth, useTerm } from '@/lib/auth';
@@ -38,6 +39,9 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { StatusBadge } from '@/lib/status';
@@ -58,11 +62,18 @@ function parseLocalDate(s: string): Date | null {
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+const WINDOWS = ['ending14', 'overdue', 'passed90', 'failed90'] as const;
+type ViewFilter = ProbationStatus | 'ALL' | ProbationWindow;
+const VIEW_FILTERS: readonly ViewFilter[] = ['ACTIVE', 'PASSED', 'EXTENDED', 'FAILED', 'ALL', ...WINDOWS];
+
 export function ProbationHome() {
-  const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
-  const [filter, setFilter] = useState<ProbationStatus | 'ALL'>('ACTIVE');
+  // One filter, in the URL (?status=EXTENDED, ?status=overdue): the status
+  // chips and the tiles set the same param, so a tile is the filter.
+  const [filter, setFilter] = useUrlParam<ViewFilter>('status', 'ACTIVE', VIEW_FILTERS);
+  const window = (WINDOWS as readonly string[]).includes(filter) ? (filter as ProbationWindow) : undefined;
+  const status = window || filter === 'ALL' ? undefined : (filter as ProbationStatus);
   const [showNew, setShowNew] = useState(false);
   const [decideRow, setDecideRow] = useState<ProbationRow | null>(null);
   const [extendRow, setExtendRow] = useState<ProbationRow | null>(null);
@@ -70,8 +81,8 @@ export function ProbationHome() {
   // Paged on the server; "Show more" reads the next page rather than the
   // list silently stopping at the first hundred.
   const refreshQuery = useInfiniteQuery({
-    queryKey: ['ProbationHome', 'rows', filter],
-    queryFn: ({ pageParam }) => listProbations(filter === 'ALL' ? undefined : filter, pageParam),
+    queryKey: ['ProbationHome', 'rows', filter, status, window],
+    queryFn: ({ pageParam }) => listProbations(status, pageParam, window),
     initialPageParam: 0,
     getNextPageParam: (last, all) => (last.hasMore ? all.length : undefined),
   });
@@ -79,7 +90,7 @@ export function ProbationHome() {
   const totalRows = refreshQuery.data?.pages[0]?.total ?? null;
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load probations.' : null;
   const refresh2Query = useQuery({
-    queryKey: ['ProbationHome', 'summary', filter],
+    queryKey: ['ProbationHome', 'summary'],
     queryFn: () => getProbationSummary(),
   });
   const summary: ProbationSummary | null = refresh2Query.isError ? null : (refresh2Query.data ?? null);
@@ -91,71 +102,41 @@ export function ProbationHome() {
     <ListTemplate
         title="Probation"
         subtitle="Track new-hire probation periods. Pass, extend, or fail before the end date."
-        breadcrumbs={[{ label: term('nav.people') }, { label: 'Probation' }]}
+        actions={canManage ? [{ label: 'Start probation', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
 
       {/* Reserve the strip while loading (it used to pop in and shove the
           page down); on failure say so quietly instead of vanishing —
           an absent row read as "zero probations". */}
-      {!summary && !summaryFailed && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-[76px] rounded-lg" />
-          ))}
-        </div>
-      )}
+      {!summary && !summaryFailed && <Skeleton className="h-[76px] rounded-lg" />}
       {summaryFailed && !summary && (
         <p className="text-xs text-silver/70">
           Couldn&apos;t load the summary counts — the list below is unaffected.
         </p>
       )}
       {summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <KpiCard label="Active" value={String(summary.active)} icon={Clock} />
-          <KpiCard
-            label="Ending in 14 days"
-            value={String(summary.endingSoon)}
-            icon={Clock}
-            tone={summary.endingSoon > 0 ? 'warn' : undefined}
-          />
-          <KpiCard
-            label="Overdue"
-            value={String(summary.overdue)}
-            icon={ShieldQuestion}
-            tone={summary.overdue > 0 ? 'bad' : undefined}
-          />
-          <KpiCard
-            label="Passed (90d)"
-            value={String(summary.passedLast90Days)}
-            icon={CheckCircle2}
-          />
-          <KpiCard
-            label="Failed (90d)"
-            value={String(summary.failedLast90Days)}
-            icon={XCircle}
-          />
-        </div>
+        // Each tile is the filter for the probations it counts.
+        <MetricStrip label="Probations at a glance" empty={summary.active + summary.endingSoon + summary.overdue + summary.passedLast90Days + summary.failedLast90Days === 0}>
+          <MetricCard label="Active" value={summary.active} icon={Clock} onClick={() => setFilter('ACTIVE')} selected={filter === 'ACTIVE'} />
+          <MetricCard label="Ending in 14 days" value={summary.endingSoon} icon={Clock} tone={summary.endingSoon > 0 ? 'warning' : 'default'} onClick={() => setFilter('ending14')} selected={filter === 'ending14'} />
+          <MetricCard label="Overdue" value={summary.overdue} icon={ShieldQuestion} hint="Past the end date, not decided" tone={summary.overdue > 0 ? 'alert' : 'default'} onClick={() => setFilter('overdue')} selected={filter === 'overdue'} />
+          <MetricCard label="Passed in 90 days" value={summary.passedLast90Days} icon={CheckCircle2} onClick={() => setFilter('passed90')} selected={filter === 'passed90'} />
+          <MetricCard label="Failed in 90 days" value={summary.failedLast90Days} icon={XCircle} onClick={() => setFilter('failed90')} selected={filter === 'failed90'} />
+        </MetricStrip>
       )}
 
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <SegmentedControl
-          ariaLabel="Filter by probation status"
-          options={[
-            { value: 'ACTIVE', label: 'Active' },
-            { value: 'PASSED', label: 'Passed' },
-            { value: 'EXTENDED', label: 'Extended' },
-            { value: 'FAILED', label: 'Failed' },
-            { value: 'ALL', label: 'All' },
-          ]}
-          value={filter}
-          onChange={setFilter}
-        />
-        {canManage && (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Start probation
-          </Button>
-        )}
-      </div>
+      <SegmentedControl
+        ariaLabel="Filter by probation status"
+        options={[
+          { value: 'ACTIVE' as ViewFilter, label: 'Active' },
+          { value: 'PASSED' as ViewFilter, label: 'Passed' },
+          { value: 'EXTENDED' as ViewFilter, label: 'Extended' },
+          { value: 'FAILED' as ViewFilter, label: 'Failed' },
+          { value: 'ALL' as ViewFilter, label: 'All' },
+        ]}
+        value={window ? ('' as ViewFilter) : filter}
+        onChange={setFilter}
+      />
 
       {error && (
         <ErrorBanner
@@ -183,6 +164,13 @@ export function ProbationHome() {
                 filter === 'ACTIVE'
                   ? 'No active probations. Start one when a new hire begins.'
                   : 'Nothing matches this filter.'
+              }
+              action={
+                filter === 'ACTIVE' && canManage ? (
+                  <Button size="sm" variant="outline" onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> Start probation
+                  </Button>
+                ) : undefined
               }
             />
           ) : (
@@ -324,39 +312,6 @@ export function ProbationHome() {
   );
 }
 
-function KpiCard({
-  label,
-  value,
-  icon: Icon,
-  tone,
-}: {
-  label: string;
-  value: string;
-  icon: React.ComponentType<{ className?: string }>;
-  tone?: 'warn' | 'bad';
-}) {
-  const toneClass =
-    tone === 'bad'
-      ? 'text-alert'
-      : tone === 'warn'
-        ? 'text-warning'
-        : 'text-white';
-  return (
-    <Card>
-      <CardContent className="flex items-center gap-3">
-        <Icon className={`h-5 w-5 ${toneClass}`} />
-        <div>
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-            {label}
-          </div>
-          <div className={`text-2xl font-semibold mt-0.5 ${toneClass}`}>
-            {value}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function NewProbationDrawer({
   onClose,

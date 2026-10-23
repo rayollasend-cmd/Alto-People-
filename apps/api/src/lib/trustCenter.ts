@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { CONTROL_STATUSES, PRODUCT_NAME, SUB_PROCESSORS, TRUST_COMMITMENTS, type ControlStatus, type Soc2Progress, type TrustControlPublic, type TrustStatus, type TrustSummary, type TrustSummaryPublic } from '@alto-people/shared';
+import { CONTROL_STATUSES, PRODUCT_NAME, PUBLIC_CONTROL_TITLES, SUB_PROCESSORS, TRUST_AREAS, TRUST_COMMITMENTS, trustAreaStatusOf, type ControlStatus, type Soc2Progress, type TrustAreaPublic, type TrustControlPublic, type TrustStatus, type TrustSummary, type TrustSummaryPublic } from '@alto-people/shared';
 import { complianceEvidence } from './evidence.js';
 import { MIN_RETENTION_YEARS, retentionYearsFor } from './auditChain.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
@@ -31,6 +31,7 @@ async function platformControls(db: Db, now: Date): Promise<TrustControlPublic[]
     controlStatus: c.status,
     checkedAt: c.latest?.collectedAt ?? null,
     how: c.how,
+    plain: c.plain,
   }));
 }
 
@@ -99,6 +100,30 @@ async function platformAgents(db: Db) {
 
 let publicCache: { at: number; value: TrustSummaryPublic } | null = null;
 
+/**
+ * What an anonymous visitor reads (F500 G5): each control under its
+ * customer-language title with its plain line — never `how` (script
+ * names, brief steps, SQL) — and the five areas, one status each.
+ */
+function publicControl(c: TrustControlPublic): TrustControlPublic {
+  const { how: _how, ...rest } = c;
+  return { ...rest, title: PUBLIC_CONTROL_TITLES[c.id] ?? c.plain ?? c.title };
+}
+
+function publicAreas(controls: TrustControlPublic[]): TrustAreaPublic[] {
+  return TRUST_AREAS.map((area) => {
+    const inArea = controls.filter((c) => area.controls.includes(c.id));
+    const checked = inArea.map((c) => c.checkedAt).filter((d): d is string => !!d).sort();
+    return {
+      key: area.key,
+      label: area.label,
+      status: trustAreaStatusOf(inArea.map((c) => c.controlStatus ?? 'NO_EVIDENCE')),
+      controls: inArea.map((c) => ({ id: c.id, title: PUBLIC_CONTROL_TITLES[c.id] ?? c.title, summary: c.plain ?? '', criteria: [...c.criteria] })),
+      lastCheckedAt: checked.length ? checked[checked.length - 1]! : null,
+    };
+  }).filter((a) => a.controls.length > 0);
+}
+
 export async function trustSummaryPublic(db: Db, now: Date = new Date()): Promise<TrustSummaryPublic> {
   if (publicCache && now.getTime() - publicCache.at < 60_000) return publicCache.value;
   const [controls, auditChain, agents, setting, soc2] = await Promise.all([
@@ -114,7 +139,7 @@ export async function trustSummaryPublic(db: Db, now: Date = new Date()): Promis
     controls: {
       passing: controls.filter((c) => c.controlStatus === 'PASSING').length,
       total: controls.length,
-      items: controls,
+      items: controls.map(publicControl),
       statusCounts: Object.fromEntries(CONTROL_STATUSES.map((s) => [s, controls.filter((c) => c.controlStatus === s).length])) as Record<ControlStatus, number>,
     },
     auditChain,
@@ -124,6 +149,7 @@ export async function trustSummaryPublic(db: Db, now: Date = new Date()): Promis
     commitments: [...TRUST_COMMITMENTS],
     securityContactSet: !!setting?.securityContactEmail,
     soc2,
+    areas: publicAreas(controls),
   };
   publicCache = { at: now.getTime(), value };
   return value;
@@ -135,7 +161,9 @@ export function __resetTrustCacheForTests(): void {
 
 /** The in-app view: the public summary plus this tenant's own numbers. */
 export async function trustSummary(db: Db, tenantId: string, now: Date = new Date()): Promise<TrustSummary> {
-  const base = await trustSummaryPublic(db, now);
+  const pub = await trustSummaryPublic(db, now);
+  // Signed in: the controls as their owners name them, with how each is checked.
+  const base = { ...pub, controls: { ...pub.controls, items: await platformControls(db, now) } };
   const [chain, retentionYears, archives, sink, connections, scim, workers, certified, suspended, gates, decisionRecords, bias, review] = await Promise.all([
     db.auditChainCheck.findFirst({ where: { tenantId }, orderBy: { checkedAt: 'desc' } }),
     retentionYearsFor(db, tenantId),

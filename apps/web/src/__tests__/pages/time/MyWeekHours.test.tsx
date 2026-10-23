@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/timeApi', () => ({ listMyTimeEntries: vi.fn() }));
@@ -9,7 +10,7 @@ vi.mock('@/components/EarningsCard', () => ({ useMyEarnings: vi.fn(() => ({ data
 import { listMyTimeEntries } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { useMyEarnings } from '@/components/EarningsCard';
-import { MyWeekHours } from '@/pages/time/MyWeekHours';
+import { MyWeekHours, weekScheduleSplit } from '@/pages/time/MyWeekHours';
 import { workweekStart } from '@/lib/workweek';
 
 /** A moment inside this Sat→Fri workweek. */
@@ -17,15 +18,19 @@ function thisWeek(hoursAfterSaturdayMidnight: number): Date {
   return new Date(workweekStart().getTime() + hoursAfterSaturdayMidnight * 3_600_000);
 }
 
-const entry = (minutes: number, split?: { ot?: number; dt?: number }) =>
+const entry = (minutes: number, split?: { ot?: number; dt?: number }, startH?: number) =>
   ({
     status: 'APPROVED',
     netMinutes: minutes,
     minutesElapsed: minutes,
+    // Where the punch sits in the week (for "was this shift punched?").
+    clockInAt: thisWeek(startH ?? -48).toISOString(),
+    clockOutAt: new Date(thisWeek(startH ?? -48).getTime() + minutes * 60_000).toISOString(),
     ...(split ? { hours: { regularMinutes: minutes - (split.ot ?? 0) - (split.dt ?? 0), overtimeMinutes: split.ot ?? 0, doubleTimeMinutes: split.dt ?? 0, overtimeMultiplier: 1.5, doubleMultiplier: 2 } } : {}),
   }) as never;
 const shift = (startH: number, hours: number) =>
   ({
+    id: `s-${startH}`,
     status: 'ASSIGNED',
     startsAt: thisWeek(startH).toISOString(),
     endsAt: new Date(thisWeek(startH).getTime() + hours * 3_600_000).toISOString(),
@@ -34,19 +39,43 @@ const shift = (startH: number, hours: number) =>
 function renderIt() {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <MyWeekHours />
+      <MemoryRouter initialEntries={['/time-attendance']}>
+        <MyWeekHours />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 describe('<MyWeekHours> — the week at a glance on the Time page', () => {
   it('worked against scheduled, and what is left', async () => {
-    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [entry(4 * 60), entry(4 * 60)] });
-    vi.mocked(listMyShifts).mockResolvedValue({ shifts: [shift(10, 4), shift(34, 4), shift(58, 4)] });
+    // Tuesday noon. Sat and Sun were worked; Monday's shift passed with no
+    // punch; Wednesday's is ahead.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(thisWeek(84));
+    onTestFinished(() => vi.useRealTimers());
+    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [entry(4 * 60, undefined, 10), entry(4 * 60, undefined, 34)] });
+    vi.mocked(listMyShifts).mockResolvedValue({ shifts: [shift(10, 4), shift(34, 4), shift(58, 4), shift(106, 4)] });
     renderIt();
     expect(await screen.findByText('8h')).toBeInTheDocument();
-    expect(screen.getByText(/\/ 12h scheduled/)).toBeInTheDocument();
+    expect(screen.getByText(/\/ 16h scheduled/)).toBeInTheDocument();
+    // "To go" is only what is still ahead — not scheduled minus worked (8h).
     expect(screen.getByText('4h to go')).toBeInTheDocument();
+    // The missed shift says so, with the way to fix it on this page.
+    expect(screen.getByText('4h scheduled, not punched')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Fix a punch' })).toHaveAttribute('href', '/time-attendance?fix=1');
+  });
+
+  it('a past shift with no punch is never "to go" (Maria: 0h / 7h, the shift already ended)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(thisWeek(84));
+    onTestFinished(() => vi.useRealTimers());
+    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [] });
+    // An 8h shift Monday: 7h paid (the unpaid meal hour).
+    vi.mocked(listMyShifts).mockResolvedValue({ shifts: [shift(58, 8)] });
+    renderIt();
+    expect(await screen.findByText('7h scheduled, not punched')).toBeInTheDocument();
+    expect(screen.queryByText(/to go/)).not.toBeInTheDocument();
+    expect(screen.queryByText('All scheduled hours worked')).not.toBeInTheDocument();
   });
 
   it('names the overtime the server split — the paycheck’s — not hours minus 40', async () => {
@@ -112,5 +141,23 @@ describe('the workweek is Saturday → Friday', () => {
     expect(workweekStart(fri).getDate()).toBe(19);
     const sun = new Date(2026, 8, 20, 9); // Sun Sep 20
     expect(workweekStart(sun).getDate()).toBe(19);
+  });
+});
+
+describe('weekScheduleSplit', () => {
+  const at = (h: number) => thisWeek(h).toISOString();
+  const s = (id: string, startH: number, hours: number) => ({ id, status: 'ASSIGNED' as const, startsAt: at(startH), endsAt: at(startH + hours) });
+  it('counts a future shift in full, an in-progress one from now, and a past unpunched one apart', () => {
+    const now = thisWeek(60); // Monday noon
+    const shifts = [s('past-worked', 10, 4), s('past-missed', 34, 4), s('now', 58, 4), s('next', 82, 4)];
+    const entries = [
+      // Linked to its shift.
+      { shiftId: 'past-worked', clockInAt: at(10), clockOutAt: at(14), status: 'APPROVED' as const },
+      // A rejected punch doesn't count as working the shift.
+      { shiftId: 'past-missed', clockInAt: at(34), clockOutAt: at(38), status: 'REJECTED' as const },
+      // Clocked in to the running shift, no link: the overlap counts.
+      { shiftId: null, clockInAt: at(58), clockOutAt: null, status: 'ACTIVE' as const },
+    ];
+    expect(weekScheduleSplit(shifts as never, entries as never, now)).toEqual({ toGoMinutes: 2 * 60 + 4 * 60, notPunchedMinutes: 4 * 60 });
   });
 });

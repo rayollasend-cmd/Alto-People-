@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ClientListItem, ClientPerformanceResponse } from '@alto-people/shared';
 import { agent, loginAs } from '../../../test/http.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 
 /**
  * GET /clients with the account numbers (Clients rebuild): scoped exactly
@@ -22,6 +23,9 @@ const DAY = 86_400_000;
 const H = 3_600_000;
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY);
+// Statements age on the company's calendar (orgDateKey), not UTC's: a due date
+// seeded from the UTC day read 39 days late after 5 PM Pacific.
+const orgDaysAgo = (n: number) => new Date(new Date(`${orgDateKey(new Date())}T00:00:00.000Z`).getTime() - n * DAY).toISOString().slice(0, 10);
 
 async function seed() {
   const harbor = await createClient('Harbor Hotel');
@@ -30,7 +34,7 @@ async function seed() {
   const south = await prisma.site.findFirstOrThrow({ where: { clientId: yard.id } });
   const owner = await createUser({ role: 'OPERATIONS_MANAGER', email: 'owner@clients-list.example' });
   await prisma.user.update({ where: { id: owner.user.id }, data: { displayName: 'Olivia Owner' } });
-  await prisma.client.update({ where: { id: harbor.id }, data: { accountOwnerUserId: owner.user.id, contractEndDate: new Date(`${ymd(new Date(Date.now() + 20 * DAY))}T00:00:00.000Z`) } });
+  await prisma.client.update({ where: { id: harbor.id }, data: { accountOwnerUserId: owner.user.id, contractEndDate: new Date(`${orgDaysAgo(-20)}T00:00:00.000Z`) } });
 
   const ana = await createAssociate({ firstName: 'Ana' });
   await prisma.associateAssignment.create({ data: { associateId: ana.id, locationId: north.id, startedAt: new Date('2026-01-01') } });
@@ -38,7 +42,7 @@ async function seed() {
 
   // Harbor: $5,760 forty days late and a paid $1,500 statement that ended 3 days ago.
   const lateEnd = daysAgo(47);
-  await prisma.clientStatement.create({ data: { clientId: harbor.id, periodStart: new Date(`${ymd(new Date(lateEnd.getTime() - 6 * DAY))}T00:00:00.000Z`), periodEnd: new Date(`${ymd(lateEnd)}T00:00:00.000Z`), status: 'FINAL', number: 101, finalizedAt: daysAgo(46), dueAt: new Date(`${ymd(daysAgo(40))}T00:00:00.000Z`), snapshot: { totals: { amount: 5760, hours: 144 } } } });
+  await prisma.clientStatement.create({ data: { clientId: harbor.id, periodStart: new Date(`${ymd(new Date(lateEnd.getTime() - 6 * DAY))}T00:00:00.000Z`), periodEnd: new Date(`${ymd(lateEnd)}T00:00:00.000Z`), status: 'FINAL', number: 101, finalizedAt: daysAgo(46), dueAt: new Date(`${orgDaysAgo(40)}T00:00:00.000Z`), snapshot: { totals: { amount: 5760, hours: 144 } } } });
   const paidEnd = daysAgo(3);
   await prisma.clientStatement.create({ data: { clientId: harbor.id, periodStart: new Date(`${ymd(new Date(paidEnd.getTime() - 6 * DAY))}T00:00:00.000Z`), periodEnd: new Date(`${ymd(paidEnd)}T00:00:00.000Z`), status: 'FINAL', number: 102, finalizedAt: daysAgo(2), dueAt: new Date(`${ymd(new Date(Date.now() + 10 * DAY))}T00:00:00.000Z`), paidAt: daysAgo(1), snapshot: { totals: { amount: 1500, hours: 37.5 } } } });
   await prisma.clientStatement.create({ data: { clientId: harbor.id, periodStart: new Date(`${ymd(daysAgo(2))}T00:00:00.000Z`), periodEnd: new Date(`${ymd(new Date(Date.now() + 4 * DAY))}T00:00:00.000Z`), status: 'DRAFT', snapshot: { totals: { amount: 640, hours: 16 } } } });
@@ -71,7 +75,7 @@ describe('GET /clients — the account numbers', () => {
     expect(harbor.healthReasons).toContain('$5,760 is 40 days past due');
     expect(harbor.healthReasons!.some((x) => x.startsWith('Contract ends in 20 days'))).toBe(true);
     expect(harbor.accountOwner).toEqual({ id: s.owner.id, name: 'Olivia Owner' });
-    expect(harbor.contractEndDate).toBe(ymd(new Date(Date.now() + 20 * DAY)));
+    expect(harbor.contractEndDate).toBe(orgDaysAgo(-20));
     const yard = byName(r.body.clients, 'Yard Market');
     expect(yard).toMatchObject({ onAssignment: 0, outstanding: 0, billedInRange: 0, fillRatePct: null, health: 'good', healthReasons: [], accountOwner: null });
 

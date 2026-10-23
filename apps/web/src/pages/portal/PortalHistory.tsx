@@ -6,16 +6,16 @@ import { CheckCircle2, FileText, History } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtHours, fmtMoney, fmtStatementNo, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtHours, parseYmd, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
+import { StatementRow, type PortalStatement } from './PortalStatements';
 import { DetailsTable, HoursChart, RingMeter, StatTile, WeekFillChart } from './portalCharts';
 import { fmtDateTick } from '@/components/ui/charts/axes';
 import { scopeParams, shiftDays } from './scope';
@@ -67,6 +67,8 @@ interface HistoryPayload {
     showedUpPct: number | null;
     scheduledHours: number;
     workedHours: number;
+    /** Hours worked past the schedule (worked − scheduled, never below 0). Absent from an older server. */
+    offScheduleHours?: number;
   };
   incidents: { noCallNoShows: number; callOuts: number; lates: number; replacementsFound: number };
   ops: {
@@ -80,20 +82,8 @@ interface HistoryPayload {
     photos: number;
   } | null;
   safety: { incidents: number; open: number };
-  statements: Array<{
-    id: string;
-    number: number | null;
-    periodStart: string;
-    periodEnd: string;
-    amount: number | null;
-    hours: number | null;
-    storeHours: number | null;
-    storeAmount: number | null;
-    paidAt: string | null;
-    /** null for store accounts — the statement covers the whole client. */
-    pdfUrl: string | null;
-    reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
-  }>;
+  /** The same row the home shows (PortalStatements): money, due date, days past due. */
+  statements: PortalStatement[];
   serviceReports: Array<{
     weekStart: string;
     weekEnd: string;
@@ -260,6 +250,10 @@ export function PortalHistory() {
     data && data.totals.scheduledHours > 0
       ? Math.min(100, Math.round((data.totals.workedHours / data.totals.scheduledHours) * 100))
       : null;
+  // Worked is every punched hour (uncapped); "delivered" is the grade's,
+  // capped at the contract each hour. More worked than scheduled is said in
+  // so many words, not shown as a full meter (F500 G5: "444.1h of 56.5h").
+  const offSchedule = data ? (data.totals.offScheduleHours ?? Math.max(0, data.totals.workedHours - data.totals.scheduledHours)) : 0;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -394,8 +388,20 @@ export function PortalHistory() {
             <StatTile
               label={t('portal.kpiHoursRange')}
               value={fmtHours(data.totals.workedHours)}
-              meter={hoursPct !== null ? { percent: hoursPct, tone: 'primary' } : null}
-              sub={t('portal.kpiHoursSub', { scheduled: fmtHours(data.totals.scheduledHours) })}
+              meter={hoursPct !== null ? { percent: hoursPct, tone: offSchedule > 0 ? 'warn' : 'primary' } : null}
+              sub={
+                offSchedule > 0 ? (
+                  <span className="text-warning" data-testid="hist-off-schedule">
+                    {t('portal.kpiOffSchedule', {
+                      worked: fmtHours(Math.round(data.totals.workedHours)),
+                      scheduled: fmtHours(Math.round(data.totals.scheduledHours)),
+                      off: fmtHours(Math.round(offSchedule)),
+                    })}
+                  </span>
+                ) : (
+                  t('portal.kpiHoursSub', { scheduled: fmtHours(data.totals.scheduledHours) })
+                )
+              }
             />
             <StatTile
               label={t('portal.kpiIncidents')}
@@ -594,51 +600,14 @@ export function PortalHistory() {
                   <p className="mt-3 text-sm text-silver/60">{t('portal.stNone')}</p>
                 ) : (
                   <ul className="mt-3 divide-y divide-navy-secondary/60">
-                    {data.statements.map((s) => {
-                      const amount = data.store && s.storeAmount !== null ? s.storeAmount : s.amount;
-                      return (
-                        <li key={s.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-2.5">
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium text-white tabular-nums">
-                              {s.number !== null ? t('portal.stNumber', { n: fmtStatementNo(s.number) }) : t('portal.statements')}
-                            </div>
-                            <div className="text-xs text-silver/70 tabular-nums">
-                              {fmtDate(parseYmd(s.periodStart))} – {fmtDate(parseYmd(s.periodEnd))}
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {amount !== null && (
-                              <span className="text-sm font-semibold tabular-nums text-white">{fmtMoney(amount)}</span>
-                            )}
-                            {s.paidAt ? (
-                              <Badge variant="success" size="sm">{t('portal.paidOn', { date: fmtDate(s.paidAt) })}</Badge>
-                            ) : (
-                              <Badge variant="pending" size="sm">{t('portal.due')}</Badge>
-                            )}
-                            {s.pdfUrl !== null && (
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                onClick={() => {
-                                  const url = s.pdfUrl;
-                                  if (url) {
-                                    void downloadStatementFile(
-                                      url,
-                                      `statement-${s.periodStart}.pdf`,
-                                    );
-                                  }
-                                }}
-                                aria-label={t('portal.stPdf')}
-                                title={t('portal.stPdf')}
-                              >
-                                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                              </Button>
-                            )}
-                            <span className="basis-full sm:basis-auto">{reviewedMark(s.reviewed, () => void markReviewed('STATEMENT', s.id))}</span>
-                          </div>
-                        </li>
-                      );
-                    })}
+                    {data.statements.map((s) => (
+                      <StatementRow
+                        key={s.id}
+                        s={s}
+                        inStore={!!data.store}
+                        actions={s.paidAt ? null : <span className="basis-full sm:basis-auto">{reviewedMark(s.reviewed, () => void markReviewed('STATEMENT', s.id))}</span>}
+                      />
+                    ))}
                     {data.serviceReports.map((r) => (
                       <li key={r.weekStart} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-2.5">
                         <div className="min-w-0">

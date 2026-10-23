@@ -317,9 +317,19 @@ export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenan
   const KIND_RANK = { close: 0, transfer: 1, add: 2 } as const;
   const shiftTime = (v: string | null) =>
     v ? new Date(v).getTime() : Number.MAX_SAFE_INTEGER;
-  return [...closeRows, ...transferRows, ...addRows]
-    .filter((r) => !reach || reach.has(r.associateId))
-    .map((r) => ({ ...r, hoursUnbilled: unbilledHours.get(r.associateId) ?? 0 }))
+  const rows = [...closeRows, ...transferRows, ...addRows].filter((r) => !reach || reach.has(r.associateId));
+  // Each row's photo (null: none on file), in one read, so the list never
+  // asks for a photo that isn't there.
+  const photos =
+    rows.length > 0
+      ? await prisma.associate.findMany({
+          where: { id: { in: [...new Set(rows.map((r) => r.associateId))] } },
+          select: { id: true, photoS3Key: true, photoUpdatedAt: true },
+        })
+      : [];
+  const photoOf = new Map(photos.map((p) => [p.id, profilePhotoUrlFor(p)]));
+  return rows
+    .map((r) => ({ ...r, photoUrl: photoOf.get(r.associateId) ?? null, hoursUnbilled: unbilledHours.get(r.associateId) ?? 0 }))
     .sort((x, y) => {
       if (x.kind !== y.kind) return KIND_RANK[x.kind] - KIND_RANK[y.kind];
       if ((y.hoursUnbilled > 0 ? 1 : 0) !== (x.hoursUnbilled > 0 ? 1 : 0)) return y.hoursUnbilled > 0 ? 1 : -1;

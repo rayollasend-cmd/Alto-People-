@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
+import { AcaFiling } from './AcaFiling';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { HeartPulse, Settings2 } from 'lucide-react';
@@ -13,7 +17,6 @@ import {
   recordAcaOffer,
   saveAcaSettings,
   setAcaClassification,
-  syncAca1095c,
   type AcaClassification,
   type AcaSettings,
   type AcaStatus,
@@ -38,8 +41,9 @@ import { cn } from '@/lib/cn';
  * ACA hours — the look-back measurement method for variable-hour work. Each
  * worker's average monthly hours in the measurement period, whether that
  * makes them full-time for the stability period that follows, the offer of
- * coverage owed and by when, the employer shared-responsibility exposure,
- * and the months the 1095-C is written from.
+ * coverage owed and by when, the employer shared-responsibility exposure —
+ * and, on its second tab, the year-end 1095-C filing (one workflow here; it
+ * used to be split with Benefits lifecycle).
  */
 
 const STATUS_LABEL: Record<AcaStatus, string> = {
@@ -74,6 +78,9 @@ const OFFER_TONE: Record<AcaWorker['offerState'], 'default' | 'pending' | 'destr
 };
 
 type Filter = 'attention' | 'full_time' | 'approaching' | 'all';
+const FILTERS: Filter[] = ['attention', 'full_time', 'approaching', 'all'];
+type AcaTab = 'hours' | 'filing';
+const ACA_TABS: AcaTab[] = ['hours', 'filing'];
 
 /** Average monthly hours against the threshold — the bar is labelled, never colour alone. */
 function HoursBar({ avg, threshold }: { avg: number; threshold: number }) {
@@ -98,7 +105,9 @@ function HoursBar({ avg, threshold }: { avg: number; threshold: number }) {
 export function AcaHours() {
   const term = useTerm();
   const hasClients = useTenant().moduleOn('clientPortal');
-  const [filter, setFilter] = useState<Filter>('attention');
+  // The tab and the filter are in the URL: a link to the filing, or to everyone full-time, is that view.
+  const [tab, setTab] = useUrlParam<AcaTab>('tab', 'hours', ACA_TABS, { history: 'push' });
+  const [filter, setFilter] = useUrlParam<Filter>('show', 'attention', FILTERS);
   const [open, setOpen] = useState<AcaWorker | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const summary = useQuery({ queryKey: ['aca', 'summary'], queryFn: getAcaSummary });
@@ -139,51 +148,77 @@ export function AcaHours() {
   ];
 
   const s = summary.data;
+  const owed = s ? s.counts.offersDue + s.counts.offersOverdue : 0;
   return (
     <ListTemplate
       title="ACA hours"
-      subtitle={`Variable-hour work measured against ${threshold} hours a month: who is full-time, who is close, and the offers of coverage owed.`}
-      breadcrumbs={[{ label: 'Benefits', to: '/benefits' }, { label: 'ACA hours' }]}
-      secondaryActions={
-        <div className="flex flex-wrap items-center gap-2">
-          <SyncButton />
-          <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>
-            <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
-            Measurement settings
-          </Button>
-        </div>
-      }
+      subtitle={`Variable-hour work measured against ${threshold} hours a month: who is full-time, who is close, the offers of coverage owed — and the year-end 1095-C filing.`}
+      actions={[{ label: 'Measurement settings', icon: Settings2, onSelect: () => setSettingsOpen(true) }]}
       summary={
         s ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <MetricCard label="Full-time" value={s.counts.fullTime} hint={`${s.counts.measured.toLocaleString()} measured`} />
-            <MetricCard label="Approaching" value={s.counts.approaching} hint={`averaging ${threshold - 10}–${threshold} hours a month`} />
+          <MetricStrip label="ACA at a glance">
+            <MetricCard
+              label="Full-time"
+              value={s.counts.fullTime}
+              hint={`${s.counts.measured.toLocaleString()} measured`}
+              tone="neutral"
+              onClick={() => {
+                setTab('hours');
+                setFilter('full_time');
+              }}
+              selected={tab === 'hours' && filter === 'full_time'}
+              nothing={s.counts.measured === 0 ? 'No one measured yet' : undefined}
+            />
+            <MetricCard
+              label="Approaching"
+              value={s.counts.approaching}
+              hint={`averaging ${threshold - 10}–${threshold} hours a month`}
+              tone="neutral"
+              onClick={() => {
+                setTab('hours');
+                setFilter('approaching');
+              }}
+              selected={tab === 'hours' && filter === 'approaching'}
+              nothing={s.counts.approaching === 0 ? 'No one close to the line' : undefined}
+            />
             <MetricCard
               label="Offers owed"
-              value={s.counts.offersDue + s.counts.offersOverdue}
-              hint={s.counts.offersOverdue ? `${s.counts.offersOverdue} past the stability start` : 'none overdue'}
-              accent={s.counts.offersOverdue > 0}
+              value={owed}
+              hint={s.counts.offersOverdue ? `${s.counts.offersOverdue} past the stability start` : 'None overdue'}
+              tone={s.counts.offersOverdue > 0 ? 'alert' : 'warning'}
+              onClick={() => {
+                setTab('hours');
+                setFilter('attention');
+              }}
+              selected={tab === 'hours' && filter === 'attention'}
+              nothing={owed === 0 ? 'No offers owed' : undefined}
             />
             <MetricCard
-              label="Most at risk"
+              label="Penalty exposure"
               value={fmtMoney(Math.max(s.exposure.a, s.exposure.b))}
-              hint={
-                s.exposure.fullTime === 0
-                  ? 'nobody is full-time yet'
-                  : s.exposure.failsNinetyFive
-                    ? `${s.exposure.offeredShare}% offered — under the 95% line`
-                    : `${s.exposure.offeredShare}% of full-time offered`
-              }
-              accent={s.exposure.failsNinetyFive}
+              hint={s.exposure.failsNinetyFive ? `${s.exposure.offeredShare}% offered — under the 95% line` : `${s.exposure.offeredShare}% of full-time offered`}
+              tone={s.exposure.failsNinetyFive ? 'alert' : 'neutral'}
+              nothing={s.exposure.fullTime === 0 ? 'Nobody is full-time yet' : undefined}
             />
-          </div>
+          </MetricStrip>
         ) : (
           <Skeleton className="h-24" />
         )
       }
-      filters={
+    >
+      <Tabs value={tab} onValueChange={(v) => setTab(v as AcaTab)}>
+        <TabsList>
+          <TabsTrigger value="hours">Hours & offers</TabsTrigger>
+          <TabsTrigger value="filing">Annual filing</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {tab === 'filing' ? (
+        <div className="mt-4">
+          <AcaFiling />
+        </div>
+      ) : (
+      <div className="mt-4 space-y-5">
         <SegmentedControl
-          className="flex-wrap"
           ariaLabel="Show"
           value={filter}
           onChange={setFilter}
@@ -194,9 +229,6 @@ export function AcaHours() {
             { value: 'all', label: 'Everyone' },
           ]}
         />
-      }
-    >
-      <div className="space-y-5">
         {s && !s.likelyAle && (
           <p className="rounded-md border border-line p-3 text-sm text-ink-muted">
             Fewer than 50 full-time {term('workers').toLowerCase()} are measured right now. The employer mandate applies to employers with 50 or more full-time and full-time-equivalent employees — count part-time hours too before relying on this.
@@ -217,14 +249,14 @@ export function AcaHours() {
           rowActionLabel={(r) => `Open ${r.name}`}
           empty={{
             icon: HeartPulse,
-            title: filter === 'attention' ? 'Nothing needs attention' : 'Nobody here',
+            title: filter === 'attention' ? 'Nothing needs attention' : 'No one here',
             description: filter === 'attention' ? 'No offers owed and nobody close to full-time.' : 'Switch to Everyone to see every W-2 worker measured.',
           }}
         />
         {s && s.byClient.some((c) => c.fullTime > 0) && (
           <Card>
             <CardHeader>
-              <CardTitle>{hasClients ? `Exposure by ${term('label.client').toLowerCase()}` : 'Exposure'}</CardTitle>
+              <CardTitle>{hasClients ? `Penalty exposure by ${term('label.client').toLowerCase()}` : 'Penalty exposure'}</CardTitle>
               <CardDescription>
                 The most each could cost if full-time {term('workers').toLowerCase()} without an offer claimed a premium tax credit ({fmtMoney(s.exposure.amounts.b)} each for {s.year}). An estimate, not an assessment.
               </CardDescription>
@@ -246,27 +278,10 @@ export function AcaHours() {
           </Card>
         )}
       </div>
+      )}
       <WorkerDrawer worker={open} threshold={threshold} onClose={() => setOpen(null)} />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </ListTemplate>
-  );
-}
-
-function SyncButton() {
-  const qc = useQueryClient();
-  const year = new Date().getFullYear();
-  const sync = useMutation({
-    mutationFn: () => syncAca1095c(year),
-    onSuccess: (r) => {
-      toast.success(`${r.year} 1095-C months written for ${r.people} people. Generate the forms from Benefits → Lifecycle.`);
-      void qc.invalidateQueries({ queryKey: ['aca'] });
-    },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not write the months.'),
-  });
-  return (
-    <Button variant="outline" size="sm" onClick={() => sync.mutate()} loading={sync.isPending}>
-      Prepare {year} 1095-C months
-    </Button>
   );
 }
 

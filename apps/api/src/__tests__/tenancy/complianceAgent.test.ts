@@ -120,7 +120,7 @@ describe('document.chase', () => {
     const [c] = await chases(w.ana.id);
     const items = await decisions(w.hr.email);
     const item = items.find((d) => d.key === `compliance:expired:${c!.id}`);
-    expect(item, JSON.stringify(items.map((d) => d.key))).toMatchObject({ severity: 'critical', linkUrl: `/people?associateId=${w.ana.id}` });
+    expect(item, JSON.stringify(items.map((d) => d.key))).toMatchObject({ severity: 'critical', linkUrl: `/people/${w.ana.id}?tab=documents` });
     expect(item!.label).toMatch(/^Ana Lopez: Id — id\.pdf expired /);
 
     await prisma.associate.update({ where: { id: w.ana.id }, data: { separatedAt: new Date() } });

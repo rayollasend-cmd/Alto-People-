@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { ListTemplate } from '@/components/templates';
+import { useUrlParam } from '@/lib/useUrlState';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { NineBox, SuccessionByStore } from './SuccessionStores';
 import { useQuery } from '@tanstack/react-query';
@@ -41,6 +41,7 @@ import {
   FilterChip,
   Input,
   MetricCard,
+  MetricStrip,
   Select,
   SkeletonRows,
   Textarea,
@@ -245,7 +246,7 @@ export function SuccessionPositions() {
         </ErrorBanner>
       ) : (
         summary && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <MetricStrip label="Positions at a glance">
             <MetricCard label="Positions" value={summary.positionCount} />
             <MetricCard
               label="With successor"
@@ -260,7 +261,7 @@ export function SuccessionPositions() {
               label="Emergency cover"
               value={summary.byReadiness.EMERGENCY_COVER}
             />
-          </div>
+          </MetricStrip>
         )
       )}
 
@@ -726,7 +727,8 @@ function AddCandidateDrawer({
   );
 }
 
-type SuccessionTab = 'stores' | 'positions' | 'nine-box';
+const SUCCESSION_TABS = ['stores', 'positions', 'nine-box'] as const;
+type SuccessionTab = (typeof SUCCESSION_TABS)[number];
 
 /**
  * Succession, three ways: by store (the seats that run each store and who
@@ -735,24 +737,14 @@ type SuccessionTab = 'stores' | 'positions' | 'nine-box';
  */
 export function SuccessionHome() {
   const term = useTerm();
-  const [params, setParams] = useSearchParams();
-  const raw = params.get('tab');
-  const tab: SuccessionTab = raw === 'positions' || raw === 'nine-box' ? raw : 'stores';
+  // The tab lives in the URL; Back returns to the last one.
+  const [tab, setTab] = useUrlParam<SuccessionTab>('tab', 'stores', SUCCESSION_TABS, { history: 'push' });
   return (
     <ListTemplate
       title="Succession"
       subtitle={`Who could lead each ${term('label.store').toLowerCase()} next, who could step into each role, and where your talent sits.`}
-      breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Succession' }]}
     >
-      <Tabs
-        value={tab}
-        onValueChange={(v) => {
-          const next = new URLSearchParams(params);
-          if (v === 'stores') next.delete('tab');
-          else next.set('tab', v);
-          setParams(next, { replace: true });
-        }}
-      >
+      <Tabs value={tab} onValueChange={(v) => setTab(v as SuccessionTab)}>
         <TabsList>
           <TabsTrigger value="stores">By {term('label.store').toLowerCase()}</TabsTrigger>
           <TabsTrigger value="positions">By position</TabsTrigger>

@@ -90,7 +90,7 @@ describe('marketing → announce a campaign', () => {
     expect(draft.body).toMatch(/December 15/);
     await flushPendingNotifications();
     const note = await prisma.notification.findFirstOrThrow({ where: { recipientUserId: hrUser.id, category: 'broadcast.review', channel: 'IN_APP' } });
-    expect(note.linkUrl).toBe(`/directory?tab=broadcasts&broadcast=${draft.id}`);
+    expect(note.linkUrl).toBe(`/communications?tab=sends&view=broadcasts&broadcast=${draft.id}`);
     // Marketing still can't send (or even list) broadcasts.
     expect((await m.post(`/broadcasts/${draft.id}/send`).send({})).status).toBe(403);
     expect((await m.get('/broadcasts')).status).toBe(403);

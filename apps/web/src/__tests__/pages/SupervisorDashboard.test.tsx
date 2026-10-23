@@ -81,6 +81,9 @@ function renderPage(
     handover?: Array<Record<string, unknown>>;
     week?: Array<Record<string, unknown>>;
     lateNow?: Array<Record<string, unknown>>;
+    coverageAhead?: Record<string, unknown>;
+    /** Today with nobody on the roster at all. */
+    emptyDay?: boolean;
   } = {},
 ) {
   const role = opts.role ?? 'SHIFT_SUPERVISOR';
@@ -101,6 +104,7 @@ function renderPage(
         })),
       };
     if (path.startsWith('/client-portal/day?date=')) return day([row('t1', 'Cy Dale', 'unconfirmed', 20, 28)]);
+    if (path.startsWith('/client-portal/day') && opts.emptyDay) return day([]);
     if (path.startsWith('/client-portal/day'))
       return {
         ...day([
@@ -118,6 +122,7 @@ function renderPage(
     if (path.startsWith('/floor/flags/') && init?.method === 'POST') return { ok: true };
     if (path === '/floor/handover') return { items: opts.handover ?? [] };
     if (path === '/floor/week') return { today: '2026-10-17', timezone: tz, days: opts.week ?? [] };
+    if (path.startsWith('/floor/coverage-ahead') && opts.coverageAhead) return opts.coverageAhead;
     if (path === '/approvals/count')
       return { swaps: 1, pickups: 2, timeOff: 2, timesheets: 6, clockIns: 1, total: 12 };
     // Attendance insights: who isn't in, and eight weeks of fill.
@@ -604,11 +609,41 @@ describe('<SupervisorDashboard> — the floor from a phone', () => {
   it('files an incident from the home, and never shows money', async () => {
     renderPage();
     await screen.findByText('Front Beach 218');
-    // One tap from anywhere: the sticky floor-actions row.
-    await userEvent.setup().click(screen.getByRole('button', { name: /report incident/i }));
+    // On a phone it's in the header (the sticky pill covered the hero there);
+    // the pill stays for desktop.
+    expect(screen.getByTestId('floor-actions')).toHaveClass('hidden', 'md:flex');
+    expect(screen.getByTestId('header-report')).toHaveClass('md:hidden');
+    await userEvent.setup().click(screen.getByTestId('header-report'));
     expect(await screen.findByRole('dialog', { name: /report an incident/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add a photo/i })).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/\$/);
+  });
+
+  it('the week tile is short vs contract, not "0 · Every shift covered" beside a 6-short hero (F500)', async () => {
+    renderPage({ coverageAhead: { days: 7, shortOfContract: 6, windowsShort: 1, openPosted: 0, windows: 7, byDay: [] } });
+    const tile = (await screen.findByText('Short vs contract · 7 days')).closest('a')!;
+    expect(tile).toHaveAttribute('href', '/scheduling');
+    expect(within(tile).getByText('No open shifts posted for them yet')).toBeInTheDocument();
+    expect(screen.queryByText('Every shift covered')).not.toBeInTheDocument();
+    expect(screen.queryByText('Open shifts · next 7 days')).not.toBeInTheDocument();
+  });
+
+  it('before their window starts, "who isn\'t in" says nobody is due yet — not "Everyone\'s in" (F500)', async () => {
+    try {
+      sessionStorage.removeItem('alto.floor.focus');
+    } catch {
+      /* no storage in this env */
+    }
+    const mod = (h: number) => minuteOfDayInZone(new Date(Date.now() + h * 3_600_000), tz);
+    renderPage({ myWindows: [{ label: 'Swing', startMinute: mod(2), endMinute: mod(8), targetCount: 5 }] });
+    expect(await screen.findByText(/^Swing starts .* — nobody due yet$/)).toBeInTheDocument();
+    expect(screen.queryByText('Everyone’s in')).not.toBeInTheDocument();
+  });
+
+  it('with nobody scheduled, "who isn\'t in" says there is nobody to wait for — not "Everyone\'s in" (F500)', async () => {
+    renderPage({ emptyDay: true });
+    expect(await screen.findByText('Nobody is scheduled today — nobody to wait for')).toBeInTheDocument();
+    expect(screen.queryByText('Everyone’s in')).not.toBeInTheDocument();
   });
 
   it('a watch-only floor lead flags a no-show in two taps and sees the week beyond tomorrow', async () => {

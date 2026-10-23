@@ -16,7 +16,6 @@ import { useI18n, type Translate } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { SkeletonRows } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 
 type Tab = 'incoming' | 'outgoing';
@@ -125,9 +124,9 @@ export function SwapMarketplace({
   };
 
   return (
-    <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
-      <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-2xl text-white">{t('swap.title')}</h2>
+    <section className="bg-navy border border-navy-secondary rounded-lg p-4 mb-5">
+      <div className="flex items-baseline justify-between mb-2">
+        <h2 className="text-base font-medium text-white">{t('swap.title')}</h2>
       </div>
       <div role="tablist" className="flex gap-2 mb-4 border-b border-navy-secondary">
         {(['incoming', 'outgoing'] as const).map((tabId) => (
@@ -162,14 +161,18 @@ export function SwapMarketplace({
         </ErrorBanner>
       )}
       {!items && !error && <SkeletonRows count={3} rowHeight="h-16" />}
+      {/* Empty is the usual day: one quiet line, not a card-sized blank
+          under the schedule (F500 G2). */}
       {items && items.length === 0 && (
-        <EmptyState
-          icon={ArrowLeftRight}
-          title={t(tab === 'incoming' ? 'swap.emptyIncomingTitle' : 'swap.emptyOutgoingTitle')}
-          description={t(
-            tab === 'incoming' ? 'swap.emptyIncomingDesc' : 'swap.emptyOutgoingDesc',
-          )}
-        />
+        <div className="flex items-start gap-2 text-sm" data-testid="swaps-empty">
+          <ArrowLeftRight className="mt-0.5 h-4 w-4 shrink-0 text-silver/60" aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="text-ink">{t(tab === 'incoming' ? 'swap.emptyIncomingTitle' : 'swap.emptyOutgoingTitle')}</div>
+            <div className="text-xs text-silver/70">
+              {t(tab === 'incoming' ? 'swap.emptyIncomingDesc' : 'swap.emptyOutgoingDesc')}
+            </div>
+          </div>
+        </div>
       )}
 
       {items && items.length > 0 && (

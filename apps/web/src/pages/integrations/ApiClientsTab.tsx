@@ -85,7 +85,7 @@ export function ApiClientsTab({ canManage }: { canManage: boolean }) {
         </p>
         <div className="ml-auto flex items-center gap-2">
           <Button asChild size="sm" variant="outline">
-            <Link to="/developers">
+            <Link to="/developers?tab=reference">
               <ExternalLink className="mr-1.5 h-3.5 w-3.5" /> API reference
             </Link>
           </Button>

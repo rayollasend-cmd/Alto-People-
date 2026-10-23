@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Download, Inbox, Megaphone, RotateCw, Send, Users } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Inbox, MoreHorizontal, RotateCw, Send, Users } from 'lucide-react';
 import { dayHeading, dayKey, fmtTimeOnly, isRelativeDayHeading } from '@/lib/dayGroup';
 import { toast } from 'sonner';
 import { performWithUndo } from '@/lib/undoToast';
@@ -18,13 +18,13 @@ import {
   listSuppressions,
   sendNotification,
 } from '@/lib/communicationsApi';
-import { listBroadcastTemplates } from '@/lib/dirCommsApi';
+import { listBroadcastTemplates, listBroadcasts } from '@/lib/dirCommsApi';
 import { cn } from '@/lib/cn';
 import { BroadcastDrawer } from '@/pages/dirComms/BroadcastDrawer';
 import { ApiError } from '@/lib/api';
-import { downloadCsv } from '@/lib/csv';
-import { fmtDateOnly, fmtDateTime, ymdLocal } from '@/lib/format';
-import { userPhotoUrl } from '@/lib/photoUrl';
+import { fmtCount, fmtDateOnly, fmtDateTime } from '@/lib/format';
+import { personPhotoUrl } from '@/lib/photoUrl';
+import { useUrlParam } from '@/lib/useUrlState';
 import {
   AssociatePicker,
   Avatar,
@@ -45,35 +45,47 @@ import {
   DrawerDescription,
   DrawerHeader,
   DrawerTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   ErrorBanner,
   Field,
   Input,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Textarea,
   type PickedAssociate,
 } from '@/components/ui';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
-import { ListTemplate } from '@/components/templates';
 import { useTerm } from '@/lib/auth';
+import { BROADCASTS_KEY, BroadcastsPanel, waitingBroadcasts } from './BroadcastsPanel';
 
-function statusVariant(
-  s: Notification['status'],
-): 'pending' | 'success' | 'destructive' | 'info' {
-  switch (s) {
-    case 'SENT':
-    case 'DELIVERED':
+type BadgeVariant = 'pending' | 'success' | 'destructive' | 'info' | 'default';
+
+/** How one message's delivery reads: an email with no provider went nowhere, whatever its stored status. */
+export function deliveryOf(n: Notification): 'sent' | 'read' | 'failed' | 'notSent' | 'queued' {
+  if (n.loggedOnly || n.status === 'NOT_CONFIGURED') return 'notSent';
+  if (n.status === 'FAILED' || n.status === 'BOUNCED' || n.status === 'COMPLAINED' || n.status === 'SUPPRESSED') return 'failed';
+  if (n.status === 'READ' || n.readAt) return 'read';
+  if (n.status === 'QUEUED') return 'queued';
+  return 'sent';
+}
+
+function statusVariant(n: Notification): BadgeVariant {
+  switch (deliveryOf(n)) {
+    case 'sent':
       return 'success';
-    case 'FAILED':
-    case 'BOUNCED':
-    case 'COMPLAINED':
-      return 'destructive';
-    case 'READ':
+    case 'read':
       return 'info';
-    case 'QUEUED':
-    case 'SUPPRESSED':
-    case 'NOT_CONFIGURED':
+    case 'failed':
+      return 'destructive';
+    case 'queued':
       return 'pending';
+    case 'notSent':
+      // Grey, not red: nothing failed — there was nothing to send it through.
+      return 'default';
   }
 }
 
@@ -89,9 +101,17 @@ const STATUS_LABELS: Record<NotificationStatus, string> = {
   NOT_CONFIGURED: 'Not sent — channel not connected',
 };
 
+/** The status in words; an email written to the server log says so instead of "Sent". */
+export function statusLabelOf(n: Notification): string {
+  return n.loggedOnly ? 'Not sent: no email provider' : STATUS_LABELS[n.status];
+}
+
 /** A person's name when the account has one, else the address it went to — never a raw user id. */
 const recipientOf = (n: Notification) =>
   n.recipientName ?? n.recipientEmail ?? n.recipientPhone ?? (n.recipientUserId ? 'A user account' : '—');
+/** One person across channels: the account, else the address. */
+const personKeyOf = (n: Notification) => n.recipientUserId ?? n.recipientEmail ?? n.recipientPhone ?? n.id;
+const photoOf = (n: Notification) => personPhotoUrl({ photoUrl: n.recipientPhotoUrl, userId: n.recipientUserId });
 
 const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   IN_APP: 'In-app',
@@ -100,53 +120,76 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   PUSH: 'Push',
   WHATSAPP: 'WhatsApp',
 };
-
-interface AdminCommsViewProps {
-  canManage: boolean;
-}
+const CHANNEL_ORDER: NotificationChannel[] = ['IN_APP', 'EMAIL', 'SMS', 'PUSH', 'WHATSAPP'];
 
 /**
- * One send, as the log shows it: a single message, or one message to many
- * people (a reminder fanned out to four admins is one row, "4 people",
- * not four). Grouped by category, subject and the minute it went out.
+ * One message, as the log shows it: the same words to one person or many,
+ * by every channel it went by — a reminder fanned out to four admins by
+ * email and in-app is one row ("4 people · Email · In-app"), not eight.
+ * Grouped by category, subject, the minute it went out and the sender.
  */
-interface SendGroup {
+export interface SendGroup {
   key: string;
   first: Notification;
   rows: Notification[];
+  channels: NotificationChannel[];
+  people: number;
   sent: number;
   failed: number;
   read: number;
+  notSent: number;
+  queued: number;
 }
 
-const FAILED_STATUSES = new Set<NotificationStatus>(['FAILED', 'BOUNCED', 'COMPLAINED', 'SUPPRESSED', 'NOT_CONFIGURED']);
-
 export function groupSends(items: Notification[]): SendGroup[] {
-  const groups = new Map<string, SendGroup>();
+  const groups = new Map<string, SendGroup & { who: Set<string> }>();
   for (const n of items) {
-    const key = [n.channel, n.category ?? '', n.subject ?? '', n.createdAt.slice(0, 16), n.senderUserId ?? ''].join('|');
+    const key = [n.category ?? '', n.subject ?? '', n.createdAt.slice(0, 16), n.senderUserId ?? ''].join('|');
     let g = groups.get(key);
     if (!g) {
-      g = { key, first: n, rows: [], sent: 0, failed: 0, read: 0 };
+      g = { key, first: n, rows: [], channels: [], people: 0, sent: 0, failed: 0, read: 0, notSent: 0, queued: 0, who: new Set() };
       groups.set(key, g);
     }
     g.rows.push(n);
-    if (FAILED_STATUSES.has(n.status)) g.failed++;
-    else if (n.status === 'READ' || n.readAt) g.read++;
-    else g.sent++;
+    if (!g.channels.includes(n.channel)) g.channels.push(n.channel);
+    g.who.add(personKeyOf(n));
+    g[deliveryOf(n)]++;
   }
-  return [...groups.values()];
+  return [...groups.values()].map(({ who, ...g }) => ({
+    ...g,
+    people: who.size,
+    channels: [...g.channels].sort((a, b) => CHANNEL_ORDER.indexOf(a) - CHANNEL_ORDER.indexOf(b)),
+  }));
 }
 
-const groupRecipients = (g: SendGroup) => (g.rows.length === 1 ? recipientOf(g.first) : `${g.rows.length} people`);
+const groupRecipients = (g: SendGroup) => (g.people === 1 ? recipientOf(g.first) : `${g.people} people`);
+const failedRows = (g: SendGroup) => g.rows.filter((r) => r.status === 'FAILED');
 
-export function AdminCommsView({ canManage }: AdminCommsViewProps) {
-  const [showCompose, setShowCompose] = useState(false);
-  const [showBroadcast, setShowBroadcast] = useState(false);
+const STATUS_FILTERS: NotificationStatus[] = ['QUEUED', 'SENT', 'READ', 'FAILED', 'BOUNCED', 'COMPLAINED', 'SUPPRESSED', 'NOT_CONFIGURED'];
+const CHANNEL_FILTERS: NotificationChannel[] = ['IN_APP', 'EMAIL', 'SMS', 'PUSH'];
+const VIEWS = ['log', 'broadcasts'] as const;
+
+interface AdminCommsViewProps {
+  canManage: boolean;
+  /** Which composer the page header opened ("Send", "New broadcast"); null when none. */
+  compose?: 'send' | 'broadcast' | null;
+  onComposeChange?: (next: 'send' | 'broadcast' | null) => void;
+}
+
+/**
+ * Notifications › Sends & broadcasts: the log of every message that went
+ * out (one row per message, its channels as chips, an honest status), and
+ * the broadcasts — drafts to review, scheduled, sent. The page header holds
+ * Send and New broadcast; this is the body under it.
+ */
+export function AdminCommsView({ canManage, compose = null, onComposeChange }: AdminCommsViewProps) {
+  const qc = useQueryClient();
+  const [view, setView] = useUrlParam<(typeof VIEWS)[number]>('view', 'log', VIEWS, { history: 'push' });
   const [drawerTarget, setDrawerTarget] = useState<SendGroup | null>(null);
-  const [channelFilter, setChannelFilter] = useState<NotificationChannel | ''>('');
-  const [statusFilter, setStatusFilter] = useState<NotificationStatus | ''>('');
-  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [channelFilter, setChannelFilter] = useUrlParam<NotificationChannel | ''>('channel', '', ['', ...CHANNEL_FILTERS]);
+  const [statusFilter, setStatusFilter] = useUrlParam<NotificationStatus | ''>('status', '', ['', ...STATUS_FILTERS]);
+  const [resendingKey, setResendingKey] = useState<string | null>(null);
+  const setCompose = (next: 'send' | 'broadcast' | null) => onComposeChange?.(next);
 
   const listParams = {
     channel: channelFilter || undefined,
@@ -157,53 +200,45 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
     queryFn: () => listAdmin(listParams),
   });
   const items: Notification[] | null = refreshQuery.data?.notifications ?? null;
+  const total = refreshQuery.data?.total ?? null;
   const groups = useMemo(() => (items ? groupSends(items) : null), [items]);
-  const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.' : null;
+  const error = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load.') : null;
   const refresh = async () => {
     await refreshQuery.refetch();
   };
 
-  const exportCsv = () => {
-    if (!items || items.length === 0) return;
-    downloadCsv(`communications-${ymdLocal()}.csv`, [
-      ['Created', 'Channel', 'Status', 'Recipient', 'Recipient name', 'Subject', 'Body', 'Sender', 'Failure reason'],
-      ...items.map((n) => [
-        fmtDateTime(n.createdAt),
-        n.channel,
-        n.status,
-        n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '',
-        n.recipientName ?? '',
-        n.subject ?? '',
-        n.body,
-        n.senderEmail ?? 'system',
-        n.failureReason ?? '',
-      ]),
-    ]);
-  };
+  // Drafts waiting (Marketing's announcements to review, scheduled sends): said on the log, one click from them.
+  const broadcastsQuery = useQuery({ queryKey: BROADCASTS_KEY, queryFn: () => listBroadcasts(), enabled: canManage });
+  const waiting = waitingBroadcasts(broadcastsQuery.data?.broadcasts);
 
-  /** Re-post the exact payload of a FAILED row through the send endpoint. */
-  const resend = async (n: Notification) => {
-    setResendingId(n.id);
+  /** Re-post the exact payload of each FAILED row in the message through the send endpoint. */
+  const resend = async (g: SendGroup) => {
+    const rows = failedRows(g);
+    if (rows.length === 0) return;
+    setResendingKey(g.key);
+    let failed = 0;
     try {
-      const sent = await sendNotification({
-        channel: n.channel,
-        recipientUserId: n.recipientUserId ?? undefined,
-        recipientEmail: n.recipientEmail ?? undefined,
-        recipientPhone: n.recipientPhone ?? undefined,
-        subject: n.subject ?? undefined,
-        body: n.body,
-        category: n.category ?? undefined,
-      });
-      if (sent.status === 'FAILED') {
-        toast.error(`Resend failed: ${sent.failureReason ?? 'unknown error'}`);
-      } else {
-        toast.success('Resent.');
+      for (const n of rows) {
+        try {
+          const sent = await sendNotification({
+            channel: n.channel,
+            recipientUserId: n.recipientUserId ?? undefined,
+            recipientEmail: n.recipientEmail ?? undefined,
+            recipientPhone: n.recipientPhone ?? undefined,
+            subject: n.subject ?? undefined,
+            body: n.body,
+            category: n.category ?? undefined,
+          });
+          if (sent.status === 'FAILED') failed++;
+        } catch {
+          failed++;
+        }
       }
+      if (failed > 0) toast.error(`${failed} of ${rows.length} still failed.`);
+      else toast.success(rows.length === 1 ? 'Resent.' : `Resent to ${rows.length}.`);
       void refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Resend failed.');
     } finally {
-      setResendingId(null);
+      setResendingKey(null);
     }
   };
 
@@ -213,7 +248,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
         key: 'time',
         header: 'Time',
         accessor: (g) => new Date(g.first.createdAt).getTime(),
-        csv: (g) => g.first.createdAt,
+        csv: (g) => fmtDateTime(g.first.createdAt),
         sortable: true,
         searchable: false,
         cardMeta: true,
@@ -222,27 +257,19 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
         cell: (g) => <span title={fmtDateTime(g.first.createdAt)}>{fmtTimeOnly(g.first.createdAt)}</span>,
       },
       {
-        key: 'channel',
-        header: 'Channel',
-        accessor: (g) => CHANNEL_LABELS[g.first.channel],
-        sortable: true,
-        cardMeta: true,
-        cell: (g) => <Badge variant="outline">{CHANNEL_LABELS[g.first.channel]}</Badge>,
-      },
-      {
         key: 'recipient',
         header: 'To',
-        accessor: (g) => (g.rows.length === 1 ? recipientOf(g.first) : g.rows.map(recipientOf).join(', ')),
+        accessor: (g) => (g.people === 1 ? recipientOf(g.first) : [...new Set(g.rows.map(recipientOf))].join(', ')),
         sortable: true,
         primary: true,
         cell: (g) =>
-          g.rows.length === 1 ? (
+          g.people === 1 ? (
             <span className="flex min-w-0 items-center gap-2.5">
-              <Avatar src={userPhotoUrl(g.first.recipientUserId)} name={recipientOf(g.first)} email={g.first.recipientEmail ?? undefined} size="xs" />
+              <Avatar src={photoOf(g.first)} name={recipientOf(g.first)} email={g.first.recipientEmail ?? undefined} size="xs" />
               <span className="min-w-0 break-words text-ink">{recipientOf(g.first)}</span>
             </span>
           ) : (
-            <span className="flex min-w-0 items-center gap-2.5" title={g.rows.map(recipientOf).join(', ')}>
+            <span className="flex min-w-0 items-center gap-2.5" title={[...new Set(g.rows.map(recipientOf))].join(', ')}>
               <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-surface-raised text-ink-muted">
                 <Users className="h-3.5 w-3.5" aria-hidden="true" />
               </span>
@@ -252,186 +279,218 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
       },
       {
         key: 'subject',
-        header: 'Subject / preview',
+        header: 'Message',
         accessor: (g) => `${g.first.subject ?? ''} ${g.first.body}`,
+        csv: (g) => g.first.subject ?? '',
         sortable: true,
         cell: (g) => (
           <>
             <div className="max-w-md truncate font-medium text-ink">{g.first.subject ?? '(no subject)'}</div>
-            <div className="line-clamp-2 max-w-md text-xs text-ink-muted">{g.first.body}</div>
+            <div className="max-w-md truncate text-xs text-ink-muted">{g.first.body.split('\n').find((l) => l.trim()) ?? ''}</div>
           </>
+        ),
+      },
+      {
+        key: 'channel',
+        header: 'Channels',
+        accessor: (g) => g.channels.map((c) => CHANNEL_LABELS[c]).join(' · '),
+        sortable: true,
+        cardMeta: true,
+        cell: (g) => (
+          <span className="flex flex-wrap gap-1">
+            {g.channels.map((c) => (
+              <Badge key={c} variant="outline">
+                {CHANNEL_LABELS[c]}
+              </Badge>
+            ))}
+          </span>
         ),
       },
       {
         key: 'status',
         header: 'Status',
-        accessor: (g) => (g.failed ? 'Failed' : g.read === g.rows.length ? 'Read' : 'Sent'),
+        accessor: (g) => (g.rows.length === 1 ? statusLabelOf(g.first) : [g.sent && `${g.sent} sent`, g.read && `${g.read} read`, g.notSent && `${g.notSent} not sent`, g.failed && `${g.failed} failed`, g.queued && `${g.queued} queued`].filter(Boolean).join(', ')),
         sortable: true,
         cardMeta: true,
         cell: (g) =>
           g.rows.length === 1 ? (
             <>
-              <Badge variant={statusVariant(g.first.status)}>{STATUS_LABELS[g.first.status]}</Badge>
-              {g.first.failureReason && <div className="mt-1 text-2xs text-alert">{g.first.failureReason}</div>}
+              <Badge variant={statusVariant(g.first)}>{statusLabelOf(g.first)}</Badge>
+              {g.first.failureReason && deliveryOf(g.first) === 'failed' && <div className="mt-1 text-2xs text-alert">{g.first.failureReason}</div>}
             </>
           ) : (
             <span className="flex flex-wrap gap-1 text-2xs">
               {g.sent > 0 && <Badge variant="success">{g.sent} sent</Badge>}
               {g.read > 0 && <Badge variant="info">{g.read} read</Badge>}
+              {g.queued > 0 && <Badge variant="pending">{g.queued} queued</Badge>}
+              {g.notSent > 0 && (
+                <Badge variant="default" title={g.rows.some((r) => r.loggedOnly) ? 'No email provider is connected: these were written to the server log, not sent.' : 'The channel is not connected.'}>
+                  {g.notSent} not sent
+                </Badge>
+              )}
               {g.failed > 0 && <Badge variant="destructive">{g.failed} failed</Badge>}
             </span>
           ),
       },
-      ...(canManage
-        ? [
-            {
-              key: 'resend',
-              header: 'Resend',
-              accessor: () => null,
-              searchable: false,
-              stopRowClick: true,
-              align: 'right',
-              cell: (g) =>
-                g.rows.length === 1 && g.first.status === 'FAILED' ? (
-                  <Button size="xs" variant="outline" disabled={resendingId === g.first.id} onClick={() => void resend(g.first)}>
-                    <RotateCw className="mr-1 h-3 w-3" />
-                    {resendingId === g.first.id ? 'Resending…' : 'Resend'}
-                  </Button>
-                ) : null,
-            } satisfies GridColumn<SendGroup>,
-          ]
-        : []),
+      {
+        key: 'more',
+        header: '',
+        accessor: () => null,
+        csv: () => '',
+        searchable: false,
+        stopRowClick: true,
+        align: 'right',
+        width: '3rem',
+        cell: (g) => (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="xs" variant="ghost" aria-label={`More for the message to ${groupRecipients(g)}`} loading={resendingKey === g.key}>
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setDrawerTarget(g)}>Open</DropdownMenuItem>
+              {canManage && failedRows(g).length > 0 && (
+                <DropdownMenuItem onSelect={() => void resend(g)}>
+                  <RotateCw className="mr-2 h-3.5 w-3.5" />
+                  {failedRows(g).length === 1 ? 'Resend' : `Resend the ${failedRows(g).length} that failed`}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ),
+      },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canManage, resendingId],
+    [canManage, resendingKey],
   );
 
-  return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
-    <ListTemplate
-      title="Communications"
-      subtitle={canManage ? 'Message one person, or broadcast to a client, a department or everyone.' : 'Read-only view of sent notifications.'}
-      primaryAction={
-        canManage ? (
-          <Button onClick={() => setShowCompose(true)}>
-            <Send className="h-4 w-4" />
-            Send
-          </Button>
-        ) : undefined
-      }
-      secondaryActions={
-        canManage ? (
-          <Button variant="outline" onClick={() => setShowBroadcast(true)}>
-            <Megaphone className="h-4 w-4" />
-            Broadcast
-          </Button>
-        ) : undefined
-      }
-    >
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-base">Sent log</CardTitle>
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Select size="sm" aria-label="Filter by channel" value={channelFilter} onChange={(e) => setChannelFilter(e.target.value as NotificationChannel | '')}>
-                <option value="">All channels</option>
-                <option value="IN_APP">In-app</option>
-                <option value="EMAIL">Email</option>
-                <option value="SMS">SMS</option>
-                <option value="PUSH">Push</option>
-              </Select>
-              <Select size="sm" aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as NotificationStatus | '')}>
-                <option value="">All statuses</option>
-                <option value="QUEUED">Queued</option>
-                <option value="SENT">Sent</option>
-                <option value="READ">Read</option>
-                <option value="FAILED">Failed</option>
-                <option value="BOUNCED">Bounced</option>
-                <option value="COMPLAINED">Marked as spam</option>
-                <option value="SUPPRESSED">Suppressed</option>
-                <option value="NOT_CONFIGURED">Not sent — channel not connected</option>
-              </Select>
-              <Button size="sm" variant="outline" onClick={exportCsv} disabled={!items || items.length === 0}>
-                <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {error && (
-            <ErrorBanner
-              className="mb-3"
-              action={
-                <Button size="sm" variant="secondary" onClick={() => void refresh()}>
-                  Retry
-                </Button>
-              }
-            >
-              {error}
-            </ErrorBanner>
-          )}
-          {!error && (
-            <DataGrid<SendGroup>
-              id="comms-log"
-              caption="Notification log"
-              rows={groups}
-              loading={!groups}
-              columns={logColumns}
-              rowKey={(g) => g.key}
-              urlState={false}
-              exportCsv={false}
-              search={{ placeholder: 'Search people and subjects' }}
-              onRowClick={(g) => setDrawerTarget(g)}
-              rowActionLabel={(g) => `Open message to ${groupRecipients(g)}`}
-              // One table, a heading per day; only today starts open so
-              // the log is not an endless scroll.
-              groupBy={{
-                key: (g) => dayKey(g.first.createdAt),
-                header: (key, rows) => (
-                  <span className="flex items-center gap-2">
-                    <span>{dayHeading(key)}</span>
-                    {isRelativeDayHeading(dayHeading(key)) && <span className="text-xs font-normal text-ink-muted/70">· {fmtDateOnly(key)}</span>}
-                    <span className="ml-auto text-xs font-normal text-ink-muted">
-                      {rows.length} {rows.length === 1 ? 'send' : 'sends'}
-                    </span>
-                  </span>
-                ),
-                collapsible: { defaultOpen: (_key, index) => index === 0 },
-              }}
-              empty={{
-                icon: Inbox,
-                title: 'No notifications yet',
-                description: canManage
-                  ? 'Send your first message — it will show up here once delivered.'
-                  : 'Notifications you receive or that go out from the system will appear here.',
-                action: canManage ? (
-                  <Button onClick={() => setShowCompose(true)}>
-                    <Send className="h-4 w-4" />
-                    Send notification
-                  </Button>
-                ) : undefined,
-              }}
-            />
-          )}
-        </CardContent>
-      </Card>
+  const activeFilters = (channelFilter ? 1 : 0) + (statusFilter ? 1 : 0);
+  const clearFilters = () => {
+    setChannelFilter('');
+    setStatusFilter('');
+  };
 
-      {canManage && <SuppressionListCard />}
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <SegmentedControl
+          ariaLabel="What to show"
+          value={view}
+          onChange={(v) => setView(v)}
+          options={[
+            { value: 'log' as const, label: 'Sent log' },
+            { value: 'broadcasts' as const, label: 'Broadcasts', count: waiting.length || undefined },
+          ]}
+        />
+        {view === 'log' && waiting.length > 0 && (
+          <button type="button" className="text-sm text-accent underline-offset-2 hover:underline" onClick={() => setView('broadcasts')}>
+            {waiting.length === 1 ? '1 broadcast is waiting to be sent' : `${waiting.length} broadcasts are waiting to be sent`} — review
+          </button>
+        )}
+      </div>
+
+      {view === 'broadcasts' ? (
+        <BroadcastsPanel />
+      ) : error ? (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      ) : (
+        <DataGrid<SendGroup>
+          id="comms-log"
+          caption="Sent log"
+          noun={{ one: 'message', many: 'messages' }}
+          rows={groups}
+          loading={!groups}
+          columns={logColumns}
+          rowKey={(g) => g.key}
+          urlKey="log"
+          exportCsv={{ filename: 'sent-log' }}
+          search={{ placeholder: 'Search people and subjects' }}
+          onRowClick={(g) => setDrawerTarget(g)}
+          rowActionLabel={(g) => `Open the message to ${groupRecipients(g)}`}
+          filters={
+            <>
+              <Select size="sm" aria-label="Channel" value={channelFilter} onChange={(e) => setChannelFilter(e.target.value as NotificationChannel | '')}>
+                <option value="">All channels</option>
+                {CHANNEL_FILTERS.map((c) => (
+                  <option key={c} value={c}>
+                    {CHANNEL_LABELS[c]}
+                  </option>
+                ))}
+              </Select>
+              <Select size="sm" aria-label="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as NotificationStatus | '')}>
+                <option value="">All statuses</option>
+                {STATUS_FILTERS.map((s) => (
+                  <option key={s} value={s}>
+                    {s === 'NOT_CONFIGURED' ? 'Not sent (nothing connected)' : STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </Select>
+            </>
+          }
+          activeFilters={activeFilters}
+          onClearFilters={clearFilters}
+          footnote={
+            items && total !== null && total > items.length
+              ? `The latest ${items.length.toLocaleString()} of ${fmtCount(total, 'message')}. Pick a channel or a status to reach older ones.`
+              : undefined
+          }
+          // One table, a heading per day; only today starts open so the log
+          // is not an endless scroll.
+          groupBy={{
+            key: (g) => dayKey(g.first.createdAt),
+            header: (key, rows) => (
+              <span className="flex items-center gap-2">
+                <span>{dayHeading(key)}</span>
+                {isRelativeDayHeading(dayHeading(key)) && <span className="text-xs font-normal text-ink-muted/70">· {fmtDateOnly(key)}</span>}
+                <span className="ml-auto text-xs font-normal text-ink-muted">
+                  {rows.length} {rows.length === 1 ? 'message' : 'messages'}
+                </span>
+              </span>
+            ),
+            collapsible: { defaultOpen: (_key, index) => index === 0 },
+          }}
+          empty={{
+            icon: Inbox,
+            title: 'Nothing sent yet',
+            description: canManage
+              ? 'Messages and broadcasts show up here, with how each one was delivered.'
+              : 'Notifications that go out from the system will appear here.',
+            action: canManage ? (
+              <Button onClick={() => setCompose('send')}>
+                <Send className="h-4 w-4" />
+                Send a message
+              </Button>
+            ) : undefined,
+          }}
+        />
+      )}
+
+      {canManage && view === 'log' && <SuppressionListCard />}
 
       <ComposeDialog
-        open={showCompose}
-        onOpenChange={setShowCompose}
+        open={compose === 'send'}
+        onOpenChange={(o) => setCompose(o ? 'send' : null)}
         onSent={() => {
-          setShowCompose(false);
+          setCompose(null);
           void refresh();
         }}
       />
-      {showBroadcast && (
+      {compose === 'broadcast' && (
         <BroadcastDrawer
           broadcast={null}
-          onClose={() => setShowBroadcast(false)}
+          onClose={() => setCompose(null)}
           onSaved={() => {
-            setShowBroadcast(false);
+            setCompose(null);
+            void qc.invalidateQueries({ queryKey: BROADCASTS_KEY });
             void refresh();
           }}
         />
@@ -440,11 +499,11 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
       <Drawer open={!!drawerTarget} onOpenChange={(o) => !o && setDrawerTarget(null)} width="max-w-xl">
         {drawerTarget && (drawerTarget.rows.length === 1 ? <NotificationDetailPanel n={drawerTarget.first} /> : <SendGroupPanel g={drawerTarget} />)}
       </Drawer>
-    </ListTemplate>
+    </div>
   );
 }
 
-/** One message to many people: the words once, then who got it and how it went. */
+/** One message to many people (or by several channels): the words once, then who got it, how, and how it went. */
 function SendGroupPanel({ g }: { g: SendGroup }) {
   const n = g.first;
   return (
@@ -452,7 +511,7 @@ function SendGroupPanel({ g }: { g: SendGroup }) {
       <DrawerHeader>
         <DrawerTitle className="truncate">{n.subject ?? '(no subject)'}</DrawerTitle>
         <DrawerDescription>
-          {g.rows.length} people · {CHANNEL_LABELS[n.channel]} · {fmtDateTime(n.createdAt)}
+          {g.people === 1 ? recipientOf(n) : `${g.people} people`} · {g.channels.map((c) => CHANNEL_LABELS[c]).join(' · ')} · {fmtDateTime(n.createdAt)}
         </DrawerDescription>
       </DrawerHeader>
       <DrawerBody>
@@ -460,9 +519,10 @@ function SendGroupPanel({ g }: { g: SendGroup }) {
         <ul className="divide-y divide-line" aria-label="Recipients">
           {g.rows.map((r) => (
             <li key={r.id} className="flex items-center gap-2.5 py-2 text-sm">
-              <Avatar src={userPhotoUrl(r.recipientUserId)} name={recipientOf(r)} email={r.recipientEmail ?? undefined} size="xs" />
+              <Avatar src={photoOf(r)} name={recipientOf(r)} email={r.recipientEmail ?? undefined} size="xs" />
               <span className="min-w-0 flex-1 truncate text-ink">{recipientOf(r)}</span>
-              <Badge variant={statusVariant(r.status)}>{STATUS_LABELS[r.status]}</Badge>
+              <Badge variant="outline">{CHANNEL_LABELS[r.channel]}</Badge>
+              <Badge variant={statusVariant(r)}>{statusLabelOf(r)}</Badge>
             </li>
           ))}
         </ul>
@@ -598,7 +658,7 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
       <DrawerHeader>
         <div className="flex items-center gap-3">
           <Avatar
-            src={userPhotoUrl(n.recipientUserId)}
+            src={photoOf(n)}
             name={recipient}
             email={n.recipientEmail ?? undefined}
             size="md"
@@ -615,7 +675,7 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
       </DrawerHeader>
       <DrawerBody>
         <div className="flex items-center gap-2 mb-4">
-          <Badge variant={statusVariant(n.status)}>{STATUS_LABELS[n.status]}</Badge>
+          <Badge variant={statusVariant(n)}>{statusLabelOf(n)}</Badge>
           {n.category && (
             <Badge variant="outline" className="text-2xs">
               {n.category}
@@ -623,11 +683,19 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
           )}
         </div>
 
-        <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4 mb-5 whitespace-pre-wrap text-sm text-white">
+        <div className="mb-5 whitespace-pre-wrap rounded-md border border-line bg-surface-raised p-4 text-sm text-ink">
           {n.body}
         </div>
 
-        {n.failureReason && (
+        {deliveryOf(n) === 'notSent' && (
+          <p className="mb-5 rounded-md border border-line p-3 text-sm text-ink-muted">
+            {n.loggedOnly
+              ? 'No email provider is connected, so this was written to the server log instead of being sent.'
+              : n.failureReason ?? 'The channel is not connected, so nothing was sent.'}
+          </p>
+        )}
+
+        {n.failureReason && deliveryOf(n) === 'failed' && (
           <div
             className="rounded-md border border-alert/40 bg-alert/[0.07] p-3 mb-5 text-sm text-alert"
             role="alert"
@@ -639,7 +707,7 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
 
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
           <DetailRow label="Channel">{CHANNEL_LABELS[n.channel]}</DetailRow>
-          <DetailRow label="Status">{STATUS_LABELS[n.status]}</DetailRow>
+          <DetailRow label="Status">{statusLabelOf(n)}</DetailRow>
           <DetailRow label="Recipient email">
             {n.recipientEmail ?? <Mute>—</Mute>}
           </DetailRow>
@@ -654,7 +722,7 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
           </DetailRow>
           <DetailRow label="Created">{fmtDateTime(n.createdAt)}</DetailRow>
           <DetailRow label="Sent">
-            {n.sentAt ? fmtDateTime(n.sentAt) : <Mute>not sent</Mute>}
+            {n.sentAt && !n.loggedOnly ? fmtDateTime(n.sentAt) : <Mute>not sent</Mute>}
           </DetailRow>
           <DetailRow label="Read">
             {n.readAt ? fmtDateTime(n.readAt) : <Mute>unread</Mute>}
@@ -678,7 +746,7 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
       <dt className="text-2xs uppercase tracking-widest text-silver/80">
         {label}
       </dt>
-      <dd className="text-white text-sm mt-0.5 break-words">{children}</dd>
+      <dd className="mt-0.5 break-words text-sm text-ink">{children}</dd>
     </div>
   );
 }

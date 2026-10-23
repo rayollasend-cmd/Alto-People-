@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { STOCK_LEGEND } from '@/components/ui/charts';
+import { PALETTE, StackedBarChart } from '@/components/ui/charts';
 import { Gauge, MapPinned } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -9,16 +8,20 @@ import { useAuth, useTerm } from '@/lib/auth';
 import { getMarketRates, setClientMargin, type MarketRow } from '@/lib/marketRatesApi';
 import { upsertRateDefault } from '@/lib/schedulingApi';
 import { useClients } from '@/lib/useClients';
+import { useStoreScope } from '@/lib/storeScope';
+import { useUrlParam } from '@/lib/useUrlState';
+import { FilterBar } from '@/components/ui/FilterBar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { CHART, ChartFrame } from '@/components/ui/ChartFrame';
+import { ChartFrame } from '@/components/ui/ChartFrame';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -43,12 +46,17 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
   const canManage = can('manage:clients') || can('process:payroll');
   const canPropose = can('manage:scheduling');
   const { clients } = useClients();
-  const [clientId, setClientId] = useState('');
-  const [siteId, setSiteId] = useState('');
-  const [position, setPosition] = useState('');
+  // The client follows the top bar until someone picks one here ('all' =
+  // every client on purpose); store and role are filters. All in the URL.
+  const scope = useStoreScope();
+  const [clientParam, setClientParam] = useUrlParam<string>('client', '');
+  const [siteId, setSiteId] = useUrlParam<string>('store', '');
+  const [position, setPosition] = useUrlParam<string>('role', '');
+  const clientId = clientParam === 'all' ? '' : clientParam || scope.clientId;
+  const setClientId = (id: string) => setClientParam(id === '' ? (scope.clientId ? 'all' : '') : id === scope.clientId ? '' : id);
 
   const q = useQuery({ queryKey: ['market', 'rates', clientId], queryFn: () => getMarketRates({ clientId: clientId || undefined }) });
-  const all = q.data?.rows ?? [];
+  const all = useMemo(() => q.data?.rows ?? [], [q.data]);
   const stores = useMemo(() => [...new Map(all.map((r) => [r.siteId, r.siteName])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [all]);
   const roles = useMemo(() => [...new Set(all.map((r) => r.position))].sort(), [all]);
   const rows = useMemo(() => all.filter((r) => (!siteId || r.siteId === siteId) && (!position || r.position === position)), [all, siteId, position]);
@@ -98,7 +106,7 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
     },
     {
       key: 'market',
-      header: 'Local market',
+      header: 'Market',
       accessor: (r) => r.market?.median ?? null,
       width: '14rem',
       searchable: false,
@@ -112,7 +120,7 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
     },
     {
       key: 'gap',
-      header: 'To median',
+      header: 'Gap',
       accessor: (r) => r.gapToMedian,
       align: 'right',
       className: 'tabular-nums',
@@ -129,7 +137,7 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
     },
     {
       key: 'bill',
-      header: 'Bill · markup',
+      header: 'Bill rate',
       accessor: (r) => r.billRate,
       align: 'right',
       className: 'tabular-nums',
@@ -142,7 +150,7 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
     },
     {
       key: 'fill',
-      header: 'Fill (90 days)',
+      header: 'Fill',
       accessor: (r) => r.fill.fillRate,
       align: 'right',
       className: 'tabular-nums',
@@ -175,8 +183,8 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label={term('label.client')} className="w-full sm:w-56">
+      <FilterBar urlKey={['client', 'store', 'role']} onClearFilters={() => { setClientParam(''); setSiteId(''); setPosition(''); }} actions={clientId && canManage ? <MarginControl clientId={clientId} /> : undefined}>
+        <Field label={term('label.client')} className="w-full md:w-56">
           {(p) => (
             <Select {...p} value={clientId} onChange={(e) => { setClientId(e.target.value); setSiteId(''); }}>
               <option value="">Every {term('label.client').toLowerCase()}</option>
@@ -188,7 +196,7 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
             </Select>
           )}
         </Field>
-        <Field label={term('label.store')} className="w-full sm:w-56">
+        <Field label={term('label.store')} className="w-full md:w-56">
           {(p) => (
             <Select {...p} value={siteId} onChange={(e) => setSiteId(e.target.value)} disabled={stores.length === 0}>
               <option value="">Every {term('label.store').toLowerCase()}</option>
@@ -200,7 +208,7 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
             </Select>
           )}
         </Field>
-        <Field label="Role" className="w-full sm:w-48">
+        <Field label="Role" className="w-full md:w-48">
           {(p) => (
             <Select {...p} value={position} onChange={(e) => setPosition(e.target.value)} disabled={roles.length === 0}>
               <option value="">Every role</option>
@@ -212,8 +220,7 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
             </Select>
           )}
         </Field>
-        {clientId && canManage && <MarginControl clientId={clientId} />}
-      </div>
+      </FilterBar>
 
       {q.isError ? (
         <QueryError what="market rates" query={q} />
@@ -238,16 +245,16 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MetricStrip label="Pay against the market">
             <MetricCard label="Roles priced" value={summary!.priced} hint={`of ${summary!.rows} store roles`} />
-            <MetricCard label="Below the metro median" value={summary!.belowMedian} hint="By more than 25¢ an hour" accent={summary!.belowMedian > 0} />
+            <MetricCard label="Below the metro median" value={summary!.belowMedian} hint="By more than 25¢ an hour" tone={summary!.belowMedian > 0 ? 'warning' : 'default'} />
             <MetricCard
               label="Pay against the market"
               value={avg === null || avg === undefined ? '—' : `${avg >= 1 ? '+' : '−'}${Math.abs(Math.round((avg - 1) * 100))}%`}
               hint={avg === null || avg === undefined ? 'Nothing priced yet' : avg >= 1 ? 'Above metro medians, on average' : 'Below metro medians, on average'}
             />
-            <MetricCard label="Not mapped yet" value={summary!.unmapped} hint={summary!.unmapped ? 'Need a metro or an occupation' : 'Every role is benchmarked'} />
-          </div>
+            <MetricCard label="Not mapped yet" value={summary!.unmapped} hint={summary!.unmapped ? 'Need a metro or an occupation' : undefined} onClick={summary!.unmapped ? onOpenMapping : undefined} nothing={summary!.unmapped ? undefined : 'Every role is benchmarked'} />
+          </MetricStrip>
 
           {nothingMapped && (
             <ErrorBanner
@@ -277,20 +284,23 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
             ]}
             rows={chartRows}
             csvName="fill-by-pay-level"
+            height={Math.max(160, chartRows.length * 64 + 48)}
             empty={<p className="text-sm text-ink-muted">Once benchmarked roles have shifts, fill at each pay level shows here.</p>}
           >
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke={CHART.grid} vertical={false} />
-                <XAxis dataKey="occupation" tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} interval={0} tickFormatter={(v: string) => (v.length > 18 ? `${v.split(/,| and /)[0]!.slice(0, 18)}…` : v)} />
-                <YAxis tickFormatter={(v: number) => `${Math.round(v * 100)}%`} domain={[0, 1]} tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
-                <Tooltip formatter={(v) => pct(v as number)} contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
-                <Legend {...STOCK_LEGEND} />
-                <Bar dataKey="below" name={BAND_LABEL.below} fill={CHART.warn} radius={[3, 3, 0, 0]} maxBarSize={56} />
-                <Bar dataKey="at" name={BAND_LABEL.at} fill={CHART.series[0]} radius={[3, 3, 0, 0]} maxBarSize={56} />
-                <Bar dataKey="above" name={BAND_LABEL.above} fill={CHART.good} radius={[3, 3, 0, 0]} maxBarSize={56} />
-              </BarChart>
-            </ResponsiveContainer>
+            {/* Bars run sideways so an occupation reads in full ("Maids and Housekeeping Cleaners"), never "Maids…". */}
+            <StackedBarChart
+              data={chartRows}
+              x="occupation"
+              layout="horizontal"
+              stacked={false}
+              format={(v) => pct(v)}
+              height={Math.max(160, chartRows.length * 64 + 48)}
+              series={[
+                { key: 'below', name: BAND_LABEL.below, color: PALETTE.warn },
+                { key: 'at', name: BAND_LABEL.at, color: PALETTE.primary },
+                { key: 'above', name: BAND_LABEL.above, color: PALETTE.good },
+              ]}
+            />
           </ChartFrame>
 
           <DataGrid
@@ -309,7 +319,7 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
             }}
           />
           <p className="text-2xs text-ink-muted">
-            Market figures: U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics — hourly wages by metro area and occupation
+            Gap is pay against the metro median; fill is the share of shifts with someone, last 90 days. Market figures: U.S. Bureau of Labor Statistics, Occupational Employment and Wage Statistics — hourly wages by metro area and occupation
             {all.find((r) => r.market)?.market?.year ? `, ${all.find((r) => r.market)!.market!.year} survey` : ''}.
           </p>
         </>

@@ -259,9 +259,11 @@ payExpRouter.post('/payroll/sick-pay', requireAuth, PROCESS, async (req, res) =>
 
 payExpRouter.post('/payroll/sick-pay/:id/void', requireAuth, PROCESS, async (req, res) => {
   const id = Id.parse(req.params.id);
+  // Why it was voided, for the audit record (the page asks for it; older callers send none).
+  const { reason } = z.object({ reason: z.string().trim().min(3).max(300).optional() }).parse(req.body ?? {});
   const row = await prisma.thirdPartySickPay.findFirst({ where: { id, associate: scopeAssociates(req.user!) }, select: { id: true } });
   if (!row) throw new HttpError(404, 'sick_pay_not_found', 'Sick pay record not found');
-  await voidThirdPartySickPay(prisma, { id: row.id, actorUserId: req.user!.id });
+  await voidThirdPartySickPay(prisma, { id: row.id, actorUserId: req.user!.id, reason: reason ?? null });
   res.json({ ok: true });
 });
 

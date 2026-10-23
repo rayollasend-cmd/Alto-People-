@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil } from 'lucide-react';
+import { Pencil, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { AGENT_ENVIRONMENT_LABELS, AGENT_SCOPES, WORKER_STATUS_LABELS, type AgentDetail } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';
+import type { PageAction } from '@/components/ui/PageHeader';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { useAuth, useTerm } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDate, fmtMoney, fmtPercent } from '@/lib/format';
 import { getAgent, listAgentCapabilities, updateAgent } from '@/lib/agentsApi';
@@ -35,11 +37,12 @@ import {
   hoursLabel,
   limitsFromForm,
   modelLine,
+  useSuspendAgent,
   versionLabel,
   type ProfileForm,
 } from '@/pages/admin/AgentRegistryAdmin';
 
-const TABS = ['profile', 'capabilities', 'credentials', 'certification', 'scorecard', 'requests', 'spend', 'trail', 'record'] as const;
+const TABS = ['profile', 'capabilities', 'credentials', 'certification', 'scorecard', 'requests', 'spend', 'record'] as const;
 type TabKey = (typeof TABS)[number];
 
 const SCOPE_LABEL = new Map<string, string>(AGENT_SCOPES.map((s) => [s.code, s.label]));
@@ -56,7 +59,6 @@ const SCOPE_LABEL = new Map<string, string>(AGENT_SCOPES.map((s) => [s.code, s.l
 export function AgentRecordPage() {
   const { id = '' } = useParams();
   const { can } = useAuth();
-  const term = useTerm();
   const canManage = can('manage:org');
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -108,6 +110,44 @@ export function AgentRecordPage() {
     );
   }
 
+  return (
+    <AgentRecord
+      agent={agent}
+      canManage={canManage}
+      editing={editing}
+      setEditing={setEditing}
+      activeTab={activeTab}
+      setTab={setTab}
+      onChanged={onChanged}
+      capabilitiesCount={capabilities.data?.length}
+      decisionsCount={decisions.data?.decisions.length}
+    />
+  );
+}
+
+/** The loaded record: header, numbers, tabs and the trail beside them. */
+function AgentRecord({
+  agent,
+  canManage,
+  editing,
+  setEditing,
+  activeTab,
+  setTab,
+  onChanged,
+  capabilitiesCount,
+  decisionsCount,
+}: {
+  agent: AgentDetail;
+  canManage: boolean;
+  editing: boolean;
+  setEditing: (v: boolean) => void;
+  activeTab: TabKey;
+  setTab: (key: string) => void;
+  onChanged: () => Promise<unknown>;
+  capabilitiesCount: number | undefined;
+  decisionsCount: number | undefined;
+}) {
+  const { suspend, busy: suspending } = useSuspendAgent(agent, onChanged);
   const s = agent.scorecard;
   const liveCredentials = agent.credentials.filter((c) => c.state === 'ACTIVE' || c.state === 'ROTATING').length;
   const over =
@@ -116,12 +156,39 @@ export function AgentRecordPage() {
     agent.drift?.driftErrorRatePct !== null &&
     agent.drift?.driftErrorRatePct !== undefined &&
     s.errorRatePct >= agent.drift.driftErrorRatePct;
-  const ownerName = agent.owner ? agent.owner.name || agent.owner.email : 'no owner';
+  // A name, never an email address, in the subtitle (F500 G2).
+  const ownerName = agent.owner ? agent.owner.name || 'an owner with no name on file' : 'no owner';
   const statusWords = WORKER_STATUS_LABELS[agent.status].toLowerCase();
+  // Edit beside the title; Suspend (destructive) in "More", where its own
+  // reason prompt is the confirm (F500 G2 — the Clients lesson).
+  const actions: PageAction[] = [
+    {
+      key: 'edit',
+      label: 'Edit',
+      icon: Pencil,
+      hidden: !canManage || editing,
+      onSelect: () => {
+        setTab('profile');
+        setEditing(true);
+      },
+    },
+    {
+      key: 'suspend',
+      label: suspending ? 'Suspending…' : 'Suspend',
+      icon: ShieldAlert,
+      destructive: true,
+      loading: suspending,
+      hidden: !canManage || agent.status === 'SUSPENDED' || agent.status === 'OFFBOARDED',
+      hint: 'Revokes every credential at once',
+      onSelect: () => void suspend(),
+    },
+  ];
+  // A tab with nothing in it waits until there is something — unless the
+  // reader can add the first one (a credential, a spend line) from it.
+  const showEmpty = (n: number | undefined, addable: boolean) => n === undefined || n > 0 || (addable && canManage);
 
   return (
     <RecordTemplate
-      breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Agents', to: '/agents' }, { label: agent.name }]}
       identity={<AgentGlyph family={agent.profile.family} status={agent.status} size="lg" />}
       title={agent.name}
       status={
@@ -130,26 +197,19 @@ export function AgentRecordPage() {
         </Badge>
       }
       subtitle={`${familyLabel(agent.profile.family) || 'Not yet placed in a family'} · owned by ${ownerName} · ${statusWords}`}
-      actions={
-        <span className="flex flex-wrap items-center gap-2">
-          {canManage && !editing && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                setTab('profile');
-                setEditing(true);
-              }}
-            >
-              <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
-            </Button>
-          )}
-          <KillSwitchRow agent={agent} canManage={canManage} onChanged={onChanged} placement="actions" />
-        </span>
+      actions={actions}
+      // The activity trail reads beside the tabs, not behind one of nine.
+      aside={
+        <section aria-labelledby="agent-trail-heading" className="space-y-2">
+          <h2 id="agent-trail-heading" className="text-sm font-medium text-ink">
+            Activity
+          </h2>
+          <TrailSection agent={agent} />
+        </section>
       }
       summary={
         <div className="space-y-[var(--d-stack)]">
-          <div className="grid grid-cols-2 gap-[var(--d-stack)] xl:grid-cols-4">
+          <MetricStrip label="This agent's week">
             <MetricCard label="Tasks · 7 days" value={s ? String(s.tasksCompleted) : '—'} hint={s ? `${s.errors} errors · ${s.exceptionsEscalated} escalated` : 'No activity yet'} />
             <MetricCard
               label="Error rate · 7 days"
@@ -163,7 +223,7 @@ export function AgentRecordPage() {
               hint={agent.profile.spendCapCents !== null ? `of ${fmtMoney(agent.profile.spendCapCents / 100)} cap` : 'No cap set'}
             />
             <MetricCard label="Waiting for a person" value={String(agent.pendingApprovals)} accent={agent.pendingApprovals > 0} hint={agent.pendingApprovals > 0 ? 'Proposals it made' : 'Nothing waiting'} />
-          </div>
+          </MetricStrip>
           <KillSwitchRow agent={agent} canManage={canManage} onChanged={onChanged} placement="summary" />
         </div>
       }
@@ -179,24 +239,36 @@ export function AgentRecordPage() {
             <ProfileView agent={agent} />
           ),
         },
-        { key: 'capabilities', label: 'Capabilities & gates', count: capabilities.data?.length, content: <CapabilitiesSection agent={agent} canManage={canManage} /> },
-        { key: 'credentials', label: 'Credentials', count: liveCredentials, content: <CredentialsSection agent={agent} canManage={canManage} onChanged={onChanged} /> },
+        { key: 'capabilities', label: 'Capabilities & gates', count: capabilitiesCount, content: <CapabilitiesSection agent={agent} canManage={canManage} /> },
+        ...(showEmpty(agent.credentials.length, true)
+          ? [{ key: 'credentials', label: 'Credentials', count: liveCredentials, content: <CredentialsSection agent={agent} canManage={canManage} onChanged={onChanged} /> }]
+          : []),
         {
           key: 'certification',
           label: agent.certification && agent.certification.scenarios > 0 ? `Certification (${agent.certification.passing}/${agent.certification.scenarios})` : 'Certification',
           content: <CertificationSection agent={agent} canManage={canManage} onChanged={onChanged} />,
         },
         { key: 'scorecard', label: 'Scorecard', content: <ScorecardSection agent={agent} canManage={canManage} onChanged={onChanged} /> },
-        { key: 'requests', label: 'Proposals', count: agent.approvals.length, content: <RequestsSection approvals={agent.approvals} /> },
-        { key: 'spend', label: 'Spend', count: agent.spend.length, content: <SpendSection agent={agent} canManage={canManage} onChanged={onChanged} /> },
-        { key: 'trail', label: 'Trail', count: agent.trail.length, content: <TrailSection agent={agent} /> },
-        { key: 'record', label: 'Decision record', count: decisions.data?.decisions.length, content: <AgentDecisionRecordTab agentId={agent.id} canManage={canManage} /> },
+        ...(showEmpty(agent.approvals.length, false)
+          ? [{ key: 'requests', label: 'Proposals', count: agent.approvals.length, content: <RequestsSection approvals={agent.approvals} /> }]
+          : []),
+        ...(showEmpty(agent.spend.length, true)
+          ? [{ key: 'spend', label: 'Spend', count: agent.spend.length, content: <SpendSection agent={agent} canManage={canManage} onChanged={onChanged} /> }]
+          : []),
+        ...(showEmpty(decisionsCount, false)
+          ? [{ key: 'record', label: 'Decision record', count: decisionsCount, content: <AgentDecisionRecordTab agentId={agent.id} canManage={canManage} /> }]
+          : []),
       ]}
     />
   );
 }
 
 /* ------------------------------------------------------------ profile */
+
+/** Build notes the registry once wrote ("Registered by the boot sweep (Brief 1D-2)…"), said in words. */
+export function noteInWords(note: string): string {
+  return /boot sweep|\bBrief \d/i.test(note) ? 'Added automatically. Confirm the owner.' : note;
+}
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -246,7 +318,7 @@ function ProfileView({ agent }: { agent: AgentDetail }) {
         {fmtDate(agent.createdAt)}
         {p.builtInKey ? ' · ships with the product' : ''}
       </Row>
-      {agent.notes && <Row label="Notes">{agent.notes}</Row>}
+      {agent.notes && <Row label="Notes">{noteInWords(agent.notes)}</Row>}
     </dl>
   );
 }

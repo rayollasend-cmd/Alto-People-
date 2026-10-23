@@ -6,7 +6,7 @@ import type { BudgetSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { createBudget, listBudgets } from '@/lib/books/closeApi';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoneyWhole } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { toast } from '@/components/ui/Toaster';
 
 export const BUDGET_STATUS: Record<string, { label: string; variant: 'success' | 'pending' | 'default' }> = {
@@ -38,9 +39,9 @@ export function BudgetsPage() {
     { key: 'name', header: 'Budget', accessor: (b) => b.name, primary: true, sortable: true, cell: (b) => <span className="font-medium text-ink">{b.name}</span> },
     { key: 'year', header: 'Year', accessor: (b) => b.fiscalYear, sortable: true, cardMeta: true, className: 'tabular-nums' },
     { key: 'status', header: 'Status', accessor: (b) => b.status, cell: (b) => <Badge size="sm" variant={BUDGET_STATUS[b.status]?.variant ?? 'default'}>{BUDGET_STATUS[b.status]?.label ?? b.status}</Badge> },
-    { key: 'income', header: 'Income', accessor: (b) => b.totalIncome, align: 'right', className: 'tabular-nums', sortable: true, cell: (b) => fmtMoney(b.totalIncome) },
-    { key: 'expense', header: 'Costs and expenses', accessor: (b) => b.totalExpense, align: 'right', className: 'tabular-nums', cell: (b) => fmtMoney(b.totalExpense) },
-    { key: 'net', header: 'Net', accessor: (b) => b.net, align: 'right', className: 'tabular-nums', sortable: true, cell: (b) => <span className={b.net < 0 ? 'text-alert' : 'text-ink'}>{fmtMoney(b.net)}</span> },
+    { key: 'income', header: 'Income', accessor: (b) => b.totalIncome, align: 'right', className: 'tabular-nums', sortable: true, cell: (b) => fmtMoneyWhole(b.totalIncome) },
+    { key: 'expense', header: 'Costs and expenses', accessor: (b) => b.totalExpense, align: 'right', className: 'tabular-nums', cell: (b) => fmtMoneyWhole(b.totalExpense) },
+    { key: 'net', header: 'Net', accessor: (b) => b.net, align: 'right', className: 'tabular-nums', sortable: true, cell: (b) => <span className={b.net < 0 ? 'text-alert' : 'text-ink'}>{fmtMoneyWhole(b.net)}</span> },
     { key: 'updated', header: 'Updated', accessor: (b) => b.updatedAt, defaultHidden: true, cell: (b) => fmtDate(b.updatedAt) },
   ];
 
@@ -48,21 +49,14 @@ export function BudgetsPage() {
     <ListTemplate
       title="Budgets"
       subtitle="The year’s plan by account and month, read against what actually happened."
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Budgets' }]}
-      primaryAction={
-        manage ? (
-          <Button onClick={() => setOpen(true)}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New budget
-          </Button>
-        ) : undefined
-      }
+      actions={[{ label: 'New budget', icon: Plus, primary: true, hidden: !manage, onSelect: () => setOpen(true) }]}
       summary={
-        <div className="grid gap-3 sm:grid-cols-3">
-          <MetricCard label={`Active for ${year}`} value={active ? active.name : 'None'} hint={active ? undefined : 'Activate a budget to read it against actuals on the books overview'} />
-          <MetricCard label="Planned income" value={active ? fmtMoney(active.totalIncome) : '—'} />
-          <MetricCard label="Planned net" value={active ? fmtMoney(active.net) : '—'} />
-        </div>
+        // Nothing to sum until a budget exists — the empty list says what to do.
+        <MetricStrip label="Budgets at a glance" empty={!q.isSuccess || budgets.length === 0}>
+          <MetricCard label={`Active for ${year}`} value={active ? active.name : '—'} tone="neutral" href={active ? `/books/budgets/${active.id}` : undefined} nothing={active ? undefined : `No budget active for ${year}`} hint={active ? undefined : 'Make one active to read it against actuals'} />
+          <MetricCard label="Planned income" value={active ? fmtMoneyWhole(active.totalIncome) : '—'} tone="neutral" nothing={active ? undefined : 'No active budget'} />
+          <MetricCard label="Planned net" value={active ? fmtMoneyWhole(active.net) : '—'} tone={active && active.net < 0 ? 'alert' : 'default'} nothing={active ? undefined : 'No active budget'} />
+        </MetricStrip>
       }
     >
       <DataGrid
@@ -76,7 +70,7 @@ export function BudgetsPage() {
         columns={columns}
         rowKey={(b) => b.id}
         rowHref={(b) => `/books/budgets/${b.id}`}
-        empty={{ icon: Target, title: 'No budgets yet', description: 'Start one from last year’s actuals, or from a blank grid.', action: manage ? <Button onClick={() => setOpen(true)}>New budget</Button> : undefined }}
+        empty={{ icon: Target, title: 'No budgets yet', description: 'Start one from last year’s actuals, or from a blank grid.', action: manage ? <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" aria-hidden="true" />New budget</Button> : undefined }}
       />
       <NewBudgetDialog open={open} onOpenChange={setOpen} onMade={(id) => navigate(`/books/budgets/${id}`)} />
     </ListTemplate>

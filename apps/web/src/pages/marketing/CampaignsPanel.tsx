@@ -202,7 +202,7 @@ export function CampaignsPanel({ canEdit }: { canEdit: boolean }) {
       toast.success(
         r.notified > 0
           ? `Announcement for ${c.name} drafted — HR reviews it and sends it.`
-          : `Announcement for ${c.name} drafted. Nobody who sends broadcasts was found to tell — ask HR to open Directory & comms → Broadcasts.`,
+          : `Announcement for ${c.name} drafted. Nobody who sends broadcasts was found to tell — ask HR to open Notifications → Sends & broadcasts.`,
       ),
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not draft the announcement.'),
   });

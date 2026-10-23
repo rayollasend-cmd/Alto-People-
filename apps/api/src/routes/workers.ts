@@ -48,8 +48,17 @@ async function ownWorker(req: Request, _res: Response, next: NextFunction): Prom
 workersRouter.get('/', VIEW, async (req, res, next) => {
   try {
     const q = z.object({ type: WorkerTypeSchema.optional(), status: WorkerStatusSchema.optional() }).parse(req.query);
-    // A site/region-bound office account sees the people at its own sites.
-    res.json(await listWorkers(prisma, { ...q, tenantId: tenantIdForWrite(), ...(isInternallyScoped(req.user!) ? { people: scopeAssociates(req.user!) } : {}) }));
+    // A site/region-bound office account sees the people at its own sites —
+    // in the list, the counts and the people's standing alike. Each person
+    // carries where they stand at work (the People directory's status).
+    res.json(
+      await listWorkers(prisma, {
+        ...q,
+        tenantId: tenantIdForWrite(),
+        peopleStatus: true,
+        ...(isInternallyScoped(req.user!) ? { people: scopeAssociates(req.user!) } : {}),
+      }),
+    );
   } catch (err) {
     next(err);
   }

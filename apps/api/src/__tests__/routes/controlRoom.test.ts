@@ -87,6 +87,11 @@ describe('control room (Brief 3-3)', () => {
     const sites = await w.admin.get('/control-room/sites');
     expect(sites.status).toBe(200);
     expect(sites.body.sites.some((s: { id: string }) => s.id === w.site.id)).toBe(true);
+    // F500 G2: each site says how many people are on shift there now, so the
+    // page opens on the busiest floor: Dana, Mateo and Priya (late) here.
+    const pilotSite = sites.body.sites.find((s: { id: string }) => s.id === w.site.id);
+    expect(pilotSite.onShiftNow).toBe(3);
+    expect(sites.body.sites.filter((s: { id: string }) => s.id !== w.site.id).every((s: { onShiftNow: number }) => s.onShiftNow === 0)).toBe(true);
 
     const res = await w.admin.get(`/control-room?locationId=${w.site.id}`);
     expect(res.status).toBe(200);

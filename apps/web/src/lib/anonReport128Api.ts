@@ -91,14 +91,24 @@ export interface HotlineSummary {
   triagingCount: number;
   investigatingCount: number;
   resolvedCount: number;
+  /** Closed reports (older servers leave it out). */
+  closedCount?: number;
+  /** Every report ever filed, any status. */
+  totalCount?: number;
   overdueCount: number;
 }
+
+/** The organization a hotline address belongs to (/hotline/:slug); no slug: the default one. */
+export const getHotlineOrg = (slug?: string) =>
+  apiFetch<{ org: { name: string; slug: string } }>(`/anonymous-reports/org${slug ? `/${encodeURIComponent(slug)}` : ''}`);
 
 export const fileAnonymousReport = (input: {
   category: ReportCategory;
   subject: string;
   description: string;
   contactEmail?: string | null;
+  /** The organization's hotline address; the server files the report there. */
+  org?: string;
 }) =>
   apiFetch<{ trackingCode: string }>('/anonymous-reports', {
     method: 'POST',

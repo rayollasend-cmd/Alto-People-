@@ -21,7 +21,6 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  ErrorBanner,
   FilterBar,
   SearchInput,
   SegmentedControl,
@@ -33,24 +32,30 @@ import { Label } from '@/components/ui/Label';
 import { Avatar } from '@/components/ui/Avatar';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { ListTemplate } from '@/components/templates';
-import { fmtDate, parseYmd } from '@/lib/format';
+import { fmtDateOnly, parseYmd } from '@/lib/format';
+import { QueryError } from '@/components/ui/QueryError';
+import { urlNumber, useUrlParam, useUrlState } from '@/lib/useUrlState';
 
 const WINDOW_OPTIONS = [30, 60, 90] as const;
+const DAYS_CODEC = urlNumber({ integer: true, min: 30, max: 90 });
 
 const keyOf = (c: CelebrationItem) => `${c.associateId}-${c.kind}-${c.date}`;
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * Phase 107 — Birthdays + work anniversaries.
  *
- * Buckets the selected window (30/60/90 days) into "this week / next
- * week / this month / later". Click a row to send a quick congrats via
- * the in-app notification system.
+ * One list at full width, today first, then the rest of this week, next
+ * week, this month and later — each row the date, the person, the occasion
+ * and a note to send. The window (30/60/90 days) and the client/store
+ * filters live in the URL.
  */
 export function CelebrationsHome() {
-  const [days, setDays] = useState<number>(60);
+  const [daysRaw, setDays] = useUrlState<number>('days', 60, DAYS_CODEC);
+  const days = (WINDOW_OPTIONS as readonly number[]).includes(daysRaw) ? daysRaw : 60;
   const [search, setSearch] = useState('');
-  const [clientFilter, setClientFilter] = useState('');
-  const [storeFilter, setStoreFilter] = useState('');
+  const [clientFilter, setClientFilter] = useUrlParam<string>('client', '');
+  const [storeFilter, setStoreFilter] = useUrlParam<string>('store', '');
   const termWord = useTerm();
   const hasClients = useTenant().moduleOn('clientPortal');
   // A shift supervisor's list is already their crew (the server clamps it).
@@ -65,12 +70,6 @@ export function CelebrationsHome() {
     queryFn: () => listUpcomingCelebrations(days),
   });
   const items = itemsQuery.data?.items ?? null;
-  const error = itemsQuery.error
-    ? itemsQuery.error instanceof ApiError
-      ? itemsQuery.error.message
-      : 'Failed to load celebrations.'
-    : null;
-  const load = () => void itemsQuery.refetch();
 
   const term = search.trim().toLowerCase();
   // Where people work, from the items themselves — the filters only offer
@@ -94,15 +93,29 @@ export function CelebrationsHome() {
       )
     : null;
   const buckets = filtered ? bucketize(filtered) : null;
+  const week = buckets ? [...buckets.Today, ...buckets['This week']] : [];
+  const weekBirthdays = week.filter((c) => c.kind === 'BIRTHDAY').length;
+  const weekAnniversaries = week.length - weekBirthdays;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Celebrations"
-        subtitle={isCrewLead ? 'Your crew’s upcoming birthdays and work anniversaries.' : 'Upcoming birthdays and work anniversaries, by where people work.'}
-        breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Celebrations' }]}
+      title="Celebrations"
+      subtitle={isCrewLead ? 'Your crew’s upcoming birthdays and work anniversaries.' : 'Upcoming birthdays and work anniversaries, by where people work.'}
     >
-      <FilterBar>
+      <FilterBar
+        bare
+        search={
+          <SearchInput
+            className="h-8 w-full text-xs sm:w-56"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name…"
+            aria-label="Search by name"
+          />
+        }
+        urlKey={['days', 'client', 'store']}
+      >
         <SegmentedControl<number>
           ariaLabel="Look-ahead window"
           options={WINDOW_OPTIONS.map((d) => ({ value: d, label: `Next ${d} days` }))}
@@ -119,7 +132,7 @@ export function CelebrationsHome() {
               setStoreFilter('');
             }}
           >
-            <option value="">Every {termWord('label.client').toLowerCase()}</option>
+            <option value="">All {termWord('label.clients').toLowerCase()}</option>
             {clientOptions.map(([id, name]) => (
               <option key={id} value={id}>
                 {name}
@@ -129,7 +142,7 @@ export function CelebrationsHome() {
         )}
         {storeOptions.length > 1 && (
           <Select size="sm" aria-label={termWord('label.store')} value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)}>
-            <option value="">Every {termWord('label.store').toLowerCase()}</option>
+            <option value="">All {termWord('label.stores').toLowerCase()}</option>
             {storeOptions.map(([id, name]) => (
               <option key={id} value={id}>
                 {name}
@@ -137,23 +150,18 @@ export function CelebrationsHome() {
             ))}
           </Select>
         )}
-        <SearchInput
-          className="h-8 w-56 text-xs"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by name…"
-          aria-label="Search by name"
-        />
       </FilterBar>
-      {error ? (
-        <ErrorBanner>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>{error}</span>
-            <Button size="sm" variant="outline" onClick={() => load()}>
-              Retry
-            </Button>
-          </div>
-        </ErrorBanner>
+
+      {filtered && filtered.length > 0 && (
+        <p className="text-sm text-silver" data-testid="celebrations-week">
+          {week.length === 0
+            ? 'Nothing this week.'
+            : `This week: ${[weekBirthdays > 0 ? plural(weekBirthdays, 'birthday', 'birthdays') : null, weekAnniversaries > 0 ? plural(weekAnniversaries, 'anniversary', 'anniversaries') : null].filter(Boolean).join(' · ')}`}
+        </p>
+      )}
+
+      {itemsQuery.error ? (
+        <QueryError what="celebrations" query={itemsQuery} />
       ) : items === null ? (
         <Card><CardContent><SkeletonRows count={4} /></CardContent></Card>
       ) : !filtered || filtered.length === 0 ? (
@@ -161,100 +169,72 @@ export function CelebrationsHome() {
           <CardContent>
             <EmptyState
               icon={PartyPopper}
-              title={
-                term
-                  ? 'No matches'
-                  : `Nothing in the next ${days} days`
-              }
+              title={term ? 'No matches' : `Nothing in the next ${days} days`}
               description={
                 term
                   ? `No upcoming celebrations match “${search.trim()}”.`
-                  : `Birthdays show up here once {termWord('workers').toLowerCase()} fill in their date of birth, and anniversaries appear once they've been on the team for a year.`
+                  : `Birthdays show up here once ${termWord('workers').toLowerCase()} fill in their date of birth, and anniversaries once they've been on the team for a year.`
               }
             />
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-4">
-          {buckets && Object.entries(buckets).map(([label, group]) =>
-            group.length === 0 ? null : (
-              <Card key={label}>
-                <CardContent>
-                  <div className="text-sm uppercase text-silver tracking-wider mb-3">{label}</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {group.map((c) => {
-                      const sent = sentKeys.has(keyOf(c));
-                      return (
-                        /* A div-with-button-role rather than a <button>:
-                           the name inside is now a real profile link, and
-                           anchors can't legally nest inside buttons. */
-                        <div
-                          key={keyOf(c)}
-                          role="button"
-                          tabIndex={sent ? -1 : 0}
-                          aria-disabled={sent || undefined}
-                          onClick={(e) => {
-                            // Clicks on the profile link navigate; only the
-                            // rest of the card opens the high-five drawer.
-                            if ((e.target as HTMLElement).closest('a')) return;
-                            if (!sent) setTarget(c);
-                          }}
-                          onKeyDown={(e) => {
-                            if (sent || (e.key !== 'Enter' && e.key !== ' ')) return;
-                            e.preventDefault();
-                            setTarget(c);
-                          }}
-                          className={`flex items-center gap-3 p-3 rounded-md border border-navy-secondary transition-colors text-left group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright ${
-                            sent
-                              ? 'opacity-70 cursor-default'
-                              : 'cursor-pointer hover:border-gold/40 hover:bg-navy-secondary/40'
-                          }`}
-                        >
-                          {/* Their face, with the occasion pinned to it. The
-                              badge sits on an opaque navy disc so the tint
-                              reads over a photo. */}
-                          <div className="relative shrink-0">
-                            <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} email={c.email} size="md" />
-                            <span className="absolute -bottom-1 -right-1 rounded-full bg-navy ring-2 ring-navy">
-                              <span className={`h-5 w-5 rounded-full grid place-items-center ${
-                                c.kind === 'BIRTHDAY'
-                                  ? 'bg-warning/20 text-warning'
-                                  : 'bg-gold/20 text-gold'
-                              }`}>
-                                {c.kind === 'BIRTHDAY' ? <Cake className="h-3 w-3" aria-hidden="true" /> : <PartyPopper className="h-3 w-3" aria-hidden="true" />}
-                              </span>
-                            </span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-white truncate">
-                              <AssociateLink associateId={c.associateId}>
-                                {c.associateName}
-                              </AssociateLink>
+        <Card>
+          <CardContent className="p-0">
+            {buckets &&
+              Object.entries(buckets).map(([label, group]) =>
+                group.length === 0 ? null : (
+                  <section key={label} aria-label={label}>
+                    {/* The week heading stays on screen while its rows scroll by. */}
+                    <div role="heading" aria-level={2} className="sticky top-0 z-10 border-b border-navy-secondary bg-navy px-4 py-2 text-xs font-medium uppercase tracking-wider text-silver">
+                      {label} <span className="font-normal normal-case tracking-normal text-silver/70">· {group.length}</span>
+                    </div>
+                    <ul className="divide-y divide-navy-secondary">
+                      {group.map((c) => {
+                        const sent = sentKeys.has(keyOf(c));
+                        return (
+                          <li key={keyOf(c)} className="flex items-center gap-3 px-4 py-2.5">
+                            <span className="hidden w-28 shrink-0 text-sm tabular-nums text-silver sm:block">{fmtDateOnly(c.date, { weekday: true, year: false })}</span>
+                            <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} email={c.email} size="sm" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-ink">
+                                <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
+                              </div>
+                              {/* On a phone the date rides under the name, so the name keeps its room. */}
+                              <div className="truncate text-xs text-silver">
+                                <span className="sm:hidden">{fmtDateOnly(c.date, { weekday: true, year: false })}{c.siteName || c.clientName ? ' · ' : ''}</span>
+                                {c.siteName ?? c.clientName ?? ''}
+                              </div>
                             </div>
-                            <div className="text-xs text-silver">
-                              {fmtDate(parseYmd(c.date))}
-                              {c.years != null && ` • ${c.years} year${c.years === 1 ? '' : 's'}`}
-                            </div>
-                          </div>
-                          <Badge variant={c.kind === 'BIRTHDAY' ? 'pending' : 'accent'}>
-                            {c.kind === 'BIRTHDAY' ? 'Birthday' : 'Anniversary'}
-                          </Badge>
-                          {sent ? (
-                            <span className="text-xs text-success whitespace-nowrap">
-                              Sent ✓
-                            </span>
-                          ) : (
-                            <Send className="h-4 w-4 text-silver can-hover:opacity-60 group-hover:opacity-100 transition-opacity" />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            ),
-          )}
-        </div>
+                            <Badge variant={c.kind === 'BIRTHDAY' ? 'pending' : 'accent'} className="shrink-0">
+                              {c.kind === 'BIRTHDAY' ? (
+                                <>
+                                  <Cake className="mr-1 h-3 w-3" aria-hidden="true" /> Birthday
+                                </>
+                              ) : (
+                                <>
+                                  <PartyPopper className="mr-1 h-3 w-3" aria-hidden="true" />
+                                  {c.years != null ? plural(c.years, 'year', 'years') : 'Anniversary'}
+                                </>
+                              )}
+                            </Badge>
+                            {sent ? (
+                              <span className="w-24 shrink-0 text-right text-xs text-success">Sent ✓</span>
+                            ) : (
+                              <Button size="sm" variant="outline" className="shrink-0" onClick={() => setTarget(c)} aria-label={`Send a note to ${c.associateName}`}>
+                                <Send className="h-3.5 w-3.5 sm:mr-1.5" aria-hidden="true" />
+                                <span className="hidden sm:inline">Send note</span>
+                              </Button>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ),
+              )}
+          </CardContent>
+        </Card>
       )}
       {target && (
         <HighFiveDrawer
@@ -351,13 +331,10 @@ function HighFiveDrawer({
   );
 }
 
-function bucketize(items: CelebrationItem[]): Record<string, CelebrationItem[]> {
-  const now = new Date();
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  );
+export function bucketize(items: CelebrationItem[], now = new Date()): Record<string, CelebrationItem[]> {
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(startOfToday);
+  tomorrow.setDate(tomorrow.getDate() + 1);
   const week = new Date(startOfToday);
   week.setDate(week.getDate() + 7);
   const twoWeeks = new Date(startOfToday);
@@ -365,22 +342,23 @@ function bucketize(items: CelebrationItem[]): Record<string, CelebrationItem[]> 
   const month = new Date(startOfToday);
   month.setDate(month.getDate() + 30);
   const buckets: Record<string, CelebrationItem[]> = {
+    Today: [],
     'This week': [],
     'Next week': [],
     'This month': [],
-    'Later': [],
+    Later: [],
   };
   for (const c of items) {
     // parseYmd, not new Date(): a date-only string parses as UTC
     // midnight and lands a day early west of Greenwich, shifting
     // celebrations into the wrong bucket.
     const d = parseYmd(c.date);
-    if (!d) {
-      buckets['Later'].push(c);
-    } else if (d < week) buckets['This week'].push(c);
+    if (!d) buckets.Later.push(c);
+    else if (d < tomorrow) buckets.Today.push(c);
+    else if (d < week) buckets['This week'].push(c);
     else if (d < twoWeeks) buckets['Next week'].push(c);
     else if (d < month) buckets['This month'].push(c);
-    else buckets['Later'].push(c);
+    else buckets.Later.push(c);
   }
   return buckets;
 }

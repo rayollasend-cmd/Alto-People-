@@ -16,6 +16,8 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { emitWorkerStatusChanged } from './webhookEvents.js';
 import { tenantIdForWrite } from './tenant.js';
+import { countStandings, peopleStandings } from './peopleStatus.js';
+import { accountPhotoUrlFor, profilePhotoUrlFor } from './profilePhotoUrl.js';
 
 /**
  * WORKERS — the data model stops assuming a person.
@@ -121,19 +123,21 @@ export async function syncPersonWorkerStatus(db: Db, associateId: string): Promi
 /* ---------------------------------------------------------------- shapes */
 
 const WORKER_INCLUDE = {
-  owner: { select: { id: true, email: true, associateId: true, associate: { select: { firstName: true, lastName: true } } } },
+  owner: { select: { id: true, email: true, associateId: true, photoS3Key: true, photoUpdatedAt: true, associate: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } } } },
   assignments: { include: { location: { select: { id: true, name: true, clientId: true, client: { select: { name: true } } } } }, orderBy: { startedAt: 'desc' } },
 } satisfies Prisma.WorkerInclude;
 
 /** A person's manager, from the associate record: the roster shows it where an agent shows its owner. */
-async function personManagers(db: Db, associateIds: string[]): Promise<Map<string, { associateId: string; name: string } | null>> {
-  const out = new Map<string, { associateId: string; name: string } | null>();
+async function personManagers(db: Db, associateIds: string[]): Promise<Map<string, { associateId: string; name: string; photoUrl: string | null } | null>> {
+  const out = new Map<string, { associateId: string; name: string; photoUrl: string | null } | null>();
   if (associateIds.length === 0) return out;
   const rows = await db.associate.findMany({
     where: { id: { in: associateIds } },
-    select: { id: true, manager: { select: { id: true, firstName: true, lastName: true } } },
+    select: { id: true, manager: { select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } } },
   });
-  for (const r of rows) out.set(r.id, r.manager ? { associateId: r.manager.id, name: `${r.manager.firstName} ${r.manager.lastName}`.trim() } : null);
+  for (const r of rows) {
+    out.set(r.id, r.manager ? { associateId: r.manager.id, name: `${r.manager.firstName} ${r.manager.lastName}`.trim(), photoUrl: profilePhotoUrlFor(r.manager) } : null);
+  }
   return out;
 }
 type WorkerRow = Prisma.WorkerGetPayload<{ include: typeof WORKER_INCLUDE }>;
@@ -177,7 +181,13 @@ async function summarize(db: Db, rows: WorkerRow[], now: Date): Promise<WorkerSu
     name: r.name,
     associateId: r.associateId,
     owner: r.owner
-      ? { id: r.owner.id, name: r.owner.associate ? `${r.owner.associate.firstName} ${r.owner.associate.lastName}`.trim() : r.owner.email, email: r.owner.email, associateId: r.owner.associateId ?? null }
+      ? {
+          id: r.owner.id,
+          name: r.owner.associate ? `${r.owner.associate.firstName} ${r.owner.associate.lastName}`.trim() : r.owner.email,
+          email: r.owner.email,
+          associateId: r.owner.associateId ?? null,
+          photoUrl: accountPhotoUrlFor(r.owner),
+        }
       : null,
     ...(r.type === 'PERSON' && r.associateId ? { manager: managerByAssociate.get(r.associateId) ?? null } : {}),
     status: r.status,
@@ -209,18 +219,21 @@ const WORKERS_CAP = 5000;
 
 export async function listWorkers(
   db: PrismaClient = defaultPrisma,
-  /** people: the associates in the caller's reach — person workers outside it are left out; agents and robots are org-level. */
-  f: { type?: WorkerType; status?: WorkerStatus; tenantId?: string; people?: Prisma.AssociateWhereInput } = {},
+  /**
+   * people: the associates in the caller's reach — person workers outside it are left out; agents and robots are org-level.
+   * peopleStatus: also say where each person stands at work (lib/peopleStatus) and count them — the roster's People tile
+   * and status column read the same numbers as the People directory and Headcount. Needs `tenantId`.
+   */
+  f: { type?: WorkerType; status?: WorkerStatus; tenantId?: string; people?: Prisma.AssociateWhereInput; peopleStatus?: boolean } = {},
   now: Date = new Date(),
 ): Promise<WorkersResponse> {
   // Agent families step 0: an optional tenant (the agent registry passes the caller's); without one, as before.
   const tenantWhere = f.tenantId ? { tenantId: f.tenantId } : {};
+  // The caller's reach over person workers (agents and robots have no associate and stay org-level).
+  const reachWhere: Prisma.WorkerWhereInput = f.people ? { OR: [{ associateId: null }, { associate: { is: f.people } }] } : {};
   const found = await db.worker.findMany({
     where: {
-      AND: [
-        { ...(f.type ? { type: f.type } : {}), ...(f.status ? { status: f.status } : {}), ...tenantWhere },
-        f.people ? { OR: [{ associateId: null }, { associate: { is: f.people } }] } : {},
-      ],
+      AND: [{ ...(f.type ? { type: f.type } : {}), ...(f.status ? { status: f.status } : {}), ...tenantWhere }, reachWhere],
     },
     include: WORKER_INCLUDE,
     orderBy: [{ type: 'asc' }, { name: 'asc' }],
@@ -229,7 +242,8 @@ export async function listWorkers(
   const truncated = found.length > WORKERS_CAP;
   const rows = found.slice(0, WORKERS_CAP);
   const all = await summarize(db, rows, now);
-  const grouped = await db.worker.groupBy({ by: ['type', 'status'], where: tenantWhere, _count: { _all: true } });
+  // Counted over the same reach as the list: a site-bound office account's tiles count its own people.
+  const grouped = await db.worker.groupBy({ by: ['type', 'status'], where: { AND: [tenantWhere, reachWhere] }, _count: { _all: true } });
   const counts = {} as WorkersResponse['counts'];
   for (const t of Object.keys(WORKER_TYPE_LABELS) as WorkerType[]) {
     counts[t] = {} as Record<WorkerStatus, number>;
@@ -239,8 +253,22 @@ export async function listWorkers(
   // The schema forbids a null owner; a deleted owner account would be the
   // only way to lose one, and Restrict forbids that too. Still asked.
   const withoutOwner = all.filter((w) => !w.owner);
-  const associatesWithoutWorker = await db.associate.count({ where: { deletedAt: null, worker: null, ...tenantWhere } });
-  return { workers: all, counts, withoutOwner, associatesWithoutWorker, truncated };
+  const associatesWithoutWorker = await db.associate.count({ where: { AND: [{ deletedAt: null, worker: null, ...tenantWhere }, f.people ?? {}] } });
+
+  // Where each person stands, by the one rule — and the counts the People
+  // directory's tiles show, over the same people (the caller's reach).
+  let people: WorkersResponse['people'];
+  if (f.peopleStatus && f.tenantId) {
+    const ids = f.people
+      ? (await db.associate.findMany({ where: { AND: [{ tenantId: f.tenantId, deletedAt: null }, f.people] }, select: { id: true } })).map((a) => a.id)
+      : undefined;
+    const standings = await peopleStandings({ tenantId: f.tenantId, ...(ids ? { associateIds: ids } : {}) }, now, db);
+    people = countStandings(standings);
+    for (const w of all) {
+      if (w.type === 'PERSON' && w.associateId) w.workStatus = standings.people.get(w.associateId)?.status ?? null;
+    }
+  }
+  return { workers: all, counts, ...(people ? { people } : {}), withoutOwner, associatesWithoutWorker, truncated };
 }
 
 export async function getWorker(db: Db, id: string, now: Date = new Date()): Promise<WorkerSummary> {

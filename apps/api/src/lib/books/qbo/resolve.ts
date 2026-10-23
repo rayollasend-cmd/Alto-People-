@@ -53,11 +53,11 @@ export async function resolveConflict(db: PrismaClient, id: string, keep: Keep, 
         // QuickBooks' change stays out of a closed month; remember we saw it.
         const link = await linkForQbo(db, q.type, q.id);
         if (link && q.entity) await db.qboSyncLink.update({ where: { id: link.id }, data: { remoteHash: remoteFingerprint(q.type, q.entity) } });
-        message = 'Kept the site’s closed month as it is; QuickBooks’ change was left out.';
+        message = 'Kept the closed month here as it is; QuickBooks’ change was left out.';
       } else {
         const ctx = await pushCtx(db, qbo, info.bookCloseDate, true);
         const out = await pushRecord(ctx, c.localType as LocalType, c.localId);
-        message = `Sent the site’s version to QuickBooks: ${out.message}`;
+        message = `Sent the version here to QuickBooks: ${out.message}`;
       }
     } else {
       const ctx = { db, qbo, force: true };
@@ -65,7 +65,7 @@ export async function resolveConflict(db: PrismaClient, id: string, keep: Keep, 
         const link = await linkFor(db, c.localType, c.localId);
         const sv = await siteVersion(db, c.localType, c.localId);
         if (link && sv) await db.qboSyncLink.update({ where: { id: link.id }, data: { localHash: fingerprint(sv.payload) } });
-        message = 'Left QuickBooks’ closed books as they are; the site’s change wasn’t sent.';
+        message = 'Left QuickBooks’ closed books as they are; the change made here wasn’t sent.';
       } else if (q.reason === 'SITE_PERIOD_CLOSED') {
         const out = await applyChange(ctx, { type: q.type, id: q.id, deleted: !q.entity, entity: q.entity, lastUpdated: null });
         message = `Applied QuickBooks’ change in the first open month: ${out.message}`;
@@ -81,7 +81,7 @@ export async function resolveConflict(db: PrismaClient, id: string, keep: Keep, 
           if (c.localType === 'JournalEntry') {
             const e = await db.journalEntry.findFirst({ where: { id: c.localId, tenantId } });
             if (e && e.status === 'POSTED') await voidEntry(db, e.id, { reason: 'Deleted in QuickBooks.', userId });
-            message = 'Voided on the site — it was deleted in QuickBooks.';
+            message = 'Voided here — it was deleted in QuickBooks.';
           } else {
             message = (await applyQboVersion(ctx, q.type, { Id: q.id, TotalAmt: 0, Line: [] }, link)).message;
           }

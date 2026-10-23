@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Download, Plus, Trash2 } from 'lucide-react';
+import { Download, Plus, Scale, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { useClients } from '@/lib/useClients';
+import { useStoreScope } from '@/lib/storeScope';
+import { useUrlParam } from '@/lib/useUrlState';
 import { downloadCsv } from '@/lib/csv';
 import {
   fmtDate,
@@ -24,6 +25,8 @@ import {
   seedCycle,
   updateBand,
   updateProposal,
+  getCompOverview,
+  type CompOverview,
   type CompBand,
   type MeritCycle,
   type MeritCycleStatus,
@@ -48,6 +51,8 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
+  MetricCard,
+  MetricStrip,
   Select,
   SkeletonRows,
   Tabs,
@@ -56,6 +61,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { QueryError } from '@/components/ui/QueryError';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { CompPlanningTab } from './CompPlanningTab';
@@ -63,7 +69,7 @@ import { useSearchParams } from 'react-router-dom';
 import { PayChangesTab, PromotionsTab } from './PayChangesTab';
 import { toast } from 'sonner';
 
-type Tab = 'bands' | 'cycles' | 'planning' | 'changes' | 'promotions';
+type Tab = 'overview' | 'bands' | 'cycles' | 'planning' | 'changes' | 'promotions';
 
 /** Date-only "YYYY-MM-DD" → "May 13, 2026" without the UTC-midnight shift. */
 const fmtYmd = (s: string | null | undefined) => fmtDate(parseYmd(s));
@@ -105,95 +111,59 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
+const TABS = ['overview', 'bands', 'cycles', 'planning', 'changes', 'promotions'] as const;
+
 export function CompensationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:comp') : false;
 
-  // Shared react-query cache — fetched at most once per 5 minutes app-wide.
-  const {
-    clients,
-    isError: clientsError,
-    refetch: refetchClients,
-  } = useClients();
-  const [clientId, setClientId] = useState<string>('');
+  // The client is the topbar's scope (lib/storeScope): picking one here
+  // picks it there too, so the page never asks a second, different question.
+  const { clientId, setClientId, clients } = useStoreScope();
   // ?tab=changes&associateId= — Finance's audit of pay, deep-linked from the cockpit and a person's record.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get('tab');
-  const tab: Tab = tabParam === 'cycles' || tabParam === 'changes' || tabParam === 'promotions' ? tabParam : 'bands';
-  const setTab = (next: Tab) => {
-    const sp = new URLSearchParams(searchParams);
-    if (next === 'bands') sp.delete('tab');
-    else sp.set('tab', next);
-    setSearchParams(sp, { replace: true });
-  };
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'overview', TABS, { history: 'push' });
+  const [searchParams] = useSearchParams();
   const associateFilter = searchParams.get('associateId') ?? undefined;
 
-  useEffect(() => {
-    if (clients.length > 0) {
-      setClientId((prev) => prev || clients[0].id);
-    }
-  }, [clients]);
   // Pay bands live under a client; a direct employer's container is its own business.
   const tenantHasClients = useTenant().moduleOn('clientPortal');
   const termFn = useTerm();
   const unit = tenantHasClients ? termFn('label.client') : 'Business';
+  const unitPlural = tenantHasClients ? termFn('label.clients') : 'businesses';
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Compensation"
-        subtitle="Pay bands tied to job profiles, effective-dated history, and merit-cycle planning."
-        breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Compensation' }]}
+      title="Compensation"
+      subtitle="Who is paid outside their band, pay changes waiting on a decision, and the merit cycle."
     >
-
-      <Card>
-        <CardContent className="flex items-center gap-3 flex-wrap">
-          <label
-            htmlFor="comp-client"
-            className="text-xs2 uppercase tracking-wider text-silver"
-          >
-            {unit}
-          </label>
-          <Select
-            id="comp-client"
-            size="sm"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-          >
-            {clients.length === 0 && <option value="">—</option>}
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-          {clientsError && (
-            <ErrorBanner
-              className="flex-1 min-w-[16rem]"
-              action={
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => void refetchClients()}
-                >
-                  Retry
-                </Button>
-              }
-            >
-              Could not load the client list.
-            </ErrorBanner>
-          )}
-        </CardContent>
-      </Card>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="comp-client" className="text-sm text-silver">
+          {unit}
+        </label>
+        <Select id="comp-client" size="sm" value={clientId} onChange={(e) => setClientId(e.target.value)} className="max-w-xs">
+          <option value="">All {unitPlural.toLowerCase()}</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+      </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="bands">Pay bands</TabsTrigger>
           <TabsTrigger value="cycles">Merit cycles</TabsTrigger>
           <TabsTrigger value="planning">Planning</TabsTrigger>
           <TabsTrigger value="changes">Pay changes</TabsTrigger>
           <TabsTrigger value="promotions">Promotions</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview">
+          <OverviewTab clientId={clientId || undefined} canManage={canManage} onTab={setTab} />
+        </TabsContent>
 
         <TabsContent value="changes">
           <PayChangesTab clientId={clientId || undefined} associateId={associateFilter} />
@@ -244,6 +214,116 @@ export function CompensationHome() {
   );
 }
 
+// ============ Overview ============
+
+const pct = (n: number) => `${Math.round(n)}%`;
+
+function OverviewTab({ clientId, canManage, onTab }: { clientId: string | undefined; canManage: boolean; onTab: (t: Tab) => void }) {
+  const q = useQuery({ queryKey: ['comp', 'overview', clientId ?? ''], queryFn: () => getCompOverview(clientId) });
+  if (q.error) return <QueryError what="the compensation overview" query={q} />;
+  const o = q.data;
+  if (!o) return <SkeletonRows count={3} />;
+  const banded = o.inBand + o.belowMin + o.aboveMax;
+  const cycle = o.cycle;
+  const budget = cycle?.budget ? Number(cycle.budget) : null;
+  const used = budget && budget > 0 ? (Number(cycle!.spent) / budget) * 100 : null;
+
+  return (
+    <div className="space-y-4">
+      <MetricStrip label="Compensation at a glance">
+        <MetricCard
+          label="Below band minimum"
+          value={o.belowMin}
+          hint={banded > 0 ? `of ${banded.toLocaleString('en-US')} people with a band` : undefined}
+          nothing={banded === 0 ? 'No one has a band yet' : undefined}
+          tone={o.belowMin > 0 ? 'warning' : 'default'}
+          href={o.belowMin > 0 ? '#outside-band' : undefined}
+        />
+        <MetricCard
+          label="Above band maximum"
+          value={o.aboveMax}
+          hint={banded > 0 ? `of ${banded.toLocaleString('en-US')} people with a band` : undefined}
+          nothing={banded === 0 ? 'No one has a band yet' : undefined}
+          tone={o.aboveMax > 0 ? 'warning' : 'default'}
+          href={o.aboveMax > 0 ? '#outside-band' : undefined}
+        />
+        <MetricCard
+          label="Pay changes waiting"
+          value={o.pendingPayChanges}
+          hint="On a second person's decision"
+          href="/approvals?queue=requests"
+        />
+        <MetricCard
+          label="Merit cycle"
+          value={cycle ? (used !== null ? `${pct(used)} of budget` : CYCLE_STATUS_LABELS[cycle.status]) : '—'}
+          hint={
+            cycle
+              ? `${cycle.name} · ${fmtMoney(cycle.spent)}${budget !== null ? ` of ${fmtMoney(budget)}` : ' proposed'} · ${cycle.pending.toLocaleString('en-US')} still open`
+              : undefined
+          }
+          nothing={cycle ? undefined : 'No merit cycle running'}
+          tone={used !== null && used > 100 ? 'alert' : 'default'}
+          onClick={cycle ? () => onTab('planning') : undefined}
+        />
+      </MetricStrip>
+
+      <p className="text-sm text-silver">
+        {o.people.toLocaleString('en-US')} {o.people === 1 ? 'person' : 'people'} · {o.inBand.toLocaleString('en-US')} paid inside their band
+        {o.noBand > 0 && <> · {o.noBand.toLocaleString('en-US')} with no band for their role</>}
+        {o.noRate > 0 && <> · {o.noRate.toLocaleString('en-US')} with no rate on file</>}
+      </p>
+
+      {banded === 0 ? (
+        <EmptyState
+          icon={Scale}
+          title="No pay bands yet"
+          description="Set a minimum, midpoint and maximum for each role, and this page shows who is paid outside them."
+          action={
+            canManage ? (
+              <Button size="sm" onClick={() => onTab('bands')}>
+                <Plus className="mr-2 h-4 w-4" /> New band
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <div id="outside-band">
+          <DataGrid<CompOverview['outsideBand'][number]>
+            id="comp-outside-band"
+            caption="Paid outside their band"
+            noun={{ one: 'person', many: 'people' }}
+            rows={o.outsideBand}
+            rowKey={(r) => r.associateId}
+            urlKey="outside"
+            footnote={o.outsideTruncated ? 'Showing the first 50.' : undefined}
+            empty={{ icon: Scale, title: 'Everyone with a band is paid inside it' }}
+            columns={[
+              {
+                key: 'name',
+                header: 'Associate',
+                accessor: (r) => r.name,
+                sortable: true,
+                primary: true,
+                cell: (r) => <AssociateLink associateId={r.associateId} tab="compensation">{r.name}</AssociateLink>,
+              },
+              {
+                key: 'where',
+                header: 'Where',
+                accessor: (r) => (r.where === 'BELOW' ? 'Below minimum' : 'Above maximum'),
+                sortable: true,
+                cardMeta: true,
+                cell: (r) => <Badge variant="pending">{r.where === 'BELOW' ? 'Below minimum' : 'Above maximum'}</Badge>,
+              },
+              { key: 'rate', header: 'Rate', accessor: (r) => Number(r.amount), csv: (r) => r.amount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmtPayRate(r.amount, r.payType) },
+              { key: 'band', header: 'Band', accessor: (r) => r.band, sortable: true, cardMeta: true, cell: (r) => `${r.band} · ${fmtMoney(r.min)}–${fmtMoney(r.max)}` },
+            ]}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ============ Bands ============
 
 type BandDraft = {
@@ -258,7 +338,6 @@ type BandDraft = {
 
 function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolean }) {
   const confirm = useConfirm();
-  const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<BandDraft | null>(null);
 
   const refreshQuery = useQuery({
@@ -269,30 +348,6 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load pay bands.' : null;
   const refresh = async () => {
     await refreshQuery.refetch();
-  };
-
-  const q = search.trim().toLowerCase();
-  const filtered = (rows ?? []).filter(
-    (b) =>
-      q === '' ||
-      b.name.toLowerCase().includes(q) ||
-      (b.level ?? '').toLowerCase().includes(q) ||
-      (b.jobProfileTitle ?? '').toLowerCase().includes(q),
-  );
-
-  const exportCsv = () => {
-    downloadCsv(`pay-bands-${ymdLocal()}.csv`, [
-      ['Name', 'Job profile', 'Level', 'Pay type', 'Min', 'Mid', 'Max'],
-      ...filtered.map((b) => [
-        b.name,
-        b.jobProfileTitle ?? '',
-        b.level ?? '',
-        PAY_TYPE_LABELS[b.payType],
-        b.minAmount,
-        b.midAmount,
-        b.maxAmount,
-      ]),
-    ]);
   };
 
   const onDelete = async (id: string) => {
@@ -308,42 +363,25 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <Input
-          className="h-8 w-56 text-sm"
-          placeholder="Search bands…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search pay bands"
-        />
-        <div className="flex gap-2">
+      {canManage && rows !== null && rows.length > 0 && (
+        <div className="flex justify-end">
           <Button
             size="sm"
-            variant="secondary"
-            onClick={exportCsv}
-            disabled={filtered.length === 0}
+            onClick={() =>
+              setDraft({
+                name: '',
+                level: '',
+                payType: 'HOURLY',
+                minAmount: '',
+                midAmount: '',
+                maxAmount: '',
+              })
+            }
           >
-            <Download className="mr-2 h-4 w-4" /> Export CSV
+            <Plus className="mr-2 h-4 w-4" /> New band
           </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              onClick={() =>
-                setDraft({
-                  name: '',
-                  level: '',
-                  payType: 'HOURLY',
-                  minAmount: '',
-                  midAmount: '',
-                  maxAmount: '',
-                })
-              }
-            >
-              <Plus className="mr-2 h-4 w-4" /> New band
-            </Button>
-          )}
         </div>
-      </div>
+      )}
       <Card>
         <CardContent className="p-0">
           {error !== null ? (
@@ -352,27 +390,26 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
-              title="No pay bands"
-              description="Define minimum / midpoint / maximum pay for each role so HR can see where in band each associate sits."
-            />
-          ) : filtered.length === 0 ? (
-            <EmptyState
-              title="No bands match"
-              description="No pay bands match your search."
+              icon={Scale}
+              title="No pay bands yet"
+              description="Set a minimum, midpoint and maximum for each role, so you can see where each person sits in their band."
               action={
-                <Button size="sm" variant="secondary" onClick={() => setSearch('')}>
-                  Clear search
-                </Button>
+                canManage ? (
+                  <Button size="sm" onClick={() => setDraft({ name: '', level: '', payType: 'HOURLY', minAmount: '', midAmount: '', maxAmount: '' })}>
+                    <Plus className="mr-2 h-4 w-4" /> New band
+                  </Button>
+                ) : undefined
               }
             />
           ) : (
-            <DataGrid<NonNullable<typeof filtered>[number]>
+            <DataGrid<CompBand>
               id="pay-bands"
               caption="Pay bands"
-              rows={filtered}
+              noun={{ one: 'band', many: 'bands' }}
+              rows={rows}
               rowKey={(b) => b.id}
-              search={false}
-              urlState={false}
+              search={{ placeholder: 'Search bands…' }}
+              urlKey="bands"
               exportCsv={{ filename: 'pay-bands' }}
               onRowClick={canManage ? (b) => setDraft({ id: b.id, name: b.name, level: b.level ?? '', payType: b.payType, minAmount: b.minAmount, midAmount: b.midAmount, maxAmount: b.maxAmount }) : undefined}
               rowActionLabel={(b) => `Edit ${b.name}`}
@@ -392,7 +429,7 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
                         csv: () => '',
                         align: 'right' as const,
                         stopRowClick: true,
-                        cell: (b: NonNullable<typeof filtered>[number]) => (
+                        cell: (b: CompBand) => (
                           <Button size="sm" variant="ghost" className="text-silver hover:text-alert" aria-label={`Delete pay band ${b.name}`} onClick={() => onDelete(b.id)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>

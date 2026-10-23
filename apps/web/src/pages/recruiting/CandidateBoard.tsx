@@ -219,7 +219,8 @@ export function CandidateBoard({
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <p id="board-keys" className="mb-2 hidden text-2xs text-silver/70 sm:block">
+      {/* For screen readers; sighted keyboard users get it from the ⓘ beside the view toggle. */}
+      <p id="board-keys" className="sr-only">
         Keyboard: arrows move between candidates · Enter opens · M moves to another stage
       </p>
       <div

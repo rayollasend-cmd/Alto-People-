@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { boundsOf, closesPolygon, pointInShape, polygonArea, polygonValid, shapeLabel, shapePoints } from '@/lib/robotZones';
+import { boundsOf, closesPolygon, pointInShape, polygonArea, polygonValid, shapeLabel, shapePoints, zoneNameAt } from '@/lib/robotZones';
+import { gridStep } from '@/pages/robots/SiteSafetyZones';
 
 /**
  * The zone geometry the drawing canvas and the server agree on: inside means
@@ -35,5 +36,27 @@ describe('robot zone geometry', () => {
     expect(shapePoints({ type: 'rect', x: 1, y: 2, w: 3, h: 4 })).toBe('1,2 4,2 4,6 1,6');
     expect(shapeLabel({ type: 'polygon', points: [[0, 0], [1, 0], [1, 1]] })).toBe('Polygon, 3 points');
     expect(shapeLabel({ type: 'rect', x: 1, y: 2, w: 3, h: 4 })).toBe('Rectangle 3 × 4 at 1, 2');
+  });
+});
+
+describe('zoneNameAt (F500 G2: a position in the site\'s words)', () => {
+  const zones = [
+    { name: 'Lobby bar', shape: { type: 'rect' as const, x: 0, y: 0, w: 20, h: 10 } },
+    { name: 'Pool deck', shape: { type: 'polygon' as const, points: [[30, 30], [60, 30], [60, 60], [30, 60]] as [number, number][] } },
+  ];
+  it('names the zone a point falls in, null outside every zone or with no reading', () => {
+    expect(zoneNameAt(zones, 12, 5)).toBe('Lobby bar');
+    expect(zoneNameAt(zones, 45, 40)).toBe('Pool deck');
+    expect(zoneNameAt(zones, 25, 25)).toBeNull();
+    expect(zoneNameAt(zones, null, 5)).toBeNull();
+  });
+});
+
+describe('gridStep', () => {
+  it('picks a round step that draws about ten lines', () => {
+    expect(gridStep(110)).toBe(20);
+    expect(gridStep(100)).toBe(10);
+    expect(gridStep(48)).toBe(5);
+    expect(gridStep(2400)).toBe(500);
   });
 });

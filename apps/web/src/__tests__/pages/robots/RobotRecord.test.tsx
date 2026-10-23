@@ -27,6 +27,9 @@ vi.mock('@/lib/robotsApi', () => ({
   addMaintenance: vi.fn(),
   reportRobotIncident: vi.fn(),
   updateRobotProfile: vi.fn(),
+  listSafetyZones: vi.fn(async () => ({
+    zones: [{ id: 'z1', locationId: 's1', name: 'Lobby bar', shape: { type: 'rect', x: 0, y: 0, w: 40, h: 20 }, guestOccupied: false, robotsAllowedWhenOccupied: false, occupiedSince: null }],
+  })),
 }));
 vi.mock('@/lib/clientsApi', () => ({ listClients: vi.fn(async () => ({ clients: [] })), listClientLocations: vi.fn(async () => ({ locations: [] })) }));
 vi.mock('@/lib/usersAdminApi', () => ({ listAdminUsers: vi.fn(async () => ({ users: [] })) }));
@@ -88,5 +91,11 @@ describe('<RobotRecord>', () => {
     expect(screen.getByText('Due')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /emergency stop/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /start shift/i })).toBeInTheDocument();
+  });
+
+  it('says where the robot is in the site\'s words: the zone, with the map units beside it (F500 G2)', async () => {
+    renderPage();
+    expect(await screen.findByText('Lobby bar')).toBeInTheDocument();
+    expect(screen.getByText('Front Beach 218 · 12, 12 map units')).toBeInTheDocument();
   });
 });

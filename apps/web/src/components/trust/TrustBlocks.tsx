@@ -100,7 +100,16 @@ export function ControlsTable({ items }: { items: TrustControlPublic[] }) {
               <tr key={c.id} className="align-top text-ink">
                 <td className="px-4 py-3">
                   <div className="font-medium">{c.title}</div>
-                  <div className="mt-0.5 text-xs2 text-ink-muted">{c.how}</div>
+                  {/* The plain line first; the technical one behind a click (F500 G4). */}
+                  {c.plain && <div className="mt-0.5 text-xs2 text-ink-muted">{c.plain}</div>}
+                  {c.plain ? (
+                    <details className="mt-1 text-xs2 text-ink-muted">
+                      <summary className="cursor-pointer select-none text-ink-muted hover:text-ink">How it’s checked</summary>
+                      <p className="mt-1">{c.how}</p>
+                    </details>
+                  ) : (
+                    <div className="mt-0.5 text-xs2 text-ink-muted">{c.how}</div>
+                  )}
                 </td>
                 <td className="hidden px-4 py-3 text-xs2 text-ink-muted md:table-cell">{c.criteria.join(', ')}</td>
                 <td className="px-4 py-3">{controlStatusBadge(c.controlStatus ?? CONTROL_FROM_TRUST[c.status])}</td>
@@ -155,7 +164,7 @@ export function SubProcessors({ data }: { data: TrustSummaryPublic }) {
                     </a>
                   </td>
                   <td className="px-4 py-2 text-ink-muted">{s.purpose}</td>
-                  <td className="hidden px-4 py-2 text-ink-muted md:table-cell">{s.region}</td>
+                  <td className="hidden whitespace-nowrap px-4 py-2 text-ink-muted md:table-cell">{s.region}</td>
                 </tr>
               ))}
             </tbody>
@@ -177,7 +186,8 @@ const STAGE_SHORT: Record<Soc2Stage, string> = { preparing: 'Preparing', observa
  * one marked, with the numbers behind it. The same block on the public page
  * and the signed-in one, so neither claims more than the other.
  */
-export function Soc2Block({ soc2 }: { soc2: Soc2Progress }) {
+/** `publicView`: the anonymous Trust Center — no per-control pass count, and no "Not yet" line for a date that isn't there (F500 G5). */
+export function Soc2Block({ soc2, publicView = false }: { soc2: Soc2Progress; publicView?: boolean }) {
   const current = STAGE_ORDER.indexOf(soc2.stage);
   return (
     <section aria-labelledby="trust-soc2">
@@ -197,6 +207,7 @@ export function Soc2Block({ soc2 }: { soc2: Soc2Progress }) {
             ))}
           </ol>
           <dl className="grid gap-3 text-sm sm:grid-cols-3">
+            {!publicView && (
             <div>
               {/* Leads with the same "passing" as the hero and Compliance evidence. */}
               <dt className="text-ink-muted">Controls passing</dt>
@@ -204,14 +215,17 @@ export function Soc2Block({ soc2 }: { soc2: Soc2Progress }) {
                 {soc2.controlsPassing} / {soc2.controlsTotal} <span className="font-normal text-ink-muted">({soc2.controlsCurrent} with current evidence)</span>
               </dd>
             </div>
+            )}
             <div>
               <dt className="text-ink-muted">Last evidence collected</dt>
               <dd className="font-medium tabular-nums text-ink">{soc2.lastEvidenceAt ? fmtDateTime(soc2.lastEvidenceAt) : 'Not yet'}</dd>
             </div>
+            {!(publicView && soc2.stage !== 'audited' && !soc2.observationSince) && (
             <div>
               <dt className="text-ink-muted">{soc2.stage === 'audited' ? 'Report issued' : 'Observation since'}</dt>
               <dd className="font-medium tabular-nums text-ink">{soc2.stage === 'audited' ? (soc2.reportIssuedOn ?? '—') : (soc2.observationSince ?? 'Not yet: every control must have current evidence first')}</dd>
             </div>
+            )}
           </dl>
         </CardContent>
       </Card>

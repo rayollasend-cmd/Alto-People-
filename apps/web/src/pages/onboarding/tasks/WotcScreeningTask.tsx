@@ -66,7 +66,7 @@ export function WotcScreeningTask() {
   };
 
   return (
-    <TaskShell title={t('ob.wotc.title')} backTo={backTo}>
+    <TaskShell title={t('ob.wotc.title')} backTo={backTo} kind="WOTC_SCREENING">
       {q.isError ? (
         <QueryError what={t('ob.wotc.title')} query={q} />
       ) : q.isLoading ? (

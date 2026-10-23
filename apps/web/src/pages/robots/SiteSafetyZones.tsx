@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pentagon, ShieldAlert, Undo2, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -8,7 +8,9 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDateTime } from '@/lib/format';
 import { boundsOf, closesPolygon, polygonValid, round1, shapeLabel, shapePoints, type Point } from '@/lib/robotZones';
-import { createSafetyZone, listSafetyZones, setZoneOccupied, updateSafetyZone } from '@/lib/robotsApi';
+import { createSafetyZone, listRobots, listSafetyZones, setZoneOccupied, updateSafetyZone } from '@/lib/robotsApi';
+import { useOrgSites } from '@/lib/useOrgSites';
+import { Select } from '@/components/ui/Select';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -37,25 +39,53 @@ const MODES: { value: DrawMode; label: string }[] = [
  * "Close shape") closes it; a vertex can be dragged after it is placed.
  * Units are the commissioning map's own.
  */
+/** A round grid step for a map `span` units wide: about ten lines (1, 2, 5 × 10ⁿ). */
+export function gridStep(span: number): number {
+  const raw = Math.max(span, 1) / 10;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const n = raw / pow;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * pow;
+}
+
 export function ZoneCanvas({
   zones,
   draft,
   onDraftChange,
   onClose,
   drawing,
+  robots = [],
 }: {
   zones: SiteSafetyZoneSummary[];
   draft: Point[];
   onDraftChange: (next: Point[]) => void;
   onClose: () => void;
   drawing: boolean;
+  /** Robots at this site at their last reading, drawn as dots for reference. */
+  robots?: { id: string; name: string; x: number; y: number }[];
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragging, setDragging] = useState<number | null>(null);
-  const b = useMemo(() => boundsOf([...zones.map((z) => z.shape), ...(draft.length ? [{ type: 'polygon' as const, points: draft.length >= 3 ? draft : [...draft, draft[0]!, draft[0]!] }] : [])]), [zones, draft]);
+  const b = useMemo(
+    () =>
+      boundsOf([
+        ...zones.map((z) => z.shape),
+        ...(draft.length ? [{ type: 'polygon' as const, points: draft.length >= 3 ? draft : [...draft, draft[0]!, draft[0]!] }] : []),
+        ...robots.map((r) => ({ type: 'rect' as const, x: r.x, y: r.y, w: 0, h: 0 })),
+      ]),
+    [zones, draft, robots],
+  );
   const w = b.maxX - b.minX;
   const h = b.maxY - b.minY;
   const tolerance = Math.max(w, h) * 0.03;
+  // A light grid with map-unit ticks, so "click the map" has a reference
+  // (it was a blank rectangle — F500 G2).
+  const step = gridStep(Math.max(w, h));
+  const unit = Math.max(w, h);
+  const lines = (lo: number, hi: number) => {
+    const out: number[] = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(Math.round(v * 1000) / 1000);
+    return out;
+  };
 
   const toMap = (e: { clientX: number; clientY: number }): Point => {
     const svg = svgRef.current!;
@@ -91,6 +121,34 @@ export function ZoneCanvas({
         onPointerUp={() => setDragging(null)}
         onPointerLeave={() => setDragging(null)}
       >
+        <g aria-hidden="true" data-testid="zone-grid">
+          {lines(b.minX, b.maxX).map((x) => (
+            <g key={`x${x}`}>
+              <line x1={x} x2={x} y1={b.minY} y2={b.maxY} className="stroke-line" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+              <text x={x + unit * 0.006} y={b.minY + unit * 0.03} fontSize={unit * 0.022} className="fill-ink-muted">
+                {x}
+              </text>
+            </g>
+          ))}
+          {lines(b.minY, b.maxY).map((y) => (
+            <g key={`y${y}`}>
+              <line y1={y} y2={y} x1={b.minX} x2={b.maxX} className="stroke-line" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+              {y !== b.minY && (
+                <text x={b.minX + unit * 0.006} y={y - unit * 0.006} fontSize={unit * 0.022} className="fill-ink-muted">
+                  {y}
+                </text>
+              )}
+            </g>
+          ))}
+        </g>
+        {robots.map((r) => (
+          <g key={r.id} data-testid={`robot-dot-${r.id}`}>
+            <circle cx={r.x} cy={r.y} r={unit * 0.012} className="fill-accent stroke-surface" strokeWidth={unit * 0.003} />
+            <text x={r.x + unit * 0.018} y={r.y + unit * 0.008} fontSize={unit * 0.026} className="fill-ink">
+              {r.name}
+            </text>
+          </g>
+        ))}
         {zones.map((z) => (
           <g key={z.id}>
             <polygon points={shapePoints(z.shape)} className={z.guestOccupied ? 'fill-alert/25 stroke-alert' : 'fill-success/15 stroke-success'} strokeWidth={Math.max(w, h) * 0.005} vectorEffect="non-scaling-stroke" />
@@ -127,6 +185,7 @@ export function ZoneCanvas({
           </g>
         )}
       </svg>
+      <p className="text-xs2 text-ink-muted">Grid every {step} map units{robots.length ? ' · dots are robots at their last reading' : ''}.</p>
     </div>
   );
 }
@@ -188,12 +247,40 @@ export function SiteSafetyZones() {
   });
   const zones = q.data?.zones ?? [];
   const occupied = zones.filter((z) => z.guestOccupied).length;
+  const navigate = useNavigate();
+  // The page names its site, and switches to another (F500 G2: "Robots ›
+  // Safety zones" never said which building).
+  const sites = useOrgSites(true);
+  const siteName = sites?.find((x) => x.id === locationId)?.name ?? null;
+  const fleet = useQuery({ queryKey: ['robots', 'list'], queryFn: listRobots, staleTime: 60_000 });
+  const robotsHere = useMemo(
+    () =>
+      (fleet.data?.robots ?? [])
+        .filter((r) => r.site?.id === locationId && r.latest?.x != null && r.latest?.y != null)
+        .map((r) => ({ id: r.id, name: r.name, x: r.latest!.x!, y: r.latest!.y! })),
+    [fleet.data, locationId],
+  );
 
   return (
     <ListTemplate
-      title="Safety zones"
+      title={siteName ? `Safety zones · ${siteName}` : 'Safety zones'}
+      topbarTitle="Safety zones"
       subtitle="Where guests gather on this site's map. While a zone is occupied, no robot operates inside it."
-      breadcrumbs={[{ label: 'Robots', to: '/robots' }, { label: 'Safety zones' }]}
+      breadcrumbs={[{ label: 'Robots', to: '/robots' }, ...(siteName ? [{ label: siteName }] : []), { label: 'Safety zones' }]}
+      filters={
+        sites && sites.length > 1 ? (
+          <label className="flex items-center gap-2 text-sm text-ink-muted">
+            Site
+            <Select size="sm" className="w-full sm:w-64" value={locationId} onChange={(e) => navigate(`/robots/sites/${e.target.value}/zones`)} aria-label="Site">
+              {sites.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : undefined
+      }
       summary={
         q.data ? (
           <p className="text-sm text-ink-muted">
@@ -245,9 +332,9 @@ export function SiteSafetyZones() {
             <SegmentedControl ariaLabel="Zone shape" options={MODES} value={mode} onChange={(m) => { setMode(m); setDraft([]); setClosed(false); }} />
             {mode === 'polygon' ? (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_16rem]">
-                <ZoneCanvas zones={zones} draft={draft} drawing={!closed} onDraftChange={(next) => setDraft(next)} onClose={() => setClosed(true)} />
+                <ZoneCanvas zones={zones} robots={robotsHere} draft={draft} drawing={!closed} onDraftChange={(next) => setDraft(next)} onClose={() => setClosed(true)} />
                 <div className="space-y-3">
-                  <Field label="Name" required>{(fp) => <Input {...fp} value={name} onChange={(e) => setName(e.target.value)} placeholder="Pool deck" />}</Field>
+                  <Field label="Name" required>{(fp) => <Input {...fp} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pool deck" />}</Field>
                   <p className="text-xs text-ink-muted" aria-live="polite">
                     {draft.length === 0
                       ? 'Click the map to place the first corner.'
@@ -274,7 +361,7 @@ export function SiteSafetyZones() {
               </div>
             ) : (
               <div className="grid gap-3 sm:grid-cols-5">
-                <Field label="Name" required className="sm:col-span-1">{(fp) => <Input {...fp} value={name} onChange={(e) => setName(e.target.value)} placeholder="Pool deck" />}</Field>
+                <Field label="Name" required className="sm:col-span-1">{(fp) => <Input {...fp} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pool deck" />}</Field>
                 {(['x', 'y', 'w', 'h'] as const).map((k) => (
                   <Field key={k} label={k === 'w' ? 'Width' : k === 'h' ? 'Height' : k.toUpperCase()}>{(fp) => <Input {...fp} type="number" value={rect[k]} onChange={(e) => setRect((r) => ({ ...r, [k]: e.target.value }))} />}</Field>
                 ))}

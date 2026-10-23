@@ -140,6 +140,52 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('Client hours: the page itself', () => {
+  it('the vendor is a tag, the store is named in Alto’s words, the hours are labelled, and there is one export', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+      if (path === '/time/admin/timesheets') {
+        return week([
+          { ...row('a1', 'Lee, Ann', 8, fg()), siteName: 'Destin 218', photoUrl: null },
+          { ...row('a2', 'Ray, Bo', 6, fg()), siteName: 'Destin 218', photoUrl: '/api/associates/a2/photo?v=1' },
+        ]) as never;
+      }
+      if (path === '/clients' || path.startsWith('/clients?')) return { clients: [] } as never;
+      throw new Error(`unexpected ${path}`);
+    });
+    renderAs('FINANCE_ACCOUNTANT', <TimesheetsView />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Client hours' })).toBeInTheDocument();
+    const table = await screen.findByRole('table');
+    // The store's own name; the Fieldglass site label is the tooltip.
+    const store = within(table).getAllByText('Destin 218')[0]!;
+    expect(store).toHaveAttribute('title', 'In Fieldglass: 1 - Onsite - FL - Destin');
+    expect(within(table).queryByText('1 - Onsite - FL - Destin')).not.toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: /Billed hours \(Others\)/ })).toBeInTheDocument();
+    // One export: the Fieldglass workbook in the header — no second grid CSV.
+    expect(screen.getByRole('button', { name: /Export \.xlsx/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Export$/ })).not.toBeInTheDocument();
+    // Mark filed is the page's one primary action.
+    expect(screen.getByRole('button', { name: /Mark filed/ })).toBeInTheDocument();
+  });
+
+  it('search finds a worker by the store’s Alto name too', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+      if (path === '/time/admin/timesheets') {
+        return week([
+          { ...row('a1', 'Lee, Ann', 8, fg()), siteName: 'Destin 218' },
+          { ...row('a2', 'Ray, Bo', 6, fg()), site: '1 - Onsite - FL - Miramar', siteName: 'Miramar 7' },
+        ]) as never;
+      }
+      if (path === '/clients' || path.startsWith('/clients?')) return { clients: [] } as never;
+      throw new Error(`unexpected ${path}`);
+    });
+    renderAs('FINANCE_ACCOUNTANT', <TimesheetsView />);
+    const table = await screen.findByRole('table');
+    await userEvent.type(screen.getByRole('searchbox'), 'miramar 7');
+    await waitFor(() => expect(within(table).queryByText('Lee, Ann')).not.toBeInTheDocument());
+    expect(within(table).getByText('Ray, Bo')).toBeInTheDocument();
+  });
+});
+
 describe('the Fieldglass desk on Timesheets', () => {
   it('the week’s deadline, progress and money; each worker’s status; the entered tick', async () => {
     const calls: Array<{ path: string; body?: unknown }> = [];

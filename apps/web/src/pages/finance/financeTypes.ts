@@ -88,7 +88,8 @@ export interface CashForecast {
   from: string;
   to: string;
   /** The Books cash position today; null when the books hold no bank account yet. */
-  opening: { balance: number; accounts: number; asOf: string } | null;
+  /** `onFile: false` — bank accounts exist but nothing is posted to them yet, so the balance is not a real $0. */
+  opening: { balance: number; accounts: number; asOf: string; onFile?: boolean } | null;
   /** The cash floor from Settings; null when none is set. */
   minimumCash: number | null;
   lowest: { weekStart: string; balance: number; belowMinimum: boolean } | null;

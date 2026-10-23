@@ -9,6 +9,7 @@ import { Logo } from '@/components/Logo';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { LinkProblem } from '@/components/LinkProblem';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -25,7 +26,9 @@ const STATE_LABEL: Record<WalletItem['state'], string> = { valid: 'Valid', expir
 export function WalletVerifyPage() {
   const { token = '' } = useParams();
   const q = useQuery({ queryKey: ['wallet', 'public', token], queryFn: () => getPublicWallet(token), retry: false, enabled: token.length > 0 });
-  const gone = q.error instanceof ApiError && q.error.status === 404;
+  // 410: a real link past its days; 404: not a link anyone shared (F500 G5).
+  const expired = q.error instanceof ApiError && q.error.status === 410;
+  const invalid = q.error instanceof ApiError && q.error.status === 404;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-midnight via-navy to-navy-secondary text-ink">
@@ -35,12 +38,18 @@ export function WalletVerifyPage() {
           <span className="text-xs uppercase tracking-widest text-silver/70">Verified credentials</span>
         </div>
         {q.isError ? (
-          <section className="mt-8 rounded-lg border border-navy-secondary bg-navy p-6">
-            <PageHeader
-              title={gone ? 'This link has expired' : 'Could not open this link'}
-              subtitle={gone ? 'Ask the person to share a new one from their credentials page.' : 'Try again in a moment.'}
-            />
-          </section>
+          <LinkProblem
+            className="mt-8"
+            kind={expired ? 'expired' : invalid ? 'invalid' : 'error'}
+            title={expired ? 'This shared link has expired' : invalid ? 'This link isn’t valid' : 'Could not open this link'}
+            reason={
+              expired
+                ? 'Shared credentials stop showing on the day the person chose. Ask them to share a new link from their credentials page.'
+                : invalid
+                  ? 'It may have been cut off when it was copied. Ask the person to send it again.'
+                  : 'Try again in a moment.'
+            }
+          />
         ) : !q.data ? (
           <Skeleton className="mt-8 h-64" />
         ) : (

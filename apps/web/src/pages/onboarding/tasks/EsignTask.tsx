@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, FileSignature } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
@@ -11,10 +11,10 @@ import {
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { fmtDateTime } from '@/lib/format';
-import { Field, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
+import { ContinueLabel, Field, TaskShell, inputCls, useNextTask, useTaskApplication } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -36,6 +36,10 @@ export function EsignTask() {
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
   const next = useNextTask('E_SIGN');
+  // Whether HR marked this step not needed — the honest words for an empty
+  // list differ ("nothing to sign" vs "nothing yet").
+  const taskSkipped =
+    useTaskApplication().data?.tasks.find((task) => task.kind === 'E_SIGN')?.status === 'SKIPPED';
 
   const agreementsQuery = useQuery({
     queryKey: ['EsignTask', 'agreements', applicationId ?? null],
@@ -68,21 +72,13 @@ export function EsignTask() {
     !!agreements && agreements.length > 0 && agreements.every((a) => a.signedAt);
 
   return (
-    <TaskShell title={t('ob.esign.title')} backTo={backTo}>
-      <p className="text-silver text-sm mb-5">{t('ob.esign.intro')}</p>
-
-      {loadFailed && (
-        <ErrorBanner
-          className="mb-4"
-          action={
-            <Button size="xs" variant="secondary" loading={agreementsQuery.isFetching} onClick={() => void agreementsQuery.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {t('ob.esign.loadFailed')}
-        </ErrorBanner>
+    <TaskShell title={t('ob.esign.title')} backTo={backTo} kind="E_SIGN">
+      {/* How to sign — only when there's something to sign. */}
+      {!(agreements && agreements.length === 0) && (
+        <p className="text-silver text-sm mb-5">{t('ob.esign.intro')}</p>
       )}
+
+      {loadFailed && <QueryError className="mb-4" what={t('ob.esign.what')} query={agreementsQuery} />}
 
       {!agreements && !loadFailed && (
         <div className="space-y-4">
@@ -94,8 +90,16 @@ export function EsignTask() {
       {agreements && agreements.length === 0 && (
         <EmptyState
           icon={FileSignature}
-          title={t('ob.esign.emptyTitle')}
-          description={t('ob.esign.emptyDesc')}
+          title={t('ob.esign.nothingTitle')}
+          description={taskSkipped ? t('ob.esign.nothingSkipped') : t('ob.esign.nothingYet')}
+          action={
+            // Nothing to do here, so the way on — never a dead end.
+            <Button asChild className="h-auto min-h-10 py-1.5 coarse:min-h-11">
+              <Link to={next?.route ?? backTo}>
+                <ContinueLabel label={next ? t('ob.policy.continue') : t('ob.shell.toChecklist')} next={next} />
+              </Link>
+            </Button>
+          }
         />
       )}
 

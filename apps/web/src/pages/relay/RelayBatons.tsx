@@ -55,7 +55,7 @@ export function RelayBatons({
     <section aria-labelledby="relay-batons">
       <SectionHead
         icon={Flag}
-        title="Batons"
+        title="Open hand-offs"
         meta={
           active.length === 0 ? 'all clear' : `${active.length} open${overdue ? ` · ${overdue} late` : ''}`
         }
@@ -65,7 +65,7 @@ export function RelayBatons({
         {active.length === 0 ? (
           <p className="flex items-center gap-2 px-4 py-3 text-sm text-success">
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            Nothing waiting{lens === 'ALL' ? '' : ' on this desk'} — silence means green.
+            Nothing waiting{lens === 'ALL' ? '' : ' on this desk'}.
           </p>
         ) : (
           <ul className="divide-y divide-navy-secondary/60">

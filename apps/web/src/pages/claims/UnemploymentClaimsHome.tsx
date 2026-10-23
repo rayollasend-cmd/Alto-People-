@@ -1,4 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useUrlParam } from '@/lib/useUrlState';
+import { useMinWidth } from '@/lib/useViewport';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Download, FileWarning, Scale } from 'lucide-react';
@@ -85,34 +88,59 @@ const POSTURE_META = {
   weak: { label: 'The record is thin', variant: 'destructive' as const },
 };
 
+/** The claim that needs answering first: overdue, then the soonest deadline, then the newest. */
+export function mostUrgent<T extends { next: { dueAt: string | null; overdue: boolean } | null }>(claims: T[]): T | null {
+  const withNext = claims.filter((c) => c.next);
+  if (withNext.length === 0) return claims[0] ?? null;
+  return [...withNext].sort((a, b) => Number(b.next!.overdue) - Number(a.next!.overdue) || (a.next!.dueAt ?? '9999').localeCompare(b.next!.dueAt ?? '9999'))[0]!;
+}
+
 export function UnemploymentClaimsHome() {
   const term = useTerm();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const openId = params.get('claim');
-  const [status, setStatus] = useState('open');
+  const [status, setStatus] = useUrlParam<string>('status', 'open', ['open', 'NEW', 'HEARING_SCHEDULED', 'all']);
   const [q, setQ] = useState('');
+  const wide = useMinWidth(1024);
   const [opening, setOpening] = useState(false);
   const summary = useQuery({ queryKey: ['claims', 'ui', 'summary'], queryFn: getUiSummary });
   const list = useQuery({ queryKey: ['claims', 'ui', 'list', status, q], queryFn: () => listUiClaims({ status, q: q.trim() || undefined }) });
-  const setOpen = (id: string | null) => {
+  const setOpen = (id: string | null, opts: { replace?: boolean } = {}) => {
     const next = new URLSearchParams(params);
     if (id) next.set('claim', id);
     else next.delete('claim');
-    setParams(next);
+    setParams(next, { replace: opts.replace });
   };
+  // On a desktop the most urgent claim opens by itself — not a "Pick a claim"
+  // placeholder beside a claim due Friday. Replace, so Back leaves the page.
+  const urgent = mostUrgent(list.data?.claims ?? []);
+  useEffect(() => {
+    if (wide && !openId && urgent) setOpen(urgent.id, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wide, openId, urgent?.id]);
   const refresh = () => void qc.invalidateQueries({ queryKey: ['claims', 'ui'] });
   const s = summary.data;
 
   // On a phone with an item open, the item takes the screen: the counts and filters step aside.
   const filters = (
     <div className={cn('space-y-3', openId && 'hidden lg:block')}>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Responses due" value={s?.responsesDueThisWeek ?? '—'} hint={s ? (s.overdue ? `${s.overdue} overdue` : 'In the next 7 days, none overdue') : undefined} />
-        <MetricCard label="Open claims" value={s?.open ?? '—'} hint={s ? `${s.hearingsNext14Days} hearing${s.hearingsNext14Days === 1 ? '' : 's'} in 14 days` : undefined} />
-        <MetricCard label="Win rate" value={s?.winRate === null || s?.winRate === undefined ? '—' : `${s.winRate}%`} hint={s ? `${s.contestedDecided} contested claim${s.contestedDecided === 1 ? '' : 's'} decided` : undefined} />
-        <MetricCard label="Estimated tax impact" value={s ? fmtMoney(s.estimatedSuiImpact) : '—'} hint="Charged benefits × your rate factor — an estimate" />
-      </div>
+      {/* Two a row on a phone, so the queue starts on the first screen. */}
+      <MetricStrip label="Claims at a glance">
+        <MetricCard
+          label="Responses due"
+          value={s?.responsesDueThisWeek ?? '—'}
+          tone={s?.overdue ? 'alert' : s?.responsesDueThisWeek ? 'warning' : 'default'}
+          hint={s ? (s.overdue ? `${s.overdue} overdue` : 'In the next 7 days, none overdue') : undefined}
+          onClick={() => setStatus('NEW')}
+          selected={status === 'NEW'}
+          nothing={s && !s.responsesDueThisWeek && !s.overdue ? 'No responses due' : undefined}
+        />
+        <MetricCard label="Open claims" value={s?.open ?? '—'} tone="neutral" hint={s ? `${s.hearingsNext14Days} hearing${s.hearingsNext14Days === 1 ? '' : 's'} in 14 days` : undefined} onClick={() => setStatus('open')} selected={status === 'open'} nothing={s && !s.open ? 'No open claims' : undefined} />
+        <MetricCard label="Win rate" value={s?.winRate === null || s?.winRate === undefined ? '—' : `${s.winRate}%`} tone="neutral" hint={s ? `${s.contestedDecided} contested claim${s.contestedDecided === 1 ? '' : 's'} decided` : undefined} nothing={s && s.winRate === null ? 'Nothing decided yet' : undefined} />
+        {/* No charges on file, no estimate: "$0.00" before anything is decided read as good news. */}
+        <MetricCard label="Estimated tax impact" value={s ? fmtMoney(s.estimatedSuiImpact) : '—'} tone="neutral" hint="Charged benefits × your rate factor — an estimate" nothing={s && !s.estimatedSuiImpact ? 'No charges yet' : undefined} />
+      </MetricStrip>
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter claims">
         {[
           ['open', 'Open'],
@@ -232,7 +260,6 @@ export function UnemploymentClaimsHome() {
       <DeskTemplate
         title="Unemployment claims"
         subtitle="Answer every state notice on time, argued from the record."
-        breadcrumbs={[{ label: 'Compliance', to: '/compliance' }, { label: 'Unemployment claims' }]}
         actions={<Button onClick={() => setOpening(true)}>Record a claim</Button>}
         filters={filters}
         queue={queue}
@@ -484,6 +511,7 @@ function OutcomeCard({ c, onChanged }: { c: UiClaim; onChanged: () => void }) {
       }),
     onSuccess: (_r, close) => {
       toast.success(close ? 'Claim closed.' : 'Saved.');
+      if (determination || hearingOutcome || appealOutcome) setEditing(false);
       onChanged();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not save.'),
@@ -499,6 +527,51 @@ function OutcomeCard({ c, onChanged }: { c: UiClaim; onChanged: () => void }) {
       )}
     </Field>
   );
+  // Once the state has decided, the outcome reads as a record; changing it
+  // is a deliberate "Update outcome", not a form that sits open.
+  const decided = !!(c.determination || c.outcome);
+  const [editing, setEditing] = useState(!decided);
+  const words = (o: string | null | undefined) => (o === 'DENIED' ? 'Benefits denied' : o === 'ALLOWED' ? 'Benefits allowed' : 'Not decided');
+  if (!editing) {
+    return (
+      <Card>
+        <CardContent className="space-y-3 p-4 md:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-ink">Determination, hearing and appeal</h3>
+            {c.outcome && <Badge variant={c.outcome === 'DENIED' ? 'success' : 'pending'}>{OUTCOME_TEXT[c.outcome]}</Badge>}
+          </div>
+          <dl className="grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-ink-muted">First determination</dt>
+              <dd className="text-ink">{words(c.determination)}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-muted">Benefits charged to your account</dt>
+              <dd className="text-ink tabular-nums">{c.chargesAmount != null ? fmtMoney(c.chargesAmount) : '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-muted">Hearing</dt>
+              <dd className="text-ink">{c.hearingAt ? `${fmtDate(c.hearingAt)} · ${words(c.hearingOutcome)}` : 'None'}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-muted">Appeal</dt>
+              <dd className="text-ink">{c.appealFiledAt ? `Filed ${fmtDate(c.appealFiledAt)} · ${words(c.appealOutcome)}` : 'None'}</dd>
+            </div>
+          </dl>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              Update outcome
+            </Button>
+            {c.status !== 'CLOSED' && c.outcome && (
+              <Button variant="secondary" loading={save.isPending} onClick={() => save.mutate(true)}>
+                Close the claim
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <Card>
       <CardContent className="space-y-3 p-4 md:p-5">

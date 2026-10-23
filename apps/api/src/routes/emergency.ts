@@ -4,10 +4,12 @@ import { z } from 'zod';
 import { EmergencyCheckInInputSchema, EmergencyDeclareInputSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { effectiveClientIdFilter } from '../lib/scope.js';
 import {
   checkIn,
   declareEmergency,
   emergencyBoard,
+  emergencyReadiness,
   emergencySites,
   listEmergencies,
   myEmergency,
@@ -21,6 +23,7 @@ import {
  *   POST /emergency/:id/check-in       "I'm safe" / "I need help", optionally a van seat
  *   GET  /emergency                    history, newest first            (view:emergency)
  *   GET  /emergency/sites              every active store, for the scope picker (manage:emergency)
+ *   GET  /emergency/readiness          reach, phones, languages, vans — the quiet page (view:emergency)
  *   GET  /emergency/:id/board          responded / not, by site, with the escalation list (view:emergency)
  *   POST /emergency                    declare                          (manage:emergency)
  *   POST /emergency/:id/stand-down     restore the schedule             (manage:emergency)
@@ -53,6 +56,21 @@ emergencyRouter.post('/:id/check-in', requireAuth, async (req, res, next) => {
 emergencyRouter.get('/', VIEW, async (_req, res, next) => {
   try {
     res.json({ emergencies: await listEmergencies(prisma) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+emergencyRouter.get('/readiness', VIEW, async (req, res, next) => {
+  try {
+    // A client-bounded viewer sees their client's people only; one with no
+    // client sees nobody.
+    const clamped = effectiveClientIdFilter(req.user!, undefined);
+    if (clamped === null) {
+      res.json({ reach: 0, withPhone: 0, languages: [], vans: null });
+      return;
+    }
+    res.json(await emergencyReadiness(prisma, { tenantId: tenantIdForWrite(), clientId: clamped ?? null }));
   } catch (err) {
     next(err);
   }

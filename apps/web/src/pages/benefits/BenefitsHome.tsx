@@ -1,18 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { CheckCircle2, HeartPulse, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { MAX_LIFE_COVERAGE_CENTS } from '@alto-people/shared';
-import type {
-  BenefitsEnrollment,
-  BenefitsPlan,
-  BenefitsPlanKind,
-} from '@alto-people/shared';
+import type { BenefitsEnrollment, BenefitsPlan } from '@alto-people/shared';
 import {
   enrollMe,
   listMyEnrollments,
-  listPlans,
+  listMyPlans,
   terminateMyEnrollment,
 } from '@/lib/benefitsApi';
 import { ApiError } from '@/lib/api';
@@ -43,21 +38,9 @@ import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
-import { useClients } from '@/lib/useClients';
-
-const KIND_LABEL: Record<BenefitsPlanKind, string> = {
-  HEALTH_MEDICAL: 'Medical',
-  DENTAL: 'Dental',
-  VISION: 'Vision',
-  HSA: 'HSA',
-  FSA_HEALTHCARE: 'FSA — Healthcare',
-  FSA_DEPENDENT_CARE: 'FSA — Dependent care',
-  RETIREMENT_401K: '401(k)',
-  RETIREMENT_403B: '403(b)',
-  LIFE_INSURANCE: 'Life insurance',
-  DISABILITY: 'Disability',
-  TRUMP_ACCOUNT: 'Trump account (employer)',
-};
+import { useUrlParam } from '@/lib/useUrlState';
+import { BenefitsAdminHome } from './BenefitsAdminHome';
+import { KIND_LABEL } from './benefitsWords';
 
 function isActiveEnrollment(e: BenefitsEnrollment): boolean {
   if (!e.terminationDate) return true;
@@ -66,27 +49,25 @@ function isActiveEnrollment(e: BenefitsEnrollment): boolean {
 
 export function BenefitsHome() {
   const { user, can } = useAuth();
-  // HR-only lifecycle console (OE windows, QLEs, COBRA, ACA) — its route is
-  // gated on view:hr-admin, so only offer the door to people it will open for.
-  const lifecycleLink = can('view:hr-admin') ? (
-    <Button asChild variant="ghost" size="sm">
-      <Link to="/benefits/lifecycle">Enrollment &amp; COBRA admin</Link>
-    </Button>
-  ) : undefined;
-  const [enrolling, setEnrolling] = useState<BenefitsPlan | null>(null);
+  // The people who run benefits (HR, finance) get the desk: plans by client,
+  // who's enrolled, what's waiting. Someone who is also an associate can
+  // still open their own elections with ?view=mine.
+  const runsBenefits = can('process:payroll') || can('view:hr-admin');
+  const [view] = useUrlParam<'desk' | 'mine'>('view', 'desk', ['desk', 'mine']);
+  if (runsBenefits && !(view === 'mine' && user?.associateId)) return <BenefitsAdminHome />;
+  if (!user?.associateId) {
+    return (
+      <div className="mx-auto">
+        <PageHeader title="Benefits" subtitle="Benefits enrollment belongs to a person record, and this account isn’t linked to one." />
+      </div>
+    );
+  }
+  return <MyBenefits />;
+}
 
-  // The associate's first client drives the available-plans pool. For
-  // multi-client associates this is a v1 simplification — pick the most
-  // recent application's client (matches backend logic). A failure here
-  // surfaces as the page-level error (with Retry) rather than silently
-  // pretending there are no plans to offer. Served from the app-wide
-  // react-query cache (5-minute staleTime).
-  const {
-    clients,
-    isLoading: clientsLoading,
-    isError: clientsError,
-    refetch: refetchClients,
-  } = useClients();
+function MyBenefits() {
+  const [enrolling, setEnrolling] = useState<BenefitsPlan | null>(null);
+  const [explain, setExplain] = useState(false);
 
   const refreshQuery = useQuery({
     queryKey: ['BenefitsHome', 'enrollments'],
@@ -97,29 +78,14 @@ export function BenefitsHome() {
     await refreshQuery.refetch();
   };
 
-  // Pull plans for the associate's client once the client list is in.
-  // Backend already enforces the client match; this just feeds the picker.
-  const firstClient = clientsLoading || clientsError ? undefined : clients[0];
-  const plansQuery = useQuery({
-    queryKey: ['BenefitsHome', 'plans', firstClient?.id ?? null],
-    queryFn: () => listPlans({ clientId: firstClient!.id }),
-    enabled: firstClient !== undefined,
-  });
-  const availablePlans: BenefitsPlan[] | null =
-    clientsLoading || clientsError
-      ? null
-      : !firstClient
-        ? []
-        : plansQuery.data?.plans ?? null;
-  const error = refreshQuery.error
-    ? refreshQuery.error instanceof ApiError
-      ? refreshQuery.error.message
-      : 'Could not load.'
-    : plansQuery.error
-      ? plansQuery.error instanceof ApiError
-        ? plansQuery.error.message
-        : 'Could not load.'
-      : null;
+  // The plans this associate can elect: the server resolves their client
+  // from where they work (GET /benefits/plans/mine). The page used to ask
+  // /scheduling/clients first, which associates may not read — a 403 that
+  // left them on "Could not load your benefits" with no plan in sight.
+  const plansQuery = useQuery({ queryKey: ['BenefitsHome', 'plans', 'mine'], queryFn: listMyPlans });
+  const availablePlans: BenefitsPlan[] | null = plansQuery.data?.plans ?? null;
+  const failed = refreshQuery.error ?? plansQuery.error;
+  const error = failed ? (failed instanceof ApiError ? failed.message : 'Could not load your benefits.') : null;
 
   const enrolledPlanIds = new Set(
     (enrollments ?? [])
@@ -130,27 +96,26 @@ export function BenefitsHome() {
     (p) => p.isActive && !enrolledPlanIds.has(p.id)
   );
 
-  if (!user?.associateId) {
-    return (
-      <div className="mx-auto">
-        <PageHeader
-          title="Benefits"
-          subtitle="Benefits enrollment belongs to a person record, and this account isn't linked to one."
-          secondaryActions={lifecycleLink}
-        />
-      </div>
-    );
-  }
-
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Benefits"
-        subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."
-        secondaryActions={lifecycleLink}
+        subtitle={
+          <>
+            Your elections come out of each paycheck before tax.{' '}
+            <button type="button" className="text-gold underline-offset-2 hover:underline" aria-expanded={explain} onClick={() => setExplain((v) => !v)}>
+              How this works
+            </button>
+          </>
+        }
     >
+      {explain && (
+        <p className="rounded-lg border border-line bg-surface-raised p-3 text-sm text-ink-muted">
+          Pre-tax elections come out of every paycheck before federal, Social Security, Medicare and state tax, so your take-home goes down by less than the amount you elect. Changes apply from the next pay period.
+        </p>
+      )}
 
-      {(error || clientsError) && (
+      {error && (
         <ErrorBanner
           action={
             <Button
@@ -158,25 +123,25 @@ export function BenefitsHome() {
               variant="secondary"
               onClick={() => {
                 void refresh();
-                if (clientsError) void refetchClients();
+                void plansQuery.refetch();
               }}
             >
               Retry
             </Button>
           }
         >
-          {error ?? 'Could not load your benefits.'}
+          {error}
         </ErrorBanner>
       )}
 
-      {!enrollments && !error && !clientsError && (
+      {!enrollments && !error && (
         <div className="space-y-2">
           <Skeleton className="h-20" />
           <Skeleton className="h-20" />
         </div>
       )}
 
-      {enrollments && (
+      {enrollments && !error && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -196,7 +161,9 @@ export function BenefitsHome() {
                 description={
                   offerable.length > 0
                     ? `${offerable.length} plan${offerable.length === 1 ? ' is' : 's are'} available to elect right now.`
-                    : "When HR opens enrollment, plans you're eligible for will appear below to elect."
+                    : availablePlans && availablePlans.length === 0
+                      ? 'Your employer hasn’t published any plans yet. When they do, they show here to elect.'
+                      : "When HR opens enrollment, plans you're eligible for will appear below to elect."
                 }
                 action={
                   offerable.length > 0 ? (
@@ -232,7 +199,8 @@ export function BenefitsHome() {
         </Card>
       )}
 
-      {availablePlans &&
+      {/* With nothing enrolled and no plans, the card above already says so — once. */}
+      {availablePlans && !error && !(availablePlans.length === 0 && (enrollments ?? []).length === 0) &&
         (offerable.length > 0 ? (
           <Card id="benefits-available-plans">
             <CardHeader>

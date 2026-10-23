@@ -7,7 +7,6 @@ import { apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -39,16 +38,11 @@ export function PayrollGoLivePage() {
   const r = q.data;
 
   return (
+    // "Payroll setup checklist" (F500 G3): "Run payroll in-house" read like a place to run payroll.
     <ListTemplate
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Run payroll in-house' }]}
-      title="Run payroll in-house"
-      subtitle="Everything the company needs on file to pay people, withhold and deposit the right taxes, and file — checked against what’s here, with where to fix each one."
-      secondaryActions={
-        <Button variant="outline" onClick={() => void q.refetch()} loading={q.isFetching && !q.isLoading}>
-          <RefreshCw className="h-4 w-4" aria-hidden="true" />
-          Check again
-        </Button>
-      }
+      title="Payroll setup checklist"
+      subtitle="Everything the company needs on file to pay people, withhold and deposit the right taxes, and file, checked against what’s here, with where to fix each one."
+      actions={[{ key: 'recheck', label: 'Check again', icon: RefreshCw, onSelect: () => void q.refetch(), loading: q.isFetching && !q.isLoading }]}
       summary={r ? <Summary r={r} /> : null}
       filters={
         r ? (
@@ -121,7 +115,7 @@ function Summary({ r }: { r: PayrollGoLive }) {
     <div className="grid gap-3 sm:grid-cols-3">
       <Card className={cn(r.ready ? 'border-success/40' : 'border-alert/40')}>
         <CardContent className="space-y-2 pt-[var(--d-tile)]">
-          <p className="text-2xs font-medium uppercase tracking-widest text-ink-muted">Ready to run in-house</p>
+          <p className="text-2xs font-medium uppercase tracking-widest text-ink-muted">Ready to run payroll</p>
           <p className={cn('text-2xl font-semibold', r.ready ? 'text-success' : 'text-alert')}>{r.ready ? 'Yes' : `Not yet — ${r.missing} needed`}</p>
           <ProgressBar percent={pct} hideLabel label="Payroll setup" />
           <p className="text-xs text-ink-muted">

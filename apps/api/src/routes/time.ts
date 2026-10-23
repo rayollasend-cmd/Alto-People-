@@ -78,6 +78,8 @@ import { renderPayrollSheetPdf } from '../lib/payrollSheetPdf.js';
 import { renderPayrollSheetXlsx } from '../lib/payrollSheetXlsx.js';
 import { listPayPeriods } from '../lib/payPeriods.js';
 import { pendingTimeWhere, pendingTimeWindow } from '../lib/pendingTime.js';
+import { timeExceptions } from '../lib/timeExceptions.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { companyWorkweek } from '../lib/timeAnomalies.js';
 import {
   buildTimesheetWeek,
@@ -102,7 +104,7 @@ const EXPORT_SHEETS = requireAnyCapability('manage:time', 'process:payroll');
 
 type RawEntry = Prisma.TimeEntryGetPayload<{
   include: {
-    associate: { select: { firstName: true; lastName: true } };
+    associate: { select: { firstName: true; lastName: true; photoS3Key: true; photoUpdatedAt: true } };
     approvedBy: { select: { email: true } };
     job: { select: { name: true } };
     breaks: true;
@@ -112,7 +114,9 @@ type RawEntry = Prisma.TimeEntryGetPayload<{
 }>;
 
 const ENTRY_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true } },
+  // The photo columns give each row its real photo URL (or null — no
+  // photo on file), so a list never guesses a URL that 404s.
+  associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
   approvedBy: { select: { email: true } },
   job: { select: { name: true } },
   breaks: true,
@@ -265,6 +269,7 @@ function buildEntry(row: RawEntry, clientName: string | null): TimeEntry {
     id: row.id,
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
+    photoUrl: profilePhotoUrlFor({ id: row.associateId, photoS3Key: row.associate.photoS3Key, photoUpdatedAt: row.associate.photoUpdatedAt }),
     clientId: row.clientId,
     clientName,
     clockInAt: row.clockInAt.toISOString(),
@@ -811,7 +816,7 @@ timeRouter.get('/admin/active', requireAnyCapability('manage:time', 'view:time-l
       where,
       orderBy: { clockInAt: 'asc' },
       include: {
-        associate: { select: { firstName: true, lastName: true } },
+        associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
         job: { select: { name: true } },
         breaks: { where: { endedAt: null } },
         // Matched shift bounds — the live board's shift-window filter
@@ -864,6 +869,7 @@ timeRouter.get('/admin/active', requireAnyCapability('manage:time', 'view:time-l
         id: r.id,
         associateId: r.associateId,
         associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+        photoUrl: profilePhotoUrlFor({ id: r.associateId, photoS3Key: r.associate.photoS3Key, photoUpdatedAt: r.associate.photoUpdatedAt }),
         clientId: r.clientId,
         clientName: c?.name ?? null,
         jobId: r.jobId,
@@ -1028,6 +1034,39 @@ timeRouter.get('/admin/entries/count', MANAGE, async (req, res, next) => {
         ...(byPeriod ? { byPeriod } : {}),
       }),
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The exceptions strip on Time & attendance: missed punches, late today,
+// overtime risk this week (lib/timeExceptions). Same client/site narrowing
+// and tenant clamp as the count above; `dayFrom`/`dayTo` are the reader's
+// own "today" (the queue's Today window), so a click on the tile lists the
+// rows the tile counted.
+timeRouter.get('/admin/exceptions', MANAGE, async (req, res, next) => {
+  try {
+    const clientId =
+      effectiveClientIdFilter(req.user!, req.query.clientId?.toString()) ??
+      undefined;
+    const locationId = req.query.locationId?.toString() || undefined;
+    const instant = (v: unknown): Date | undefined => {
+      const s = typeof v === 'string' ? v : undefined;
+      if (!s) return undefined;
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? undefined : d;
+    };
+    const dayFrom = instant(req.query.dayFrom);
+    const dayTo = instant(req.query.dayTo);
+    if (dayFrom && dayTo && (dayTo <= dayFrom || dayTo.getTime() - dayFrom.getTime() > 26 * 3_600_000)) {
+      throw new HttpError(400, 'invalid_day', 'dayFrom/dayTo must name one day.');
+    }
+    const result = await timeExceptions(prisma, req.user!, {
+      clientId,
+      locationId,
+      ...(dayFrom && dayTo ? { dayFrom, dayTo } : {}),
+    });
+    res.json(result);
   } catch (err) {
     next(err);
   }

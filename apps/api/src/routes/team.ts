@@ -20,6 +20,7 @@ import { notifyAssociate } from '../lib/notify.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
+import { teamNumbers, teamNumbersSummary } from '../lib/teamNumbers.js';
 
 /**
  * Phase 79 — Manager-scoped routes.
@@ -88,6 +89,8 @@ teamRouter.get('/reports', VIEW, async (req: Request, res: Response) => {
       employmentType: true,
       department: { select: { name: true } },
       jobProfile: { select: { title: true } },
+      photoS3Key: true,
+      photoUpdatedAt: true,
     },
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
   });
@@ -109,6 +112,9 @@ teamRouter.get('/reports', VIEW, async (req: Request, res: Response) => {
       ])
     : [[], []];
   const lastBy = new Map(lastHeld.map((g) => [g.associateId, g._max.completedAt]));
+  // This week's hours, the clock and the last seven days' lates and
+  // no-shows per report — the rows behind My team's tiles.
+  const numbers = ids.length ? await teamNumbers(user) : null;
   const nextBy = new Map<string, (typeof upcoming)[number]>();
   for (const m of upcoming) if (!nextBy.has(m.associateId)) nextBy.set(m.associateId, m);
   res.json({
@@ -123,8 +129,12 @@ teamRouter.get('/reports', VIEW, async (req: Request, res: Response) => {
         employmentType: r.employmentType,
         departmentName: r.department?.name ?? null,
         jobTitle: r.jobProfile?.title ?? null,
+        // The headshot's address, or null when there is none — the roster
+        // asks for no photo that would 404 (F500 SH-1's photoUrl contract).
+        photoUrl: r.photoS3Key ? `/api/associates/${r.id}/photo?v=${r.photoUpdatedAt?.getTime() ?? 0}` : null,
         lastOneOnOneAt: lastBy.get(r.id)?.toISOString() ?? null,
         nextOneOnOne: next ? { id: next.id, scheduledFor: next.scheduledFor.toISOString(), cadence: next.cadence } : null,
+        week: numbers?.people.get(r.id) ?? null,
       };
     }),
   });
@@ -195,6 +205,7 @@ teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
     pendingReimbursements,
     atRiskGoals,
     onboardingInProgress,
+    numbers,
   ] = await Promise.all([
     prisma.timeEntry.count({
       where: { associateId: { in: reportIds }, status: 'COMPLETED' },
@@ -219,6 +230,9 @@ teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
         deletedAt: null,
       },
     }),
+    // The team in numbers — who is working, hours against the schedule,
+    // lates and no-shows, overtime risk (lib/teamNumbers).
+    teamNumbers(user),
   ]);
   res.json({
     directReports: reportIds.length,
@@ -227,6 +241,7 @@ teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
     pendingReimbursements,
     atRiskGoals,
     onboardingInProgress,
+    team: teamNumbersSummary(numbers),
   });
 });
 

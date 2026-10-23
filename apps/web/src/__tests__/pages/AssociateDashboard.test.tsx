@@ -65,6 +65,7 @@ vi.mock('@/lib/onboardingApi', () => ({
 import { clockIn, clockOut, getActiveTimeEntry } from '@/lib/timeApi';
 import { getMyShiftDetail, listMyShifts } from '@/lib/schedulingApi';
 import { listOpenShifts } from '@/lib/qualApi';
+import { listApplications } from '@/lib/onboardingApi';
 import { listMyAgreements } from '@/lib/agreements122Api';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { listMyInbox } from '@/lib/communicationsApi';
@@ -362,6 +363,24 @@ describe('<AssociateDashboard> — the counted "Needs you"', () => {
     expect(within(list).getByText('2 of 8 done')).toBeInTheDocument();
     expect(within(list).queryByText(/unread in your inbox/i)).not.toBeInTheDocument();
     expect(screen.getByTestId('needs-unread')).toHaveTextContent('5 unread notices');
+    // A real tap target on a phone (it was 16px tall).
+    expect(screen.getByTestId('needs-unread')).toHaveClass('coarse:min-h-11');
+  });
+
+  it('a date-only deadline (dueDate) reads as its own day, first in the list (F500 G5)', async () => {
+    vi.mocked(getInbox).mockResolvedValue({
+      total: 2,
+      sources: [
+        { key: 'my-agreements', label: 'Agreements to sign', description: '', count: 1, path: '/agreements' },
+        // Sent as the calendar day; as a UTC-midnight instant it read "Sun, Nov 1" west of UTC.
+        { key: 'my-leave-certification', label: 'Upload leave certification', description: '', count: 1, path: '/leave', dueAt: null, dueDate: '2026-11-02' },
+      ],
+    } as never);
+    renderDashboard();
+    const list = await screen.findByTestId('associate-needs-you');
+    const rows = within(list).getAllByRole('link');
+    expect(rows[0]).toHaveTextContent('Upload leave certification');
+    expect(rows[0]).toHaveTextContent(/Due Mon, Nov 2/);
   });
 
   it('puts required training in the flow of work, above the ride', async () => {
@@ -425,8 +444,48 @@ describe('<AssociateDashboard> — their numbers and their week', () => {
     // The hours-this-week tile counted a different week from the strip beside it (floor walk 26).
     expect(screen.queryByText('This week')).not.toBeInTheDocument();
     expect(screen.getByText('Last paycheck').closest('a')).toHaveAttribute('href', '/payroll');
-    expect(screen.getByText('Open shifts').closest('a')).toHaveAttribute('href', '/marketplace');
     expect(screen.getByText('Time off').closest('a')).toHaveAttribute('href', '/time-off');
+    // One strip, no orphan: with no open shifts there is no "0 · None right now" tile (F500 G5).
+    const strip = screen.getByRole('group', { name: 'My numbers' });
+    expect(within(strip).queryByText('Open shifts')).not.toBeInTheDocument();
+    // The quick links don't repeat the Schedule tab; open shifts are one of them instead.
+    const quick = screen.getByRole('heading', { name: 'Quick links' }).closest('section')!;
+    expect(within(quick).queryByText('Schedule & swaps')).not.toBeInTheDocument();
+    expect(within(quick).getByText('Open shifts').closest('a')).toHaveAttribute('href', '/marketplace');
+  });
+
+  it('the open-shifts tile shows only when there are some (F500 G5)', async () => {
+    vi.mocked(listOpenShifts).mockResolvedValue({ shifts: [{ id: 'o1' }, { id: 'o2' }] as never });
+    renderDashboard();
+    const strip = await screen.findByRole('group', { name: 'My numbers' });
+    expect(await within(strip).findByText('Open shifts')).toBeInTheDocument();
+    expect(within(strip).getByText('Open shifts').closest('a')).toHaveAttribute('href', '/marketplace');
+  });
+
+  it('nothing in the next 14 days is one line with the way to open shifts, not 14 empty cells (F500 G5)', async () => {
+    renderDashboard();
+    const none = await screen.findByTestId('next-14-none');
+    expect(none).toHaveTextContent('No shifts in the next 14 days.');
+    expect(within(none).getByRole('link', { name: /See open shifts/ })).toHaveAttribute('href', '/marketplace');
+    expect(screen.queryByTestId('next-14-days')).not.toBeInTheDocument();
+  });
+
+  it('unfinished onboarding is the hero with a Continue you can see, the next step and the count (F500 G5)', async () => {
+    // Every read of the list sees the open checklist (the home and the card share the query).
+    vi.mocked(listApplications).mockResolvedValue({
+      applications: [
+        { id: 'app-1', associateName: 'Maria Lopez', clientName: 'Seaside Hospitality Group', onboardingTrack: 'STANDARD', status: 'DRAFT', position: null, startDate: null, invitedAt: new Date().toISOString(), submittedAt: null, percentComplete: 38, nextTask: { kind: 'DOCUMENT_UPLOAD', title: 'Upload your ID' }, tasksDone: 3, tasksTotal: 8 },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+    } as never);
+    renderDashboard();
+    expect(await screen.findByTestId('onb-continue')).toHaveTextContent('Continue');
+    expect(await screen.findByTestId('onb-next')).toHaveTextContent('Next: Upload your ID · about 5 min');
+    expect(screen.getByTestId('onb-count')).toHaveTextContent('3 of 8 tasks');
+    expect(screen.getByTestId('onb-continue').closest('a')).toHaveAttribute('href', '/onboarding/me/app-1');
+    vi.mocked(listApplications).mockResolvedValue({ applications: [], total: 0, page: 1, pageSize: 50 } as never);
   });
 
   it('the next 14 days mark the days on and the ones still to confirm', async () => {

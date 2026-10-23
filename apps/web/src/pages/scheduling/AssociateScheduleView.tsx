@@ -20,11 +20,11 @@ import {
 import { patchNotificationPreference } from '@/lib/settingsApi';
 import { ApiError, apiFetch } from '@/lib/api';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
 import { fmtDateTime, fmtHours, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, mapsUrl, zonedDayKey } from '@/lib/format';
@@ -33,7 +33,9 @@ import { enterStagger } from '@/lib/motion';
 import {
   BellRing,
   CalendarDays,
+  CalendarPlus,
   Check,
+  Clock,
   Copy,
   ExternalLink,
   HandHelping,
@@ -42,6 +44,7 @@ import {
   UserX,
   WifiOff,
 } from 'lucide-react';
+import { useUrlParam } from '@/lib/useUrlState';
 import { listMyRequests } from '@/lib/timeOffApi';
 import {
   PullToRefreshIndicator,
@@ -63,6 +66,7 @@ import { ListTemplate } from '@/components/templates';
 import { workweekStart } from '@/lib/workweek';
 
 type ScheduleViewMode = 'list' | 'week' | 'month';
+const SHEETS = ['', 'availability', 'calendar'] as const;
 const VIEW_STORAGE_KEY = 'alto:mySchedule.view.v1';
 // Last successfully-loaded schedule, for offline fallback. An associate
 // opening the app in a dead-signal stockroom should still see their week.
@@ -385,6 +389,16 @@ export function AssociateScheduleView() {
   const loaded = shifts !== null;
   const isEmpty = loaded && upcomingCount === 0 && past.length === 0;
 
+  // The two set-up jobs open as sheets from the header (?sheet= so a link
+  // — Open shifts' "Set my availability" — lands on one): availability
+  // and its one-time days off, and adding the shifts to a calendar. They
+  // sat inline under the schedule, a page of config after the shifts.
+  const [sheet, setSheet] = useUrlParam<'' | 'availability' | 'calendar'>('sheet', '', SHEETS);
+  // Same cache the open-shifts list below reads: the empty hero says how
+  // many there are to pick up.
+  const openShiftsQuery = useQuery({ queryKey: ['me', 'open-shifts'], queryFn: () => listMyOpenShifts() });
+  const openShiftCount = openShiftsQuery.data?.shifts.length ?? null;
+
   // Everything loaded so far (main window + paged history) for the
   // calendar views, deduped by id in case the windows ever overlap.
   const allShifts = useMemo(() => {
@@ -399,7 +413,12 @@ export function AssociateScheduleView() {
       <PullToRefreshIndicator state={pullState} />
       {/* Design system §4.2 (UX upgrade step 6, the sweep): the List template. */}
       <ListTemplate
-        title={t('sched.title')} subtitle={t('sched.subtitle')}
+        title={t('sched.title')}
+        subtitle={t('sched.subtitle')}
+        actions={[
+          { key: 'availability', label: t('sched.availAction'), icon: Clock, onSelect: () => setSheet('availability') },
+          { key: 'calendar', label: t('sched.calAction'), icon: CalendarPlus, onSelect: () => setSheet('calendar') },
+        ]}
       >
 
       {offlineAt !== null && (
@@ -427,12 +446,19 @@ export function AssociateScheduleView() {
         />
       )}
 
+      {/* No next shift: the hero's place says so, with the two ways to get
+          one — pick up an open shift, or be told when one fits. */}
+      {loaded && !unlinked && !error && upcomingCount === 0 && (
+        <NoNextShift openCount={openShiftCount} />
+      )}
+
       {loaded && !isEmpty && (
         <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
           {/* One human sentence where the three-cell stat console stood —
               what's ahead, this week's hours, and the 40h flag folded in. */}
           {upcomingCount === 0 ? (
-            <p className="text-sm text-silver">{t('sched.noUpcoming')}</p>
+            // The hero above already says it; the views still switch.
+            <span />
           ) : (
             <p className="text-sm text-silver tabular-nums">
               {upcomingCount === 1
@@ -513,27 +539,20 @@ export function AssociateScheduleView() {
             <div className="text-sm font-medium text-ink">{t('sched.setAvailTitle')}</div>
             <div className="text-xs text-silver">{t('sched.setAvailDesc')}</div>
           </div>
-          <Button size="sm" onClick={() => document.getElementById('availability')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+          <Button size="sm" onClick={() => setSheet('availability')}>
             {t('sched.setAvailCta')}
           </Button>
         </div>
       )}
 
-      {isEmpty &&
-        (unlinked ? (
-          <div
-            role="alert"
-            className="mb-4 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning"
-          >
-            {t('sched.unlinked')}
-          </div>
-        ) : (
-          <EmptyState
-            icon={CalendarDays}
-            title={t('sched.noShifts')}
-            description={t('sched.emptyDesc')}
-          />
-        ))}
+      {isEmpty && unlinked && (
+        <div
+          role="alert"
+          className="mb-4 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning"
+        >
+          {t('sched.unlinked')}
+        </div>
+      )}
 
       {loaded && !isEmpty && view === 'week' && (
         <ScheduleWeekView
@@ -608,7 +627,9 @@ export function AssociateScheduleView() {
         </div>
       )}
 
-      {loaded && <OpenShiftsSection key={refreshNonce} estRate={estRate} />}
+      {/* With no next shift the hero above offers "Notify me" — the empty
+          open-shifts card would say it twice. */}
+      {loaded && <OpenShiftsSection key={refreshNonce} estRate={estRate} quietWhenEmpty={upcomingCount === 0} />}
 
       {loaded && view === 'list' && (past.length > 0 || (history?.length ?? 0) > 0) && (
         <div className="mt-6">
@@ -652,11 +673,26 @@ export function AssociateScheduleView() {
       )}
 
       <div className="mt-8">
-        <CalendarSubscribeCard />
         <SwapMarketplace refreshToken={swapVersion} />
-        <AvailabilityEditor />
       </div>
       </ListTemplate>
+
+      <Drawer open={sheet === 'availability'} onOpenChange={(o) => setSheet(o ? 'availability' : '')}>
+        <DrawerHeader>
+          <DrawerTitle>{t('avail.title')}</DrawerTitle>
+        </DrawerHeader>
+        <DrawerBody>
+          <AvailabilityEditor embedded />
+        </DrawerBody>
+      </Drawer>
+      <Drawer open={sheet === 'calendar'} onOpenChange={(o) => setSheet(o ? 'calendar' : '')}>
+        <DrawerHeader>
+          <DrawerTitle>{t('sched.calAction')}</DrawerTitle>
+        </DrawerHeader>
+        <DrawerBody>
+          <CalendarSubscribeCard />
+        </DrawerBody>
+      </Drawer>
     </>
   );
 }
@@ -667,7 +703,7 @@ export function AssociateScheduleView() {
  * pickup claim for the manager to approve — hidden entirely when there's
  * nothing to offer, so the page stays quiet most days.
  */
-function OpenShiftsSection({ estRate }: { estRate: number | null }) {
+function OpenShiftsSection({ estRate, quietWhenEmpty = false }: { estRate: number | null; quietWhenEmpty?: boolean }) {
   const { t } = useI18n();
   const [busyId, setBusyId] = useState<string | null>(null);
   // The row that just got claimed — plays the success flash once.
@@ -708,7 +744,7 @@ function OpenShiftsSection({ estRate }: { estRate: number | null }) {
     );
   }
   if (!items) return null;
-  if (items.length === 0) return <NoOpenShifts />;
+  if (items.length === 0) return quietWhenEmpty ? null : <NoOpenShifts />;
 
   const request = async (shift: OpenShiftsResponse['shifts'][number]) => {
     setBusyId(shift.id);
@@ -757,7 +793,7 @@ function OpenShiftsSection({ estRate }: { estRate: number | null }) {
       : null;
 
   return (
-    <section className="mt-6">
+    <section className="mt-6 scroll-mt-20" id="open-shifts">
       <h2 className="text-sm font-medium text-white mb-2 flex flex-wrap items-center gap-1.5">
         <HandHelping className="h-4 w-4 text-gold" aria-hidden="true" />
         {t('sched.openHeading', { count: items.length })}
@@ -920,48 +956,48 @@ function CalendarSubscribeCard() {
     }
   };
 
+  // Google subscribes to a feed by its webcal address.
+  const googleUrl = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(feed.webcalUrl)}`;
   return (
-    <div className="mb-6 p-4 bg-navy border border-navy-secondary rounded-lg">
-      <div className="flex items-start gap-3">
-        <CalendarDays className="h-5 w-5 text-gold mt-0.5 shrink-0" />
-        <div className="min-w-0 flex-1">
-          <div className="text-white font-medium">{t('sched.calTitle')}</div>
-          <div className="text-xs text-silver/70 mt-0.5">{t('sched.calBody')}</div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <code className="flex-1 min-w-0 truncate text-xs2 text-silver bg-navy-secondary/40 border border-navy-secondary rounded px-2 py-1.5 tabular-nums">
-              {feed.url}
-            </code>
-            <Button onClick={onCopy} variant="secondary" className="shrink-0">
-              {copied ? (
-                <>
-                  <Check className="h-3.5 w-3.5" />
-                  {t('sched.calCopied')}
-                </>
-              ) : (
-                <>
-                  <Copy className="h-3.5 w-3.5" />
-                  {t('sched.calCopyUrl')}
-                </>
-              )}
-            </Button>
-            <a
-              href={feed.webcalUrl}
-              className="inline-flex items-center gap-1 coarse:min-h-11 text-xs text-gold hover:text-gold-bright active:text-gold-bright underline underline-offset-2"
-            >
-              <ExternalLink className="h-3 w-3" />
-              {t('sched.calOpenApple')}
-            </a>
-            <button
-              type="button"
-              onClick={() => setConfirmReset(true)}
-              className="inline-flex items-center gap-1 coarse:min-h-11 text-xs text-silver/70 hover:text-white active:text-white underline underline-offset-2 transition-colors"
-            >
-              <RotateCcw className="h-3 w-3" />
-              {t('sched.calResetLink')}
-            </button>
-          </div>
-        </div>
+    <div data-testid="calendar-sheet">
+      <p className="text-sm text-silver">{t('sched.calBody')}</p>
+      {/* Three ways in, as buttons — the raw feed address isn't something
+          to read, only to copy. */}
+      <div className="mt-4 flex flex-col gap-2">
+        <Button asChild variant="secondary" className="justify-start">
+          <a href={feed.webcalUrl}>
+            <ExternalLink className="h-4 w-4" aria-hidden="true" />
+            {t('sched.calOpenApple')}
+          </a>
+        </Button>
+        <Button asChild variant="secondary" className="justify-start">
+          <a href={googleUrl} target="_blank" rel="noreferrer">
+            <ExternalLink className="h-4 w-4" aria-hidden="true" />
+            {t('sched.calGoogle')}
+          </a>
+        </Button>
+        <Button onClick={onCopy} variant="secondary" className="justify-start">
+          {copied ? (
+            <>
+              <Check className="h-4 w-4" aria-hidden="true" />
+              {t('sched.calCopied')}
+            </>
+          ) : (
+            <>
+              <Copy className="h-4 w-4" aria-hidden="true" />
+              {t('sched.calCopyUrl')}
+            </>
+          )}
+        </Button>
       </div>
+      <button
+        type="button"
+        onClick={() => setConfirmReset(true)}
+        className="mt-4 inline-flex items-center gap-1 coarse:min-h-11 text-xs text-silver/70 hover:text-white active:text-white underline underline-offset-2 transition-colors"
+      >
+        <RotateCcw className="h-3 w-3" aria-hidden="true" />
+        {t('sched.calResetLink')}
+      </button>
       <ConfirmDialog
         open={confirmReset}
         onOpenChange={setConfirmReset}
@@ -1040,12 +1076,8 @@ function DeclineMyShiftRow({ shift, onDeclined }: { shift: Shift; onDeclined: (s
   );
 }
 
-/**
- * The open-shifts section no longer disappears when it is empty: a new hire
- * never learned why nothing came their way. One tap turns schedule
- * notifications on so the next fit reaches them.
- */
-function NoOpenShifts() {
+/** "Notify me": schedule notifications on, so the next fit reaches them. */
+function useNotifyMe() {
   const { t } = useI18n();
   const [state, setState] = useState<'idle' | 'busy' | 'on'>('idle');
   const notify = async () => {
@@ -1059,6 +1091,73 @@ function NoOpenShifts() {
       toast.error(err instanceof ApiError ? err.message : t('sched.notifyFailed'));
     }
   };
+  return { state, notify };
+}
+
+function NotifyMeButton({ variant = 'outline' }: { variant?: 'outline' | 'secondary' }) {
+  const { t } = useI18n();
+  const { state, notify } = useNotifyMe();
+  return state === 'on' ? (
+    <span className="inline-flex items-center gap-1 text-xs text-success">
+      <Check className="h-3.5 w-3.5" aria-hidden="true" />
+      {t('sched.notifyOn')}
+    </span>
+  ) : (
+    <Button size="sm" variant={variant} onClick={notify} loading={state === 'busy'} disabled={state === 'busy'}>
+      <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
+      {t('sched.notifyMe')}
+    </Button>
+  );
+}
+
+/**
+ * The hero's place when there is no next shift (F500 G2): what's true —
+ * nothing is coming up — and the two ways to change it: pick up an open
+ * shift (when there are some), or be told when one fits.
+ */
+function NoNextShift({ openCount }: { openCount: number | null }) {
+  const { t } = useI18n();
+  const hasOpen = (openCount ?? 0) > 0;
+  return (
+    <section
+      className="mb-4 rounded-lg border border-navy-secondary bg-navy-secondary/30 p-4"
+      data-testid="no-next-shift"
+      aria-labelledby="no-next-shift-title"
+    >
+      <div className="flex items-start gap-3">
+        <CalendarDays className="mt-0.5 h-5 w-5 shrink-0 text-gold" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <h2 id="no-next-shift-title" className="text-base font-medium text-ink">
+            {t('sched.noNextTitle')}
+          </h2>
+          <p className="mt-0.5 text-sm text-silver">
+            {hasOpen ? t('sched.noNextOpen', { count: openCount ?? 0 }) : t('sched.noNextDesc')}
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {hasOpen && (
+              <Button
+                size="sm"
+                onClick={() => document.getElementById('open-shifts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              >
+                <HandHelping className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('sched.pickUpOpen')}
+              </Button>
+            )}
+            <NotifyMeButton variant={hasOpen ? 'outline' : 'secondary'} />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The open-shifts section no longer disappears when it is empty: a new hire
+ * never learned why nothing came their way. One tap turns schedule
+ * notifications on so the next fit reaches them.
+ */
+function NoOpenShifts() {
+  const { t } = useI18n();
   return (
     <section className="mt-6" data-testid="no-open-shifts">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-navy-secondary bg-navy/60 px-4 py-3">
@@ -1069,17 +1168,7 @@ function NoOpenShifts() {
           </div>
           <div className="text-xs text-silver">{t('sched.noOpenDesc')}</div>
         </div>
-        {state === 'on' ? (
-          <span className="inline-flex items-center gap-1 text-xs text-success">
-            <Check className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('sched.notifyOn')}
-          </span>
-        ) : (
-          <Button size="sm" variant="outline" onClick={notify} loading={state === 'busy'} disabled={state === 'busy'}>
-            <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('sched.notifyMe')}
-          </Button>
-        )}
+        <NotifyMeButton />
       </div>
     </section>
   );

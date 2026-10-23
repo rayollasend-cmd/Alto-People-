@@ -329,12 +329,12 @@ export async function pushRecord(ctx: PushCtx, localType: LocalType, localId: st
   const link = await linkFor(ctx.db, localType, localId);
   if (!sv) {
     if (link) return removeRemote(ctx, localType, localId, qboType, link.qboId);
-    return { result: 'SKIPPED', message: 'It no longer exists on the site.' };
+    return { result: 'SKIPPED', message: 'It no longer exists here.' };
   }
   const skip = await notForQuickbooks(ctx, localType, localId, sv.payload);
   if (skip && !(localType === 'Bill' && link)) return { result: 'SKIPPED', message: skip };
   if (sv.gone && localType !== 'LedgerAccount' && localType !== 'Vendor') {
-    if (!link) return { result: 'SKIPPED', message: 'Void on the site, and never sent.' };
+    if (!link) return { result: 'SKIPPED', message: 'Void here, and never sent.' };
     return removeRemote(ctx, localType, localId, qboType, link.qboId);
   }
   // QuickBooks' books are closed through bookCloseDate: no transaction lands on or before it.
@@ -362,7 +362,7 @@ export async function pushRecord(ctx: PushCtx, localType: LocalType, localId: st
           linkId: link.id,
           localType,
           localId,
-          summary: `This ${labelOf(localType)} was changed in QuickBooks and on the site since they last matched.`,
+          summary: `This ${labelOf(localType)} was changed in QuickBooks and here since they last matched.`,
           siteVersion: sv.payload,
           qboVersion: { type: qboType, id: link.qboId, entity: current },
         });

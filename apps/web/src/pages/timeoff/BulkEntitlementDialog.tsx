@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Users } from 'lucide-react';
-import type { TimeOffCategory } from '@alto-people/shared';
+import { isOnTheBooks, type TimeOffCategory } from '@alto-people/shared';
 import { listDirectory } from '@/lib/directoryApi';
 import { useClients } from '@/lib/useClients';
 import { bulkUpsertEntitlements } from '@/lib/timeOffApi';
@@ -61,12 +61,14 @@ export function BulkEntitlementDialog({
 
   const roster = useQuery({
     queryKey: ['directory', 'bulk-entitlement', clientId],
-    queryFn: () => listDirectory({ status: 'ACTIVE', ...(clientId ? { clientId } : {}) }),
+    // Everyone on the books (hired, not separated): a time-off entitlement
+    // belongs to people between shifts too, not only to "Working".
+    queryFn: () => listDirectory({ ...(clientId ? { clientId } : {}) }),
     enabled: open,
   });
 
   const people = useMemo(
-    () => (roster.data?.associates ?? []).filter((a) => !!a.id),
+    () => (roster.data?.associates ?? []).filter((a) => !!a.id && (!a.workStatus || isOnTheBooks(a.workStatus))),
     [roster.data],
   );
   const allPicked = people.length > 0 && people.every((p) => picked.has(p.id));

@@ -55,7 +55,7 @@ beforeEach(() => {
 
 describe('RoleFocusRow — operations', () => {
   it('computes each tile from the data and links it to the list behind it', async () => {
-    overview.current = { now: { onFloor: 6, scheduledNow: 8 }, today: { filled: 5, open: 2 }, week: { start: '2026-10-17', fillRatePct: 84 } };
+    overview.current = { now: { onFloor: 6, scheduledNow: 8 }, today: { filled: 5, open: 2 }, week: { start: '2026-10-17', fillRatePct: 84, filled: 42, total: 50 } };
     labor.current = { rows: [{ workedMinutes: 600, scheduledMinutes: 900 }, { workedMinutes: 330, scheduledMinutes: 300 }] };
     headcount.current = { total: 9, byStatus: { OPEN: 3, FILLED: 6 }, fteAuthorized: '9', fteFilled: '6' };
     renderRow();
@@ -64,10 +64,16 @@ describe('RoleFocusRow — operations', () => {
     expect(within(coverage).getByText('2 shifts still open')).toBeInTheDocument();
     // Every store at once (role walk HR 6), not the month-long list.
     expect(coverage).toHaveAttribute('href', '/scheduling/coverage');
-    expect(within(tile('Fill rate this week')).getByText('84%')).toBeInTheDocument();
-    // 930 worked minutes → 16h (rounded), against 1,200 scheduled → 20h.
-    expect(await within(tile('Hours worked this week')).findByText('16')).toBeInTheDocument();
-    expect(within(tile('Hours worked this week')).getByText('against 20 scheduled across stores')).toBeInTheDocument();
+    const fill = tile('Fill rate this week');
+    expect(within(fill).getByText('84%')).toBeInTheDocument();
+    // The week's own counts against the target — not "now" (F500 G5).
+    expect(within(fill).getByText('42 of 50 shifts filled · target 95%')).toBeInTheDocument();
+    expect(fill).toHaveAttribute('href', '/scheduling?open=1&view=week&week=2026-10-17');
+    // Below the 95% target: the number asks for attention.
+    expect(fill.querySelector('[data-metric-value]')).toHaveClass('text-warning');
+    // 930 worked minutes → 16h (rounded), against 1,200 scheduled → 20h — one unit, "h".
+    expect(await within(tile('Hours worked this week')).findByText('16h')).toBeInTheDocument();
+    expect(within(tile('Hours worked this week')).getByText('of 20h scheduled across stores')).toBeInTheDocument();
     expect(await within(tile('Open positions')).findByText('3')).toBeInTheDocument();
     expect(tile('Open positions')).toHaveAttribute('href', '/org?tab=positions');
     expect(screen.getByRole('group', { name: 'Your floor this week' })).toBeInTheDocument();

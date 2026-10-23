@@ -68,6 +68,62 @@ function shapeCarrier(c: Prisma.BenefitCarrierGetPayload<object>, extra: { plans
   };
 }
 
+/**
+ * How each feed is doing, from the data the send log holds:
+ *   people          — everyone the next full file would carry (enrolled in
+ *                     one of the carrier's plans, effective within 90 days,
+ *                     not ended before today: the full file's own rule);
+ *   changesWaiting  — people whose enrollment in those plans changed since
+ *                     the last file made (what the next change file
+ *                     carries); null before the first file — that's a full;
+ *   lastFile        — the newest file: made when, full or changes, its
+ *                     control number, how many members, and whether it was
+ *                     delivered. Carriers' 999/TA1 acknowledgments aren't
+ *                     received here, so delivery is as far as it goes.
+ */
+export interface FeedHealth {
+  people: number;
+  changesWaiting: number | null;
+  lastFile: { createdAt: string; mode: string; status: string; controlNumber: number; memberCount: number; sentAt: string | null; error: string | null } | null;
+}
+
+export async function feedHealthFor(carrierIds: string[], now: Date = new Date()): Promise<Map<string, FeedHealth>> {
+  const tenantId = tenantIdForWrite();
+  const out = new Map<string, FeedHealth>();
+  if (carrierIds.length === 0) return out;
+  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  const [plans, newest, baselines] = await Promise.all([
+    prisma.benefitsPlan.findMany({ where: { tenantId, carrierId: { in: carrierIds } }, select: { id: true, carrierId: true } }),
+    prisma.edi834File.findMany({ where: { tenantId, carrierId: { in: carrierIds } }, orderBy: { createdAt: 'desc' }, distinct: ['carrierId'] }),
+    // The change file's own baseline: the last file made (a failed send still counts as made).
+    prisma.edi834File.findMany({ where: { tenantId, carrierId: { in: carrierIds }, status: { in: ['GENERATED', 'SENT'] } }, orderBy: { createdAt: 'desc' }, distinct: ['carrierId'], select: { carrierId: true, createdAt: true } }),
+  ]);
+  const enrolled = plans.length
+    ? await prisma.benefitsEnrollment.findMany({
+        where: { tenantId, planId: { in: plans.map((p) => p.id) }, effectiveDate: { lte: new Date(today.getTime() + 90 * 86_400_000) }, OR: [{ terminationDate: null }, { terminationDate: { gte: today } }] },
+        select: { planId: true, associateId: true },
+      })
+    : [];
+  for (const id of carrierIds) {
+    const planIds = new Set(plans.filter((p) => p.carrierId === id).map((p) => p.id));
+    const f = newest.find((x) => x.carrierId === id);
+    const since = baselines.find((x) => x.carrierId === id)?.createdAt ?? null;
+    let changesWaiting: number | null = null;
+    if (since) {
+      const changed = planIds.size
+        ? await prisma.benefitsEnrollment.findMany({ where: { tenantId, planId: { in: [...planIds] }, updatedAt: { gt: since } }, select: { associateId: true }, distinct: ['associateId'] })
+        : [];
+      changesWaiting = changed.length;
+    }
+    out.set(id, {
+      people: new Set(enrolled.filter((e) => planIds.has(e.planId)).map((e) => e.associateId)).size,
+      changesWaiting,
+      lastFile: f ? { createdAt: f.createdAt.toISOString(), mode: f.mode, status: f.status, controlNumber: f.controlNumber, memberCount: f.memberCount, sentAt: f.sentAt?.toISOString() ?? null, error: f.error } : null,
+    });
+  }
+  return out;
+}
+
 benefitCarriersRouter.get('/benefit-carriers', PROCESS, async (_req, res) => {
   const tenantId = tenantIdForWrite();
   const [carriers, plans, lastFiles] = await Promise.all([
@@ -75,13 +131,15 @@ benefitCarriersRouter.get('/benefit-carriers', PROCESS, async (_req, res) => {
     prisma.benefitsPlan.findMany({ where: { tenantId, isActive: true }, select: { id: true, name: true, kind: true, carrierId: true, insuranceLineCode: true, carrierPlanCode: true }, orderBy: { name: 'asc' } }),
     prisma.edi834File.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' }, distinct: ['carrierId'], select: { carrierId: true, createdAt: true, mode: true, status: true } }),
   ]);
+  const health = await feedHealthFor(carriers.map((c) => c.id));
   res.json({
-    carriers: carriers.map((c) =>
-      shapeCarrier(c, {
+    carriers: carriers.map((c) => ({
+      ...shapeCarrier(c, {
         plans: plans.filter((p) => p.carrierId === c.id),
         lastFile: lastFiles.find((f) => f.carrierId === c.id) ?? null,
       }),
-    ),
+      health: health.get(c.id) ?? { people: 0, changesWaiting: null, lastFile: null },
+    })),
     plans: plans.map((p) => ({ ...p, defaultLine: INSURANCE_LINE_BY_KIND[p.kind] ?? null })),
   });
 });

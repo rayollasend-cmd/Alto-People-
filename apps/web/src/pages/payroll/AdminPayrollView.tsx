@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Circle,
   CreditCard,
   Download,
   FileText,
@@ -23,19 +22,12 @@ import {
   Scale,
   Send,
   Landmark,
-  MoreHorizontal,
   ShieldAlert,
   ShieldCheck,
   Users,
   X,
   PlaneTakeoff,
 } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/DropdownMenu';
 import { getFinancialChangesSummary } from '@/lib/financialChangesApi';
 import type {
   PayrollRunDetail,
@@ -76,8 +68,11 @@ import { ExceptionStrip } from './PayrollExceptionStrip';
 import { fundingSentence, getRunFunding } from '@/lib/bankingApi';
 import { PayrollCostChart } from './PayrollCostChart';
 import { listPaySchedulesForFlow, PAY_SCHEDULES_FLOW_KEY, type PayrollUpcomingWithSchedules, type UpcomingBySchedule } from '@/lib/payScheduleFlowApi';
-import { WebhookHealthTile } from './WebhookHealthTile';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { PayrollNeedsYou } from './PayrollNeedsYou';
+import { RunStatusStepper } from '@/components/payroll/RunStatusStepper';
+import { SectionTitle } from '@/components/ui/SectionTitle';
+import { useUrlParam } from '@/lib/useUrlState';
+import { useDesktopTable } from '@/lib/useViewport';
 import { ApiError } from '@/lib/api';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -109,7 +104,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import { associatePhotoUrl } from '@/lib/photoUrl';
-import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtCount, fmtDate, fmtDateOnlyRange, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
 import { StatusBadge } from '@/lib/status';
 import { useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -123,7 +118,10 @@ import { RunStatusBadge, paycheckStatusLabel, paycheckStatusTone, runStatusLabel
 const fmtPeriod = (startYmd: string, endYmd: string) =>
   `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
 
-const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL' | 'OPEN'; label: MessageKey }> = [
+type RunFilter = PayrollRunStatus | 'ALL' | 'OPEN';
+const RUN_FILTERS: readonly RunFilter[] = ['OPEN', 'DRAFT', 'FINALIZED', 'DISBURSED', 'CANCELLED', 'ALL'];
+
+const STATUS_FILTERS: Array<{ value: RunFilter; label: MessageKey }> = [
   // Draft and finalized: the runs still moving — the default view (finance walk 10).
   { value: 'OPEN', label: 'payrollHome.statusOpen' },
   { value: 'DRAFT', label: 'payrollHome.statusDraft' },
@@ -211,14 +209,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     refetchInterval: 120_000,
   });
   const openChanges = financialChanges.data?.open ?? 0;
-  const [tab, setTab] = useState<'runs'>('runs');
-  const [filter, setFilter] = useState<PayrollRunStatus | 'ALL' | 'OPEN'>('OPEN');
+  // Phone cards say "0 paystubs"; the desktop column header already says what the number is.
+  const desktopTable = useDesktopTable();
+  // The status filter lives in the URL (?status=), so a filtered list can be linked and Back keeps it.
+  const [filter, setFilter] = useUrlParam<RunFilter>('status', 'OPEN', RUN_FILTERS);
   // The default "Open" view falls back to All, once, when nothing is open.
   const openFellBack = useRef(false);
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   // Hero-CTA prefill for the wizard; null = generic "New run" (full flow).
   const [wizardSeed, setWizardSeed] = useState<RunPayrollSeed | null>(null);
+  // The header's "Off-cycle run" opens the wizard on Off-cycle; every other entry opens on Regular.
+  const [wizardKind, setWizardKind] = useState<'REGULAR' | 'OFF_CYCLE'>('REGULAR');
   const [confirmDisburse, setConfirmDisburse] = useState(false);
   // Gap 3 — void confirmation modal. The user has to type the run's pay
   // period in MM/DD/YYYY - MM/DD/YYYY format AND supply a free-text
@@ -324,7 +326,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       openFellBack.current = true;
       setFilter('ALL');
     }
-  }, [filter, runsQuery.isSuccess, runsQuery.isPlaceholderData, runsQuery.data]);
+  }, [filter, setFilter, runsQuery.isSuccess, runsQuery.isPlaceholderData, runsQuery.data]);
   const { refetch: refetchRuns } = runsQuery;
   const refresh = useCallback(async () => {
     await refetchRuns();
@@ -779,101 +781,42 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     <ListTemplate
         title={t('payrollHome.title')}
         subtitle={canProcess ? t('payrollHome.subProcess') : t('payrollHome.subReadOnly')}
-        primaryAction={
-          canProcess ? (
-            // One primary, one desk item while it carries work, and the
-            // seven payroll rooms behind one menu: the header used to spend
-            // a full row on eight buttons before the first number.
-            <div className="flex flex-wrap items-center gap-2">
-              {openChanges > 0 && (
-                <Button asChild variant="outline" size="sm">
-                  <Link to="/payroll/financial-changes">
-                    <Landmark className="mr-1 h-4 w-4" />
-                    {t('payrollHome.financialChanges')}
-                    <span className="ml-1.5 rounded-full bg-alert/20 px-1.5 text-xs font-semibold text-alert">{openChanges}</span>
-                  </Link>
-                </Button>
-              )}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" aria-label={t('payrollHome.morePages')}>
-                    <MoreHorizontal className="mr-1 h-4 w-4" />
-                    {t('payrollHome.more')}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  {openChanges === 0 && (
-                    <DropdownMenuItem asChild>
-                      <Link to="/payroll/financial-changes">
-                        <Landmark className="mr-2 h-4 w-4" />
-                        {t('payrollHome.financialChanges')}
-                      </Link>
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem asChild>
-                    <Link to="/payroll/readiness">
-                      <Users className="mr-2 h-4 w-4" />
-                      {t('payrollHome.readiness')}
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/payroll/go-live">
-                      <PlaneTakeoff className="mr-2 h-4 w-4" />
-                      {t('payrollHome.goLive')}
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/payroll/ytd">
-                      <FileText className="mr-2 h-4 w-4" />
-                      {t('payrollHome.ytd')}
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/payroll/taxes?tab=returns">
-                      <FileText className="mr-2 h-4 w-4" />
-                      {t('payrollHome.taxForms')}
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/payroll/compliance">
-                      <AlertTriangle className="mr-2 h-4 w-4" />
-                      {t('payrollHome.compliance')}
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/payroll/labor-rules">
-                      <Scale className="mr-2 h-4 w-4" />
-                      {t('payrollHome.laborRules')}
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/payroll/year-end-close">
-                      <CheckCircle2 className="mr-2 h-4 w-4" />
-                      {t('payrollHome.yearEndClose')}
-                    </Link>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button
-                onClick={() => {
-                  setWizardSeed(null);
-                  setShowCreate(true);
-                }}
-              >
-                <Plus className="h-4 w-4" />
-                {t('payrollHome.newRun')}
-              </Button>
-            </div>
-          ) : undefined
+        // The hero's "Run payroll" is THE primary (it knows the schedule and period); the header
+        // offers an off-cycle run beside the pages a payroll person visits, in "More" (F500 G3:
+        // "New run" and "Run payroll" were two primaries for one action).
+        actions={
+          canProcess
+            ? [
+                { key: 'off-cycle', label: t('payrollHome.newRun'), icon: Plus, onSelect: () => { setWizardSeed(null); setWizardKind('OFF_CYCLE'); setShowCreate(true); } },
+                ...(openChanges > 0 ? [{ key: 'changes', label: `${t('payrollHome.financialChanges')} (${openChanges})`, icon: Landmark, to: '/payroll/financial-changes' }] : []),
+                ...(openChanges === 0 ? [{ key: 'changes', label: t('payrollHome.financialChanges'), icon: Landmark, to: '/payroll/financial-changes', overflow: true }] : []),
+                { key: 'readiness', label: t('payrollHome.readiness'), icon: Users, to: '/payroll/readiness', overflow: true },
+                { key: 'go-live', label: t('payrollHome.goLive'), icon: PlaneTakeoff, to: '/payroll/go-live', overflow: true },
+                { key: 'ytd', label: t('payrollHome.ytd'), icon: FileText, to: '/payroll/ytd', overflow: true },
+                { key: 'year-end', label: t('payrollHome.yearEndClose'), icon: CheckCircle2, to: '/payroll/year-end', overflow: true },
+                { key: 'compliance', label: t('payrollHome.compliance'), icon: AlertTriangle, to: '/payroll/compliance', overflow: true },
+                { key: 'labor-rules', label: t('payrollHome.laborRules'), icon: Scale, to: '/payroll/labor-rules', overflow: true },
+              ]
+            : undefined
         }
+        // Sibling desks are links, not tabs styled as tabs (they used to sit beside "Runs").
+        related={[
+          { label: t('payrollHome.tabSchedules'), to: '/payroll/schedules' },
+          { label: t('payrollHome.tabGarnishments'), to: '/payroll/garnishments' },
+          { label: 'Payroll banking', to: '/payroll/banking' },
+        ]}
         summary={
               <>
 
           {canProcess && (
             <RunPayrollWizard
               open={showCreate}
-              onOpenChange={setShowCreate}
+              onOpenChange={(o) => {
+                setShowCreate(o);
+                if (!o) setWizardKind('REGULAR');
+              }}
               seed={wizardSeed}
+              initialKind={wizardKind}
               onCreated={(detail) => {
                 setShowCreate(false);
                 setSelected(detail);
@@ -882,6 +825,10 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               }}
             />
           )}
+
+          {/* What's waiting on this desk, in one place (F500 G3): failing payouts, each run's
+              next step, the Inbox's payroll queues, readiness and garnishments. */}
+          <PayrollNeedsYou canProcess={canProcess} />
 
           {/* Wave 8 — QBO-parity hero. Shows next pay date · employee count ·
               projected gross/net · exception count, with a one-click resume
@@ -915,23 +862,20 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             onExceptionsChanged={() => void refreshUpcoming()}
           />
 
-          {/* Paydays that passed with no run, and the hours they left unpaid (finance walk 1). */}
-          <MissedPaydaysStrip
-            canProcess={canProcess}
-            focus={searchParams.get('ledger') === 'missed'}
-            onPay={(seed) => {
-              setWizardSeed(seed);
-              setShowCreate(true);
-            }}
-          />
+          {/* Paydays that passed with no run (finance walk 1). A row in "Needs you" now;
+              the strip with its "Pay these hours now" opens from it (?ledger=missed). */}
+          {searchParams.get('ledger') === 'missed' && (
+            <MissedPaydaysStrip
+              canProcess={canProcess}
+              focus
+              onPay={(seed) => {
+                setWizardSeed(seed);
+                setShowCreate(true);
+              }}
+            />
+          )}
 
           <PayrollCostChart onOpenRun={(id) => void openRun(id)} />
-
-          {canProcess && (
-            <div className="mb-4">
-              <WebhookHealthTile surface="payroll" />
-            </div>
-          )}
 
               </>
         }
@@ -945,9 +889,16 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             {selected && (
               <>
                 <DrawerHeader>
-                  <DrawerTitle>
-                    {fmtPeriod(selected.periodStart, selected.periodEnd)}
-                  </DrawerTitle>
+                  <div className="flex flex-wrap items-start justify-between gap-2 pr-8">
+                    <DrawerTitle>
+                      {fmtPeriod(selected.periodStart, selected.periodEnd)}
+                    </DrawerTitle>
+                    {/* The drawer is a quick look; the run's own page has every part of it (F500 G3). */}
+                    <Link to={`/payroll/runs/${selected.id}`} className="inline-flex items-center gap-1 text-sm font-medium text-accent hover:underline">
+                      Open run
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                    </Link>
+                  </div>
                   <DrawerDescription>
                     <RunStatusBadge status={selected.status} />
                     <span className="ml-2 text-xs">
@@ -976,18 +927,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         <Ban className="h-4 w-4" />
                         Run voided
                         {selected.cancelledAt && (
-                          <span className="text-silver/70 font-normal">
+                          <span className="text-ink-muted font-normal">
                             — {fmtDateTime(selected.cancelledAt)}
                           </span>
                         )}
                       </div>
                       {selected.cancelReason && (
-                        <div className="text-silver mt-1">
-                          <span className="text-silver/70">Reason: </span>
+                        <div className="text-ink mt-1">
+                          <span className="text-ink-muted">Reason: </span>
                           {selected.cancelReason}
                         </div>
                       )}
-                      <div className="text-silver/70 mt-1.5">
+                      <div className="text-ink-muted mt-1.5">
                         Alto did not pull funds back from associates. Recover
                         disbursed amounts out-of-band or via a deduction on the
                         corrected run. A voided run can&apos;t be amended — create
@@ -1018,8 +969,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         Amendment run
                       </div>
                       {selected.amendmentReason && (
-                        <div className="text-silver mt-1">
-                          <span className="text-silver/70">Reason: </span>
+                        <div className="text-ink mt-1">
+                          <span className="text-ink-muted">Reason: </span>
                           {selected.amendmentReason}
                         </div>
                       )}
@@ -1027,7 +978,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         <Button
                           variant="link"
                           onClick={() => openRun(selected.amendsRunId!)}
-                          className="mt-1 text-xs font-normal text-silver/70 hover:text-gold"
+                          className="mt-1 text-xs font-normal text-ink-muted hover:text-gold"
                         >
                           View source run
                         </Button>
@@ -1069,7 +1020,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   {/* Wave 9 — QBO-style status progress bar shown across the top
                       of the drawer. Tracks the run state through the three
                       human-meaningful checkpoints. */}
-                  <RunStatusStepper status={selected.status} lifecycle={runs?.find((r) => r.id === selected.id) ?? null} signedOff={!!signoff?.current} />
+                  <RunStatusStepper status={selected.status} lifecycle={runs?.find((r) => r.id === selected.id) ?? selected} signedOff={!!signoff?.current} />
 
                   {/* Draft add-on lines (bonus / commission / tips / PTO). */}
                   {selected.status === 'DRAFT' && canProcess && (
@@ -1086,23 +1037,23 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
                   {/* Workers-comp premium accrual (disbursed runs). */}
                   {selected.status === 'DISBURSED' && wcReport && wcReport.totalPremium > 0 && (
-                    <div className="mt-5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
+                    <div className="mt-5 rounded-md border border-line bg-surface-raised p-3">
                       <div className="mb-2 flex items-center justify-between">
-                        <div className="text-xs uppercase tracking-wide text-silver">
+                        <div className="text-xs uppercase tracking-wide text-ink-muted">
                           Workers-comp premium (accrual)
                         </div>
-                        <div className="text-lg tabular-nums text-white">
+                        <div className="text-lg tabular-nums text-ink">
                           {fmtMoney(wcReport.totalPremium)}
                         </div>
                       </div>
                       <div className="space-y-1 text-xs">
                         {wcReport.classes.map((c) => (
-                          <div key={c.code} className="flex justify-between text-silver">
+                          <div key={c.code} className="flex justify-between text-ink-muted">
                             <span>
                               {c.code} · {c.description}{' '}
-                              <span className="text-silver/60">@ {c.ratePer100}/100</span>
+                              <span className="text-ink-subtle">@ {c.ratePer100}/100</span>
                             </span>
-                            <span className="tabular-nums text-white">{fmtMoney(c.premium)}</span>
+                            <span className="tabular-nums text-ink">{fmtMoney(c.premium)}</span>
                           </div>
                         ))}
                         {wcReport.unclassifiedWages > 0 && (
@@ -1153,7 +1104,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   {selected.items.length > 0 && (
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <div className="text-2xs uppercase tracking-widest text-silver/70">
+                        <div className="text-2xs uppercase tracking-widest text-ink-muted">
                           Paystubs ({selected.items.length})
                         </div>
                         {paystubView.heldCount > 0 && (
@@ -1208,6 +1159,15 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         <Link to={`/payroll/runs/${selected.id}/review`}>
                           <ShieldCheck className="h-4 w-4" />
                           {signoff?.current ? 'Review report' : 'Review and sign off'}
+                        </Link>
+                      </Button>
+                    )}
+                    {/* A paid run's report stays readable — the record of what was paid and who signed. */}
+                    {selected.status === 'DISBURSED' && (
+                      <Button asChild variant="secondary">
+                        <Link to={`/payroll/runs/${selected.id}/review`}>
+                          <ShieldCheck className="h-4 w-4" />
+                          Review report
                         </Link>
                       </Button>
                     )}
@@ -1307,44 +1267,17 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
         }
       >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs')} className="mb-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <TabsList>
-            <TabsTrigger value="runs">{t('payrollHome.tabRuns')}</TabsTrigger>
-          </TabsList>
-          {/* Garnishments live on their own desk (finance walk 5: one place, not four). */}
-          <Link to="/payroll/garnishments" className="text-sm text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-            {t('payrollHome.tabGarnishments')} →
-          </Link>
-          {/* Pay schedules grew into their own page — who is paid when, by client and by face. */}
-          <Link to="/payroll/schedules" className="text-sm text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-            {t('payrollHome.tabSchedules')} →
-          </Link>
-        </div>
-        <TabsContent value="runs" className="mt-5">
-
-      {/* snap-x snap-mandatory locks each chip to a scroll-stop on
-          mobile so a flick doesn't leave a chip half-clipped at the
-          edge — feels like a deliberate rail instead of a free scroller. */}
-      <div className="-mx-2 mb-5 flex gap-2 overflow-x-auto snap-x snap-mandatory px-2 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0 sm:snap-none">
-        {STATUS_FILTERS.map((f) => (
-          <FilterChip
-            key={f.value}
-            active={filter === f.value}
-            onClick={() => setFilter(f.value)}
-            className="shrink-0 snap-start sm:px-3 sm:text-sm"
-          >
-            {t(f.label)}
-          </FilterChip>
-        ))}
-      </div>
+      {/* The runs: one section, not a tab row of one real tab and two links (F500 G3). The
+          status chips are the grid's filter, kept in ?status=, with search beside them. */}
+      <section aria-labelledby="payroll-runs-title" className="mb-5 space-y-3">
+        <SectionTitle id="payroll-runs-title" title={t('payrollHome.tabRuns')} />
 
       {/* Bulk action bar — appears once any run is checked. Counts on the
           buttons are the ELIGIBLE subset of the selection, mirroring the
           drawer's per-run affordances. */}
       {canProcess && bulkSelected.size > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-gold/30 bg-gold/5 px-3 py-2">
-          <span className="text-xs text-silver">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-gold/30 bg-gold/5 px-3 py-2">
+          <span className="text-xs text-ink-muted">
             {bulkSelected.size} selected
           </span>
           <Button
@@ -1376,32 +1309,40 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         </div>
       )}
 
-      {/* Wave 9 — runs presented as a sortable table. Clicking a row
-          opens the detail drawer; columns mirror QBO's Run history list. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('payrollHome.tabRuns')}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!runs && (
-            <div className="space-y-2">
-              <Skeleton className="h-9" />
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-12" />
-              ))}
-            </div>
-          )}
-          {runs && runs.length === 0 && (
-            <EmptyState
-              icon={FileText}
-              title={
-                filter === 'ALL'
-                  ? t('payrollHome.noRuns')
-                  : t('payrollHome.noRunsFiltered', { status: t(STATUS_FILTERS.find((f) => f.value === filter)!.label).toLowerCase() })
+            {/* Newest period first; the headers re-sort. The page's bulk
+                selection drives the checkboxes so the action bar above keeps
+                reading it. */}
+            <DataGrid<PayrollRunSummary>
+              id="payroll-runs"
+              caption="Payroll runs"
+              noun={{ one: 'run', many: 'runs' }}
+              rows={runs}
+              loading={!runs}
+              rowKey={(r) => r.id}
+              search={{ placeholder: 'Search runs' }}
+              urlKey="runs"
+              exportCsv={{ filename: 'payroll-runs' }}
+              defaultSort={{ key: 'period', direction: 'desc' }}
+              onRowClick={(r) => void openRun(r.id)}
+              rowActionLabel={(r) => `Open run ${fmtPeriod(r.periodStart, r.periodEnd)}`}
+              rowClassName={(r) => (selected?.id === r.id ? 'bg-gold/5' : undefined)}
+              selectable={canProcess ? { selectAllLabel: 'Select all runs', selection: { selected: bulkSelected, onChange: setBulkSelected } } : undefined}
+              filters={
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Run status">
+                  {STATUS_FILTERS.map((f) => (
+                    <FilterChip key={f.value} active={filter === f.value} onClick={() => setFilter(f.value)}>
+                      {t(f.label)}
+                    </FilterChip>
+                  ))}
+                </div>
               }
-              description={filter === 'ALL' ? t('payrollHome.noRunsBody') : t('payrollHome.noRunsFilteredBody')}
-              action={
-                canProcess ? (
+              activeFilters={filter === 'ALL' ? 0 : 1}
+              onClearFilters={() => setFilter('ALL')}
+              empty={{
+                icon: FileText,
+                title: filter === 'ALL' ? t('payrollHome.noRuns') : t('payrollHome.noRunsFiltered', { status: t(STATUS_FILTERS.find((f) => f.value === filter)!.label).toLowerCase() }),
+                description: filter === 'ALL' ? t('payrollHome.noRunsBody') : t('payrollHome.noRunsFilteredBody'),
+                action: canProcess ? (
                   <div className="flex flex-wrap items-center justify-center gap-2">
                     <Button onClick={() => setShowCreate(true)}>
                       <Plus className="h-4 w-4" />
@@ -1413,41 +1354,21 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                       </Button>
                     )}
                   </div>
-                ) : undefined
-              }
-            />
-          )}
-          {runs && runs.length > 0 && (
-            // Newest period first; the headers re-sort. The page's bulk
-            // selection drives the checkboxes so the action bar above keeps
-            // reading it.
-            <DataGrid<NonNullable<typeof runs>[number]>
-              id="payroll-runs"
-              caption="Payroll runs"
-              rows={runs}
-              rowKey={(r) => r.id}
-              search={false}
-              urlState={false}
-              exportCsv={{ filename: 'payroll-runs' }}
-              defaultSort={{ key: 'period', direction: 'desc' }}
-              onRowClick={(r) => void openRun(r.id)}
-              rowActionLabel={(r) => `Open run ${fmtPeriod(r.periodStart, r.periodEnd)}`}
-              rowClassName={(r) => (selected?.id === r.id ? 'bg-gold/5' : undefined)}
-              selectable={canProcess ? { selectAllLabel: 'Select all runs', selection: { selected: bulkSelected, onChange: setBulkSelected } } : undefined}
+                ) : undefined,
+              }}
               columns={[
                 {
                   key: 'period',
                   header: 'Period',
-                  accessor: (r) => r.periodEnd,
+                  accessor: (r) => `${r.periodEnd} ${fmtPeriod(r.periodStart, r.periodEnd)} ${r.payrollScheduleName ?? ''} ${r.clientName ?? ''}`,
                   csv: (r) => fmtPeriod(r.periodStart, r.periodEnd),
                   sortable: true,
-                  searchable: false,
                   primary: true,
                   cell: (r) => (
                     <>
-                      <div className="text-white tabular-nums">{fmtPeriod(r.periodStart, r.periodEnd)}</div>
+                      <div className="tabular-nums text-ink">{fmtPeriod(r.periodStart, r.periodEnd)}</div>
                       {(r.payrollScheduleName || r.clientName) && (
-                        <div className="text-xs2 text-silver/70 mt-0.5">
+                        <div className="mt-0.5 text-xs2 text-ink-muted">
                           {[r.payrollScheduleName, r.clientName].filter(Boolean).join(' · ')}
                         </div>
                       )}
@@ -1455,8 +1376,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   ),
                 },
                 { key: 'schedule', header: 'Pay schedule', accessor: (r) => r.payrollScheduleName ?? '', sortable: true, defaultHidden: true, cell: (r) => r.payrollScheduleName ?? '—' },
-                { key: 'payday', header: 'Payday', accessor: (r) => r.payDate ?? '', csv: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : ''), sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums text-silver whitespace-nowrap', cell: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : '—') },
-                { key: 'kind', header: 'Kind', accessor: (r) => r.kind, sortable: true, cell: (r) => (r.kind === 'REGULAR' ? <span className="text-silver">Regular</span> : <RunKindBadge kind={r.kind} />) },
+                // A labelled field on a phone card ("Payday —"), not a bare dash beside the count.
+                { key: 'payday', header: 'Payday', accessor: (r) => r.payDate ?? '', csv: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : ''), sortable: true, searchable: false, className: 'tabular-nums text-ink-muted whitespace-nowrap', cell: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : '—') },
+                { key: 'kind', header: 'Kind', accessor: (r) => r.kind, sortable: true, searchable: false, cell: (r) => (r.kind === 'REGULAR' ? <span className="text-ink-muted">Regular</span> : <RunKindBadge kind={r.kind} />) },
                 {
                   key: 'nextStep',
                   header: 'Next step',
@@ -1465,9 +1387,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   cardMeta: true,
                   cell: (r) =>
                     r.nextStep ? (
-                      <span className={cn('text-xs', r.nextStep.key === 'done' || r.nextStep.key === 'cancelled' ? 'text-silver' : 'text-ink')}>
+                      <span className={cn('text-xs', r.nextStep.key === 'done' || r.nextStep.key === 'cancelled' ? 'text-ink-muted' : 'text-ink')}>
                         {r.nextStep.label}
-                        {r.nextStep.waitingOn && <span className="block text-2xs text-silver">waiting on {r.nextStep.waitingOn}</span>}
+                        {r.nextStep.waitingOn && <span className="block text-2xs text-ink-muted">waiting on {r.nextStep.waitingOn}</span>}
                       </span>
                     ) : (
                       '—'
@@ -1478,6 +1400,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   header: 'Status',
                   accessor: (r) => runStatusLabel(r.status),
                   sortable: true,
+                  searchable: false,
                   cardMeta: true,
                   cell: (r) => (
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -1486,16 +1409,13 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     </div>
                   ),
                 },
-                { key: 'paystubs', header: 'Paystubs', accessor: (r) => r.itemCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver' },
-                { key: 'gross', header: 'Gross', accessor: (r) => r.totalGross, csv: (r) => fmtMoney(r.totalGross), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver', cell: (r) => fmtMoney(r.totalGross) },
+                // "0 paystubs", never a bare "0" on a phone card.
+                { key: 'paystubs', header: 'Paystubs', accessor: (r) => r.itemCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-ink-muted', cell: (r) => (desktopTable ? r.itemCount : fmtCount(r.itemCount, 'paystub')) },
+                { key: 'gross', header: 'Gross', accessor: (r) => r.totalGross, csv: (r) => fmtMoney(r.totalGross), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-ink-muted', cell: (r) => fmtMoney(r.totalGross) },
                 { key: 'net', header: 'Net', accessor: (r) => r.totalNet, csv: (r) => fmtMoney(r.totalNet), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-gold', cell: (r) => fmtMoney(r.totalNet) },
               ]}
             />
-          )}
-        </CardContent>
-      </Card>
-        </TabsContent>
-      </Tabs>
+      </section>
 
 
       {/* Disburse ceremony — the most consequential moment in payroll
@@ -1516,47 +1436,47 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr] min-h-[20rem]">
               {/* Left — the moment. Tinted bg + gold accent rail so the
                   numbers anchor the ceremony. */}
-              <div className="bg-navy-secondary/30 border-r border-navy-secondary border-l-2 border-l-gold/60 p-6 md:p-8 flex flex-col gap-6">
+              <div className="bg-surface-raised border-r border-line border-l-2 border-l-gold/60 p-6 md:p-8 flex flex-col gap-6">
                 <div>
                   <div className="text-2xs uppercase tracking-widest text-gold inline-flex items-center gap-1.5">
                     <Send className="h-3 w-3" aria-hidden="true" />
                     {busy ? 'Processing payouts' : 'Ready to disburse'}
                   </div>
-                  <div className="text-xs2 text-silver tabular-nums mt-2">
+                  <div className="text-xs2 text-ink-muted tabular-nums mt-2">
                     {fmtPeriod(selected.periodStart, selected.periodEnd)}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-2xs uppercase tracking-widest text-silver">
+                  <div className="text-2xs uppercase tracking-widest text-ink-muted">
                     Net to {term('workers').toLowerCase()}
                   </div>
                   <div className="font-display text-4xl md:text-5xl text-gold-bright leading-none tabular-nums mt-2">
                     {fmtMoney(selected.totalNet)}
                   </div>
-                  <div className="text-sm text-silver mt-2 tabular-nums">
+                  <div className="text-sm text-ink-muted mt-2 tabular-nums">
                     across{' '}
-                    <span className="text-white">
+                    <span className="text-ink">
                       {selected.itemCount.toLocaleString()}
                     </span>{' '}
                     {selected.itemCount === 1 ? 'paystub' : 'paystubs'}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 text-sm pt-2 mt-auto border-t border-navy-secondary">
+                <div className="grid grid-cols-2 gap-3 text-sm pt-2 mt-auto border-t border-line">
                   <div className="pt-3">
-                    <div className="text-2xs uppercase tracking-widest text-silver">
+                    <div className="text-2xs uppercase tracking-widest text-ink-muted">
                       Gross
                     </div>
-                    <div className="text-xl text-white tabular-nums mt-1">
+                    <div className="text-xl text-ink tabular-nums mt-1">
                       {fmtMoney(selected.totalGross)}
                     </div>
                   </div>
                   <div className="pt-3">
-                    <div className="text-2xs uppercase tracking-widest text-silver">
+                    <div className="text-2xs uppercase tracking-widest text-ink-muted">
                       Tax withheld
                     </div>
-                    <div className="text-xl text-white tabular-nums mt-1">
+                    <div className="text-xl text-ink tabular-nums mt-1">
                       −{fmtMoney(selected.totalTax)}
                     </div>
                   </div>
@@ -1579,7 +1499,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 {!busy && <DisburseFacts runId={selected.id} data={disbursePreview.data} loading={disbursePreview.isLoading} />}
 
                 {busy && (
-                  <div className="rounded-md border border-gold/30 bg-gold/5 p-3 text-xs text-silver inline-flex items-center gap-2">
+                  <div className="rounded-md border border-gold/30 bg-gold/5 p-3 text-xs text-ink-muted inline-flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-gold animate-pulse" />
                     Results will appear on the run timeline when complete.
                   </div>
@@ -1617,10 +1537,10 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             <DialogTitle>{t('payrollHome.finalizeRun')}</DialogTitle>
           </DialogHeader>
           {selected && (
-            <div className="space-y-3 text-sm text-silver">
+            <div className="space-y-3 text-sm text-ink-muted">
               <p>
                 Finalizing locks the projection for{' '}
-                <span className="text-white">
+                <span className="text-ink">
                   {fmtPeriod(selected.periodStart, selected.periodEnd)}
                 </span>{' '}
                 — {selected.itemCount} paystub{selected.itemCount === 1 ? '' : 's'},{' '}
@@ -1669,7 +1589,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               label={
                 <>
                   Type the pay period to confirm:{' '}
-                  <span className="font-mono text-white">{expectedVoidString}</span>
+                  <span className="font-mono text-ink">{expectedVoidString}</span>
                 </>
               }
               hint="Format MM/DD/YYYY - MM/DD/YYYY (the spaces around the dash matter)."
@@ -1829,7 +1749,7 @@ function PayrollHero({
       <div
         className={cn(
           'lg:col-span-2 rounded-lg border p-5',
-          nr ? 'border-gold/30 bg-gradient-to-br from-gold/8 to-transparent' : 'border-silver/15 bg-black/30'
+          nr ? 'border-gold/30 bg-gradient-to-br from-gold/8 to-transparent' : 'border-line bg-surface-raised'
         )}
       >
         {nr ? (
@@ -1839,20 +1759,22 @@ function PayrollHero({
                 <CalendarDays className="h-3.5 w-3.5" />
                 {isResume ? 'Resume in-progress run' : 'Next pay date'}
               </div>
-              <div className="text-2xl text-white font-medium tabular-nums">
+              <div className="text-2xl text-ink font-medium tabular-nums">
                 {fmtDate(parseYmd(nr.payDate))}
               </div>
-              <div className="text-xs text-silver/70 mt-1">
-                {nr.scheduleName}
-                {` · ${patternOf(nr.scheduleId) ?? FREQ_WORDS[nr.frequency] ?? nr.frequency.toLowerCase()}`} ·{' '}
+              {/* The schedule once, by name; its pattern ("Every other week, Saturday to Friday…") on hover. */}
+              <div className="text-xs text-ink-muted mt-1">
+                <span title={patternOf(nr.scheduleId) ?? FREQ_WORDS[nr.frequency] ?? undefined}>{nr.scheduleName}</span>
+                {' · '}
                 {fmtPeriod(nr.periodStart, nr.periodEnd)}
                 {nr.clientName ? ` · ${nr.clientName}` : ''}
               </div>
-              <div className="mt-4 grid grid-cols-1 min-[420px]:grid-cols-3 gap-2 sm:gap-3 text-xs">
+              {/* Three across at every width (stacked, they pushed the runs list 1,500px down a phone). */}
+              <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3 text-xs">
                 <HeroStat
-                  icon={<Users className="h-3.5 w-3.5" />}
+                  icon={<Users className="h-3.5 w-3.5" aria-hidden="true" />}
                   label={only ? 'People' : 'Paystubs'}
-                  value={only ? `${only.people} on schedule` : String(nr.employeeCount)}
+                  value={only ? String(only.people) : String(nr.employeeCount)}
                 />
                 <HeroStat
                   label="Projected gross"
@@ -1880,14 +1802,6 @@ function PayrollHero({
                   </Link>
                 </p>
               )}
-              {(upcoming.peopleOnNoSchedule ?? 0) > 0 && (
-                <p className="mt-2 text-xs text-warning" role="status">
-                  {upcoming.peopleOnNoSchedule} {upcoming.peopleOnNoSchedule === 1 ? 'person is' : 'people are'} on no pay schedule — no run pays them.{' '}
-                  <Link to="/payroll/schedules?view=unassigned" className="underline underline-offset-2">
-                    Add them
-                  </Link>
-                </p>
-              )}
             </div>
             {canProcess && (
               <Button
@@ -1902,8 +1816,8 @@ function PayrollHero({
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-3 text-silver/70 text-sm">
-            <CalendarDays className="h-5 w-5 text-silver/70" />
+          <div className="flex items-center gap-3 text-ink-muted text-sm">
+            <CalendarDays className="h-5 w-5 text-ink-muted" />
             No active pay schedule yet.{' '}
             <Link to="/payroll/schedules" className="text-gold underline underline-offset-2">
               Set one up
@@ -1913,10 +1827,10 @@ function PayrollHero({
         )}
       </div>
 
-      {/* Last run snapshot. */}
-      <div className="rounded-lg border border-silver/15 bg-black/30 p-5">
-        <div className="flex items-center gap-2 text-xs2 uppercase tracking-widest text-silver/70 mb-1.5">
-          <FileText className="h-3.5 w-3.5" />
+      {/* Last run snapshot: a card on a desktop, one line on a phone. */}
+      <div className="rounded-lg border border-line bg-surface-raised p-3 sm:p-5">
+        <div className="mb-1.5 hidden items-center gap-2 text-xs2 uppercase tracking-widest text-ink-muted sm:flex">
+          <FileText className="h-3.5 w-3.5" aria-hidden="true" />
           Last run
         </div>
         {lr ? (
@@ -1924,25 +1838,32 @@ function PayrollHero({
             type="button"
             onClick={() => onOpenLastRun(lr.id)}
             className="block text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+            aria-label={`Open the last run, ${fmtPeriod(lr.periodStart, lr.periodEnd)}`}
           >
-            <div className="text-base text-white tabular-nums">
-              {fmtPeriod(lr.periodStart, lr.periodEnd)}
-            </div>
-            <div className="mt-1.5 flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm sm:hidden">
+              <span className="text-ink-muted">Last run</span>
+              <span className="tabular-nums text-ink">{fmtDateOnlyRange(lr.periodStart, lr.periodEnd)}</span>
               <RunStatusBadge status={lr.status} />
-              <span className="text-xs text-silver/70">
-                {lr.itemCount} paystub{lr.itemCount === 1 ? '' : 's'}
-              </span>
+              <span className="ml-auto tabular-nums text-gold">{fmtMoney(lr.totalNet)} net</span>
             </div>
-            <div className="mt-3">
-              <div className="text-xs2 uppercase tracking-widest text-silver/70">Net paid</div>
-              <div className="tabular-nums text-gold mt-0.5">{fmtMoney(lr.totalNet)}</div>
+            <div className="hidden sm:block">
+              <div className="text-base text-ink tabular-nums">
+                {fmtPeriod(lr.periodStart, lr.periodEnd)}
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <RunStatusBadge status={lr.status} />
+                <span className="text-xs text-ink-muted">{fmtCount(lr.itemCount, 'paystub')}</span>
+              </div>
+              <div className="mt-3">
+                <div className="text-xs2 uppercase tracking-widest text-ink-muted">Net paid</div>
+                <div className="tabular-nums text-gold mt-0.5">{fmtMoney(lr.totalNet)}</div>
+              </div>
             </div>
             {/* The stored totals above, checked against the paychecks (apps/api/src/lib/payrollRunTotals.ts). */}
             <RunTotalsMismatch compact className="mt-3" check={{ ...lr, paychecks: lr.itemCount }} />
           </button>
         ) : (
-          <div className="text-sm text-silver/70">
+          <div className="text-sm text-ink-muted">
             No prior runs. Your first run will appear here once created.
           </div>
         )}
@@ -2069,7 +1990,7 @@ function SchedulesHero({
             Pay schedules
           </Link>
         </div>
-        <ul className="mt-2 divide-y divide-navy-secondary">
+        <ul className="mt-2 divide-y divide-line">
           {sorted.map((r) => (
             <li key={r.scheduleId} className="flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center">
               <div className="min-w-0 flex-1">
@@ -2077,14 +1998,14 @@ function SchedulesHero({
                   <span className="text-lg font-medium tabular-nums text-ink">{fmtDate(parseYmd(r.payDate))}</span>
                   <span className="truncate text-sm text-ink">{r.scheduleName}</span>
                 </div>
-                <div className="mt-0.5 text-xs text-silver/80">
+                <div className="mt-0.5 text-xs text-ink-muted">
                   {`${patternOf(r.scheduleId) ?? FREQ_WORDS[r.frequency] ?? r.frequency.toLowerCase()} · `}
                   {fmtPeriod(r.periodStart, r.periodEnd)}
                 </div>
               </div>
               <div className="flex items-center gap-5 text-xs sm:w-56 sm:justify-end">
                 <span className="tabular-nums">
-                  <span className="block text-2xs uppercase tracking-widest text-silver/70">People</span>
+                  <span className="block text-2xs uppercase tracking-widest text-ink-muted">People</span>
                   <span className={cn('text-sm', r.people === 0 ? 'text-warning' : 'text-ink')}>{r.people}</span>
                 </span>
                 {canProcess && (
@@ -2116,10 +2037,10 @@ function SchedulesHero({
         <button
           type="button"
           onClick={() => onOpenLastRun(lastRun.id)}
-          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-silver/15 bg-black/30 px-4 py-2.5 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
-          <FileText className="h-4 w-4 text-silver/70" aria-hidden="true" />
-          <span className="text-silver/80">Last run</span>
+          <FileText className="h-4 w-4 text-ink-muted" aria-hidden="true" />
+          <span className="text-ink-muted">Last run</span>
           <span className="tabular-nums text-ink">{fmtPeriod(lastRun.periodStart, lastRun.periodEnd)}</span>
           <RunStatusBadge status={lastRun.status} />
           <span className="ml-auto tabular-nums text-gold">{fmtMoney(lastRun.totalNet)} net</span>
@@ -2137,7 +2058,7 @@ function SchedulesHero({
 function PayrollHeroSkeleton() {
   return (
     <div className="mb-5 grid grid-cols-1 lg:grid-cols-3 gap-3">
-      <div className="lg:col-span-2 rounded-lg border border-silver/15 bg-black/30 p-5 space-y-3">
+      <div className="lg:col-span-2 rounded-lg border border-line bg-surface-raised p-5 space-y-3">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-7 w-44" />
         <Skeleton className="h-3 w-72" />
@@ -2147,95 +2068,12 @@ function PayrollHeroSkeleton() {
           <Skeleton className="h-9" />
         </div>
       </div>
-      <div className="rounded-lg border border-silver/15 bg-black/30 p-5 space-y-3">
+      <div className="rounded-lg border border-line bg-surface-raised p-5 space-y-3">
         <Skeleton className="h-3 w-16" />
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-5 w-20" />
         <Skeleton className="h-7 w-24" />
       </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- *
- *  Wave 9 — Run status stepper.
- *
- *  4 checkpoints rendered as connected dots: Draft → Finalized → Disbursed
- *  → Synced. Reflects what's actually visible in the run row, not the
- *  internal database statuses.
- * -------------------------------------------------------------------------- */
-
-type StepperStage = 'DRAFT' | 'FINALIZED' | 'SIGNED' | 'DISBURSED' | 'DEPOSIT';
-
-function RunStatusStepper({ status, lifecycle, signedOff }: { status: PayrollRunStatus; lifecycle: PayrollRunSummary | null; signedOff: boolean }) {
-  if (status === 'CANCELLED') {
-    return (
-      <div className="rounded border border-alert/30 bg-alert/5 p-3 text-xs text-alert flex items-center gap-2">
-        <Circle className="h-3.5 w-3.5 fill-alert text-alert" />
-        Run cancelled. No paystubs will disburse.
-      </div>
-    );
-  }
-  // The same lifecycle the guided close shows (GET /payroll/runs nextStep, finance walk 10).
-  const stages: { key: StepperStage; label: string }[] = [
-    // The one word per status (lib/payrollRunStatus): "Paid", as on every payroll page.
-    { key: 'DRAFT', label: runStatusLabel('DRAFT') },
-    { key: 'FINALIZED', label: runStatusLabel('FINALIZED') },
-    { key: 'SIGNED', label: 'Signed off' },
-    { key: 'DISBURSED', label: runStatusLabel('DISBURSED') },
-    { key: 'DEPOSIT', label: 'Tax deposit' },
-  ];
-  const next = lifecycle?.nextStep ?? null;
-  const reachedIdx = (() => {
-    if (status === 'DISBURSED') return next && (next.key === 'done' || next.key === 'remit') ? 4 : 3;
-    if (status === 'FINALIZED') return signedOff || !!lifecycle?.reviewSignedAt || (next && next.key !== 'review') ? 2 : 1;
-    return 0;
-  })();
-  return (
-    <div className="space-y-2">
-    <ol className="flex items-center gap-1 sm:gap-2">
-      {stages.map((s, i) => {
-        const reached = i <= reachedIdx;
-        const current = i === reachedIdx;
-        return (
-          <li key={s.key} className="flex items-center gap-1 sm:gap-2 flex-1">
-            <div className="flex flex-col items-center min-w-0">
-              <span
-                className={cn(
-                  'inline-flex h-6 w-6 items-center justify-center rounded-full text-2xs font-medium transition-colors',
-                  reached ? 'bg-gold text-navy' : 'bg-silver/10 text-silver/70',
-                  current && 'ring-2 ring-gold/30 ring-offset-2 ring-offset-navy'
-                )}
-              >
-                {reached && i < reachedIdx ? '✓' : i + 1}
-              </span>
-              <span
-                className={cn(
-                  'mt-1 text-2xs uppercase tracking-widest text-center truncate max-w-[80px]',
-                  reached ? 'text-silver' : 'text-silver/70'
-                )}
-              >
-                {s.label}
-              </span>
-            </div>
-            {i < stages.length - 1 && (
-              <span
-                className={cn(
-                  'flex-1 h-px transition-colors mb-4',
-                  i < reachedIdx ? 'bg-gold/50' : 'bg-silver/15'
-                )}
-              />
-            )}
-          </li>
-        );
-      })}
-    </ol>
-      {next && next.key !== 'done' && (
-        <p className="text-xs text-silver">
-          Next: <Link to={next.to} className="text-gold underline underline-offset-2">{next.label}</Link>
-          {next.waitingOn && ` — waiting on ${next.waitingOn}`}
-        </p>
-      )}
     </div>
   );
 }
@@ -2287,17 +2125,17 @@ function DrawerStat({
   hint?: string;
 }) {
   return (
-    <div className={cn('rounded border px-3 py-2', highlight ? 'border-gold/40 bg-gold/5' : 'border-silver/15 bg-black/30')}>
+    <div className={cn('rounded border px-3 py-2', highlight ? 'border-gold/40 bg-gold/5' : 'border-line bg-surface-raised')}>
       <div
         className={cn(
           'text-2xs uppercase tracking-widest',
-          highlight ? 'text-gold' : 'text-silver/70'
+          highlight ? 'text-gold' : 'text-ink-muted'
         )}
         title={hint}
       >
         {label}
       </div>
-      <div className={cn('mt-0.5 tabular-nums text-base', highlight ? 'text-gold' : 'text-white')}>
+      <div className={cn('mt-0.5 tabular-nums text-base', highlight ? 'text-gold' : 'text-ink')}>
         {value}
       </div>
     </div>
@@ -2445,9 +2283,9 @@ function DraftAddOnsSection({
   };
 
   return (
-    <div className="mt-5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
+    <div className="mt-5 rounded-md border border-line bg-surface-raised p-3">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-xs uppercase tracking-wide text-silver">
+        <div className="text-xs uppercase tracking-wide text-ink-muted">
           Extra earnings (bonus, commission, tips, PTO)
         </div>
         {!open && (
@@ -2462,12 +2300,12 @@ function DraftAddOnsSection({
         <div className="mb-2 space-y-1">
           {addOns.map((a) => (
             <div key={a.id} className="flex items-center justify-between text-sm">
-              <span className="text-silver">
+              <span className="text-ink-muted">
                 {a.associateName} ·{' '}
                 {ADD_ON_KINDS.find((k) => k.value === a.kind)?.label ?? a.kind}
                 {a.note ? ` — ${a.note}` : ''}
                 {a.grossUp && (
-                  <span className="block text-xs text-silver/70 tabular-nums">
+                  <span className="block text-xs text-ink-muted tabular-nums">
                     Take-home {fmtMoney(a.grossUp.net)} · federal {fmtMoney(a.grossUp.federal)} · Social Security {fmtMoney(a.grossUp.socialSecurity)} · Medicare {fmtMoney(a.grossUp.medicare)}
                     {a.grossUp.state ? ` · state ${fmtMoney(a.grossUp.state)}` : ''}
                     {a.grossUp.preTax ? ` · 401(k) ${fmtMoney(a.grossUp.preTax)}` : ''}
@@ -2475,13 +2313,13 @@ function DraftAddOnsSection({
                 )}
               </span>
               <span className="flex items-center gap-2">
-                <span className="tabular-nums text-white">{fmtMoney(a.amount)}</span>
+                <span className="tabular-nums text-ink">{fmtMoney(a.amount)}</span>
                 <Button
                   variant="ghost"
                   size="icon-sm"
                   onClick={() => remove(a.id)}
                   disabled={busy}
-                  className="text-silver/60 hover:text-alert"
+                  className="text-ink-subtle hover:text-alert"
                   aria-label="Remove earning line"
                 >
                   <X className="h-4 w-4" />
@@ -2493,8 +2331,8 @@ function DraftAddOnsSection({
       )}
 
       {open && (
-        <div className="space-y-2 border-t border-navy-secondary pt-2">
-          <label className="flex items-center gap-2 text-sm text-silver cursor-pointer">
+        <div className="space-y-2 border-t border-line pt-2">
+          <label className="flex items-center gap-2 text-sm text-ink-muted cursor-pointer">
             <input
               type="checkbox"
               className="h-4 w-4 cursor-pointer accent-gold"
@@ -2511,7 +2349,7 @@ function DraftAddOnsSection({
                   {assocs.map((a) => (
                     <span
                       key={a.id}
-                      className="inline-flex items-center gap-1 rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-xs text-white"
+                      className="inline-flex items-center gap-1 rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-xs text-ink"
                     >
                       {a.name}
                       <button
@@ -2520,7 +2358,7 @@ function DraftAddOnsSection({
                           setAssocs((prev) => prev.filter((x) => x.id !== a.id))
                         }
                         disabled={busy}
-                        className="text-silver/60 hover:text-alert"
+                        className="text-ink-subtle hover:text-alert"
                         aria-label={`Remove ${a.name}`}
                       >
                         <X className="h-3 w-3" />
@@ -2573,18 +2411,18 @@ function DraftAddOnsSection({
               className="w-32"
             />
           </div>
-          <label className="flex items-center gap-2 text-sm text-silver cursor-pointer">
+          <label className="flex items-center gap-2 text-sm text-ink-muted cursor-pointer">
             <input type="checkbox" className="h-4 w-4 cursor-pointer accent-gold" checked={takeHome} onChange={(e) => setTakeHome(e.target.checked)} disabled={busy} />
             Enter the take-home instead (gross it up)
           </label>
           {takeHome && (
-            <label className="flex items-center gap-2 text-sm text-silver cursor-pointer">
+            <label className="flex items-center gap-2 text-sm text-ink-muted cursor-pointer">
               <input type="checkbox" className="h-4 w-4 cursor-pointer accent-gold" checked={includePreTax} onChange={(e) => setIncludePreTax(e.target.checked)} disabled={busy} />
               Gross up the 401(k) deferral too
             </label>
           )}
           {quoteFor && quote.data && (
-            <div className="rounded-md border border-navy-secondary p-2 text-xs text-silver tabular-nums" aria-live="polite">
+            <div className="rounded-md border border-line p-2 text-xs text-ink-muted tabular-nums" aria-live="polite">
               Gross {fmtMoney(quote.data.breakdown.gross)} · federal {fmtMoney(quote.data.breakdown.federal)}
               {quote.data.breakdown.federalMethod === 'SUPPLEMENTAL_22' ? ' (22%)' : ' (37% over $1M)'} · Social Security {fmtMoney(quote.data.breakdown.socialSecurity)} · Medicare{' '}
               {fmtMoney(quote.data.breakdown.medicare)}
@@ -2592,7 +2430,7 @@ function DraftAddOnsSection({
               {quote.data.breakdown.preTax ? ` · 401(k) ${fmtMoney(quote.data.breakdown.preTax)}` : ''} → take-home {fmtMoney(quote.data.breakdown.net)}
             </div>
           )}
-          <p className="text-xs text-silver/70">
+          <p className="text-xs text-ink-muted">
             Bonuses and commissions are supplemental wages — federal income tax
             withholds at the flat 22% supplemental rate (37% past $1M in the year).
             {takeHome ? ' The line is checked against the real paycheck so the take-home lands to the cent.' : ''}
@@ -2677,7 +2515,7 @@ function FailedPaymentsSummary({
         {[...groups.entries()].map(([reason, group]) => (
           <div key={reason}>
             <div className="flex items-center justify-between gap-2 mb-1">
-              <div className="min-w-0 flex items-center gap-1.5 text-xs2 text-silver">
+              <div className="min-w-0 flex items-center gap-1.5 text-xs2 text-ink-muted">
                 <span className="truncate" title={reason}>
                   {reason}
                 </span>
@@ -2714,10 +2552,10 @@ function FailedPaymentsSummary({
                 return (
                 <li
                   key={it.id}
-                  className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-black/30 px-2.5 py-1.5"
+                  className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-surface-raised px-2.5 py-1.5"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="text-white truncate">
+                    <div className="text-ink truncate">
                       {it.associateName ? (
                         // Secondary path — a NEW TAB keeps this run drawer
                         // (and its ?run= URL) alive behind the profile.
@@ -2814,10 +2652,10 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
   return (
     <li
       className={cn(
-        'rounded border bg-black/30 transition-colors',
+        'rounded border bg-surface-raised transition-colors',
         item.status === 'HELD' || item.status === 'FAILED'
           ? 'border-alert/30'
-          : 'border-silver/15 hover:border-silver/30'
+          : 'border-line hover:border-ink-muted/40'
       )}
     >
       <button
@@ -2828,16 +2666,16 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {expanded ? (
-            <ChevronDown className="h-4 w-4 text-silver/70 shrink-0" />
+            <ChevronDown className="h-4 w-4 text-ink-muted shrink-0" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-silver/70 shrink-0" />
+            <ChevronRight className="h-4 w-4 text-ink-muted shrink-0" />
           )}
           <Avatar src={associatePhotoUrl(item.associateId)} name={item.associateName ?? '—'} size="sm" />
           <div className="min-w-0">
-            <div className="text-sm text-white truncate">
+            <div className="text-sm text-ink truncate">
               {item.associateName ?? '—'}
             </div>
-            <div className="text-xs2 text-silver/70 truncate">
+            <div className="text-xs2 text-ink-muted truncate">
               {item.hoursWorked.toFixed(2)} hrs · {fmtMoney(item.hourlyRate)}/hr
               {item.taxState ? ` · ${item.taxState}` : ''}
             </div>
@@ -2850,12 +2688,12 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
           )}
         </div>
         <div className="text-right shrink-0">
-          <div className="text-2xs uppercase tracking-widest text-silver/70">Net</div>
+          <div className="text-2xs uppercase tracking-widest text-ink-muted">Net</div>
           <div className="tabular-nums text-gold">{fmtMoney(item.netPay)}</div>
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-silver/10 px-3 py-3 text-xs2 space-y-3">
+        <div className="border-t border-line px-3 py-3 text-xs2 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
               <DrillRow label="Gross pay" value={fmtMoney(item.grossPay)} />
@@ -2907,7 +2745,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
               <DrillRow label="Net pay" value={fmtMoney(item.netPay)} bold accent />
             </div>
             <div className="space-y-1">
-              <div className="text-2xs uppercase tracking-widest text-silver/70 mb-1">
+              <div className="text-2xs uppercase tracking-widest text-ink-muted mb-1">
                 Employer cost
               </div>
               <DrillRow
@@ -2946,7 +2784,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
                 )}
                 bold
               />
-              <div className="text-2xs uppercase tracking-widest text-silver/70 mt-3 mb-1">
+              <div className="text-2xs uppercase tracking-widest text-ink-muted mt-3 mb-1">
                 YTD (before this run)
               </div>
               <DrillRow
@@ -2968,19 +2806,19 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
             </div>
           )}
           {item.disbursementRef && (
-            <div className="text-silver/70">
+            <div className="text-ink-muted">
               Disbursement ref:{' '}
-              <span className="font-mono text-silver">{item.disbursementRef}</span>
+              <span className="font-mono text-ink-muted">{item.disbursementRef}</span>
             </div>
           )}
 
           {paperCheckReason && (
-            <div className="rounded border border-steel/40 bg-steel/10 px-2 py-1.5 text-silver">
+            <div className="rounded border border-steel/40 bg-steel/10 px-2 py-1.5 text-ink-muted">
               Paid by paper check this time: {paperCheckReason}
             </div>
           )}
           {canProcess && (
-            <div className="pt-1 border-t border-silver/10 flex flex-wrap gap-x-4">
+            <div className="pt-1 border-t border-line flex flex-wrap gap-x-4">
               {canSwitchToCheck && onPayByCheck && (
                 <Button
                   variant="link"
@@ -2988,7 +2826,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
                     e.stopPropagation();
                     onPayByCheck(item.id, item.associateName ?? null, !paperCheckReason);
                   }}
-                  className="gap-1.5 text-xs font-normal text-silver/70 hover:text-gold"
+                  className="gap-1.5 text-xs font-normal text-ink-muted hover:text-gold"
                 >
                   <Banknote className="h-3.5 w-3.5" />
                   {paperCheckReason ? 'Undo paper check' : 'Pay by check this time'}
@@ -3000,7 +2838,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
                   e.stopPropagation();
                   onEnrollBranch(item.associateId, item.associateName ?? null);
                 }}
-                className="gap-1.5 text-xs font-normal text-silver/70 hover:text-gold"
+                className="gap-1.5 text-xs font-normal text-ink-muted hover:text-gold"
               >
                 <CreditCard className="h-3.5 w-3.5" />
                 Manage Branch enrollment
@@ -3028,12 +2866,12 @@ function DrillRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className={cn(muted ? 'text-silver/70' : 'text-silver/70')}>{label}</span>
+      <span className={cn(muted ? 'text-ink-muted' : 'text-ink-muted')}>{label}</span>
       <span
         className={cn(
           'tabular-nums',
           bold && 'font-medium',
-          accent ? 'text-gold' : muted ? 'text-silver/70' : 'text-white'
+          accent ? 'text-gold' : muted ? 'text-ink-muted' : 'text-ink'
         )}
       >
         {value}
@@ -3055,11 +2893,11 @@ function HeroStat({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-1 text-2xs uppercase tracking-widest text-silver/70">
+      <div className="flex items-center gap-1 text-2xs uppercase tracking-widest text-ink-muted">
         {icon}
         {label}
       </div>
-      <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-white')}>
+      <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-ink')}>
         {value}
       </div>
     </div>

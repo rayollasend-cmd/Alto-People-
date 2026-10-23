@@ -1,14 +1,8 @@
 import { useState } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import {
-  CalendarDays,
-  Download,
-  FileSpreadsheet,
-  HeartPulse,
-  Plus,
-  ShieldOff,
-} from 'lucide-react';
+import { CalendarDays, HeartPulse, Plus, ShieldOff } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
 import {
   createCobra,
@@ -16,25 +10,21 @@ import {
   createQle,
   decideQle,
   electCobra,
-  get1095c,
-  generate1095cForms,
-  acaAirUrl,
   listCobra,
   listOpenEnrollment,
   listQles,
   openEnrollmentClose,
   openEnrollmentOpen,
   waiveCobra,
-  type AcaEmployeeMonths,
   type CobraOffer,
   type OpenEnrollmentWindow,
   type Qle,
   type QleKind,
 } from '@/lib/benefitsLifecycle92Api';
 import { useClients } from '@/lib/useClients';
-import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth, useTerm } from '@/lib/auth';
+import { useUrlParam } from '@/lib/useUrlState';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge } from '@/lib/status';
@@ -65,7 +55,10 @@ import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 import { pickOne } from '@/lib/validationCopy';
 
-type Tab = 'oe' | 'qle' | 'cobra' | 'aca';
+type Tab = 'oe' | 'qle' | 'cobra';
+/** 'auto' = no ?tab: open on the first tab with work pending. */
+type TabParam = Tab | 'auto';
+const TAB_PARAMS: TabParam[] = ['auto', 'oe', 'qle', 'cobra'];
 
 // Format a date-only "YYYY-MM-DD" string via the shared formatter. Parsing
 // through parseYmd keeps the day stable west of UTC (new Date('YYYY-MM-DD')
@@ -79,11 +72,6 @@ function addDaysYmd(ymd: string, days: number): string {
   d.setDate(d.getDate() + days);
   return ymdLocal(d);
 }
-
-const MONTHS_SHORT = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-] as const;
 
 /** Shared "section failed to load" body with a Retry affordance. */
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
@@ -102,38 +90,72 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
+/**
+ * What each tab has waiting on someone: windows to open (drafts) or to
+ * close (open past their end), life events nobody has decided, COBRA offers
+ * the person hasn't answered. The tabs read the same queries, so a count
+ * and its rows never disagree.
+ */
+export function lifecyclePending(data: { windows?: OpenEnrollmentWindow[]; qles?: Qle[]; offers?: CobraOffer[] }, today: string = ymdLocal()) {
+  return {
+    oe: data.windows?.filter((w) => w.status === 'DRAFT' || (w.status === 'OPEN' && w.endsOn < today)).length,
+    qle: data.qles?.filter((q) => q.status === 'PENDING').length,
+    cobra: data.offers?.filter((c) => c.status === 'NOTIFIED').length,
+  };
+}
+
+/** The first tab, in order, with something waiting; else Open enrollment. */
+export function firstPendingTab(p: { oe?: number; qle?: number; cobra?: number }): Tab {
+  return (['oe', 'qle', 'cobra'] as const).find((k) => (p[k] ?? 0) > 0) ?? 'oe';
+}
+
 export function BenefitsLifecycle() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'process:payroll') : false;
-  const [tab, setTab] = useState<Tab>('oe');
+  const [params] = useSearchParams();
+  const [tabParam, setTab] = useUrlParam<TabParam>('tab', 'auto', TAB_PARAMS, { history: 'push' });
+  const oe = useQuery({ queryKey: ['OeTab', 'rows'], queryFn: () => listOpenEnrollment() });
+  const qle = useQuery({ queryKey: ['QleTab', 'rows'], queryFn: () => listQles() });
+  const cobra = useQuery({ queryKey: ['CobraTab', 'rows'], queryFn: () => listCobra() });
+  const pending = lifecyclePending({ windows: oe.data?.windows, qles: qle.data?.qles, offers: cobra.data?.offers });
+  // Opened without a tab: wait for the counts, then land where the work is.
+  const settled = !oe.isPending && !qle.isPending && !cobra.isPending;
+  const tab: Tab = tabParam !== 'auto' ? tabParam : firstPendingTab(pending);
 
+  // The 1095-C filing moved to ACA hours (Annual filing); old links land there.
+  if (params.get('tab') === 'aca') return <Navigate to="/benefits/aca?tab=filing" replace />;
+
+  const count = (n: number | undefined) => (n ? <span className="ml-1.5 text-xs tabular-nums text-ink-muted">({n})</span> : null);
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Benefits lifecycle"
-        subtitle="Open enrollment, qualifying life events, COBRA offers, and ACA 1095-C reporting."
-        breadcrumbs={[{ label: 'Benefits' }, { label: 'Lifecycle' }]}
+        subtitle="Open enrollment, life events and COBRA offers. The 1095-C filing is on ACA hours."
+        related={[{ label: 'ACA hours & filing', to: '/benefits/aca' }]}
     >
+      {tabParam === 'auto' && !settled ? (
+        <SkeletonRows count={4} />
+      ) : (
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
-          <TabsTrigger value="oe">
-            <CalendarDays className="mr-2 h-4 w-4" /> Open enrollment
+          <TabsTrigger value="oe" className="inline-flex items-center">
+            <CalendarDays className="mr-2 hidden h-4 w-4 sm:inline-block" aria-hidden="true" /> Open enrollment
+            {count(pending.oe)}
           </TabsTrigger>
-          <TabsTrigger value="qle">
-            <HeartPulse className="mr-2 h-4 w-4" /> QLE
+          <TabsTrigger value="qle" className="inline-flex items-center">
+            <HeartPulse className="mr-2 hidden h-4 w-4 sm:inline-block" aria-hidden="true" /> Life events
+            {count(pending.qle)}
           </TabsTrigger>
-          <TabsTrigger value="cobra">
-            <ShieldOff className="mr-2 h-4 w-4" /> COBRA
-          </TabsTrigger>
-          <TabsTrigger value="aca">
-            <FileSpreadsheet className="mr-2 h-4 w-4" /> ACA / 1095-C
+          <TabsTrigger value="cobra" className="inline-flex items-center">
+            <ShieldOff className="mr-2 hidden h-4 w-4 sm:inline-block" aria-hidden="true" /> COBRA
+            {count(pending.cobra)}
           </TabsTrigger>
         </TabsList>
         <TabsContent value="oe"><OeTab canManage={canManage} /></TabsContent>
         <TabsContent value="qle"><QleTab canManage={canManage} /></TabsContent>
         <TabsContent value="cobra"><CobraTab canManage={canManage} /></TabsContent>
-        <TabsContent value="aca"><AcaTab /></TabsContent>
       </Tabs>
+      )}
     </ListTemplate>
   );
 }
@@ -416,27 +438,27 @@ function QleTab({ canManage }: { canManage: boolean }) {
   const rows: Qle[] | null = refreshQuery.data?.qles ?? null;
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError
             ? refreshQuery.error.message
-            : 'Could not load qualifying life events.' : null;
+            : 'Could not load life events.' : null;
   const refresh = () => void refreshQuery.refetch();
 
   const onApprove = async (q: Qle) => {
     try {
       await decideQle(q.id, 'APPROVED');
-      toast.success(`${q.associateName}'s QLE approved.`);
+      toast.success(`${q.associateName}'s life event approved — their change window is open.`);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not approve the QLE.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not approve the life event.');
     }
   };
 
   const onDeny = async (q: Qle) => {
     const reason = await prompt({
-      title: `Deny ${q.associateName}'s QLE?`,
+      title: `Deny ${q.associateName}'s life event?`,
       description:
-        'The associate will be notified that their qualifying life event was denied, along with this reason.',
+        'They are told the life event was denied, with this reason.',
       reasonLabel: 'Denial reason',
       reasonPlaceholder: 'Missing documentation, event outside the window, …',
-      confirmLabel: 'Deny QLE',
+      confirmLabel: 'Deny life event',
       destructive: true,
     });
     if (reason === null) return;
@@ -447,10 +469,10 @@ function QleTab({ canManage }: { canManage: boolean }) {
         method: 'POST',
         body: { decision: 'DENIED', reason },
       });
-      toast.success(`${q.associateName}'s QLE denied.`);
+      toast.success(`${q.associateName}'s life event denied.`);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not deny the QLE.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not deny the life event.');
     }
   };
 
@@ -458,7 +480,7 @@ function QleTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={() => setShowNew(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Submit QLE
+          <Plus className="mr-2 h-4 w-4" aria-hidden="true" /> Record a life event
         </Button>
       </div>
       <Card>
@@ -470,18 +492,18 @@ function QleTab({ canManage }: { canManage: boolean }) {
           ) : rows.length === 0 ? (
             <EmptyState
               icon={HeartPulse}
-              title="No QLEs"
-              description="Major life events like marriage, birth, or loss of coverage trigger a 30-day change window."
+              title="No life events"
+              description="A marriage, a birth or a lost coverage opens a 30-day window to change benefits. Record one here when someone tells you."
             />
           ) : (
             <DataGrid<NonNullable<typeof rows>[number]>
               id="qualifying-life-events"
-              caption="Qualifying life events"
+              caption="Life events"
               rows={rows}
               rowKey={(q) => q.id}
               search={{ placeholder: `${term('worker')}, kind…` }}
               urlState={false}
-              exportCsv={{ filename: 'qualifying-life-events' }}
+              exportCsv={{ filename: 'life-events' }}
               columns={[
                 {
                   key: 'associate',
@@ -570,10 +592,10 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
         evidenceUrl: evidenceUrl.trim() || null,
         notes: notes.trim() || null,
       });
-      toast.success('QLE submitted.');
+      toast.success('Life event recorded.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not submit the QLE.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not record the life event.');
     } finally {
       setSaving(false);
     }
@@ -581,7 +603,7 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Submit a QLE</DrawerTitle>
+        <DrawerTitle>Record a life event</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
@@ -746,8 +768,8 @@ function CobraTab({ canManage }: { canManage: boolean }) {
                   className: 'font-medium text-white',
                   cell: (c) => <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>,
                 },
-                { key: 'qe', header: 'QE', accessor: (c) => c.qualifyingEvent, sortable: true, cardMeta: true },
-                { key: 'qeDate', header: 'QE date', accessor: (c) => c.qeDate, sortable: true, searchable: false, className: 'tabular-nums', cell: (c) => fmtYmd(c.qeDate) },
+                { key: 'qe', header: 'Event', accessor: (c) => COBRA_EVENT_LABEL[c.qualifyingEvent] ?? c.qualifyingEvent, sortable: true, cardMeta: true },
+                { key: 'qeDate', header: 'Event date', accessor: (c) => c.qeDate, sortable: true, searchable: false, className: 'tabular-nums', cell: (c) => fmtYmd(c.qeDate) },
                 { key: 'electBy', header: 'Election by', accessor: (c) => c.electionDeadline, sortable: true, searchable: false, cardMeta: true, className: 'tabular-nums', cell: (c) => fmtYmd(c.electionDeadline) },
                 { key: 'premium', header: 'Premium/mo', accessor: (c) => (c.premiumPerMonth ? Number(c.premiumPerMonth) : null), csv: (c) => fmtMoney(c.premiumPerMonth), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (c) => fmtMoney(c.premiumPerMonth) },
                 { key: 'status', header: 'Status', accessor: (c) => c.status, sortable: true, cell: (c) => <StatusBadge status={c.status} overrides={COBRA_STATUS_TONES} /> },
@@ -790,6 +812,14 @@ function CobraTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+const COBRA_EVENT_LABEL: Record<string, string> = {
+  TERMINATION: 'Termination',
+  REDUCTION_OF_HOURS: 'Reduction of hours',
+  DEATH: 'Death',
+  DIVORCE: 'Divorce',
+  MEDICARE: 'Medicare entitlement',
+};
+
 function NewCobraDrawer({
   onClose,
   onSaved,
@@ -817,7 +847,7 @@ function NewCobraDrawer({
       return;
     }
     if (!qeDate) {
-      toast.error('QE date required.');
+      toast.error('Enter the date of the event.');
       return;
     }
     setSaving(true);
@@ -849,7 +879,7 @@ function NewCobraDrawer({
           </div>
         </div>
         <div>
-          <Label htmlFor="bl-qualifying-event">Qualifying event</Label>
+          <Label htmlFor="bl-qualifying-event">Event</Label>
           <Select
             id="bl-qualifying-event"
             className="mt-1"
@@ -864,7 +894,7 @@ function NewCobraDrawer({
           </Select>
         </div>
         <div>
-          <Label>QE date</Label>
+          <Label>Event date</Label>
           <Input
             type="date"
             className="mt-1"
@@ -897,235 +927,5 @@ function NewCobraDrawer({
         </Button>
       </DrawerFooter>
     </Drawer>
-  );
-}
-
-function formatAcaCell(m: AcaEmployeeMonths['months'][number]): string {
-  if (!m) return '—';
-  const offer = m.offerOfCoverage?.replace('CODE_', '') ?? '—';
-  const safe = m.safeHarbor ?? '—';
-  return `${offer}/${safe}`;
-}
-
-/** An employee is "missing codes" when any month has no row or no offer code. */
-function hasMissingCodes(e: AcaEmployeeMonths): boolean {
-  return e.months.some((m) => !m || !m.offerOfCoverage);
-}
-
-function AcaTab() {
-  const term = useTerm();
-  // Last 5 completed-ish tax years — 1095-C reporting is for the prior year.
-  const currentYear = new Date().getFullYear();
-  const yearOptions = Array.from({ length: 5 }, (_, i) => String(currentYear - 1 - i));
-  const [year, setYear] = useState(yearOptions[0]);
-  const [employees, setEmployees] = useState<AcaEmployeeMonths[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [nameFilter, setNameFilter] = useState('');
-  const [missingOnly, setMissingOnly] = useState(false);
-  const { can } = useAuth();
-  const canFile = can('process:payroll');
-  const [generating, setGenerating] = useState(false);
-  const generateForms = async () => {
-    setGenerating(true);
-    try {
-      const r = await generate1095cForms(Number(year));
-      toast.success(`${r.created} 1095-C form${r.created === 1 ? '' : 's'} drafted${r.skipped ? `, ${r.skipped} already on file` : ''}. Review and mark them filed in Payroll → Tax forms.`);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not generate the forms.');
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const refresh = async () => {
-    setEmployees(null);
-    setError(null);
-    try {
-      const r = await get1095c(Number(year));
-      setEmployees(r.employees);
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : 'Could not load the 1095-C grid.',
-      );
-    }
-  };
-
-  const filtered = (employees ?? []).filter(
-    (e) =>
-      e.associateName.toLowerCase().includes(nameFilter.trim().toLowerCase()) &&
-      (!missingOnly || hasMissingCodes(e)),
-  );
-
-  const exportCsv = () => {
-    downloadCsv(`1095c-${year}.csv`, [
-      [term('worker'), ...MONTHS_SHORT],
-      ...filtered.map((e) => [
-        e.associateName,
-        ...e.months.map((m) => (m ? formatAcaCell(m) : '')),
-      ]),
-    ]);
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-end gap-3 flex-wrap">
-        <div>
-          <Label htmlFor="bl-aca-year">Tax year</Label>
-          <Select
-            id="bl-aca-year"
-            className="mt-1 w-32"
-            value={year}
-            onChange={(e) => setYear(e.target.value)}
-          >
-            {yearOptions.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <Button onClick={refresh}>Load grid</Button>
-        {canFile && (
-          <>
-            <Button variant="secondary" loading={generating} onClick={() => void generateForms()} title="One 1095-C per employee with months on file, plus the 1094-C transmittal. Anyone already on file is skipped.">
-              Generate 1095-C forms
-            </Button>
-            <Button variant="ghost" asChild title="The 1094-C/1095-C AIR file. Your filing partner (or your own TCC) transmits it through the IRS AIR system.">
-              <a href={acaAirUrl(Number(year))} download>
-                <Download className="mr-2 h-4 w-4" /> AIR file
-              </a>
-            </Button>
-          </>
-        )}
-        {employees !== null && employees.length > 0 && (
-          <>
-            <div className="flex-1 min-w-[10rem]">
-              <Label htmlFor="bl-aca-filter">{term('worker')}</Label>
-              <Input
-                id="bl-aca-filter"
-                className="mt-1"
-                placeholder="Filter by name…"
-                value={nameFilter}
-                onChange={(e) => setNameFilter(e.target.value)}
-              />
-            </div>
-            <label className="flex items-center gap-2 pb-2.5 text-sm text-silver whitespace-nowrap">
-              <input
-                type="checkbox"
-                checked={missingOnly}
-                onChange={(e) => setMissingOnly(e.target.checked)}
-              />
-              Missing codes only
-            </label>
-            <Button variant="secondary" onClick={exportCsv}>
-              <Download className="mr-2 h-4 w-4" /> Export CSV
-            </Button>
-          </>
-        )}
-      </div>
-      <Card>
-        <CardContent className="p-0">
-          {error !== null ? (
-            <LoadError message={error} onRetry={refresh} />
-          ) : employees === null ? (
-            <div className="p-6 text-sm text-silver">
-              Choose a year and click Load grid.
-            </div>
-          ) : employees.length === 0 ? (
-            <EmptyState
-              icon={FileSpreadsheet}
-              title={`No 1095-C data for ${year}`}
-              description="Nothing has been imported for this tax year yet. Monthly coverage codes show up here after the year-end ACA import runs for your clients — pick a different year, or retry once the import has landed."
-              action={
-                <Button variant="secondary" onClick={refresh}>
-                  Retry load
-                </Button>
-              }
-            />
-          ) : filtered.length === 0 ? (
-            <EmptyState
-              icon={FileSpreadsheet}
-              title="No associates match"
-              description={
-                missingOnly
-                  ? 'Every associate matching your filter has a full set of codes.'
-                  : 'No associate names match your filter.'
-              }
-              action={
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    setNameFilter('');
-                    setMissingOnly(false);
-                  }}
-                >
-                  Clear filters
-                </Button>
-              }
-            />
-          ) : (
-            <>
-              {/* Desktop: 13-column table — month-across, employee-per-row.
-                  This is the IRS 1094/1095-C mental model so HR auditors
-                  can scan a year horizontally before drilling into a row. */}
-              <div className="hidden md:block overflow-x-auto">
-                <table className="min-w-max text-xs">
-                  <thead className="text-silver">
-                    <tr>
-                      <th className="text-left px-3 py-2">{term('worker')}</th>
-                      {MONTHS_SHORT.map((mo) => (
-                        <th key={mo} className="text-left px-2 py-2">
-                          {mo}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="text-white">
-                    {filtered.map((e) => (
-                      <tr key={e.associateId} className="border-t border-navy-secondary">
-                        <td className="px-3 py-2 font-medium"><AssociateLink associateId={e.associateId}>{e.associateName}</AssociateLink></td>
-                        {e.months.map((m, i) => (
-                          <td key={i} className="px-2 py-2 font-mono">
-                            {formatAcaCell(m)}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {/* Mobile: card per associate — same data, rotated into a
-                  4×3 month grid so all twelve months stay on-screen
-                  without horizontal scroll. */}
-              <ul className="md:hidden divide-y divide-navy-secondary">
-                {filtered.map((e) => (
-                  <li key={e.associateId} className="p-4">
-                    <div className="font-medium text-white text-sm mb-3 truncate">
-                      {e.associateName}
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                      {e.months.map((m, i) => (
-                        <div
-                          key={i}
-                          className="rounded border border-navy-secondary bg-navy-secondary/30 px-2 py-1.5"
-                        >
-                          <div className="text-2xs uppercase tracking-wider text-silver">
-                            {MONTHS_SHORT[i]}
-                          </div>
-                          <div className="font-mono text-xs text-white truncate">
-                            {formatAcaCell(m)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
   );
 }

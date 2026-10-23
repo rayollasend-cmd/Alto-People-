@@ -14,7 +14,7 @@ export const STATUS_COMPONENTS: readonly { key: StatusComponentKey; label: strin
   { key: 'API', label: 'Platform API', what: 'Every screen and integration talks to it.' },
   { key: 'WEB', label: 'Web app', what: 'The signed-in app on desktop and phone.' },
   { key: 'KIOSK', label: 'Kiosk clock-in', what: 'PIN and face punches on the worksite tablet.' },
-  { key: 'MESSAGING', label: 'WhatsApp messaging', what: 'Shift confirmations, reminders and the assistant.' },
+  { key: 'MESSAGING', label: 'Text and WhatsApp messages', what: 'Shift confirmations, reminders and the assistant.' },
   { key: 'PAYROLL_WEBHOOK', label: 'Payroll disbursement', what: 'The provider’s confirmations that pay went out.' },
   { key: 'EMAIL', label: 'Email delivery', what: 'Invitations, reminders and alerts by email.' },
 ];
@@ -34,6 +34,20 @@ export interface StatusComponentPublic {
   note: string;
   /** Percent of measured days in the last 90 without a bad day; null when the component has no daily measure. */
   uptime90d: number | null;
+  /**
+   * The same 90 days, one cell each, oldest first (F500 G5): the day's worst
+   * state — its measure, worsened by any incident that day — and the day's
+   * success rate when it was measured. Optional for older payloads.
+   */
+  days?: StatusDayPublic[];
+}
+
+export interface StatusDayPublic {
+  /** UTC calendar day, 'YYYY-MM-DD'. */
+  date: string;
+  state: StatusState;
+  /** Percent of requests (punches) that succeeded that day; null when unmeasured. */
+  pct: number | null;
 }
 
 export interface StatusIncidentUpdatePublic {

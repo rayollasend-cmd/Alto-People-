@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { opsPhotoUrl, type OpsFeedEvent, type OpsFeedPhoto } from '@/lib/opsApi';
-import { fmtAgo, fmtClock, fmtFull, opsTimeZoneCity } from './opsTime';
+import { fmtAgo, fmtClock, fmtFull, opsTimeZoneLabel } from './opsTime';
 
 /**
  * From the floor, and the floor feed.
@@ -171,9 +171,11 @@ export function OpsFloorFeed({
         <CardTitle className="text-base">
           <Activity className="mr-1.5 inline h-4 w-4 text-gold" aria-hidden="true" />
           Floor feed
-          <span className="ml-2 text-2xs font-normal uppercase tracking-wider text-silver/50">
-            {generatedAt ? `as of ${fmtClock(generatedAt)}` : 'loading'}
-          </span>
+          {/* The board's header says when it was last true; this label read
+              "LOADING" for good because the feed never sends a stamp. */}
+          {generatedAt && (
+            <span className="ml-2 text-2xs font-normal text-silver/50">as of {fmtClock(generatedAt)}</span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -196,7 +198,7 @@ export function OpsFloorFeed({
           ))}
         </div>
         <p className="mb-2 text-2xs text-silver/50">
-          Last {hours}h · times in {opsTimeZoneCity()}
+          Last {hours}h · times in {opsTimeZoneLabel()}
         </p>
 
         {loading && !events ? (
@@ -248,7 +250,9 @@ export function OpsFloorFeed({
                       <Icon className="h-3.5 w-3.5" aria-hidden="true" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-white">{e.headline}</span>
+                      <span className="line-clamp-2 block text-sm text-white" title={e.headline}>
+                        {e.headline}
+                      </span>
                       <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-2xs text-silver/70">
                         <span className="font-medium text-silver">{e.store}</span>
                         <span className="text-gold">{PERIOD_LABEL[e.period] ?? e.period}</span>

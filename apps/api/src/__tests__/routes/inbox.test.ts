@@ -150,6 +150,8 @@ describe('GET /me/inbox', () => {
   it('an associate gets only what they may see — nothing is a manager’s decision', async () => {
     await seedPendingWork();
     const associate = await createAssociate();
+    // Availability on file, so "Set when you can work" isn't one of their rows.
+    await prisma.associateAvailability.create({ data: { associateId: associate.id, dayOfWeek: 1, startMinute: 480, endMinute: 1020 } });
     const { user } = await createUser({
       role: 'ASSOCIATE',
       email: associate.email,

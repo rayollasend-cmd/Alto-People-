@@ -329,6 +329,13 @@ export const ApplicationSummarySchema = /* @__PURE__ */ (() => z.object({
   stuck: z.boolean().optional(),
   /** The hire's headshot (cache-busted); null when none is on file. */
   photoUrl: z.string().nullable().optional(),
+  /** Who sent the invite (the actor on the application_created event); null when unrecorded (imports, seed data). */
+  ownerName: z.string().nullable().optional(),
+  /** The first unfinished task, in checklist order — what the hire's own Continue opens (F500 G5). */
+  nextTask: z.object({ kind: TaskKindSchema, title: z.string() }).nullable().optional(),
+  /** Tasks done (or skipped) and in all — "3 of 8 tasks". */
+  tasksDone: z.number().int().min(0).optional(),
+  tasksTotal: z.number().int().min(0).optional(),
 }))();
 export type ApplicationSummary = z.infer<typeof ApplicationSummarySchema>;
 
@@ -408,6 +415,10 @@ export const ApplicationStatsResponseSchema = /* @__PURE__ */ (() => z.object({
   bouncedSamples: z.array(ApplicationSummarySchema),
   /** Drafts nobody has moved in 7 days — the "Idle drafts" filter and the Inbox's "drafts gone quiet". */
   idleDrafts: z.number().int().nonnegative().optional(),
+  /** Not rejected or cancelled, start date within the next 7 days counting `today` (the caller's local day). */
+  startingSoon: z.number().int().nonnegative().optional(),
+  /** Of those, still in flight with the checklist unfinished. */
+  startingSoonUnfinished: z.number().int().nonnegative().optional(),
 }))();
 export type ApplicationStatsResponse = z.infer<
   typeof ApplicationStatsResponseSchema
@@ -431,6 +442,10 @@ export const OnboardingTemplateSchema = /* @__PURE__ */ (() => z.object({
   track: OnboardingTrackSchema,
   name: z.string(),
   tasks: z.array(TemplateTaskSchema),
+  /** Last edit (the list's "Last edited"). */
+  updatedAt: z.string().datetime().optional(),
+  /** In-flight applications on this template's client and track, in the caller's reach (list only). */
+  inUse: z.number().int().nonnegative().optional(),
 }))();
 export type OnboardingTemplate = z.infer<typeof OnboardingTemplateSchema>;
 
@@ -483,6 +498,8 @@ export const OnboardingTrackBreakdownSchema = /* @__PURE__ */ (() => z.object({
   track: OnboardingTrackSchema,
   count: z.number().int().nonnegative(),
   medianDays: z.number().nullable(),
+  /** How many finished in the window — the median's sample (too few to tell under 3). */
+  completed: z.number().int().nonnegative().optional(),
 }))();
 export type OnboardingTrackBreakdown = z.infer<
   typeof OnboardingTrackBreakdownSchema
@@ -493,6 +510,8 @@ export const OnboardingClientBreakdownSchema = /* @__PURE__ */ (() => z.object({
   clientName: z.string(),
   count: z.number().int().nonnegative(),
   medianDays: z.number().nullable(),
+  /** How many finished in the window — the median's sample (too few to tell under 3). */
+  completed: z.number().int().nonnegative().optional(),
 }))();
 export type OnboardingClientBreakdown = z.infer<
   typeof OnboardingClientBreakdownSchema
@@ -1126,8 +1145,14 @@ export const AuditSearchEntrySchema = /* @__PURE__ */ (() => z.object({
   action: z.string(),
   actorUserId: UuidSchema.nullable(),
   actorEmail: z.string().email().nullable(),
+  /** The actor's name as people know it (F500 G4); null for the system. Optional for older payloads. */
+  actorName: z.string().nullable().optional(),
   entityType: z.string(),
   entityId: z.string(),
+  /** The record's display name — the person, account, site or client — instead of its UUID; null when unknown or gone. */
+  entityLabel: z.string().nullable().optional(),
+  /** Where the record lives in the app, when it has a page. */
+  entityHref: z.string().nullable().optional(),
   clientId: UuidSchema.nullable(),
   metadata: z.record(z.unknown()).nullable(),
   createdAt: z.string().datetime(),
@@ -1157,6 +1182,8 @@ export const TimeEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
+  /** The associate's photo URL, or null when none is on file (no guessed URL that 404s). */
+  photoUrl: z.string().nullable().optional(),
   clientId: UuidSchema.nullable(),
   clientName: z.string().nullable(),
   clockInAt: z.string().datetime(),
@@ -1615,6 +1642,11 @@ export const TimesheetRowSchema = /* @__PURE__ */ (() => z.object({
   worker: z.string(),
   /** Worksite / client label, shown in the Fieldglass Site column. */
   site: z.string(),
+  /** The store's own name in Alto (location, else client) — what the page
+   *  shows; `site` stays the Fieldglass label (copy, export, tooltip). */
+  siteName: z.string().optional(),
+  /** The associate's photo URL; null when none is on file. */
+  photoUrl: z.string().nullable().optional(),
   st: z.number().nonnegative(),
   ot: z.number().nonnegative(),
   dt: z.number().nonnegative(),
@@ -3986,13 +4018,36 @@ export const I9VerificationSchema = /* @__PURE__ */ (() => z.object({
   reverifyDueAt: z.string().nullable().optional(),
   /** Separated on (ISO instant) — retention runs from here. */
   separatedAt: z.string().datetime().nullable().optional(),
+  /** Hired and placed: the population the compliance scorecard measures
+   *  (lib/activeDefinition placements). False for someone still onboarding. */
+  placed: z.boolean().optional(),
+  /** The person's headshot URL; null = none on file (the Avatar skips the
+   *  request). Absent from older servers. */
+  photoUrl: z.string().nullable().optional(),
 }))();
 export type I9Verification = z.infer<typeof I9VerificationSchema>;
+
+/** A placed person with no I-9 record at all — the scorecard counts them
+ *  as missing, so the I-9 tab lists them too. */
+export const I9NotStartedSchema = /* @__PURE__ */ (() => z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  associateEmail: z.string().nullable(),
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  /** Hire date (YYYY-MM-DD): Section 2 was due 3 business days after it. */
+  hireDate: z.string().nullable(),
+  /** Headshot URL; null = none on file. */
+  photoUrl: z.string().nullable().optional(),
+}))();
+export type I9NotStarted = z.infer<typeof I9NotStartedSchema>;
 
 export const I9ListResponseSchema = /* @__PURE__ */ (() => z.object({
   i9s: z.array(I9VerificationSchema),
   /** True when more I-9s matched than the list carries. */
   truncated: z.boolean().optional(),
+  /** Placed people with no I-9 record (the working list only). */
+  notStarted: z.array(I9NotStartedSchema).optional(),
 }))();
 export type I9ListResponse = z.infer<typeof I9ListResponseSchema>;
 
@@ -4442,6 +4497,12 @@ export const NotificationSchema = /* @__PURE__ */ (() => z.object({
   /** Admin log only: the recipient account's person (or account email) —
    *  so the sent log names people, not user ids. */
   recipientName: z.string().nullable().optional(),
+  /** Admin log only: the recipient's photo, null when none is on file (no guessed URL, no 404). */
+  recipientPhotoUrl: z.string().nullable().optional(),
+  /** EMAIL with no provider connected: the message was written to the
+   *  server log, not delivered. The row's status still reads SENT for the
+   *  flows that wait on it, so the log says "Not sent" from this. */
+  loggedOnly: z.boolean().optional(),
 }))();
 export type Notification = z.infer<typeof NotificationSchema>;
 
@@ -4660,7 +4721,7 @@ export type CandidateBoardResponse = z.infer<typeof CandidateBoardResponseSchema
 
 /* ----- Saved views ---------------------------------------------------------- */
 
-export const SavedViewScopeSchema = /* @__PURE__ */ (() => z.enum(['recruiting.candidates', 'people.directory', 'onboarding.applications', 'clients.list']))();
+export const SavedViewScopeSchema = /* @__PURE__ */ (() => z.enum(['recruiting.candidates', 'people.directory', 'onboarding.applications', 'clients.list', 'books.journal', 'books.bills', 'audit.log']))();
 export type SavedViewScope = z.infer<typeof SavedViewScopeSchema>;
 
 /** A view's query: the list's own URL params — short strings only. */
@@ -5346,6 +5407,8 @@ export const ActiveDashboardEntrySchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
+  /** The associate's photo URL, or null when none is on file. */
+  photoUrl: z.string().nullable().optional(),
   clientId: UuidSchema.nullable(),
   clientName: z.string().nullable(),
   jobId: UuidSchema.nullable(),
@@ -6084,6 +6147,10 @@ export type TimeOffLedgerEntry = z.infer<typeof TimeOffLedgerEntrySchema>;
 export const TimeOffMyBalanceResponseSchema = /* @__PURE__ */ (() => z.object({
   balances: z.array(TimeOffBalanceSchema),
   recentLedger: z.array(TimeOffLedgerEntrySchema),
+  /** The sick-time rule where the person works: 1 hour earned per
+   *  `hoursWorkedPerHour` hours worked; null where the state has none
+   *  (F500 G2: a balance row at 0.0h says how it builds up). */
+  sickAccrual: z.object({ hoursWorkedPerHour: z.number().positive() }).nullable().optional(),
 }))();
 export type TimeOffMyBalanceResponse = z.infer<typeof TimeOffMyBalanceResponseSchema>;
 
@@ -6411,9 +6478,15 @@ export const DirectoryEntrySchema = /* @__PURE__ */ (() => z.object({
   position: z.string().nullable(),
   startDate: z.string().nullable(), // ISO date or null
   // Pay rate from the latest open CompensationRecord (effectiveTo=null).
-  payAmount: z.string().nullable(), // decimal-as-string so the wire stays exact
-  payType: z.string().nullable(), // HOURLY / SALARY / COMMISSION etc.
-  payCurrency: z.string().nullable(),
+  // Left out (not null) for a caller who may not read pay (view:comp):
+  // null means "no rate on file", absent means "not yours to see".
+  payAmount: z.string().nullable().optional(), // decimal-as-string so the wire stays exact
+  payType: z.string().nullable().optional(), // HOURLY / SALARY / COMMISSION etc.
+  payCurrency: z.string().nullable().optional(),
+  /** Their latest clock-in (not rejected) that the caller can see; null when none. */
+  lastWorkedAt: z.string().datetime().nullable().optional(),
+  /** Net minutes worked in the company's active window (OrgSetting.activeWindowDays, 14 by default), in the caller's reach. */
+  recentMinutes: z.number().int().nonnegative().nullable().optional(),
   // Org tile.
   managerId: UuidSchema.nullable(),
   managerName: z.string().nullable(),
@@ -6462,6 +6535,54 @@ export const DirectoryListResponseSchema = /* @__PURE__ */ (() => z.object({
   nextCursor: z.string().uuid().nullable().optional(),
 }))();
 export type DirectoryListResponse = z.infer<typeof DirectoryListResponseSchema>;
+
+/**
+ * GET /people/directory/:id/overview — the numbers a person's record opens
+ * on (F500 fix-up, G1): their work in the caller's reach, documents running
+ * out, and their pay schedule. A section is left out for a caller who may
+ * not read it (documents: view:documents; schedule: view:comp or
+ * process:payroll), never sent as zeros.
+ */
+export const PersonOverviewSchema = /* @__PURE__ */ (() => z.object({
+  /** The company's active window (OrgSetting.activeWindowDays). */
+  windowDays: z.number().int().positive(),
+  work: z.object({
+    /** Net minutes on non-rejected clock-ins that started in the window. */
+    minutes: z.number().int().nonnegative(),
+    /** Those clock-ins. */
+    entries: z.number().int().nonnegative(),
+    /** Clocked out and not yet approved (any date). */
+    awaitingReview: z.number().int().nonnegative(),
+    lastWorkedAt: z.string().datetime().nullable(),
+    nextShift: z
+      .object({
+        id: UuidSchema,
+        startsAt: z.string().datetime(),
+        endsAt: z.string().datetime(),
+        position: z.string(),
+        locationName: z.string().nullable(),
+        timezone: z.string().nullable(),
+      })
+      .nullable(),
+    /** No-call no-shows on record in the last 30 days, excused ones left out. */
+    noShows30d: z.number().int().nonnegative(),
+  }),
+  documents: z
+    .object({
+      /** Expiring in the next 30 days. */
+      expiringSoon: z.number().int().nonnegative(),
+      /** Already past their expiry date. */
+      expired: z.number().int().nonnegative(),
+    })
+    .optional(),
+  pay: z
+    .object({
+      scheduleId: UuidSchema.nullable(),
+      scheduleName: z.string().nullable(),
+    })
+    .optional(),
+}))();
+export type PersonOverview = z.infer<typeof PersonOverviewSchema>;
 
 // ===== Phase 78 — Position ================================================
 
@@ -7306,6 +7427,10 @@ export const ScorecardActionSchema = /* @__PURE__ */ (() => z.object({
   link: z.string().nullable(),  // SPA path, e.g. "/people?associate=..."
   /** Persisted remediation state (assignment/snooze). Absent = untouched. */
   state: ScorecardActionStateSchema.nullable().optional(),
+  /** The signal the action belongs to ("Background check on file"), so the
+   *  list can fold 10 people missing one thing into one row. `link` is
+   *  where the whole group is worked from. Absent = a one-off action. */
+  group: z.object({ key: z.string(), label: z.string(), link: z.string().nullable() }).optional(),
 }))();
 export type ScorecardAction = z.infer<typeof ScorecardActionSchema>;
 
@@ -7383,6 +7508,15 @@ export function isDartSeverity(severity: OshaIncidentSeverity): boolean {
  *  ~4.5; these targets are the bar we hold ourselves to, not the average. */
 export const OSHA_TRIR_TARGET = 3.0;
 export const OSHA_DART_TARGET = 2.0;
+/** Below this many hours worked a rate is noise: one injury on 1,239 hours
+ *  reads as a TRIR of 161. The pages show the case count instead ("2
+ *  recordables · rate shown after 20,000 h") and a rate this thin never
+ *  colours a tile. */
+export const OSHA_RATE_MIN_HOURS = 20_000;
+/** True when the hours are enough for TRIR/DART to mean something. */
+export function oshaRateMeaningful(hoursWorked: number | null | undefined): boolean {
+  return (hoursWorked ?? 0) >= OSHA_RATE_MIN_HOURS;
+}
 
 /** One OshaIncident as the scorecard tile surfaces it. */
 export const ScorecardSafetyIncidentSchema = /* @__PURE__ */ (() => z.object({
@@ -8246,7 +8380,10 @@ export interface TeamDelegationsResponse {
 
 export interface TeamDelegationCandidate {
   id: string;
+  /** Their name, else "Role · email" (lib/displayName) — never the address twice. */
   name: string;
+  /** False when `name` is the "Role · email" fallback. */
+  named?: boolean;
   email: string;
   role: string;
 }
@@ -8335,6 +8472,8 @@ export const DocumentStatsSchema = /* @__PURE__ */ (() => z.object({
   verified: z.number().int().nonnegative(),
   rejected: z.number().int().nonnegative(),
   expired: z.number().int().nonnegative(),
+  /** In review or verified, expiring within the next 30 days (F500 G1: the vault's renewal tile). */
+  expiring30: z.number().int().nonnegative().optional(),
   /** Oldest still-unreviewed upload, for the SLA banner. */
   oldestPendingAt: z.string().datetime().nullable(),
 }))();
@@ -9098,10 +9237,13 @@ export interface WorkerSummary {
   name: string;
   associateId: string | null;
   /** The accountable account; `associateId` is their own person record when they have one, so a row can show a face and link to it. */
-  owner: { id: string; name: string; email: string; associateId?: string | null } | null;
+  owner: { id: string; name: string; email: string; associateId?: string | null; /** Their face, null when none is on file (no request for a photo that isn't there). */ photoUrl?: string | null } | null;
   /** PERSON rows only: who they report to, read from the associate record. Absent on agents and robots. */
-  manager?: { associateId: string; name: string } | null;
+  manager?: { associateId: string; name: string; photoUrl?: string | null } | null;
+  /** The worker's account (Active / Suspended …). For a person it mirrors the associate record; where they stand at work is `workStatus`. */
   status: WorkerStatus;
+  /** PERSON rows on the roster only: where the person stands at work, in the one people vocabulary (peopleStatus) the People directory shows. */
+  workStatus?: z.infer<typeof WorkStatusSchema> | null;
   capabilities: string[];
   notes: string | null;
   sites: WorkerSiteRef[];
@@ -9114,6 +9256,8 @@ export interface WorkerSummary {
 export interface WorkersResponse {
   workers: WorkerSummary[];
   counts: Record<WorkerType, Record<WorkerStatus, number>>;
+  /** The roster's people by where they stand (lib/peopleStatus) — the same counts as the People directory's tiles and Headcount, over the caller's reach. */
+  people?: WorkStatusCounts;
   /** Must be zero. Listed so the page can say so. */
   withoutOwner: WorkerSummary[];
   /** Associates that have no PERSON worker yet (the sweep fills them when an owner can be found). */
@@ -9607,8 +9751,10 @@ export interface HeadcountOverview {
   statusCounts?: WorkStatusCounts;
   /** Associates on an ASSIGNED shift in the current org week. */
   scheduledThisWeek: number;
-  /** Associates the payroll engine would pay for the last closed period, or null when no run exists. */
-  onPayrollLastPeriod: { count: number; periodStart: string; periodEnd: string } | null;
+  /** Of those, how many are not Working (no shift worked in the window): "2 are scheduled this week but haven't worked in 14 days". */
+  scheduledNotWorking?: number;
+  /** The last finalized or paid payroll run: its pay period, how many it paid, and when it was finalized. Null when no run exists. */
+  onPayrollLastPeriod: { count: number; periodStart: string; periodEnd: string; finalizedOn?: string | null } | null;
   /** Associates with housing on file; null until the housing link (Helios) exists. */
   inHousing: number | null;
   /** On file but not active, by reason. */
@@ -9642,6 +9788,14 @@ export const InboxSourceSchema = /* @__PURE__ */ (() => z.object({
   urgency: z.enum(INBOX_URGENCIES).optional(),
   /** The soonest deadline among the items counted, when the queue has one. */
   dueAt: z.string().datetime().nullable().optional(),
+  /**
+   * The soonest deadline when it is a calendar day (a due date, an expiry):
+   * 'YYYY-MM-DD', shown as that day in every zone. A date-only deadline sent
+   * as UTC midnight read as the day before west of UTC (F500 G5).
+   */
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  /** When the queue holds three items or fewer: their names, shown under the title. */
+  preview: z.array(z.string()).max(3).optional(),
   /** A task's own progress ("2 of 8 done") — the associate's onboarding. */
   progress: z.object({ done: z.number().int().min(0), total: z.number().int().min(1) }).optional(),
   /**
@@ -9657,9 +9811,10 @@ export type InboxSource = z.infer<typeof InboxSourceSchema>;
  * a band the soonest deadline, then the biggest queue. One ranking for the
  * page, the home rows and the phone sheet, so no two surfaces disagree.
  */
-export function rankInboxSources<T extends Pick<InboxSource, 'count' | 'urgency' | 'dueAt'>>(sources: readonly T[]): T[] {
+export function rankInboxSources<T extends Pick<InboxSource, 'count' | 'urgency' | 'dueAt'> & { dueDate?: string | null }>(sources: readonly T[]): T[] {
   const band = (s: T) => INBOX_URGENCIES.indexOf(s.urgency ?? 'routine');
-  const due = (s: T) => (s.dueAt ? Date.parse(s.dueAt) : Number.POSITIVE_INFINITY);
+  const due = (s: T) =>
+    s.dueAt ? Date.parse(s.dueAt) : s.dueDate ? Date.parse(`${s.dueDate}T12:00:00Z`) : Number.POSITIVE_INFINITY;
   return [...sources].sort((a, b) => band(a) - band(b) || due(a) - due(b) || b.count - a.count);
 }
 

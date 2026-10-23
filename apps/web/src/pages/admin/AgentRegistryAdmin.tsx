@@ -69,11 +69,11 @@ import {
   updateAgentDrift,
 } from '@/lib/agentsApi';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { HugoPanel } from './HugoPanel';
 import { AgentCatalogPicker, type CatalogChoice } from './AgentCatalogPicker';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Select } from '@/components/ui/Select';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -628,7 +628,6 @@ export function AgentRegistryAdmin() {
       <PageHeader
         title="Agents"
         subtitle={`The agents that work beside your ${term('workers').toLowerCase()}, routed by ${assistantName}. Each has a person who answers for it, the scopes it may use, and limits on spend, rate and hours; anything gated waits for a person.`}
-        breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Agents' }]}
         primaryAction={
           canManage ? (
             <Button onClick={() => setCreating(true)}>
@@ -712,17 +711,18 @@ export function AgentRegistryAdmin() {
 
       {/* Hero: the approval queue. */}
       <section aria-labelledby="agent-queue-heading" className="space-y-3">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <MetricStrip label="The agents at a glance">
           <MetricCard
             label="Waiting for a person"
             value={registry.isLoading && queue.isLoading ? '—' : String(pendingCount)}
             accent={pendingCount > 0}
-            hint={pendingCount > 0 ? 'Gated actions an agent asked for' : 'Nothing waiting'}
+            hint={pendingCount > 0 ? 'Proposals an agent asked for' : 'Nothing waiting'}
+            href="/approvals?queue=proposals"
           />
           <MetricCard label="Active" value={registry.isLoading ? '—' : String(counts?.ACTIVE ?? 0)} hint="Working now" />
           <MetricCard label="Onboarding" value={registry.isLoading ? '—' : String(counts?.ONBOARDING ?? 0)} hint="Registered, not yet live" />
           <MetricCard label="Suspended" value={registry.isLoading ? '—' : String(counts?.SUSPENDED ?? 0)} hint="Credentials revoked" />
-        </div>
+        </MetricStrip>
         <h2 id="agent-queue-heading" className="sr-only">
           Approval queue
         </h2>
@@ -767,7 +767,7 @@ export function AgentRegistryAdmin() {
       )}
 
       <div className="flex items-center justify-between gap-3">
-        <SectionTitle title="The agents" description={agents.length ? `${agents.length} registered, by family.` : undefined} />
+        <SectionTitle title="The agents" description={agents.length ? `${agents.length} registered, ordered by family.` : undefined} />
         <div role="radiogroup" aria-label="Agents view" className="inline-flex gap-0.5 rounded-md border border-line bg-navy-secondary/30 p-0.5">
           <Button size="xs" variant={view === 'cards' ? 'secondary' : 'ghost'} role="radio" aria-checked={view === 'cards'} onClick={() => { setView('cards'); writeAgentsView('cards'); }}>
             <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" /> Cards
@@ -777,15 +777,11 @@ export function AgentRegistryAdmin() {
           </Button>
         </div>
       </div>
+      {/* One grid, family order: a family of one used to leave two thirds
+          of its own row empty, three times over (F500 G2). Each card names
+          its family. */}
       {view === 'cards' && agents.length > 0 && !registry.isLoading && (
-        <div className="space-y-6">
-          {groups.map((g) => (
-            <section key={g.key} aria-labelledby={`agents-group-${g.key.replace(/\W+/g, '-')}`} className="space-y-3">
-              <SectionTitle as="h3" id={`agents-group-${g.key.replace(/\W+/g, '-')}`} title={g.label} trailing={<span className="text-xs tabular-nums text-ink-muted">{g.agents.length}</span>} />
-              <AgentCards agents={g.agents} />
-            </section>
-          ))}
-        </div>
+        <AgentCards agents={groups.flatMap((g) => g.agents)} />
       )}
       {(view === 'table' || agents.length === 0 || registry.isLoading) && (
       <DataGrid
@@ -812,10 +808,10 @@ export function AgentRegistryAdmin() {
       />
       )}
 
-      {/* The assistant: ask him, and see what the agents he routes to are doing (agent families step 3). */}
-      <HugoPanel />
+      {/* The assistant has his own seat in the header; the registry doesn't
+          carry a second chat box (F500 G2). */}
       <p className="text-xs2 text-ink-muted">
-        Who approves what, certification and credentials across agents, the MCP tools and the decision record are under{' '}
+        Who approves what and agent credentials are under{' '}
         <Link to="/admin/agents" className="underline underline-offset-2 hover:text-accent">
           Settings &amp; trust › Agents &amp; gates
         </Link>
@@ -1182,25 +1178,14 @@ function CreateAgentDialog({ onClose, onCreated }: { onClose: () => void; onCrea
  * reason) or resume (the owner, and only the owner). Suspending revokes
  * every credential; resuming gives none back.
  */
-export function KillSwitchRow({
-  agent,
-  canManage,
-  onChanged,
-  placement = 'summary',
-}: {
-  agent: AgentDetail;
-  canManage: boolean;
-  onChanged: () => Promise<unknown>;
-  /** `actions`: the Suspend button alone, for the record header. `summary`: the suspended banner and the resumed notice. */
-  placement?: 'actions' | 'summary';
-}) {
-  const { user } = useAuth();
+/**
+ * Suspend one agent: asks for the reason (the confirm), revokes every
+ * credential, says how many. Shared by the kill-switch row and the record
+ * header's "More" menu (F500 G2: Suspend left the header's button row).
+ */
+export function useSuspendAgent(agent: AgentDetail, onChanged: () => Promise<unknown>, onSuspended?: () => void): { suspend: () => Promise<void>; busy: boolean } {
   const prompt = usePrompt();
   const [busy, setBusy] = useState(false);
-  const [resumed, setResumed] = useState(false);
-  const isOwner = Boolean(user?.id && agent.owner?.id && user.id === agent.owner.id);
-  const kill = agent.kill;
-
   const suspend = async () => {
     const reason = await prompt({
       title: `Suspend ${agent.name}?`,
@@ -1220,7 +1205,7 @@ export function KillSwitchRow({
     try {
       const r = await suspendAgent(agent.id, reason.trim());
       toast.success(`${agent.name} suspended. ${r.revoked === 1 ? '1 credential' : `${r.revoked} credentials`} revoked.`);
-      setResumed(false);
+      onSuspended?.();
       await onChanged();
     } catch (err) {
       toast.error(errorMessage(err, 'Could not suspend the agent.'));
@@ -1228,6 +1213,28 @@ export function KillSwitchRow({
       setBusy(false);
     }
   };
+  return { suspend, busy };
+}
+
+export function KillSwitchRow({
+  agent,
+  canManage,
+  onChanged,
+  placement = 'summary',
+}: {
+  agent: AgentDetail;
+  canManage: boolean;
+  onChanged: () => Promise<unknown>;
+  /** `actions`: the Suspend button alone, for the record header. `summary`: the suspended banner and the resumed notice. */
+  placement?: 'actions' | 'summary';
+}) {
+  const { user } = useAuth();
+  const [resumed, setResumed] = useState(false);
+  const { suspend, busy: suspending } = useSuspendAgent(agent, onChanged, () => setResumed(false));
+  const [resuming, setBusy] = useState(false);
+  const busy = suspending || resuming;
+  const isOwner = Boolean(user?.id && agent.owner?.id && user.id === agent.owner.id);
+  const kill = agent.kill;
 
   const resume = async () => {
     setBusy(true);

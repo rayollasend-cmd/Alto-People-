@@ -183,7 +183,10 @@ workforceOverviewRouter.get(
             select: {
               associateId: true,
               approvedAt: true,
+              clientId: true,
+              position: true,
               client: { select: { name: true } },
+              location: { select: { name: true } },
               associate: {
                 select: { id: true, firstName: true, lastName: true, deletedAt: true },
               },
@@ -218,7 +221,32 @@ workforceOverviewRouter.get(
           name: `${a.associate.firstName} ${a.associate.lastName}`.trim(),
           clientName: a.client?.name ?? null,
           approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,
+          clientId: a.clientId,
+          position: a.position ?? null,
+          storeName: a.location?.name ?? null,
         }));
+      // The earliest open shift each shown row could fill (same client, and
+      // the same position when the application names one), so the row is
+      // actionable from home: "Stocker · Front Beach 218 · first open Sat 6 AM".
+      const shownReady = readyRows.slice(0, 8);
+      const readyClientIds = [...new Set(shownReady.map((r) => r.clientId).filter((id): id is string => !!id))];
+      const openForReady =
+        readyClientIds.length > 0
+          ? await prisma.shift.findMany({
+              where: { status: 'OPEN', clientId: { in: readyClientIds }, startsAt: { gte: now }, ...clamp },
+              orderBy: { startsAt: 'asc' },
+              take: 200,
+              select: { id: true, clientId: true, position: true, startsAt: true, locationRel: { select: { name: true, timezone: true } } },
+            })
+          : [];
+      const earliestOpenFor = (clientId: string | null, position: string | null) => {
+        if (!clientId) return null;
+        const want = position?.trim().toLowerCase() || null;
+        const hit = openForReady.find((s) => s.clientId === clientId && (!want || s.position.trim().toLowerCase() === want));
+        return hit
+          ? { shiftId: hit.id, startsAt: hit.startsAt.toISOString(), position: hit.position, storeName: hit.locationRel?.name ?? null, timezone: hit.locationRel?.timezone ?? ORG_TZ }
+          : null;
+      };
 
       // THE INTERNAL LABOR MARKET: for each of the next 3 days, stores
       // that are short (open shifts) side by side with the bench — active
@@ -331,9 +359,15 @@ workforceOverviewRouter.get(
         clientName: string;
         onFloor: number;
         scheduledNow: number;
+        /** Filled shifts on today's schedule (assigned or done), whenever they start. */
+        scheduledToday: number;
         openToday: number;
         unconfirmedTomorrow: number;
         openTomorrow: number;
+        /** Assigned shifts tomorrow the worker has confirmed (the ops home's per-store board). */
+        confirmedTomorrow: number;
+        /** Call-outs logged today (unexcused attendance events of kind CALL_OUT). */
+        callOutsToday: number;
         exceptionsToday: number;
         noShowsToday: number;
         incidentsToday: number;
@@ -362,9 +396,12 @@ workforceOverviewRouter.get(
             clientName: name ?? '—',
             onFloor: 0,
             scheduledNow: 0,
+            scheduledToday: 0,
             openToday: 0,
             unconfirmedTomorrow: 0,
             openTomorrow: 0,
+            confirmedTomorrow: 0,
+            callOutsToday: 0,
             exceptionsToday: 0,
             noShowsToday: 0,
             incidentsToday: 0,
@@ -382,11 +419,9 @@ workforceOverviewRouter.get(
         const b = storeBucket(s.client?.id ?? null, s.client?.name ?? null);
         shiftClient.set(s.id, s.client?.id ?? null);
         if (s.status === 'OPEN') b.openToday += 1;
-        else if (
-          s.startsAt.getTime() <= now.getTime() &&
-          s.endsAt.getTime() > now.getTime()
-        ) {
-          b.scheduledNow += 1;
+        else {
+          b.scheduledToday += 1;
+          if (s.startsAt.getTime() <= now.getTime() && s.endsAt.getTime() > now.getTime()) b.scheduledNow += 1;
         }
         if (showCost && b.laborToday !== null) {
           const rate = s.payRate !== null ? Number(s.payRate) : cardOn(cards, s.client?.id ?? null, s.position, s.startsAt)?.payRate ?? null;
@@ -412,6 +447,7 @@ workforceOverviewRouter.get(
         const b = storeMap.get(s.client.id)!;
         if (s.status === 'OPEN') b.openTomorrow += 1;
         else if (s.acknowledgedAt === null) b.unconfirmedTomorrow += 1;
+        else b.confirmedTomorrow += 1;
       }
       for (const e of todayEvents) {
         if (!e.clientId) continue;
@@ -419,6 +455,7 @@ workforceOverviewRouter.get(
         if (!b) continue;
         b.exceptionsToday += 1;
         if (e.kind === 'NO_CALL_NO_SHOW') b.noShowsToday += 1;
+        if (e.kind === 'CALL_OUT') b.callOutsToday += 1;
       }
       for (const i of incidentRows) {
         const b = storeMap.get(i.clientId);
@@ -458,7 +495,9 @@ workforceOverviewRouter.get(
       const stores = [...storeMap.values()]
         .filter(
           (s) =>
-            s.onFloor + s.scheduledNow + s.openToday + s.unconfirmedTomorrow + s.openTomorrow > 0,
+            // A store with shifts later today is live today too (it used to
+            // drop off the board until its first shift started).
+            s.onFloor + s.scheduledNow + s.scheduledToday + s.openToday + s.unconfirmedTomorrow + s.openTomorrow > 0,
         )
         .map((s) => {
           if (s.laborToday !== null) s.laborToday = Math.round(s.laborToday * 100) / 100;
@@ -518,6 +557,8 @@ workforceOverviewRouter.get(
         where: {
           ...published,
           status: { in: ['OPEN', 'ASSIGNED', 'COMPLETED'] },
+          // A store-bound caller's week is their store's, like every other read here.
+          ...clamp,
           startsAt: { gte: weekStart, lt: new Date(weekStart.getTime() + 7 * 24 * HOUR_MS) },
         },
         _count: true,
@@ -572,6 +613,9 @@ workforceOverviewRouter.get(
         week: {
           start: orgDateKey(weekStart),
           fillRatePct: weekTotal > 0 ? Math.round((weekFilled / weekTotal) * 100) : null,
+          // The counts behind the rate, so a tile can say "X of Y shifts filled".
+          filled: weekFilled,
+          total: weekTotal,
           noCallNoShows: kindCount('NO_CALL_NO_SHOW'),
           callOuts: kindCount('CALL_OUT'),
           lates: kindCount('LATE'),
@@ -585,7 +629,7 @@ workforceOverviewRouter.get(
         },
         readyToSchedule: {
           count: readyRows.length,
-          rows: readyRows.slice(0, 8),
+          rows: readyRows.slice(0, 8).map(({ clientId, ...r }) => ({ ...r, earliestOpen: earliestOpenFor(clientId, r.position) })),
         },
         rebalance,
         dispatch: {

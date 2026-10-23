@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { registerApplyHandler } from './approvalRequests.js';
 import { completeSeparation } from './separationComplete.js';
 import { applyRoleChange } from './accessChanges.js';
+import { dropHeldInvite, releaseHeldInvite } from './staffInvite.js';
 import { applyPromotion, rejectPromotion } from './promotions.js';
 import { openPosition } from './requisitions.js';
 import { recordFinancialChange, addressSummary } from './financialChanges.js';
@@ -19,10 +20,19 @@ registerApplyHandler('SEPARATION_COMPLETE', async (_db, row, decider) => {
   await completeSeparation(row.subjectId, decider.id, { approvalRequestId: row.id });
 });
 
-registerApplyHandler('ROLE_CHANGE', async (db, row, decider) => {
-  const p = row.proposed as { userId: string; role?: string; additionalRoles?: string[] };
-  await applyRoleChange(db, p.userId, { role: p.role as never, additionalRoles: p.additionalRoles as never }, decider.id, { approvalRequestId: row.id, requestedByUserId: row.requesterUserId });
-});
+registerApplyHandler(
+  'ROLE_CHANGE',
+  async (db, row, decider) => {
+    const p = row.proposed as { userId: string; role?: string; additionalRoles?: string[]; invite?: boolean };
+    await applyRoleChange(db, p.userId, { role: p.role as never, additionalRoles: p.additionalRoles as never }, decider.id, { approvalRequestId: row.id, requestedByUserId: row.requesterUserId });
+    // A held invite (lib/staffInvite): the role has landed; open the account and send the link.
+    if (p.invite) await releaseHeldInvite(db, p.userId, decider.id);
+  },
+  async (db, row) => {
+    const p = row.proposed as { userId: string; invite?: boolean };
+    if (p.invite) await dropHeldInvite(db, p.userId);
+  },
+);
 
 registerApplyHandler(
   'PROMOTION',

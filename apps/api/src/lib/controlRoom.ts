@@ -44,7 +44,31 @@ export async function controlRoomSites(db: Db, tenantId: string | null, scope: {
     orderBy: { name: 'asc' },
     take: 500,
   });
-  return sites.map((s) => ({ id: s.id, name: s.name, timezone: s.timezone, clientName: s.client?.name ?? null }));
+  // Who is on an assigned shift at each site right now, so the page can open
+  // on the busiest floor instead of the alphabetically first (F500 G2).
+  const now = new Date();
+  const onShift = sites.length
+    ? await db.shift.groupBy({
+        by: ['locationId'],
+        where: {
+          ...(tenantId ? { tenantId } : {}),
+          locationId: { in: sites.map((s) => s.id) },
+          status: 'ASSIGNED',
+          assignedAssociateId: { not: null },
+          startsAt: { lte: now },
+          endsAt: { gt: now },
+        },
+        _count: { _all: true },
+      })
+    : [];
+  const counts = new Map(onShift.map((g) => [g.locationId, g._count._all]));
+  return sites.map((s) => ({
+    id: s.id,
+    name: s.name,
+    timezone: s.timezone,
+    clientName: s.client?.name ?? null,
+    onShiftNow: counts.get(s.id) ?? 0,
+  }));
 }
 
 export async function controlRoom(db: Db = defaultPrisma, locationId: string, tenantId: string | null, now: Date = new Date()): Promise<ControlRoomResponse> {

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { Check, Copy, Download, FileText, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -31,6 +30,7 @@ import {
   ErrorBanner,
   Input,
   PageHeader,
+  SectionTitle,
   Select,
   SkeletonRows,
   Textarea,
@@ -40,6 +40,87 @@ import { AssociatePicker, type PickedAssociate } from '@/components/ui/Associate
 import { Label } from '@/components/ui/Label';
 import { fmtDateTime } from '@/lib/format';
 import { toast } from 'sonner';
+
+/**
+ * Starting points for the letters HR writes most. Each becomes a DRAFT
+ * (v1, unpublished): the [bracketed] parts are for HR to fill in or
+ * reword before publishing, and only associate tokens are used, so a
+ * render never leaves an unresolved {{ }} behind.
+ */
+export const STARTER_TEMPLATES: Array<{ key: string; name: string; kind: DocumentTemplateKind; hint: string; subject: string; body: string }> = [
+  {
+    key: 'offer',
+    name: 'Offer letter',
+    kind: 'OFFER_LETTER',
+    hint: 'Position, start date and pay, with a signature line.',
+    subject: 'Your offer, {{ associate.firstName }}',
+    body: [
+      'Dear {{ associate.firstName }} {{ associate.lastName }},',
+      '',
+      'We are pleased to offer you the position of {{ associate.jobTitle }} in {{ associate.department }}.',
+      '',
+      'Start date: [start date]',
+      'Pay: [pay rate] per hour',
+      'Schedule: [days and hours]',
+      '',
+      'This offer depends on completing your onboarding paperwork, including the I-9.',
+      '',
+      'To accept, sign and date below.',
+      '',
+      'Signature: ______________________   Date: __________',
+    ].join('\n'),
+  },
+  {
+    key: 'warning',
+    name: 'Written warning',
+    kind: 'WARNING_LETTER',
+    hint: 'What happened, what is expected, and the next step.',
+    subject: 'Written warning: {{ associate.firstName }} {{ associate.lastName }}',
+    body: [
+      '{{ associate.firstName }} {{ associate.lastName }}',
+      '{{ associate.jobTitle }}, {{ associate.department }}',
+      '',
+      'This is a written warning about: [what happened, with dates].',
+      '',
+      'What we expect from now on: [the expectation].',
+      '',
+      'If it happens again, the next step may be [next step].',
+      '',
+      'You may add your own statement to this record.',
+      '',
+      'Employee signature: ______________________   Date: __________',
+      'Manager signature: ______________________   Date: __________',
+    ].join('\n'),
+  },
+  {
+    key: 'nda',
+    name: 'Confidentiality agreement',
+    kind: 'NDA',
+    hint: 'Keeps company information private.',
+    subject: 'Confidentiality agreement',
+    body: [
+      '{{ associate.firstName }} {{ associate.lastName }} agrees to keep private any non-public information about the company, its customers and its people learned while working here, during and after employment.',
+      '',
+      'This includes: [examples, such as customer lists, pricing and guest details].',
+      '',
+      'Nothing here stops you from discussing your own pay or working conditions, or from reporting a concern to a government agency.',
+      '',
+      'Signature: ______________________   Date: __________',
+    ].join('\n'),
+  },
+  {
+    key: 'policy',
+    name: 'Policy acknowledgement',
+    kind: 'POLICY',
+    hint: 'Confirms the person read a policy.',
+    subject: 'Policy acknowledgement: [policy name]',
+    body: [
+      'I, {{ associate.firstName }} {{ associate.lastName }}, have received and read [policy name], effective [effective date]. I understand it and agree to follow it.',
+      '',
+      'Signature: ______________________   Date: __________',
+    ].join('\n'),
+  },
+];
 
 const KIND_LABEL: Record<DocumentTemplateKind, string> = {
   OFFER_LETTER: 'Offer letter',
@@ -66,7 +147,6 @@ const ASSOCIATE_TOKEN_PATHS = [
 ] as const;
 
 export function TemplatesHome() {
-  const term = useTerm();
   const confirm = useConfirm();
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<DocumentTemplate | null>(null);
@@ -91,6 +171,20 @@ export function TemplatesHome() {
   const loadError = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load templates.') : null;
   const refresh = () => void refreshQuery.refetch();
 
+  /** A starter becomes a draft template and opens in the editor. */
+  const startFrom = async (starter: (typeof STARTER_TEMPLATES)[number]) => {
+    await act(`starter-${starter.key}`, async () => {
+      try {
+        const { id } = await createStarter(starter);
+        toast.success(`“${starter.name}” is a draft. Fill in the [bracketed] parts, then publish it.`);
+        const next = await refreshQuery.refetch();
+        setActive(next.data?.templates.find((t) => t.id === id) ?? null);
+      } catch (err) {
+        toast.error(err instanceof ApiError ? err.message : 'Could not create it.');
+      }
+    });
+  };
+
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Delete this template?', destructive: true }))) return;
     await act(`del-${id}`, async () => {
@@ -109,13 +203,8 @@ export function TemplatesHome() {
       <PageHeader
         title="Document templates"
         subtitle="Mail-merge templates with version history, filled in from each person’s record."
-        breadcrumbs={[{ label: term('nav.compliance') }, { label: 'Document templates' }]}
+        actions={[{ label: 'New template', icon: Plus, primary: true, onSelect: () => setShowNew(true) }]}
       />
-      <div className="flex justify-end">
-        <Button onClick={() => setShowNew(true)}>
-          <Plus className="mr-2 h-4 w-4" /> New template
-        </Button>
-      </div>
       <Card>
         <CardContent className="p-0">
           {loadError ? (
@@ -133,11 +222,15 @@ export function TemplatesHome() {
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
-            <EmptyState
-              icon={FileText}
-              title="No templates"
-              description="Define offer letters, policies, NDAs, and warnings with mail-merge tokens."
-            />
+            <div className="space-y-4 p-4 sm:p-6">
+              <EmptyState
+                icon={FileText}
+                title="No templates yet"
+                description="Start from one of these, or write your own with New template. Each starts as a draft you can reword before publishing."
+                size="sm"
+              />
+              <StarterGallery busyKey={actionKey} onPick={(s) => void startFrom(s)} />
+            </div>
           ) : (
             <DataGrid<(typeof rows)[number]>
               id="templates"
@@ -210,7 +303,16 @@ function NewTemplateDrawer({
 }) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState<DocumentTemplateKind>('OFFER_LETTER');
+  const [starterKey, setStarterKey] = useState('');
   const [saving, setSaving] = useState(false);
+  const pickStarter = (key: string) => {
+    setStarterKey(key);
+    const s = STARTER_TEMPLATES.find((x) => x.key === key);
+    if (s) {
+      setKind(s.kind);
+      if (!name.trim()) setName(s.name);
+    }
+  };
   const onSubmit = async () => {
     if (!name.trim()) {
       toast.error('Name required.');
@@ -218,8 +320,10 @@ function NewTemplateDrawer({
     }
     setSaving(true);
     try {
-      await createTemplate({ name: name.trim(), kind });
-      toast.success('Template created.');
+      const starter = STARTER_TEMPLATES.find((x) => x.key === starterKey);
+      if (starter) await createStarter({ ...starter, name: name.trim(), kind });
+      else await createTemplate({ name: name.trim(), kind });
+      toast.success(starter ? 'Template created as a draft from the starter.' : 'Template created.');
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -233,6 +337,17 @@ function NewTemplateDrawer({
         <DrawerTitle>New template</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
+        <div>
+          <Label htmlFor="tpl-starter">Start from</Label>
+          <Select id="tpl-starter" className="mt-1" value={starterKey} onChange={(e) => pickStarter(e.target.value)}>
+            <option value="">A blank page</option>
+            {STARTER_TEMPLATES.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </div>
         <div>
           <Label>Name</Label>
           <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} />
@@ -674,5 +789,35 @@ function TemplateDrawer({
         </Button>
       </DrawerFooter>
     </Drawer>
+  );
+}
+
+/** Create the template, then its first (draft) version from the starter's words. */
+async function createStarter(starter: { name: string; kind: DocumentTemplateKind; subject: string; body: string }): Promise<{ id: string }> {
+  const { id } = await createTemplate({ name: starter.name, kind: starter.kind });
+  await saveVersion(id, { subject: starter.subject, body: starter.body });
+  return { id };
+}
+
+function StarterGallery({ busyKey, onPick }: { busyKey: string | null; onPick: (s: (typeof STARTER_TEMPLATES)[number]) => void }) {
+  return (
+    <section aria-label="Start from a starter" className="space-y-3">
+      <SectionTitle as="h2" size="sm" title="Start from a starter" description="Opens as a draft in the editor, ready to reword." />
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {STARTER_TEMPLATES.map((s) => (
+          <li key={s.key}>
+            <button
+              type="button"
+              disabled={!!busyKey}
+              onClick={() => onPick(s)}
+              className="flex h-full w-full flex-col rounded-lg border border-line bg-surface p-3 text-left transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
+            >
+              <span className="text-sm font-medium text-ink">{s.name}</span>
+              <span className="mt-1 text-xs text-ink-muted">{s.hint}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

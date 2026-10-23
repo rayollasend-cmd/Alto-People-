@@ -366,7 +366,7 @@ export async function computeRoleDecisions(
         detail: 'Associates fronted this money — a quick decision keeps trust intact.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/reimbursements?status=SUBMITTED',
+        linkUrl: '/reimbursements?status=approve',
       });
     }
   }
@@ -631,7 +631,7 @@ export async function computeRoleDecisions(
         detail: 'Fold them into the next regular payroll run.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/reimbursements?status=MANAGER_APPROVED',
+        linkUrl: '/reimbursements?status=ready',
       });
     }
   }

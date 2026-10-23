@@ -99,7 +99,8 @@ describe('Expirations', () => {
 
   it('the full list is still one click away', async () => {
     renderAs('HR_ADMINISTRATOR', <ExpirationsHome />, '/expirations?view=list');
-    expect(await screen.findByText('Nothing expired.')).toBeInTheDocument();
+    // Nothing in any bucket: one empty state (F500), not three empty grids.
+    expect(await screen.findByText('Nothing expired or expiring within a year')).toBeInTheDocument();
     expect(getExpirations).toHaveBeenCalled();
   });
 });
@@ -123,11 +124,12 @@ describe('People analytics', () => {
       absenceTrend: [{ month: '2026-09', absenceDays: 2, scheduledShiftDays: 50, absenceRatePct: 3.8 }],
     });
     renderAs('HR_ADMINISTRATOR', <PeopleAnalytics />, '/reports/people');
-    expect(await screen.findByRole('img', { name: /Headcount went from 10 to 12/ })).toBeInTheDocument();
+    // "On the books" (hired, not separated): the one headcount name (F500 G4).
+    expect(await screen.findByRole('img', { name: /On the books went from 10 to 12/ })).toBeInTheDocument();
     const grid = screen.getByRole('table', { name: /separations by store and tenure/i });
     expect(within(grid).getByText('Front Beach')).toBeInTheDocument();
     // Every chart's numbers are in the page for a screen reader.
-    expect(screen.getAllByRole('table', { name: 'Headcount, month by month', hidden: true }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('table', { name: 'On the books, month by month', hidden: true }).length).toBeGreaterThan(0);
   });
 });
 
@@ -156,12 +158,20 @@ describe('Headcount plan', () => {
             ],
             priced: 1,
           })
-        : Promise.resolve({}),
+        : path.startsWith('/headcount/overview')
+          ? Promise.resolve({ active: 1, windowDays: 14, byClient: [] })
+          : Promise.resolve({}),
     );
     getHeadcountPlan.mockResolvedValue({ year: 2026, positions: [], departments: [], totals: { positions: 0, filled: 0, budget: 0, projected: 0, paidYearToDate: 0, unbudgeted: 0, variance: 0 } });
     renderAs('HR_ADMINISTRATOR', <HeadcountPlan />, '/headcount/plan');
     expect(await screen.findByLabelText(/Front Beach, week of .*16 required, 14 short/)).toBeInTheDocument();
     expect(screen.getByText('Staffing targets')).toBeInTheDocument();
+    // Placed is not working (F500 G1): the tile says how many of the placed work,
+    // by Headcount's own definition; the estimate is whole and says so.
+    expect(screen.getByText('Placed now')).toBeInTheDocument();
+    expect(await screen.findByText('1 of them working (a shift in the last 14 days or ahead)')).toBeInTheDocument();
+    expect(screen.getByText('Bill over 12 weeks (estimate)')).toBeInTheDocument();
+    expect(await screen.findByText('$16k')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'Office seats' }));
     await waitFor(() => expect(getHeadcountPlan).toHaveBeenCalled());
   });

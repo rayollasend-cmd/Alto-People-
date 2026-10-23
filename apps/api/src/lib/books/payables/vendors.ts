@@ -7,7 +7,7 @@ import { isValidRouting } from '../../banking/nacha.js';
 import { decryptString, encryptString } from '../../crypto.js';
 import { tenantIdForWrite } from '../../tenant.js';
 import { emitBooksChange } from '../events.js';
-import { cents, dollars, userNames, type Db } from './shared.js';
+import { cents, dateOnly, dollars, todayYmd, userNames, ymd, type Db } from './shared.js';
 
 /**
  * Vendors — the people and companies the company pays.
@@ -62,11 +62,32 @@ export async function balancesByVendor(db: Db, vendorIds?: string[]): Promise<Ma
   return new Map(rows.map((r) => [r.vendorId, dollars(cents(r._sum.balance))]));
 }
 
+/**
+ * What each vendor was paid this calendar year and when it was last paid —
+ * every payment not voided (card included: this is cash out the door, not
+ * the 1099 total, which leaves card out).
+ */
+export async function paymentsByVendor(db: Db, vendorIds: string[], now: Date = new Date()): Promise<Map<string, { paidThisYear: number; lastPaidOn: string | null }>> {
+  if (vendorIds.length === 0) return new Map();
+  const year = todayYmd(now).slice(0, 4);
+  const where = { tenantId: tenantIdForWrite(), vendorId: { in: vendorIds }, status: { not: 'VOID' } };
+  const [thisYear, last] = await Promise.all([
+    db.billPayment.groupBy({ by: ['vendorId'], where: { ...where, paidOn: { gte: dateOnly(`${year}-01-01`), lte: dateOnly(`${year}-12-31`) } }, _sum: { amount: true } }),
+    db.billPayment.groupBy({ by: ['vendorId'], where, _max: { paidOn: true } }),
+  ]);
+  const out = new Map<string, { paidThisYear: number; lastPaidOn: string | null }>();
+  for (const id of vendorIds) out.set(id, { paidThisYear: 0, lastPaidOn: null });
+  for (const r of thisYear) out.get(r.vendorId)!.paidThisYear = dollars(cents(r._sum.amount));
+  for (const r of last) out.get(r.vendorId)!.lastPaidOn = r._max.paidOn ? ymd(r._max.paidOn) : null;
+  return out;
+}
+
 export async function shapeVendors(db: Db, vendors: Vendor[]): Promise<BooksVendor[]> {
   if (vendors.length === 0) return [];
   const tenantId = tenantIdForWrite();
-  const [balances, accounts, pending] = await Promise.all([
+  const [balances, paid, accounts, pending] = await Promise.all([
     balancesByVendor(db, vendors.map((v) => v.id)),
+    paymentsByVendor(db, vendors.map((v) => v.id)),
     db.ledgerAccount.findMany({ where: { tenantId, id: { in: vendors.map((v) => v.defaultExpenseAccountId).filter((x): x is string => !!x) } }, select: { id: true, code: true, name: true } }),
     db.approvalRequest.findMany({ where: { tenantId, kind: 'VENDOR_BANK', status: 'PENDING', subjectId: { in: vendors.map((v) => v.id) } }, orderBy: { createdAt: 'desc' } }),
   ]);
@@ -98,6 +119,8 @@ export async function shapeVendors(db: Db, vendors: Vendor[]): Promise<BooksVend
       notes: v.notes,
       isActive: v.isActive,
       balance: balances.get(v.id) ?? 0,
+      paidThisYear: paid.get(v.id)?.paidThisYear ?? 0,
+      lastPaidOn: paid.get(v.id)?.lastPaidOn ?? null,
       pendingBankChange: p
         ? { approvalId: p.id, accountLast4: String((p.proposed as { accountLast4?: string }).accountLast4 ?? ''), requestedAt: p.createdAt.toISOString(), requestedByName: p.requesterUserId ? (names.get(p.requesterUserId) ?? null) : null }
         : null,

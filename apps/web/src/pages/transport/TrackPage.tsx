@@ -6,7 +6,7 @@ import { fmtTimeTz } from '@/lib/format';
 import { getPublicTrip } from '@/lib/transportApi';
 import { Logo } from '@/components/Logo';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { LinkProblem } from '@/components/LinkProblem';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 
 /**
@@ -24,7 +24,9 @@ export function TrackPage() {
     retry: false,
   });
   const trip = q.data?.trip;
-  const expired = q.error instanceof ApiError && q.error.status === 404;
+  // 410: a real link past its six hours (or the run ended); 404: not a link the driver sent (F500 G5).
+  const expired = q.error instanceof ApiError && q.error.status === 410;
+  const invalid = q.error instanceof ApiError && q.error.status === 404;
   const markers: MapMarker[] = trip?.position
     ? [{ id: 'van', kind: 'van', lat: trip.position.lat, lng: trip.position.lng, heading: trip.position.heading, stale: trip.stale, highlight: true, label: trip.van.name }]
     : [];
@@ -37,8 +39,12 @@ export function TrackPage() {
         </div>
         {q.isLoading ? (
           <Skeleton className="h-80" />
-        ) : expired || !trip ? (
-          <EmptyState icon={Bus} title="This link has expired" description="Shared trips stop showing after six hours, or once the run is over. Ask the driver for a new link." />
+        ) : expired ? (
+          <LinkProblem kind="expired" title="This shared trip has ended" reason="Shared trips stop showing after six hours, or once the run is over. Ask the driver for a new link." />
+        ) : invalid ? (
+          <LinkProblem kind="invalid" title="This link isn’t valid" reason="It may have been cut off when it was copied. Ask the driver to share the trip again." />
+        ) : !trip ? (
+          <LinkProblem kind="error" title="The trip didn’t load" reason="Check your connection and try again in a moment." />
         ) : (
           <div className="space-y-4">
             <div className="rounded-lg border border-navy-secondary bg-navy p-5">

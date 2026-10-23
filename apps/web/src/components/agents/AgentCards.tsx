@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/Badge';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';
 import { fmtMoney, fmtPercent, fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { familyLabel, modelLine, OwnerPerson, STATUS_VARIANT } from '@/pages/admin/AgentRegistryAdmin';
+import { familyLabel, OwnerPerson, STATUS_VARIANT } from '@/pages/admin/AgentRegistryAdmin';
 
 /**
  * The agents as a wall of cards (UX upgrade, 2026-10-15): one card per
@@ -21,9 +21,11 @@ const WORKER_CAP_LABEL = new Map<string, string>(WORKER_CAPABILITIES.map((c) => 
 
 export function AgentCards({ agents, className }: { agents: AgentSummary[]; className?: string }) {
   return (
-    <ul className={cn('grid gap-[var(--d-stack)] sm:grid-cols-2 xl:grid-cols-3', className)} aria-label="Agents">
+    // grid-cols-1 (minmax(0,1fr)) + min-w-0: with no base column a card's
+    // min-content width pushed the phone page to 471px (F500 G2).
+    <ul className={cn('grid grid-cols-1 gap-[var(--d-stack)] sm:grid-cols-2 xl:grid-cols-3', className)} aria-label="Agents">
       {agents.map((a) => (
-        <li key={a.id}>
+        <li key={a.id} className="min-w-0">
           <AgentCard agent={a} />
         </li>
       ))}
@@ -57,9 +59,10 @@ function AgentCard({ agent: a }: { agent: AgentSummary }) {
               {WORKER_STATUS_LABELS[a.status]}
             </Badge>
           </div>
-          <div className="mt-0.5 truncate text-xs text-ink-muted">
-            {familyLabel(a.profile.family) || 'Not yet placed in a family'} · {modelLine(a.profile)}
-          </div>
+          {/* The family; who answers for it is the Owner line below, and the
+              vendor and model are on the record's Profile tab, not in prime
+              space (F500 G2). */}
+          <div className="mt-0.5 truncate text-xs text-ink-muted">{familyLabel(a.profile.family) || 'Not yet placed in a family'}</div>
         </div>
       </div>
 
@@ -88,7 +91,7 @@ function AgentCard({ agent: a }: { agent: AgentSummary }) {
         <div>
           <dt className="text-ink-muted">Errors</dt>
           <dd className={cn('mt-0.5 text-base font-semibold tabular-nums', over ? 'text-caution' : 'text-ink')}>
-            {s && s.errorRatePct !== null ? fmtPercent(s.errorRatePct, { decimals: 0 }) : '—'}
+            {errorsLabel(s)}
           </dd>
         </div>
         <div>
@@ -116,4 +119,12 @@ function AgentCard({ agent: a }: { agent: AgentSummary }) {
       </div>
     </article>
   );
+}
+
+/** One rule for the Errors figure: "—" when the agent finished no tasks
+ *  this week (no rate to speak of), the rate otherwise (F500 G2: some cards
+ *  said "—" and another "0%" for the same nothing). */
+export function errorsLabel(s: AgentSummary['scorecard']): string {
+  if (!s || s.tasksCompleted === 0 || s.errorRatePct === null) return '—';
+  return fmtPercent(s.errorRatePct, { decimals: 0 });
 }

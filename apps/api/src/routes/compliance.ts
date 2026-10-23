@@ -47,6 +47,8 @@ import {
   primaryClientsForAssociates,
 } from '../lib/associateClients.js';
 import { notifyAssociate, notifyHrOnApplicationComplete } from '../lib/notify.js';
+import { placements } from '../lib/activeDefinition.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { everifyRouter } from './everify.js';
 import { drugTestsRouter } from './drugTests.js';
 
@@ -80,6 +82,8 @@ type RawI9 = Prisma.I9VerificationGetPayload<{
         email: true;
         hireDate: true;
         separatedAt: true;
+        photoS3Key: true;
+        photoUpdatedAt: true;
         applications: {
           select: { id: true; invitedAt: true; startDate: true };
           orderBy: { invitedAt: 'desc' };
@@ -124,6 +128,8 @@ function toI9(
     retainUntil: dateOrNull(i9RetainUntil(row.associate.hireDate, row.associate.separatedAt)),
     reverifyDueAt: dateOrNull(i9ReverifyDueAt(row.workAuthExpiresAt)),
     separatedAt: row.associate.separatedAt ? row.associate.separatedAt.toISOString() : null,
+    // null = no headshot: the list's avatars stop asking for a photo that 404s.
+    photoUrl: profilePhotoUrlFor({ id: row.associateId, photoS3Key: row.associate.photoS3Key, photoUpdatedAt: row.associate.photoUpdatedAt }),
   };
 }
 
@@ -137,6 +143,8 @@ const I9_INCLUDE = {
       email: true,
       hireDate: true,
       separatedAt: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
       applications: {
         select: { id: true, invitedAt: true, startDate: true },
         orderBy: { invitedAt: 'desc' as const },
@@ -177,10 +185,62 @@ complianceRouter.get('/i9', async (req, res, next) => {
     const placement = await primaryClientsForAssociates(
       rows.map((r) => r.associateId),
     );
+    // The compliance scorecard measures everyone hired and placed
+    // (lib/activeDefinition placements). The working list carries the same
+    // population, so the tab's "I-9 complete" and the scorecard's I-9 line
+    // are one number: each row says whether its person is placed, and the
+    // placed people with no I-9 record at all come back as notStarted
+    // (the scorecard counts them missing; the list used to hide them).
+    const tenantId = tenantIdForWrite();
+    const placed = status === undefined ? await placements({ tenantId }, prisma) : null;
+    let notStarted: Array<{
+      associateId: string;
+      associateName: string;
+      associateEmail: string | null;
+      clientId: string | null;
+      clientName: string | null;
+      hireDate: string | null;
+      photoUrl: string | null;
+    }> | undefined;
+    if (placed) {
+      const withRecord = await prisma.i9Verification.findMany({
+        where: { tenantId, associateId: { in: [...placed.keys()] } },
+        select: { associateId: true },
+      });
+      const has = new Set(withRecord.map((r) => r.associateId));
+      const missingIds = [...placed.keys()].filter((id) => !has.has(id));
+      const people = missingIds.length
+        ? await prisma.associate.findMany({
+            where: { AND: [{ id: { in: missingIds } }, { tenantId, deletedAt: null }, reach] },
+            select: { id: true, firstName: true, lastName: true, email: true, hireDate: true, photoS3Key: true, photoUpdatedAt: true },
+          })
+        : [];
+      const names = await clientNamesById(
+        people.map((p) => placed.get(p.id)?.clientId).filter((c): c is string => !!c),
+      );
+      notStarted = people
+        .map((p) => {
+          const clientId = placed.get(p.id)?.clientId ?? null;
+          return {
+            associateId: p.id,
+            associateName: `${p.firstName} ${p.lastName}`,
+            associateEmail: p.email,
+            clientId,
+            clientName: clientId ? names.get(clientId) ?? null : null,
+            hireDate: p.hireDate ? ymd(p.hireDate) : null,
+            photoUrl: profilePhotoUrlFor(p),
+          };
+        })
+        .sort((a, b) => a.associateName.localeCompare(b.associateName));
+    }
     res.json(
       I9ListResponseSchema.parse({
-        i9s: rows.map((r) => toI9(r, placement.get(r.associateId))),
+        i9s: rows.map((r) => ({
+          ...toI9(r, placement.get(r.associateId)),
+          ...(placed ? { placed: placed.has(r.associateId) } : {}),
+        })),
         truncated,
+        ...(notStarted ? { notStarted } : {}),
       }),
     );
   } catch (err) {

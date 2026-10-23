@@ -104,10 +104,8 @@ const ApprovalsHome = lazyNamed(() => import('@/pages/approvals/ApprovalsHome'),
 const InboxHome = lazyNamed(() => import('@/pages/inbox/InboxHome'), 'InboxHome');
 const DecisionOpen = lazyNamed(() => import('@/pages/inbox/DecisionOpen'), 'DecisionOpen');
 const PayrollHome = lazyNamed(() => import('@/pages/payroll/PayrollHome'), 'PayrollHome');
-const PayrollConfigView = lazyNamed(
-  () => import('@/pages/payroll/PayrollConfigView'),
-  'PayrollConfigView',
-);
+// Federal / state / local tax reference in one place (F500 G3); /payroll/config, /state-tax and /tax-jurisdictions redirect here.
+const TaxTablesPage = lazyNamed(() => import('@/pages/payroll/TaxTablesPage'), 'TaxTablesPage');
 const FinancialChangesQueue = lazyNamed(
   () => import('@/pages/payroll/FinancialChangesQueue'),
   'FinancialChangesQueue',
@@ -117,20 +115,16 @@ const PayrollReadiness = lazyNamed(
   'PayrollReadiness',
 );
 const PayrollYtd = lazyNamed(() => import('@/pages/payroll/PayrollYtd'), 'PayrollYtd');
-const PayrollClosePage = lazyNamed(() => import('@/pages/payroll/PayrollClosePage'), 'PayrollClosePage');
+const RunRecordPage = lazyNamed(() => import('@/pages/payroll/RunRecordPage'), 'RunRecordPage');
 const PaySchedulesPage = lazyNamed(() => import('@/pages/payroll/schedules/PaySchedulesPage'), 'PaySchedulesPage');
 const NewPaySchedulePage = lazyNamed(() => import('@/pages/payroll/schedules/NewPaySchedulePage'), 'NewPaySchedulePage');
 const PayScheduleDetailPage = lazyNamed(() => import('@/pages/payroll/schedules/PayScheduleDetailPage'), 'PayScheduleDetailPage');
-const PayrollChecksPage = lazyNamed(() => import('@/pages/payroll/PayrollChecksPage'), 'PayrollChecksPage');
-const PayrollReviewPage = lazyNamed(() => import('@/pages/payroll/PayrollReviewPage'), 'PayrollReviewPage');
 const PayrollReviewsPage = lazyNamed(() => import('@/pages/payroll/PayrollReviewsPage'), 'PayrollReviewsPage');
 const EarnedWageDesk = lazyNamed(() => import('@/pages/payroll/EarnedWageDesk'), 'EarnedWageDesk');
 const DailyPayDesk = lazyNamed(() => import('@/pages/payroll/DailyPayDesk'), 'DailyPayDesk');
 const ManualChecksPage = lazyNamed(() => import('@/pages/payroll/ManualChecksPage'), 'ManualChecksPage');
 const PayChecksPage = lazyNamed(() => import('@/pages/payroll/PayChecksPage'), 'PayChecksPage');
 const W4Estimator = lazyNamed(() => import('@/pages/payroll/W4Estimator'), 'W4Estimator');
-const StateTaxCoverage = lazyNamed(() => import('@/pages/payroll/StateTaxCoverage'), 'StateTaxCoverage');
-const TaxJurisdictions = lazyNamed(() => import('@/pages/payroll/TaxJurisdictions'), 'TaxJurisdictions');
 const WotcDesk = lazyNamed(() => import('@/pages/payroll/WotcDesk'), 'WotcDesk');
 const AcaHours = lazyNamed(() => import('@/pages/benefits/AcaHours'), 'AcaHours');
 const WotcScreeningTask = lazyNamed(() => import('@/pages/onboarding/tasks/WotcScreeningTask'), 'WotcScreeningTask');
@@ -160,11 +154,8 @@ const QuickbooksSyncPage = lazyNamed(() => import('@/pages/books/quickbooks/Quic
 const PayBillPage = lazyNamed(() => import('@/pages/finance/PayBillPage'), 'PayBillPage');
 const MarketRatesHome = lazyNamed(() => import('@/pages/market/MarketRatesHome'), 'MarketRatesHome');
 const LaborRulesPage = lazyNamed(() => import('@/pages/payroll/LaborRulesPage'), 'LaborRulesPage');
-const YearEndReconciliation = lazyNamed(() => import('@/pages/payroll/YearEndReconciliation'), 'YearEndReconciliation');
-const PayrollYearEndClose = lazyNamed(
-  () => import('@/pages/payroll/PayrollYearEndClose'),
-  'PayrollYearEndClose',
-);
+// Year-end in one place (F500 G3): checklist, reconciliation and forms; the old pages redirect here.
+const YearEndPage = lazyNamed(() => import('@/pages/payroll/YearEndPage'), 'YearEndPage');
 const W4SsnRecollection = lazyNamed(
   () => import('@/pages/payroll/W4SsnRecollection'),
   'W4SsnRecollection',
@@ -273,6 +264,9 @@ const WhatsNewPage = lazyNamed(() => import('@/pages/WhatsNewPage'), 'WhatsNewPa
 const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdmin');
 const RolesPage = lazyNamed(() => import('@/pages/admin/RolesPage'), 'RolesPage');
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
+// F500 G4: the settings that were misfiled on Branding, each in its own Settings page.
+const FinanceSettingsPage = lazyNamed(() => import('@/pages/admin/FinanceSettingsPage'), 'FinanceSettingsPage');
+const ApprovalRulesPage = lazyNamed(() => import('@/pages/admin/ApprovalRulesPage'), 'ApprovalRulesPage');
 const TenantProfileHome = lazyNamed(() => import('@/pages/admin/TenantProfileHome'), 'TenantProfileHome');
 const SettingsHome = lazyNamed(() => import('@/pages/admin/SettingsHome'), 'SettingsHome');
 const SignInSettings = lazyNamed(() => import('@/pages/admin/SignInSettings'), 'SignInSettings');
@@ -613,6 +607,10 @@ const LAYOUT_ROUTES = [
     // the decision record and the kill switches. The agents themselves live in People (/agents).
     { path: 'admin/agents', element: <RequireCapability cap="view:org"><AgentGovernance /></RequireCapability> },
     { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
+    // Finance's own settings (mailbox, unverified-bank policy, remit-to, cash floor) and the
+    // second-person approval rules — both used to sit on Branding (F500 G4).
+    { path: 'admin/finance', element: <RequireCapability cap="view:hr-admin"><FinanceSettingsPage /></RequireCapability> },
+    { path: 'admin/approvals', element: <RequireCapability cap="view:hr-admin"><ApprovalRulesPage /></RequireCapability> },
     // Settings & trust → Communications: channels, WhatsApp, the do-not-email list, routing.
     { path: 'admin/communications', element: <RequireCapability cap="manage:communications"><CommunicationsSettings /></RequireCapability> },
     { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
@@ -667,7 +665,7 @@ const LAYOUT_ROUTES = [
   { path: 'marketing/bonuses', element: <RequireCapability cap="process:payroll" anyOf={['view:marketing']}><ReferralBonusDesk /></RequireCapability> },
   { path: 'skills', element: <RequireCapability cap="view:org"><SkillsHome /></RequireCapability> },
   { path: 'mentorship', element: <RequireCapability cap="view:org"><MentorshipHome /></RequireCapability> },
-  { path: 'expirations', element: <RequireCapability cap="view:org"><ExpirationsHome /></RequireCapability> },
+  { path: 'expirations', element: <RequireCapability cap="view:org" selfService="/me/wallet"><ExpirationsHome /></RequireCapability> },
   { path: 'learning-paths', element: <RequireCapability cap="view:compliance"><LearningPathsHome /></RequireCapability> },
   { path: 'succession', element: <RequireCapability cap="view:hr-admin"><SuccessionHome /></RequireCapability> },
   { path: 'probation', element: <RequireCapability cap="view:hr-admin"><ProbationHome /></RequireCapability> },
@@ -721,29 +719,32 @@ const LAYOUT_ROUTES = [
   { path: 'benefits/carriers', element: <RequireCapability cap="process:payroll"><CarrierFeeds /></RequireCapability> },
   { path: 'payroll/certified/:id', element: <RequireCapability cap="process:payroll"><CertifiedProject /></RequireCapability> },
   { path: 'payroll/certified/:id/weeks/:weekEnding', element: <RequireCapability cap="process:payroll"><CertifiedWeek /></RequireCapability> },
-  { path: 'payroll/contractors', element: <RequireCapability cap="process:payroll"><ContractorsDesk /></RequireCapability> },
+  { path: 'payroll/contractors', element: <RequireCapability cap="process:payroll"><LegacyPayrollRedirect><ContractorsDesk /></LegacyPayrollRedirect></RequireCapability> },
   { path: 'payroll/banking', element: <RequireCapability cap="process:payroll"><PayrollBankingPage /></RequireCapability> },
   { path: 'payroll/schedules', element: <RequireCapability cap="process:payroll"><PaySchedulesPage /></RequireCapability> },
   { path: 'payroll/schedules/new', element: <RequireCapability cap="process:payroll"><NewPaySchedulePage /></RequireCapability> },
   { path: 'payroll/schedules/:id', element: <RequireCapability cap="process:payroll"><PayScheduleDetailPage /></RequireCapability> },
-  { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
+  { path: 'payroll/tax-tables', element: <RequireCapability cap="process:payroll"><TaxTablesPage /></RequireCapability> },
+  // Retired: tax reference lives on Tax tables (pages/payroll/legacyPayrollRoutes).
+  { path: 'payroll/config', element: <LegacyPayrollRedirect /> },
   // ?tab=deposits and ?tab=remittances moved to the taxes and garnishment desks; the other tabs stay.
   { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><LegacyPayrollRedirect><PayrollCompliance /></LegacyPayrollRedirect></RequireCapability> },
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
   { path: 'payroll/go-live', element: <RequireCapability cap="process:payroll"><PayrollGoLivePage /></RequireCapability> },
   { path: 'payroll/financial-changes', element: <RequireCapability cap="process:payroll"><FinancialChangesQueue /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
-  { path: 'payroll/runs/:id/close', element: <RequireCapability cap="process:payroll"><PayrollClosePage /></RequireCapability> },
-  { path: 'payroll/runs/:id/checks', element: <RequireCapability cap="process:payroll"><PayrollChecksPage /></RequireCapability> },
-  { path: 'payroll/runs/:id/review', element: <RequireCapability cap="process:payroll"><PayrollReviewPage /></RequireCapability> },
+  // One run, one record (F500 G3): /payroll/runs/:id and its tabs by path — /review, /close and
+  // /checks (every existing link) land on that tab, plus /paychecks and /confirmations.
+  { path: 'payroll/runs/:id', element: <RequireCapability cap="process:payroll"><RunRecordPage /></RequireCapability> },
+  { path: 'payroll/runs/:id/:tab', element: <RequireCapability cap="process:payroll"><RunRecordPage /></RequireCapability> },
   { path: 'payroll/review', element: <RequireCapability cap="process:payroll"><PayrollReviewsPage /></RequireCapability> },
   { path: 'payroll/earned-wage', element: <RequireCapability cap="process:payroll"><EarnedWageDesk /></RequireCapability> },
   { path: 'payroll/daily-pay', element: <RequireCapability cap="process:payroll"><DailyPayDesk /></RequireCapability> },
   { path: 'payroll/manual-checks', element: <RequireCapability cap="process:payroll"><ManualChecksPage /></RequireCapability> },
   { path: 'payroll/pay-checks', element: <RequireCapability cap="process:payroll"><PayChecksPage /></RequireCapability> },
   { path: 'payroll/w4-estimator', element: <W4Estimator /> },
-  { path: 'payroll/state-tax', element: <RequireCapability cap="process:payroll"><StateTaxCoverage /></RequireCapability> },
-  { path: 'payroll/tax-jurisdictions', element: <RequireCapability cap="process:payroll"><TaxJurisdictions /></RequireCapability> },
+  { path: 'payroll/state-tax', element: <LegacyPayrollRedirect /> },
+  { path: 'payroll/tax-jurisdictions', element: <LegacyPayrollRedirect /> },
   { path: 'payroll/wotc', element: <RequireCapability cap="process:payroll" anyOf={['manage:onboarding']}><WotcDesk /></RequireCapability> },
   { path: 'benefits/aca', element: <RequireCapability cap="process:payroll"><AcaHours /></RequireCapability> },
   { path: 'finance/cash-forecast', element: <RequireCapability cap="process:payroll"><CashForecastPage /></RequireCapability> },
@@ -772,8 +773,10 @@ const LAYOUT_ROUTES = [
   { path: 'finance/pay-bill', element: <RequireCapability cap="process:payroll" anyOf={['view:executive']}><PayBillPage /></RequireCapability> },
   { path: 'market-rates', element: <RequireCapability cap="view:clients"><MarketRatesHome /></RequireCapability> },
   { path: 'payroll/labor-rules', element: <RequireCapability cap="process:payroll" anyOf={['manage:org', 'view:executive']}><LaborRulesPage /></RequireCapability> },
-  { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
-  { path: 'payroll/year-end/reconciliation', element: <RequireCapability cap="process:payroll"><YearEndReconciliation /></RequireCapability> },
+  { path: 'payroll/year-end', element: <RequireCapability cap="process:payroll"><YearEndPage /></RequireCapability> },
+  // Retired: year-end lives on one page (pages/payroll/legacyPayrollRoutes).
+  { path: 'payroll/year-end-close', element: <LegacyPayrollRedirect /> },
+  { path: 'payroll/year-end/reconciliation', element: <LegacyPayrollRedirect /> },
   { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },
   { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
   { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
@@ -870,6 +873,17 @@ export const router = createBrowserRouter([
   // shoulder-surfing privacy: nothing on screen identifies the reporter.
   {
     path: '/hotline',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <HotlinePage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  // An organization's own hotline (F500 G5): the server files the report
+  // into the organization the address names.
+  {
+    path: '/hotline/:slug',
     element: (
       <Suspense fallback={<PublicRouteFallback />}>
         <HotlinePage />

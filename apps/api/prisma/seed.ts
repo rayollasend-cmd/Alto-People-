@@ -15,18 +15,21 @@ const PORTAL_DEV_PASSWORD = 'portal-dev-2026!';
 // capabilities (granted in roles.ts); only the role label differs so audit
 // logs show who acted in which capacity. FINANCE is intentionally limited
 // to the time + pay surface.
+// Each carries a name (F500 G5): an unnamed account read as "ops" in the
+// messenger and "manager@altohr.com — manager@altohr.com" in Out of office.
 const MANAGEMENT_USERS: ReadonlyArray<{
   email: string;
   password: string;
   role: Role;
   label: string;
+  displayName: string;
 }> = [
-  { email: 'ops@altohr.com', password: 'ops-dev-2026!', role: 'OPERATIONS_MANAGER', label: 'Operations Manager' },
-  { email: 'manager@altohr.com', password: 'manager-dev-2026!', role: 'MANAGER', label: 'Manager' },
-  { email: 'recruiter@altohr.com', password: 'recruiter-dev-2026!', role: 'INTERNAL_RECRUITER', label: 'Internal Recruiter' },
-  { email: 'workforce@altohr.com', password: 'workforce-dev-2026!', role: 'WORKFORCE_MANAGER', label: 'Workforce Manager' },
-  { email: 'marketing@altohr.com', password: 'marketing-dev-2026!', role: 'MARKETING_MANAGER', label: 'Marketing Manager' },
-  { email: 'finance@altohr.com', password: 'finance-dev-2026!', role: 'FINANCE_ACCOUNTANT', label: 'Finance / Accountant' },
+  { email: 'ops@altohr.com', password: 'ops-dev-2026!', role: 'OPERATIONS_MANAGER', label: 'Operations Manager', displayName: 'Jordan Ellis' },
+  { email: 'manager@altohr.com', password: 'manager-dev-2026!', role: 'MANAGER', label: 'Manager', displayName: 'Priya Shah' },
+  { email: 'recruiter@altohr.com', password: 'recruiter-dev-2026!', role: 'INTERNAL_RECRUITER', label: 'Internal Recruiter', displayName: 'Sam Rivera' },
+  { email: 'workforce@altohr.com', password: 'workforce-dev-2026!', role: 'WORKFORCE_MANAGER', label: 'Workforce Manager', displayName: 'Casey Brooks' },
+  { email: 'marketing@altohr.com', password: 'marketing-dev-2026!', role: 'MARKETING_MANAGER', label: 'Marketing Manager', displayName: 'Riley Park' },
+  { email: 'finance@altohr.com', password: 'finance-dev-2026!', role: 'FINANCE_ACCOUNTANT', label: 'Finance / Accountant', displayName: 'Morgan Lee' },
 ];
 
 // Transportation logins carry a person (the driver's name is what riders
@@ -67,6 +70,7 @@ async function main() {
     adminUser = await prisma.user.create({
       data: {
         email: 'admin@altohr.com',
+        displayName: 'Alex Morgan',
         passwordHash: await hashPassword(ADMIN_DEV_PASSWORD),
         role: 'HR_ADMINISTRATOR',
         status: 'ACTIVE',
@@ -84,6 +88,9 @@ async function main() {
     });
   } else {
     adminUser = existingAdmin;
+  }
+  if (!adminUser.displayName) {
+    adminUser = await prisma.user.update({ where: { id: adminUser.id }, data: { displayName: 'Alex Morgan' } });
   }
 
   // ---- Client ------------------------------------------------------------
@@ -445,12 +452,17 @@ async function main() {
       await prisma.user.create({
         data: {
           email: m.email,
+          displayName: m.displayName,
           passwordHash: await hashPassword(m.password),
           role: m.role,
           status: 'ACTIVE',
         },
       });
-    } else if (!existing.passwordHash || existing.role !== m.role) {
+    } else if (!existing.displayName) {
+      // An account seeded before names: give it one, leave everything else.
+      await prisma.user.update({ where: { id: existing.id }, data: { displayName: m.displayName } });
+    }
+    if (existing && (!existing.passwordHash || existing.role !== m.role)) {
       await prisma.user.update({
         where: { id: existing.id },
         data: {

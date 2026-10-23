@@ -10,9 +10,14 @@ import {
   type BenefitsPlanListResponse,
 } from '@alto-people/shared';
 import { toDateOnly } from '@alto-people/shared';
+import type { Prisma } from '@prisma/client';
+import { can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
+import { primaryClientsForAssociates } from '../lib/associateClients.js';
+import { scopeActiveAssociates, scopeClients, scopeWhere } from '../lib/scope.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 
 export const benefitsRouter = Router();
 
@@ -46,6 +51,169 @@ benefitsRouter.get('/plans', async (req, res, next) => {
     const plans: BenefitsPlan[] = rows.map(toPlan);
     const body: BenefitsPlanListResponse = { plans };
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The client whose plans an associate may elect: where they work today
+ * (an open assignment), else their most recently approved application's
+ * client (lib/associateClients), else their newest application's. One
+ * rule for what the page offers and what enrolling allows.
+ */
+export async function benefitsClientFor(associateId: string): Promise<{ clientId: string; clientName: string } | null> {
+  const primary = (await primaryClientsForAssociates([associateId])).get(associateId);
+  if (primary) return primary;
+  const app = await prisma.application.findFirst({
+    where: { associateId, deletedAt: null, clientId: { not: null } },
+    orderBy: { createdAt: 'desc' },
+    select: { client: { select: { id: true, name: true } } },
+  });
+  return app?.client ? { clientId: app.client.id, clientName: app.client.name } : null;
+}
+
+/**
+ * GET /benefits/plans/mine — the plans the signed-in associate can elect,
+ * resolved on the server from their placement. The page used to ask
+ * /scheduling/clients for a client id first, which an associate may not
+ * read (403), so associates never saw a plan.
+ */
+benefitsRouter.get('/plans/mine', async (req, res, next) => {
+  try {
+    const associateId = req.user!.associateId;
+    if (!associateId) {
+      res.json({ client: null, plans: [] });
+      return;
+    }
+    const client = await benefitsClientFor(associateId);
+    if (!client) {
+      res.json({ client: null, plans: [] });
+      return;
+    }
+    const rows = await prisma.benefitsPlan.findMany({
+      where: { tenantId: tenantIdForWrite(), clientId: client.clientId, isActive: true },
+      orderBy: [{ kind: 'asc' }, { name: 'asc' }],
+      take: 200,
+    });
+    res.json({ client: { id: client.clientId, name: client.clientName }, plans: rows.map(toPlan) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /benefits/overview — the benefits desk for people who run it (HR,
+ * finance), not the person enrolling: plans by client with how many are
+ * enrolled and what they put in each pay period, open enrollment, life
+ * events waiting, COBRA offers not yet answered, and each carrier feed's
+ * last file. Clients and people are the caller's reach (scopeClients,
+ * scopeActiveAssociates), in the caller's tenant. Carrier feeds need
+ * process:payroll (their own page's gate) and are omitted otherwise.
+ */
+// The desk view is for whoever runs benefits — never an associate's.
+const RUNS_BENEFITS = requireAnyCapability('process:payroll', 'view:hr-admin');
+
+benefitsRouter.get('/overview', RUNS_BENEFITS, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const tenantId = tenantIdForWrite();
+    const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    const clients = await prisma.client.findMany({
+      where: scopeWhere<Prisma.ClientWhereInput>({ tenantId }, scopeClients(user)),
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+      take: 2000,
+    });
+    const clientIds = clients.map((c) => c.id);
+    const people: Prisma.AssociateWhereInput = scopeActiveAssociates(user, { former: true });
+    const [plans, enrollments, windows, qlesWaiting, cobraPending] = await Promise.all([
+      prisma.benefitsPlan.findMany({ where: { tenantId, clientId: { in: clientIds } }, orderBy: [{ kind: 'asc' }, { name: 'asc' }], take: 2000 }),
+      prisma.benefitsEnrollment.findMany({
+        where: {
+          tenantId,
+          plan: { clientId: { in: clientIds } },
+          effectiveDate: { lte: today },
+          OR: [{ terminationDate: null }, { terminationDate: { gt: today } }],
+          associate: people,
+        },
+        select: { planId: true, associateId: true, electedAmountCentsPerPeriod: true },
+        take: 50_000,
+      }),
+      prisma.openEnrollmentWindow.findMany({
+        where: { tenantId, clientId: { in: clientIds }, status: { in: ['DRAFT', 'OPEN'] }, endsOn: { gte: today } },
+        include: { client: { select: { name: true } } },
+        orderBy: { startsOn: 'asc' },
+        take: 50,
+      }),
+      prisma.qualifyingLifeEvent.count({ where: { tenantId, status: 'PENDING', associate: people } }),
+      prisma.cobraOffer.count({ where: { tenantId, status: 'NOTIFIED', electionDeadline: { gte: today }, associate: people } }),
+    ]);
+    const byPlan = new Map<string, { people: Set<string>; employeeCents: number }>();
+    for (const e of enrollments) {
+      const b = byPlan.get(e.planId) ?? { people: new Set<string>(), employeeCents: 0 };
+      b.people.add(e.associateId);
+      b.employeeCents += e.electedAmountCentsPerPeriod;
+      byPlan.set(e.planId, b);
+    }
+    const planRows = plans.map((p) => {
+      const b = byPlan.get(p.id);
+      const enrolled = b?.people.size ?? 0;
+      return {
+        id: p.id,
+        clientId: p.clientId,
+        name: p.name,
+        kind: p.kind,
+        isActive: p.isActive,
+        enrolled,
+        // Per pay period, as elected — not converted to a month (pay schedules differ).
+        employeeCentsPerPeriod: b?.employeeCents ?? 0,
+        employerCentsPerPeriod: p.employerContributionCentsPerPeriod * enrolled,
+      };
+    });
+    const byClient = clients
+      .map((c) => {
+        const mine = planRows.filter((p) => p.clientId === c.id);
+        return { clientId: c.id, clientName: c.name, plans: mine };
+      })
+      .filter((c) => c.plans.length > 0);
+    const enrolledPeople = new Set(enrollments.map((e) => e.associateId)).size;
+    let carriers: Array<{ id: string; name: string; active: boolean; members: number; lastFile: { createdAt: string; mode: string; status: string; controlNumber: number; memberCount: number } | null }> | undefined;
+    if (can(user, 'process:payroll')) {
+      const [rows, files, carrierPlans] = await Promise.all([
+        prisma.benefitCarrier.findMany({ where: { tenantId }, orderBy: { name: 'asc' } }),
+        prisma.edi834File.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' }, distinct: ['carrierId'], select: { carrierId: true, createdAt: true, mode: true, status: true, controlNumber: true, memberCount: true } }),
+        prisma.benefitsPlan.findMany({ where: { tenantId, carrierId: { not: null } }, select: { id: true, carrierId: true } }),
+      ]);
+      carriers = rows.map((c) => {
+        const planIds = new Set(carrierPlans.filter((p) => p.carrierId === c.id).map((p) => p.id));
+        const members = new Set(enrollments.filter((e) => planIds.has(e.planId)).map((e) => e.associateId)).size;
+        const f = files.find((x) => x.carrierId === c.id);
+        return { id: c.id, name: c.name, active: c.active, members, lastFile: f ? { createdAt: f.createdAt.toISOString(), mode: f.mode, status: f.status, controlNumber: f.controlNumber, memberCount: f.memberCount } : null };
+      });
+    }
+    res.json({
+      totals: {
+        activePlans: plans.filter((p) => p.isActive).length,
+        enrolledPeople,
+        employeeCentsPerPeriod: planRows.reduce((t, p) => t + p.employeeCentsPerPeriod, 0),
+        employerCentsPerPeriod: planRows.reduce((t, p) => t + p.employerCentsPerPeriod, 0),
+        lifeEventsWaiting: qlesWaiting,
+        cobraPending,
+      },
+      clients: byClient,
+      openEnrollment: windows.map((w) => ({
+        id: w.id,
+        clientId: w.clientId,
+        clientName: w.client.name,
+        name: w.name,
+        status: w.status,
+        startsOn: w.startsOn.toISOString().slice(0, 10),
+        endsOn: w.endsOn.toISOString().slice(0, 10),
+        effectiveOn: w.effectiveOn.toISOString().slice(0, 10),
+      })),
+      ...(carriers ? { carriers } : {}),
+    });
   } catch (err) {
     next(err);
   }
@@ -216,13 +384,8 @@ async function enrollAssociate(
   // For self-service, the plan must belong to the associate's client.
   // (HR-side enrollment can override later when we add admin endpoints.)
   if (selfService) {
-    const associate = await prisma.associate.findUnique({
-      where: { id: associateId },
-      include: {
-        applications: { select: { clientId: true }, take: 1, orderBy: { createdAt: 'desc' } },
-      },
-    });
-    const clientId = associate?.applications[0]?.clientId;
+    // The same client GET /benefits/plans/mine offers plans from.
+    const clientId = (await benefitsClientFor(associateId))?.clientId;
     if (clientId && plan.clientId !== clientId) {
       throw new HttpError(
         403,

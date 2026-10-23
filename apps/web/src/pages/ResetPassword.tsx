@@ -1,7 +1,10 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
+import { LinkProblem } from '@/components/LinkProblem';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
@@ -56,6 +59,26 @@ function ShowPasswordToggle({
 export function ResetPassword() {
   const { token = '' } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  // Ask first whether the link still works (non-consuming), so a dead link
+  // says so up front — not after two 12-character passwords (F500 G5).
+  const check = useQuery({
+    queryKey: ['auth', 'reset-link', token],
+    queryFn: () => apiFetch<{ email: string; expiresAt: string }>(`/auth/reset-password/${encodeURIComponent(token)}`),
+    enabled: !!token,
+    retry: false,
+    staleTime: Infinity,
+  });
+  const linkState: 'checking' | 'ok' | 'expired' | 'invalid' | 'unknown' = !token
+    ? 'invalid'
+    : check.isPending
+      ? 'checking'
+      : check.data
+        ? 'ok'
+        : check.error instanceof ApiError && check.error.status === 410
+          ? 'expired'
+          : check.error instanceof ApiError && check.error.status === 404
+            ? 'invalid'
+            : 'unknown';
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -90,9 +113,7 @@ export function ResetPassword() {
       if (err instanceof NetworkError) {
         setError('Network error — check your connection and try again.');
       } else if (err instanceof ApiError && err.code === 'invalid_token') {
-        setError(
-          'This reset link is invalid or expired. Request a new one from the sign-in page.'
-        );
+        setError('expired');
       } else if (err instanceof ApiError) {
         setError(err.message);
       } else {
@@ -102,6 +123,46 @@ export function ResetPassword() {
       setSubmitting(false);
     }
   };
+
+  const newLink = (
+    <Button asChild size="lg" className="w-full sm:w-auto">
+      <Link to="/forgot-password">Send me a new link</Link>
+    </Button>
+  );
+
+  if (linkState === 'checking') {
+    return (
+      <AuthShell>
+        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3" aria-busy="true">
+          <AuthCardTitle>New password</AuthCardTitle>
+          <Skeleton className="h-4 w-3/4 mb-6" />
+          <Skeleton className="h-10 w-full mb-3" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      </AuthShell>
+    );
+  }
+  if (linkState === 'expired' || linkState === 'invalid') {
+    return (
+      <AuthShell>
+        <LinkProblem
+          kind={linkState}
+          title={linkState === 'expired' ? 'This reset link has expired' : 'This reset link isn’t valid'}
+          reason={
+            linkState === 'expired'
+              ? 'Reset links work for one hour, and only once. Ask for a new one — it takes a minute.'
+              : 'It may have been cut off or mistyped. Ask for a new one — it takes a minute.'
+          }
+          action={newLink}
+        >
+          <Link to="/login" className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
+            <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+            Back to sign in
+          </Link>
+        </LinkProblem>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell>
@@ -123,6 +184,11 @@ export function ResetPassword() {
         >
           <AuthCardTitle>New password</AuthCardTitle>
           <p className="text-silver text-sm mb-6">
+            {check.data ? (
+              <>
+                For <span className="text-ink" data-testid="reset-email">{check.data.email}</span>.{' '}
+              </>
+            ) : null}
             Pick something you don't use on other sites. Minimum 12
             characters.
           </p>
@@ -194,7 +260,17 @@ export function ResetPassword() {
             </Field>
           </div>
 
-          {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
+          {error === 'expired' ? (
+            // The submit-time answer offers the action, not directions to it.
+            <ErrorBanner className="mt-4">
+              This reset link has expired or was already used.{' '}
+              <Link to="/forgot-password" className="font-medium underline underline-offset-2">
+                Send me a new link
+              </Link>
+            </ErrorBanner>
+          ) : (
+            error && <ErrorBanner className="mt-4">{error}</ErrorBanner>
+          )}
 
           <Button
             type="submit"

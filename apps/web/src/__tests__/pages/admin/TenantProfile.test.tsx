@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -7,9 +7,11 @@ import { ROLE_CAPABILITIES, defaultTenantProfile, type Capability } from '@alto-
 import { AuthContext, DEFAULT_TENANT, type TenantSession } from '@/lib/auth';
 
 vi.mock('@/lib/tenantProfileApi', () => ({ getTenantProfile: vi.fn(), saveTenantProfile: vi.fn() }));
+vi.mock('@/lib/brandingApi', () => ({ getOrgBranding: vi.fn(), patchOrgBranding: vi.fn() }));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true), usePrompt: () => vi.fn() }));
 
 import { getTenantProfile, saveTenantProfile } from '@/lib/tenantProfileApi';
+import { getOrgBranding, patchOrgBranding } from '@/lib/brandingApi';
 import { TenantProfileHome } from '@/pages/admin/TenantProfileHome';
 
 const profile = defaultTenantProfile('WORKFORCE_PROVIDER');
@@ -47,8 +49,11 @@ function renderPage(tenant: TenantSession = DEFAULT_TENANT) {
 }
 
 beforeEach(() => {
+  vi.mocked(getOrgBranding).mockResolvedValue({ weekStartsOn: 6, timezone: 'America/New_York' } as never);
+  vi.mocked(patchOrgBranding).mockImplementation(async (body) => ({ weekStartsOn: 6, timezone: 'America/New_York', ...body }) as never);
   vi.mocked(getTenantProfile).mockResolvedValue({
     tenantId: 't1',
+    facts: { name: 'Coastal Resort Holdings', plan: 'growth', createdAt: '2025-03-01T12:00:00.000Z', onTheBooks: 212, sites: 9 },
     profile,
     defaults: { modules: profile.modules, terminology: profile.terminology },
     catalog: { businessModels: ['DIRECT_EMPLOYER', 'WORKFORCE_PROVIDER', 'MANAGED_PROGRAM', 'HYBRID'], modules: [], termKeys: [] },
@@ -104,5 +109,32 @@ describe('Organization profile', () => {
     await screen.findByRole('checkbox', { name: /^Transportation/ });
     await user.click(screen.getByRole('button', { name: "Reset to the model's defaults" }));
     await waitFor(() => expect(saveTenantProfile).toHaveBeenCalledWith({ businessModel: 'WORKFORCE_PROVIDER', resetToDefaults: true }));
+  });
+
+  it('the header says what this organization is, each number linked to its list', async () => {
+    renderPage();
+    await screen.findByRole('checkbox', { name: /^Transportation/ });
+    const fact = (label: string) => screen.getByText(label, { selector: 'dt' }).nextElementSibling!;
+    expect(fact('Name')).toHaveTextContent('Coastal Resort Holdings');
+    expect(fact('Plan')).toHaveTextContent('Growth');
+    expect(fact('People on the books')).toHaveTextContent('212');
+    expect(fact('People on the books').querySelector('a')).toHaveAttribute('href', '/people');
+    // No row of link chips that repeats the Settings rail.
+    expect(screen.queryByRole('navigation', { name: 'Organization' })).toBeNull();
+  });
+
+  it('the workweek and time zone moved here from Branding, and save from the same bar', async () => {
+    vi.mocked(saveTenantProfile).mockClear();
+    const user = userEvent.setup();
+    renderPage();
+    const week = (await screen.findByLabelText('Workweek starts on')) as HTMLSelectElement;
+    await waitFor(() => expect(week.value).toBe('6'));
+    await user.selectOptions(week, '1');
+    const bar = screen.getByTestId('settings-save-bar');
+    expect(bar).toHaveTextContent('1 unsaved change.');
+    await user.click(within(bar).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchOrgBranding).toHaveBeenCalledWith({ weekStartsOn: 1, timezone: 'America/New_York' }));
+    // Only the calendar changed: the profile is not re-sent.
+    expect(saveTenantProfile).not.toHaveBeenCalled();
   });
 });

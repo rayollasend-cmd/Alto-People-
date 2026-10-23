@@ -1,4 +1,8 @@
+import { useQuery } from '@tanstack/react-query';
 import { PRODUCT_NAME } from '@alto-people/shared';
+import { apiFetch } from '@/lib/api';
+import { LANGS } from '@/lib/i18n';
+import { fmtPhone, phoneHref } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionTitle } from '@/components/ui/SectionTitle';
@@ -19,10 +23,34 @@ const COVERED: Array<{ title: string; body: string }> = [
   { title: 'Contrast and themes', body: 'Text and controls meet WCAG AA contrast in both the dark and the light theme; the pairs are tested in the build.' },
   { title: 'Phones and touch', body: 'Touch targets are at least 44 pixels, text can be enlarged to 200 percent, and the layout holds at phone width without sideways scrolling.' },
   { title: 'Motion', body: 'Animation respects the system’s reduced-motion setting.' },
-  { title: 'Languages', body: 'The screens a frontline worker uses are available in English, Spanish and Turkish.' },
 ];
 
+/** "English, Spanish, …, and Ukrainian" — the languages the app ships, from the one list (LANGS), never typed by hand. */
+export function languagesSentence(langs: readonly string[] = LANGS): string {
+  const names = langs.map((l) => {
+    try {
+      return new Intl.DisplayNames(['en'], { type: 'language' }).of(l) ?? l;
+    } catch {
+      return l;
+    }
+  });
+  const list = names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `The screens a frontline worker uses are available in ${list}.`;
+}
+
+interface Contact {
+  email: string;
+  phone: string | null;
+  hours: string | null;
+}
+
 export function AccessibilityPage() {
+  // A direct line for anyone — a job applicant or a member of the public has
+  // neither the in-app Help menu nor an account team (F500 G5). The
+  // platform's published support contact (the one in every email footer).
+  const cfg = useQuery({ queryKey: ['support', 'config'], queryFn: () => apiFetch<{ contact?: Contact }>('/support/config'), retry: false, staleTime: 60 * 60_000 });
+  const contact = cfg.data?.contact ?? null;
+  const covered = [...COVERED, { title: 'Languages', body: languagesSentence() }];
   return (
     <PublicShell eyebrow="Accessibility">
       <div>
@@ -45,7 +73,7 @@ export function AccessibilityPage() {
         <SectionTitle id="a11y-covered" title="What is covered" />
         <Card>
           <CardContent className="divide-y divide-line p-0">
-            {COVERED.map((c) => (
+            {covered.map((c) => (
               <div key={c.title} className="px-4 py-3">
                 <div className="font-medium text-ink">{c.title}</div>
                 <p className="mt-0.5 max-w-prose text-sm text-ink-muted">{c.body}</p>
@@ -67,8 +95,27 @@ export function AccessibilityPage() {
       <section aria-labelledby="a11y-contact" className="rounded-lg border border-line bg-surface p-5">
         <SectionTitle id="a11y-contact" title="Something in the way?" className="mb-0" />
         <p className="mt-1 max-w-prose text-sm text-ink-muted">
-          Tell us from the Help menu inside the app, or through your account team if you do not have an account yet. We answer within two business days and fix what blocks a task first.
+          Write or call us directly — no account needed — or use the Help menu inside the app. We answer within two business days and fix what blocks a task first.
         </p>
+        {contact && (
+          <ul className="mt-3 space-y-1 text-sm" data-testid="a11y-contact-line">
+            <li>
+              <span className="text-ink-muted">Email </span>
+              <a href={`mailto:${contact.email}?subject=${encodeURIComponent('Accessibility')}`} className="text-accent underline underline-offset-2">
+                {contact.email}
+              </a>
+            </li>
+            {contact.phone && (
+              <li>
+                <span className="text-ink-muted">Phone </span>
+                <a href={phoneHref(contact.phone) ?? undefined} className="text-accent underline underline-offset-2">
+                  {fmtPhone(contact.phone)}
+                </a>
+                {contact.hours && <span className="text-ink-muted"> · {contact.hours}</span>}
+              </li>
+            )}
+          </ul>
+        )}
         <p className="mt-3 text-xs2 text-ink-muted">Statement dated {fmtDateOnly(STATEMENT_DATE)}. Reviewed with each release.</p>
       </section>
     </PublicShell>

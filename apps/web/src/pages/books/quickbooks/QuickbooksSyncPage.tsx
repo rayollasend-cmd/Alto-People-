@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Info, Link2, Pause, Play, RefreshCcw, Unplug } from 'lucide-react';
 import type { QboSyncStatus } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
-import { useConfirm } from '@/lib/confirm';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
   disconnectQbo,
@@ -21,6 +20,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import type { PageAction } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -89,21 +90,46 @@ export function QuickbooksSyncPage() {
 
   const s = status.data;
   const conn = s?.connection ?? null;
+  const paused = conn?.status === 'PAUSED';
+  const pause = useMutation({
+    mutationFn: () => (paused ? resumeQbo() : pauseQbo()),
+    onSuccess: () => {
+      toast.success(paused ? 'The sync is running again.' : 'The sync is paused.');
+      void refresh();
+    },
+    onError: (err) => toast.error(errMsg(err)),
+  });
+  const disconnect = useMutation({
+    mutationFn: disconnectQbo,
+    onSuccess: () => {
+      toast.success('QuickBooks is disconnected.');
+      void refresh();
+    },
+    onError: (err) => toast.error(errMsg(err)),
+  });
+  // Sync now leads; pause beside it; disconnecting is destructive, so it waits under More behind its confirm.
+  const actions: PageAction[] =
+    manage && conn
+      ? [
+          ...(conn.status === 'CONNECTED' ? [{ key: 'sync', label: 'Sync now', icon: RefreshCcw, primary: true, loading: sync.isPending, onSelect: () => sync.mutate() }] : []),
+          ...(conn.status !== 'NEEDS_RECONNECT' ? [{ key: 'pause', label: paused ? 'Resume' : 'Pause', icon: paused ? Play : Pause, loading: pause.isPending, onSelect: () => pause.mutate() }] : []),
+          {
+            key: 'disconnect',
+            label: 'Disconnect',
+            icon: Unplug,
+            destructive: true,
+            loading: disconnect.isPending,
+            confirm: { title: 'Disconnect QuickBooks?', description: 'Nothing more goes over or comes back. Both sets of books keep what they have; changes waiting to go are dropped. You can connect again any time.', confirmLabel: 'Disconnect', destructive: true },
+            onSelect: () => disconnect.mutate(),
+          },
+        ]
+      : [];
 
   return (
     <ListTemplate
       title="QuickBooks sync"
-      subtitle="Your company’s QuickBooks kept in step with the books here, both ways: what the site makes goes over, what your accountant does there comes back."
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'QuickBooks sync' }]}
-      primaryAction={
-        manage && conn?.status === 'CONNECTED' ? (
-          <Button onClick={() => sync.mutate()} loading={sync.isPending}>
-            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-            Sync now
-          </Button>
-        ) : undefined
-      }
-      secondaryActions={manage && conn ? <ConnectionActions status={conn.status} onChanged={refresh} /> : undefined}
+      subtitle="Your company’s QuickBooks kept in step with the books here, both ways: what’s made here goes over, what your accountant does there comes back."
+      actions={actions}
       summary={s && conn ? <Summary s={s} /> : undefined}
     >
       {status.isError ? (
@@ -123,7 +149,7 @@ export function QuickbooksSyncPage() {
               )}
             </Banner>
           )}
-          {conn.status === 'PAUSED' && <Banner tone="warning" title="The sync is paused" body="Changes on the site wait in the queue and nothing is brought in from QuickBooks until it’s resumed." />}
+          {conn.status === 'PAUSED' && <Banner tone="warning" title="The sync is paused" body="Changes made here wait in the queue and nothing is brought in from QuickBooks until it’s resumed." />}
           {conn.status === 'CONNECTED' && conn.lastError && <Banner tone="warning" title="The last sync stopped part way" body={conn.lastError} />}
           <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
             <div className="-mx-1 overflow-x-auto px-1">
@@ -199,39 +225,12 @@ function Summary({ s }: { s: QboSyncStatus }) {
           No Intuit keys are set on this server, so QuickBooks is simulated end to end. Set INTUIT_CLIENT_ID and INTUIT_CLIENT_SECRET to connect the real company.
         </p>
       )}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Waiting to go" value={s.counts.pending} hint="site changes queued for QuickBooks" />
-        <MetricCard label="Couldn’t go" value={s.counts.failed} accent={s.counts.failed > 0} hint="stopped after six tries" />
-        <MetricCard label="Waiting for a decision" value={s.counts.conflicts} accent={s.counts.conflicts > 0} hint="changed on both sides" />
-        <MetricCard label="Records linked" value={s.counts.linked} hint="accounts, vendors, customers, transactions" />
-      </div>
-    </div>
-  );
-}
-
-function ConnectionActions({ status, onChanged }: { status: string; onChanged: () => void }) {
-  const confirm = useConfirm();
-  const pause = useMutation({ mutationFn: status === 'PAUSED' ? resumeQbo : pauseQbo, onSuccess: () => { toast.success(status === 'PAUSED' ? 'The sync is running again.' : 'The sync is paused.'); onChanged(); }, onError: (err) => toast.error(errMsg(err)) });
-  const disconnect = useMutation({ mutationFn: disconnectQbo, onSuccess: () => { toast.success('QuickBooks is disconnected.'); onChanged(); }, onError: (err) => toast.error(errMsg(err)) });
-  return (
-    <div className="flex flex-wrap gap-2">
-      {status !== 'NEEDS_RECONNECT' && (
-        <Button variant="outline" size="sm" onClick={() => pause.mutate()} loading={pause.isPending}>
-          {status === 'PAUSED' ? <Play className="h-4 w-4" aria-hidden="true" /> : <Pause className="h-4 w-4" aria-hidden="true" />}
-          {status === 'PAUSED' ? 'Resume' : 'Pause'}
-        </Button>
-      )}
-      <Button
-        variant="ghost"
-        size="sm"
-        loading={disconnect.isPending}
-        onClick={async () => {
-          if (await confirm({ title: 'Disconnect QuickBooks?', description: 'Nothing more goes over or comes back. Both sets of books keep what they have; changes waiting to go are dropped. You can connect again any time.', confirmLabel: 'Disconnect', destructive: true })) disconnect.mutate();
-        }}
-      >
-        <Unplug className="h-4 w-4" aria-hidden="true" />
-        Disconnect
-      </Button>
+      <MetricStrip label="The sync at a glance">
+        <MetricCard label="Waiting to go" value={s.counts.pending} hint="changes made here, queued for QuickBooks" href="/books/quickbooks?tab=waiting" />
+        <MetricCard label="Couldn’t go" value={s.counts.failed} tone={s.counts.failed > 0 ? 'alert' : 'default'} hint="stopped after six tries" href="/books/quickbooks?tab=waiting" />
+        <MetricCard label="Waiting for a decision" value={s.counts.conflicts} tone={s.counts.conflicts > 0 ? 'warning' : 'default'} hint="changed on both sides" href="/books/quickbooks" />
+        <MetricCard label="Records linked" value={s.counts.linked} hint="accounts, vendors, customers, transactions" href="/books/quickbooks?tab=mapping" />
+      </MetricStrip>
     </div>
   );
 }
@@ -239,7 +238,7 @@ function ConnectionActions({ status, onChanged }: { status: string; onChanged: (
 /* ---- Not connected: what will happen ------------------------------------ */
 
 const TO_QBO = ['Your chart of accounts, vendors and clients (as customers)', 'Journal entries: payroll as summary lines, depreciation, accruals, entries made by hand', 'Approved vendor bills and their payments', 'Finalized client statements as invoices, and the payments against them'];
-const FROM_QBO = ['Accounts and vendors your accountant adds or changes', 'Expenses, deposits, transfers, journal entries, bills and invoices entered there', 'Edits and deletes — the site follows them'];
+const FROM_QBO = ['Accounts and vendors your accountant adds or changes', 'Expenses, deposits, transfers, journal entries, bills and invoices entered there', 'Edits and deletes — the books here follow them'];
 
 function NotConnected({ s, manage, onConnect, connecting }: { s: QboSyncStatus; manage: boolean; onConnect: () => void; connecting: boolean }) {
   return (
@@ -252,7 +251,7 @@ function NotConnected({ s, manage, onConnect, connecting }: { s: QboSyncStatus; 
           <SectionTitle
             className="mb-0 min-w-0 flex-1"
             title="Connect your company’s QuickBooks"
-            description="Everything on the site goes to QuickBooks, and everything your accountant does in QuickBooks comes back — within minutes, both ways. Payroll goes over as totals, so people’s pay stays here."
+            description="Everything in the books here goes to QuickBooks, and everything your accountant does in QuickBooks comes back — within minutes, both ways. Payroll goes over as totals, so people’s pay stays here."
           />
           {manage ? (
             <Button className="shrink-0" onClick={onConnect} loading={connecting}>
@@ -263,8 +262,8 @@ function NotConnected({ s, manage, onConnect, connecting }: { s: QboSyncStatus; 
           )}
         </div>
         <div className="grid gap-4 md:grid-cols-2">
-          <Flow icon={ArrowUpFromLine} title="From the site to QuickBooks" items={TO_QBO} />
-          <Flow icon={ArrowDownToLine} title="From QuickBooks to the site" items={FROM_QBO} />
+          <Flow icon={ArrowUpFromLine} title="From here to QuickBooks" items={TO_QBO} />
+          <Flow icon={ArrowDownToLine} title="From QuickBooks to here" items={FROM_QBO} />
         </div>
         <ul className="space-y-1.5 text-sm text-ink-muted">
           <li className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden="true" />Each record has one home. Changed on both sides, it waits for a person to pick the version to keep — nothing is overwritten silently.</li>

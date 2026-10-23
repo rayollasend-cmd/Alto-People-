@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, CalendarCheck2, Download, FileText, Inbox, Landmark, RefreshCw, Scale, ShieldCheck, Wallet } from 'lucide-react';
+import { AlertTriangle, CalendarCheck2, Download, FileText, History, Inbox, Landmark, RefreshCw, Scale, ShieldCheck, Wallet } from 'lucide-react';
 import {
   cancelTaxPayment,
   createTaxPayment,
@@ -28,16 +28,18 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtMoney } from '@/lib/format';
+import { useUrlParam } from '@/lib/useUrlState';
 import { DueBadge, KIND_SHORT, LiabilityBadge, PaymentBadge, ReturnBadge, dueText, localToday, quarterName } from './taxShared';
 import { ReturnsTab } from './ReturnsTab';
 import { NoticesTab } from './NoticesTab';
-import { AgenciesTab } from './AgenciesTab';
+import { AgenciesTab, RebuildDialog } from './AgenciesTab';
 import { ReconciliationTab } from './ReconciliationTab';
 
 /**
@@ -50,27 +52,26 @@ import { ReconciliationTab } from './ReconciliationTab';
 type Tab = 'overview' | 'deposits' | 'returns' | 'reconciliation' | 'notices' | 'agencies';
 const TABS: Tab[] = ['overview', 'deposits', 'returns', 'reconciliation', 'notices', 'agencies'];
 
+/** "2026-Q4" → "Q4 2026". */
+export function quarterShort(label: string): string {
+  const m = /^(\d{4})-Q([1-4])$/.exec(label);
+  return m ? `Q${m[2]} ${m[1]}` : label;
+}
+
 export function PayrollTaxesDesk() {
-  const [params, setParams] = useSearchParams();
-  const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'overview') as Tab;
-  const setTab = (t: Tab) => {
-    const next = new URLSearchParams(params);
-    if (t === 'overview') next.delete('tab');
-    else next.set('tab', t);
-    setParams(next, { replace: true });
-  };
+  // A tab is a place: Back returns to the one you came from; ?tab= deep links keep working.
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'overview', TABS, { history: 'push' });
   const overview = useQuery({ queryKey: ['payroll-taxes', 'overview'], queryFn: getTaxOverview });
 
   return (
     <ListTemplate
       title="Payroll taxes"
       subtitle="What payroll owes each tax agency and when it’s due, the returns each quarter needs, and the letters agencies send."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Payroll taxes' }]}
-      secondaryActions={
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/payroll/garnishments">Garnishments</Link>
-        </Button>
-      }
+      related={[
+        { label: 'Year-end forms', to: '/payroll/year-end?tab=forms' },
+        { label: 'Tax tables', to: '/payroll/tax-tables' },
+        { label: 'Garnishments', to: '/payroll/garnishments' },
+      ]}
       summary={overview.data && tab === 'overview' ? <FilingBanner filing={overview.data.filing} /> : null}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -88,9 +89,11 @@ export function PayrollTaxesDesk() {
           <OverviewTab query={overview} onTab={setTab} />
         </TabsContent>
         <TabsContent value="deposits">
+          <UnpostedAlert overview={overview.data} />
           <DepositsTab provider={overview.data?.filing.mode === 'PROVIDER'} providerLabel={overview.data?.filing.providerLabel ?? null} />
         </TabsContent>
         <TabsContent value="returns">
+          <UnpostedAlert overview={overview.data} />
           <ReturnsTab provider={overview.data?.filing.mode === 'PROVIDER'} />
         </TabsContent>
         <TabsContent value="reconciliation">
@@ -104,6 +107,54 @@ export function PayrollTaxesDesk() {
         </TabsContent>
       </Tabs>
     </ListTemplate>
+  );
+}
+
+/* ----- Paid payrolls whose taxes never posted ------------------------------------- */
+
+/**
+ * The paid payrolls whose taxes never reached this desk. Every number on it
+ * — "paid up", this quarter, the returns — leaves them out until they post,
+ * so this sits above them, with the fix: post them (the Agencies tab's "Post
+ * past payrolls", from the oldest such payday), or, for a run with no paid
+ * paychecks to post from, open the run.
+ */
+export function UnpostedAlert({ overview }: { overview: TaxOverview | undefined }) {
+  const [posting, setPosting] = useState(false);
+  const u = overview?.unposted;
+  if (!u || u.count === 0) return null;
+  const postable = u.runs.filter((r) => !r.paychecksMissing);
+  const broken = u.runs.filter((r) => r.paychecksMissing);
+  const oldest = postable[0]?.paidOn ?? null;
+  const runWord = (n: number) => (n === 1 ? 'paid payroll' : 'paid payrolls');
+  return (
+    <div role="alert" className="mb-4 flex flex-col gap-3 rounded-lg border border-alert/40 bg-alert/[0.06] p-4 sm:flex-row sm:items-start" data-testid="unposted-taxes">
+      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-alert" aria-hidden />
+      <div className="min-w-0 flex-1 text-sm">
+        <p className="font-medium text-ink">
+          {`${u.count} ${runWord(u.count)} ${u.count === 1 ? 'hasn’t' : 'haven’t'} posted ${u.count === 1 ? 'its' : 'their'} taxes (${fmtMoney(u.amount)})`}
+        </p>
+        <p className="mt-0.5 text-ink-muted">Deposits, this quarter’s numbers and the returns below leave {u.count === 1 ? 'it' : 'them'} out until {u.count === 1 ? 'it posts' : 'they post'}.</p>
+        {broken.length > 0 && (
+          <ul className="mt-1.5 space-y-0.5 text-ink-muted">
+            {broken.map((r) => (
+              <li key={r.id}>
+                {`${r.periodStart && r.periodEnd ? fmtDateOnlyRange(r.periodStart, r.periodEnd) : 'A paid run'} records ${fmtMoney(r.amount)} in taxes but has no paid paychecks to post them from. `}
+                <Link to={`/payroll/runs/${r.id}`} className="text-accent underline underline-offset-2">
+                  Open the run
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {postable.length > 0 && (
+        <Button size="sm" className="shrink-0" onClick={() => setPosting(true)}>
+          <History className="mr-1.5 h-4 w-4" aria-hidden /> Post past payrolls
+        </Button>
+      )}
+      {posting && <RebuildDialog initialFrom={oldest} onClose={() => setPosting(false)} />}
+    </div>
   );
 }
 
@@ -141,10 +192,47 @@ function FilingBanner({ filing }: { filing: TaxOverview['filing'] }) {
       </Card>
     );
   }
+  return <InHouseBanner />;
+}
+
+/**
+ * In house: the three steps the customer does themselves. In full the first
+ * time; once read, one line with "How this works" (it took a third of a
+ * phone's first screen on every visit).
+ */
+function InHouseBanner() {
+  const [read, setRead] = useState(() => {
+    try {
+      return window.localStorage.getItem('alto.payrollTaxes.inHouseRead') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [open, setOpen] = useState(!read);
+  const markRead = () => {
+    setRead(true);
+    setOpen(false);
+    try {
+      window.localStorage.setItem('alto.payrollTaxes.inHouseRead', '1');
+    } catch {
+      /* private window: shown in full again next time */
+    }
+  };
+  if (!open) {
+    return (
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-sm text-ink" data-testid="in-house-line">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden />
+        You file and pay these yourself.
+        <button type="button" className="text-accent underline underline-offset-2" onClick={() => setOpen(true)}>
+          How this works
+        </button>
+      </p>
+    );
+  }
   return (
     <Card className="border-warning/30 bg-warning/5">
       <CardContent className="flex items-start gap-3 py-4">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden />
+        <AlertTriangle className="mt-0.5 hidden h-5 w-5 shrink-0 text-warning sm:block" aria-hidden />
         <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-start">
           <div className="min-w-0 flex-1">
             <p className="font-medium text-ink">You file and pay these yourself</p>
@@ -154,9 +242,14 @@ function FilingBanner({ filing }: { filing: TaxOverview['filing'] }) {
               <li>Keep each agency account current. Unemployment rates change every January.</li>
             </ul>
           </div>
-          <Button asChild variant="outline" size="sm" className="self-start lg:shrink-0">
-            <Link to="/integrations">Connect a payroll tax provider</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2 self-start lg:shrink-0">
+            <Button asChild variant="outline" size="sm">
+              <Link to="/integrations">Connect a payroll tax provider</Link>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={markRead}>
+              {read ? 'Hide' : 'Got it'}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -171,15 +264,48 @@ function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOv
   if (query.isLoading || !query.data) return <SkeletonRows count={6} />;
   const o = query.data;
   const owed = [...(o.overdue ?? []), ...(o.dueSoon ?? [])];
-  const returnItems = [...(o.returns?.previous?.items ?? []), ...(o.returns?.current?.items ?? [])].filter((r) => r.status !== 'FILED' && r.status !== 'ACCEPTED');
+  const checklist = [...(o.returns?.previous?.items ?? []), ...(o.returns?.current?.items ?? [])];
+  const returnItems = checklist.filter((r) => r.status !== 'FILED' && r.status !== 'ACCEPTED');
+  const next = [...(o.dueSoon ?? []), ...(o.upcoming ?? [])][0] ?? null;
+  const unposted = o.unposted?.count ?? 0;
+  const late = o.totals?.overdue ?? 0;
+  const dueSoon = o.totals?.dueSoon ?? 0;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Late" value={fmtMoney(o.totals?.overdue ?? 0)} hint="Past the due date, not paid" accent={(o.totals?.overdue ?? 0) > 0} />
-        <MetricCard label="Due in the next 14 days" value={fmtMoney(o.totals?.dueSoon ?? 0)} hint={`${(o.dueSoon ?? []).length} deposit${(o.dueSoon ?? []).length === 1 ? '' : 's'}`} />
-        <MetricCard label="Open notices" value={String(o.totals?.openNotices ?? 0)} hint="Letters from agencies" accent={(o.totals?.openNotices ?? 0) > 0} />
-        <MetricCard label="Failed payments" value={String(o.totals?.failedPayments ?? 0)} hint="Need sending again" accent={(o.totals?.failedPayments ?? 0) > 0} />
-      </div>
+      <UnpostedAlert overview={o} />
+      {(o.totals?.failedPayments ?? 0) > 0 && (
+        <p role="status" className="flex flex-wrap items-center gap-2 rounded-md border border-alert/30 bg-alert/[0.05] px-3 py-2 text-sm text-ink">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-alert" aria-hidden />
+          {`${o.totals.failedPayments} tax payment${o.totals.failedPayments === 1 ? '' : 's'} failed and need${o.totals.failedPayments === 1 ? 's' : ''} sending again.`}
+          <Link to="/payroll/taxes?tab=deposits" className="font-medium text-accent underline underline-offset-2" onClick={(e) => { e.preventDefault(); onTab('deposits'); }}>
+            Open payments
+          </Link>
+        </p>
+      )}
+      <MetricStrip label="Payroll taxes at a glance">
+        <MetricCard label="Late" value={fmtMoney(late)} nothing={late === 0 ? 'Nothing late' : undefined} tone={late > 0 ? 'alert' : 'default'} hint="Past the due date, not paid" href="/payroll/taxes?tab=deposits" />
+        <MetricCard
+          label="Due in the next 14 days"
+          value={fmtMoney(dueSoon)}
+          nothing={dueSoon === 0 ? 'Nothing due in 14 days' : undefined}
+          hint={`${(o.dueSoon ?? []).length} deposit${(o.dueSoon ?? []).length === 1 ? '' : 's'}`}
+          href="/payroll/taxes?tab=deposits"
+        />
+        <MetricCard
+          label="Next deposit"
+          value={next ? fmtDate(next.dueDate) : '—'}
+          nothing={next ? undefined : unposted > 0 ? 'None posted yet' : 'None scheduled'}
+          hint={next ? `${fmtMoney(next.amount)} · ${next.agency}` : undefined}
+          href="/payroll/taxes?tab=deposits"
+        />
+        <MetricCard
+          label={`Taxes ${o.quarter ? quarterShort(o.quarter.periodLabel) : 'this quarter'}`}
+          value={fmtMoney(o.quarter?.posted ?? 0)}
+          nothing={(o.quarter?.posted ?? 0) === 0 ? (unposted > 0 ? 'None posted yet' : 'No payroll taxes yet') : undefined}
+          hint={o.quarter ? `${fmtMoney(o.quarter.deposited)} deposited · withheld and employer share` : undefined}
+          href="/payroll/taxes?tab=reconciliation"
+        />
+      </MetricStrip>
 
       <Card>
         <CardHeader>
@@ -188,7 +314,12 @@ function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOv
         </CardHeader>
         <CardContent>
           {owed.length === 0 ? (
-            <EmptyState size="sm" icon={CalendarCheck2} title="You’re paid up" description={(o.upcoming ?? []).length ? `The next deposit is ${dueText(o.upcoming[0]?.dueDate, o.today).toLowerCase()}.` : 'Deposits appear here as payroll runs are paid.'} />
+            unposted > 0 || !o.hasLiabilities ? (
+              // "Paid up" only means something once taxes have posted.
+              <EmptyState size="sm" icon={CalendarCheck2} title="No deposits due yet" description={unposted > 0 ? 'The paid payroll above hasn’t posted its taxes, so nothing is listed to pay.' : 'Deposits appear here as payroll runs are paid.'} />
+            ) : (
+              <EmptyState size="sm" icon={CalendarCheck2} title="You’re paid up" description={(o.upcoming ?? []).length ? `The next deposit is ${dueText(o.upcoming[0]?.dueDate, o.today).toLowerCase()}.` : 'Every tax posted so far is paid.'} />
+            )
           ) : (
             <ul className="divide-y divide-navy-secondary">
               {owed.map((l) => (
@@ -223,7 +354,11 @@ function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOv
           </CardHeader>
           <CardContent>
             {returnItems.length === 0 ? (
-              <EmptyState size="sm" icon={FileText} title="Every return is filed" description="Returns appear here once payroll posts taxes in a quarter." />
+              checklist.length === 0 ? (
+                <EmptyState size="sm" icon={FileText} title="No returns due yet" description={unposted > 0 ? 'The paid payroll above hasn’t posted its taxes; its quarter’s returns appear once it does.' : 'Returns appear here once payroll posts taxes in a quarter.'} />
+              ) : (
+                <EmptyState size="sm" icon={FileText} title="Every return is filed" description={`All ${checklist.length} return${checklist.length === 1 ? '' : 's'} for these two quarters are filed.`} />
+              )
             ) : (
               <ul className="divide-y divide-navy-secondary">
                 {returnItems.map((r) => (
@@ -276,8 +411,8 @@ function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOv
       {(o.registrations ?? []).length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Register in a new state</CardTitle>
-            <CardDescription>Tax is owed or people work where there’s no agency account yet. Payroll can’t pay these agencies until you register.</CardDescription>
+            <CardTitle>Tax accounts to set up</CardTitle>
+            <CardDescription>Federal and state accounts payroll needs and doesn’t have yet. Payroll can’t pay these agencies until you register.</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="divide-y divide-navy-secondary">
@@ -431,6 +566,11 @@ function DepositsTab({ provider, providerLabel }: { provider: boolean; providerL
 
   return (
     <div className="space-y-3">
+      <p className="text-sm text-ink-muted">
+        {view === 'to-pay'
+          ? 'Taxes posted by paid payrolls, by agency and due date. A payment goes to one agency: select taxes for the same agency, then pay them together.'
+          : 'Payments started here, how each was made, and the agency’s confirmation.'}
+      </p>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SegmentedControl<DepositView>
           ariaLabel="Deposits view"
@@ -473,7 +613,6 @@ function DepositsTab({ provider, providerLabel }: { provider: boolean; providerL
               </Button>
             ),
           }}
-          footnote="A payment goes to one agency: select taxes for the same agency, then pay them together."
           empty={{ icon: CalendarCheck2, title: 'Nothing to pay', description: 'Taxes appear here when a payroll run is paid.' }}
         />
       ) : (

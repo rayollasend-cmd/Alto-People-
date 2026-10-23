@@ -145,7 +145,7 @@ export function LaneDrawer({
 
               {lane && canManageCohorts && cohorts.length > 0 && (
                 <label className="flex items-center justify-between gap-3 text-sm">
-                  <span className="text-silver">Wave</span>
+                  <span className="text-silver">Hiring push</span>
                   <Select
                     size="sm"
                     className="w-56"
@@ -154,12 +154,12 @@ export function LaneDrawer({
                       void apiFetch('/cohorts/assign', { method: 'POST', body: { associateId, cohortId: e.target.value || null } })
                         .then(() => {
                           onChanged();
-                          toast.success('Wave updated.');
+                          toast.success('Hiring push updated.');
                         })
                         .catch(() => toast.error('Could not move the lane.'));
                     }}
                   >
-                    <option value="">No wave</option>
+                    <option value="">No hiring push</option>
                     {cohorts.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}

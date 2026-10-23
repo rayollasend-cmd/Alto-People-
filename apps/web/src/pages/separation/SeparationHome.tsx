@@ -47,6 +47,9 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
 import { pickOne } from '@/lib/validationCopy';
@@ -60,15 +63,17 @@ const SEPARATION_STATUS_TONES = { IN_PROGRESS: 'accent' } as const;
 const STATUS_LABELS: Record<SeparationStatus, string> = {
   PLANNED: 'Planned',
   IN_PROGRESS: 'In progress',
-  COMPLETE: 'Complete',
+  COMPLETE: 'Completed',
 };
+
+const SEPARATION_FILTERS = ['PLANNED', 'IN_PROGRESS', 'COMPLETE', 'ALL'] as const;
 
 export function SeparationHome() {
   const term = useTerm();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [rows, setRows] = useState<SeparationRow[] | null>(null);
-  const [filter, setFilter] = useState<SeparationStatus | 'ALL'>('PLANNED');
+  const [filter, setFilter] = useUrlParam<SeparationStatus | 'ALL'>('status', 'PLANNED', SEPARATION_FILTERS);
   const [showNew, setShowNew] = useState(false);
   const [openRow, setOpenRow] = useState<SeparationRow | null>(null);
   const [openAfterSave, setOpenAfterSave] = useState<string | null>(null);
@@ -134,7 +139,7 @@ export function SeparationHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshQuery.data]);
   const refresh2Query = useQuery({
-    queryKey: ['SeparationHome', 'summary', filter],
+    queryKey: ['SeparationHome', 'summary'],
     queryFn: () => getSeparationSummary(90),
   });
   const summary: SeparationSummary | null = refresh2Query.isError ? null : (refresh2Query.data ?? null);
@@ -193,72 +198,50 @@ export function SeparationHome() {
     <ListTemplate
         title="Separations"
         subtitle="Plan, process, and complete departures. Capture exit-interview feedback."
-        breadcrumbs={[{ label: term('nav.people') }, { label: 'Separations' }]}
+        actions={[
+          ...(canManage ? [{ label: 'Initiate separation', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : []),
+          // The full export (exit-interview answers included); the grid's own export is off.
+          { label: 'Export CSV', icon: Download, onSelect: exportCsv, hidden: !rows || rows.length === 0 },
+        ]}
     >
 
       {/* Reserved while loading; explicit note on failure — an absent KPI
           row read as "zero separations". */}
-      {!summary && !summaryFailed && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-[76px] rounded-lg" />
-          ))}
-        </div>
-      )}
+      {!summary && !summaryFailed && <Skeleton className="h-[76px] rounded-lg" />}
       {summaryFailed && !summary && (
         <p className="text-xs text-silver/70">
           Couldn&apos;t load the summary counts — the list below is unaffected.
         </p>
       )}
       {summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <KpiCard label="Planned" value={String(summary.planned)} />
-          <KpiCard label="In progress" value={String(summary.inProgress)} />
-          <KpiCard
-            label="Completed (90d)"
-            value={String(summary.completedInWindow)}
+        <MetricStrip label="Separations at a glance" empty={summary.planned + summary.inProgress + summary.completedInWindow === 0}>
+          <MetricCard label="Planned" value={summary.planned} onClick={() => setFilter('PLANNED')} selected={filter === 'PLANNED'} />
+          <MetricCard label="In progress" value={summary.inProgress} onClick={() => setFilter('IN_PROGRESS')} selected={filter === 'IN_PROGRESS'} />
+          <MetricCard label="Completed" value={summary.completedInWindow} hint="Last 90 days" onClick={() => setFilter('COMPLETE')} selected={filter === 'COMPLETE'} />
+          <MetricCard
+            label="Exit interviews"
+            value={`${summary.exitInterviewCompletedInWindow} of ${summary.completedInWindow}`}
+            hint="Of the completed, last 90 days"
+            nothing={summary.completedInWindow === 0 ? 'No exits in 90 days' : undefined}
           />
-          <KpiCard
-            label="Exit interviews (90d)"
-            value={`${summary.exitInterviewCompletedInWindow} / ${summary.completedInWindow}`}
+          <MetricCard
+            label="Average rating"
+            value={summary.averageRating !== null ? `${summary.averageRating} / 10` : '—'}
+            hint="Exit interviews, last 90 days"
+            nothing={summary.averageRating === null ? 'No ratings yet' : undefined}
           />
-          <KpiCard
-            label="Avg rating (90d)"
-            value={
-              summary.averageRating !== null ? `${summary.averageRating} / 10` : '—'
-            }
-          />
-        </div>
+        </MetricStrip>
       )}
 
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <SegmentedControl
-          ariaLabel="Filter by separation status"
-          options={(['PLANNED', 'IN_PROGRESS', 'COMPLETE', 'ALL'] as const).map(
-            (s) => ({
-              value: s,
-              label: s === 'ALL' ? 'All' : STATUS_LABELS[s],
-            }),
-          )}
-          value={filter}
-          onChange={setFilter}
-        />
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={exportCsv}
-            disabled={!rows || rows.length === 0}
-          >
-            <Download className="mr-2 h-4 w-4" /> Export CSV
-          </Button>
-          {canManage && (
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Initiate separation
-            </Button>
-          )}
-        </div>
-      </div>
+      <SegmentedControl
+        ariaLabel="Filter by separation status"
+        options={(['PLANNED', 'IN_PROGRESS', 'COMPLETE', 'ALL'] as const).map((s) => ({
+          value: s,
+          label: s === 'ALL' ? 'All' : STATUS_LABELS[s],
+        }))}
+        value={filter}
+        onChange={setFilter}
+      />
 
       <Card>
         <CardContent className="p-0">
@@ -296,7 +279,7 @@ export function SeparationHome() {
               rowKey={(s) => s.id}
               search={false}
               urlState={false}
-              exportCsv={{ filename: 'separations' }}
+              exportCsv={false}
               onRowClick={(s) => setOpenRow(s)}
               rowActionLabel={(s) => `Open the separation for ${s.associateName}`}
               columns={[
@@ -406,18 +389,6 @@ export function SeparationHome() {
   );
 }
 
-function KpiCard({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardContent>
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-          {label}
-        </div>
-        <div className="text-2xl font-semibold text-white mt-1">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function NewSeparationDrawer({
   initialAssociate = null,

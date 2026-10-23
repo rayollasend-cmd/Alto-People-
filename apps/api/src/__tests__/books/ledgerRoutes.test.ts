@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { agent, loginAs } from '../../../test/http.js';
 import { accountByKey, postEntry } from '../../lib/books/ledger.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 
 /**
  * The ledger's screens over HTTP: who may read and write the books, the
@@ -172,7 +173,8 @@ describe('the overview', () => {
   it('cash, receivables aged from open statements, payables, profit, the close and what needs you', async () => {
     const p = await people();
     const client = await createClient('Harbor Grill');
-    const today = new Date().toISOString().slice(0, 10);
+    // The company's calendar day: the overview counts cash and the close on it, not UTC's.
+    const today = orgDateKey(new Date());
     const longAgo = new Date(Date.now() - 100 * 86_400_000);
     await prisma.clientStatement.create({
       data: { clientId: client.id, periodStart: new Date('2026-01-01'), periodEnd: new Date('2026-01-07'), status: 'FINAL', finalizedAt: longAgo, dueAt: longAgo, snapshot: { totals: { amount: 1200 } } },

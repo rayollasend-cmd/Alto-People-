@@ -23,6 +23,9 @@ export const assetsRouter = Router();
 
 /** Rows a list draws; more than this says so (`truncated`). */
 const ASSET_PAGE = 2000;
+
+/** A holder who has left: a separation is recorded or the record was erased (lib/peopleStatus). */
+const LEFT: Prisma.AssociateWhereInput = { OR: [{ separatedAt: { not: null } }, { erasedAt: { not: null } }] };
 const ASSIGNMENT_PAGE = 1000;
 
 const VIEW = requireCapability('view:org');
@@ -56,43 +59,63 @@ assetsRouter.get('/assets', VIEW, async (req, res) => {
   const kind = z.enum(ALL_KINDS).optional().parse(req.query.kind);
   const locationId = z.string().uuid().optional().parse(req.query.locationId);
   const reach = internalSites(req.user!);
+  // Everything the caller may see: their tenant, and for a site-scoped
+  // lead, assets kept at their stores, held by their people, or unassigned
+  // stock with no store.
+  const inReach: Prisma.AssetWhereInput = {
+    AND: [
+      { tenantId: tenantIdForWrite() },
+      reach
+        ? {
+            OR: [
+              { location: { is: reach } },
+              { locationId: null, assignments: { some: { returnedAt: null, associate: scopeAssociates(req.user!) } } },
+              { locationId: null, assignments: { none: { returnedAt: null } } },
+            ],
+          }
+        : {},
+    ],
+  };
   const fetched = await prisma.asset.findMany({
     take: ASSET_PAGE + 1,
     where: {
-      AND: [
-        { tenantId: tenantIdForWrite() },
-        status ? { status } : {},
-        kind ? { kind } : {},
-        locationId ? { locationId } : {},
-        // A site-scoped lead: assets kept at their stores, held by their
-        // people, or unassigned stock with no store.
-        reach
-          ? {
-              OR: [
-                { location: { is: reach } },
-                { locationId: null, assignments: { some: { returnedAt: null, associate: scopeAssociates(req.user!) } } },
-                { locationId: null, assignments: { none: { returnedAt: null } } },
-              ],
-            }
-          : {},
-      ],
+      AND: [inReach, status ? { status } : {}, kind ? { kind } : {}, locationId ? { locationId } : {}],
     },
     include: {
       location: { select: { id: true, name: true, client: { select: { name: true } } } },
       assignments: {
         where: { returnedAt: null },
         include: {
-          associate: { select: { id: true, firstName: true, lastName: true } },
+          associate: { select: { id: true, firstName: true, lastName: true, separatedAt: true, erasedAt: true } },
         },
         take: 1,
       },
     },
     orderBy: [{ kind: 'asc' }, { label: 'asc' }, { id: 'asc' }],
   });
+  // The numbers that matter for the role (F500 G2), over everything in
+  // reach (not the page's filters): by status, and the asset-recovery
+  // view — kit still out with someone who has left.
+  const [byStatus, heldByLeavers] = await Promise.all([
+    prisma.asset.groupBy({ by: ['status'], where: inReach, _count: { _all: true } }),
+    prisma.asset.count({
+      where: {
+        AND: [inReach, { assignments: { some: { returnedAt: null, associate: LEFT } } }],
+      },
+    }),
+  ]);
+  const countOf = (st: string) => byStatus.find((g) => g.status === st)?._count._all ?? 0;
   const truncated = fetched.length > ASSET_PAGE;
   const rows = truncated ? fetched.slice(0, ASSET_PAGE) : fetched;
   res.json({
     truncated,
+    summary: {
+      assigned: countOf('ASSIGNED'),
+      available: countOf('AVAILABLE'),
+      inRepair: countOf('IN_REPAIR'),
+      lost: countOf('LOST'),
+      heldByLeavers,
+    },
     assets: rows.map((a) => ({
       id: a.id,
       kind: a.kind,
@@ -112,6 +135,7 @@ assetsRouter.get('/assets', VIEW, async (req, res) => {
             associateId: a.assignments[0].associate.id,
             associateName: `${a.assignments[0].associate.firstName} ${a.assignments[0].associate.lastName}`,
             assignedAt: a.assignments[0].assignedAt.toISOString(),
+            holderLeft: !!(a.assignments[0].associate.separatedAt || a.assignments[0].associate.erasedAt),
           }
         : null,
       createdAt: a.createdAt.toISOString(),

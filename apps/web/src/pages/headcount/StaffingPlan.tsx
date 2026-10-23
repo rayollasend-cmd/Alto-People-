@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -7,12 +7,14 @@ import { Briefcase, CalendarRange } from 'lucide-react';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { postingForGapHref } from '@/pages/recruiting/postingSeed';
 import { getStaffingPlan, largestGap, type StaffingStore, type StaffingWeek } from '@/pages/recruiting/staffingGaps';
-import { useClients } from '@/lib/useClients';
-import { fmtDayShort, fmtMoney } from '@/lib/format';
+import { useStoreScope } from '@/lib/storeScope';
+import { urlNumber, useUrlState } from '@/lib/useUrlState';
+import { getHeadcountOverview } from '@/lib/headcount110Api';
+import { fmtDayShort, fmtMoney, fmtMoneyCompact, fmtMoneyWhole } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { CHART, ChartFrame } from '@/components/ui/ChartFrame';
 import { QueryError } from '@/components/ui/QueryError';
-import { Button, Card, CardContent, EmptyState, MetricCard, SegmentedControl, Select, SkeletonRows } from '@/components/ui';
+import { Button, Card, CardContent, EmptyState, MetricCard, MetricStrip, SegmentedControl, Select, SkeletonRows } from '@/components/ui';
 
 /**
  * The staffing plan (GET /headcount/staffing-plan): heads required against
@@ -23,6 +25,8 @@ import { Button, Card, CardContent, EmptyState, MetricCard, SegmentedControl, Se
  */
 
 type Source = StaffingWeek['source'];
+
+const WEEKS_CODEC = urlNumber({ integer: true, min: 8, max: 26 });
 
 const SOURCE_LABEL: Record<Source, string> = {
   season: 'Season plan',
@@ -35,11 +39,17 @@ export function StaffingPlanView() {
   const term = useTerm();
   const canPost = useAuth().can('manage:recruiting');
   const hasClients = useTenant().moduleOn('clientPortal');
-  const { clients } = useClients({ enabled: hasClients });
-  const [weeks, setWeeks] = useState<8 | 12 | 26>(12);
-  const [clientId, setClientId] = useState('');
+  // The client is the topbar's scope (lib/storeScope), shown inline here too.
+  const { clientId, setClientId, clients } = useStoreScope();
+  const [weeksRaw, setWeeksRaw] = useUrlState<number>('weeks', 12, WEEKS_CODEC);
+  const weeks: 8 | 12 | 26 = weeksRaw === 8 || weeksRaw === 26 ? weeksRaw : 12;
   const plan = useQuery({ queryKey: ['headcount', 'staffing-plan', weeks, clientId], queryFn: () => getStaffingPlan({ weeks, clientId: clientId || undefined }) });
   const d = plan.data;
+  // Placed is not the same as working: the Headcount page's "Working"
+  // (worked in the activity window, or scheduled ahead), for the same client.
+  const headcount = useQuery({ queryKey: ['headcount', 'overview'], queryFn: getHeadcountOverview, staleTime: 60_000 });
+  const hc = headcount.data;
+  const working = typeof hc?.active === 'number' ? (clientId ? (hc.byClient?.find((c) => c.id === clientId)?.active ?? 0) : hc.active) : null;
 
   const chartRows = useMemo(
     () =>
@@ -72,7 +82,7 @@ export function StaffingPlanView() {
         <SegmentedControl
           ariaLabel="Weeks ahead"
           value={weeks}
-          onChange={setWeeks}
+          onChange={(w) => setWeeksRaw(w)}
           options={[
             { value: 8 as const, label: '8 weeks' },
             { value: 12 as const, label: '12 weeks' },
@@ -81,7 +91,7 @@ export function StaffingPlanView() {
         />
         {hasClients && clients.length > 1 && (
           <Select size="sm" aria-label={term('label.client')} value={clientId} onChange={(e) => setClientId(e.target.value)}>
-            <option value="">Every {term('label.client').toLowerCase()}</option>
+            <option value="">All {term('label.clients').toLowerCase()}</option>
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -89,14 +99,6 @@ export function StaffingPlanView() {
             ))}
           </Select>
         )}
-        <div className="ml-auto flex gap-2">
-          <Button asChild size="sm" variant="outline">
-            <Link to="/season-planner">
-              <CalendarRange className="h-3.5 w-3.5" aria-hidden="true" />
-              Season planner
-            </Link>
-          </Button>
-        </div>
       </div>
 
       {plan.isError ? (
@@ -111,21 +113,36 @@ export function StaffingPlanView() {
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <MetricStrip label="The plan at a glance">
             <MetricCard label="Peak heads required" value={peak?.required ?? 0} hint={peak?.week ? `Week of ${fmtDayShort(peak.week)}` : undefined} />
-            <MetricCard label="In place now" value={d.totals[0]?.placed ?? 0} hint={`Placed across ${d.stores.length} ${d.stores.length === 1 ? term('label.store').toLowerCase() : term('label.stores').toLowerCase()}`} />
+            <MetricCard
+              label="Placed now"
+              value={d.totals[0]?.placed ?? 0}
+              hint={
+                working !== null && hc
+                  ? `${working.toLocaleString('en-US')} of them working (a shift in the last ${hc.windowDays} days or ahead)`
+                  : `Placed across ${d.stores.length} ${d.stores.length === 1 ? term('label.store').toLowerCase() : term('label.stores').toLowerCase()}`
+              }
+              valueTitle="Placed at a site — not necessarily working"
+            />
             <MetricCard label="Short at the peak" value={peak?.gap ?? 0} accent={(peak?.gap ?? 0) > 0} hint={`${short.length} ${short.length === 1 ? term('label.store').toLowerCase() : term('label.stores').toLowerCase()} short in some week`} />
-            <MetricCard label={`Bill over ${weeks} weeks`} value={budget ? fmtMoney(budget) : '—'} hint={`An estimate at today’s bill rates · ${d.priced} of ${d.stores.length} priced`} />
-          </div>
+            <MetricCard
+              label={`Bill over ${weeks} weeks (estimate)`}
+              value={budget ? fmtMoneyCompact(budget) : '—'}
+              valueTitle={budget ? fmtMoneyWhole(budget) : undefined}
+              hint={`At today’s bill rates · ${d.priced} of ${d.stores.length} priced`}
+              nothing={budget ? undefined : 'No bill rates to price it'}
+            />
+          </MetricStrip>
 
           <ChartFrame
             title="Required against in place"
-            description="Each week: the heads in place, the shortfall stacked on top, and who is actually scheduled."
-            summary={`Peak requirement is ${peak?.required ?? 0} heads; ${peak?.gap ?? 0} short that week. ${d.totals[0]?.placed ?? 0} in place now.`}
+            description="Each week: heads required, covered by placed staff up to that number, the shortfall stacked on top, and who is actually scheduled."
+            summary={`Peak requirement is ${peak?.required ?? 0} heads; ${peak?.gap ?? 0} short that week. ${d.totals[0]?.placed ?? 0} placed now.`}
             columns={[
               { key: 'week', label: 'Week of' },
               { key: 'required', label: 'Required', numeric: true },
-              { key: 'inPlace', label: 'In place', numeric: true },
+              { key: 'inPlace', label: 'Covered by placed staff', numeric: true },
               { key: 'short', label: 'Short', numeric: true },
               { key: 'scheduled', label: 'Scheduled', numeric: true },
             ]}
@@ -140,7 +157,7 @@ export function StaffingPlanView() {
                 <YAxis allowDecimals={false} tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} width="auto" />
                 <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
                 <Legend {...STOCK_LEGEND} />
-                <Bar dataKey="inPlace" name="In place" stackId="heads" fill={CHART.series[1]} />
+                <Bar dataKey="inPlace" name="Covered by placed staff" stackId="heads" fill={CHART.series[1]} />
                 <Bar dataKey="short" name="Short" stackId="heads" fill={CHART.bad} radius={[3, 3, 0, 0]} />
                 <Line dataKey="scheduled" name="Scheduled" stroke={CHART.series[0]} strokeWidth={2} dot={false} />
               </ComposedChart>
@@ -157,7 +174,7 @@ export function StaffingPlanView() {
                       {term('label.store')}
                     </th>
                     <th scope="col" className="px-2 py-2 text-right font-medium">
-                      In place
+                      Placed
                     </th>
                     {d.weeks.map((w) => (
                       <th key={w} scope="col" className="whitespace-nowrap px-2 py-2 text-center font-medium">
@@ -200,7 +217,7 @@ export function StaffingPlanView() {
                               ) : (
                                 <span
                                   className={cn('block rounded px-1.5 py-1 tabular-nums', w.gap > 0 ? 'bg-alert/15 text-alert' : 'text-ink')}
-                                  title={`${w.required} required · ${w.placed} in place · ${w.scheduled} scheduled${w.budget !== null ? ` · ${fmtMoney(w.budget)}` : ''}`}
+                                  title={`${w.required} required · ${w.placed} placed · ${w.scheduled} scheduled${w.budget !== null ? ` · ${fmtMoney(w.budget)}` : ''}`}
                                   aria-label={`${s.storeName}, week of ${fmtDayShort(w.week)}: ${w.required} required, ${w.gap > 0 ? `${w.gap} short` : 'covered'}`}
                                 >
                                   {w.required}
@@ -218,7 +235,7 @@ export function StaffingPlanView() {
             </CardContent>
           </Card>
           <p className="text-xs text-ink-muted">
-            Each cell is heads required that week; red with a minus is the shortfall against the people in place. Close a gap in the{' '}
+            Each cell is heads required that week; red with a minus is the shortfall against the people placed there. Close a gap in the{' '}
             <Link to="/season-planner" className="text-accent hover:underline">
               Season planner
             </Link>{' '}

@@ -135,6 +135,31 @@ describe('going live, state by state', () => {
   });
 });
 
+describe('each state’s last run, replayed', () => {
+  it('leads each worked state with what its rules would have paid on the last finished run, totals only', async () => {
+    const { ana } = await californiaDay();
+    const run = await prisma.payrollRun.create({ data: { periodStart: new Date('2026-09-12T00:00:00Z'), periodEnd: new Date('2026-09-25T00:00:00Z'), status: 'FINALIZED', kind: 'REGULAR' } });
+    await prisma.payrollItem.create({
+      data: { payrollRunId: run.id, associateId: ana.id, hoursWorked: 10, hourlyRate: 20, grossPay: 200, federalWithholding: 0, fica: 0, medicare: 0, stateWithholding: 0, employerFica: 0, employerMedicare: 0, netPay: 200 },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const r = await a.get('/labor-rules/last-run');
+    expect(r.status).toBe(200);
+    // California only: no other state has a site.
+    expect(r.body.states).toHaveLength(1);
+    const ca = r.body.states[0];
+    expect(ca).toMatchObject({ jurisdiction: 'US-CA', periodStart: '2026-09-12', periodEnd: '2026-09-25', replayed: 1, people: 1 });
+    // 10 h at $20 paid straight; under California's rules 2 h are daily overtime (+$20) plus a meal and a rest premium (+$40).
+    expect(ca.amountDifference).toBe(60);
+    // Totals only: no names leave this route.
+    expect(JSON.stringify(r.body)).not.toMatch(/Ruiz/);
+
+    const { user: assoc } = await createUser({ role: 'ASSOCIATE', associateId: ana.id });
+    expect((await (await loginAs(assoc.email)).get('/labor-rules/last-run')).status).toBe(403);
+  });
+});
+
 describe('punch rounding', () => {
   it('rounds to the nearest increment by the neutral rule, or always in the worker’s favor', () => {
     const at = (hm: string) => new Date(`2026-09-14T${hm}:00Z`);

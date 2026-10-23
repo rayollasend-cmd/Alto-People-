@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { nextInQueue } from '@/lib/queueNext';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { ClipboardList, Download, Plus, Star } from 'lucide-react';
@@ -11,11 +10,16 @@ import type {
 } from '@alto-people/shared';
 import {
   createReview,
+  getReviewsSummary,
   listReviews,
   submitReview,
+  type ReviewsSummary,
 } from '@/lib/performanceApi';
+import { useUrlParam } from '@/lib/useUrlState';
+import { QueryError } from '@/components/ui/QueryError';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { downloadCsv } from '@/lib/csv';
 import { ListTemplate } from '@/components/templates';
@@ -45,6 +49,8 @@ import {
   FilterChip,
   Field,
   Input,
+  MetricCard,
+  MetricStrip,
   SearchInput,
   SkeletonRows,
   Textarea,
@@ -67,12 +73,23 @@ function fmtPeriod(start: string, end: string): string {
   return `${fmtDate(parseYmd(start))} → ${fmtDate(parseYmd(end))}`;
 }
 
-const STATUS_FILTERS: Array<{ value: PerformanceReviewStatus | 'ALL'; label: string }> = [
+/** The list's filter: a review status, the reviews that need action, or the people due for one. */
+type ReviewFilter = 'NEEDS_ACTION' | PerformanceReviewStatus | 'ALL' | 'DUE' | 'OVERDUE';
+const FILTER_VALUES: readonly ReviewFilter[] = ['NEEDS_ACTION', 'DRAFT', 'SUBMITTED', 'ACKNOWLEDGED', 'ALL', 'DUE', 'OVERDUE'];
+
+const STATUS_FILTERS: Array<{ value: ReviewFilter; label: string }> = [
+  { value: 'NEEDS_ACTION', label: 'Needs action' },
   { value: 'DRAFT', label: 'Draft' },
   { value: 'SUBMITTED', label: 'Submitted' },
   { value: 'ACKNOWLEDGED', label: 'Acknowledged' },
   { value: 'ALL', label: 'All' },
 ];
+
+function statusQuery(f: ReviewFilter): PerformanceReviewStatus | PerformanceReviewStatus[] | undefined {
+  if (f === 'NEEDS_ACTION') return ['DRAFT', 'SUBMITTED'];
+  if (f === 'DRAFT' || f === 'SUBMITTED' || f === 'ACKNOWLEDGED') return f;
+  return undefined;
+}
 
 function statusVariant(
   s: PerformanceReviewStatus,
@@ -96,7 +113,11 @@ const STATUS_LABELS: Record<PerformanceReviewStatus, string> = {
 };
 
 export function AdminReviewsView({ canManage }: { canManage: boolean }) {
-  const [filter, setFilter] = useState<PerformanceReviewStatus | 'ALL'>('DRAFT');
+  // The filter lives in the URL (?status=), and opens on what needs action.
+  const [filter, setFilter] = useUrlParam<ReviewFilter>('status', 'NEEDS_ACTION', FILTER_VALUES);
+  const peopleView = filter === 'DUE' || filter === 'OVERDUE';
+  const summaryQ = useQuery({ queryKey: ['AdminReviewsView', 'summary'], queryFn: getReviewsSummary });
+  const summary = summaryQ.data;
   const [showCreate, setShowCreate] = useState(false);
   const [errorLocal, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -109,7 +130,8 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
 
   const refreshQuery = useQuery({
     queryKey: ['AdminReviewsView', 'reviews', filter],
-    queryFn: () => listReviews(filter === 'ALL' ? {} : { status: filter }),
+    queryFn: () => listReviews({ status: statusQuery(filter) }),
+    enabled: !peopleView,
   });
   const reviews: PerformanceReview[] | null = refreshQuery.data?.reviews ?? null;
   const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load reviews.' : null);
@@ -125,7 +147,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
     });
   }, [refreshQuery.data]);
   const refresh = async () => {
-    await refreshQuery.refetch();
+    await Promise.all([refreshQuery.refetch(), summaryQ.refetch()]);
   };
 
 
@@ -207,85 +229,91 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Performance"
-        subtitle={
-          canManage
-            ? 'Compose, submit, and track performance reviews.'
-            : 'Read-only view of performance reviews.'
-        }
-        secondaryActions={
-          <>
-            {canManage && (
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/performance/calibration">Calibrate</Link>
-              </Button>
-            )}
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/performance/extras">Goals, PIPs &amp; 360s</Link>
-            </Button>
-          </>
-        }
-        primaryAction={
-          canManage ? (
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="h-4 w-4" />
-              New review
-            </Button>
-          ) : undefined
-        }
+      title="Performance"
+      subtitle={canManage ? 'Reviews due, waiting on the person, and done this quarter.' : 'Read-only view of performance reviews.'}
+      related={[
+        { label: 'Goals, 1:1s & feedback', to: '/performance/extras' },
+        ...(canManage ? [{ label: 'Calibration', to: '/performance/calibration' }] : []),
+      ]}
+      actions={canManage ? [{ label: 'New review', icon: Plus, primary: true, onSelect: () => setShowCreate(true) }] : undefined}
     >
+      {summaryQ.isError ? (
+        <QueryError what="the review counts" query={summaryQ} />
+      ) : (
+        <MetricStrip label="Reviews at a glance">
+          <MetricCard
+            label="Due this month"
+            value={summary ? summary.dueThisMonth : '—'}
+            hint="A year since their last review"
+            onClick={() => setFilter('DUE')}
+            selected={filter === 'DUE'}
+          />
+          <MetricCard
+            label="Overdue"
+            value={summary ? summary.overdue : '—'}
+            hint="More than a year since their last review"
+            tone={summary && summary.overdue > 0 ? 'warning' : 'default'}
+            onClick={() => setFilter('OVERDUE')}
+            selected={filter === 'OVERDUE'}
+          />
+          <MetricCard
+            label="Awaiting acknowledgment"
+            value={summary ? summary.awaitingAck : '—'}
+            hint="Submitted, not yet read and signed"
+            onClick={() => setFilter('SUBMITTED')}
+            selected={filter === 'SUBMITTED'}
+          />
+          <MetricCard
+            label="Done this quarter"
+            value={summary ? summary.doneThisQuarter : '—'}
+            hint={summary ? `Acknowledged since ${fmtDateOnly(summary.quarterStart)}` : undefined}
+            onClick={() => setFilter('ACKNOWLEDGED')}
+            selected={filter === 'ACKNOWLEDGED'}
+          />
+        </MetricStrip>
+      )}
 
-      <div className="flex flex-wrap gap-2 mb-3">
+      <div className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => (
-          <FilterChip
-            key={f.value}
-            active={filter === f.value}
-            onClick={() => setFilter(f.value)}
-            className="uppercase tracking-wider"
-          >
+          <FilterChip key={f.value} active={filter === f.value} onClick={() => setFilter(f.value)} count={summary ? chipCount(f.value, summary) : undefined}>
             {f.label}
           </FilterChip>
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mb-5">
-        <div className="w-64 max-w-full">
-          <SearchInput
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name…"
-            aria-label="Search reviews by name"
-          />
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={onExportCsv}
-          disabled={!filtered || filtered.length === 0}
-        >
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
-        {canManage && selected.size > 0 && (
-          <Button type="button" size="sm" onClick={() => setBulkConfirm(true)}>
-            Submit selected drafts ({selected.size})
+      {peopleView ? (
+        <DueList
+          rows={(summary?.due ?? []).filter((d) => (filter === 'OVERDUE' ? d.overdue : !d.overdue))}
+          overdue={filter === 'OVERDUE'}
+          canManage={canManage}
+          onStart={() => setShowCreate(true)}
+        />
+      ) : (
+      <>
+      {reviews && reviews.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="w-64 max-w-full">
+            <SearchInput
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name…"
+              aria-label="Search reviews by name"
+            />
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={onExportCsv} disabled={!filtered || filtered.length === 0}>
+            <Download className="h-4 w-4" />
+            Export CSV
           </Button>
-        )}
-      </div>
-
-      {error && (
-        <ErrorBanner
-          className="mb-3"
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
-              Retry
+          {canManage && selected.size > 0 && (
+            <Button type="button" size="sm" onClick={() => setBulkConfirm(true)}>
+              Submit selected drafts ({selected.size})
             </Button>
-          }
-        >
-          {error}
-        </ErrorBanner>
+          )}
+        </div>
       )}
+
+      {errorLocal && <ErrorBanner>{errorLocal}</ErrorBanner>}
+      {refreshQuery.isError && <QueryError what="reviews" query={refreshQuery} />}
       {!reviews && !error && <SkeletonRows count={4} rowHeight="h-20" />}
       {filtered && filtered.length === 0 && reviews && reviews.length > 0 && (
         <p className="text-sm text-silver">No reviews match “{search.trim()}”.</p>
@@ -293,10 +321,10 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
       {reviews && reviews.length === 0 && (
         <EmptyState
           icon={ClipboardList}
-          title="No reviews match this filter"
+          title={filter === 'NEEDS_ACTION' ? 'No reviews need action' : filter === 'ALL' ? 'No reviews yet' : `No ${STATUS_FILTERS.find((f) => f.value === filter)?.label.toLowerCase() ?? ''} reviews`}
           description={
             canManage
-              ? 'Switch filters or compose a new review.'
+              ? 'Drafts and reviews waiting on the person show here. Start one for someone who is due.'
               : 'Switch to a different status filter to see more.'
           }
           action={
@@ -377,6 +405,8 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
             </li>
           ))}
         </ul>
+      )}
+      </>
       )}
 
       <CreateReviewDialog
@@ -520,6 +550,72 @@ interface CreateReviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
+}
+
+function chipCount(f: ReviewFilter, s: ReviewsSummary): number | undefined {
+  switch (f) {
+    case 'NEEDS_ACTION':
+      return s.drafts + s.awaitingAck;
+    case 'DRAFT':
+      return s.drafts;
+    case 'SUBMITTED':
+      return s.awaitingAck;
+    case 'ACKNOWLEDGED':
+      return s.acknowledged;
+    case 'ALL':
+      return s.drafts + s.awaitingAck + s.acknowledged;
+    default:
+      return undefined;
+  }
+}
+
+/** The people behind "Due this month" / "Overdue": who needs a review, and since when. */
+function DueList({ rows, overdue, canManage, onStart }: { rows: ReviewsSummary['due']; overdue: boolean; canManage: boolean; onStart: () => void }) {
+  return (
+    <DataGrid<ReviewsSummary['due'][number]>
+      id={overdue ? 'reviews-overdue' : 'reviews-due'}
+      caption={overdue ? 'Overdue for a review' : 'Due for a review this month'}
+      noun={{ one: 'person', many: 'people' }}
+      rows={rows}
+      rowKey={(r) => r.associateId}
+      urlKey="due"
+      empty={{
+        icon: ClipboardList,
+        title: overdue ? 'No one is overdue for a review' : 'No one else is due this month',
+        description: 'A review falls due a year after the last one ended, or a year after the hire date.',
+      }}
+      columns={[
+        {
+          key: 'name',
+          header: 'Associate',
+          accessor: (r) => r.name,
+          sortable: true,
+          primary: true,
+          cell: (r) => <AssociateLink associateId={r.associateId}>{r.name}</AssociateLink>,
+        },
+        { key: 'last', header: 'Last review ended', accessor: (r) => r.lastPeriodEnd ?? '', sortable: true, cardMeta: true, cell: (r) => (r.lastPeriodEnd ? fmtDateOnly(r.lastPeriodEnd) : 'None yet') },
+        { key: 'due', header: 'Due', accessor: (r) => r.dueOn, sortable: true, cardMeta: true, cell: (r) => <span className={r.overdue ? 'text-warning' : undefined}>{fmtDateOnly(r.dueOn)}</span> },
+        ...(canManage
+          ? [
+              {
+                key: 'start',
+                header: '',
+                accessor: () => null,
+                searchable: false,
+                csv: () => '',
+                align: 'right' as const,
+                stopRowClick: true,
+                cell: () => (
+                  <Button size="sm" variant="outline" onClick={onStart}>
+                    Start review
+                  </Button>
+                ),
+              },
+            ]
+          : []),
+      ]}
+    />
+  );
 }
 
 function CreateReviewDialog({

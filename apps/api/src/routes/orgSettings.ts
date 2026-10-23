@@ -10,7 +10,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import {
   ensureBrandingLoaded,
@@ -128,7 +128,9 @@ async function loadResponse(tenantId: string): Promise<OrgBranding> {
 
 orgSettingsRouter.get(
   '/admin/org/settings',
-  requireCapability('view:hr-admin'),
+  // Whoever may change these may read them: Sign-in's two-step switch is
+  // for manage:org holders (a workforce manager has no view:hr-admin).
+  requireAnyCapability('view:hr-admin', 'manage:org'),
   async (_req, res) => {
     res.json(await loadResponse(tenantIdForWrite()));
   },
@@ -322,9 +324,11 @@ orgSettingsRouter.get('/admin/settings-health', requireCapability('view:hr-admin
   ]);
   const providerFailing = providers.filter((p) => p.lastErrorAt && (!p.lastSuccessAt || p.lastErrorAt > p.lastSuccessAt)).length;
   const failing = vendorFailing + providerFailing;
-  const items: Array<{ key: string; tone: 'bad' | 'warn'; label: string }> = [];
-  if (failing > 0) items.push({ key: 'integrations', tone: 'bad', label: `${failing} failing` });
-  if (!(env.RESEND_API_KEY && env.RESEND_FROM)) items.push({ key: 'communications', tone: 'warn', label: 'Email not connected' });
-  if (overdueReviews > 0) items.push({ key: 'access-certifications', tone: 'warn', label: `${overdueReviews} past due` });
+  // `label` is the card's badge; `message` + `action` are the overview's
+  // "Needs attention" row ("Email isn't connected — Connect").
+  const items: Array<{ key: string; tone: 'bad' | 'warn'; label: string; message: string; action: string }> = [];
+  if (failing > 0) items.push({ key: 'integrations', tone: 'bad', label: `${failing} failing`, message: `${failing} ${failing === 1 ? 'integration is' : 'integrations are'} failing`, action: 'Fix' });
+  if (!(env.RESEND_API_KEY && env.RESEND_FROM)) items.push({ key: 'communications', tone: 'warn', label: 'Email not connected', message: "Email isn't connected", action: 'Connect' });
+  if (overdueReviews > 0) items.push({ key: 'access-certifications', tone: 'warn', label: `${overdueReviews} past due`, message: `${overdueReviews} access ${overdueReviews === 1 ? 'review is' : 'reviews are'} past due`, action: 'Review' });
   res.json({ items });
 });

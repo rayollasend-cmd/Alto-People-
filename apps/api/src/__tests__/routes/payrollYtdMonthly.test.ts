@@ -50,3 +50,23 @@ describe('GET /payroll/ytd — monthly', () => {
     expect(gross).toBe(res.body.totals.gross);
   });
 });
+
+describe('GET /payroll/ytd — runs not in the report (F500 G3)', () => {
+  it('names a paid run whose stored totals have no paychecks, instead of a silent $0', async () => {
+    const client = await createClient();
+    const a = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await paidRun(client.id, a.id, '2026-03-06T15:00:00Z', 800, 650);
+    // Paid, stored totals, and no paychecks behind them.
+    const orphan = await prisma.payrollRun.create({
+      data: { clientId: client.id, periodStart: new Date('2026-08-29T00:00:00Z'), periodEnd: new Date('2026-09-11T00:00:00Z'), status: 'DISBURSED', kind: 'REGULAR', totalGross: 4054.5, totalNet: 3490.2, disbursedAt: new Date('2026-09-18T15:00:00Z') },
+    });
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const agent = request.agent(createApp());
+    expect((await agent.post('/auth/login').send({ email: user.email, password: DEFAULT_TEST_PASSWORD })).status).toBe(200);
+
+    const res = await agent.get('/payroll/ytd?year=2026');
+    expect(res.status).toBe(200);
+    expect(res.body.totals.gross).toBe(800);
+    expect(res.body.notInReport).toEqual([{ id: orphan.id, periodStart: '2026-08-29', periodEnd: '2026-09-11', totalGross: 4054.5, totalNet: 3490.2, paychecks: 0 }]);
+  });
+});

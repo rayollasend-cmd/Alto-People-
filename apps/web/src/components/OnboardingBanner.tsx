@@ -3,7 +3,7 @@ import { useI18n } from '@/lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Sparkles } from 'lucide-react';
-import type { ApplicationSummary } from '@alto-people/shared';
+import type { ApplicationSummary, TaskKind } from '@alto-people/shared';
 import { listApplications } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -48,6 +48,23 @@ export function useOpenOnboarding(): ApplicationSummary | null | undefined {
   return item;
 }
 
+/** About how long each kind of task takes a new hire on a phone — a rough guide, said as "about N min". */
+const TASK_MINUTES: Record<TaskKind, number> = {
+  PROFILE_INFO: 3,
+  DOCUMENT_UPLOAD: 5,
+  E_SIGN: 3,
+  BACKGROUND_CHECK: 5,
+  W4: 5,
+  DIRECT_DEPOSIT: 3,
+  POLICY_ACK: 2,
+  J1_DOCS: 10,
+  I9_VERIFICATION: 10,
+  PROFILE_PHOTO: 1,
+  WOTC_SCREENING: 5,
+  // When they can work: a few taps on the schedule's presets.
+  AVAILABILITY: 2,
+};
+
 /**
  * The onboarding card. On the associate home it IS the hero while the
  * checklist is unfinished (`hero`): a person who cannot work yet has one
@@ -61,6 +78,7 @@ export function OnboardingBanner({ hero = false }: { hero?: boolean }) {
   if (!item) return null;
 
   const isFresh = item.percentComplete === 0;
+  const counted = typeof item.tasksDone === 'number' && typeof item.tasksTotal === 'number' && item.tasksTotal > 0;
 
   return (
     <Link
@@ -77,8 +95,8 @@ export function OnboardingBanner({ hero = false }: { hero?: boolean }) {
             <div className="text-lg text-gold">
               {isFresh ? t('onbBanner.welcome') : t('onbBanner.finish')}
             </div>
-            <div className="text-sm text-silver tabular-nums shrink-0">
-              {t('onbBanner.percent', { n: item.percentComplete })}
+            <div className="text-sm text-silver tabular-nums shrink-0" data-testid="onb-count">
+              {counted ? t('onbBanner.tasksOf', { done: item.tasksDone!, total: item.tasksTotal! }) : t('onbBanner.percent', { n: item.percentComplete })}
             </div>
           </div>
           <p className="text-sm text-silver mt-1">
@@ -89,8 +107,21 @@ export function OnboardingBanner({ hero = false }: { hero?: boolean }) {
           <div className="mt-3">
             <ProgressBar percent={item.percentComplete} hideLabel />
           </div>
+          {item.nextTask && (
+            <p className="mt-2 text-sm text-ink" data-testid="onb-next">
+              {t('onbBanner.next', { task: item.nextTask.title, n: TASK_MINUTES[item.nextTask.kind] ?? 5 })}
+            </p>
+          )}
+          {hero && (
+            // The hero's one job has a button you can see on a phone — the
+            // arrow was the only affordance, and it was hidden below sm.
+            <span className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-accent-fill px-4 text-sm font-semibold text-accent-on transition-colors group-hover:brightness-105 sm:w-auto sm:inline-flex" data-testid="onb-continue">
+              {t('onbBanner.cta')}
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </span>
+          )}
         </div>
-        <ArrowRight className="hidden sm:block h-5 w-5 text-gold/60 group-hover:text-gold group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
+        {!hero && <ArrowRight className="hidden sm:block h-5 w-5 text-gold/60 group-hover:text-gold group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />}
       </div>
     </Link>
   );

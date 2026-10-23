@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -33,13 +33,20 @@ function renderTab(canManage: boolean) {
 describe('<RequirementsTab>', () => {
   it('shows each requirement with its latest week, and a manager adds one with the label prefilled', async () => {
     renderTab(true);
-    expect(await screen.findByText('3 of 12 without it, week of 2026-10-10')).toBeInTheDocument();
-    await screen.findByRole('option', { name: 'The Grand Hotel' });
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: /Site/ }), 's1');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: /Kind/ }), 'TRAINING');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: /^Required/ }), 'FOOD_HANDLER');
-    expect(screen.getByRole('textbox', { name: /What people read/ })).toHaveValue('Food handler');
+    // The week reads as a date, not "2026-10-10".
+    expect(await screen.findByText('3 of 12 without it, week of Oct 10, 2026')).toBeInTheDocument();
+    // One word for the place: the card says what the tab says.
+    expect(screen.getByText(/^(Site|Store) requirements$/)).toBeInTheDocument();
+    // The form lives in a dialog, not inline under the list.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Add requirement' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('option', { name: 'The Grand Hotel' });
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: /Site|Store/ }), 's1');
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: /Kind/ }), 'TRAINING');
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: /^Required/ }), 'FOOD_HANDLER');
+    expect(within(dialog).getByRole('textbox', { name: /What people read/ })).toHaveValue('Food handler');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add requirement' }));
     await waitFor(() =>
       expect(createCredentialRequirement).toHaveBeenCalledWith({ locationId: 's1', kind: 'TRAINING', label: 'Food handler', vaccinationKind: null, complianceTag: 'FOOD_HANDLER', qualificationId: null }),
     );

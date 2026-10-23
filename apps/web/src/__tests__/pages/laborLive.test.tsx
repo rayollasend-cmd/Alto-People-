@@ -6,6 +6,7 @@ import { renderAs } from './hrPack/harness';
 const api = vi.hoisted(() => ({
   getLaborActivations: vi.fn(),
   getChangeReport: vi.fn(),
+  getLaborLastRun: vi.fn(),
   goLive: vi.fn(),
   backToShadow: vi.fn(),
   getMyCorrections: vi.fn(),
@@ -24,7 +25,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/laborLiveApi', () => api);
 
-import { LaborGoLiveTab } from '@/pages/payroll/LaborGoLive';
+import { LaborGoLiveTab, lastRunSentence } from '@/pages/payroll/LaborGoLive';
 import { PunchFixes } from '@/pages/time/PunchFixes';
 import { TimeCorrectionsDesk } from '@/pages/time/TimeCorrectionsDesk';
 import { OvertimeRotationPanel } from '@/pages/scheduling/OvertimeRotationPanel';
@@ -47,6 +48,7 @@ beforeEach(() => {
       },
     ],
   });
+  api.getLaborLastRun.mockResolvedValue({ states: [{ jurisdiction: 'US-CA', periodStart: '2026-09-12', periodEnd: '2026-09-25', replayed: 5, people: 3, amountDifference: 120 }] });
   api.getChangeReport.mockResolvedValue({
     jurisdiction: 'US-CA',
     siteId: null,
@@ -65,8 +67,14 @@ describe('labor rules: by state', () => {
     api.goLive.mockResolvedValue({ pending: true, approvalId: 'ap1', activationId: 'act1', title: 'Waiting' });
     renderAs('HR_ADMINISTRATOR', <LaborGoLiveTab />);
     expect(await screen.findByText('California')).toBeInTheDocument();
-    expect(screen.getByText('Live')).toBeInTheDocument();
-    expect(screen.getByText(/Paying by New York’s rules/)).toBeInTheDocument();
+    expect(screen.getAllByText('Live').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Testing (not paying yet)').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/approved by Omar Diaz/).length).toBeGreaterThan(0);
+    // The number each state leads with: the last run replayed under its rules.
+    expect((await screen.findAllByText('Would have paid $120.00 more')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/3 people/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/shadow/i)).toBeNull();
+    expect(screen.queryByText(/stores?\b/i)).toBeNull();
 
     await userEvent.click(screen.getByRole('button', { name: 'Review and go live' }));
     expect(await screen.findByText('People affected')).toBeInTheDocument();
@@ -83,12 +91,12 @@ describe('labor rules: by state', () => {
     await waitFor(() => expect(api.goLive).toHaveBeenCalledWith(expect.objectContaining({ jurisdiction: 'US-CA', counselName: 'Dana Whit', counselFirm: 'Whit & Co LLP', attestation: ATTESTATION })));
   });
 
-  it('back to shadow asks why', async () => {
+  it('turning a live state off asks why', async () => {
     api.backToShadow.mockResolvedValue({ id: 'a1', status: 'ENDED' });
     renderAs('HR_ADMINISTRATOR', <LaborGoLiveTab />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Back to shadow' }));
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Stop paying by these rules' }))[0]!);
     const dialog = await screen.findByRole('dialog');
-    const confirm = within(dialog).getByRole('button', { name: 'Back to shadow' });
+    const confirm = within(dialog).getByRole('button', { name: 'Stop paying by these rules' });
     expect(confirm).toBeDisabled();
     await userEvent.type(within(dialog).getByLabelText(/Why/), 'Counsel asked us to pause.');
     await userEvent.click(confirm);
@@ -99,6 +107,17 @@ describe('labor rules: by state', () => {
     renderAs('FINANCE_ACCOUNTANT', <LaborGoLiveTab />);
     expect(await screen.findByText('California')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Review and go live' })).toBeNull();
+  });
+});
+
+describe('the last test run, in words', () => {
+  it('never says “the same” when nobody there was on the run', () => {
+    const base = { jurisdiction: 'US-FL', periodStart: '2026-08-29', periodEnd: '2026-09-11' };
+    expect(lastRunSentence(undefined, false)).toBe('No finished run to test yet');
+    expect(lastRunSentence({ ...base, replayed: 0, people: 0, amountDifference: 0 }, false)).toBe('Nobody here was on the last run');
+    expect(lastRunSentence({ ...base, replayed: 4, people: 0, amountDifference: 0 }, false)).toBe('Would have paid the same');
+    expect(lastRunSentence({ ...base, replayed: 4, people: 2, amountDifference: -40 }, false)).toBe('Would have paid $40.00 less');
+    expect(lastRunSentence({ ...base, replayed: 4, people: 2, amountDifference: 40 }, true)).toBe('Its rules added $40.00 last run');
   });
 });
 

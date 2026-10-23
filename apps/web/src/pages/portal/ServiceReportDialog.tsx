@@ -4,6 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,8 @@ export function ServiceReportDialog({
   onClose,
   scope,
   initial,
+  stores,
+  initialStoreId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -57,8 +60,16 @@ export function ServiceReportDialog({
   scope: URLSearchParams;
   /** What the opening page was looking at, so the picker starts there. */
   initial?: ReportPick;
+  /** A region's command center: the report is a store's, so the dialog picks the store. */
+  stores?: Array<{ id: string; name: string; clientId?: string }>;
+  initialStoreId?: string | null;
 }) {
   const { t } = useI18n();
+  const [storeId, setStoreId] = useState<string | null>(initialStoreId ?? stores?.[0]?.id ?? null);
+  useEffect(() => {
+    if (open && stores) setStoreId(initialStoreId ?? stores[0]?.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   const today = ymdLocal();
   const yesterday = shiftDays(today, -1);
   const sat = weekSaturday(today);
@@ -106,7 +117,14 @@ export function ServiceReportDialog({
   const download = async () => {
     setBusy(true);
     try {
-      const { url, filename } = reportUrl(scope, pick);
+      const withStore = new URLSearchParams(scope);
+      if (stores && storeId) {
+        withStore.set('locationId', storeId);
+        // An admin preview names the client too: the chosen store's own.
+        const cid = stores.find((st) => st.id === storeId)?.clientId;
+        if (cid && withStore.has('clientId')) withStore.set('clientId', cid);
+      }
+      const { url, filename } = reportUrl(withStore, pick);
       await downloadStatementFile(url, filename);
       onClose();
     } finally {
@@ -132,6 +150,18 @@ export function ServiceReportDialog({
           <DialogDescription>{t('portal.svcReportDesc')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {stores && stores.length > 0 && (
+            <label className="block text-sm text-silver">
+              {t('portal.svcStore')}
+              <Select className="mt-1" value={storeId ?? ''} onChange={(e) => setStoreId(e.target.value)} aria-label={t('portal.svcStore')}>
+                {stores.map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {st.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
           <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t('portal.svcReportTitle')}>
             {presets.map((p) => (
               <Button

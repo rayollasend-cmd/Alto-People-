@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Download, FileSearch, MailWarning, ShieldCheck, Upload, UserRoundCheck } from 'lucide-react';
@@ -18,6 +17,7 @@ import {
   requestW9,
   resolveBNotice,
   setBackup,
+  getYearEnd,
   type BNoticeRow,
   type ContractorRow,
   type TinBatch,
@@ -34,39 +34,39 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtDateTime } from '@/lib/format';
-import { PaymentRunsTab, StateFilingTab, YearEndTab } from './ContractorPayments';
+import { fmtDate, fmtDateTime, fmtMoneyWhole } from '@/lib/format';
+import { PaymentRunsTab, StateFilingTab } from './ContractorPayments';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { useUrlParam } from '@/lib/useUrlState';
 
 /**
  * Contractors (1099) — the W-9 each one signs, whether the IRS agrees
  * with their name and TIN, the B-notices a mismatch requires and the 24%
  * backup withholding that follows an unanswered one, contractor payment
- * runs, how each state gets its 1099s, and the year-end summary.
+ * runs and how each state gets its 1099s. The year-end 1099 summary lives
+ * on the Year-end page's Forms tab (F500 G3: one home for year-end); the
+ * old ?tab=year-end link redirects there.
  */
 
-type Tab = 'contractors' | 'notices' | 'tin' | 'payments' | 'states' | 'year-end';
-const TABS: Tab[] = ['contractors', 'notices', 'tin', 'payments', 'states', 'year-end'];
+type Tab = 'contractors' | 'notices' | 'tin' | 'payments' | 'states';
+const TABS: Tab[] = ['contractors', 'notices', 'tin', 'payments', 'states'];
+
+/** The 1099 year being worked: last year until April (they're filed by Jan 31; corrections follow), then this one. */
+export const contractorTaxYear = (now: Date = new Date()) => now.getFullYear() - (now.getMonth() < 3 ? 1 : 0);
 
 export function ContractorsDesk() {
-  const [params, setParams] = useSearchParams();
-  const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'contractors') as Tab;
-  const setTab = (t: Tab) => {
-    const next = new URLSearchParams(params);
-    if (t === 'contractors') next.delete('tab');
-    else next.set('tab', t);
-    next.delete('q');
-    setParams(next, { replace: true });
-  };
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'contractors', TABS, { history: 'push' });
   return (
     <ListTemplate
       title="Contractors"
-      subtitle="W-9s, IRS name and TIN checks, B-notices and backup withholding, contractor payments and 1099 filing by state."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Contractors' }]}
-      secondaryActions={
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/payroll/taxes?tab=returns">1099 forms</Link>
-        </Button>
-      }
+      subtitle="People paid on a 1099: their W-9s, whether the IRS accepts their name and tax ID, and what they’re paid."
+      related={[
+        { label: '1099 forms', to: '/payroll/year-end?tab=forms' },
+        { label: 'Payroll taxes', to: '/payroll/taxes' },
+      ]}
+      summary={tab === 'contractors' ? <ContractorNumbers /> : null}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <div className="-mx-1 overflow-x-auto px-1">
@@ -76,7 +76,6 @@ export function ContractorsDesk() {
             <TabsTrigger value="tin">TIN matching</TabsTrigger>
             <TabsTrigger value="payments">Payment runs</TabsTrigger>
             <TabsTrigger value="states">State filing</TabsTrigger>
-            <TabsTrigger value="year-end">Year-end</TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="contractors">
@@ -94,11 +93,45 @@ export function ContractorsDesk() {
         <TabsContent value="states">
           <StateFilingTab />
         </TabsContent>
-        <TabsContent value="year-end">
-          <YearEndTab />
-        </TabsContent>
       </Tabs>
     </ListTemplate>
+  );
+}
+
+/* ----- The numbers on the main tab ------------------------------------------------- */
+
+type Show = 'all' | 'missing-w9' | 'mismatch';
+const SHOWS: readonly Show[] = ['all', 'missing-w9', 'mismatch'];
+const missingW9 = (c: ContractorRow) => c.w9Status !== 'SIGNED';
+const tinMismatch = (c: ContractorRow) => c.tinMatchStatus === 'MISMATCH' || c.tinMatchStatus === 'INVALID';
+
+/**
+ * What finance asks about contractors first: who has no signed W-9, whose
+ * name and TIN the IRS doesn't match, what was paid this year and how many
+ * 1099s are owed — counted from the contractor list and the 1099 summary
+ * already on this desk. Each tile filters the list or opens the page behind it.
+ */
+function ContractorNumbers() {
+  const year = new Date().getFullYear();
+  const filingYear = contractorTaxYear();
+  const list = useQuery({ queryKey: ['contractors', 'list'], queryFn: () => listContractors() });
+  const paid = useQuery({ queryKey: ['contractors', 'year-end', year], queryFn: () => getYearEnd(year) });
+  const owed = useQuery({ queryKey: ['contractors', 'year-end', filingYear], queryFn: () => getYearEnd(filingYear), enabled: filingYear !== year });
+  const owedData = filingYear === year ? paid.data : owed.data;
+  const [show, setShow] = useUrlParam<Show>('show', 'all', SHOWS);
+  const rows = list.data?.contractors ?? null;
+  if (!rows || rows.length === 0) return null;
+  const noW9 = rows.filter(missingW9).length;
+  const mismatched = rows.filter(tinMismatch).length;
+  const paidThisYear = paid.data ? paid.data.rows.reduce((a, r) => a + r.necBox1 + r.miscTotal, 0) : null;
+  const formsOwed = owedData ? owedData.totals.necForms + owedData.totals.miscForms : null;
+  return (
+    <MetricStrip label="Contractors at a glance">
+      <MetricCard label="Missing a W-9" value={noW9} nothing={noW9 === 0 ? 'Every W-9 signed' : undefined} tone={noW9 > 0 ? 'warning' : 'default'} onClick={() => setShow(show === 'missing-w9' ? 'all' : 'missing-w9')} selected={show === 'missing-w9'} />
+      <MetricCard label="IRS TIN mismatches" value={mismatched} nothing={mismatched === 0 ? 'No mismatches' : undefined} tone={mismatched > 0 ? 'alert' : 'default'} onClick={() => setShow(show === 'mismatch' ? 'all' : 'mismatch')} selected={show === 'mismatch'} />
+      <MetricCard label={`Paid in ${year}`} value={paidThisYear === null ? '—' : fmtMoneyWhole(paidThisYear)} nothing={paidThisYear === 0 ? `Nothing paid in ${year}` : undefined} href="/payroll/contractors?tab=payments" />
+      <MetricCard label={`1099s owed for ${filingYear}`} value={formsOwed === null ? '—' : formsOwed} nothing={formsOwed === 0 ? 'None owed' : undefined} hint={formsOwed ? 'Filed by January 31' : undefined} href="/payroll/year-end?tab=forms" />
+    </MetricStrip>
   );
 }
 
@@ -132,6 +165,8 @@ const BACKUP_REASON: Record<string, string> = {
 function ContractorsTab() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['contractors', 'list'], queryFn: () => listContractors() });
+  const [show, setShow] = useUrlParam<Show>('show', 'all', SHOWS);
+  const shown = q.data ? q.data.contractors.filter((c) => (show === 'missing-w9' ? missingW9(c) : show === 'mismatch' ? tinMismatch(c) : true)) : null;
   const [noticeFor, setNoticeFor] = useState<ContractorRow | null>(null);
   const [backupFor, setBackupFor] = useState<ContractorRow | null>(null);
   const done = (msg: string) => {
@@ -205,13 +240,27 @@ function ContractorsTab() {
         id="contractors-list"
         caption="Contractors"
         noun={{ one: 'contractor', many: 'contractors' }}
-        rows={q.data?.contractors ?? null}
+        rows={shown}
         columns={columns}
         rowKey={(c) => c.associateId}
         loading={q.isLoading}
         error={q.isError ? 'The contractors could not be loaded.' : null}
         onRetry={() => void q.refetch()}
         search={{ placeholder: 'Search contractors' }}
+        filters={
+          <SegmentedControl<Show>
+            ariaLabel="Show"
+            value={show}
+            onChange={setShow}
+            options={[
+              { value: 'all', label: 'Everyone' },
+              { value: 'missing-w9', label: 'Missing a W-9' },
+              { value: 'mismatch', label: 'IRS mismatch' },
+            ]}
+          />
+        }
+        activeFilters={show === 'all' ? 0 : 1}
+        onClearFilters={() => setShow('all')}
         empty={{ icon: UserRoundCheck, title: 'No contractors', description: 'People hired as 1099 contractors appear here, with their W\u20119 and IRS status.' }}
       />
       <LogNoticeDialog c={noticeFor} onClose={() => setNoticeFor(null)} />

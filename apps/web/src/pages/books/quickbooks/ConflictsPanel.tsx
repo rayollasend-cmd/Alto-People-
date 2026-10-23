@@ -19,13 +19,13 @@ import { errMsg } from './qboWords';
 /** The differences waiting for a person: each side, field by field, and the three ways to settle it. */
 
 const REASON: Record<QboConflictRow['reason'], { label: string; site: string; qbo: string }> = {
-  BOTH_CHANGED: { label: 'Changed on both sides', site: 'Keep the site’s', qbo: 'Keep QuickBooks’' },
-  DELETED_IN_QUICKBOOKS: { label: 'Deleted in QuickBooks', site: 'Send it back to QuickBooks', qbo: 'Take it off the site too' },
+  BOTH_CHANGED: { label: 'Changed on both sides', site: 'Keep the version here', qbo: 'Keep QuickBooks’' },
+  DELETED_IN_QUICKBOOKS: { label: 'Deleted in QuickBooks', site: 'Send it back to QuickBooks', qbo: 'Remove it here too' },
   SITE_PERIOD_CLOSED: { label: 'A closed month here', site: 'Leave the closed month alone', qbo: 'Post it in the first open month' },
   BOOKS_CLOSED: { label: 'QuickBooks’ books are closed', site: 'Send it anyway', qbo: 'Don’t send it' },
 };
 
-const STATUS_WORDS: Record<QboConflictRow['status'], string> = { OPEN: 'Open', KEPT_SITE: 'Kept the site’s', KEPT_QUICKBOOKS: 'Kept QuickBooks’', DISMISSED: 'Dismissed' };
+const STATUS_WORDS: Record<QboConflictRow['status'], string> = { OPEN: 'Open', KEPT_SITE: 'Kept the version here', KEPT_QUICKBOOKS: 'Kept QuickBooks’', DISMISSED: 'Dismissed' };
 
 export function ConflictsPanel({ manage }: { manage: boolean }) {
   const [view, setView] = useState<'OPEN' | 'ALL'>('OPEN');
@@ -90,7 +90,7 @@ function ConflictCard({ c, manage }: { c: QboConflictRow; manage: boolean }) {
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <th scope="col" className="px-3 py-2 font-medium">Field</th>
-                  <th scope="col" className="px-3 py-2 font-medium">On the site</th>
+                  <th scope="col" className="px-3 py-2 font-medium">Here</th>
                   <th scope="col" className="px-3 py-2 font-medium">In QuickBooks</th>
                 </tr>
               </thead>

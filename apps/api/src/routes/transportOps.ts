@@ -25,7 +25,7 @@ import { haversineM } from '../lib/transportLive.js';
 import { TRANSPORT_PHOTO_NAME, bookableStores, transportPhotoUrl } from '../lib/transport.js';
 import { storeShiftWindows } from '../lib/transportSeats.js';
 import { generateSeries, seriesTargetAt } from '../lib/rideSeries.js';
-import { ackSos, driverOk, publicTrack, raiseSos, shareToken, verifyShareToken } from '../lib/transportSafety.js';
+import { ackSos, driverOk, publicTrack, raiseSos, shareToken, shareTokenState } from '../lib/transportSafety.js';
 import {
   DRIVER_POSITION,
   PRE_TRIP_ITEMS,
@@ -442,10 +442,12 @@ transportOpsRouter.post('/runs/:id/sos/ack', MANAGE, async (req, res) => {
 
 /** Public: the shared trip. No auth — the link IS the key, and it expires. */
 transportOpsRouter.get('/track/:token', async (req, res) => {
-  const runId = verifyShareToken(String(req.params.token));
-  if (!runId) throw new HttpError(404, 'link_expired', 'This link has expired or is not valid.');
-  const view = await publicTrack(runId);
-  if (!view) throw new HttpError(404, 'link_expired', 'This link has expired or is not valid.');
+  // 410 for a real link past its time (or a run that was cancelled), 404 for one that never was (F500 G5).
+  const state = shareTokenState(String(req.params.token));
+  if (state === 'invalid') throw new HttpError(404, 'not_found', 'This link is not valid.');
+  if (state === 'expired') throw new HttpError(410, 'link_expired', 'This shared trip has expired.');
+  const view = await publicTrack(state.runId);
+  if (!view) throw new HttpError(410, 'link_expired', 'This trip is no longer shared.');
   res.setHeader('Cache-Control', 'no-store');
   res.json({ trip: view });
 });
@@ -1330,10 +1332,17 @@ transportOpsRouter.get('/costs', VIEW, async (req, res) => {
 
 /* ===== Eight weeks, week by week =========================================== */
 
-/** Monday of the week a YYYY-MM-DD falls in (service dates are store-local days). */
-function mondayOf(ymd: string): string {
+/**
+ * The Saturday that starts the org week a YYYY-MM-DD falls in (service
+ * dates are store-local days). Alto's week runs Saturday to Friday — the
+ * week payroll, overtime and the schedule use (lib/timeAnomalies
+ * startOfWeekInZone; web lib/workweek) — so the vans' weeks line up with
+ * everyone else's (F500 G2: these said "Monday to Sunday").
+ */
+export function orgWeekStartOf(ymd: string): string {
   const d = new Date(`${ymd}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  // Sat → 0 days back, Sun → 1, … Fri → 6.
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 1) % 7));
   return d.toISOString().slice(0, 10);
 }
 const addDaysYmd = (ymd: string, n: number) => {
@@ -1347,7 +1356,7 @@ const ON_TIME_GRACE_MS = 5 * 60_000;
 
 /**
  * The director's trend lines: riders carried, on-time pickups, no-shows,
- * and what the vans earned against what they cost — Monday to Sunday, the
+ * and what the vans earned against what they cost — Saturday to Friday, the
  * last `weeks` weeks with this one (still running) last. Cost is the same
  * reckoning as /costs: run hours at each driver's rate, plus the week's
  * fuel and upkeep from the service log.
@@ -1355,11 +1364,11 @@ const ON_TIME_GRACE_MS = 5 * 60_000;
 transportOpsRouter.get('/trends', VIEW, async (req, res) => {
   const weeks = z.coerce.number().int().min(2).max(26).default(8).parse(req.query.weeks ?? 8);
   const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
-  const thisWeek = mondayOf(today);
+  const thisWeek = orgWeekStartOf(today);
   const starts = Array.from({ length: weeks }, (_, i) => addDaysYmd(thisWeek, (i - weeks + 1) * 7));
   const from = starts[0]!;
   const to = addDaysYmd(thisWeek, 6);
-  const [rides, runs, service] = await Promise.all([
+  const [rides, runs, service, lastRide] = await Promise.all([
     prisma.ride.findMany({
       where: { tenantId: tenantIdForWrite(), serviceDate: { gte: from, lte: to }, status: { in: ['BOARDED', 'COMPLETED', 'NO_SHOW'] } },
       select: { serviceDate: true, status: true, chargeCents: true, waivedAt: true, pickupAt: true, vanArrivedAt: true, boardedAt: true, run: { select: { status: true } } },
@@ -1371,6 +1380,13 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
     prisma.vanServiceEntry.findMany({
       where: { tenantId: tenantIdForWrite(), occurredAt: { gte: toDate(from)!, lt: toDate(addDaysYmd(to, 1))! } },
       select: { occurredAt: true, costCents: true },
+    }),
+    // The last day anyone rode, at any distance back: a quiet week says when
+    // the vans last carried someone ("No rides last week — last ride Sep 14").
+    prisma.ride.findFirst({
+      where: { tenantId: tenantIdForWrite(), serviceDate: { lte: today }, status: { in: ['BOARDED', 'COMPLETED'] } },
+      orderBy: { serviceDate: 'desc' },
+      select: { serviceDate: true },
     }),
   ]);
   // Driver rates, in one read.
@@ -1386,7 +1402,7 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
 
   const buckets = new Map(starts.map((s) => [s, { riders: 0, noShows: 0, timed: 0, onTime: 0, revenueCents: 0, costCents: 0 }]));
   for (const r of rides) {
-    const b = buckets.get(mondayOf(r.serviceDate));
+    const b = buckets.get(orgWeekStartOf(r.serviceDate));
     if (!b) continue;
     if (r.status === 'NO_SHOW') b.noShows += 1;
     else b.riders += 1;
@@ -1400,13 +1416,13 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
     }
   }
   for (const run of runs) {
-    const b = buckets.get(mondayOf(run.serviceDate));
+    const b = buckets.get(orgWeekStartOf(run.serviceDate));
     if (!b) continue;
     const hours = run.startedAt && run.endedAt ? (run.endedAt.getTime() - run.startedAt.getTime()) / 3_600_000 : 2;
     b.costCents += Math.round(hours * (rateOf.get(run.driverUserId) ?? env.DEFAULT_ASSOCIATE_PAY_RATE) * 100);
   }
   for (const s of service) {
-    const b = buckets.get(mondayOf(s.occurredAt.toISOString().slice(0, 10)));
+    const b = buckets.get(orgWeekStartOf(s.occurredAt.toISOString().slice(0, 10)));
     if (b) b.costCents += s.costCents;
   }
   res.json({
@@ -1423,6 +1439,8 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
         costCents: b.costCents,
       };
     }),
+    weekStartsOn: 'SATURDAY',
+    lastRideDate: lastRide?.serviceDate ?? null,
     note: 'On time: the van arrived (or the rider boarded) within 5 minutes of the planned pickup. Revenue is fares and no-show fees charged on runs that ended, less waivers — the same terms as Costs. Cost is run hours at each driver’s rate plus fuel and upkeep from the service log.',
   });
 });

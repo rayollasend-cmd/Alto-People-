@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { TrustAreaPublic } from './trustPublic.js';
 import type { ControlStatus } from './complianceEvidence.js';
 /**
  * The Trust Center (UX upgrade step 4; docs/ux-upgrade-investigation.md
@@ -22,8 +23,10 @@ export interface TrustControlPublic {
   controlStatus?: ControlStatus;
   /** When the last evidence was collected; null when none yet. */
   checkedAt: string | null;
-  /** One sentence about what the control checks; never a value from it. */
-  how: string;
+  /** One sentence about what the control checks; never a value from it. The anonymous page never receives it (F500 G5). */
+  how?: string;
+  /** What the control means, in one plain line — said first; `how` sits behind "How it's checked" (F500 G4). Optional for older payloads. */
+  plain?: string;
 }
 
 export interface SubProcessor {
@@ -45,6 +48,8 @@ export interface TrustSummaryPublic {
   /** Controls passing / total, the number the badge shows. */
   /** `passing` is CONTROL status PASSING — the number Compliance evidence shows. */
   controls: { passing: number; total: number; items: TrustControlPublic[]; statusCounts?: Record<ControlStatus, number> };
+  /** The five areas a security review reads by, one status each (trustPublic.ts). Sent by the public route. */
+  areas?: TrustAreaPublic[];
   /** The audit trail's tamper evidence, platform-wide. */
   auditChain: { verifiedAt: string | null; ok: boolean | null };
   retention: { auditYearsMinimum: number };

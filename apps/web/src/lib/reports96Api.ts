@@ -61,6 +61,15 @@ export interface ReportSummary {
   /** First relative-period token in the spec, for the list's window label. */
   period: ReportPeriodToken | null;
   createdAt: string;
+  /** Who saved it (null when the account is gone). */
+  ownerName?: string | null;
+  /** The caller saved it. */
+  mine?: boolean;
+  /** When it last ran — by hand from the list or by a schedule's delivery. */
+  lastRunAt?: string | null;
+  /** Active schedules and their cadences. */
+  scheduleCount?: number;
+  cadences?: string[];
 }
 
 export interface ReportFull {

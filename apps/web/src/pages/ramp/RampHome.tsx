@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Download, Plus, Target, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { urlBoolean, useUrlState } from '@/lib/useUrlState';
 import {
   addMilestone,
   archiveRampPlan,
@@ -34,6 +35,8 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
+  FilterBar,
+  FilterChip,
   Input,
   Select,
   SkeletonRows,
@@ -63,7 +66,8 @@ export function RampHome() {
   const [open, setOpen] = useState<string | null>(null); // associateId
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
-  const [missedOnly, setMissedOnly] = useState(false);
+  // ?missed=1 — plans with a missed milestone, kept in the URL.
+  const [missedOnly, setMissedOnly] = useUrlState('missed', false, urlBoolean);
 
   const refreshQuery = useQuery({
     queryKey: ['RampHome', 'rows'],
@@ -104,39 +108,31 @@ export function RampHome() {
     <ListTemplate
         title="30/60/90 plans"
         subtitle={`Every new hire's first weeks, from the first shift on — owned by their manager or the ${term('label.store').toLowerCase()}’s ${term('role.shiftSupervisor').toLowerCase()}.`}
-        breadcrumbs={[{ label: 'People', to: '/people' }, { label: '30/60/90 plans' }]}
+        actions={[
+          ...(canManage ? [{ label: 'New ramp plan', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : []),
+          { label: 'Export CSV', icon: Download, onSelect: onExportCsv, hidden: !filtered || filtered.length === 0 },
+        ]}
     >
 
-      <div className="flex flex-wrap items-center gap-2 justify-end">
-        <Input
-          placeholder="Search by name…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-xs"
-          aria-label={`Search plans by ${term('worker').toLowerCase()} name`}
-        />
-        <Button
-          size="sm"
-          variant={missedOnly ? 'secondary' : 'ghost'}
-          aria-pressed={missedOnly}
-          onClick={() => setMissedOnly((v) => !v)}
+      {/* No search or filter over an empty list. */}
+      {rows && rows.length > 0 && (
+        <FilterBar
+          bare
+          search={
+            <Input
+              placeholder="Search by name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full sm:max-w-xs"
+              aria-label={`Search plans by ${term('worker').toLowerCase()} name`}
+            />
+          }
         >
-          Has missed milestones
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={onExportCsv}
-          disabled={!filtered || filtered.length === 0}
-        >
-          <Download className="mr-2 h-4 w-4" /> Export CSV
-        </Button>
-        {canManage && (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New ramp plan
-          </Button>
-        )}
-      </div>
+          <FilterChip active={missedOnly} onClick={() => setMissedOnly(!missedOnly)} count={rows.filter((p) => p.missed > 0).length}>
+            Has missed milestones
+          </FilterChip>
+        </FilterBar>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -169,7 +165,7 @@ export function RampHome() {
               }
               action={
                 canManage && (!rows || rows.length === 0) ? (
-                  <Button onClick={() => setShowNew(true)}>
+                  <Button variant="outline" onClick={() => setShowNew(true)}>
                     <Plus className="mr-2 h-4 w-4" /> New ramp plan
                   </Button>
                 ) : undefined

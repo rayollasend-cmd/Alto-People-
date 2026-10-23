@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { listClientLocations } from '@/lib/clientsApi';
 import { useClients } from '@/lib/useClients';
-import type { LocationSummary } from '@alto-people/shared';
+import { OSHA_RATE_MIN_HOURS, oshaRateMeaningful, type LocationSummary } from '@alto-people/shared';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import {
   createOshaIncident,
@@ -53,6 +53,9 @@ import { fmtDate, fmtMoney, fmtMonthShortYear, parseYmd, ymdLocal } from '@/lib/
 import { downloadCsv } from '@/lib/csv';
 import { toast } from 'sonner';
 import { ListTemplate } from '@/components/templates';
+import { TaxYearSelect } from '@/components/ui/TaxYearSelect';
+import { useUrlParam } from '@/lib/useUrlState';
+import { useStoreScope } from '@/lib/storeScope';
 import { statusTone } from '@/lib/status';
 import { useTerm } from '@/lib/auth';
 import { pickOne } from '@/lib/validationCopy';
@@ -62,42 +65,62 @@ import { getEeoApplicantReport } from '@/lib/complianceApi';
 import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
 
 type Tab = 'osha' | 'wc' | 'eeo';
+const TABS: readonly Tab[] = ['osha', 'wc', 'eeo'];
+
+/**
+ * The client this page reads: a ?client= link wins, then the top bar's
+ * client scope, and otherwise every client. It used to open on the first
+ * client in the list ("Alto HR — Internal Hires": "No OSHA incidents")
+ * while the scorecard that links here counted two open recordables at
+ * another client. '' = all clients.
+ */
+export function useSafetyClient(): [string, (id: string) => void] {
+  const [fromUrl, setFromUrl] = useUrlParam<string>('client', '');
+  const scope = useStoreScope();
+  const clientId = fromUrl || (scope.enabled ? scope.clientId : '');
+  const setClient = (id: string) => {
+    setFromUrl(id);
+    // Keep the top bar in step, as the I-9 tab does.
+    if (scope.enabled) scope.setClientId(id);
+  };
+  return [clientId, setClient];
+}
 
 export function OshaWcEeoHome() {
   // Shared react-query cache — fetched at most once per 5 minutes app-wide.
   const { clients } = useClients();
-  const [clientId, setClientId] = useState('');
-  const [tab, setTab] = useState<Tab>('osha');
-
-  useEffect(() => {
-    if (clients.length > 0) setClientId((prev) => prev || clients[0].id);
-  }, [clients]);
+  const [clientId, setClientId] = useSafetyClient();
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'osha', TABS, { history: 'push' });
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="OSHA · WC · EEO-1"
-        subtitle="OSHA injury log, Workers' Comp class codes, and EEO-1 race/gender/category reporting."
-        breadcrumbs={[{ label: 'Compliance' }, { label: 'OSHA · WC · EEO' }]}
+        title="Safety & EEO reporting"
+        subtitle="The OSHA injury log and Form 300A summary, Workers' Comp class codes, and the EEO-1 report."
+        filters={
+          clients.length > 0 && tab !== 'wc' ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="safety-client" className="text-xs2 uppercase tracking-wider text-silver">
+                Client
+              </label>
+              <Select
+                id="safety-client"
+                size="sm"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                className="w-full sm:w-auto"
+              >
+                <option value="">All clients</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : undefined
+        }
     >
-      <Card>
-        <CardContent className="flex items-center gap-3">
-          <span className="text-xs2 uppercase tracking-wider text-silver">Client</span>
-          <Select
-            size="sm"
-            aria-label="Filter by client"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-          >
-            {clients.length === 0 && <option value="">—</option>}
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        </CardContent>
-      </Card>
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="osha">OSHA log</TabsTrigger>
@@ -105,12 +128,12 @@ export function OshaWcEeoHome() {
           <TabsTrigger value="eeo">EEO-1 report</TabsTrigger>
         </TabsList>
         <TabsContent value="osha">
-          {clientId && <OshaTab clientId={clientId} />}
+          <OshaTab clientId={clientId} clients={clients} />
         </TabsContent>
         <TabsContent value="wc"><WcTab /></TabsContent>
         <TabsContent value="eeo">
           <ApplicantSelfIdCard />
-          {clientId && <EeoTab clientId={clientId} />}
+          <EeoTab clientId={clientId} />
         </TabsContent>
       </Tabs>
     </ListTemplate>
@@ -147,7 +170,10 @@ const OSHA_STATUS_LABELS: Record<OshaStatus, string> = {
   ESCALATED: 'Escalated',
 };
 
-function OshaTab({ clientId }: { clientId: string }) {
+function OshaTab({ clientId, clients }: { clientId: string; clients: Array<{ id: string; name: string }> }) {
+  // The tenant's word for a person ("Associate", "Employee", "Team member").
+  const term = useTerm();
+  const person = term('worker');
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<OshaIncident | null>(null);
   const [year, setYear] = useState(new Date().getFullYear());
@@ -212,20 +238,30 @@ function OshaTab({ clientId }: { clientId: string }) {
               {summary && (summary.hoursWorked ?? 0) > 0 && (
                 <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 md:grid-cols-7">
                   <Stat label="Hours worked" value={(summary.hoursWorked ?? 0).toLocaleString('en-US')} />
-                  <Stat label="Injury rate (TRIR)" value={summary.trir ?? '—'} />
-                  <Stat label="Days away/restricted (DART)" value={summary.dart ?? '—'} />
+                  {oshaRateMeaningful(summary.hoursWorked) ? (
+                    <>
+                      <Stat label="Injury rate (TRIR)" value={summary.trir ?? '—'} />
+                      <Stat label="Days away/restricted (DART)" value={summary.dart ?? '—'} />
+                    </>
+                  ) : (
+                    // A rate on a few thousand hours is noise (one case reads
+                    // as a TRIR in the hundreds), so it waits for the hours.
+                    <div className="col-span-2">
+                      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">Injury rates</div>
+                      <div className="mt-0.5 text-sm text-silver">
+                        Shown after {OSHA_RATE_MIN_HOURS.toLocaleString('en-US')} hours worked
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
             <div className="flex items-end gap-3">
               <div>
                 <Label>Year</Label>
-                <Input
-                  className="mt-1 w-24"
-                  type="number"
-                  value={year}
-                  onChange={(e) => setYear(Number(e.target.value) || year)}
-                />
+                <div className="mt-1">
+                  <TaxYearSelect value={year} onChange={setYear} label="Year" span={5} />
+                </div>
               </div>
               <Button variant="secondary" onClick={download300aCsv} disabled={!summary}>
                 <Download className="mr-2 h-4 w-4" /> Export CSV
@@ -267,14 +303,16 @@ function OshaTab({ clientId }: { clientId: string }) {
               caption="OSHA incidents"
               rows={rows}
               rowKey={(i) => i.id}
-              search={{ placeholder: 'Associate, body part…' }}
+              search={{ placeholder: `${person}, body part…` }}
               urlState={false}
               exportCsv={{ filename: 'osha-incidents' }}
               onRowClick={(i) => setEditing(i)}
-              rowActionLabel={(i) => `Open incident for ${i.associateName ?? 'associate'} on ${fmtDate(i.occurredAt)}`}
+              rowActionLabel={(i) => `Open incident for ${i.associateName ?? person.toLowerCase()} on ${fmtDate(i.occurredAt)}`}
               columns={[
                 { key: 'occurred', header: 'Occurred', accessor: (i) => i.occurredAt, sortable: true, searchable: false, cardMeta: true, cell: (i) => fmtDate(i.occurredAt) },
-                { key: 'associate', header: 'Associate', accessor: (i) => i.associateName, sortable: true, primary: true, cell: (i) => i.associateName ?? '—' },
+                { key: 'associate', header: person, accessor: (i) => i.associateName, sortable: true, primary: true, cell: (i) => i.associateName ?? '—' },
+                // Every client in view: say which one each incident is at.
+                ...(clientId || clients.length < 2 ? [] : [{ key: 'client', header: 'Client', accessor: (i: OshaIncident) => i.clientName, sortable: true, cardMeta: true, className: 'text-silver' }]),
                 { key: 'severity', header: 'Severity', accessor: (i) => SEVERITY_LABELS[i.severity], sortable: true, cardMeta: true, cell: (i) => <Badge variant={SEVERITY_COLOR[i.severity]}>{SEVERITY_LABELS[i.severity]}</Badge> },
                 { key: 'bodyPart', header: 'Body part', accessor: (i) => i.bodyPart, sortable: true, cell: (i) => i.bodyPart ?? '—' },
                 { key: 'daysAway', header: 'Days away', accessor: (i) => i.daysAway, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
@@ -287,6 +325,7 @@ function OshaTab({ clientId }: { clientId: string }) {
       {showNew && (
         <NewIncidentDrawer
           clientId={clientId}
+          clients={clients}
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
@@ -413,14 +452,19 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 }
 
 function NewIncidentDrawer({
-  clientId,
+  clientId: scopedClientId,
+  clients,
   onClose,
   onSaved,
 }: {
+  /** '' = the page shows every client: the drawer asks which one. */
   clientId: string;
+  clients: Array<{ id: string; name: string }>;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
+  const [clientId, setClientId] = useState(scopedClientId || (clients.length === 1 ? clients[0]!.id : ''));
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   // Default to "now" in LOCAL wall-clock time — incidents are almost always
   // logged right after they happen, and datetime-local wants no timezone.
@@ -441,12 +485,17 @@ function NewIncidentDrawer({
   const locationsQuery = useQuery({
     queryKey: ['clients', clientId, 'locations'],
     queryFn: () => listClientLocations(clientId),
+    enabled: !!clientId,
   });
   const locations: LocationSummary[] | null = locationsQuery.isError
     ? []
     : (locationsQuery.data?.locations ?? null);
 
   const onSubmit = async () => {
+    if (!clientId) {
+      toast.error('Pick the client it happened at.');
+      return;
+    }
     if (!description.trim()) {
       toast.error('Description required.');
       return;
@@ -481,8 +530,29 @@ function NewIncidentDrawer({
         <DrawerTitle>Report OSHA incident</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
+        {!scopedClientId && (
+          <div>
+            <Label htmlFor="osha-client">Client</Label>
+            <Select
+              id="osha-client"
+              className="mt-1"
+              value={clientId}
+              onChange={(e) => {
+                setClientId(e.target.value);
+                setLocation('');
+              }}
+            >
+              <option value="">Pick a client</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
         <div>
-          <Label>Associate (optional)</Label>
+          <Label>{term('worker')} (optional)</Label>
           <div className="mt-1">
             <AssociatePicker value={assoc} onChange={setAssoc} />
           </div>
@@ -585,6 +655,7 @@ function EditIncidentDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const term = useTerm();
   const [status, setStatus] = useState<OshaStatus>(incident.status);
   const [resolutionNote, setResolutionNote] = useState(incident.resolutionNote ?? '');
   const [daysAway, setDaysAway] = useState(String(incident.daysAway));
@@ -630,7 +701,7 @@ function EditIncidentDrawer({
         <div className="grid grid-cols-2 gap-3 text-sm">
           <Stat label="Occurred" value={fmtDate(incident.occurredAt)} />
           <Stat label="Reported" value={fmtDate(incident.reportedAt)} />
-          <Stat label="Associate" value={incident.associateName ?? '—'} />
+          <Stat label={term('worker')} value={incident.associateName ?? '—'} />
           <Stat label="Client" value={incident.clientName} />
           <Stat label="Location" value={incident.location ?? '—'} />
           <Stat label="Body part" value={incident.bodyPart ?? '—'} />
@@ -932,6 +1003,7 @@ const EEO_GENDER_LABELS: Record<string, string> = {
 };
 
 function EeoTab({ clientId }: { clientId: string }) {
+  const term = useTerm();
   const reportQuery = useQuery({
     queryKey: ['compliance', 'eeo', clientId],
     queryFn: () => getEeoReport(clientId),
@@ -988,7 +1060,7 @@ function EeoTab({ clientId }: { clientId: string }) {
         <CardContent className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <div className="text-xs uppercase tracking-wider text-silver">
-              Active associates with EEO records
+              {term('workers')} counted
             </div>
             <div className="mt-1 text-2xl text-white font-medium">{data.total}</div>
           </div>
@@ -1007,7 +1079,7 @@ function EeoTab({ clientId }: { clientId: string }) {
           {data.buckets.length === 0 ? (
             <EmptyState
               title="No EEO data yet"
-              description="Record self-identification per associate with the panel above; counts roll up here by category × race × gender."
+              description={`Record self-identification per ${term('worker').toLowerCase()} with the panel above; counts roll up here by category × race × gender.`}
             />
           ) : (
             <DataGrid<(typeof data.buckets)[number]>
@@ -1079,7 +1151,7 @@ function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
         </div>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           <div>
-            <Label>Associate</Label>
+            <Label>{term('worker')}</Label>
             <div className="mt-1">
               <AssociatePicker value={assoc} onChange={setAssoc} />
             </div>

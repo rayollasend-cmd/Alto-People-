@@ -100,13 +100,18 @@ export function SchedulingToolbar(p: SchedulingToolbarProps) {
           </Button>
         </div>
       )}
-      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      {/* The scope stays in view: the chips keep room for one ("Coastal
+          Resort Ho…") however crowded the bar gets. */}
+      <div className={cn('flex min-w-0 flex-1 items-center gap-1 overflow-x-auto', p.chips.length > 0 && 'min-w-[5.5rem]')}>
         {p.chips.map((c) => (
           <span
             key={c.key}
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-navy-secondary bg-navy-secondary/40 px-2.5 text-xs text-ink"
+            // A long store name ends in "…" (full name on hover) instead of
+            // being cut off at the scroller's edge.
+            className="inline-flex h-7 min-w-[5rem] max-w-[16rem] shrink items-center gap-1 rounded-full border border-navy-secondary bg-navy-secondary/40 px-2.5 text-xs text-ink"
+            title={c.label}
           >
-            {c.label}
+            <span className="min-w-0 truncate">{c.label}</span>
             {c.onRemove && (
               <button type="button" onClick={c.onRemove} aria-label={`Clear ${c.label}`} className="text-silver/70 hover:text-ink">
                 ×
@@ -114,16 +119,17 @@ export function SchedulingToolbar(p: SchedulingToolbarProps) {
             )}
           </span>
         ))}
-        {p.onOpenFilters && (
-          <button
-            type="button"
-            onClick={p.onOpenFilters}
-            className="h-7 shrink-0 rounded-full border border-dashed border-navy-secondary px-2.5 text-xs text-silver hover:text-ink"
-          >
-            {p.chips.length === 0 ? 'Filter…' : 'Edit filters'}
-          </button>
-        )}
       </div>
+      {/* Outside the chips' scroller, so it never clips to "Edit filte". */}
+      {p.onOpenFilters && (
+        <button
+          type="button"
+          onClick={p.onOpenFilters}
+          className="h-7 shrink-0 whitespace-nowrap rounded-full border border-dashed border-navy-secondary px-2.5 text-xs text-silver hover:text-ink"
+        >
+          {p.chips.length === 0 ? 'Filter…' : 'Edit filters'}
+        </button>
+      )}
       {p.trailing}
       {p.canManage && p.onBuild && (
         <Button variant="secondary" size="sm" onClick={p.onBuild} loading={p.building} className="relative shrink-0" title="Copy this week into next week, fill what's open, review the picks, then publish">
@@ -151,24 +157,38 @@ export function SchedulingToolbar(p: SchedulingToolbarProps) {
   );
 }
 
+export type KpiPartKey = 'filled' | 'open' | 'unfilled' | 'hours' | 'forecast' | 'cost';
+
 /**
- * The KPIs as one line: "18% filled · 4 open · 5 unfilled · 77h scheduled
- * · 66h forecast · $1.1k". Null parts are left out; a client-bound role
- * never sees the dollars.
+ * The KPIs as parts — "18% filled", "4 open", "5 unfilled", "77h
+ * scheduled", "66h forecast", "$1.1k" — so the page can render them as one
+ * line on a desk and as sideways-scrolling chips on a phone, and make
+ * "5 unfilled" a link to the list of them. Null parts are left out; a
+ * client-bound role never sees the dollars.
  */
-export function kpiLine(kpis: SchedulingKpis | null, forecastHours: number | null): string {
-  if (!kpis) return '';
+export function kpiParts(kpis: SchedulingKpis | null, forecastHours: number | null): Array<{ key: KpiPartKey; text: string }> {
+  if (!kpis) return [];
   const filled = kpis.assignedShifts + kpis.completedShifts;
   const open = kpis.openUpcoming ?? kpis.openShifts;
   const unfilled = kpis.unfilledPast ?? kpis.wentUnfilled ?? 0;
-  const parts: string[] = [];
-  if (filled + open > 0) parts.push(`${kpis.fillRatePercent}% filled`);
-  parts.push(`${open} open`);
-  if (unfilled > 0) parts.push(`${unfilled} unfilled`);
+  const parts: Array<{ key: KpiPartKey; text: string }> = [];
+  if (filled + open > 0) parts.push({ key: 'filled', text: `${kpis.fillRatePercent}% filled` });
+  parts.push({ key: 'open', text: `${open} open` });
+  if (unfilled > 0) parts.push({ key: 'unfilled', text: `${unfilled} unfilled` });
   const hours = Math.round(kpis.totalScheduledMinutes / 60);
-  parts.push(forecastHours != null ? `${hours}h scheduled · ${Math.round(forecastHours)}h forecast` : `${hours}h`);
-  if (kpis.projectedLaborCost !== null) parts.push(fmtMoneyCompact(kpis.projectedLaborCost));
-  return parts.join(' · ');
+  if (forecastHours != null) {
+    parts.push({ key: 'hours', text: `${hours}h scheduled` });
+    parts.push({ key: 'forecast', text: `${Math.round(forecastHours)}h forecast` });
+  } else parts.push({ key: 'hours', text: `${hours}h` });
+  if (kpis.projectedLaborCost !== null) parts.push({ key: 'cost', text: fmtMoneyCompact(kpis.projectedLaborCost) });
+  return parts;
+}
+
+/** The KPIs as one line: "18% filled · 4 open · 5 unfilled · 77h scheduled · 66h forecast · $1.1k". */
+export function kpiLine(kpis: SchedulingKpis | null, forecastHours: number | null): string {
+  return kpiParts(kpis, forecastHours)
+    .map((p) => p.text)
+    .join(' · ');
 }
 
 /**

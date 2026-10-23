@@ -340,7 +340,7 @@ export async function buildStoreOps(
           ...base,
           kind: 'NOT_SUBMITTED',
           severity: SEVERITY.NOT_SUBMITTED,
-          title: 'Shift ended — SOP not submitted',
+          title: 'Shift ended — checklist not submitted',
           detail: `${done} of ${total} done · ${personName(s.openedBy)}`,
           at: s.dueAt.toISOString(),
         });
@@ -420,6 +420,10 @@ export async function buildStoreOps(
   }> = [];
   for (const a of assigned) {
     if (!a.template.active || a.template.retiredAt) continue;
+    // The page's narrowing applies here too: "Last night" listed the
+    // evening's "not started" item (F500 G5).
+    if (opts.period && a.template.period !== opts.period) continue;
+    if (opts.department && a.template.department !== opts.department) continue;
     const w = windows.get(`${a.locationId}|${a.label}`);
     const store = tzOf.get(a.locationId);
     if (!w || !store) continue;
@@ -446,7 +450,10 @@ export async function buildStoreOps(
         department: a.template.department,
         period: a.template.period,
         storeName: store.name,
-        title: end <= now ? `${a.label} — no SOP was run` : `${a.label} — SOP not started`,
+        // The row's own line names the department and the period (Morning,
+        // Evening…); the title doesn't add the store window's name ("Swing"),
+        // which called the same shift a second name (F500 G5).
+        title: end <= now ? 'No checklist was run' : 'Checklist not started',
         detail: a.template.name,
         at: start.toISOString(),
       });

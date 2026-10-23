@@ -192,3 +192,23 @@ export interface Calibration {
 export const getWorksheet = (cycleId: string, managerId?: string) =>
   apiFetch<Worksheet>(`/comp/cycles/${cycleId}/worksheet${managerId ? `?managerId=${managerId}` : ''}`);
 export const getCalibration = (cycleId: string) => apiFetch<Calibration>(`/comp/cycles/${cycleId}/calibration`);
+
+/** GET /comp/overview — who is paid outside their band, pay changes waiting, the live cycle (apps/api routes/compensation.ts). */
+export interface CompOverview {
+  /** Employed people in reach (in the client, when one is picked). */
+  people: number;
+  belowMin: number;
+  aboveMax: number;
+  inBand: number;
+  /** A rate on file but no band for their client, pay type and role. */
+  noBand: number;
+  noRate: number;
+  outsideBand: Array<{ associateId: string; name: string; payType: PayType; amount: string; band: string; min: string; max: string; where: 'BELOW' | 'ABOVE' }>;
+  outsideTruncated: boolean;
+  /** Pay-rate changes and promotions waiting on a second person. */
+  pendingPayChanges: number;
+  cycle: { id: string; name: string; status: MeritCycleStatus; effectiveDate: string; budget: string | null; spent: string; people: number; pending: number } | null;
+}
+
+export const getCompOverview = (clientId?: string) =>
+  apiFetch<CompOverview>(`/comp/overview${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`);

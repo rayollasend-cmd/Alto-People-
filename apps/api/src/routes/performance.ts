@@ -12,6 +12,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeAssociatesIncludingFormer, scopeWhere } from '../lib/scope.js';
 import { enqueueAudit, recordComplianceEvent } from '../lib/audit.js';
+import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { notifyAssociate, notifyUser } from '../lib/notify.js';
 
 export const performanceRouter = Router();
@@ -58,12 +59,21 @@ const REVIEW_INCLUDE = {
 
 /* ===== HR (manage:performance) ========================================== */
 
+const REVIEW_STATUSES = ['DRAFT', 'SUBMITTED', 'ACKNOWLEDGED'] as const;
+type ReviewStatus = (typeof REVIEW_STATUSES)[number];
+
 performanceRouter.get('/reviews', MANAGE, async (req, res, next) => {
   try {
-    const status = req.query.status?.toString();
+    // One status, or several comma-separated ("DRAFT,SUBMITTED" = needs action).
+    const statuses = (req.query.status?.toString() ?? '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter((x): x is ReviewStatus => (REVIEW_STATUSES as readonly string[]).includes(x));
     const associateId = req.query.associateId?.toString();
     const where: Prisma.PerformanceReviewWhereInput = {
-      ...(status ? { status: status as Prisma.PerformanceReviewWhereInput['status'] } : {}),
+      // Only the people in the caller's reach (a site-bound account sees its sites' reviews).
+      associate: { is: scopeAssociatesIncludingFormer(req.user!) },
+      ...(statuses.length === 1 ? { status: statuses[0] } : statuses.length > 1 ? { status: { in: statuses } } : {}),
       ...(associateId ? { associateId } : {}),
     };
     const rows = await prisma.performanceReview.findMany({
@@ -75,6 +85,80 @@ performanceRouter.get('/reviews', MANAGE, async (req, res, next) => {
     res.json(
       PerformanceReviewListResponseSchema.parse({ reviews: rows.map(toReview) })
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /performance/reviews/summary — the review cycle at a glance (F500
+ * 2026-10-22: the page opened on a "Draft" filter with no overview).
+ *
+ *   - drafts / awaitingAck / acknowledged: reviews by status;
+ *   - doneThisQuarter: acknowledged since the calendar quarter began;
+ *   - due: who needs a review, by the Manager home's rule — a person's
+ *     review is due a year after their last review's period end (or their
+ *     hire date when they have none); overdue when that day has passed,
+ *     due this month when it falls between today and the month's end (UTC
+ *     calendar days, as review periods and hire dates are stored).
+ *     A person with a draft or submitted review under way is not due.
+ *
+ * Employed people in the caller's reach only, like the list.
+ */
+performanceRouter.get('/reviews/summary', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const now = new Date();
+    const scope = scopeAssociatesIncludingFormer(user);
+    const quarterStart = new Date(Date.UTC(now.getUTCFullYear(), Math.floor(now.getUTCMonth() / 3) * 3, 1));
+    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const [byStatus, doneThisQuarter, people] = await Promise.all([
+      prisma.performanceReview.groupBy({ by: ['status'], where: { associate: { is: scope } }, _count: { _all: true } }),
+      prisma.performanceReview.count({ where: { associate: { is: scope }, status: 'ACKNOWLEDGED', acknowledgedAt: { gte: quarterStart } } }),
+      prisma.associate.findMany({
+        take: 5000,
+        where: { AND: [scope, EMPLOYED_WHERE] },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          hireDate: true,
+          performanceReviews: { orderBy: { periodEnd: 'desc' }, take: 1, select: { periodEnd: true, status: true } },
+        },
+      }),
+    ]);
+    const count = (s: ReviewStatus) => byStatus.find((g) => g.status === s)?._count._all ?? 0;
+    const YEAR = 365 * 86_400_000;
+    const due = people
+      .map((p) => {
+        const last = p.performanceReviews[0] ?? null;
+        // A review under way answers the question.
+        if (last && last.status !== 'ACKNOWLEDGED') return null;
+        const since = last?.periodEnd ?? p.hireDate ?? null;
+        if (!since) return null;
+        // Dates, not instants: period ends and hire dates are calendar days.
+        const dueOn = ymd(new Date(since.getTime() + YEAR));
+        if (dueOn >= ymd(monthEnd)) return null;
+        return {
+          associateId: p.id,
+          name: `${p.firstName} ${p.lastName}`.trim(),
+          lastPeriodEnd: last ? ymd(last.periodEnd) : null,
+          dueOn,
+          overdue: dueOn < ymd(now),
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.name.localeCompare(b.name));
+    res.json({
+      drafts: count('DRAFT'),
+      awaitingAck: count('SUBMITTED'),
+      acknowledged: count('ACKNOWLEDGED'),
+      doneThisQuarter,
+      quarterStart: ymd(quarterStart),
+      overdue: due.filter((d) => d.overdue).length,
+      dueThisMonth: due.filter((d) => !d.overdue).length,
+      due: due.slice(0, 200),
+    });
   } catch (err) {
     next(err);
   }

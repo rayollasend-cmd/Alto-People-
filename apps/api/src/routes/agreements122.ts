@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Prisma } from '@prisma/client';
 import { httpUrl } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -45,6 +46,8 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
     .enum(['PENDING_SIGNATURE', 'SIGNED', 'EXPIRED', 'SUPERSEDED'])
     .optional()
     .parse(req.query.status);
+  // ?window=signed30 | expiring30 — the rows behind the summary's tiles.
+  const window = z.enum(['signed30', 'expiring30']).optional().parse(req.query.window);
 
   const rows = await prisma.agreement.findMany({
     take: 500,
@@ -55,6 +58,7 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
       ...(associateId ? { associateId } : {}),
       ...(kind ? { kind } : {}),
       ...(status ? { status } : {}),
+      ...(window ? agreementWindow(window, new Date()) : {}),
     },
     include: {
       associate: {
@@ -84,6 +88,31 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
       createdAt: a.createdAt.toISOString(),
     })),
   });
+});
+
+/** The tiles' windows: signed in the last 30 days; signed and lapsing within 30 days (today included). */
+function agreementWindow(window: 'signed30' | 'expiring30', now: Date): Prisma.AgreementWhereInput {
+  const DAY = 86_400_000;
+  if (window === 'signed30') return { status: 'SIGNED', signedAt: { gte: new Date(now.getTime() - 30 * DAY) } };
+  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  return { status: 'SIGNED', expiresOn: { gte: today, lte: new Date(today.getTime() + 30 * DAY) } };
+}
+
+// ----- Summary -------------------------------------------------------------
+//
+// The desk's numbers (F500 2026-10-22): awaiting signature, signed in the
+// last 30 days, and signed agreements lapsing within 30 days. Same reach as
+// the list.
+
+agreements122Router.get('/agreements/summary', VIEW, async (req, res) => {
+  const now = new Date();
+  const reach: Prisma.AgreementWhereInput = { associate: { is: scopeActiveAssociates(req.user!, { former: true }) }, deletedAt: null };
+  const [awaitingSignature, signed30d, expiring30d] = await Promise.all([
+    prisma.agreement.count({ where: { ...reach, status: 'PENDING_SIGNATURE' } }),
+    prisma.agreement.count({ where: { ...reach, ...agreementWindow('signed30', now) } }),
+    prisma.agreement.count({ where: { ...reach, ...agreementWindow('expiring30', now) } }),
+  ]);
+  res.json({ awaitingSignature, signed30d, expiring30d });
 });
 
 // ----- My pending ----------------------------------------------------------

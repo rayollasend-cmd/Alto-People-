@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ArrowLeft, BedDouble, Bus, CalendarRange, Copy, Download, FileText, Plus, TrendingUp, Users } from 'lucide-react';
+import { ArrowLeft, BedDouble, CalendarRange, Copy, Download, FileText, Plus, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   RECRUITING_CHANNELS,
@@ -47,8 +46,8 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
-import { DetailsTable, LegendKey, PALETTE, PortalTooltip, TICK } from '@/components/ui/charts';
-import { SERIES } from '@/pages/portal/portalCharts';
+import { StackedBarChart } from '@/components/ui/charts';
+import { ChartFrame, type ChartColumn } from '@/components/ui/ChartFrame';
 import { TaskDemandEditor, linesOf, mixLine, spreadLines } from './TaskDemandEditor';
 import { fmtMoney } from '@/lib/format';
 
@@ -73,6 +72,21 @@ const weekLabel = (ymd: string) => {
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${MONTHS[(m ?? 1) - 1]} ${d}`;
 };
+
+/** The weekly figures, the plan chart's table and CSV. */
+const dash = (v: unknown) => (v === null || v === undefined ? '—' : String(v));
+const WEEKLY_COLUMNS: ChartColumn[] = [
+  { key: 'label', label: 'Week of' },
+  { key: 'daily', label: 'On floor / day', numeric: true },
+  { key: 'associatesNeeded', label: 'Associates', numeric: true },
+  { key: 'bedsNeeded', label: 'Beds needed', numeric: true },
+  { key: 'bedsAvailable', label: 'Beds available', numeric: true },
+  { key: 'vanSeatsNeeded', label: 'Van seats needed', numeric: true },
+  { key: 'vanSeatsAvailable', label: 'Van seats carried', numeric: true },
+  { key: 'scheduledHours', label: 'Scheduled hours', numeric: true, format: dash },
+  { key: 'activeHeadcount', label: 'Active now', numeric: true, format: dash },
+  { key: 'forecastShortDays', label: 'Short days (forecast)', numeric: true, format: dash },
+];
 const GAP_BADGE: Record<SeasonGap['kind'], { variant: 'destructive' | 'pending' | 'info' | 'accent'; label: string }> = {
   HEADCOUNT: { variant: 'destructive', label: 'People' },
   BEDS: { variant: 'destructive', label: 'Beds' },
@@ -111,14 +125,17 @@ function PlansList() {
   const [compareB, setCompareB] = useState('');
   const q = useQuery({ queryKey: ['season-plans', 'list', showArchived], queryFn: () => listSeasonPlans(showArchived) });
   const plans = q.data?.plans ?? [];
+  const noPlans = !!q.data && plans.length === 0 && !showArchived;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Season planner"
         subtitle="Demand by store, shift and week becomes associates, beds, van seats and recruiting targets. Save scenarios and compare them side by side."
+        // With no plan yet both ways in sit in the empty state itself, not
+        // only up here (F500 G2); the header carries them once there is a list.
         primaryAction={
-          canManage ? (
+          canManage && !noPlans ? (
             <Button onClick={() => setCreating(true)}>
               <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
               New plan
@@ -126,7 +143,7 @@ function PlansList() {
           ) : undefined
         }
         secondaryActions={
-          canManage ? (
+          canManage && !noPlans ? (
             // Brief 3-4: a plan whose demand is the 26-week forecast, one click away.
             <Button variant="outline" onClick={() => navigate('/forecast?plan=1')}>
               <TrendingUp className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -157,8 +174,22 @@ function PlansList() {
             ) : plans.length === 0 ? (
               <EmptyState
                 icon={CalendarRange}
-                title="No season plan yet"
-                description="A new plan starts from every store's current staffing targets, one row per week of the season."
+                title={showArchived ? 'No season plans' : 'No season plan yet'}
+                description="Start from the 26-week forecast, or a blank plan from every store's current staffing targets, one row per week of the season."
+                action={
+                  canManage && !showArchived ? (
+                    <div className="flex flex-wrap justify-center gap-2">
+                      <Button onClick={() => navigate('/forecast?plan=1')}>
+                        <TrendingUp className="mr-2 h-4 w-4" aria-hidden="true" />
+                        Start from the forecast
+                      </Button>
+                      <Button variant="secondary" onClick={() => setCreating(true)}>
+                        <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
+                        Blank plan
+                      </Button>
+                    </div>
+                  ) : undefined
+                }
               />
             ) : (
               <DataGrid<SeasonPlanSummary>
@@ -436,48 +467,32 @@ function PlanView({ id }: { id: string }) {
           <LiveWhatIfCard planId={plan.id} weeks={plan.weeks} />
 
           {/* ---- week by week --------------------------------------------- */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-gold" aria-hidden="true" />
-                Associates needed, week by week
-              </CardTitle>
-              <CardDescription>Across every store in the plan. Floor headcount × 7 days ÷ {plan.targetHoursPerWeek / plan.shiftHours} shifts a person, plus {plan.reservePct}% reserve.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {weekly.length === 0 ? (
+          {weekly.length === 0 ? (
+            <Card>
+              <CardContent>
                 <EmptyState icon={CalendarRange} title="No weeks" description="The season dates do not cover a full org week." />
-              ) : (
-                <>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart accessibilityLayer={false} data={weekly}>
-                      <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-                      <XAxis dataKey="label" tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} />
-                      <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
-                      <Tooltip content={<PortalTooltip series={{ associatesNeeded: { name: 'Associates', color: SERIES.primary } }} heading={(l) => `Week of ${l}`} />} cursor={{ fill: PALETTE.cursor }} />
-                      <Bar dataKey="associatesNeeded" name="Associates" fill={SERIES.primary} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                  <DetailsTable
-                    label="Details"
-                    columns={['Week of', 'On floor / day', 'Associates', 'Beds needed', 'Beds available', 'Van seats needed', 'Van seats carried', 'Scheduled hours', 'Active now', 'Short days (forecast)']}
-                    rows={weekly.map((t) => [
-                      weekLabel(t.week),
-                      t.daily,
-                      t.associatesNeeded,
-                      t.bedsNeeded,
-                      t.bedsAvailable,
-                      t.vanSeatsNeeded,
-                      t.vanSeatsAvailable,
-                      t.scheduledHours === null ? '—' : t.scheduledHours,
-                      t.activeHeadcount === null ? '—' : t.activeHeadcount,
-                      t.forecastShortDays == null ? '—' : t.forecastShortDays,
-                    ])}
-                  />
-                </>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ) : (
+            // The kit chart in a ChartFrame (F500 G2): a legend-free single
+            // series, its own Table / CSV view carrying every weekly figure.
+            <ChartFrame
+              title="Associates needed, week by week"
+              description={`Across every store in the plan. Floor headcount × 7 days ÷ ${plan.targetHoursPerWeek / plan.shiftHours} shifts a person, plus ${plan.reservePct}% reserve.`}
+              summary={`Peak: ${plan.peak.associatesNeeded} associates the week of ${weekLabel(plan.peak.week)}, over ${weekly.length} week${weekly.length === 1 ? '' : 's'}.`}
+              csvName="season-plan-weeks"
+              height={240}
+              columns={WEEKLY_COLUMNS}
+              rows={weekly}
+            >
+              <StackedBarChart
+                data={weekly}
+                x="label"
+                series={[{ key: 'associatesNeeded', name: 'Associates' }]}
+                heading={(l) => `Week of ${l}`}
+              />
+            </ChartFrame>
+          )}
 
           {/* ---- gaps and recruiting -------------------------------------- */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -880,32 +895,32 @@ function CompareView({ a, b }: { a: string; b: string }) {
             {col(q.data.a)}
             {col(q.data.b)}
           </div>
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bus className="h-4 w-4 text-gold" aria-hidden="true" />
-                Associates needed, week by week
-              </CardTitle>
-              <CardDescription>Both scenarios on the same weeks.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart accessibilityLayer={false} data={series}>
-                  <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-                  <XAxis dataKey="label" tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} />
-                  <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
-                  <Tooltip content={<PortalTooltip series={{ a: { name: q.data.a.name, color: SERIES.primary }, b: { name: q.data.b.name, color: SERIES.secondary } }} heading={(l) => `Week of ${l}`} />} cursor={{ fill: PALETTE.cursor }} />
-                  <Bar dataKey="a" name={q.data.a.name} fill={SERIES.primary} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="b" name={q.data.b.name} fill={SERIES.secondary} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              {/* Two scenarios, two colors — the key says which is which. */}
-              <div className="mt-2">
-                <LegendKey items={[{ name: q.data.a.name, color: SERIES.primary }, { name: q.data.b.name, color: SERIES.secondary }]} />
-              </div>
-              <DetailsTable label="Details" columns={['Week of', q.data.a.name, q.data.b.name, 'Difference']} rows={series.map((s) => [s.label, s.a, s.b, s.b - s.a])} />
-            </CardContent>
-          </Card>
+          <ChartFrame
+            title="Associates needed, week by week"
+            description="Both scenarios on the same weeks."
+            summary={`${q.data.a.name} peaks at ${q.data.a.peak.associatesNeeded} associates; ${q.data.b.name} at ${q.data.b.peak.associatesNeeded}.`}
+            csvName="season-plan-compare"
+            height={260}
+            columns={[
+              { key: 'label', label: 'Week of' },
+              { key: 'a', label: q.data.a.name, numeric: true },
+              { key: 'b', label: q.data.b.name, numeric: true },
+              { key: 'diff', label: 'Difference', numeric: true },
+            ]}
+            rows={series.map((s) => ({ ...s, diff: s.b - s.a }))}
+          >
+            {/* Two scenarios side by side, the kit's grouped columns with its legend. */}
+            <StackedBarChart
+              data={series}
+              x="label"
+              stacked={false}
+              series={[
+                { key: 'a', name: q.data.a.name },
+                { key: 'b', name: q.data.b.name },
+              ]}
+              heading={(l) => `Week of ${l}`}
+            />
+          </ChartFrame>
         </>
       )}
     </ListTemplate>

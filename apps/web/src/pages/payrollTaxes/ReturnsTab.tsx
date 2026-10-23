@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle, Download, FilePlus2, FileText } from 'lucide-react';
@@ -31,7 +32,7 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 import { listTaxForms } from '@/lib/payrollTax91Api';
 import { EfileAction } from '@/pages/payrollTax/EfileAction';
-import { FORM_KIND_LABEL, TaxFormsTab } from '@/pages/payrollTax/PayrollTaxHome';
+import { FORM_KIND_LABEL } from '@/pages/payrollTax/PayrollTaxHome';
 import { DueBadge, FIGURE_LABEL, ReturnBadge, byColumnOrder, byFigureOrder, dueText, isCountFigure, localToday, quarterName, recentQuarters } from './taxShared';
 
 /**
@@ -74,10 +75,13 @@ export function RejectedFormsCard() {
   );
 }
 
-/** Returns by quarter: what each quarter needs, generate, review, file, amend — then the year-end forms. */
+/**
+ * Returns by quarter: what each quarter needs, generate, review, file, amend.
+ * The year-end forms (W-2, 1099, the 941/940 builders) live on the Year-end
+ * page's Forms tab — one home for year-end (F500 G3).
+ */
 export function ReturnsTab({ provider }: { provider: boolean }) {
   const quarters = recentQuarters();
-  const canManageForms = useAuth().can('process:payroll');
   const [period, setPeriod] = useState(quarters[1] ?? quarters[0]!);
   const [openId, setOpenId] = useState<string | null>(null);
   const qc = useQueryClient();
@@ -104,7 +108,6 @@ export function ReturnsTab({ provider }: { provider: boolean }) {
 
   return (
     <div className="space-y-4">
-      <RejectedFormsCard />
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Quarter" className="w-full sm:w-72">
           {(p) => (
@@ -157,30 +160,32 @@ export function ReturnsTab({ provider }: { provider: boolean }) {
         </CardContent>
       </Card>
 
-      <DataGrid<TaxReturn>
-        id="payroll-taxes-returns"
-        caption="Returns"
-        noun={{ one: 'return', many: 'returns' }}
-        rows={visible}
-        loading={q.isLoading}
-        error={q.isError ? (q.error as Error).message : null}
-        onRetry={() => void q.refetch()}
-        columns={columns}
-        rowKey={(r) => r.id}
-        onRowClick={(r) => setOpenId(r.id)}
-        rowActionLabel={(r) => `Open ${r.label} for ${r.agency}`}
-        empty={{ icon: FileText, title: 'No returns prepared yet', description: 'Prepare one from the list above.' }}
-      />
+      {/* The prepared returns. With none yet, the checklist above already says what to prepare: one empty state, not two. */}
+      {(q.isLoading || q.isError || visible.length > 0) && (
+        <DataGrid<TaxReturn>
+          id="payroll-taxes-returns"
+          caption="Prepared returns"
+          noun={{ one: 'return', many: 'returns' }}
+          rows={visible}
+          loading={q.isLoading}
+          error={q.isError ? (q.error as Error).message : null}
+          onRetry={() => void q.refetch()}
+          columns={columns}
+          rowKey={(r) => r.id}
+          onRowClick={(r) => setOpenId(r.id)}
+          rowActionLabel={(r) => `Open ${r.label} for ${r.agency}`}
+        />
+      )}
 
       {openId && <ReturnDrawer id={openId} provider={provider} onClose={() => setOpenId(null)} onOpen={setOpenId} />}
 
-      <section aria-labelledby="year-end-forms" className="space-y-3 pt-2">
-        <div>
-          <h2 id="year-end-forms" className="text-base font-semibold text-ink">Year-end forms</h2>
-          <p className="text-sm text-ink-muted">W-2 and 1099 for each person, the 941 and 940 builders, e-file and recipient copies.</p>
-        </div>
-        <TaxFormsTab canManage={canManageForms} />
-      </section>
+      <p className="text-sm text-ink-muted">
+        W-2s, 1099s and the 941 and 940 builders are on the{' '}
+        <Link to="/payroll/year-end?tab=forms" className="text-accent underline underline-offset-2">
+          Year-end page
+        </Link>
+        .
+      </p>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
+import { apiFetch } from '@/lib/api';
 import { Logo } from '@/components/Logo';
 import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
@@ -23,11 +24,48 @@ import { useI18n } from '@/lib/i18n';
  * the footer. The page's own name is the card's title — the page's h1.
  */
 
+/** The deployment's status page address, read once per page load (undefined: not asked yet). */
+let statusUrlCache: string | null | undefined;
+/** Tests: forget the cached status address between cases. */
+export function __resetAuthShellStatusCache(): void {
+  statusUrlCache = undefined;
+}
+
 /** The signed-out card's surface. */
 export const AUTH_CARD = 'bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in';
 
 export function AuthShell({ children, wide = false }: { children: React.ReactNode; /** The install page's wider card. */ wide?: boolean }) {
   const { t } = useI18n();
+  // One status link (F500 G5): the footer's, pointing at the hosted status
+  // page when the deployment names one (STATUS_PAGE_URL), else /status. The
+  // sign-in card no longer carries a second "System status" link.
+  // Read once per page load, without React Query: the signed-out pages also
+  // render where no QueryClient is mounted (tests, the native hand-off).
+  const [statusUrl, setStatusUrl] = React.useState<string | null>(statusUrlCache ?? null);
+  React.useEffect(() => {
+    if (statusUrlCache !== undefined) return;
+    let live = true;
+    void apiFetch<{ statusPageUrl: string | null }>('/support/config')
+      .then((r) => {
+        statusUrlCache = r?.statusPageUrl ?? null;
+        if (live) setStatusUrl(statusUrlCache);
+      })
+      .catch(() => {
+        /* the footer keeps its own /status link */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  // The default answer is this app's own /status (APP_BASE_URL/status): keep the in-app link then.
+  const externalStatus = (() => {
+    if (!statusUrl) return false;
+    try {
+      return new URL(statusUrl, window.location.origin).pathname.replace(/\/$/, '') !== '/status';
+    } catch {
+      return false;
+    }
+  })();
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora" data-testid="auth-shell">
       <div className={cn('w-full', wide ? 'max-w-xl' : 'max-w-md')}>
@@ -41,9 +79,15 @@ export function AuthShell({ children, wide = false }: { children: React.ReactNod
         {children}
         <p className="text-center text-xs text-silver/70 mt-6">© {new Date().getFullYear()} Alto Etho LLC d/b/a Alto HR</p>
         <nav aria-label={t('login.publicPages')} className="mt-2 flex items-center justify-center gap-3 text-xs text-silver/70">
-          <Link to="/status" className="hover:text-gold-bright underline-offset-2 hover:underline">
-            {t('login.status')}
-          </Link>
+          {externalStatus ? (
+            <a href={statusUrl!} target="_blank" rel="noreferrer" className="hover:text-gold-bright underline-offset-2 hover:underline">
+              {t('login.status')}
+            </a>
+          ) : (
+            <Link to="/status" className="hover:text-gold-bright underline-offset-2 hover:underline">
+              {t('login.status')}
+            </Link>
+          )}
           <span aria-hidden="true">·</span>
           <Link to="/trust-center" className="hover:text-gold-bright underline-offset-2 hover:underline">
             {t('login.trustCenter')}

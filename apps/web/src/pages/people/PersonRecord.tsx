@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, Clock, Eye, Gauge, MessageSquare, MoreHorizontal, Palmtree, Smartphone, Ticket } from 'lucide-react';
-import type { DirectoryEntry, TimeEntry, TimeOffEntitlement, TimeOffRequest } from '@alto-people/shared';
+import { AlertTriangle, CalendarDays, CheckCircle2, Clock, FileWarning, Gauge, KeyRound, MapPin, MessageSquare, Palmtree, PauseCircle, Smartphone, Ticket, UserRound, UserX } from 'lucide-react';
+import type { DirectoryEntry, PersonOverview, TimeEntry, TimeOffEntitlement, TimeOffRequest } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';
 import { personRecordTabs, type PersonTabKey } from '@/lib/personTabs';
 import { WorkThreadPanel } from '@/components/WorkThreadPanel';
-import { Avatar, Badge, Button, Card, CardContent, EmptyState, Label, MetricCard, SectionTitle, Skeleton, SkeletonRows } from '@/components/ui';
+import { Badge, Button, Card, CardContent, EmptyState, Label, MetricCard, MetricStrip, SectionTitle, Skeleton, SkeletonRows } from '@/components/ui';
+import type { PageAction } from '@/components/ui/PageHeader';
+import { PeopleStatusBadge, workStatusOf } from '@/components/ui/PeopleStatusBadge';
 import { StateCertificateCard } from '@/components/payroll/StateCertificateCard';
 import { TaxWithholdingCard } from '@/components/payroll/TaxWithholdingCard';
 import { RothCatchUpCard } from '@/components/payroll/RothCatchUpCard';
@@ -16,25 +18,25 @@ import { LocalTaxRuleCard } from '@/components/payroll/LocalTaxRuleCard';
 import { getCareerPosition } from '@/lib/career126Api';
 import { CareerLadderView } from '@/pages/career/CareerPosition';
 import { DataGrid } from '@/components/ui/DataGrid';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
-import { StickyActionBar } from '@/components/ui/StickyActionBar';
 import { QueryError } from '@/components/ui/QueryError';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Textarea } from '@/components/ui/Input';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { cn } from '@/lib/cn';
 import { sendNotification } from '@/lib/communicationsApi';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useAssistantRecord } from '@/lib/assistantContext';
-import { getDirectoryEntry } from '@/lib/directoryApi';
+import { getDirectoryEntry, personOverviewQuery } from '@/lib/directoryApi';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
-import { fmtDate, fmtDateTz, fmtHours, fmtMinutes, parseYmd, ymdLocal, ymdToIsoStart } from '@/lib/format';
+import { fmtDate, fmtDateTz, fmtHours, fmtMinutes, fmtRelativeDayTz, fmtShiftRangeTz, parseYmd, ymdLocal, ymdToIsoStart } from '@/lib/format';
+import { useUrlParam } from '@/lib/useUrlState';
 import { fmtPunchTime } from '@/pages/time/punchFormat';
 
 /** "Jun 13, 2026": a punch's day on its site's clock (the display zone with no site). */
 const punchDay = (e: { clockInAt: string; locationTimezone?: string | null }) =>
   e.locationTimezone ? fmtDateTz(e.clockInAt, e.locationTimezone, { year: true }) : fmtDate(e.clockInAt);
-import { getAssociateKioskPin } from '@/lib/kiosk99Api';
+import { getAssociateKioskPin, type KioskPin } from '@/lib/kiosk99Api';
 import { listAdminTimeEntries } from '@/lib/timeApi';
 import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import { listAdminEntitlements, listAdminRequests } from '@/lib/timeOffApi';
@@ -42,7 +44,20 @@ import { getPerfTimeline, listGoals, listOneOnOnes, listPips, type PerfTimelineE
 import { getLadder, KIND_LABELS, type DisciplineKind } from '@/lib/discipline118Api';
 import { CATEGORY_LABELS as CASE_CATEGORY_LABELS, listCaseQueue, type QueueCaseRow } from '@/lib/hrCases123Api';
 import { StatusBadge, statusLabel, statusTone } from '@/lib/status';
-import { CompensationTab, DocumentsTab, EmploymentTab, PaymentsTab, ProfileTab, TransferDialog } from './PeopleDirectory';
+import {
+  CompensationTab,
+  DeactivateDialog,
+  DocumentsTab,
+  EmploymentTab,
+  EraseDialog,
+  PaymentsTab,
+  PersonTransferDialog,
+  ProfilePhoto,
+  ProfileTab,
+  canPause,
+  fmtPay,
+  useReactivate,
+} from './PeopleDirectory';
 import { withReturn } from '@/lib/returnPath';
 import { PromoteDialog } from './PromoteDialog';
 import { OnBehalfCaseDrawer } from '../hrCases/OnBehalfCaseDrawer';
@@ -51,17 +66,20 @@ import { ProtectedLeaveFlag } from '../leave/ProtectedLeaveFlag';
 
 /**
  * One person's record (UX upgrade, 2026-10-16 — Rippling's one-record
- * model). The directory drawer is the quick look; this page is the whole
- * person on one URL: who they are, where they work, their hours, their
- * leave, their performance and their cases — each a facet of the same
- * Record template an agent or a robot gets. `?tab=` is the open facet, so
- * a notification can land on Time off or Cases.
+ * model): who they are, where they work, their hours, their leave, their
+ * performance and their cases on one URL. `?tab=` is the open facet, so a
+ * notification can land on Time off or Cases.
  *
- * The drawer's sections are reused, not copied: Profile, Employment,
- * Compensation, Payments and Documents come from PeopleDirectory.tsx. The
- * four new facets (Time, Time off, Performance, Cases) read the modules'
- * existing per-person endpoints and hide themselves from roles the API
- * would turn away.
+ * It opens on Overview (F500 fix-up, G1): what needs attention (onboarding
+ * not finished, a clock-in number that won't work, not placed, no manager,
+ * documents running out), their work (hours in the window, last and next
+ * shift, time waiting approval, no-shows), their pay and their open cases
+ * — the 13-section Profile is one tab over. It is the person's one home:
+ * the People list opens it, and the old profile drawer's links land here.
+ *
+ * The facets are the directory's sections, reused (PeopleDirectory.tsx);
+ * Time, Time off, Performance and Cases read the modules' per-person
+ * endpoints and hide themselves from roles the API would turn away.
  */
 type TabKey = PersonTabKey;
 
@@ -74,10 +92,11 @@ export function PersonRecord() {
   const [textOpen, setTextOpen] = useState(false);
   const [promoteOpen, setPromoteOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [eraseOpen, setEraseOpen] = useState(false);
   const { moduleOn } = useTenant();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
 
   const hasClients = moduleOn('clientPortal');
   // What the API lets this role read — a tab the server would 403 is not shown.
@@ -100,25 +119,19 @@ export function PersonRecord() {
   useAssistantRecord(detail.data ? { type: term('worker'), id: detail.data.id, name: `${detail.data.firstName} ${detail.data.lastName}` } : null);
   const a = detail.data;
 
+  const overview = useQuery({ ...personOverviewQuery(associateId), enabled: associateId.length > 0 && Boolean(a) });
   const time = usePersonTime(associateId, canSeeTime && Boolean(a));
   const timeOffRequests = usePersonTimeOffRequests(associateId, canSeeTimeOff && Boolean(a));
   const cases = usePersonCases(associateId, canSeeCases && Boolean(a));
 
   // The same rule ⌘K's person shortcuts use (lib/personTabs).
   const visibleTabs = useMemo(() => personRecordTabs(can, moduleOn), [can, moduleOn]);
+  // A tab is a place: it pushes history, so Back returns to the last one.
+  const [activeTab, setActiveTab] = useUrlParam<TabKey>('tab', 'overview', visibleTabs, { history: 'push' });
 
-  const tabParam = searchParams.get('tab');
-  const activeTab: TabKey = (visibleTabs as readonly string[]).includes(tabParam ?? '') ? (tabParam as TabKey) : 'profile';
-  const setTab = (key: string) => {
-    const next = new URLSearchParams(searchParams);
-    if (key === 'profile') next.delete('tab');
-    else next.set('tab', key);
-    setSearchParams(next, { replace: true });
-  };
-
-  // The drawer's sections patch the person as they save; here that patch
-  // lands on the cached record, and the directory's lists refetch so a
-  // row there agrees with the page.
+  // The sections patch the person as they save; here that patch lands on
+  // the cached record, and the directory's lists refetch so a row there
+  // agrees with the page.
   const onAssociateChange = (patch: Partial<DirectoryEntry>) => {
     qc.setQueryData<DirectoryEntry>(['directory', 'entry', associateId], (old) => (old ? { ...old, ...patch } : old));
     void qc.invalidateQueries({
@@ -126,16 +139,10 @@ export function PersonRecord() {
       predicate: (q) => q.queryKey[1] !== 'entry',
     });
   };
+  const reactivation = useReactivate(a ?? ({ id: associateId } as DirectoryEntry), onAssociateChange);
 
   if (detail.isError) {
-    return (
-      <div className="space-y-4">
-        <QueryError what="this person" query={detail} />
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/people">Back to {term('nav.people')}</Link>
-        </Button>
-      </div>
-    );
+    return <QueryError what="this person" query={detail} />;
   }
   if (!a) {
     return (
@@ -155,8 +162,13 @@ export function PersonRecord() {
 
   const name = `${a.firstName} ${a.lastName}`;
   const workerWord = term('worker').toLowerCase();
+  const managerWord = term('manager');
+  const siteWord = term('site');
+  const status = workStatusOf(a);
+  const tabHref = (tab: TabKey) => `/people/${a.id}${tab === 'overview' ? '' : `?tab=${tab}`}`;
   // Separation is an org change (manage:org), offered while they still work here.
   const canSeparate = can('manage:org') && !a.separatedAt;
+  const canTransfer = can('manage:org') && Boolean(a.workplaceClientId) && !a.separatedAt;
   const subtitle = [
     a.position,
     hasClients ? a.workplaceClientName : null,
@@ -165,21 +177,63 @@ export function PersonRecord() {
   ]
     .filter(Boolean)
     .join(' · ');
-  // The "why" beside the status, the same facts the drawer explains.
+  // The "why" beside the status, the same facts the list explains.
   const statusWhy =
-    a.status === 'PENDING' && a.onboardingPercent !== null
+    status === 'ONBOARDING' && a.onboardingPercent !== null
       ? `Onboarding ${a.onboardingPercent}% complete`
       : a.deactivatedAt
-        ? `Deactivated ${fmtDate(a.deactivatedAt)}${a.deactivationReason ? ` — ${a.deactivationReason}` : ''}`
+        ? `Paused ${fmtDate(a.deactivatedAt)}${a.deactivationReason ? ` — ${a.deactivationReason}` : ''}`
         : a.separatedAt
           ? `Separated ${fmtDate(a.separatedAt)}`
           : null;
 
+  const ov = overview.data;
+  const windowDays = ov?.windowDays ?? 14;
+
+  // The header's actions: one primary (reach them), the life-cycle moves
+  // in More, the ones that end or erase something kept apart at its foot.
+  const canMessage = Boolean(a.messageUserId) && user?.role !== 'ASSOCIATE';
+  const canText = !a.messageUserId && Boolean(a.phone) && can('manage:communications');
+  const actionList: Array<PageAction | null> = [
+    canMessage
+      ? { key: 'message', label: 'Message', icon: MessageSquare, to: `/messages?to=${a.messageUserId}`, primary: true }
+      : null,
+    canText ? { key: 'text', label: 'Text', icon: Smartphone, onSelect: () => setTextOpen(true), primary: true } : null,
+    a.deactivatedAt && can('manage:org')
+      ? { key: 'reactivate', label: 'Reactivate', onSelect: () => void reactivation.reactivate(), loading: reactivation.busy }
+      : null,
+    canTransfer
+      ? { key: 'transfer', label: a.currentLocationId ? 'Transfer…' : `Assign to a ${siteWord.toLowerCase()}…`, onSelect: () => setTransferOpen(true), overflow: true }
+      : null,
+    can('manage:comp') && !a.separatedAt ? { key: 'promote', label: 'Promote…', onSelect: () => setPromoteOpen(true), overflow: true } : null,
+    can('manage:org') && canPause(a) ? { key: 'deactivate', label: `Deactivate…`, onSelect: () => setDeactivateOpen(true), overflow: true } : null,
+    canSeparate ? { key: 'separate', label: 'Separate…', onSelect: () => navigate(withReturn(`/separations?associateId=${a.id}`, `/people/${a.id}`)), destructive: true } : null,
+    can('view:hr-admin') ? { key: 'erase', label: 'Erase personal data…', onSelect: () => setEraseOpen(true), destructive: true } : null,
+  ];
+  const actions = actionList.filter((x): x is PageAction => x !== null);
+
   const tabs = [
+    {
+      key: 'overview',
+      label: 'Overview',
+      content: (
+        <OverviewTab
+          associate={a}
+          overview={overview}
+          windowDays={windowDays}
+          tabHref={tabHref}
+          canSeeTime={canSeeTime}
+          canSeePay={canSeeComp}
+          cases={canSeeCases ? cases : null}
+          onTransfer={canTransfer ? () => setTransferOpen(true) : null}
+          onReactivate={a.deactivatedAt && can('manage:org') ? () => void reactivation.reactivate() : null}
+        />
+      ),
+    },
     {
       key: 'profile',
       label: 'Profile',
-      content: <ProfileTab associate={a} onAssociateChange={onAssociateChange} onClose={() => navigate('/people')} />,
+      content: <ProfileTab associate={a} onAssociateChange={onAssociateChange} />,
     },
     { key: 'employment', label: 'Employment', content: <EmploymentTab associateId={a.id} /> },
     {
@@ -217,102 +271,104 @@ export function PersonRecord() {
     { key: 'thread', label: 'Thread', content: <WorkThreadPanel associateId={a.id} /> },
   ].filter((t) => (visibleTabs as readonly string[]).includes(t.key));
 
+  const next = ov?.work.nextShift ?? null;
+  const nextDay = next ? fmtRelativeDayTz(next.startsAt, next.timezone) : null;
+  const nextTimes = next ? fmtShiftRangeTz(next.startsAt, next.endsAt, next.timezone) : null;
+  const hoursText = ov ? fmtHours(Math.round((ov.work.minutes / 60) * 10) / 10) : '…';
+  const lastWorked = ov?.work.lastWorkedAt ?? a.lastWorkedAt ?? null;
+
   return (
     <RecordTemplate
       breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: name }]}
-      identity={<Avatar size="xl" src={a.photoUrl} name={name} email={a.email} />}
+      identity={<ProfilePhoto associate={a} onAssociateChange={onAssociateChange} />}
       title={name}
       subtitle={subtitle || `No position on record for this ${workerWord}`}
       status={
         <span className="inline-flex flex-wrap items-center gap-2">
-          <StatusBadge status={a.status} size="lg" />
+          <PeopleStatusBadge status={status} windowDays={windowDays} size="lg" />
           {a.j1Status && <Badge variant="default">J-1</Badge>}
           <ProtectedLeaveFlag associateId={associateId} />
           {statusWhy && <span className="text-xs text-ink-muted">{statusWhy}</span>}
         </span>
       }
-      actions={
+      actions={actions.length > 0 ? actions : undefined}
+      related={[
+        { label: 'Schedule', to: `/scheduling?associate=${a.id}` },
+        ...(canSeeTime ? [{ label: term('label.timesheet'), to: `/time-attendance?associate=${a.id}&name=${encodeURIComponent(name)}` }] : []),
+      ]}
+      summary={
         <>
-          {/* From sm up the header row holds them; a phone gets the same
-              actions in the sticky bar below (role walk HR 15). */}
-          <div className="hidden sm:contents">
-          {/* Message: a thread with their login, when the messenger serves it
-              (staff). Text: an SMS to the phone on file, for everyone else
-              who has one — the way the floor actually reaches a person. */}
-          {a.messageUserId && user?.role !== 'ASSOCIATE' && (
-            <Button asChild variant="outline" size="sm">
-              <Link to={`/messages?to=${a.messageUserId}`}>
-                <MessageSquare className="h-3.5 w-3.5" />
-                Message
-              </Link>
-            </Button>
-          )}
-          {!a.messageUserId && a.phone && can('manage:communications') && (
-            <Button variant="outline" size="sm" onClick={() => setTextOpen(true)}>
-              <Smartphone className="h-3.5 w-3.5" />
-              Text
-            </Button>
-          )}
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/people?associateId=${a.id}`}>
-              <Eye className="h-3.5 w-3.5" />
-              Quick view
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/scheduling?associate=${a.id}`}>
-              <CalendarDays className="h-3.5 w-3.5" />
-              Schedule
-            </Link>
-          </Button>
-          {canSeeTime && (
-            <Button asChild variant="outline" size="sm">
-              <Link to={`/time-attendance?associate=${a.id}&name=${encodeURIComponent(name)}`}>
-                <Clock className="h-3.5 w-3.5" />
-                {term('label.timesheet')}
-              </Link>
-            </Button>
-          )}
-          {/* The life-cycle moves live together (HR walk 12): separating
-              someone used to mean scrolling to the bottom of Profile. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" aria-label="More actions">
-                <MoreHorizontal className="h-3.5 w-3.5" />
-                More
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {/* The directory drawer transfers inline; the full record used to
-                  leave for /org. Same dialog, no trip. */}
-              <DropdownMenuItem onSelect={() => (a.workplaceClientId ? setTransferOpen(true) : navigate(withReturn(`/org?tab=people&associateId=${a.id}`, `/people/${a.id}`)))}>Transfer…</DropdownMenuItem>
-              {can('manage:comp') && <DropdownMenuItem onSelect={() => setPromoteOpen(true)}>Promote…</DropdownMenuItem>}
-              {canSeparate && (
-                <DropdownMenuItem onSelect={() => navigate(withReturn(`/separations?associateId=${a.id}`, `/people/${a.id}`))} className="text-alert focus:text-alert">
-                  Separate…
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* A phone reads the record in two lines, not five half-width
+              tiles (role walk HR 15); the Overview tab below has the rest. */}
+          <div className="space-y-0.5 text-sm sm:hidden" data-testid="person-summary-phone">
+            <p className="truncate text-ink">
+              {[
+                ov ? `${hoursText} in ${windowDays} days` : null,
+                next ? `Next shift ${nextDay}` : ov ? 'No shift scheduled' : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+            <p className="truncate text-ink-muted">
+              {[a.currentLocationName ?? 'Not placed', a.managerName ? `${managerWord}: ${a.managerName}` : `No ${managerWord.toLowerCase()}`].join(' · ')}
+            </p>
+          </div>
+          <div className="hidden sm:block">
+            <MetricStrip label="At a glance">
+              <MetricCard
+                label={siteWord}
+                value={a.currentLocationName ?? 'Not placed'}
+                hint={
+                  a.currentLocationName
+                    ? [hasClients ? a.workplaceClientName : null, a.currentAssignmentStartedAt ? `since ${fmtDate(parseYmd(a.currentAssignmentStartedAt) ?? a.currentAssignmentStartedAt)}` : null].filter(Boolean).join(' · ') || undefined
+                    : hasClients && a.workplaceClientName
+                      ? `Hired for ${a.workplaceClientName}`
+                      : undefined
+                }
+                compact
+              />
+              <MetricCard
+                label={managerWord}
+                value={
+                  a.managerName ? (
+                    a.managerId ? (
+                      <Link to={`/people/${a.managerId}`} className="hover:text-gold-bright">
+                        {a.managerName}
+                      </Link>
+                    ) : (
+                      a.managerName
+                    )
+                  ) : (
+                    'None'
+                  )
+                }
+                hint={a.departmentName ?? 'No department'}
+                nothing={a.managerName ? undefined : `No ${managerWord.toLowerCase()} assigned`}
+                compact
+              />
+              <MetricCard
+                label={`Hours (${windowDays} days)`}
+                value={hoursText}
+                hint={ov ? (ov.work.entries === 0 ? 'No clock-ins' : `${ov.work.entries} clock-in${ov.work.entries === 1 ? '' : 's'}`) : undefined}
+                href={canSeeTime ? tabHref('time') : undefined}
+                compact
+              />
+              <MetricCard
+                label="Last worked"
+                value={lastWorked ? fmtDate(lastWorked) : 'Never'}
+                nothing={lastWorked ? undefined : 'No clock-ins yet'}
+                compact
+              />
+              <MetricCard
+                label="Next shift"
+                value={next ? nextDay : '…'}
+                hint={next ? [nextTimes, next.locationName].filter(Boolean).join(' · ') : undefined}
+                nothing={ov && !next ? 'None scheduled' : undefined}
+                compact
+              />
+            </MetricStrip>
           </div>
           {textOpen && <TextDialog phone={a.phone!} name={name} onClose={() => setTextOpen(false)} />}
-          {transferOpen && (
-            <TransferDialog
-              open={transferOpen}
-              onOpenChange={setTransferOpen}
-              associate={a}
-              onSaved={(r) => {
-                onAssociateChange({
-                  currentLocationId: r.locationId,
-                  currentLocationName: r.locationName,
-                  workplaceClientId: r.clientId,
-                  workplaceClientName: r.clientName,
-                  ...(r.crossClient ? { managerId: null, managerName: null, departmentId: null, departmentName: null, jobProfileId: null, jobProfileTitle: null } : {}),
-                });
-                setTransferOpen(false);
-              }}
-            />
-          )}
           {promoteOpen && (
             <PromoteDialog
               associate={{ id: a.id, firstName: a.firstName, lastName: a.lastName }}
@@ -322,90 +378,326 @@ export function PersonRecord() {
               onOpenChange={setPromoteOpen}
             />
           )}
-        </>
-      }
-      summary={
-        <>
-        {/* A phone reads the record in two lines, not five half-width
-            cards of dashes (role walk HR 15). */}
-        <div className="space-y-0.5 text-sm sm:hidden" data-testid="person-summary-phone">
-          <p className="truncate text-ink">
-            {[a.startDate ? `Started ${fmtDate(parseYmd(a.startDate) ?? a.startDate)}` : 'No start date', a.managerName ? `${term('manager')}: ${a.managerName}` : null].filter(Boolean).join(' · ')}
-          </p>
-          <p className="truncate text-ink-muted">
-            {[EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType, a.currentLocationName ?? 'Not placed'].join(' · ')}
-          </p>
-        </div>
-        <div className="hidden grid-cols-2 gap-[var(--d-stack)] sm:grid xl:grid-cols-5">
-          <MetricCard label="Start date" value={a.startDate ? fmtDate(parseYmd(a.startDate) ?? a.startDate) : '—'} hint={`On record since ${fmtDate(a.createdAt)}`} />
-          <MetricCard
-            label={term('manager')}
-            value={
-              a.managerName ? (
-                a.managerId ? (
-                  <Link to={`/people/${a.managerId}`} className="hover:text-gold-bright">
-                    {a.managerName}
-                  </Link>
-                ) : (
-                  a.managerName
-                )
-              ) : (
-                '—'
-              )
-            }
-            hint={a.departmentName ?? 'No department assigned'}
-          />
-          <MetricCard label="Employment type" value={EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType} hint={a.jobProfileTitle ?? 'No job profile'} />
-          <MetricCard
-            label={term('site')}
-            value={a.currentLocationName ?? '—'}
-            hint={a.currentAssignmentStartedAt ? `Since ${fmtDate(parseYmd(a.currentAssignmentStartedAt) ?? a.currentAssignmentStartedAt)}` : 'Not placed'}
-          />
-          {canSeeTime && <ClockInNumberCard associate={a} />}
-        </div>
-        <StickyActionBar
-          label="Actions"
-          primary={
-            a.messageUserId && user?.role !== 'ASSOCIATE' ? (
-              <Button asChild>
-                <Link to={`/messages?to=${a.messageUserId}`}>
-                  <MessageSquare className="h-4 w-4" />
-                  Message
-                </Link>
-              </Button>
-            ) : a.phone && can('manage:communications') ? (
-              <Button onClick={() => setTextOpen(true)}>
-                <Smartphone className="h-4 w-4" />
-                Text
-              </Button>
-            ) : undefined
-          }
-          more={[
-            { label: 'Quick view', onSelect: () => navigate(`/people?associateId=${a.id}`) },
-            { label: 'Schedule', onSelect: () => navigate(`/scheduling?associate=${a.id}`) },
-            ...(canSeeTime ? [{ label: term('label.timesheet'), onSelect: () => navigate(`/time-attendance?associate=${a.id}&name=${encodeURIComponent(name)}`) }] : []),
-            { label: 'Edit org assignment', onSelect: () => navigate(withReturn(`/org?tab=people&associateId=${a.id}`, `/people/${a.id}`)) },
-            ...(can('manage:comp') ? [{ label: 'Promote', onSelect: () => setPromoteOpen(true) }] : []),
-            ...(canSeparate ? [{ label: 'Separate…', onSelect: () => navigate(withReturn(`/separations?associateId=${a.id}`, `/people/${a.id}`)) }] : []),
-          ]}
-        />
+          {canTransfer && (
+            <PersonTransferDialog open={transferOpen} onOpenChange={setTransferOpen} associate={a} onAssociateChange={onAssociateChange} />
+          )}
+          <DeactivateDialog associate={a} open={deactivateOpen} onOpenChange={setDeactivateOpen} onAssociateChange={onAssociateChange} />
+          <EraseDialog associate={a} open={eraseOpen} onOpenChange={setEraseOpen} onErased={() => navigate('/people')} />
         </>
       }
       activeTab={activeTab}
-      onTabChange={setTab}
+      onTabChange={(k) => setActiveTab(k as TabKey)}
       tabs={tabs}
     />
   );
 }
 
-/* ----------------------------------------------------------------- summary */
+/* ---------------------------------------------------------------- overview */
 
-/** Can they clock in? The same query the Profile tab's kiosk section runs. */
-function ClockInNumberCard({ associate: a }: { associate: DirectoryEntry }) {
-  const pin = useQuery({ queryKey: ['kiosk-pin', a.id], queryFn: () => getAssociateKioskPin(a.id) });
-  const value = pin.isPending ? '…' : pin.isError ? '—' : !pin.data ? 'None issued' : pin.data.wontClockIn ? 'Needs re-issue' : pin.data.active ? 'Issued' : 'Inactive';
-  const hint = pin.data?.employeeNumber ? `Number ${pin.data.employeeNumber}` : pin.data ? 'Number on file' : 'Kiosk clock-in';
-  return <MetricCard label="Clock-in number" value={value} hint={hint} accent={Boolean(pin.data?.wontClockIn)} />;
+interface AttentionItem {
+  key: string;
+  icon: React.ComponentType<{ className?: string }>;
+  tone: 'alert' | 'warning' | 'info';
+  text: React.ReactNode;
+  action?: { label: string; to?: string; onSelect?: () => void };
+}
+
+/** "1 document" / "3 documents". */
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Where the kiosk admin issues (or re-issues) their number, preselected on them. */
+function issueLinkFor(a: DirectoryEntry): string {
+  return `/time-attendance/kiosk?tab=pins&issue=${a.id}${a.workplaceClientId ? `&client=${a.workplaceClientId}` : ''}&return=${encodeURIComponent(`/people/${a.id}`)}`;
+}
+
+/** What needs someone's attention on this record, most pressing first. */
+function attentionItems(opts: {
+  a: DirectoryEntry;
+  ov: PersonOverview | undefined;
+  pin: KioskPin | null | undefined;
+  windowDays: number;
+  managerWord: string;
+  siteWord: string;
+  tabHref: (tab: TabKey) => string;
+  canSeeTime: boolean;
+  onTransfer: (() => void) | null;
+  onReactivate: (() => void) | null;
+}): AttentionItem[] {
+  const { a, ov, pin, windowDays, managerWord, siteWord, tabHref } = opts;
+  const status = workStatusOf(a);
+  const onBooks = status === 'ACTIVE' || status === 'PLACED_NOT_ACTIVE' || status === 'NOT_PLACED';
+  const items: AttentionItem[] = [];
+  if (a.deactivatedAt) {
+    items.push({
+      key: 'paused',
+      icon: PauseCircle,
+      tone: 'warning',
+      text: `Paused since ${fmtDate(a.deactivatedAt)}${a.deactivationReason ? ` — ${a.deactivationReason}` : ''}. They can't clock in or be scheduled.`,
+      ...(opts.onReactivate ? { action: { label: 'Reactivate', onSelect: opts.onReactivate } } : {}),
+    });
+  }
+  if (status === 'ONBOARDING') {
+    items.push({
+      key: 'onboarding',
+      icon: UserRound,
+      tone: 'info',
+      text: a.onboardingPercent !== null ? `Onboarding is ${a.onboardingPercent}% done.` : 'Onboarding is in progress.',
+      ...(a.applicationId ? { action: { label: 'Open the application', to: `/onboarding/applications/${a.applicationId}` } } : {}),
+    });
+  }
+  if (opts.canSeeTime && pin && !a.deactivatedAt && !a.separatedAt) {
+    const mismatch = Boolean(a.workplaceClientId && pin.clientId !== a.workplaceClientId);
+    if (mismatch || pin.wontClockIn) {
+      items.push({
+        key: 'pin',
+        icon: KeyRound,
+        tone: 'alert',
+        text: mismatch
+          ? `Their clock-in number won't work: it's filed under ${pin.clientName}, not ${a.workplaceClientName ?? 'their current client'}.`
+          : "Their clock-in number won't work at the kiosk (the PIN secret changed since it was issued).",
+        action: { label: 'Re-issue', to: issueLinkFor(a) },
+      });
+    }
+  } else if (opts.canSeeTime && pin === null && onBooks && !a.deactivatedAt) {
+    items.push({ key: 'pin', icon: KeyRound, tone: 'warning', text: 'No clock-in number issued yet.', action: { label: 'Issue a number', to: issueLinkFor(a) } });
+  }
+  if (status === 'NOT_PLACED') {
+    items.push({
+      key: 'placed',
+      icon: MapPin,
+      tone: 'warning',
+      text: `Hired, but not placed at a ${siteWord.toLowerCase()}.`,
+      ...(opts.onTransfer ? { action: { label: `Assign to a ${siteWord.toLowerCase()}`, onSelect: opts.onTransfer } } : {}),
+    });
+  }
+  if (status === 'PLACED_NOT_ACTIVE') {
+    items.push({
+      key: 'idle',
+      icon: CalendarDays,
+      tone: 'warning',
+      text: `No shift worked in the last ${windowDays} days, and nothing scheduled.`,
+      action: { label: 'Schedule them', to: `/scheduling?associate=${a.id}` },
+    });
+  }
+  if (onBooks && !a.managerId) {
+    items.push({ key: 'manager', icon: UserX, tone: 'info', text: `No ${managerWord.toLowerCase()} assigned.`, action: { label: `Set a ${managerWord.toLowerCase()}`, to: tabHref('profile') } });
+  }
+  if (ov?.documents && ov.documents.expired > 0) {
+    items.push({ key: 'expired', icon: FileWarning, tone: 'alert', text: `${plural(ov.documents.expired, 'document')} expired.`, action: { label: 'Open documents', to: tabHref('documents') } });
+  }
+  if (ov?.documents && ov.documents.expiringSoon > 0) {
+    items.push({
+      key: 'expiring',
+      icon: FileWarning,
+      tone: 'warning',
+      text: `${plural(ov.documents.expiringSoon, 'document')} ${ov.documents.expiringSoon === 1 ? 'expires' : 'expire'} in the next 30 days.`,
+      action: { label: 'Open documents', to: tabHref('documents') },
+    });
+  }
+  if (ov && ov.work.noShows30d > 0) {
+    items.push({ key: 'noshow', icon: AlertTriangle, tone: 'alert', text: `${plural(ov.work.noShows30d, 'no-call no-show')} in the last 30 days.` });
+  }
+  if (opts.canSeeTime && ov && ov.work.awaitingReview > 0) {
+    items.push({
+      key: 'review',
+      icon: Clock,
+      tone: 'info',
+      text: `${plural(ov.work.awaitingReview, 'clock-in')} waiting for approval.`,
+      // Any date, so the full history (the Time tab shows 30 days).
+      action: { label: 'Review time', to: `/time-attendance/timesheets/history/${a.id}` },
+    });
+  }
+  return items;
+}
+
+const TONE_ICON: Record<AttentionItem['tone'], string> = {
+  alert: 'text-alert',
+  warning: 'text-warning',
+  info: 'text-ink-muted',
+};
+
+function OverviewTab({
+  associate: a,
+  overview,
+  windowDays,
+  tabHref,
+  canSeeTime,
+  canSeePay,
+  cases,
+  onTransfer,
+  onReactivate,
+}: {
+  associate: DirectoryEntry;
+  overview: { data?: PersonOverview; isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown; isFetching: boolean };
+  windowDays: number;
+  tabHref: (tab: TabKey) => string;
+  canSeeTime: boolean;
+  canSeePay: boolean;
+  /** Their cases, when this login works cases. */
+  cases: ReturnType<typeof usePersonCases> | null;
+  onTransfer: (() => void) | null;
+  onReactivate: (() => void) | null;
+}) {
+  const term = useTerm();
+  const pin = useQuery({ queryKey: ['kiosk-pin', a.id], queryFn: () => getAssociateKioskPin(a.id), enabled: canSeeTime });
+  const ov = overview.data;
+  const items = attentionItems({
+    a,
+    ov,
+    pin: canSeeTime ? (pin.isSuccess ? pin.data : undefined) : undefined,
+    windowDays,
+    managerWord: term('manager'),
+    siteWord: term('site'),
+    tabHref,
+    canSeeTime,
+    onTransfer,
+    onReactivate,
+  });
+  const next = ov?.work.nextShift ?? null;
+  const openCases = cases?.data ? cases.data.cases.filter((c) => c.status !== 'RESOLVED' && c.status !== 'CLOSED').length : null;
+  const hasPay = canSeePay || ov?.pay !== undefined;
+
+  return (
+    <div className="grid items-start gap-[var(--d-stack)] lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <Card>
+        <CardContent className="space-y-3 py-4">
+          <SectionTitle title="Needs attention" size="sm" className="mb-0" />
+          {overview.isPending && !ov ? (
+            <SkeletonRows count={2} rowHeight="h-8" />
+          ) : items.length === 0 ? (
+            <p className="flex items-center gap-2 text-sm text-ink-muted" data-testid="attention-none">
+              <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
+              All clear on this record.
+            </p>
+          ) : (
+            <ul className="divide-y divide-line" data-testid="attention-list">
+              {items.map((it) => (
+                <li key={it.key} className="flex flex-wrap items-start gap-x-3 gap-y-1 py-2 first:pt-0 last:pb-0">
+                  <it.icon className={cn('mt-0.5 h-4 w-4 shrink-0', TONE_ICON[it.tone])} aria-hidden="true" />
+                  <p className="min-w-0 flex-1 text-sm text-ink">{it.text}</p>
+                  {it.action &&
+                    (it.action.to ? (
+                      <Link to={it.action.to} className="basis-full pl-7 text-sm font-medium text-gold hover:text-gold-bright sm:basis-auto sm:pl-0">
+                        {it.action.label}
+                      </Link>
+                    ) : (
+                      <button type="button" onClick={it.action.onSelect} className="basis-full pl-7 text-left text-sm font-medium text-gold hover:text-gold-bright sm:basis-auto sm:pl-0">
+                        {it.action.label}
+                      </button>
+                    ))}
+                </li>
+              ))}
+            </ul>
+          )}
+          {overview.isError && <QueryError what="their numbers" query={overview} />}
+        </CardContent>
+      </Card>
+
+      <div className="space-y-[var(--d-stack)]">
+        <Card>
+          <CardContent className="space-y-3 py-4">
+            <SectionTitle title="Work" size="sm" className="mb-0" />
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+              <dt className="text-ink-muted">Hours ({windowDays} days)</dt>
+              <dd className="tabular-nums text-ink">
+                {ov ? (
+                  canSeeTime ? (
+                    <Link to={tabHref('time')} className="hover:text-gold-bright">
+                      {fmtHours(Math.round((ov.work.minutes / 60) * 10) / 10)}
+                    </Link>
+                  ) : (
+                    fmtHours(Math.round((ov.work.minutes / 60) * 10) / 10)
+                  )
+                ) : (
+                  '…'
+                )}
+              </dd>
+              <dt className="text-ink-muted">Last worked</dt>
+              <dd className="text-ink">{ov ? (ov.work.lastWorkedAt ? fmtDate(ov.work.lastWorkedAt) : 'Never') : '…'}</dd>
+              <dt className="text-ink-muted">Next shift</dt>
+              <dd className="text-ink">
+                {ov ? (
+                  next ? (
+                    <>
+                      {fmtRelativeDayTz(next.startsAt, next.timezone)} · {fmtShiftRangeTz(next.startsAt, next.endsAt, next.timezone)}
+                      <span className="block text-xs text-ink-muted">{[next.position, next.locationName].filter(Boolean).join(' · ')}</span>
+                    </>
+                  ) : (
+                    <span className="text-ink-muted">None scheduled</span>
+                  )
+                ) : (
+                  '…'
+                )}
+              </dd>
+              {canSeeTime && (
+                <>
+                  <dt className="text-ink-muted">Waiting approval</dt>
+                  <dd className="tabular-nums text-ink">{ov ? plural(ov.work.awaitingReview, 'clock-in') : '…'}</dd>
+                </>
+              )}
+              <dt className="text-ink-muted">No-shows (30 days)</dt>
+              <dd className={cn('tabular-nums', ov && ov.work.noShows30d > 0 ? 'text-alert' : 'text-ink')}>{ov ? ov.work.noShows30d : '…'}</dd>
+            </dl>
+          </CardContent>
+        </Card>
+
+        {hasPay && (
+          <Card>
+            <CardContent className="space-y-3 py-4">
+              <SectionTitle
+                title="Pay"
+                size="sm"
+                className="mb-0"
+                trailing={
+                  <Link to={tabHref('pay')} className="text-xs text-gold hover:text-gold-bright">
+                    Open Pay
+                  </Link>
+                }
+              />
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+                {canSeePay && (
+                  <>
+                    <dt className="text-ink-muted">Rate</dt>
+                    <dd className="tabular-nums text-ink">{a.payAmount ? fmtPay(a.payAmount, a.payType ?? null, a.payCurrency ?? null) : <span className="text-ink-muted">No rate on file</span>}</dd>
+                  </>
+                )}
+                {ov?.pay && (
+                  <>
+                    <dt className="text-ink-muted">Pay schedule</dt>
+                    <dd className="text-ink">{ov.pay.scheduleName ?? <span className="text-ink-muted">Not on a pay schedule</span>}</dd>
+                  </>
+                )}
+              </dl>
+            </CardContent>
+          </Card>
+        )}
+
+        {cases && (
+          <Card>
+            <CardContent className="flex items-baseline justify-between gap-3 py-4">
+              <div className="min-w-0">
+                <SectionTitle title="Cases" size="sm" className="mb-1" />
+                <p className="text-sm text-ink-muted">
+                  {cases.isError
+                    ? "Couldn't load their cases."
+                    : openCases === null
+                      ? '…'
+                      : openCases === 0
+                        ? cases.data!.cases.length === 0
+                          ? 'No cases on record.'
+                          : `None open · ${plural(cases.data!.cases.length, 'case')} on record`
+                        : `${openCases} open · ${plural(cases.data!.cases.length, 'case')} on record`}
+                </p>
+              </div>
+              <Link to={tabHref('cases')} className="shrink-0 text-xs text-gold hover:text-gold-bright">
+                Open Cases
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* -------------------------------------------------------------------- time */

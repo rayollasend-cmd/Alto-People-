@@ -10,6 +10,10 @@ const api = {
   getMyW9: vi.fn(),
   submitMyW9: vi.fn(),
   listContractors: vi.fn(),
+  getYearEnd: vi.fn(),
+  getProject: vi.fn(),
+  listProjects: vi.fn(),
+  updateProject: vi.fn(),
 };
 vi.mock('@/lib/certifiedPayrollApi', async (orig) => ({
   ...(await orig<typeof import('@/lib/certifiedPayrollApi')>()),
@@ -18,9 +22,15 @@ vi.mock('@/lib/certifiedPayrollApi', async (orig) => ({
   getMyW9: (...a: unknown[]) => api.getMyW9(...a),
   submitMyW9: (...a: unknown[]) => api.submitMyW9(...a),
   listContractors: (...a: unknown[]) => api.listContractors(...a),
+  getYearEnd: (...a: unknown[]) => api.getYearEnd(...a),
+  getProject: (...a: unknown[]) => api.getProject(...a),
+  listProjects: (...a: unknown[]) => api.listProjects(...a),
+  updateProject: (...a: unknown[]) => api.updateProject(...a),
 }));
 
 import { CertifiedWeek } from '@/pages/certifiedPayroll/CertifiedWeek';
+import { CertifiedProject } from '@/pages/certifiedPayroll/CertifiedProject';
+import { CertifiedPayrollDesk } from '@/pages/certifiedPayroll/CertifiedPayrollDesk';
 import { MyW9 } from '@/pages/me/MyW9';
 import { ContractorsDesk } from '@/pages/contractors/ContractorsDesk';
 
@@ -60,6 +70,8 @@ describe('a certified payroll week', () => {
     expect(await screen.findByText('Fix these before signing')).toBeInTheDocument();
     expect(screen.getByText(/needs at least \$50\.00/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Sign the statement/ })).toBeDisabled();
+    // The disabled button says what to do, in words.
+    expect(screen.getByRole('button', { name: /Sign the statement/ })).toHaveAttribute('title', 'Fix the item listed below first');
     expect(screen.getByRole('button', { name: /eCPR file/ })).toBeDisabled();
   });
 
@@ -81,6 +93,8 @@ describe('the contractor’s W-9', () => {
     api.getMyW9.mockResolvedValue({ required: false, status: 'NONE', signedAt: null, backupWithholding: false, form: { legalName: 'Ana', businessName: null, taxClassification: null, llcTaxClass: null, exemptPayeeCode: null, fatcaCode: null, addressLine1: null, city: null, state: null, zip: null, tinType: null, tinLast4: null, subjectToBackup: false } });
     renderAs('ASSOCIATE', <MyW9 />, '/me/w9', { associateId: 'a1' });
     expect(await screen.findByText('You don’t need a W-9')).toBeInTheDocument();
+    // …and where their W-4 is (F500 G5).
+    expect(await screen.findByRole('link', { name: 'See my W-4 on Pay' })).toHaveAttribute('href', '/payroll');
   });
 
   it('signs only with a nine-digit TIN, a typed name and the perjury statement', async () => {
@@ -112,5 +126,113 @@ describe('the contractors desk', () => {
     expect((await screen.findAllByText('Nia Contractor')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('24% · no TIN on file').length).toBeGreaterThan(0);
     expect(screen.getAllByText('No W-9').length).toBeGreaterThan(0);
+  });
+
+  it('leads with the numbers finance asks for, each a filter or a link (F500 G3)', async () => {
+    const c = (id: string, name: string, over: Record<string, unknown>) => ({ associateId: id, name, email: `${id}@example.com`, employmentType: 'CONTRACTOR_1099_INDIVIDUAL', w9Status: 'SIGNED', w9SignedAt: '2026-01-01T00:00:00Z', hasTin: true, tinLast4: '1234', tinMatchStatus: 'MATCHED', tinMatchLabel: null, backupWithholding: false, backupReason: null, openBNotices: [], ...over });
+    api.listContractors.mockResolvedValue({
+      truncated: false,
+      contractors: [c('c1', 'Nia Contractor', { w9Status: 'NONE' }), c('c2', 'Omar Builder', { tinMatchStatus: 'MISMATCH' }), c('c3', 'Pia Painter', { w9Status: 'REQUESTED' }), c('c4', 'Quin Roofer', {})],
+    });
+    const ye = (rows: Array<{ necBox1: number; miscTotal: number }>, necForms: number, miscForms: number) => ({
+      taxYear: 2026,
+      threshold: 600,
+      rows: rows.map((r, i) => ({ associateId: `c${i}`, name: `C${i}`, necBox4: 0, miscBox4: 0, states: [], needsNec: true, needsMisc: false, issues: [], ...r })),
+      totals: { payees: rows.length, necForms, miscForms, necBox1: 0, backupWithheld: 0, withIssues: 0 },
+    });
+    // This year: $1,200.40 + $300 NEC and $99.60 MISC paid; the filing year's 1099s: 2 NEC + 1 MISC.
+    api.getYearEnd.mockImplementation(async (year: number) => (year === new Date().getFullYear() ? ye([{ necBox1: 1200.4, miscTotal: 0 }, { necBox1: 300, miscTotal: 99.6 }], 2, 1) : ye([{ necBox1: 700, miscTotal: 0 }], 2, 1)));
+    renderAs('FINANCE_ACCOUNTANT', <ContractorsDesk />, '/payroll/contractors');
+    const strip = await screen.findByRole('group', { name: 'Contractors at a glance' });
+    // Tiles count up to their value: wait for the end of it.
+    await waitFor(() => expect(strip).toHaveTextContent(/Missing a W-92IRS TIN mismatches1Paid in \d{4}\$1,6001099s owed for \d{4}3/));
+    // Missing a W-9: Nia (none) and Pia (requested) = 2; mismatches: Omar = 1.
+    await userEvent.click(screen.getByRole('button', { name: /Missing a W-9/ }));
+    await waitFor(() => expect(screen.queryAllByText('Omar Builder')).toHaveLength(0));
+    expect(screen.getAllByText('Nia Contractor').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Pia Painter').length).toBeGreaterThan(0);
+    // The 1099 forms live on Year-end now: a link, not a ghost button.
+    expect(screen.getByRole('link', { name: '1099 forms' })).toHaveAttribute('href', '/payroll/year-end?tab=forms');
+    expect(screen.queryByRole('tab', { name: 'Year-end' })).toBeNull();
+  });
+});
+
+const projectDetail = (over: Record<string, unknown> = {}) => ({
+  project: {
+    id: 'p1', name: 'Civic Center Retrofit', contractNumber: 'C-12', agency: 'City of Ventura', awardingBody: null, wageDeterminationNumber: 'CA20260001', dirProjectId: null, siteId: null, site: null,
+    addressLine1: null, city: null, county: null, state: 'CA', zip: null, startDate: '2026-08-01', endDate: null, weekEndsOn: 6, fringeMode: 'CASH', payrollOfficerName: 'Pat Payroll', payrollOfficerTitle: 'Payroll Officer', status: 'ACTIVE',
+    rates: [{ id: 'r1', classification: 'Electrician', baseRate: 40, fringeRate: 10, apprenticesPerJourneyman: null, effectiveFrom: '2026-08-01', effectiveTo: null }],
+    workers: [
+      { id: 'w1', associateId: 'a1', name: 'Rosa Lopez', classification: 'Electrician', isApprentice: false, apprenticeRegistration: null, apprenticeLevelPercent: null, startedOn: '2026-08-01', endedOn: null },
+      { id: 'w2', associateId: 'a2', name: 'Ben Ortiz', classification: 'Electrician', isApprentice: false, apprenticeRegistration: null, apprenticeLevelPercent: null, startedOn: '2026-08-01', endedOn: '2026-08-20' },
+    ],
+  },
+  weeks: [
+    { weekEnding: '2026-09-12', status: 'DRAFT', payrollNumber: null, signedAt: null, submittedAt: null },
+    { weekEnding: '2026-09-05', status: 'SIGNED', payrollNumber: 2, signedAt: '2026-09-07T10:00:00Z', submittedAt: null },
+    { weekEnding: '2026-08-29', status: 'SUBMITTED', payrollNumber: 1, signedAt: '2026-08-31T10:00:00Z', submittedAt: '2026-09-01T10:00:00Z' },
+  ],
+  totals: { grossReported: 4275, weeksReported: 2 },
+  ...over,
+});
+
+describe('a certified project record', () => {
+  function renderProject() {
+    return renderAs(
+      'FINANCE_ACCOUNTANT',
+      <Routes>
+        <Route path="/payroll/certified/:id" element={<CertifiedProject />} />
+        <Route path="/payroll/certified/:id/weeks/:weekEnding" element={<p>week page</p>} />
+      </Routes>,
+      '/payroll/certified/p1',
+    );
+  }
+
+  it('leads with the facts that matter and opens the oldest week still owed', async () => {
+    api.getProject.mockResolvedValue(projectDetail());
+    renderProject();
+    expect(await screen.findByRole('heading', { name: 'Civic Center Retrofit' })).toBeInTheDocument();
+    expect(screen.getByText('Weeks owed')).toBeInTheDocument();
+    expect(screen.getByText('Workers on site')).toBeInTheDocument();
+    expect(screen.getByText('Gross on signed reports')).toBeInTheDocument();
+    expect(screen.getByText('$4,275.00')).toBeInTheDocument();
+    expect(screen.getByTitle('2 signed weeks')).toHaveTextContent('$4,275.00');
+    // The oldest owed week (Sep 5, signed but not submitted), not the newest.
+    await userEvent.click(screen.getByRole('button', { name: 'Open week ending Sep 5, 2026' }));
+    expect(await screen.findByText('week page')).toBeInTheDocument();
+  });
+
+  it('closing a project asks first', async () => {
+    api.getProject.mockResolvedValue(projectDetail({ weeks: [] }));
+    api.updateProject.mockResolvedValue({ id: 'p1', status: 'CLOSED' });
+    renderProject();
+    await screen.findByRole('heading', { name: 'Civic Center Retrofit' });
+    expect(screen.queryByRole('button', { name: /Open week ending/ })).toBeNull();
+    const more = screen.queryByRole('button', { name: 'Close project' }) ?? (await openOverflow());
+    await userEvent.click(more as HTMLElement);
+    const dialog = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
+    expect(dialog).toHaveTextContent('Close Civic Center Retrofit?');
+    expect(api.updateProject).not.toHaveBeenCalled();
+  });
+
+  it('a page still loading keeps its title', async () => {
+    api.getProject.mockReturnValue(new Promise(() => {}));
+    renderProject();
+    expect(await screen.findByRole('heading', { name: 'Prevailing-wage project' })).toBeInTheDocument();
+  });
+});
+
+async function openOverflow(): Promise<HTMLElement> {
+  await userEvent.click(screen.getByRole('button', { name: /more actions/i }));
+  return screen.findByRole('menuitem', { name: 'Close project' });
+}
+
+describe('the certified payroll desk', () => {
+  it('with no projects, the empty list carries the page, not three zero tiles', async () => {
+    api.listProjects.mockResolvedValue({ projects: [] });
+    renderAs('FINANCE_ACCOUNTANT', <CertifiedPayrollDesk />, '/payroll/certified');
+    expect(await screen.findByText('No prevailing-wage projects')).toBeInTheDocument();
+    expect(screen.queryByText('Active projects')).toBeNull();
+    expect(screen.queryByText('Waiting for a signature')).toBeNull();
   });
 });

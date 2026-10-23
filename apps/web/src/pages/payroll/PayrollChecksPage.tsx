@@ -23,7 +23,7 @@ import {
   type RunCheck,
   type RunChecks,
 } from '@/lib/paperChecksApi';
-import { ListTemplate } from '@/components/templates';
+import { RunPageShell, type RunSubPageProps } from './RunPageShell';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -54,15 +54,16 @@ const STATUS: Record<CheckStatus, { label: string; variant: 'default' | 'success
 /** STATUS for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
 const statusOf = (k: string) => known(STATUS, k, () => ({ label: enumWords(k), variant: 'default' as const }));
 
-export function PayrollChecksPage() {
-  const { id = '' } = useParams<{ id: string }>();
+export function PayrollChecksPage({ runId, embedded = false }: RunSubPageProps = {}) {
+  const params = useParams<{ id: string }>();
+  const id = runId ?? params.id ?? '';
   const qc = useQueryClient();
   const prompt = usePrompt();
   const q = useQuery({ queryKey: ['payroll', 'checks', id], queryFn: () => getRunChecks(id), enabled: !!id });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const refresh = () => void qc.invalidateQueries({ queryKey: ['payroll'] });
-  const crumbs = [{ label: 'Payroll', to: '/payroll' }, { label: 'Guided close', to: `/payroll/runs/${id}/close` }, { label: 'Paper checks' }];
+  const crumbs = [{ label: 'Payroll', to: '/payroll' }, { label: 'Run', to: `/payroll/runs/${id}` }, { label: 'Paper checks' }];
 
   const run = async (key: string, fn: () => Promise<unknown>, ok: string) => {
     setBusy(key);
@@ -79,17 +80,17 @@ export function PayrollChecksPage() {
 
   if (q.isError) {
     return (
-      <ListTemplate title="Paper checks" breadcrumbs={crumbs}>
+      <RunPageShell embedded={embedded} title="Paper checks" breadcrumbs={crumbs}>
         <EmptyState title="We couldn’t load this run’s checks" description={q.error instanceof ApiError ? q.error.message : undefined} action={<Button size="sm" variant="secondary" onClick={() => void q.refetch()}>Retry</Button>} />
-      </ListTemplate>
+      </RunPageShell>
     );
   }
   if (!q.data) {
     return (
-      <ListTemplate title="Paper checks" breadcrumbs={crumbs}>
+      <RunPageShell embedded={embedded} title="Paper checks" breadcrumbs={crumbs}>
         <Skeleton className="h-24" />
         <Skeleton className="h-72" />
-      </ListTemplate>
+      </RunPageShell>
     );
   }
   const d = q.data;
@@ -176,7 +177,8 @@ export function PayrollChecksPage() {
   ];
 
   return (
-    <ListTemplate
+    <RunPageShell
+      embedded={embedded}
       title="Paper checks"
       subtitle={`Pay period ${period}`}
       breadcrumbs={crumbs}
@@ -206,8 +208,10 @@ export function PayrollChecksPage() {
           </Button>
         </>
       }
+      // The setup gaps matter once there is a check to print (or one coming at payout); on a run with
+      // no paper checks they'd be a red alarm about nothing — Check settings still lists them (F500 G3).
       summary={
-        d.settings.gaps.length > 0 ? (
+        d.settings.gaps.length > 0 && (d.checks.length > 0 || d.overrides.length > 0) ? (
           <div role="status" className={cn('flex items-start gap-3 rounded-lg border p-3.5', d.settings.ready ? 'border-warning/40 bg-warning/5' : 'border-alert/40 bg-alert/5')}>
             <AlertTriangle className={cn('mt-0.5 h-5 w-5 shrink-0', d.settings.ready ? 'text-warning' : 'text-alert')} aria-hidden="true" />
             <div className="min-w-0 text-sm">
@@ -248,7 +252,7 @@ export function PayrollChecksPage() {
       </section>
 
       {settingsOpen && <CheckSettingsDrawer onClose={() => setSettingsOpen(false)} onSaved={refresh} />}
-    </ListTemplate>
+    </RunPageShell>
   );
 }
 

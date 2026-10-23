@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarOff, Plus, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
@@ -265,7 +265,13 @@ export function AssociateTimeOffView() {
         </ErrorBanner>
       )}
 
-      {!loadError && <BalanceHero balances={balances} requests={requests} />}
+      {!loadError && (
+        <BalanceHero
+          balances={balances}
+          requests={requests}
+          sickAccrual={balancesQuery.data?.sickAccrual ?? null}
+        />
+      )}
 
       <Card>
         <CardHeader>
@@ -275,11 +281,8 @@ export function AssociateTimeOffView() {
         <CardContent>
           {!requests && !loadError && <SkeletonRows count={3} />}
           {requests && requests.length === 0 && (
-            <EmptyState
-              icon={CalendarOff}
-              title={t('timeoff.noRequests')}
-              description={t('timeoff.noRequestsDesc')}
-            />
+            // One quiet line: two big empty cards filled the phone (F500 G2).
+            <EmptyState size="sm" icon={CalendarOff} title={t('timeoff.noRequests')} />
           )}
           {requests && requests.length > 0 && (
             <>
@@ -359,6 +362,14 @@ export function AssociateTimeOffView() {
         </CardContent>
       </Card>
 
+      {/* Time off and protected leave are two pages; each points to the other. */}
+      <p className="text-sm text-silver" data-testid="leave-pointer">
+        {t('timeoff.leavePointer')}{' '}
+        <Link to="/leave" className="text-gold underline-offset-2 hover:underline">
+          {t('timeoff.leavePointerLink')}
+        </Link>
+      </p>
+
       <CreateRequestDialog
         open={openCreate}
         onOpenChange={(o) => {
@@ -387,30 +398,61 @@ export function AssociateTimeOffView() {
  * glow — never a negative-offset blur, per the e2e rect guard).
  */
 function BalanceHero({
-  balances,
+  balances: given,
   requests,
+  sickAccrual = null,
 }: {
   balances: TimeOffBalance[] | null;
   requests: TimeOffRequest[] | null;
+  /** The state's sick-time rule (null: none where they work). */
+  sickAccrual?: { hoursWorkedPerHour: number } | null;
 }) {
   const { t } = useI18n();
-  if (!balances) {
+  if (!given) {
     return <Skeleton className="h-36" />;
   }
+  // Sick time shows as a row even at 0h where it builds up, with its rule.
+  const balances =
+    sickAccrual && !given.some((b) => b.category === 'SICK')
+      ? [...given, { category: 'SICK' as const, balanceMinutes: 0 }]
+      : given;
   if (balances.length === 0) {
     return (
+      <p className="flex items-center gap-2 rounded-md border border-line bg-surface px-3 py-2.5 text-sm text-silver" data-testid="timeoff-no-balance">
+        <Wallet className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+        {t('timeoff.noBalanceShort')}
+      </p>
+    );
+  }
+  const totalMinutes = balances.reduce((sum, b) => sum + b.balanceMinutes, 0);
+  if (totalMinutes === 0) {
+    // Nothing banked yet: a compact row per category instead of a big zero.
+    return (
       <Card>
-        <CardContent className="py-6">
-          <EmptyState
-            icon={Wallet}
-            title={t('timeoff.noBalance')}
-            description={t('timeoff.noBalanceDesc')}
-          />
+        <CardContent className="py-3">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
+            <Wallet className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('timeoff.balancesTitle')}
+          </div>
+          <ul className="divide-y divide-line" data-testid="timeoff-balance-rows">
+            {balances.map((b) => (
+              <li key={b.category} className="flex items-baseline justify-between gap-3 py-2">
+                <span className="min-w-0">
+                  <span className="block text-sm text-ink">{t(CATEGORY_KEYS[b.category])}</span>
+                  {b.category === 'SICK' && sickAccrual && (
+                    <span className="block text-xs text-silver/70">
+                      {t('timeoff.accrualRule', { n: sickAccrual.hoursWorkedPerHour })}
+                    </span>
+                  )}
+                </span>
+                <span className="shrink-0 text-sm font-semibold tabular-nums text-ink">{fmtMins(b.balanceMinutes)}</span>
+              </li>
+            ))}
+          </ul>
         </CardContent>
       </Card>
     );
   }
-  const totalMinutes = balances.reduce((sum, b) => sum + b.balanceMinutes, 0);
   const pending = (requests ?? []).filter((r) => r.status === 'PENDING');
   const first = pending[0];
   return (
@@ -440,6 +482,11 @@ function BalanceHero({
                 (b) => `${fmtMins(b.balanceMinutes)} ${t(CATEGORY_KEYS[b.category])}`,
               )
               .join(' · ')}
+          </p>
+        )}
+        {sickAccrual && balances.some((b) => b.category === 'SICK') && (
+          <p className="mt-1 text-xs text-silver/70">
+            {t(CATEGORY_KEYS.SICK)}: {t('timeoff.accrualRule', { n: sickAccrual.hoursWorkedPerHour })}
           </p>
         )}
         {pending.length > 0 && (

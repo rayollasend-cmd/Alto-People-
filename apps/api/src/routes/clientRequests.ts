@@ -329,7 +329,8 @@ clientRequestsRouter.patch(
                 ? `${who} replied:\n\n${input.resolution}\n\nThe full thread is in your portal.`
                 : `${who} is working on "${existing.subject}". You'll hear back here when there's a reply.`,
             category: 'client-request',
-            linkUrl: '/portal/requests',
+            // Lands on this request, opened and marked (F500 G5).
+            linkUrl: `/portal/requests?id=${existing.id}`,
           }))),
         );
       }

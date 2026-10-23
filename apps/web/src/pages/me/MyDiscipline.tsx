@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import {
   acknowledgeDisciplinaryAction,
   listMyDisciplinaryActions,
+  respondToDisciplinaryAction,
   type MyDisciplinaryAction,
 } from '@/lib/discipline118Api';
 import { ApiError } from '@/lib/api';
@@ -19,6 +20,7 @@ import {
   ErrorBanner,
   Input,
   SkeletonRows,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
@@ -44,6 +46,9 @@ export function MyDiscipline() {
     await actionsQuery.refetch();
   };
 
+  // A deep link to a notice that isn't on the record (rescinded and removed,
+  // or someone else's) says so instead of quietly showing the list (F500 G5).
+  const missingLink = !!actionId && actions !== null && !actions.some((a) => a.id === actionId);
   // Deep-linked record floats to the top and starts highlighted.
   const ordered =
     actions === null
@@ -56,12 +61,17 @@ export function MyDiscipline() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         className="mx-auto max-w-2xl"
-        title={t('record.title')}
+        // "Notices on file", under My records — "My record" beside a
+        // "My records" group meant two things (F500 G5). The trail comes
+        // from the sidebar (My records), not a hand-written one.
+        title={t('record.titleNotices')}
         subtitle={t('record.subtitle')}
-        // Up is My profile (a trail, on the desktop; the top bar's Back on a
-        // phone) — not a lone crumb that repeats the title, nor a link at the bottom.
-        breadcrumbs={[{ label: t('me.title'), to: '/me' }, { label: t('record.title') }]}
     >
+      {missingLink && (
+        <p role="status" className="rounded-md border border-line px-3 py-2 text-sm text-ink-muted" data-testid="record-missing">
+          {t('record.missing')}
+        </p>
+      )}
       {loadError && (
         <ErrorBanner
           action={
@@ -82,7 +92,7 @@ export function MyDiscipline() {
         <EmptyState
           icon={ShieldAlert}
           title={t('record.emptyTitle')}
-          description={t('record.emptyDesc')}
+          description={t('record.emptyDesc2')}
         />
       )}
       <div className="space-y-4">
@@ -169,6 +179,8 @@ function ActionCard({
         )}
         {a.status === 'ACTIVE' && (
           <div className="space-y-2 border-t border-navy-secondary pt-3">
+            {/* Said where the signature is, not only in a clamped subtitle. */}
+            <p className="text-sm text-ink" data-testid="record-not-agree">{t('record.ackNotAgree')}</p>
             <Label>{t('record.signLabel')}</Label>
             <p className="text-xs text-silver">
               {t('record.signHint')}
@@ -211,7 +223,68 @@ function ActionCard({
             </Button>
           </div>
         )}
+        {a.status !== 'RESCINDED' && <ResponseBlock action={a} onSaved={onChanged} />}
       </CardContent>
     </Card>
+  );
+}
+
+/** The employee's own side, under the notice: HR reads it on the action (F500 G5). */
+function ResponseBlock({ action: a, onSaved }: { action: MyDisciplinaryAction; onSaved: () => void }) {
+  const { t } = useI18n();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(a.employeeResponse ?? '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await respondToDisciplinaryAction(a.id, text.trim());
+      toast.success(t('record.responseSaved'));
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('record.responseFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!editing) {
+    return (
+      <div className="space-y-1 border-t border-navy-secondary pt-3" data-testid="record-response">
+        {a.employeeResponse ? (
+          <>
+            <div className="text-xs text-silver">
+              {t('record.yourResponse')}
+              {a.employeeRespondedAt ? ` · ${fmtDateTime(a.employeeRespondedAt)}` : ''}
+            </div>
+            <p className="whitespace-pre-wrap text-sm text-ink">{a.employeeResponse}</p>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+              {t('record.editResponse')}
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+            {t('record.addResponse')}
+          </Button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2 border-t border-navy-secondary pt-3">
+      <Label>
+        {t('record.responseLabel')}
+        <Textarea className="mt-1" rows={5} maxLength={2000} value={text} onChange={(e) => setText(e.target.value)} />
+      </Label>
+      <p className="text-xs text-silver">{t('record.responseHint', { n: 2000 - text.length })}</p>
+      <div className="flex gap-2">
+        <Button size="sm" loading={busy} disabled={busy || text.trim().length === 0} onClick={() => void save()}>
+          {t('record.saveResponse')}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>
+          {t('common.cancel')}
+        </Button>
+      </div>
+    </div>
   );
 }

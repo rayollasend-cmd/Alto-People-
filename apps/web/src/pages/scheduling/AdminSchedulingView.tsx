@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { OvertimeRotationPanel } from './OvertimeRotationPanel';
 import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
@@ -59,10 +59,20 @@ import { DraftsDialog } from './DraftsDialog';
 import { ChangeReasonField, changeReasonRequired } from './ChangeReasonField';
 import { AssignCandidateFacts } from './AssignCandidateFacts';
 import { PublishReviewSheet } from './PublishReviewSheet';
-import { SchedulingToolbar, kpiLine, useHeaderCollapsed } from './SchedulingToolbar';
+import { SchedulingToolbar, kpiParts, useHeaderCollapsed } from './SchedulingToolbar';
 import { shiftTimesOnDay } from './weekGridFit';
 import { getSiteForecast } from '@/lib/forecastApi';
 import { useMinWidth } from '@/lib/useViewport';
+import { urlDay, useUrlParam, useUrlState, useUrlWriter } from '@/lib/useUrlState';
+import {
+  HISTORY_STATUSES,
+  LIST_STATUSES,
+  listRangeDefault,
+  listStatusQuery,
+  restoredListStatus,
+  unfilledThisWeekRange,
+  type ListStatus,
+} from './listRange';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { listClientLocations } from '@/lib/clientsApi';
@@ -117,6 +127,7 @@ import {
   fmtDateTime,
   fmtDateTz,
   fmtDayHeaderTz,
+  fmtDateOnlyRange,
   fmtMoneyCompact,
   fmtMonthYearTz,
   fmtRelativeDayTz,
@@ -260,14 +271,28 @@ function PositionSelect({
   );
 }
 
-const STATUS_FILTERS: Array<{ value: ShiftStatus | 'ALL'; label: string }> = [
+// "Open" is still fillable (the KPI line's "open"); "Went unfilled" is the
+// past ones that ended still open — the KPI line's "unfilled".
+const STATUS_FILTERS: Array<{ value: ListStatus; label: string }> = [
   { value: 'OPEN', label: 'Open' },
+  { value: 'UNFILLED', label: 'Went unfilled' },
   { value: 'ASSIGNED', label: 'Assigned' },
   { value: 'DRAFT', label: 'Draft' },
   { value: 'COMPLETED', label: 'Completed' },
   { value: 'CANCELLED', label: 'Cancelled' },
   { value: 'ALL', label: 'All' },
 ];
+
+/** The list's empty state, per chip: which list is empty, and what that means. */
+const LIST_EMPTY: Record<ListStatus, { title: string; description: string }> = {
+  OPEN: { title: 'No open shifts', description: 'Nothing in these days is waiting for someone to fill it.' },
+  UNFILLED: { title: 'No shifts went unfilled', description: 'Every shift that ended in these days had someone on it, or was closed out.' },
+  ASSIGNED: { title: 'No assigned shifts', description: 'Nobody is on a published shift in these days.' },
+  DRAFT: { title: 'No drafts', description: 'Nothing is waiting to be published in these days.' },
+  COMPLETED: { title: 'No completed shifts', description: 'No shift was worked to the end in these days.' },
+  CANCELLED: { title: 'No cancelled shifts', description: 'Nothing was cancelled in these days.' },
+  ALL: { title: 'No shifts', description: 'Nothing is scheduled in these days. Try another range.' },
+};
 
 const STATUS_VARIANT: Record<
   ShiftStatus,
@@ -699,12 +724,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     window.localStorage.setItem('alto:scheduling.tileDensity.v1', tileDensity);
   }, [tileDensity]);
 
-  const [filter, setFilter] = useState<ShiftStatus | 'ALL'>(() => {
-    if (openOnly) return 'OPEN';
-    const s = readStoredFilters()?.status;
-    const valid = ['ALL', 'OPEN', 'ASSIGNED', 'DRAFT', 'COMPLETED', 'CANCELLED'];
-    return s && valid.includes(s) ? (s as ShiftStatus | 'ALL') : 'OPEN';
-  });
+  // The list's status chip lives in the URL (?status=), so a link, a
+  // reload and Back keep it. With none, the last forward-looking pick
+  // (a history chip doesn't stick: the list reopens on what's ahead).
+  const [storedStatus] = useState<ListStatus>(() => (openOnly ? 'OPEN' : restoredListStatus(readStoredFilters()?.status)));
+  const [filter, setFilter] = useUrlParam<ListStatus>('status', storedStatus, LIST_STATUSES);
+  const writeUrl = useUrlWriter();
   const [showCreate, setShowCreate] = useState(false);
   const [createInitialDate, setCreateInitialDate] = useState<Date | null>(null);
   // End of a drag-created range (time-grid drag-to-create); null = default.
@@ -904,36 +929,45 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     return d;
   });
 
-  // Phase 54.2 — list-view date range (defaults to the current month, or the
-  // last range used). When either bound is empty the field is treated as
-  // unbounded on that side.
+  // Phase 54.2 — the list-view date range. It opens on today and the next
+  // two weeks (a history chip: the last 30 days) and lives in the URL
+  // (?from=&to=) — it isn't remembered between visits: a planning list
+  // that reopened on last month's range opened on history (F500 G2).
   // List view renders in pages of 200 — the server cap is 500 and mounting
   // 500 action-heavy table rows at once made the tab visibly chug. Most
   // ranges fit one page (so printing is unaffected); bigger ones get an
   // explicit "Show more" instead of a wall.
   const [listVisibleCount, setListVisibleCount] = useState(LIST_PAGE_SIZE);
-  const [listFrom, setListFrom] = useState<string>(() => {
-    if (deepLinkDate) return deepLinkDate;
-    // The open-shifts list starts at today: a shift that is over isn't open
-    // (role walk, HR 19).
-    if (searchParams.get('open') === '1') return ymd(new Date());
-    const stored = readStoredAnchors();
-    if (stored && stored.listFrom !== undefined) return stored.listFrom;
-    const d = new Date();
-    d.setDate(1);
-    return ymd(d);
-  });
-  const [listTo, setListTo] = useState<string>(() => {
-    if (deepLinkDate) return deepLinkDate;
-    const stored = readStoredAnchors();
-    if (stored && stored.listTo !== undefined) return stored.listTo;
-    const d = new Date();
-    d.setMonth(d.getMonth() + 1);
-    d.setDate(0); // last day of current month
-    return ymd(d);
-  });
+  // A ?date= link (consumed at mount) pins the list to that day.
+  const [linkRange] = useState<{ from: string; to: string } | null>(() =>
+    deepLinkDate ? { from: deepLinkDate, to: deepLinkDate } : null,
+  );
+  const [fromParam, setFromParam] = useUrlState('from', '', urlDay);
+  const [toParam, setToParam] = useUrlState('to', '', urlDay);
+  const todayKey = ymd(new Date());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const chipRange = useMemo(() => listRangeDefault(filter), [filter, todayKey]);
+  const listFrom = fromParam || linkRange?.from || chipRange.from;
+  const listTo = toParam || linkRange?.to || chipRange.to;
+  // An emptied date field goes back to the chip's default for that side.
+  const setListFrom = setFromParam;
+  const setListTo = setToParam;
+  /** Both ends at once (a preset); the chip's own default writes nothing. */
+  const setListRange = useCallback(
+    (from: string, to: string) => {
+      writeUrl((p) => {
+        const def = listRangeDefault(filter);
+        if (from === def.from) p.delete('from');
+        else p.set('from', from);
+        if (to === def.to) p.delete('to');
+        else p.set('to', to);
+      });
+    },
+    [writeUrl, filter],
+  );
 
-  // Persist the anchors + list range so each view resumes where it was left.
+  // Persist the day/month anchors so each calendar view resumes where it
+  // was left (the list range is the URL's, not the device's).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(
@@ -941,11 +975,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       JSON.stringify({
         day: ymd(dayAnchor),
         month: ymd(monthAnchor),
-        listFrom,
-        listTo,
       }),
     );
-  }, [dayAnchor, monthAnchor, listFrom, listTo]);
+  }, [dayAnchor, monthAnchor]);
 
   // Phase 54.4 — PDF export pending flag.
   const [exportingPdf, setExportingPdf] = useState(false);
@@ -1238,7 +1270,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       const gridEnd = addDaysLocal(gridStart, 42);
       args = { from: padDay(gridStart, -1), to: padDay(gridEnd, 1) };
     } else {
-      args = filter === 'ALL' ? {} : { status: filter };
+      // "Open" asks for still-fillable shifts only; "Went unfilled" for the
+      // ones that ended open (the API's ?ended=).
+      args = listStatusQuery(filter);
       // Phase 54.2 — list view honors a date range alongside the status
       // filter. Empty bounds = unbounded on that side.
       if (listFrom) {
@@ -1371,12 +1405,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   useEffect(() => {
     if (!deepLinkShift || shiftJumpDoneRef.current || shiftJump.isPending) return;
     shiftJumpDoneRef.current = true;
-    const next = new URLSearchParams(searchParams);
-    next.delete('shift');
-    next.delete('open');
-    next.delete('date');
-    setSearchParams(next, { replace: true });
     const target = shiftJump.data?.shifts[0];
+    const targetYmd = target ? ymd(new Date(target.startsAt)) : null;
+    // One write: the link's params go, and the list's range widens to the
+    // shift's day when it sits outside it.
+    writeUrl((p) => {
+      p.delete('shift');
+      p.delete('open');
+      p.delete('date');
+      if (targetYmd && listFrom > targetYmd) p.set('from', targetYmd);
+      if (targetYmd && listTo < targetYmd) p.set('to', targetYmd);
+    });
     if (!target) {
       toast.error('That shift could not be found — it may have been deleted, or it is outside your stores.');
       return;
@@ -1389,10 +1428,6 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const first = new Date(day);
     first.setDate(1);
     setMonthAnchor(first);
-    const dayYmd = ymd(day);
-    // An empty bound is unbounded — it already includes the day; keep it.
-    setListFrom((cur) => (!cur || cur <= dayYmd ? cur : dayYmd));
-    setListTo((cur) => (!cur || cur >= dayYmd ? cur : dayYmd));
     // Someone who can't change the schedule gets the shift to read, not an
     // edit form whose Save would be refused.
     if (!canManage) setViewTarget(target);
@@ -2047,6 +2082,49 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       toast.error(err instanceof ApiError ? err.message : 'Could not close out the shifts.');
     } finally {
       setClosingOut(false);
+    }
+  };
+
+  // One past row's Close out — the same verb and the same record as the
+  // bulk one, for just this shift.
+  const onCloseOutOne = async (sh: Shift) => {
+    const ok = await confirm({
+      title: 'Close out this unfilled shift?',
+      description: `${sh.position} · ${fmtShift(sh)} ended with nobody assigned. Closing it out records it as cancelled with the reason "unfilled" — it stops counting as open, and fill-rate history keeps the miss.`,
+      confirmLabel: 'Close out',
+      destructive: true,
+    });
+    if (!ok) return;
+    setPendingId(sh.id);
+    try {
+      const r = await closeOutUnfilled({ shiftIds: [sh.id] });
+      toast.success(r.closed === 0 ? 'Nothing to close out.' : 'Shift closed out as unfilled.');
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not close out the shift.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  // "N unfilled" on the KPI line → the list of them: the Went unfilled
+  // chip over the same days the line counts (this workweek so far, or the
+  // days on the week grid), where Close out sits. One URL write.
+  const showUnfilled = () => {
+    const q = kpi.query as { fromDay?: string; toDay?: string };
+    const today = ymd(new Date());
+    const range = q.fromDay && q.toDay ? { from: q.fromDay, to: q.toDay < today ? q.toDay : today } : unfilledThisWeekRange();
+    writeUrl((p) => {
+      p.delete('view');
+      p.delete('associate');
+      p.set('status', 'UNFILLED');
+      p.set('from', range.from);
+      p.set('to', range.to);
+    });
+    try {
+      window.localStorage.setItem(VIEW_KEY, 'list');
+    } catch {
+      // best-effort
     }
   };
 
@@ -2825,7 +2903,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const pullState = usePullToRefresh(refresh);
 
   // The list view's date range rides on the filter row (Phase 54.2 gave it
-  // a card of its own; the sweep folded it in). Defaults to the current month.
+  // a card of its own; the sweep folded it in). Opens on the next two weeks.
   const rangeControls = view === 'list' ? (
     <div className="ml-auto inline-flex flex-wrap items-center gap-2">
       <div className="text-2xs uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
@@ -2847,44 +2925,39 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
         aria-label="To date"
       />
-      <button
-        type="button"
-        onClick={() => {
-          const d = new Date();
-          setListFrom(ymd(new Date(d.getFullYear(), d.getMonth(), 1)));
-          setListTo(ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)));
-        }}
-        className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
-      >
-        This month
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const d = new Date();
-          const monday = startOfWeekMonday(d);
-          setListFrom(ymd(monday));
-          const sunday = new Date(monday);
-          sunday.setDate(sunday.getDate() + 6);
-          setListTo(ymd(sunday));
-        }}
-        className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
-      >
-        This week
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          setListFrom('');
-          setListTo('');
-        }}
-        className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
-      >
-        Clear
-      </button>
-      <span className="ml-auto text-2xs text-silver/70 tabular-nums">
-        {filteredShifts ? `${filteredShifts.length} shifts` : ''}
-      </span>
+      {/* Presets: the list opens on the next two weeks; the others are a
+          tap away. An emptied date field goes back to the default. */}
+      {(
+        [
+          ['Next 2 weeks', () => listRangeDefault('OPEN')],
+          ['This week', () => {
+            const sat = startOfWeekMonday(new Date());
+            return { from: ymd(sat), to: ymd(addDaysLocal(sat, 6)) };
+          }],
+          ['This month', () => {
+            const d = new Date();
+            return { from: ymd(new Date(d.getFullYear(), d.getMonth(), 1)), to: ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)) };
+          }],
+          ['Last 30 days', () => ({ from: ymd(addDaysLocal(new Date(), -30)), to: ymd(new Date()) })],
+        ] as const
+      ).map(([label, range]) => {
+        const r = range();
+        const on = r.from === listFrom && r.to === listTo;
+        return (
+          <button
+            key={label}
+            type="button"
+            onClick={() => setListRange(r.from, r.to)}
+            aria-pressed={on}
+            className={cn(
+              'whitespace-nowrap text-2xs underline-offset-2 hover:text-gold',
+              on ? 'text-gold' : 'text-silver/70 underline',
+            )}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   ) : null;
 
@@ -2966,16 +3039,63 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             <div className="no-print">
               {/* One line (ops 4); the tiles stay behind "Details". On a phone
                   the line scrolls sideways as chips (ops 14). */}
-              <div className="mb-2 flex items-center gap-2 overflow-x-auto text-sm text-silver" data-testid="kpi-line">
-                <span className="whitespace-nowrap tabular-nums">
-                  {kpis ? kpiLine(kpis, forecastHours) : '…'}
-                </span>
+              <div className="mb-2 flex items-center gap-2 overflow-x-auto text-sm text-silver [scrollbar-width:none]" data-testid="kpi-line">
+                {kpis ? (
+                  <>
+                    {/* Which window the numbers count — "This week" off the
+                        week grid, the days on screen on it. */}
+                    <span className="shrink-0 whitespace-nowrap text-silver/70">
+                      {kpi.period.charAt(0).toUpperCase() + kpi.period.slice(1)}:
+                    </span>
+                    {(() => {
+                      const parts = kpiParts(kpis, forecastHours).map((part) => ({
+                        key: part.key,
+                        // "N unfilled" lists them: the Went unfilled chip, on
+                        // the same days, where Close out is.
+                        body:
+                          part.key === 'unfilled' ? (
+                            <button
+                              type="button"
+                              onClick={showUnfilled}
+                              className="whitespace-nowrap tabular-nums underline decoration-dotted underline-offset-2 hover:text-gold"
+                              title="List the shifts that went unfilled"
+                              data-testid="kpi-unfilled"
+                            >
+                              {part.text}
+                            </button>
+                          ) : (
+                            <span className="whitespace-nowrap tabular-nums">{part.text}</span>
+                          ),
+                      }));
+                      // A phone reads them as chips that scroll sideways; a
+                      // desk as one line.
+                      return isPhone ? (
+                        parts.map((p) => (
+                          <span key={p.key} className="inline-flex h-7 shrink-0 items-center rounded-full border border-navy-secondary px-2.5 text-xs">
+                            {p.body}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="shrink-0 whitespace-nowrap">
+                          {parts.map((p, i) => (
+                            <Fragment key={p.key}>
+                              {i > 0 && <span aria-hidden="true">{' · '}</span>}
+                              {p.body}
+                            </Fragment>
+                          ))}
+                        </span>
+                      );
+                    })()}
+                  </>
+                ) : (
+                  <span className="shrink-0">…</span>
+                )}
                 {unfilledInView > 0 && canManage && (
-                  <Button size="xs" variant="ghost" onClick={() => void onCloseOutUnfilled(unfilledInView)} loading={closingOut} className="whitespace-nowrap" data-testid="close-out-unfilled">
+                  <Button size="xs" variant="ghost" onClick={() => void onCloseOutUnfilled(unfilledInView)} loading={closingOut} className="shrink-0 whitespace-nowrap" data-testid="close-out-unfilled">
                     Close out {unfilledInView} unfilled past shift{unfilledInView === 1 ? '' : 's'}
                   </Button>
                 )}
-                <button type="button" onClick={() => setKpiDetails((v) => !v)} className="ml-auto whitespace-nowrap text-2xs text-silver/70 underline underline-offset-2 hover:text-gold" aria-expanded={kpiDetails}>
+                <button type="button" onClick={() => setKpiDetails((v) => !v)} className="ml-auto shrink-0 whitespace-nowrap text-2xs text-silver/70 underline underline-offset-2 hover:text-gold" aria-expanded={kpiDetails}>
                   {kpiDetails ? 'Hide details' : 'Details'}
                 </button>
               </div>
@@ -3035,10 +3155,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               ? fmtDayHeaderTz(dayAnchor, null, { year: true })
               : view === 'month'
                 ? fmtMonthYearTz(monthAnchor)
-                : `${listFrom || '…'} → ${listTo || '…'}`
+                : fmtDateOnlyRange(listFrom, listTo)
         }
+        // A phone pages by the day strip (one navigator, the org week);
+        // the toolbar's week/day/month range stays on bigger screens.
         onPrev={
-          view === 'week'
+          isPhone
+            ? undefined
+            : view === 'week'
             ? () => setWeekStart((w) => addDaysLocal(w, -weekDayCount))
             : view === 'day'
               ? () => setDayAnchor(addDaysLocal(dayAnchor, -1))
@@ -3051,7 +3175,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 : undefined
         }
         onNext={
-          view === 'week'
+          isPhone
+            ? undefined
+            : view === 'week'
             ? () => setWeekStart((w) => addDaysLocal(w, weekDayCount))
             : view === 'day'
               ? () => setDayAnchor(addDaysLocal(dayAnchor, 1))
@@ -3108,7 +3234,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 <TooltipContent>{tzHint}</TooltipContent>
               </Tooltip>
             )}
-            {(view === 'week' || view === 'day' || view === 'month') && (
+            {/* The key reads the grid's marks; a phone shows the day agenda, not the grid. */}
+            {!isPhone && (view === 'week' || view === 'day' || view === 'month') && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button type="button" className="shrink-0 text-silver/70 hover:text-ink" aria-label="Status key">
@@ -3638,7 +3765,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           leaves the anchor at 01:00 on spring-forward — which then skews every
           from/to fetch window built from it. The desktop nav already does
           this correctly; only this path had drifted. */}
-      {filteredShifts && (
+      {/* Not above the list view: there the list IS the phone's view, and a
+          day strip over it was a second navigator for another range. */}
+      {filteredShifts && view !== 'list' && (
         <div className="lg:hidden fine:md:hidden">
           <MobileScheduleList
             shifts={filteredShifts}
@@ -3826,18 +3955,28 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       </TileDensityProvider>
 
       {/* List view: empty state */}
+      {/* Says which list is empty and for which days — "No open shifts,
+          Oct 22 – Nov 4" is news (nothing waits for someone), not a
+          mystery — with the way to everything else. */}
       {filteredShifts && view === 'list' && filteredShifts.length === 0 && (
         <EmptyState
           icon={Calendar}
-          title={t('schedHome.noMatch')}
-          description={canManage ? t('schedHome.noMatchManage') : t('schedHome.noMatchRead')}
+          title={`${LIST_EMPTY[filter].title} · ${fmtDateOnlyRange(listFrom, listTo)}`}
+          description={LIST_EMPTY[filter].description}
           action={
-            canManage ? (
-              <Button onClick={() => setShowCreate(true)}>
-                <Plus className="h-4 w-4" />
-                New shift
-              </Button>
-            ) : undefined
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {filter !== 'ALL' && (
+                <Button variant={canManage ? 'secondary' : 'primary'} onClick={() => setFilter('ALL')}>
+                  Show every shift
+                </Button>
+              )}
+              {canManage && (
+                <Button onClick={() => setShowCreate(true)}>
+                  <Plus className="h-4 w-4" />
+                  New shift
+                </Button>
+              )}
+            </div>
           }
         />
       )}
@@ -3885,11 +4024,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           <DataGrid<NonNullable<typeof filteredShifts>[number]>
             id="shift-list"
             caption="Shifts"
-            rows={filteredShifts.slice(0, listVisibleCount)}
+            rows={(HISTORY_STATUSES.has(filter) ? [...filteredShifts].reverse() : filteredShifts).slice(0, listVisibleCount)}
             rowKey={(sh) => sh.id}
             search={false}
             urlState={false}
-            exportCsv={{ filename: 'shifts' }}
+            // The header's Export (print / CSV / PDF) is the one way out.
+            exportCsv={false}
             columns={[
               { key: 'position', header: 'Position', accessor: (sh) => sh.position, sortable: true, primary: true, className: 'font-medium' },
               ...(!boundedClient && clientsOn
@@ -3981,13 +4121,22 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                               Unassign
                             </Button>
                           )}
-                          {sh.status !== 'COMPLETED' && sh.status !== 'CANCELLED' && (
-                            // Quiet until it's meant: a red block on every row
-                            // shouted louder than the work (the dialog confirms).
-                            <Button size="sm" variant="ghost" className="text-alert hover:bg-alert/10" onClick={() => setCancelTarget(sh)} disabled={pendingId === sh.id}>
-                              <X className="h-3.5 w-3.5" />
-                              Cancel
+                          {wentUnfilled(sh) ? (
+                            // A past open shift isn't cancelled, it's closed out
+                            // — the same verb as the bulk action above.
+                            <Button size="sm" variant="ghost" onClick={() => void onCloseOutOne(sh)} disabled={pendingId === sh.id}>
+                              Close out
                             </Button>
+                          ) : (
+                            sh.status !== 'COMPLETED' &&
+                            sh.status !== 'CANCELLED' && (
+                              // Quiet until it's meant: a red block on every row
+                              // shouted louder than the work (the dialog confirms).
+                              <Button size="sm" variant="ghost" className="text-alert hover:bg-alert/10" onClick={() => setCancelTarget(sh)} disabled={pendingId === sh.id}>
+                                <X className="h-3.5 w-3.5" />
+                                Cancel
+                              </Button>
+                            )
                           )}
                         </div>
                       ),
@@ -4060,7 +4209,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 <DialogTitle>{mobileAction.position}</DialogTitle>
                 <DialogDescription>
                   {shiftPlace(mobileAction)} · {fmtShift(mobileAction)} ·{' '}
-                  {STATUS_LABELS[mobileAction.status] ?? mobileAction.status}
+                  {wentUnfilled(mobileAction) ? 'Went unfilled' : (STATUS_LABELS[mobileAction.status] ?? mobileAction.status)}
                   {mobileAction.assignedAssociateName
                     ? ` · ${mobileAction.assignedAssociateName}`
                     : ''}
@@ -4073,6 +4222,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                   setMobileAction(null);
                   void fn(s);
                 };
+                // Over and never filled: nothing to assign or edit — it closes out.
+                if (wentUnfilled(s)) {
+                  return (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button variant="secondary" onClick={act(onCloseOutOne)}>
+                        Close out
+                      </Button>
+                      <Button variant="ghost" className="text-alert hover:text-alert" onClick={act(quickActions.onDelete)}>
+                        Delete
+                      </Button>
+                    </div>
+                  );
+                }
                 return (
                   <div className="grid grid-cols-2 gap-2">
                     {!terminal && (

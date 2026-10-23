@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CalendarCheck2, HardHat, Plus, Trash2, Users } from 'lucide-react';
@@ -37,38 +37,82 @@ export function WeekStatusBadge({ status }: { status: WeekRow['status'] }) {
 
 export function CertifiedProject() {
   const { id = '' } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') ?? 'weeks';
   const q = useQuery({ queryKey: ['certified-payroll', 'project', id], queryFn: () => getProject(id), enabled: !!id });
+  const setStatus = useMutation({
+    mutationFn: (status: 'CLOSED' | 'ARCHIVED') => updateProject(id, { status }),
+    onSuccess: (_d, status) => {
+      toast.success(status === 'CLOSED' ? 'Project closed.' : 'Project archived.');
+      void qc.invalidateQueries({ queryKey: ['certified-payroll'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const crumbs = [{ label: 'Payroll', to: '/payroll' }, { label: 'Certified payroll', to: '/payroll/certified' }];
 
-  if (q.isError) return <QueryError what="this project" query={q} />;
-  if (q.isLoading || !q.data) return <SkeletonRows count={8} />;
+  // Loading and failing keep the record's shell: its title and trail (F500 G3).
+  if (q.isError || q.isLoading || !q.data) {
+    return (
+      <RecordTemplate
+        breadcrumbs={crumbs}
+        title="Prevailing-wage project"
+        tabs={[{ key: 'weeks', label: 'Weeks', content: q.isError ? <QueryError what="this project" query={q} /> : <SkeletonRows count={8} /> }]}
+      />
+    );
+  }
   const { project, weeks } = q.data;
-  const owed = weeks.filter((w) => w.status !== 'SUBMITTED').length;
+  const owedWeeks = weeks.filter((w) => w.status !== 'SUBMITTED');
+  const owed = owedWeeks.length;
+  // The next week to file: the oldest one still owed.
+  const nextWeek = [...owedWeeks].sort((a, b) => a.weekEnding.localeCompare(b.weekEnding))[0] ?? null;
+  const onSite = project.workers.filter((w) => !w.endedOn).length;
 
   return (
     <RecordTemplate
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Certified payroll', to: '/payroll/certified' }, { label: project.name }]}
+      breadcrumbs={[...crumbs, { label: project.name }]}
       identity={<HardHat className="h-8 w-8 text-gold" aria-hidden />}
       title={project.name}
       subtitle={[project.contractNumber && `Contract ${project.contractNumber}`, project.agency, project.wageDeterminationNumber && `WD ${project.wageDeterminationNumber}`].filter(Boolean).join(' · ') || 'Add the contract facts under Details'}
-      status={
-        <>
-          <Badge variant={project.status === 'ACTIVE' ? 'success' : 'default'}>{project.status === 'ACTIVE' ? 'Active' : project.status === 'CLOSED' ? 'Closed' : 'Archived'}</Badge>
-          {owed > 0 ? <Badge variant="pending">{`${owed} week${owed === 1 ? '' : 's'} owed`}</Badge> : null}
-        </>
-      }
+      status={<Badge variant={project.status === 'ACTIVE' ? 'success' : 'default'}>{project.status === 'ACTIVE' ? 'Active' : project.status === 'CLOSED' ? 'Closed' : 'Archived'}</Badge>}
+      facts={[
+        { label: 'Weeks owed', value: owed === 0 ? 'None' : String(owed) },
+        { label: 'Workers on site', value: String(onSite), to: `/payroll/certified/${project.id}?tab=workers` },
+        { label: 'Gross on signed reports', value: q.data.totals ? fmtMoney(q.data.totals.grossReported) : null, hint: q.data.totals ? `${q.data.totals.weeksReported} signed week${q.data.totals.weeksReported === 1 ? '' : 's'}` : undefined },
+      ]}
+      actions={[
+        ...(nextWeek
+          ? [{ key: 'next-week', label: `Open week ending ${fmtDate(nextWeek.weekEnding)}`, primary: true, onSelect: () => navigate(`/payroll/certified/${project.id}/weeks/${nextWeek.weekEnding}`) }]
+          : []),
+        {
+          key: 'close',
+          label: 'Close project',
+          destructive: true,
+          hidden: project.status !== 'ACTIVE',
+          confirm: { title: `Close ${project.name}?`, description: 'No more weeks are owed after its end date. Signed weeks stay on record.', confirmLabel: 'Close project' },
+          onSelect: () => setStatus.mutate('CLOSED'),
+        },
+        {
+          key: 'archive',
+          label: 'Archive project',
+          destructive: true,
+          hidden: project.status === 'ARCHIVED',
+          confirm: { title: `Archive ${project.name}?`, description: 'It leaves the list of projects. Its weeks and reports stay on record.', confirmLabel: 'Archive' },
+          onSelect: () => setStatus.mutate('ARCHIVED'),
+        },
+      ]}
       activeTab={tab}
       onTabChange={(k) => {
         const next = new URLSearchParams(params);
         if (k === 'weeks') next.delete('tab');
         else next.set('tab', k);
-        setParams(next, { replace: true });
+        setParams(next);
       }}
       tabs={[
         { key: 'weeks', label: 'Weeks', count: owed || undefined, content: <WeeksTab projectId={project.id} weeks={weeks} /> },
         { key: 'rates', label: 'Rates', count: project.rates.length, content: <RatesTab project={project} /> },
-        { key: 'workers', label: 'Workers', count: project.workers.filter((w) => !w.endedOn).length, content: <WorkersTab project={project} /> },
+        { key: 'workers', label: 'Workers', count: onSite, content: <WorkersTab project={project} /> },
         { key: 'details', label: 'Details', content: <DetailsTab project={project} /> },
       ]}
     />

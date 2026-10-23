@@ -12,7 +12,6 @@ import {
   History as HistoryIcon,
   Lock,
   RefreshCw,
-  Search,
   CheckCircle2,
 } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -50,7 +49,9 @@ import {
   DrawerDescription,
   DrawerHeader,
   DrawerTitle,
-  Input,
+  FilterBar,
+  FilterChip,
+  SearchInput,
   Select,
   Skeleton,
 } from '@/components/ui';
@@ -400,7 +401,7 @@ export function TimesheetsView() {
     const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return allRows;
     return allRows.filter((r) => {
-      const hay = `${r.worker} ${r.site}`.toLowerCase();
+      const hay = `${r.worker} ${r.site} ${r.siteName ?? ''}`.toLowerCase();
       return tokens.every((t) => hay.includes(t));
     });
   }, [allRows, search]);
@@ -409,135 +410,158 @@ export function TimesheetsView() {
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Client hours"
-        subtitle="Each client's weekly hours, ready for Fieldglass (Saturday → Friday). Approved time only, net of unpaid breaks."
+        subtitle={
+          <>
+            {/* The vendor is a tag, not the page's name: the hours are the client's. */}
+            <Badge variant="default" size="sm" className="mr-2 align-[0.1em]">
+              Fieldglass
+            </Badge>
+            Each client&rsquo;s hours by week, Saturday to Friday. Approved time only, net of unpaid breaks.
+          </>
+        }
+        // One primary (file the week), the Fieldglass workbook and the paste
+        // beside it; Refresh in More. On a phone: the primary and one sheet.
+        actions={[
+          {
+            key: 'file',
+            label: data?.filing ? 'Re-file' : 'Mark filed',
+            icon: data?.filing ? RefreshCw : CheckCircle2,
+            primary: true,
+            onSelect: () => void onMarkFiled(),
+            loading: filingBusy,
+            disabled: !data || allRows.length === 0,
+            hint: "Record a snapshot of this week's hours as filed into Fieldglass",
+          },
+          {
+            key: 'xlsx',
+            label: 'Export .xlsx',
+            icon: FileSpreadsheet,
+            onSelect: () => void onDownload(),
+            loading: downloading,
+            disabled: allRows.length === 0,
+            hint: 'The Fieldglass workbook for this week',
+          },
+          {
+            key: 'copy',
+            label: 'Copy for Fieldglass',
+            icon: ClipboardCopy,
+            onSelect: () => void onCopy(),
+            disabled: allRows.length === 0,
+            hint: 'Tab-separated, ready to paste into Fieldglass',
+          },
+          {
+            key: 'refresh',
+            label: 'Refresh',
+            icon: RefreshCw,
+            onSelect: () => void load(),
+            loading: weekQuery.isFetching,
+            overflow: true,
+          },
+        ]}
         filters={
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex items-center rounded-md border border-navy-secondary bg-navy-secondary/30 p-0.5">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setWeekStart((w) => addDays(w, -7))}
-                title="Previous week"
-                aria-label="Previous week"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="px-3 text-sm text-white tabular-nums whitespace-nowrap">
-                {/* Prefer the SERVER's week bounds once loaded. The rows are
-                    bucketed in the store timezone (America/New_York) server-side,
-                    while weekStart/weekEnd here are browser-local — for a viewer
-                    east of US Eastern, the browser's Saturday can fall in the
-                    PREVIOUS store-local week, and this header used to claim a
-                    different week than the data below it. The browser dates
-                    remain only as a pre-load placeholder and for navigation. */}
-                {data
-                  ? `${fmtDate(`${data.weekStart}T12:00:00Z`)} – ${fmtDate(`${data.weekEndIso}T12:00:00Z`)}`
-                  : `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}`}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setWeekStart((w) => addDays(w, 7))}
-                title="Next week"
-                aria-label="Next week"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setWeekStart(lastCompletedWeekStart(new Date()))}
-              title="Jump to the last completed week"
-            >
-              Last completed week
-            </Button>
-            {!moduleOn('clientPortal') ? null : boundedClient ? (
-              <div
-                className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
-                title="Your account is scoped to this client"
-              >
-                {boundedClient.name}
+          <div className="flex flex-wrap items-start gap-2">
+            {/* The week is the page's subject: always in view, never in a sheet. */}
+            <div className="flex flex-wrap items-center gap-1">
+              <div className="inline-flex items-center rounded-md border border-navy-secondary bg-navy-secondary/30 p-0.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setWeekStart((w) => addDays(w, -7))}
+                  title="Previous week"
+                  aria-label="Previous week"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-2 text-sm text-white tabular-nums whitespace-nowrap sm:px-3">
+                  {/* Prefer the SERVER's week bounds once loaded. The rows are
+                      bucketed in the store timezone (America/New_York) server-side,
+                      while weekStart/weekEnd here are browser-local — for a viewer
+                      east of US Eastern, the browser's Saturday can fall in the
+                      PREVIOUS store-local week, and this header used to claim a
+                      different week than the data below it. The browser dates
+                      remain only as a pre-load placeholder and for navigation. */}
+                  {data
+                    ? `${fmtDate(`${data.weekStart}T12:00:00Z`)} – ${fmtDate(`${data.weekEndIso}T12:00:00Z`)}`
+                    : `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}`}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setWeekStart((w) => addDays(w, 7))}
+                  title="Next week"
+                  aria-label="Next week"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               </div>
-            ) : (
-              <Select
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                className="h-8 w-auto text-sm"
-                title="File one Fieldglass client/SOW at a time"
-                aria-label="Client filter"
-              >
-                <option value="">All clients</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            )}
-            <div className="relative w-56">
-              <Search className="absolute left-2.5 top-2 h-4 w-4 text-silver/70 pointer-events-none" />
-              <Input
-                placeholder={`Search ${term('worker').toLowerCase()} or ${term('site').toLowerCase()}…`}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 h-8 text-sm"
-                aria-label={`Search ${term('workers').toLowerCase()}`}
-              />
+              {ymdLocal(weekStart) !== ymdLocal(lastCompletedWeekStart(new Date())) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setWeekStart(lastCompletedWeekStart(new Date()))}
+                  title="Jump to the last completed week"
+                >
+                  Last completed week
+                </Button>
+              )}
             </div>
-
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <Button
-                variant={showSchedule ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => setShowSchedule((v) => !v)}
-                disabled={!data || data.scheduleComparison.length === 0}
-                title="Compare published schedule vs hours actually worked"
-              >
-                <CalendarClock className="h-3.5 w-3.5" />
-                Scheduled vs actual
-                {scheduleFlags.length > 0 && (
-                  <span className="ml-1 rounded-full bg-gold/20 px-1.5 text-xs2 text-gold">
-                    {scheduleFlags.length}
-                  </span>
-                )}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => void load()} loading={weekQuery.isFetching}>
-                <RefreshCw className="h-3.5 w-3.5" />
-                Refresh
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onCopy}
-                disabled={allRows.length === 0}
-                title="Copy the grid (tab-separated) for pasting into Fieldglass"
-              >
-                <ClipboardCopy className="h-3.5 w-3.5" />
-                Copy
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={onDownload}
-                loading={downloading}
-                disabled={allRows.length === 0}
-              >
-                <FileSpreadsheet className="h-3.5 w-3.5" />
-                Export .xlsx
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={onMarkFiled}
-                loading={filingBusy}
-                disabled={!data || allRows.length === 0}
-                title="Record a snapshot of this week's hours as filed into Fieldglass"
-              >
-                {data?.filing ? <RefreshCw className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                {data?.filing ? 'Re-file' : 'Mark filed'}
-              </Button>
-            </div>
+            {/* Client and search: one bar; below md the client folds into
+                the filter sheet and the search keeps the first row. */}
+            <FilterBar
+              bare
+              // A real minimum, so on a phone the bar wraps under the week
+              // instead of squeezing beside it (flex-1 alone never wraps).
+              className="min-w-[min(100%,22rem)] flex-1"
+              search={
+                <SearchInput
+                  placeholder={`Search ${term('worker').toLowerCase()} or ${term('site').toLowerCase()}…`}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="h-8 text-sm"
+                  aria-label={`Search ${term('workers').toLowerCase()}`}
+                />
+              }
+              activeFilters={moduleOn('clientPortal') && !boundedClient && clientId ? 1 : 0}
+              onClearFilters={() => setClientId('')}
+              actions={
+                <FilterChip
+                  active={showSchedule}
+                  onClick={() => setShowSchedule((v) => !v)}
+                  disabled={!data || data.scheduleComparison.length === 0}
+                  count={scheduleFlags.length > 0 ? scheduleFlags.length : undefined}
+                  title="Compare the published schedule with the hours actually worked"
+                  className="shrink-0"
+                >
+                  <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span className="hidden sm:inline">Scheduled vs actual</span>
+                  <span className="sm:hidden">Vs schedule</span>
+                </FilterChip>
+              }
+            >
+              {!moduleOn('clientPortal') ? null : boundedClient ? (
+                <div
+                  className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
+                  title="Your account is scoped to this client"
+                >
+                  {boundedClient.name}
+                </div>
+              ) : (
+                <Select
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  className="h-8 w-auto text-sm"
+                  title="File one Fieldglass client/SOW at a time"
+                  aria-label="Client filter"
+                >
+                  <option value="">All clients</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </FilterBar>
           </div>
         }
         drawer={
@@ -936,7 +960,9 @@ export function TimesheetsView() {
             loading={loading}
             search={false}
             urlState={false}
-            exportCsv={{ filename: 'timesheets' }}
+            // The header's Export .xlsx is the Fieldglass artifact; a second
+            // CSV of the same rows was a duplicate.
+            exportCsv={false}
             empty={
               allRows.length > 0
                 ? { title: 'No associate matches', description: `Nobody in this week's timesheet matches "${search.trim()}". Clear the search to see all ${allRows.length} associates.` }
@@ -965,7 +991,12 @@ export function TimesheetsView() {
                 cell: (r) => (
                   <>
                     <span className="inline-flex items-center gap-1.5">
-                      <Avatar src={associatePhotoUrl(r.associateId)} name={r.worker} size="xs" />
+                      <Avatar
+                        src={r.photoUrl ?? associatePhotoUrl(r.associateId)}
+                        hasPhoto={r.photoUrl === undefined ? undefined : r.photoUrl !== null}
+                        name={r.worker}
+                        size="xs"
+                      />
                       <button
                         type="button"
                         onClick={() => void openDetail(r.associateId)}
@@ -995,7 +1026,21 @@ export function TimesheetsView() {
                 stopRowClick: true,
                 cell: (r) => <FieldglassStatusCell row={r} busy={ticking === `${r.associateId}|${r.clientId}`} onToggle={(entered) => void toggleEntered(r, entered)} />,
               },
-              { key: 'site', header: 'Site', accessor: (r) => r.site, sortable: true, cardMeta: true, className: 'text-silver', cell: (r) => <span className="block max-w-[12rem] truncate" title={r.site}>{r.site}</span> },
+              // The store in Alto's words; the label Fieldglass knows it by
+              // (often "1 - Onsite - FL - …") is the tooltip, the copy and the export.
+              {
+                key: 'site',
+                header: term('site'),
+                accessor: (r) => r.siteName ?? r.site,
+                sortable: true,
+                cardMeta: true,
+                className: 'text-silver',
+                cell: (r) => (
+                  <span className="block max-w-[16rem] truncate" title={r.siteName && r.siteName !== r.site ? `In Fieldglass: ${r.site}` : r.site}>
+                    {r.siteName ?? r.site}
+                  </span>
+                ),
+              },
               { key: 'end', header: 'End', accessor: () => data?.weekEnding ?? null, searchable: false, defaultHidden: true, className: 'tabular-nums text-silver' },
               ...(showBuckets
                 ? [
@@ -1004,7 +1049,7 @@ export function TimesheetsView() {
                     { key: 'dt', header: 'DT', accessor: (r: TsRow) => r.dt, csv: (r: TsRow) => hoursCell(r.dt), sortable: true, searchable: false, align: 'right' as const, className: 'tabular-nums text-silver', cell: (r: TsRow) => hoursCell(r.dt) },
                   ]
                 : []),
-              { key: 'others', header: 'Others', accessor: (r) => r.others, csv: (r) => hoursCell(r.others), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-white', cell: (r) => hoursCell(r.others) },
+              { key: 'others', header: 'Billed hours (Others)', accessor: (r) => r.others, csv: (r) => hoursCell(r.others), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-white', cell: (r) => hoursCell(r.others) },
               ...(showBuckets
                 ? [{ key: 'nb', header: 'NB', accessor: (r: TsRow) => r.nb, csv: (r: TsRow) => hoursCell(r.nb), sortable: true, searchable: false, align: 'right' as const, className: 'tabular-nums text-silver', cell: (r: TsRow) => hoursCell(r.nb) }]
                 : []),

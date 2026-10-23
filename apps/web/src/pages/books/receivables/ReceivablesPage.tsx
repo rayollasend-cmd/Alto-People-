@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { HandCoins, History, Plus, RotateCcw } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { HandCoins, Plus, RotateCcw } from 'lucide-react';
 import {
   AGING_BUCKET_KEYS,
   AGING_BUCKET_LABELS,
@@ -18,8 +18,8 @@ import { fmtDate, fmtMoney, fmtStatementNo, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   RECEIVABLES_KEY,
-  backfillPosting,
   getCollectionsWorklist,
+  getDsoTrend,
   getReceivablesAging,
   listClientPayments,
   undoClientPayment,
@@ -29,6 +29,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
 import { PaymentDialog, useWho } from './receivablesKit';
@@ -51,7 +52,6 @@ export function ReceivablesPage() {
   const who = useWho();
   const { can } = useAuth();
   const manage = can('manage:books');
-  const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const asked = params.get('view') as View | null;
   const view: View = asked && VIEWS.includes(asked) ? asked : 'aging';
@@ -66,24 +66,9 @@ export function ReceivablesPage() {
   // The worklist also feeds each client's expanded statements (reminder stage, last sent, next).
   const worklist = useQuery({ queryKey: [...RECEIVABLES_KEY, 'worklist'], queryFn: getCollectionsWorklist });
 
-  const backfill = useMutation({
-    mutationFn: () => backfillPosting(),
-    onSuccess: (r) => {
-      const posted = r.payrollRuns + r.statements + r.taxPayments + r.taxDeposits + r.garnishmentRemittances + r.wageAdvances;
-      const parts = [
-        r.payrollRuns && `${r.payrollRuns} payroll ${r.payrollRuns === 1 ? 'run' : 'runs'}`,
-        r.statements && `${r.statements} ${r.statements === 1 ? 'statement' : 'statements'}`,
-        r.taxPayments + r.taxDeposits && `${r.taxPayments + r.taxDeposits} tax ${r.taxPayments + r.taxDeposits === 1 ? 'payment' : 'payments'}`,
-        r.garnishmentRemittances && `${r.garnishmentRemittances} garnishment ${r.garnishmentRemittances === 1 ? 'payment' : 'payments'}`,
-        r.wageAdvances && `${r.wageAdvances} wage ${r.wageAdvances === 1 ? 'advance' : 'advances'}`,
-      ].filter(Boolean);
-      if (posted === 0 && r.failed.length === 0) toast.success('The books already hold everything — nothing to post.');
-      else toast.success(`Posted ${parts.join(', ')}.${r.failed.length ? ` ${r.failed.length} couldn’t post: ${r.failed[0]!.error}` : ''}`);
-      void qc.invalidateQueries({ queryKey: ['books'] });
-    },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not post history.'),
-  });
+  const dso = useQuery({ queryKey: [...RECEIVABLES_KEY, 'dso'], queryFn: () => getDsoTrend(6) });
 
+  const trendDrawn = (dso.data?.months.filter((m) => m.days !== null).length ?? 0) >= 3;
   const totals = aging.data?.totals;
   const late = totals ? totals.open - totals.buckets.current : 0;
   const over60 = totals ? totals.buckets.days61to90 + totals.buckets.over90 : 0;
@@ -93,29 +78,29 @@ export function ReceivablesPage() {
       title="Receivables"
       topbarTitle="Receivables"
       subtitle={`What ${who.many} owe, how late it is, and the money they’ve paid.`}
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Receivables' }]}
-      primaryAction={
-        manage ? (
-          <Button onClick={() => setPaying({ clientId: null })}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            Record a payment
-          </Button>
-        ) : undefined
-      }
-      secondaryActions={
-        manage ? (
-          <Button variant="secondary" loading={backfill.isPending} onClick={() => backfill.mutate()} title="Post every payroll run, statement and payment the books don’t hold yet">
-            <History className="h-4 w-4" aria-hidden="true" />
-            Post history
-          </Button>
-        ) : undefined
-      }
+      actions={[{ label: 'Record a payment', icon: Plus, primary: true, hidden: !manage, onSelect: () => setPaying({ clientId: null }) }]}
       summary={
-        <div className="grid gap-3 sm:grid-cols-3">
-          <MetricCard label="Owed to you" value={totals ? money(totals.open) : '—'} hint={aging.data ? `${aging.data.statements.length} open ${aging.data.statements.length === 1 ? 'statement' : 'statements'}` : undefined} />
-          <MetricCard label="Past due" value={totals ? money(late) : '—'} hint={totals && totals.open ? `${Math.round((late / totals.open) * 100)}% of what’s owed` : 'nothing late'} accent={late > 0} />
-          <MetricCard label="Over 60 days" value={totals ? money(over60) : '—'} hint={over60 > 0 ? 'call these first' : 'none'} accent={over60 > 0} />
-        </div>
+        <MetricStrip label="Receivables at a glance" empty={aging.isSuccess && dso.isSuccess && !totals?.open && !dso.data.last90.statements && !dso.data.collectedThisMonth.payments}>
+          <MetricCard label="Owed to you" value={totals ? money(totals.open) : '—'} hint={aging.data ? `${aging.data.statements.length} open ${aging.data.statements.length === 1 ? 'statement' : 'statements'}` : undefined} href="/books/receivables?view=aging" nothing={totals && !totals.open ? 'Nothing owed' : undefined} />
+          <MetricCard label="Past due" value={totals ? money(late) : '—'} hint={totals && totals.open ? `${Math.round((late / totals.open) * 100)}% of what’s owed` : undefined} tone={late > 0 ? 'warning' : 'default'} href="/books/receivables?view=collections" nothing={totals && !late ? 'Nothing late' : undefined} />
+          <MetricCard label="Over 60 days" value={totals ? money(over60) : '—'} hint={over60 > 0 ? 'Call these first' : undefined} tone={over60 > 0 ? 'alert' : 'default'} href="/books/receivables?view=collections" nothing={totals && !over60 ? 'Nothing over 60 days' : undefined} />
+          <MetricCard
+            label="Days to collect"
+            value={dso.data?.last90.days ?? '—'}
+            unit={dso.data?.last90.days != null ? (dso.data.last90.days === 1 ? 'day' : 'days') : undefined}
+            hint={dso.data ? `Last 90 days · ${dso.data.last90.statements} ${dso.data.last90.statements === 1 ? 'statement' : 'statements'} paid` : undefined}
+            tone="neutral"
+            nothing={dso.data && dso.data.last90.days === null ? 'No statements paid in 90 days' : undefined}
+          />
+          <MetricCard
+            label="Collected this month"
+            value={dso.data ? money(dso.data.collectedThisMonth.amount) : '—'}
+            hint={dso.data ? `${dso.data.collectedThisMonth.payments} ${dso.data.collectedThisMonth.payments === 1 ? 'payment' : 'payments'}` : undefined}
+            tone="good"
+            href="/books/receivables?view=payments"
+            nothing={dso.data && !dso.data.collectedThisMonth.payments ? 'Nothing collected yet this month' : undefined}
+          />
+        </MetricStrip>
       }
       filters={
         <SegmentedControl
@@ -131,9 +116,11 @@ export function ReceivablesPage() {
       }
     >
       {view === 'aging' ? (
-        <div className="space-y-[var(--d-stack)]">
+        // On a phone the clients come first and the pictures after them;
+        // from lg the charts lead, side by side.
+        <div className="flex flex-col gap-[var(--d-stack)]">
           {(aging.data?.rows.length ?? 0) > 0 && (
-            <div className="grid gap-[var(--d-stack)] lg:grid-cols-2">
+            <div className={cn('order-last grid gap-[var(--d-stack)] lg:order-first', trendDrawn && 'lg:grid-cols-2')}>
               <AgingByClientChart rows={aging.data!.rows} />
               <DsoTrendChart />
             </div>

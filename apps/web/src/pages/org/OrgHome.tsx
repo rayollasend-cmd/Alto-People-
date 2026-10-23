@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
-import { Briefcase, Building2, CalendarClock, FolderTree, Hash, Plus, Sparkles, Trash2, Users } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowDown, ArrowUp, Briefcase, Building2, CalendarClock, FolderTree, GripVertical, Hash, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { OrgAssignmentDrawer } from './OrgAssignmentDrawer';
 import { PositionsTab } from './PositionsTab';
 import { CustomFieldsTab } from './CustomFieldsTab';
 import type {
@@ -10,11 +11,9 @@ import type {
   Department,
   JobProfile,
   ShiftPosition,
-  AssociateOrgSummary,
 } from '@alto-people/shared';
 import { useClients } from '@/lib/useClients';
 import {
-  assignOrgFields,
   createCostCenter,
   createDepartment,
   createJobProfile,
@@ -23,17 +22,14 @@ import {
   deleteDepartment,
   deleteJobProfile,
   deleteShiftPosition,
-  listAssociateHistory,
   listCostCenters,
   listDepartments,
   listJobProfiles,
-  listOrgAssociates,
   listShiftPositions,
   updateCostCenter,
   updateDepartment,
   updateJobProfile,
   updateShiftPosition,
-  type AssociateHistoryEntry,
 } from '@/lib/orgApi';
 import { DepartmentTree } from './DepartmentTree';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
@@ -42,22 +38,11 @@ import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { useStoreScope } from '@/lib/storeScope';
 import { usePersistentState } from '@/lib/usePersistentState';
-import { useSelection } from '@/lib/useSelection';
-import { fmtDateTime } from '@/lib/format';
-import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
-import { AssociateLink } from '@/components/ui/AssociateLink';
+import { useUrlParam } from '@/lib/useUrlState';
+import { cn } from '@/lib/cn';
 import {
-  Avatar,
   Badge,
   Button,
-  Card,
-  CardContent,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   Drawer,
   DrawerBody,
   DrawerDescription,
@@ -68,7 +53,6 @@ import {
   ErrorBanner,
   Field,
   Input,
-  SearchInput,
   Select,
   SkeletonRows,
   Tabs,
@@ -77,11 +61,10 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 
-type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'shift-positions' | 'people' | 'custom-fields';
+type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'shift-positions' | 'custom-fields';
 
 const TAB_VALUES: readonly Tab[] = [
   'departments',
@@ -89,13 +72,13 @@ const TAB_VALUES: readonly Tab[] = [
   'job-profiles',
   'positions',
   'shift-positions',
-  'people',
   'custom-fields',
 ];
 
 export function OrgHome() {
   const { user } = useAuth();
   const term = useTerm();
+  const navigate = useNavigate();
   const hasClients = useTenant().moduleOn('clientPortal');
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   // Shared react-query cache — fetched at most once per 5 minutes app-wide.
@@ -137,30 +120,24 @@ export function OrgHome() {
     // No-op when the scope is disabled (bounded roles / signed-out).
     storeScope.setClientId(id);
   };
-  // ?tab= lives in the URL — shareable, and tab changes replace (not push)
-  // so Back leaves the page instead of retracing every tab flip. The
-  // People-directory drawer's "Edit org assignment" link lands on
-  // /org?tab=people&associateId=….
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get('tab');
-  // A staffing company runs on the shift positions each client staffs: they
-  // lead. A direct employer starts at its departments.
+  // ?tab= lives in the URL — shareable, and Back returns to the tab you
+  // came from. A staffing company runs on the shift roles each client
+  // staffs: they lead. A direct employer starts at its departments.
   const defaultTab: Tab = hasClients ? 'shift-positions' : 'departments';
-  const tab: Tab =
-    tabParam && (TAB_VALUES as readonly string[]).includes(tabParam)
-      ? (tabParam as Tab)
-      : defaultTab;
-  const setTab = (next: Tab) => {
-    const params = new URLSearchParams(searchParams);
-    if (next === defaultTab) params.delete('tab');
-    else params.set('tab', next);
-    setSearchParams(params, { replace: true });
+  const [tab, setTab] = useUrlParam<Tab>('tab', defaultTab, TAB_VALUES, { history: 'push' });
+  // The People tab is gone (People is the one list of people), but its
+  // deep link stays: `?tab=people&associateId=…` — a person's record and
+  // the People directory's "Edit org assignment" — opens that person's org
+  // assignment here; a bare `?tab=people` goes to People.
+  const [searchParams] = useSearchParams();
+  const legacyPeopleTab = searchParams.get('tab') === 'people';
+  const editAssociateId = legacyPeopleTab ? searchParams.get('associateId') : null;
+  const closeAssignment = () => {
+    // Back to where the edit was opened from (the person's record), else to it.
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (idx > 0) navigate(-1);
+    else navigate(editAssociateId ? `/people/${editAssociateId}` : '/people', { replace: true });
   };
-  const deepLinkAssociateId = useRef(
-    new URLSearchParams(window.location.search).get('associateId'),
-  );
-  const clientSelectRef = useRef<HTMLSelectElement>(null);
-  const focusClientPicker = () => clientSelectRef.current?.focus();
 
   // With exactly one client there is nothing to choose — preselect it.
   useEffect(() => {
@@ -175,16 +152,20 @@ export function OrgHome() {
     if (!clients.some((c) => c.id === pageClientId)) setPageClientId('');
   }, [clients, pageClientId, setPageClientId]);
 
+  const clientSelectRef = useRef<HTMLSelectElement>(null);
+  const focusClientPicker = () => clientSelectRef.current?.focus();
+
+  if (legacyPeopleTab && !editAssociateId) return <Navigate to="/people" replace />;
+
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Departments & job profiles"
         subtitle={
           hasClients
-            ? `The shift positions each ${term('label.client').toLowerCase()} staffs, and the departments, job profiles and positions behind reporting and approvals.`
-            : 'Departments, job profiles, positions and the people assigned to them — the dimensions behind reporting and approvals.'
+            ? `The shift roles each ${term('label.client').toLowerCase()} staffs, and the departments, job profiles and positions behind reporting and approvals.`
+            : 'Departments, job profiles and positions — the dimensions behind reporting and approvals.'
         }
-        breadcrumbs={[{ label: 'People', to: '/people' }, { label: 'Departments & job profiles' }]}
     >
 
       {clientsError && (
@@ -198,70 +179,65 @@ export function OrgHome() {
         </ErrorBanner>
       )}
 
-      {hasClients && (
-      <Card>
-        <CardContent className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs2 uppercase tracking-wider text-ink-muted">
-            {term('label.client')}
-          </span>
-          <Select
-            ref={clientSelectRef}
-            size="sm"
-            aria-label={`Filter by ${term('label.client').toLowerCase()}`}
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            disabled={!!boundedClientId}
-          >
-            <option value="">Every {term('label.client').toLowerCase()}</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        </CardContent>
-      </Card>
-      )}
-
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList>
+        {/* The client is a filter of the tab row, not a card of its own; it
+            follows the top bar's store scope both ways. */}
+        <div className="flex flex-wrap-reverse items-end gap-x-4 gap-y-3 border-b border-navy-secondary">
+          <TabsList className="min-w-0 flex-1 border-b-0">
+            {hasClients && (
+              <TabsTrigger value="shift-positions">
+                <CalendarClock className="h-3.5 w-3.5" />
+                Shift roles
+              </TabsTrigger>
+            )}
+            <TabsTrigger value="departments">
+              <FolderTree className="h-3.5 w-3.5" />
+              Departments
+            </TabsTrigger>
+            <TabsTrigger value="cost-centers">
+              <Hash className="h-3.5 w-3.5" />
+              Cost centers
+            </TabsTrigger>
+            <TabsTrigger value="job-profiles">
+              <Building2 className="h-3.5 w-3.5" />
+              Job profiles
+            </TabsTrigger>
+            <TabsTrigger value="positions">
+              <Briefcase className="h-3.5 w-3.5" />
+              Positions
+            </TabsTrigger>
+            {!hasClients && (
+              <TabsTrigger value="shift-positions">
+                <CalendarClock className="h-3.5 w-3.5" />
+                Shift roles
+              </TabsTrigger>
+            )}
+            <TabsTrigger value="custom-fields">
+              <Sparkles className="h-3.5 w-3.5" />
+              Custom fields
+            </TabsTrigger>
+          </TabsList>
           {hasClients && (
-            <TabsTrigger value="shift-positions">
-              <CalendarClock className="h-3.5 w-3.5" />
-              Shift positions
-            </TabsTrigger>
+            <label className="flex basis-full items-center gap-2 text-sm text-ink-muted sm:basis-auto sm:shrink-0 sm:pb-2 [&>div]:min-w-0 [&>div]:flex-1 sm:[&>div]:flex-none">
+              <span>{term('label.client')}</span>
+              <Select
+                ref={clientSelectRef}
+                size="sm"
+                aria-label={`Filter by ${term('label.client').toLowerCase()}`}
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                disabled={!!boundedClientId}
+              >
+                <option value="">Every {term('label.client').toLowerCase()}</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
           )}
-          <TabsTrigger value="departments">
-            <FolderTree className="h-3.5 w-3.5" />
-            Departments
-          </TabsTrigger>
-          <TabsTrigger value="cost-centers">
-            <Hash className="h-3.5 w-3.5" />
-            Cost centers
-          </TabsTrigger>
-          <TabsTrigger value="job-profiles">
-            <Building2 className="h-3.5 w-3.5" />
-            Job profiles
-          </TabsTrigger>
-          <TabsTrigger value="positions">
-            <Briefcase className="h-3.5 w-3.5" />
-            Positions
-          </TabsTrigger>
-          {!hasClients && (
-            <TabsTrigger value="shift-positions">
-              <CalendarClock className="h-3.5 w-3.5" />
-              Shift positions
-            </TabsTrigger>
-          )}
-          <TabsTrigger value="people">
-            <Users className="h-3.5 w-3.5" />
-            People
-          </TabsTrigger>
-          <TabsTrigger value="custom-fields">
-            <Sparkles className="h-3.5 w-3.5" />
-            Custom fields
-          </TabsTrigger>
-        </TabsList>
+        </div>
         <TabsContent value="departments">
           <DepartmentsTab
             clientId={clientId}
@@ -289,22 +265,16 @@ export function OrgHome() {
         <TabsContent value="shift-positions">
           <ShiftPositionsTab
             clientId={clientId}
+            clients={clients}
             canManage={canManage}
             onPickClient={focusClientPicker}
-          />
-        </TabsContent>
-        <TabsContent value="people">
-          <PeopleTab
-            clientId={clientId}
-            canManage={canManage}
-            clients={clients}
-            initialAssociateId={deepLinkAssociateId.current}
           />
         </TabsContent>
         <TabsContent value="custom-fields">
           <CustomFieldsTab clientId={clientId} canManage={canManage} />
         </TabsContent>
       </Tabs>
+      <OrgAssignmentDrawer associateId={editAssociateId} canManage={canManage} onClose={closeAssignment} />
     </ListTemplate>
   );
 }
@@ -860,23 +830,28 @@ function CostCenterDrawer({
   );
 }
 
-// ----- Shift positions tab ------------------------------------------------
-// The curated dropdown that constrains Shift.position on the scheduling
-// page, so admins stop typing divergent free-text for the same role.
+// ----- Shift roles tab (Shift positions in the API) -----------------------
+//
+// "Shift roles", not "Shift positions": the Positions tab is the headcount
+// seat (a job profile, budgeted and filled); a shift role is the label a
+// scheduler picks for a shift. One word, one meaning.
 
 function ShiftPositionsTab({
   clientId,
+  clients,
   canManage,
   onPickClient,
 }: {
   clientId: string;
+  clients: ClientSummary[];
   canManage: boolean;
   onPickClient: () => void;
 }) {
+  const qc = useQueryClient();
   const [drawerTarget, setDrawerTarget] = useState<ShiftPosition | 'new' | null>(null);
-
+  const queryKey = ['org', 'shift-positions', clientId];
   const listQuery = useQuery({
-    queryKey: ['org', 'shift-positions', clientId],
+    queryKey,
     queryFn: () => listShiftPositions(clientId || undefined),
   });
   const rows: ShiftPosition[] | null = listQuery.data?.shiftPositions ?? null;
@@ -888,22 +863,53 @@ function ShiftPositionsTab({
   const refresh = async () => {
     await listQuery.refetch();
   };
+  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? '';
+  // The order is the order schedulers see in the shift dialog. It is set by
+  // moving rows (drag, or the arrows from the keyboard and on a phone) —
+  // never typed as a number. Only within one client: each client has its own list.
+  const canReorder = canManage && !!clientId && (rows?.length ?? 0) > 1;
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const reorder = useMutation({
+    mutationFn: async (next: ShiftPosition[]) => {
+      const changed = next.map((p, i) => ({ p, i })).filter(({ p, i }) => p.sortOrder !== i);
+      await Promise.all(changed.map(({ p, i }) => updateShiftPosition(p.id, { sortOrder: i })));
+    },
+    onMutate: async (next) => {
+      await qc.cancelQueries({ queryKey });
+      const prev = qc.getQueryData(queryKey);
+      qc.setQueryData(queryKey, { shiftPositions: next.map((p, i) => ({ ...p, sortOrder: i })) });
+      return { prev };
+    },
+    onError: (err, _next, ctx) => {
+      if (ctx?.prev) qc.setQueryData(queryKey, ctx.prev);
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the new order.');
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey }),
+  });
+  const move = (from: number, to: number) => {
+    if (!rows || from === to || to < 0 || to >= rows.length) return;
+    const next = [...rows];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item!);
+    reorder.mutate(next);
+  };
 
   return (
     <section>
       <div className="flex items-center justify-between gap-3 mb-4">
-        <h2 className="text-base font-medium text-white">Shift positions</h2>
+        <h2 className="text-base font-medium text-white">Shift roles</h2>
         {canManage && clientId && (
           <Button onClick={() => setDrawerTarget('new')} size="sm">
             <Plus className="h-4 w-4" />
-            New position
+            New shift role
           </Button>
         )}
       </div>
       <p className="text-sm text-silver/80 mb-4 max-w-2xl">
-        The list of positions admins can pick from when creating a shift. Keeping
-        it curated stops the same role being typed a dozen different ways and
-        keeps scheduling reports clean.
+        The roles schedulers pick from when they create a shift, in the order
+        they see them. A short list stops the same role being typed a dozen
+        ways and keeps scheduling reports clean.
       </p>
       {error && (
         <ErrorBanner className="mb-3">
@@ -919,11 +925,11 @@ function ShiftPositionsTab({
       {rows && rows.length === 0 && (
         <EmptyState
           icon={CalendarClock}
-          title="No shift positions yet"
+          title="No shift roles yet"
           description={
             clientId
-              ? 'Add the positions schedulers should choose from (e.g. "F&D Morning Shift").'
-              : 'Pick a client to manage its shift positions.'
+              ? 'Add the roles schedulers should choose from (e.g. "F&D Morning Shift").'
+              : 'Pick a client to set up its shift roles.'
           }
           action={
             !clientId ? (
@@ -933,28 +939,114 @@ function ShiftPositionsTab({
             ) : canManage ? (
               <Button onClick={() => setDrawerTarget('new')} size="sm">
                 <Plus className="h-4 w-4" />
-                New position
+                New shift role
               </Button>
             ) : undefined
           }
         />
       )}
       {rows && rows.length > 0 && (
-        <DataGrid<NonNullable<typeof rows>[number]>
-          id="org-positions"
-          caption="Positions"
-          rows={rows}
-          rowKey={(pos) => pos.id}
-          search={{ placeholder: 'Position…' }}
-          urlState={false}
-          exportCsv={{ filename: 'positions' }}
-          onRowClick={(pos) => setDrawerTarget(pos)}
-          rowActionLabel={(pos) => `Open ${pos.name}`}
-          columns={[
-            { key: 'order', header: 'Order', accessor: (pos) => pos.sortOrder, sortable: true, searchable: false, align: 'right', cardMeta: true, width: '4rem', className: 'tabular-nums text-silver' },
-            { key: 'name', header: 'Name', accessor: (pos) => pos.name, sortable: true, primary: true, className: 'font-medium' },
-          ]}
-        />
+        <>
+          <ol
+            className="divide-y divide-navy-secondary overflow-hidden rounded-lg border border-navy-secondary"
+            aria-label="Shift roles, in the order schedulers see them"
+          >
+            {rows.map((pos, i) => (
+              <li
+                key={pos.id}
+                data-testid="shift-role-row"
+                className={cn(
+                  'flex items-center gap-2 bg-surface px-2 py-1.5 sm:px-3',
+                  overId === pos.id && dragId !== pos.id && 'ring-2 ring-inset ring-accent',
+                  dragId === pos.id && 'opacity-50',
+                )}
+                onDragOver={
+                  canReorder && dragId
+                    ? (e) => {
+                        e.preventDefault();
+                        if (overId !== pos.id) setOverId(pos.id);
+                      }
+                    : undefined
+                }
+                onDrop={
+                  canReorder && dragId
+                    ? (e) => {
+                        e.preventDefault();
+                        const from = rows.findIndex((r) => r.id === dragId);
+                        setDragId(null);
+                        setOverId(null);
+                        move(from, i);
+                      }
+                    : undefined
+                }
+              >
+                {canReorder && (
+                  <span
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', pos.id);
+                      setDragId(pos.id);
+                    }}
+                    onDragEnd={() => {
+                      setDragId(null);
+                      setOverId(null);
+                    }}
+                    className="hidden cursor-grab touch-none text-ink-muted active:cursor-grabbing md:inline-flex"
+                    title="Drag to reorder"
+                    aria-hidden="true"
+                  >
+                    <GripVertical className="h-4 w-4" />
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 truncate py-1.5 text-left text-sm font-medium text-ink hover:underline"
+                  onClick={() => setDrawerTarget(pos)}
+                >
+                  {pos.name}
+                  {!clientId && clientName(pos.clientId) && (
+                    <span className="font-normal text-ink-muted"> · {clientName(pos.clientId)}</span>
+                  )}
+                </button>
+                {pos.isLead && (
+                  <Badge size="sm" variant="outline">
+                    Lead
+                  </Badge>
+                )}
+                {canReorder && (
+                  <span className="flex shrink-0 items-center">
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={`Move ${pos.name} up`}
+                      disabled={i === 0 || reorder.isPending}
+                      onClick={() => move(i, i - 1)}
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={`Move ${pos.name} down`}
+                      disabled={i === rows.length - 1 || reorder.isPending}
+                      onClick={() => move(i, i + 1)}
+                    >
+                      <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+          <p className="mt-2 text-xs text-ink-muted">
+            {canReorder
+              ? 'Drag a role, or use its arrows, to change the order schedulers see.'
+              : canManage && !clientId
+                ? 'Pick a client to add roles or change their order.'
+                : null}
+          </p>
+        </>
       )}
 
       <Drawer
@@ -996,7 +1088,6 @@ function ShiftPositionDrawer({
   const isNew = target === 'new';
   const initial = isNew ? null : target;
   const [name, setName] = useState(initial?.name ?? '');
-  const [sortOrder, setSortOrder] = useState(String(initial?.sortOrder ?? ''));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1004,21 +1095,14 @@ function ShiftPositionDrawer({
     if (!name.trim()) return;
     setError(null);
     setSubmitting(true);
-    const order = sortOrder.trim() === '' ? undefined : Number(sortOrder);
     try {
       if (isNew) {
-        await createShiftPosition({
-          clientId,
-          name: name.trim(),
-          ...(order !== undefined && Number.isFinite(order) ? { sortOrder: order } : {}),
-        });
-        toast.success('Shift position created.');
+        // A new role goes to the end of the list; move it from the list.
+        await createShiftPosition({ clientId, name: name.trim() });
+        toast.success('Shift role created.');
       } else {
-        await updateShiftPosition(initial!.id, {
-          name: name.trim(),
-          ...(order !== undefined && Number.isFinite(order) ? { sortOrder: order } : {}),
-        });
-        toast.success('Shift position updated.');
+        await updateShiftPosition(initial!.id, { name: name.trim() });
+        toast.success('Shift role updated.');
       }
       onSaved();
     } catch (err) {
@@ -1034,7 +1118,7 @@ function ShiftPositionDrawer({
     setSubmitting(true);
     try {
       await deleteShiftPosition(initial!.id);
-      toast.success('Shift position deleted.');
+      toast.success('Shift role deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -1053,10 +1137,10 @@ function ShiftPositionDrawer({
       className="flex min-h-0 flex-1 flex-col"
     >
       <DrawerHeader>
-        <DrawerTitle>{isNew ? 'New shift position' : initial!.name}</DrawerTitle>
+        <DrawerTitle>{isNew ? 'New shift role' : initial!.name}</DrawerTitle>
         <DrawerDescription>
           {isNew
-            ? 'This name appears in the position dropdown when scheduling a shift.'
+            ? 'Schedulers pick this name when they create a shift. It goes to the end of the list.'
             : 'Renaming only affects future shifts; past shifts keep the name they were saved with.'}
         </DrawerDescription>
       </DrawerHeader>
@@ -1069,19 +1153,6 @@ function ShiftPositionDrawer({
                 onChange={(e) => setName(e.target.value)}
                 maxLength={120}
                 placeholder="F&D Morning Shift"
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-          <Field label="Sort order" hint="Lower numbers appear first in the dropdown.">
-            {(p) => (
-              <Input
-                type="number"
-                value={sortOrder}
-                onChange={(e) => setSortOrder(e.target.value)}
-                min={0}
-                placeholder="Auto"
                 disabled={!canManage}
                 {...p}
               />
@@ -1444,607 +1515,6 @@ function JobProfileDrawer({
             </Button>
           )}
         </div>
-      </DrawerFooter>
-    </>
-  );
-}
-
-// ----- People tab — assign manager / dept / cost center / job profile -----
-
-function PeopleTab({
-  clientId,
-  canManage,
-  clients,
-  initialAssociateId,
-}: {
-  clientId: string;
-  canManage: boolean;
-  clients: ClientSummary[];
-  initialAssociateId: string | null;
-}) {
-  const term = useTerm();
-  const [target, setTarget] = useState<AssociateOrgSummary | null>(null);
-  // Client-side name/email filter over the loaded rows, debounced so
-  // typing doesn't re-filter a 1000-row list on every keystroke.
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedSearch(search.trim()), 250);
-    return () => clearTimeout(id);
-  }, [search]);
-  // ?associateId= deep-link (from the People-directory drawer). Consumed
-  // once when the first row set arrives.
-  const deepLinkConsumed = useRef(false);
-
-  const peopleQuery = useQuery({
-    queryKey: ['org', 'people', clientId],
-    queryFn: async () => {
-      const [a, d, c, j] = await Promise.all([
-        listOrgAssociates(clientId || undefined),
-        listDepartments(clientId || undefined),
-        listCostCenters(clientId || undefined),
-        listJobProfiles(clientId || undefined),
-      ]);
-      return {
-        rows: a.associates,
-        departments: d.departments,
-        costCenters: c.costCenters,
-        jobProfiles: j.jobProfiles,
-      };
-    },
-  });
-  const rows: AssociateOrgSummary[] | null = peopleQuery.data?.rows ?? null;
-  const departments: Department[] = peopleQuery.data?.departments ?? [];
-  const costCenters: CostCenter[] = peopleQuery.data?.costCenters ?? [];
-  const jobProfiles: JobProfile[] = peopleQuery.data?.jobProfiles ?? [];
-  const error = peopleQuery.error
-    ? peopleQuery.error instanceof ApiError
-      ? peopleQuery.error.message
-      : 'Failed to load.'
-    : null;
-  const refresh = async () => {
-    await peopleQuery.refetch();
-  };
-
-  // Auto-open the drawer for a deep-linked associate once rows land.
-  useEffect(() => {
-    if (!initialAssociateId || deepLinkConsumed.current || !rows) return;
-    deepLinkConsumed.current = true;
-    const match = rows.find((a) => a.id === initialAssociateId);
-    if (match) setTarget(match);
-    else toast.error('That associate is not in the current client view.');
-  }, [initialAssociateId, rows]);
-
-  const filtered = useMemo(() => {
-    if (!rows) return null;
-    const q = debouncedSearch.toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (a) =>
-        `${a.firstName} ${a.lastName}`.toLowerCase().includes(q) ||
-        a.email.toLowerCase().includes(q),
-    );
-  }, [rows, debouncedSearch]);
-
-  const clientLabel = clients.find((c) => c.id === clientId)?.name ?? 'All clients';
-
-  // Bulk org-field assignment: checkbox a cohort, fill ONE dialog, done —
-  // instead of ten drawer round-trips for a ten-person start class. The
-  // selection deliberately survives search changes (build the cohort across
-  // several searches); it resets when the client scope changes.
-  const selectableIds = useMemo(
-    () => (filtered ?? []).map((a) => a.id),
-    [filtered],
-  );
-  const sel = useSelection(selectableIds);
-  const clearSel = sel.clear;
-  useEffect(() => {
-    clearSel();
-  }, [clientId, clearSel]);
-  const [bulkOpen, setBulkOpen] = useState(false);
-
-  const applyBulk = async (input: {
-    departmentId?: string;
-    costCenterId?: string;
-    jobProfileId?: string;
-  }) => {
-    const ids = [...sel.selected];
-    const results = await Promise.allSettled(
-      ids.map((id) => assignOrgFields(id, input)),
-    );
-    const failedIds: string[] = [];
-    results.forEach((r, i) => {
-      if (r.status !== 'rejected') return;
-      failedIds.push(ids[i]);
-      const row = rows?.find((a) => a.id === ids[i]);
-      toast.error(
-        `${row ? `${row.firstName} ${row.lastName}` : term('worker')}: ${
-          r.reason instanceof ApiError ? r.reason.message : 'assignment failed.'
-        }`,
-      );
-    });
-    const ok = ids.length - failedIds.length;
-    if (ok > 0) {
-      toast.success(`Org fields assigned to ${ok} associate${ok === 1 ? '' : 's'}.`);
-    }
-    // Failed rows stay selected so a retry is one click away.
-    sel.selectAll(failedIds);
-    setBulkOpen(false);
-    await refresh();
-  };
-
-  return (
-    <section>
-      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <h2 className="text-base font-medium text-white">
-          Associates · {clientLabel}
-        </h2>
-        <div className="flex items-center gap-3">
-          {rows && filtered && (
-            <span className="text-xs text-silver tabular-nums">
-              {debouncedSearch
-                ? `${filtered.length} of ${rows.length}`
-                : rows.length}{' '}
-              associate{(debouncedSearch ? filtered.length : rows.length) === 1 ? '' : 's'}
-            </span>
-          )}
-          <SearchInput
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name or email"
-            className="h-8 text-sm w-56"
-            aria-label="Search associates"
-          />
-        </div>
-      </div>
-      {error && (
-        <ErrorBanner className="mb-3">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span>{error}</span>
-            <Button size="sm" variant="outline" onClick={() => void refresh()}>
-              Retry
-            </Button>
-          </div>
-        </ErrorBanner>
-      )}
-      {!rows && !error && <SkeletonRows count={6} rowHeight="h-14" />}
-      {rows && rows.length === 0 && (
-        <EmptyState
-          icon={Users}
-          title="No associates"
-          description="Once associates are onboarded for the selected client, they'll appear here for org-field assignment."
-        />
-      )}
-      {rows && filtered && rows.length > 0 && filtered.length === 0 && (
-        <EmptyState
-          icon={Users}
-          title="No associates match"
-          description="Try a different name or email."
-          action={
-            <Button variant="outline" size="sm" onClick={() => setSearch('')}>
-              Clear search
-            </Button>
-          }
-        />
-      )}
-      {canManage && sel.count > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2 mb-3">
-          <span className="text-xs text-silver tabular-nums">
-            {sel.count} selected
-          </span>
-          <Button size="sm" variant="secondary" onClick={() => setBulkOpen(true)}>
-            Assign org fields ({sel.count})…
-          </Button>
-          <Button variant="ghost" size="sm" onClick={sel.clear}>
-            Clear selection
-          </Button>
-        </div>
-      )}
-      {filtered && filtered.length > 0 && (
-        <DataGrid<NonNullable<typeof filtered>[number]>
-          id="org-associates"
-          caption={`${term('workers')} and their org fields`}
-          rows={filtered}
-          rowKey={(a) => a.id}
-          search={false}
-          urlState={false}
-          exportCsv={{ filename: 'org-assignments' }}
-          onRowClick={(a) => setTarget(a)}
-          rowActionLabel={(a) => `Open ${a.firstName} ${a.lastName}`}
-          selectable={canManage ? { selection: { selected: sel.selected, onChange: sel.replace } } : undefined}
-          columns={[
-            {
-              key: 'associate',
-              header: term('worker'),
-              accessor: (a) => `${a.firstName} ${a.lastName}`,
-              sortable: true,
-              primary: true,
-              className: 'font-medium',
-              cell: (a) => (
-                <div className="flex items-center gap-2.5">
-                  <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
-                  <div className="min-w-0">
-                    <AssociateLink associateId={a.id}>
-                      {a.firstName} {a.lastName}
-                    </AssociateLink>
-                  </div>
-                </div>
-              ),
-            },
-            {
-              key: 'manager',
-              header: 'Manager',
-              accessor: (a) => a.managerName,
-              sortable: true,
-              cardMeta: true,
-              className: 'text-silver',
-              cell: (a) => (a.managerName ? <AssociateLink associateId={a.managerId}>{a.managerName}</AssociateLink> : '—'),
-            },
-            { key: 'department', header: 'Department', accessor: (a) => a.departmentName, sortable: true, cardMeta: true, className: 'text-silver', cell: (a) => a.departmentName ?? '—' },
-            { key: 'costCenter', header: 'Cost ctr', accessor: (a) => a.costCenterCode, sortable: true, className: 'text-silver tabular-nums', cell: (a) => a.costCenterCode ?? '—' },
-            { key: 'jobProfile', header: 'Job profile', accessor: (a) => a.jobProfileTitle, sortable: true, cardMeta: true, className: 'text-silver', cell: (a) => a.jobProfileTitle ?? '—' },
-          ]}
-        />
-      )}
-
-      <Drawer
-        open={target !== null}
-        onOpenChange={(o) => !o && setTarget(null)}
-        width="max-w-md"
-      >
-        {target && (
-          <PersonOrgDrawer
-            associate={target}
-            canManage={canManage}
-            departments={departments}
-            costCenters={costCenters}
-            jobProfiles={jobProfiles}
-            onClose={() => setTarget(null)}
-            onSaved={() => {
-              setTarget(null);
-              refresh();
-            }}
-          />
-        )}
-      </Drawer>
-
-      {/* Mounted per open so the "leave unchanged" defaults reset. */}
-      {bulkOpen && (
-        <BulkOrgFieldsDialog
-          count={sel.count}
-          departments={departments}
-          costCenters={costCenters}
-          jobProfiles={jobProfiles}
-          onClose={() => setBulkOpen(false)}
-          onApply={applyBulk}
-        />
-      )}
-    </section>
-  );
-}
-
-function BulkOrgFieldsDialog({
-  count,
-  departments,
-  costCenters,
-  jobProfiles,
-  onClose,
-  onApply,
-}: {
-  count: number;
-  departments: Department[];
-  costCenters: CostCenter[];
-  jobProfiles: JobProfile[];
-  onClose: () => void;
-  onApply: (input: {
-    departmentId?: string;
-    costCenterId?: string;
-    jobProfileId?: string;
-  }) => Promise<void>;
-}) {
-  // '' = leave unchanged — omitted from the payload; the API treats an
-  // omitted field as "keep the current value" (bulk never clears a field).
-  const [departmentId, setDepartmentId] = useState('');
-  const [costCenterId, setCostCenterId] = useState('');
-  const [jobProfileId, setJobProfileId] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const nothingChosen = !departmentId && !costCenterId && !jobProfileId;
-
-  const submit = async () => {
-    setSubmitting(true);
-    try {
-      await onApply({
-        ...(departmentId ? { departmentId } : {}),
-        ...(costCenterId ? { costCenterId } : {}),
-        ...(jobProfileId ? { jobProfileId } : {}),
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && !submitting && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            Assign org fields to {count} associate{count === 1 ? '' : 's'}
-          </DialogTitle>
-          <DialogDescription>
-            Only the fields you pick are applied — everything left on
-            “Leave unchanged” keeps each associate's current value.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <Field label="Department">
-            {(p) => (
-              <Select
-                value={departmentId}
-                onChange={(e) => setDepartmentId(e.target.value)}
-                {...p}
-              >
-                <option value="">Leave unchanged</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Cost center">
-            {(p) => (
-              <Select
-                value={costCenterId}
-                onChange={(e) => setCostCenterId(e.target.value)}
-                {...p}
-              >
-                <option value="">Leave unchanged</option>
-                {costCenters.map((c) => (
-                  <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Job profile">
-            {(p) => (
-              <Select
-                value={jobProfileId}
-                onChange={(e) => setJobProfileId(e.target.value)}
-                {...p}
-              >
-                <option value="">Leave unchanged</option>
-                {jobProfiles.map((j) => (
-                  <option key={j.id} value={j.id}>{j.code} · {j.title}</option>
-                ))}
-              </Select>
-            )}
-          </Field>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button onClick={submit} loading={submitting} disabled={nothingChosen}>
-            Apply to {count}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function PersonOrgDrawer({
-  associate,
-  canManage,
-  departments,
-  costCenters,
-  jobProfiles,
-  onClose,
-  onSaved,
-}: {
-  associate: AssociateOrgSummary;
-  canManage: boolean;
-  departments: Department[];
-  costCenters: CostCenter[];
-  jobProfiles: JobProfile[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [manager, setManager] = useState<PickedAssociate | null>(
-    associate.managerId
-      ? { id: associate.managerId, name: associate.managerName ?? 'Current manager' }
-      : null,
-  );
-  const [departmentId, setDepartmentId] = useState(associate.departmentId ?? '');
-  const [costCenterId, setCostCenterId] = useState(associate.costCenterId ?? '');
-  const [jobProfileId, setJobProfileId] = useState(associate.jobProfileId ?? '');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const historyQuery = useQuery({
-    queryKey: ['org', 'associate-history', associate.id],
-    queryFn: () => listAssociateHistory(associate.id),
-  });
-  const history: AssociateHistoryEntry[] | null = historyQuery.data?.history ?? null;
-  const historyError = historyQuery.error
-    ? historyQuery.error instanceof ApiError
-      ? historyQuery.error.message
-      : 'Could not load history.'
-    : null;
-
-  const submit = async () => {
-    setError(null);
-    setSubmitting(true);
-    try {
-      await assignOrgFields(associate.id, {
-        managerId: manager?.id ?? null,
-        departmentId: departmentId || null,
-        costCenterId: costCenterId || null,
-        jobProfileId: jobProfileId || null,
-      });
-      toast.success('Org assignment updated.');
-      onSaved();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Save failed.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <>
-      <DrawerHeader>
-        <div className="flex items-center gap-3">
-          <Avatar
-            src={associate.photoUrl}
-            name={`${associate.firstName} ${associate.lastName}`}
-            email={associate.email}
-            size="md"
-          />
-          <div className="min-w-0">
-            <DrawerTitle className="truncate">
-              {associate.firstName} {associate.lastName}
-            </DrawerTitle>
-            <DrawerDescription className="truncate">
-              {associate.email}
-            </DrawerDescription>
-          </div>
-        </div>
-      </DrawerHeader>
-      <DrawerBody>
-        <div className="space-y-3">
-          <Field label="Manager">
-            {() =>
-              canManage ? (
-                <AssociatePicker
-                  value={manager}
-                  onChange={(v) => {
-                    if (v && v.id === associate.id) {
-                      toast.error('An associate cannot manage themselves.');
-                      return;
-                    }
-                    setManager(v);
-                  }}
-                  placeholder="Search for a manager…"
-                />
-              ) : (
-                <div className="rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm text-white">
-                  {manager?.name ?? '—'}
-                </div>
-              )
-            }
-          </Field>
-          <Field label="Department">
-            {(p) => (
-              <Select
-                value={departmentId}
-                onChange={(e) => setDepartmentId(e.target.value)}
-                disabled={!canManage}
-                {...p}
-              >
-                <option value="">—</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Cost center">
-            {(p) => (
-              <Select
-                value={costCenterId}
-                onChange={(e) => setCostCenterId(e.target.value)}
-                disabled={!canManage}
-                {...p}
-              >
-                <option value="">—</option>
-                {costCenters.map((c) => (
-                  <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Field label="Job profile">
-            {(p) => (
-              <Select
-                value={jobProfileId}
-                onChange={(e) => setJobProfileId(e.target.value)}
-                disabled={!canManage}
-                {...p}
-              >
-                <option value="">—</option>
-                {jobProfiles.map((j) => (
-                  <option key={j.id} value={j.id}>{j.code} · {j.title}</option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          {error && <ErrorBanner>{error}</ErrorBanner>}
-
-          <div className="pt-3 border-t border-navy-secondary">
-            <div className="text-2xs uppercase tracking-widest text-silver/80 mb-2">
-              Effective changes
-            </div>
-            {historyError && (
-              <ErrorBanner className="mb-2">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <span>{historyError}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void historyQuery.refetch()}
-                  >
-                    Retry
-                  </Button>
-                </div>
-              </ErrorBanner>
-            )}
-            {history === null && !historyError && (
-              <div className="space-y-1.5">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-1/2" />
-              </div>
-            )}
-            {history?.length === 0 && (
-              <EmptyState size="sm" title={"No history yet."} />
-            )}
-            {history && history.length > 0 && (
-              <ol className="space-y-2 text-xs">
-                {history.map((h) => {
-                  const isCurrent = h.effectiveTo === null;
-                  return (
-                    <li
-                      key={h.id}
-                      className="flex items-start gap-3 border-l-2 pl-3 border-navy-secondary data-[current=true]:border-gold"
-                      data-current={isCurrent}
-                    >
-                      <div className="min-w-0">
-                        <div className="text-white tabular-nums">
-                          {fmtDateTime(h.effectiveFrom)}
-                          {isCurrent ? (
-                            <Badge variant="default" className="ml-2">Current</Badge>
-                          ) : null}
-                        </div>
-                        <div className="text-silver mt-0.5">
-                          {h.reason ?? '—'}
-                          {h.actorEmail ? ` · ${h.actorEmail}` : ''}
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-          </div>
-        </div>
-      </DrawerBody>
-      <DrawerFooter>
-        <Button variant="ghost" onClick={onClose} disabled={submitting}>
-          Cancel
-        </Button>
-        {canManage && (
-          <Button onClick={submit} loading={submitting}>
-            Save assignment
-          </Button>
-        )}
       </DrawerFooter>
     </>
   );

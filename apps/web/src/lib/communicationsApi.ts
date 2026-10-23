@@ -76,8 +76,15 @@ export function deleteSuppression(email: string): Promise<void> {
 export interface ChannelAvailability {
   channel: NotificationChannel;
   available: boolean;
-  /** Why it can't be used, when it can't — shown on the disabled chip. */
+  /** Why it can't be used, when it can't — shown on the disabled chip. Plain words, never a setting name. */
   reason: string | null;
+  /** For whoever runs the API: the settings that connect it. Shown folded, under "For developers". */
+  developerNote?: string | null;
+}
+
+/** One test email to the caller's own address. `delivered: false` means nothing left (no provider, or it failed). */
+export function sendTestEmail(): Promise<{ notification: Notification; delivered: boolean; to: string }> {
+  return apiFetch<{ notification: Notification; delivered: boolean; to: string }>('/communications/admin/test-email', { method: 'POST', body: {} });
 }
 
 /** Which channels can actually deliver here (a channel with no provider is offered disabled, with the reason). */

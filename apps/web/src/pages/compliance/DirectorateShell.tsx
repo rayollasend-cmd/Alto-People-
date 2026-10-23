@@ -58,9 +58,12 @@ export function Kpi({
   tone,
   onClick,
   active,
+  of,
 }: {
   label: string;
   value: number;
+  /** The population the value is out of ("0 / 10"). */
+  of?: number;
   tone?: string;
   /** Makes the number a filter: clicking shows the rows it counts. */
   onClick?: () => void;
@@ -70,7 +73,10 @@ export function Kpi({
   const body = (
     <>
       <div className="text-2xs uppercase tracking-wider text-silver/70">{label}</div>
-      <div className={cn('text-xl tabular-nums', tone ?? 'text-ink')}>{value}</div>
+      <div className={cn('text-xl tabular-nums', tone ?? 'text-ink')}>
+        {value}
+        {of !== undefined && <span className="ml-1 text-sm text-silver">/ {of}</span>}
+      </div>
     </>
   );
   if (!onClick) return <div>{body}</div>;

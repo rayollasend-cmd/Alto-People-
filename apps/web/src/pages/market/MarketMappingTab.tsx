@@ -107,7 +107,8 @@ function StoresCard({ data, canManage }: { data: MarketMapping; canManage: boole
                   <Select
                     id={`area-${s.id}`}
                     size="sm"
-                    className="w-full sm:w-64"
+                    className="w-full sm:w-96"
+                    title={s.area?.name ?? undefined}
                     value={s.area?.code ?? ''}
                     disabled={!canManage || save.isPending}
                     onChange={(e) => save.mutate({ siteId: s.id, code: e.target.value || null })}
@@ -202,7 +203,8 @@ function RolesCard({ data, canManage }: { data: MarketMapping; canManage: boolea
                   <Select
                     id={`soc-${p.key}`}
                     size="sm"
-                    className="w-full sm:w-72"
+                    className="w-full sm:w-96"
+                    title={p.soc?.title ?? undefined}
                     value={p.soc?.code ?? ''}
                     disabled={!canManage || save.isPending}
                     onChange={(e) => save.mutate({ name: p.name, code: e.target.value || null })}

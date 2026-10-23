@@ -37,8 +37,21 @@ export function CertifiedWeek() {
   const [submitting, setSubmitting] = useState(false);
   const [busy, setBusy] = useState<'pdf' | 'xml' | null>(null);
 
-  if (q.isError) return <QueryError what="this week" query={q} />;
-  if (q.isLoading || !q.data) return <SkeletonRows count={8} />;
+  // Loading and failing keep the page's shell: its title and trail (F500 G3).
+  if (q.isError || q.isLoading || !q.data) {
+    return (
+      <ListTemplate
+        title={weekEnding ? `Week ending ${fmtDate(weekEnding)}` : 'Reporting week'}
+        breadcrumbs={[
+          { label: 'Payroll', to: '/payroll' },
+          { label: 'Certified payroll', to: '/payroll/certified' },
+          { label: 'Project', to: `/payroll/certified/${id}` },
+        ]}
+      >
+        {q.isError ? <QueryError what="this week" query={q} /> : <SkeletonRows count={8} />}
+      </ListTemplate>
+    );
+  }
   const d = q.data;
   const status = d.report?.status ?? 'OPEN';
   const signed = status === 'SIGNED' || status === 'SUBMITTED';
@@ -120,7 +133,7 @@ export function CertifiedWeek() {
             Mark submitted
           </Button>
         ) : !signed ? (
-          <Button onClick={() => setSigning(true)} disabled={blocking.length > 0} title={blocking.length > 0 ? 'Fix the items above first' : undefined}>
+          <Button onClick={() => setSigning(true)} disabled={blocking.length > 0} title={blocking.length > 0 ? `Fix the ${blocking.length === 1 ? 'item' : `${blocking.length} items`} listed below first` : undefined}>
             <PenLine className="mr-1.5 h-4 w-4" aria-hidden />
             Sign the statement
           </Button>

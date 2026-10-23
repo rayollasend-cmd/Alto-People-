@@ -337,3 +337,49 @@ describe('reports', () => {
     await flushPendingNotifications();
   });
 });
+
+describe('the bills list by status — late and due never overlap', () => {
+  it('“due” is today through 7 days out; “late” is past due; the inbox counts each list exactly', async () => {
+    const s = await seed();
+    const v = await vendor(s.a, { termsDays: 0 });
+    const late1 = await approvedBill(s, v.id, 4000.55, '2026-10-01'); // 18 days late
+    const late2 = await approvedBill(s, v.id, 150, '2026-10-18'); // 1 day late
+    const today = await approvedBill(s, v.id, 500, '2026-10-19'); // due today
+    const week = await approvedBill(s, v.id, 8000, '2026-10-26'); // due in 7 days
+    await approvedBill(s, v.id, 99, '2026-10-27'); // 8 days out: neither
+    const ids = (r: { body: { bills: Array<{ id: string; balance: number }> } }) => r.body.bills.map((b) => b.id).sort();
+    const sumOf = (r: { body: { bills: Array<{ balance: number }> } }) => Math.round(r.body.bills.reduce((t, b) => t + b.balance * 100, 0)) / 100;
+    const due = await s.a.get('/books/bills?tab=due');
+    const lateList = await s.a.get('/books/bills?tab=late');
+    expect(ids(due)).toEqual([today.id, week.id].sort());
+    expect(sumOf(due)).toBe(8500);
+    expect(ids(lateList)).toEqual([late1.id, late2.id].sort());
+    expect(sumOf(lateList)).toBe(4150.55);
+    // Unpaid is both and the bill further out.
+    expect((await s.a.get('/books/bills?tab=unpaid')).body.bills).toHaveLength(5);
+    // The inbox's two money rows are those two lists, one count each.
+    const inbox = (await s.a.get('/me/inbox')).body as { sources: Array<{ key: string; count: number; path: string }> };
+    const row = (k: string) => inbox.sources.find((i) => i.key === k);
+    expect(row('books-bills-late')).toMatchObject({ count: 2, path: '/books/bills?status=late' });
+    expect(row('books-bills-due')).toMatchObject({ count: 2, path: '/books/bills?status=due' });
+  });
+});
+
+describe('vendors — what each was paid', () => {
+  it('paid this year (every method, voids left out) and the last payment date', async () => {
+    const s = await seed();
+    const v = await vendor(s.a, { name: 'Pat the Mechanic' });
+    const never = await vendor(s.a, { name: 'Window Washer' });
+    const b1 = await approvedBill(s, v.id, 1000);
+    const b2 = await approvedBill(s, v.id, 600);
+    const b3 = await approvedBill(s, v.id, 250);
+    await s.a.post('/books/bill-payments').send({ vendorId: v.id, paidOn: '2026-10-05', method: 'CHECK', bankAccountId: s.cash.id, applications: [{ billId: b1.id, amount: 1000 }] });
+    await s.a.post('/books/bill-payments').send({ vendorId: v.id, paidOn: '2026-10-12', method: 'CARD', bankAccountId: s.card.id, applications: [{ billId: b2.id, amount: 600 }] });
+    const voided = await s.a.post('/books/bill-payments').send({ vendorId: v.id, paidOn: '2026-10-15', method: 'CHECK', bankAccountId: s.cash.id, applications: [{ billId: b3.id, amount: 250 }] });
+    expect((await s.a.post(`/books/bill-payments/${voided.body.payment.id}/void`).send({ reason: 'Check lost' })).status).toBe(200);
+    const list = (await s.a.get('/books/vendors?active=all')).body.vendors as Array<{ id: string; paidThisYear: number; lastPaidOn: string | null; balance: number }>;
+    expect(list.find((x) => x.id === v.id)).toMatchObject({ paidThisYear: 1600, lastPaidOn: '2026-10-12', balance: 250 });
+    expect(list.find((x) => x.id === never.id)).toMatchObject({ paidThisYear: 0, lastPaidOn: null });
+    expect((await s.a.get(`/books/vendors/${v.id}`)).body.vendor).toMatchObject({ paidThisYear: 1600, lastPaidOn: '2026-10-12' });
+  });
+});

@@ -13,6 +13,9 @@ import { listSites } from '@/lib/orgApi';
 import { listQualifications } from '@/lib/qualApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
+import { useTerm } from '@/lib/auth';
+import { fmtDate } from '@/lib/format';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
@@ -43,6 +46,11 @@ const TRAININGS = [
 const KIND_LABEL: Record<RequirementKind, string> = { VACCINATION: 'Vaccination', TRAINING: 'Training', QUALIFICATION: 'Qualification' };
 
 export function RequirementsTab({ canManage }: { canManage: boolean }) {
+  const term = useTerm();
+  // The tab says "Store requirements" in this tenant's words; the card, the
+  // field and the empty state say the same word.
+  const site = term('site');
+  const [adding, setAdding] = useState(false);
   const qc = useQueryClient();
   const confirm = useConfirm();
   const list = useQuery({ queryKey: ['credentialRequirements', 'list'], queryFn: listCredentialRequirements });
@@ -68,6 +76,7 @@ export function RequirementsTab({ canManage }: { canManage: boolean }) {
       toast.success('Requirement added. The Compliance agent measures it this week.');
       setTarget('');
       setLabel('');
+      setAdding(false);
       await qc.invalidateQueries({ queryKey: ['credentialRequirements', 'list'] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not add the requirement.'),
@@ -97,14 +106,25 @@ export function RequirementsTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Site requirements</CardTitle>
-          <CardDescription>What everyone placed at a site must hold. The Compliance agent measures each requirement weekly and asks each person missing it.</CardDescription>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle>{site} requirements</CardTitle>
+              <CardDescription>
+                What everyone placed at a {site.toLowerCase()} must hold. The Compliance agent measures each requirement weekly and asks each person missing it.
+              </CardDescription>
+            </div>
+            {canManage && (
+              <Button size="sm" onClick={() => setAdding(true)}>
+                Add requirement
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {list.error ? (
             <QueryError what="the requirements" query={list} />
           ) : rows.length === 0 ? (
-            <EmptyState title="Nothing required yet" description={canManage ? 'Add a requirement below.' : 'A compliance manager sets these.'} />
+            <EmptyState title="Nothing required yet" description={canManage ? `Add what a ${site.toLowerCase()} requires, and the Compliance agent starts measuring it.` : 'A compliance manager sets these.'} />
           ) : (
             <ul className="divide-y divide-navy-secondary">
               {rows.map((r) => (
@@ -116,8 +136,8 @@ export function RequirementsTab({ canManage }: { canManage: boolean }) {
                     <p className="text-xs2 text-silver">
                       {r.latest
                         ? r.latest.missing === 0
-                          ? `Everyone covered (${r.latest.population}), week of ${r.latest.weekOf}`
-                          : `${r.latest.missing} of ${r.latest.population} without it, week of ${r.latest.weekOf}`
+                          ? `Everyone covered (${r.latest.population}), week of ${fmtDate(r.latest.weekOf)}`
+                          : `${r.latest.missing} of ${r.latest.population} without it, week of ${fmtDate(r.latest.weekOf)}`
                         : 'Not measured yet'}
                     </p>
                   </div>
@@ -134,22 +154,24 @@ export function RequirementsTab({ canManage }: { canManage: boolean }) {
       </Card>
 
       {canManage && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Add a requirement</CardTitle>
-          </CardHeader>
-          <CardContent>
+        <Dialog open={adding} onOpenChange={(o) => !add.isPending && setAdding(o)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add requirement</DialogTitle>
+              <DialogDescription>What everyone placed at one {site.toLowerCase()} must hold.</DialogDescription>
+            </DialogHeader>
             <form
+              id="add-requirement"
               className="grid gap-3 sm:grid-cols-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 if (locationId && target && label.trim()) add.mutate();
               }}
             >
-              <Field label="Site" required>
+              <Field label={site} required>
                 {(p) => (
                   <Select {...p} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-                    <option value="">Choose a site</option>
+                    <option value="">Choose a {site.toLowerCase()}</option>
                     {(sites.data?.sites ?? []).filter((s) => s.isActive).map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.clientName ? `${s.clientName} · ${s.name}` : s.name}
@@ -189,14 +211,17 @@ export function RequirementsTab({ canManage }: { canManage: boolean }) {
               <Field label="What people read" required hint="Shown to the person asked and on the desk.">
                 {(p) => <Input {...p} value={label} maxLength={120} onChange={(e) => setLabel(e.target.value)} />}
               </Field>
-              <div className="sm:col-span-2">
-                <Button type="submit" size="sm" loading={add.isPending} disabled={!locationId || !target || !label.trim() || add.isPending}>
-                  Add requirement
-                </Button>
-              </div>
             </form>
-          </CardContent>
-        </Card>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setAdding(false)} disabled={add.isPending}>
+                Cancel
+              </Button>
+              <Button type="submit" form="add-requirement" loading={add.isPending} disabled={!locationId || !target || !label.trim() || add.isPending}>
+                Add requirement
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

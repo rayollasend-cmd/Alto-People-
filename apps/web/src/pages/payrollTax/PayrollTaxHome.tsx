@@ -348,41 +348,47 @@ export function TaxFormsTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-4">
       <TaxFormsWorkflowSteps rows={rows} />
-      <p className="rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2 text-xs text-silver">
-        Alto builds every form and file — the PDFs, the SSA EFW2 file, the 941/940 MeF returns and the ACA AIR file. Transmission happens through the
-        IRS or SSA portal, or your filing partner; &ldquo;Mark filed&rdquo; records the acknowledgment they return. The IRS FIRE file for 1099s has not
-        been through the IRS test system yet — run it through FIRE&rsquo;s test environment before a production transmission.
-      </p>
-      {canManage && (
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" onClick={() => setShowSubmitter(true)}>
-            Submitter profile
-          </Button>
-          <Button variant="ghost" onClick={() => setShow941Builder(true)}>
-            Build 941
-          </Button>
-          <Button variant="ghost" onClick={() => setShow940Builder(true)}>
-            Build 940
-          </Button>
-          <Button asChild variant="ghost">
-            <a href={w3PdfUrl(new Date().getFullYear() - 1)} download>
-              <Download className="mr-2 h-4 w-4" /> W-3 totals
-            </a>
-          </Button>
-          <Button variant="ghost" onClick={() => setShowW2Generate(true)}>
-            Generate W-2s
-          </Button>
-          <Button variant="ghost" onClick={() => setShowF1099NecGenerate(true)}>
-            Generate 1099-NECs
-          </Button>
-          <Button variant="ghost" onClick={() => setShowF1099MiscGenerate(true)}>
-            Generate 1099-MISCs
-          </Button>
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New form
-          </Button>
-        </div>
-      )}
+      {/* One "Generate" menu and one primary, not seven ghost buttons in a row (F500 G3);
+          the filing caveat is behind "How filing works", not a paragraph in prime space. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <details className="group text-sm text-ink-muted">
+          <summary className="cursor-pointer list-none text-accent underline underline-offset-2 [&::-webkit-details-marker]:hidden">How filing works</summary>
+          <p className="mt-1 max-w-2xl text-xs">
+            Alto builds every form and file: the PDFs, the SSA EFW2 file, the 941/940 MeF returns and the ACA AIR file. You transmit them through the
+            IRS or SSA portal, or your filing partner; &ldquo;Mark filed&rdquo; records the acknowledgment they return. Run the IRS FIRE file for 1099s
+            through FIRE&rsquo;s test environment once before your first production transmission.
+          </p>
+        </details>
+        {canManage && (
+          <div className="flex flex-wrap gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  Generate <ChevronDown className="ml-1 h-4 w-4" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onSelect={() => setShowW2Generate(true)}>W-2s</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShowF1099NecGenerate(true)}>1099-NECs</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShowF1099MiscGenerate(true)}>1099-MISCs</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setShow941Builder(true)}>Form 941</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShow940Builder(true)}>Form 940</DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <a href={w3PdfUrl(new Date().getFullYear() - 1)} download>
+                    <Download className="mr-2 h-4 w-4" aria-hidden="true" /> W-3 totals
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setShowSubmitter(true)}>Submitter profile</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" aria-hidden="true" /> New form
+            </Button>
+          </div>
+        )}
+      </div>
       {rows !== null && rows.length > 0 && (
         <div className="flex flex-wrap items-end gap-3">
           <div>

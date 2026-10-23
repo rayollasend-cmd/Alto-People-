@@ -14,21 +14,24 @@ export function HomeMeta({ items, className }: { items: React.ReactNode[]; class
   const shown = items.filter((i) => i !== null && i !== undefined && i !== false && i !== '');
   if (shown.length === 0) return null;
   return (
-    <ul
-      className={cn(
-        'flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted',
-        // The separator belongs to the item after it, and a wrapped line
-        // starts with an item, not a dot.
-        '[&>li+li]:before:mr-2 [&>li+li]:before:text-ink-subtle [&>li+li]:before:content-["·"]',
-        className,
-      )}
-      data-testid="home-meta"
-    >
-      {shown.map((item, i) => (
-        <li key={i} className="whitespace-nowrap">
-          {item}
-        </li>
-      ))}
-    </ul>
+    // Every item carries its dot in front, and the list sits a dot's width
+    // to the left inside a clipping box: the dot that would open a line —
+    // the first item's, or a wrapped line's on a phone ("· Payday Fri, Oct
+    // 30") — falls in the clipped margin, so a line always starts with words.
+    <div className={cn('overflow-hidden', className)}>
+      <ul
+        className={cn(
+          '-ml-4 flex flex-wrap items-center gap-y-1 text-xs text-ink-muted',
+          '[&>li]:before:inline-block [&>li]:before:w-4 [&>li]:before:text-center [&>li]:before:text-ink-subtle [&>li]:before:content-["·"]',
+        )}
+        data-testid="home-meta"
+      >
+        {shown.map((item, i) => (
+          <li key={i} className="whitespace-nowrap">
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

@@ -9,6 +9,7 @@ import {
   Copy,
   FileText,
   LogIn,
+  LogOut,
   Upload,
   UserCheck,
 } from 'lucide-react';
@@ -19,6 +20,9 @@ import type {
   DocumentRecord,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
+import { QueryError } from '@/components/ui/QueryError';
 import {
   approveApplication,
   finishDocumentUpload,
@@ -45,7 +49,6 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -97,22 +100,20 @@ const TASK_LABEL: Record<string, string> = {
   J1_DOCS: 'J-1 documents',
 };
 
-// Tasks the admin cannot legitimately complete on the associate's behalf.
-// Surfaced in the hand-off card so the admin knows what's left for the
-// associate to do themselves on this device.
-const SELF_ATTESTATION_KINDS = new Set([
-  'I9_VERIFICATION',
-  'E_SIGN',
-  'BACKGROUND_CHECK',
-  'W4',
-  'DIRECT_DEPOSIT',
-]);
+// The one task HR does here, on the associate's behalf (step 1). Every
+// other open task is the associate's own — their attestations (I-9,
+// W-4, e-sign, background authorization) and their own details (profile,
+// photo, payout, policies, tax-credit questions) — so the hand-off card
+// lists them all, not just the five signatures (F500 G1).
+const HR_DOES_HERE = new Set(['DOCUMENT_UPLOAD']);
 
 const NO_DOCS: DocumentRecord[] = [];
 
 export function InPersonOnboarding() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const navigate = useNavigate();
+  const { signOut } = useAuth();
+  const confirm = useConfirm();
   const [uploading, setUploading] = useState(false);
   const [docKind, setDocKind] = useState<DocumentKind>('ID');
   const [showCamera, setShowCamera] = useState(false);
@@ -133,11 +134,6 @@ export function InPersonOnboarding() {
   });
   const detail: ApplicationDetailType | null = appQuery.data?.detail ?? null;
   const docs: DocumentRecord[] = appQuery.data?.docs ?? NO_DOCS;
-  const error = appQuery.error
-    ? appQuery.error instanceof ApiError
-      ? appQuery.error.message
-      : 'Failed to load.'
-    : null;
   const refresh = async () => {
     await appQuery.refetch();
   };
@@ -235,7 +231,7 @@ export function InPersonOnboarding() {
     }
   };
 
-  if (error) {
+  if (appQuery.isError) {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
@@ -245,7 +241,7 @@ export function InPersonOnboarding() {
             { label: 'In-person session' },
           ]}
       >
-        <ErrorBanner>{error}</ErrorBanner>
+        <QueryError what="this application" query={appQuery} />
       </ListTemplate>
     );
   }
@@ -264,14 +260,30 @@ export function InPersonOnboarding() {
     d.kind === 'ID' || d.kind === 'SSN_CARD' || d.kind === 'I9_SUPPORTING',
   );
   const docTask = detail.tasks.find((t) => t.kind === 'DOCUMENT_UPLOAD');
+  // Resolved either way (no more scanning asked for), but only DONE was
+  // submitted: a skipped step said "Submitted" beside "No documents scanned
+  // yet" (F500 G1).
   const docTaskDone = docTask?.status === 'DONE' || docTask?.status === 'SKIPPED';
+  const docTaskBadge = docTask?.status === 'DONE' ? 'Submitted' : docTask?.status === 'SKIPPED' ? 'Skipped' : null;
 
-  const outstandingForAssociate = detail.tasks.filter(
-    (t) =>
-      t.status !== 'DONE' &&
-      t.status !== 'SKIPPED' &&
-      SELF_ATTESTATION_KINDS.has(t.kind),
-  );
+  const outstandingForAssociate = [...detail.tasks]
+    .sort((a, b) => a.order - b.order)
+    .filter((t) => t.status !== 'DONE' && t.status !== 'SKIPPED' && !HR_DOES_HERE.has(t.kind));
+  const firstName = detail.associateName.split(' ')[0] || 'the associate';
+
+  // Hand the device over: sign HR out and open the sign-in page, so the
+  // associate signs in (or opens their invite email) here and finishes in
+  // their own account — nothing of HR's session is left on the screen.
+  const startAssociateSession = async () => {
+    const ok = await confirm({
+      title: `Sign out and hand the device to ${firstName}?`,
+      description: `You'll be signed out here. ${firstName} signs in with their own account — or opens the invite email we sent — and finishes their steps on this device. Sign back in when they're done.`,
+      confirmLabel: 'Sign out and hand over',
+    });
+    if (!ok) return;
+    await signOut();
+    navigate('/login', { replace: true });
+  };
 
   const checklistComplete = detail.percentComplete === 100;
   const decided =
@@ -332,9 +344,9 @@ export function InPersonOnboarding() {
             <CardTitle className="flex items-center gap-2 text-base">
               <FileText className="h-4 w-4 text-silver/80" />
               1. Scan identity documents
-              {docTaskDone && (
-                <Badge variant="success" className="ml-1">
-                  Submitted
+              {docTaskBadge && (
+                <Badge variant={docTaskBadge === 'Submitted' ? 'success' : 'default'} className="ml-1">
+                  {docTaskBadge}
                 </Badge>
               )}
             </CardTitle>
@@ -444,16 +456,15 @@ export function InPersonOnboarding() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <UserCheck className="h-4 w-4 text-silver/80" />
-                2. Hand the device to{' '}
-                {detail.associateName.split(' ')[0] ?? 'the associate'}
+                2. Hand the device to {firstName}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-silver">
-                The steps below need the associate's own signature — they
-                attest to their identity, tax withholding, and agreement to
-                policies. Resend their invite link and let them log in on
-                this device to complete each one.
+                These steps are {firstName}'s own — their details, their
+                payout, and the forms they sign for their identity, tax
+                withholding and the policies. They finish them signed in to
+                their own account, on this device.
               </p>
               <ul className="space-y-1.5">
                 {outstandingForAssociate.map((t) => (
@@ -481,15 +492,27 @@ export function InPersonOnboarding() {
                   <div className="text-2xl font-semibold text-gold font-mono break-all select-all">
                     {window.location.origin}
                   </div>
-                  <Button variant="secondary" onClick={copyLoginUrl}>
-                    <Copy className="h-4 w-4" />
-                    Copy login URL
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => void startAssociateSession()}>
+                      <LogOut className="h-4 w-4" />
+                      Sign out and hand over
+                    </Button>
+                    <Button variant="secondary" onClick={copyLoginUrl}>
+                      <Copy className="h-4 w-4" />
+                      Copy login URL
+                    </Button>
+                  </div>
                 </div>
               ) : (
-                <Button variant="secondary" onClick={handleResendInvite}>
-                  Copy fresh invite link
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => void startAssociateSession()}>
+                    <LogOut className="h-4 w-4" />
+                    Sign out and hand over
+                  </Button>
+                  <Button variant="secondary" onClick={handleResendInvite}>
+                    Send a fresh invite link
+                  </Button>
+                </div>
               )}
             </CardContent>
           </Card>

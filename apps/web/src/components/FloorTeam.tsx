@@ -45,9 +45,10 @@ import { toast } from '@/components/ui/Toaster';
 
 // Supervisors are staff logins: the API sends their associate headshot, else
 // their account photo. The bare associate path is the fallback for an API
-// that predates the field.
+// that predates the field (photoUrl undefined) — an API `null` means "no
+// photo on file", so no guessed URL that 404s (F1 SH-1's rule).
 const photoUrl = (p: { photoUrl?: string | null; associateId: string | null }) =>
-  p.photoUrl ?? (p.associateId ? `/api/associates/${p.associateId}/photo` : undefined);
+  p.photoUrl !== undefined ? (p.photoUrl ?? undefined) : p.associateId ? `/api/associates/${p.associateId}/photo` : undefined;
 
 export function useFloorTeam() {
   return useQuery({

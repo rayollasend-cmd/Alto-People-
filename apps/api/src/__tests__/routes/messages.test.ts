@@ -195,9 +195,9 @@ describe('messages', () => {
     // The Workforce desk reaches everyone; a supervisor reaches their own
     // store's manager but not the other client's.
     const wfm = await loginAs(s.wfm.email);
-    expect((await wfm.post('/messages/conversations').send({ participantIds: [s.manager.id, s.supervisor.id], title: 'Friday plan' })).status).toBe(201);
+    expect((await wfm.post('/messages/conversations').send({ participantIds: [s.manager.id, s.supervisor.id], title: 'Friday plan', body: 'Friday plan, first draft.' })).status).toBe(201);
     const sup = await loginAs(s.supervisor.email);
-    expect((await sup.post('/messages/conversations').send({ participantIds: [s.manager.id] })).status).toBe(201);
+    expect((await sup.post('/messages/conversations').send({ participantIds: [s.manager.id], body: 'Morning.' })).status).toBe(201);
     expect((await sup.post('/messages/conversations').send({ participantIds: [s.otherManager.id] })).status).toBe(403);
   });
 });
@@ -212,7 +212,7 @@ describe('long messages', () => {
     const { user: longName } = await createUser({ role: 'WORKFORCE_MANAGER', email: 'maximiliana.featherstonehaugh-montgomery@example.com' });
     const sup = await loginAs(s.supervisor.email);
     const wfm = await loginAs(longName.email);
-    const start = await wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id] });
+    const start = await wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id], body: 'Hi.' });
     expect(start.status).toBe(201);
     const id = start.body.id as string;
 
@@ -232,7 +232,8 @@ describe('long messages', () => {
     expect((await sup.post(`/messages/conversations/${id}/messages`).send({ body: '🙂'.repeat(4000) })).status).toBe(201);
 
     const thread = (await sup.get(`/messages/conversations/${id}`)).body;
-    expect(thread.messages.map((m: { body: string }) => m.body)).toEqual([three, max, '🙂'.repeat(4000)]);
+    // The thread starts with its first message now (F500 G5: no empty threads).
+    expect(thread.messages.map((m: { body: string }) => m.body)).toEqual(['Hi.', three, max, '🙂'.repeat(4000)]);
     // The inbox preview is cut to fit, and says so.
     const row = await prisma.conversation.findUniqueOrThrow({ where: { id } });
     expect(Array.from(row.lastPreview!).length).toBeLessThanOrEqual(160);
@@ -259,5 +260,66 @@ describe('long messages', () => {
     const ok = await wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id, s.manager.id], title: 'Weekend', body: 'Three sentences here. '.repeat(10) });
     expect(ok.status).toBe(201);
     expect(await prisma.conversation.count({ where: { kind: 'GROUP' } })).toBe(1);
+  });
+});
+
+describe('one direct thread per pair, and no empty threads (F500 G5)', () => {
+  it('two starts at once make one thread, keyed by the pair; a new thread needs its first message', async () => {
+    const s = await seed();
+    const wfm = await loginAs(s.wfm.email);
+    // No first message, no thread yet: refused, nothing created.
+    const empty = await wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id] });
+    expect(empty.status).toBe(400);
+    expect(empty.body.error.code).toBe('first_message_needed');
+    expect(await prisma.conversation.count({ where: { kind: 'DIRECT' } })).toBe(0);
+    // Two at once (a double click, the ?to= link firing twice): one thread.
+    const [a, b] = await Promise.all([
+      wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id], body: 'One' }),
+      wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id], body: 'Two' }),
+    ]);
+    expect([a.status, b.status]).toEqual([201, 201]);
+    expect(a.body.id).toBe(b.body.id);
+    const rows = await prisma.conversation.findMany({ where: { kind: 'DIRECT' } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.directKey).toBe([s.wfm.id, s.supervisor.id].sort().join(':'));
+    expect(await prisma.message.count({ where: { conversationId: a.body.id } })).toBe(2);
+    // Started from the other side, it is the same thread — and now no first message is needed.
+    const sup = await loginAs(s.supervisor.email);
+    const back = await sup.post('/messages/conversations').send({ participantIds: [s.wfm.id] });
+    expect(back.status).toBe(201);
+    expect(back.body.id).toBe(a.body.id);
+  });
+
+  it('the inbox leaves out threads nobody wrote in; the deep link finds the thread or names the person', async () => {
+    const s = await seed();
+    const wfm = await loginAs(s.wfm.email);
+    // An old empty thread (made before the rule): not in the inbox.
+    await prisma.conversation.create({
+      data: { kind: 'DIRECT', createdById: s.wfm.id, participants: { create: [{ userId: s.wfm.id }, { userId: s.manager.id }] } },
+    });
+    const inbox = await wfm.get('/messages/conversations');
+    expect(inbox.body.conversations.filter((c: { kind: string }) => c.kind === 'DIRECT')).toHaveLength(0);
+    // /messages?to=<supervisor>: no thread yet — who they are, for the draft.
+    const none = await wfm.get(`/messages/direct/${s.supervisor.id}`);
+    expect(none.status).toBe(200);
+    expect(none.body).toMatchObject({ conversationId: null, person: { id: s.supervisor.id, name: 'Dana Reyes', named: true, siteName: 'Walmart 218' } });
+    const started = await wfm.post('/messages/conversations').send({ participantIds: [s.supervisor.id], body: 'Hello' });
+    expect((await wfm.get(`/messages/direct/${s.supervisor.id}`)).body.conversationId).toBe(started.body.id);
+    // Someone the caller may not message is not found.
+    const manager = await loginAs(s.manager.email);
+    expect((await manager.get(`/messages/direct/${s.otherSupervisor.id}`)).status).toBe(404);
+  });
+
+  it('names an account with no name "Role · email", never the email’s local part', async () => {
+    const s = await seed();
+    const manager = await loginAs(s.manager.email);
+    const dir = await manager.get('/messages/directory');
+    const desk = dir.body.people.find((p: { id: string }) => p.id === s.wfm.id);
+    expect(desk.name).toBe(`Workforce Manager · ${s.wfm.email}`);
+    expect(desk.named).toBe(false);
+    // A name on the account wins.
+    await prisma.user.update({ where: { id: s.wfm.id }, data: { displayName: 'Casey Brooks' } });
+    const again = (await manager.get('/messages/directory')).body.people.find((p: { id: string }) => p.id === s.wfm.id);
+    expect(again).toMatchObject({ name: 'Casey Brooks', named: true });
   });
 });

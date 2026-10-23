@@ -218,12 +218,13 @@ export function AvatarStack({ people, max = 5, size = 'sm' }: { people: Array<{ 
   return (
     <span className="inline-flex items-center">
       {shown.map((p, i) => (
-        <span key={`${p.name}-${i}`} className={cn('rounded-full ring-2 ring-surface-raised', i > 0 && '-ml-2')}>
+        // A smaller overlap for the small faces: -ml-2 covered the second letter of "AE" (F500 G3).
+        <span key={`${p.name}-${i}`} className={cn('rounded-full ring-2 ring-surface-raised', i > 0 && (size === 'xs' ? '-ml-1' : '-ml-1.5'))}>
           <Avatar src={p.photoUrl} name={p.name} size={size} />
         </span>
       ))}
       {rest > 0 && (
-        <span className="-ml-2 grid h-8 min-w-8 place-items-center rounded-full bg-surface-raised px-1.5 text-2xs font-semibold tabular-nums text-ink-muted ring-2 ring-surface-raised">
+        <span className={cn('grid min-w-8 place-items-center rounded-full bg-surface-raised px-1.5 text-2xs font-semibold tabular-nums text-ink-muted ring-2 ring-surface-raised', size === 'xs' ? '-ml-1 h-6 min-w-6' : '-ml-1.5 h-8')}>
           +{rest}
         </span>
       )}

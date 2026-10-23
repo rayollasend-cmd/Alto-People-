@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { onLiveEvent } from '@/lib/liveEvents';
+import { useAuth } from '@/lib/auth';
+import { useUrlParam } from '@/lib/useUrlState';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Repeat, ThumbsDown, ThumbsUp, Trash2, UserRound, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
@@ -139,9 +142,16 @@ function homeEnd(r: Ride): string {
   return r.pickup.kind === 'stop' ? r.pickup.name : r.pickup.address;
 }
 
+/** The signed rider's page below the hero, one view at a time (F500 G2:
+ *  ten stacked sections made a phone page six screens long). */
+const RIDE_VIEWS = ['upcoming', 'history', 'charges', 'places'] as const;
+type RideView = (typeof RIDE_VIEWS)[number];
+
 export function RideHome() {
   const { t } = useI18n();
+  const { can } = useAuth();
   const me = useQuery({ queryKey: ['transport', 'me'], queryFn: getMyTransport, refetchInterval: 60_000 });
+  const [view, setView] = useUrlParam<RideView>('view', 'upcoming', RIDE_VIEWS, { history: 'push' });
   // The booking form, open — blank, or prefilled from a shift / a past ride.
   const [booking, setBooking] = useState<BookPrefill | null>(null);
   const [reporting, setReporting] = useState<{ rideId?: string } | null>(null);
@@ -153,6 +163,13 @@ export function RideHome() {
   useRiderAlerts(data, useMyLiveRide());
   // With a ride coming the trip leads — the explainer steps aside.
   const riding = authorized && sortedLive(data!.rides, Date.now()).length > 0;
+  // The transportation director (or anyone who runs the vans) who isn't
+  // placed at a store rides nothing: the rider pitch is not their page, the
+  // board's Rides tab is (F500 G2).
+  const runsTheVans = can('view:transport');
+  if (runsTheVans && ((data && data.stores.length === 0 && data.rides.length === 0) || me.isError)) {
+    return <Navigate to="/transport?tab=rides" replace />;
+  }
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -161,7 +178,9 @@ export function RideHome() {
         title={t('ride.title')}
         subtitle={riding ? undefined : t('ride.subtitle')}
         headerClassName={riding ? 'mb-3 md:mb-5' : undefined}
-        secondaryActions={<SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} />}
+        secondaryActions={
+          <SoundToggle onLabel={t('ride.soundsOn')} offLabel={t('ride.soundsOff')} text={{ on: t('ride.soundsOnShort'), off: t('ride.soundsOffShort') }} />
+        }
         primaryAction={
           canBook ? (
             <Button onClick={() => setBooking({})}>
@@ -189,17 +208,46 @@ export function RideHome() {
         <>
           <NextRideHero data={data} onBook={() => setBooking({})} onReport={(rideId) => setReporting({ rideId })} />
           <RideFeedbackCard />
-          <ShiftRides data={data} onCustom={(shift) => setBooking(prefillFromShift(data, shift))} />
-          <RideCalendar data={data} />
-          <StandingBookings />
-          <ChargesCard data={data} />
-          <AuthorizationStatusCard data={data} />
-          <PastRides
-            data={data}
-            onReport={(rideId) => setReporting({ rideId })}
-            onBookAgain={(ride) => setBooking(prefillFromRide(data, ride))}
+          <SegmentedControl
+            ariaLabel={t('ride.view.label')}
+            value={view}
+            onChange={setView}
+            className="mb-4"
+            options={RIDE_VIEWS.map((v) => ({ value: v, label: t(`ride.view.${v}` as MessageKey) }))}
           />
-          <SavedPlaces data={data} />
+          {view === 'upcoming' && (
+            <div data-testid="ride-view-upcoming">
+              <ShiftRides data={data} onCustom={(shift) => setBooking(prefillFromShift(data, shift))} />
+              <RideCalendar data={data} />
+              <StandingBookings />
+            </div>
+          )}
+          {view === 'history' && (
+            <div data-testid="ride-view-history">
+              {!data.rides.some((r) => !LIVE.includes(r.status)) && (
+                <EmptyState size="sm" icon={Bus} title={t('ride.view.historyNone')} className="mb-4" />
+              )}
+              <PastRides
+                data={data}
+                onReport={(rideId) => setReporting({ rideId })}
+                onBookAgain={(ride) => setBooking(prefillFromRide(data, ride))}
+              />
+            </div>
+          )}
+          {view === 'charges' && (
+            <div data-testid="ride-view-charges">
+              <ChargesCard data={data} />
+              <AuthorizationStatusCard data={data} />
+            </div>
+          )}
+          {view === 'places' && (
+            <div data-testid="ride-view-places">
+              {data.places.length === 0 && (
+                <EmptyState size="sm" icon={MapPin} title={t('ride.view.placesNone')} description={t('ride.view.placesNoneHint')} className="mb-4" />
+              )}
+              <SavedPlaces data={data} />
+            </div>
+          )}
           <div className="mt-2 mb-8 flex justify-center">
             <Button variant="ghost" size="sm" onClick={() => setReporting({})}>
               <AlertTriangle className="h-4 w-4" />

@@ -19,7 +19,8 @@ import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
-import { anyPushConfigured, send, statusForSendError } from '../lib/notifications.js';
+import { STUB_EMAIL_REF_PREFIX, anyPushConfigured, emailConfigured, inAppBody, isLoggedOnlyEmail, send, statusForSendError } from '../lib/notifications.js';
+import { ACCOUNT_PHOTO_SELECT, accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { pushConfigured } from '../lib/webPush.js';
 import { smsAvailability } from '../lib/sms.js';
 import { enqueueAudit } from '../lib/audit.js';
@@ -44,7 +45,7 @@ type RawNotif = Prisma.NotificationGetPayload<{
   include: { senderUser: { select: { email: true } } };
 }>;
 
-function toNotif(row: RawNotif, recipientName?: string | null): Notification {
+function toNotif(row: RawNotif, recipient?: { name: string | null; photoUrl: string | null }): Notification {
   return {
     id: row.id,
     channel: row.channel,
@@ -65,19 +66,38 @@ function toNotif(row: RawNotif, recipientName?: string | null): Notification {
     senderEmail: row.senderUser?.email ?? null,
     linkUrl: row.linkUrl ?? null,
     createdAt: row.createdAt.toISOString(),
-    ...(recipientName !== undefined ? { recipientName } : {}),
+    ...(recipient !== undefined ? { recipientName: recipient.name, recipientPhotoUrl: recipient.photoUrl } : {}),
+    ...(isLoggedOnlyEmail(row) ? { loggedOnly: true } : {}),
   };
 }
 
-/** Names for the admin log: the account's person, else the account's email. */
-async function recipientNames(userIds: Array<string | null>): Promise<Map<string, string>> {
+/** The bell and the Notifications page: the words without the app links the Open button already carries. */
+function toInboxNotif(row: RawNotif): Notification {
+  const n = toNotif(row);
+  return { ...n, body: inAppBody(n.body, n.linkUrl) };
+}
+
+/** Names (and faces) for the admin log: the account's person, else the account's email. */
+async function recipientNames(userIds: Array<string | null>): Promise<Map<string, { name: string; photoUrl: string | null }>> {
   const ids = [...new Set(userIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return new Map();
   const users = await prisma.user.findMany({
     where: { id: { in: ids } },
-    select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } },
+    select: {
+      ...ACCOUNT_PHOTO_SELECT,
+      email: true,
+      associate: { select: { id: true, photoS3Key: true, photoUpdatedAt: true, firstName: true, lastName: true } },
+    },
   });
-  return new Map(users.map((u) => [u.id, u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : u.email]));
+  return new Map(
+    users.map((u) => [
+      u.id,
+      {
+        name: u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : u.email,
+        photoUrl: accountPhotoUrlFor(u),
+      },
+    ]),
+  );
 }
 
 const NOTIF_INCLUDE = {
@@ -168,7 +188,7 @@ communicationsMeRouter.get('/inbox', async (req, res, next) => {
       }),
     ]);
     const payload: NotificationListResponse = NotificationListResponseSchema.parse({
-      notifications: rows.map((r) => toNotif(r)),
+      notifications: rows.map((r) => toInboxNotif(r)),
       total,
     });
     res.json(payload);
@@ -274,20 +294,40 @@ communicationsRouter.get('/admin', MANAGE, async (req, res, next) => {
     const statusParsed = NotificationStatusSchema.safeParse(
       req.query.status?.toString(),
     );
+    // An email written to the server log (no provider connected) is stored
+    // SENT so the flow behind it continues — but it did not go anywhere, so
+    // it filters with "Not sent — channel not connected", never with Sent.
+    const stubbed: Prisma.NotificationWhereInput = { channel: 'EMAIL', externalRef: { startsWith: STUB_EMAIL_REF_PREFIX } };
+    // Spelled out rather than NOT(stubbed): SQL's NOT over a NULL externalRef
+    // would drop every real email that has no provider reference.
+    const delivered: Prisma.NotificationWhereInput = {
+      OR: [{ channel: { not: 'EMAIL' } }, { externalRef: null }, { NOT: { externalRef: { startsWith: STUB_EMAIL_REF_PREFIX } } }],
+    };
+    const statusWhere: Prisma.NotificationWhereInput = !statusParsed.success
+      ? {}
+      : statusParsed.data === 'NOT_CONFIGURED'
+        ? { OR: [{ status: 'NOT_CONFIGURED' }, { status: 'SENT', ...stubbed }] }
+        : statusParsed.data === 'SENT'
+          ? { status: 'SENT', ...delivered }
+          : { status: statusParsed.data };
     const where: Prisma.NotificationWhereInput = {
       ...(channelParsed.success ? { channel: channelParsed.data } : {}),
-      ...(statusParsed.success ? { status: statusParsed.data } : {}),
+      ...statusWhere,
     };
-    const rows = await prisma.notification.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-      include: NOTIF_INCLUDE,
-    });
-    const names = await recipientNames(rows.map((r) => r.recipientUserId));
+    const [total, rows] = await Promise.all([
+      prisma.notification.count({ where }),
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+        include: NOTIF_INCLUDE,
+      }),
+    ]);
+    const people = await recipientNames(rows.map((r) => r.recipientUserId));
     res.json(
       NotificationListResponseSchema.parse({
-        notifications: rows.map((r) => toNotif(r, r.recipientUserId ? names.get(r.recipientUserId) ?? null : null)),
+        notifications: rows.map((r) => toNotif(r, (r.recipientUserId ? people.get(r.recipientUserId) : null) ?? { name: null, photoUrl: null })),
+        total,
       })
     );
   } catch (err) {
@@ -389,23 +429,90 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
  * instead of a "(stub)" option that silently goes nowhere.
  */
 communicationsRouter.get('/admin/channels', MANAGE, (_req, res) => {
-  const emailReady = Boolean(env.RESEND_API_KEY && env.RESEND_FROM);
+  // `reason` is for the person sending: plain words, and who can fix it
+  // (connecting a provider is done for the organization, not on a page
+  // here — "set one up in Settings › Communications" sent people in a
+  // circle). `developerNote` names the settings for whoever runs the API.
+  const emailReady = emailConfigured();
+  const sms = smsAvailability();
+  const pushReady = anyPushConfigured();
+  const notConnected = 'Not connected for this organization yet. Alto People support connects it.';
   res.json({
     channels: [
-      { channel: 'IN_APP', available: true, reason: null },
+      { channel: 'IN_APP', available: true, reason: null, developerNote: null },
       {
         channel: 'EMAIL',
         available: emailReady,
-        reason: emailReady ? null : 'No email provider connected — set one up in Settings › Communications.',
+        reason: emailReady ? null : notConnected,
+        developerNote: emailReady
+          ? null
+          : 'Set RESEND_API_KEY and RESEND_FROM on the API. Until then each email is written to the API log instead of being sent.',
       },
-      { channel: 'SMS', ...smsAvailability() },
+      {
+        channel: 'SMS',
+        available: sms.available,
+        reason: sms.available ? null : notConnected,
+        developerNote: sms.available ? null : sms.reason,
+      },
       {
         channel: 'PUSH',
-        available: anyPushConfigured(),
-        reason: anyPushConfigured() ? null : 'Push isn’t set up for this organization — set the VAPID (web) or APNs / FCM (phone) keys on the API.',
+        available: pushReady,
+        reason: pushReady ? null : notConnected,
+        developerNote: pushReady ? null : 'Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY (web) or the APNs / FCM keys (phones) on the API.',
       },
     ],
   });
+});
+
+/**
+ * POST /communications/admin/test-email — one email to the caller's own
+ * address, written to the log like any send. With no provider connected
+ * nothing leaves, and the answer says so (`delivered: false`) rather
+ * than "sent".
+ */
+communicationsRouter.post('/admin/test-email', MANAGE, async (req, res, next) => {
+  try {
+    const me = await prisma.user.findUnique({ where: { id: req.user!.id }, select: { email: true } });
+    if (!me?.email) throw new HttpError(400, 'no_email', 'Your account has no email address to send a test to.');
+    const created = await prisma.notification.create({
+      data: {
+        channel: 'EMAIL',
+        status: 'QUEUED',
+        recipientUserId: req.user!.id,
+        recipientEmail: me.email,
+        subject: 'Test email from Alto People',
+        body: 'This is a test from Settings › Communications. If it reached your inbox, email is working for your organization.',
+        category: 'communications.test',
+        senderUserId: req.user!.id,
+      },
+      include: NOTIF_INCLUDE,
+    });
+    try {
+      const { externalRef, providerMessageId } = await send({
+        channel: 'EMAIL',
+        recipient: { userId: req.user!.id, email: me.email, phone: null },
+        subject: created.subject,
+        body: created.body,
+        category: created.category,
+        audit: false,
+      });
+      const sent = await prisma.notification.update({
+        where: { id: created.id },
+        data: { status: 'SENT', sentAt: new Date(), externalRef, providerMessageId },
+        include: NOTIF_INCLUDE,
+      });
+      res.status(201).json({ notification: toNotif(sent), delivered: !isLoggedOnlyEmail(sent), to: me.email });
+    } catch (sendErr) {
+      const failed = await prisma.notification.update({
+        where: { id: created.id },
+        data: { status: statusForSendError(sendErr), failureReason: sendErr instanceof Error ? sendErr.message.slice(0, 500) : 'unknown error' },
+        include: NOTIF_INCLUDE,
+      });
+      res.status(202).json({ notification: toNotif(failed), delivered: false, to: me.email });
+    }
+  } catch (err) {
+    next(err);
+  }
 });
 
 /* ===== Email suppression list (do-not-email) =========================== */

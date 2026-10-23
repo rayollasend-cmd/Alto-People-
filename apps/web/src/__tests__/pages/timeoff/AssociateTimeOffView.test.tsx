@@ -81,6 +81,29 @@ describe('<AssociateTimeOffView>', () => {
     });
   });
 
+  it('nothing banked: a compact row per category at 0h with the sick-time rule, and a one-line requests empty state (F500 G2)', async () => {
+    vi.mocked(getMyBalance).mockResolvedValue({
+      balances: [{ category: 'VACATION', balanceMinutes: 0 }],
+      recentLedger: [],
+      sickAccrual: { hoursWorkedPerHour: 30 },
+    });
+    renderView();
+    const rows = await screen.findByTestId('timeoff-balance-rows');
+    expect(rows).toHaveTextContent('Vacation');
+    expect(rows).toHaveTextContent('Sick');
+    expect(rows).toHaveTextContent('Builds up 1h for every 30h you work');
+    expect(screen.queryByText('No accrued balance yet')).not.toBeInTheDocument();
+    expect(await screen.findByText('No requests yet')).toBeInTheDocument();
+    expect(screen.queryByText('Submit one with the button above. HR will be notified.')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'My leave →' })).toHaveAttribute('href', '/leave');
+  });
+
+  it('no balance and no sick-time rule: one short line, not a big empty card', async () => {
+    vi.mocked(getMyBalance).mockResolvedValue({ balances: [], recentLedger: [], sickAccrual: null });
+    renderView();
+    expect(await screen.findByTestId('timeoff-no-balance')).toHaveTextContent('No time-off balance yet.');
+  });
+
   it('submits a request with the form values', async () => {
     vi.mocked(createMyRequest).mockResolvedValue({
       request: {

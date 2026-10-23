@@ -17,7 +17,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/taxJurisdictionsApi', async (orig) => ({ ...(await orig<typeof import('@/lib/taxJurisdictionsApi')>()), ...api }));
 
-import { TaxJurisdictions } from '@/pages/payroll/TaxJurisdictions';
+import { LocalTaxTables, ReciprocityTable } from '@/pages/payroll/TaxJurisdictions';
 import { TaxWithholdingCard } from '@/components/payroll/TaxWithholdingCard';
 import { RunTaxBreakdown } from '@/components/payroll/RunTaxBreakdown';
 
@@ -61,7 +61,7 @@ beforeEach(() => {
   });
 });
 
-describe('<TaxJurisdictions>', () => {
+describe('Tax tables › Local', () => {
   it('leads with what needs review, checks a paycheck, and records a review only once confirmed', async () => {
     api.getJurisdictions.mockResolvedValue({
       engine: { key: 'IN_HOUSE', label: 'Alto', environment: null },
@@ -74,13 +74,14 @@ describe('<TaxJurisdictions>', () => {
       unresolved: [{ associateId: 'a1', name: 'Pat Burgh', questions: ['Lives in Pennsylvania, but the home municipality (PSD code) isn’t set.'] }],
     });
     api.acknowledgeJurisdiction.mockResolvedValue({ ok: true });
-    renderAs('HR_ADMINISTRATOR', <TaxJurisdictions />, '/payroll/tax-jurisdictions');
+    renderAs('HR_ADMINISTRATOR', <LocalTaxTables />, '/payroll/tax-tables?tab=local');
     expect(await screen.findByText('Pittsburgh earned income tax')).toBeInTheDocument();
     expect(screen.queryByText('Columbus income tax')).toBeNull(); // reviewed — not in "Needs review"
     expect(screen.queryByText('Detroit income tax')).toBeNull(); // nobody owes it
     expect(screen.getByText('Questions to answer', { selector: 'h3, [class*="CardTitle"], div' })).toBeInTheDocument();
     expect(screen.getByText('Pat Burgh')).toBeInTheDocument();
-    expect(await screen.findByText(/Works in NJ, lives in PA/)).toBeInTheDocument();
+    // The reciprocity table is its own tab now (F500 G3); the engine link only shows to someone who can open it.
+    expect(screen.queryByText(/Works in NJ, lives in PA/)).toBeNull();
 
     await userEvent.click(screen.getByRole('row', { name: 'Open Pittsburgh earned income tax' }));
     const drawer = await screen.findByRole('dialog');
@@ -93,9 +94,14 @@ describe('<TaxJurisdictions>', () => {
     await waitFor(() => expect(api.acknowledgeJurisdiction).toHaveBeenCalledWith('PA-PITTSBURGH', undefined));
   });
 
+  it('the reciprocity table is its own tab', async () => {
+    renderAs('FINANCE_ACCOUNTANT', <ReciprocityTable />, '/payroll/tax-tables?tab=reciprocity');
+    expect(await screen.findByText(/Works in NJ, lives in PA/)).toBeInTheDocument();
+  });
+
   it('says so when the list fails to load', async () => {
     api.getJurisdictions.mockRejectedValue(new Error('boom'));
-    renderAs('HR_ADMINISTRATOR', <TaxJurisdictions />, '/payroll/tax-jurisdictions');
+    renderAs('HR_ADMINISTRATOR', <LocalTaxTables />, '/payroll/tax-tables?tab=local');
     expect(await screen.findByText('Could not load jurisdictions.')).toBeInTheDocument();
   });
 });

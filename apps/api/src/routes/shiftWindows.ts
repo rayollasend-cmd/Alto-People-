@@ -16,7 +16,9 @@ import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
  *   GET /admin/shift-windows/gaps         every client: shifts nobody leads,
  *                                         supervisors with no shift, floor
  *                                         supervisors with no shift or no
- *                                         shift supervisor
+ *                                         shift supervisor; every shift with
+ *                                         its leads; ?all=1 keeps the
+ *                                         all-clear clients too
  *   PUT /admin/users/:id/shift-windows    set a supervisor's windows
  *
  * The reads are open to whoever can view the users admin OR assign a
@@ -56,7 +58,10 @@ shiftWindowsRouter.get('/me/shift-windows', requireAuth, async (req, res) => {
 
 const CAN_READ = requireAnyCapability('view:hr-admin', 'manage:org');
 
-shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) => {
+shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (req, res) => {
+  // ?all=1 — every client with named shifts, the all-clear ones too (the
+  // Store leads page lists each shift with its lead, not only the gaps).
+  const all = req.query.all === '1' || req.query.all === 'true';
   const stores = await prisma.site.findMany({
     where: { deletedAt: null, isActive: true, client: { deletedAt: null, status: 'ACTIVE' } },
     select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
@@ -131,6 +136,29 @@ shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) 
         startMinute: w.startMinute,
         endMinute: w.endMinute,
       }));
+    // Every shift at the client with who leads it ("No lead" is an empty list).
+    const leadsByWindow = new Map<string, string[]>();
+    for (const u of sups) {
+      for (const w of u.windows) {
+        const k = `${w.locationId}|${w.label}`;
+        leadsByWindow.set(k, [...(leadsByWindow.get(k) ?? []), u.name]);
+      }
+    }
+    const allWindows = windows
+      .slice()
+      .sort(
+        (a, b) =>
+          (storeById.get(a.locationId)?.name ?? '').localeCompare(storeById.get(b.locationId)?.name ?? '') ||
+          a.startMinute - b.startMinute,
+      )
+      .map((w) => ({
+        locationId: w.locationId,
+        locationName: storeById.get(w.locationId)?.name ?? '',
+        label: w.label,
+        startMinute: w.startMinute,
+        endMinute: w.endMinute,
+        leads: leadsByWindow.get(`${w.locationId}|${w.label}`) ?? [],
+      }));
     const noShift = sups.filter((u) => u.windows.length === 0);
     // A lead only counts while they're an active shift supervisor here.
     const leadIds = new Set(sups.map((u) => u.userId));
@@ -152,10 +180,11 @@ shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) 
       .filter((f) => f.noLead || f.noShift);
     total += windows.length;
     covered += windows.length - uncovered.length;
-    if (uncovered.length === 0 && noShift.length === 0 && floorGaps.length === 0) continue;
+    if (!all && uncovered.length === 0 && noShift.length === 0 && floorGaps.length === 0) continue;
     clients.push({
       ...c,
       uncovered,
+      windows: allWindows,
       noShift: noShift.map((u) => u.userId),
       supervisors: sups,
       floorSupervisors: floorGaps,

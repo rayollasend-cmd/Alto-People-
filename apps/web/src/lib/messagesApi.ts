@@ -5,9 +5,18 @@ import { apiFetch } from './api';
 export interface MessagePerson {
   id: string;
   name: string;
+  /** False when `name` is the "Role · email" fallback (no name on file): the role line would repeat it. */
+  named?: boolean;
   role: string;
   roleLabel: string;
+  /** Where they work: their store, their placement, or their client. */
+  siteName?: string | null;
   photoUrl: string | null;
+}
+
+/** "Associate · Front Beach 218" — role and site, the line under a name. */
+export function personLine(p: Pick<MessagePerson, 'roleLabel' | 'siteName' | 'named'>): string {
+  return [p.named === false ? null : p.roleLabel, p.siteName].filter(Boolean).join(' · ');
 }
 
 export interface ConversationRow {
@@ -52,6 +61,11 @@ export function unreadMessages(): Promise<{ unread: number }> {
 
 export function messageDirectory(q: string): Promise<{ people: Array<MessagePerson & { clientName: string | null }> }> {
   return apiFetch(`/messages/directory${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+}
+
+/** The direct thread with one person, or who they are for a first-message draft (/messages?to=). */
+export function getDirect(userId: string): Promise<{ conversationId: string | null; person: MessagePerson }> {
+  return apiFetch(`/messages/direct/${encodeURIComponent(userId)}`);
 }
 
 export function startConversation(body: {

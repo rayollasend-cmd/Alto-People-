@@ -9,6 +9,7 @@ import { assertSameTenant } from '../lib/sameTenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
+import { enqueueAudit } from '../lib/audit.js';
 import {
   disciplineAssociateTemplate,
   disciplineManagerTemplate,
@@ -51,6 +52,8 @@ discipline118Router.get('/disciplinary-actions', VIEW, async (req, res) => {
     .enum(['ACTIVE', 'ACKNOWLEDGED', 'RESCINDED'])
     .optional()
     .parse(req.query.status);
+  // ?state=in-force — every action not rescinded (awaiting acknowledgment or acknowledged).
+  const state = z.enum(['in-force']).optional().parse(req.query.state);
   const kind = KIND.optional().parse(req.query.kind);
 
   const page = z.coerce.number().int().min(0).max(10_000).default(0).parse(req.query.page);
@@ -60,6 +63,7 @@ discipline118Router.get('/disciplinary-actions', VIEW, async (req, res) => {
       { tenantId: tenantIdForWrite(), associate: scopeAssociatesIncludingFormer(req.user!) },
       associateId ? { associateId } : {},
       status ? { status } : {},
+      state === 'in-force' ? { status: { in: ['ACTIVE', 'ACKNOWLEDGED'] as const } } : {},
       kind ? { kind } : {},
     ],
   };
@@ -101,8 +105,30 @@ discipline118Router.get('/disciplinary-actions', VIEW, async (req, res) => {
       rescindedAt: a.rescindedAt?.toISOString() ?? null,
       rescindedReason: a.rescindedReason,
       rescindedByEmail: a.rescindedBy?.email ?? null,
+      // The employee's own side (F500 G5), shown to HR on the action.
+      employeeResponse: a.employeeResponse,
+      employeeRespondedAt: a.employeeRespondedAt?.toISOString() ?? null,
     })),
   });
+});
+
+// ----- Summary ---------------------------------------------------------------
+//
+// The log's numbers (F500 2026-10-22: the page had none): actions in force
+// (not rescinded), those still awaiting the person's acknowledgment, how many
+// people hold a final warning in force (one step from termination), and how
+// many were issued in the last 90 days. Same reach as the list.
+
+discipline118Router.get('/disciplinary-actions/summary', VIEW, async (req, res) => {
+  const reach: Prisma.DisciplinaryActionWhereInput = { tenantId: tenantIdForWrite(), associate: scopeAssociatesIncludingFormer(req.user!) };
+  const since = new Date(Date.now() - 90 * 86_400_000);
+  const [inForce, awaitingAck, finals, issued90d] = await Promise.all([
+    prisma.disciplinaryAction.count({ where: { ...reach, status: { in: ['ACTIVE', 'ACKNOWLEDGED'] } } }),
+    prisma.disciplinaryAction.count({ where: { ...reach, status: 'ACTIVE' } }),
+    prisma.disciplinaryAction.findMany({ where: { ...reach, kind: 'FINAL_WARNING', status: { in: ['ACTIVE', 'ACKNOWLEDGED'] } }, select: { associateId: true }, distinct: ['associateId'], take: 10_000 }),
+    prisma.disciplinaryAction.count({ where: { ...reach, createdAt: { gte: since } } }),
+  ]);
+  res.json({ inForce, awaitingAck, finalWarningPeople: finals.length, issued90d });
 });
 
 // ----- Per-associate ladder rollup -----------------------------------------
@@ -260,8 +286,54 @@ discipline118Router.get(
         acknowledgedSig: a.acknowledgedSig,
         rescindedAt: a.rescindedAt?.toISOString() ?? null,
         rescindedReason: a.rescindedReason,
+        employeeResponse: a.employeeResponse,
+        employeeRespondedAt: a.employeeRespondedAt?.toISOString() ?? null,
       })),
     });
+  },
+);
+
+// ----- Respond (associate self-serve, F500 G5) ------------------------------
+// Acknowledging says "I received it", not "I agree". The employee may write
+// their side under a notice in force (once written, it can be rewritten while
+// the notice stands); HR reads it on the action. Only the subject may write.
+
+const ResponseInputSchema = z.object({
+  text: z.string().trim().min(1).max(2000),
+});
+
+discipline118Router.post(
+  '/disciplinary-actions/:id/response',
+  requireAuth,
+  async (req, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const input = ResponseInputSchema.parse(req.body);
+    const action = await prisma.disciplinaryAction.findUnique({ where: { id } });
+    if (!action || req.user!.associateId !== action.associateId) {
+      // Not theirs reads the same as not there: nothing about someone else's record.
+      throw new HttpError(404, 'not_found', 'Action not found.');
+    }
+    if (action.status === 'RESCINDED') {
+      throw new HttpError(409, 'rescinded', 'This notice was rescinded.');
+    }
+    const at = new Date();
+    await prisma.disciplinaryAction.update({
+      where: { id },
+      data: { employeeResponse: input.text, employeeRespondedAt: at },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: null,
+        tenantId: tenantIdForWrite(),
+        action: 'discipline.employee_response',
+        entityType: 'DisciplinaryAction',
+        entityId: id,
+        metadata: { length: input.text.length },
+      },
+      'discipline',
+    );
+    res.json({ ok: true, employeeRespondedAt: at.toISOString() });
   },
 );
 

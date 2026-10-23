@@ -256,13 +256,23 @@ export async function lateApprovedTime(db: Db, scheduleId: string, beforePeriodS
 }
 
 /** The inbox count: paydays that passed with no run, with the hours they left unpaid. */
-export async function missedPaydaysNeedingYou(db: Db, user: SessionUser): Promise<{ count: number; description: string }> {
+export async function missedPaydaysNeedingYou(db: Db, user: SessionUser): Promise<{ count: number; description: string; dueDate?: string | null }> {
   const ledger = await periodLedger(db, user);
   const n = ledger.missed.periods;
   if (n === 0) return { count: 0, description: 'Every past payday has a run.' };
+  // Which paydays, by schedule: "Fri, Oct 2 and Fri, Oct 16 (Biweekly A)" —
+  // the description used to repeat its title ("2 paydays passed with no run").
+  const day = (ymdStr: string) => new Date(`${ymdStr}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const words = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+  const bySchedule = ledger.schedules
+    .map((s) => ({ name: s.name, days: s.periods.filter((p) => p.status === 'MISSED').map((p) => p.payDate).sort() }))
+    .filter((s) => s.days.length > 0);
+  const which = bySchedule.map((s) => `${words(s.days.slice(0, 3).map(day))}${s.days.length > 3 ? ` and ${s.days.length - 3} more` : ''} (${s.name})`).join('; ');
+  const oldest = bySchedule.flatMap((s) => s.days).sort()[0] ?? null;
   return {
     count: n,
-    description: `${n} payday${n === 1 ? '' : 's'} passed with no run${ledger.missed.hours > 0 ? ` · ${ledger.missed.hours}h approved and unpaid for ${ledger.missed.people} ${ledger.missed.people === 1 ? 'person' : 'people'}` : ''}.`,
+    dueDate: oldest,
+    description: `${which}${ledger.missed.hours > 0 ? ` · ${ledger.missed.hours}h approved and unpaid for ${ledger.missed.people} ${ledger.missed.people === 1 ? 'person' : 'people'}` : ''}.`,
   };
 }
 

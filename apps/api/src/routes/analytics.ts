@@ -606,6 +606,8 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
           track: track as OnboardingTrackBreakdown['track'],
           count,
           medianDays: median(sorted),
+          // The median's sample: the page says "too few to tell" under 3.
+          completed: sorted.length,
         };
       })
       .sort((a, b) => b.count - a.count);
@@ -634,6 +636,7 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
         clientName: v.name,
         count: v.count,
         medianDays: median(v.days.sort((a, b) => a - b)),
+        completed: v.days.length,
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, ANALYTICS_TOP_CLIENTS);

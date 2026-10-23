@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download, GraduationCap, Plus, Sparkles } from 'lucide-react';
+import { GraduationCap, Plus, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -29,8 +29,6 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
-  FilterBar,
-  Input,
   Select,
   SkeletonRows,
   Textarea,
@@ -38,9 +36,10 @@ import {
 import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
-import { fmtDate, ymdLocal } from '@/lib/format';
+import { fmtDate } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
-import { downloadCsv } from '@/lib/csv';
+import { QueryError } from '@/components/ui/QueryError';
+import { useUrlParam } from '@/lib/useUrlState';
 import { pickOne } from '@/lib/validationCopy';
 
 const STATUSES: MentorshipStatus[] = [
@@ -72,8 +71,8 @@ export function MentorshipHome() {
   const [prefill, setPrefill] = useState<PairingPrefill | null>(null);
   const [completeTarget, setCompleteTarget] = useState<Mentorship | null>(null);
   const [completing, setCompleting] = useState(false);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<MentorshipStatus | ''>('');
+  // The status filter lives in the URL (?status=ACTIVE); search is the grid's own.
+  const [statusFilter, setStatusFilter] = useUrlParam<MentorshipStatus | ''>('status', '', ['', ...STATUSES]);
   // One in-flight action at a time — a double-click on Activate/Decline
   // used to fire the write twice.
   const [actionKey, setActionKey] = useState<string | null>(null);
@@ -92,121 +91,80 @@ export function MentorshipHome() {
     queryFn: () => listMentorships(),
   });
   const rows = refreshQuery.data?.mentorships ?? null;
-  const loadError = refreshQuery.error ? (refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Failed to load mentorships.') : null;
   const refresh = () => void refreshQuery.refetch();
 
   const filtered = useMemo(() => {
     if (!rows) return null;
-    const q = search.trim().toLowerCase();
-    return rows.filter(
-      (m) =>
-        (!q ||
-          m.mentorName.toLowerCase().includes(q) ||
-          m.menteeName.toLowerCase().includes(q)) &&
-        (!statusFilter || m.status === statusFilter),
-    );
-  }, [rows, search, statusFilter]);
-
-  const onExportCsv = () => {
-    if (!filtered) return;
-    downloadCsv(`mentorships-${ymdLocal()}.csv`, [
-      ['Mentor', 'Mentee', 'Focus skill', 'Status', 'Started', 'Ended', 'Created'],
-      ...filtered.map((m) => [
-        m.mentorName,
-        m.menteeName,
-        m.focusSkillName ?? '',
-        statusLabel(m.status),
-        m.startedAt ? fmtDate(m.startedAt) : '',
-        m.endedAt ? fmtDate(m.endedAt) : '',
-        fmtDate(m.createdAt),
-      ]),
-    ]);
-  };
+    return rows.filter((m) => !statusFilter || m.status === statusFilter);
+  }, [rows, statusFilter]);
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Mentorship"
         subtitle="Pair experienced people with newer ones. Status tracks the lifecycle from proposal to completion."
-        breadcrumbs={[{ label: 'Mentorship' }]}
-        primaryAction={
-          canManage ? (
-            <Button onClick={() => setShowNew(true)}>
-              <Plus className="mr-2 h-4 w-4" /> New pairing
-            </Button>
-          ) : undefined
-        }
-        secondaryActions={
-          <>
-            {canManage && (
-              <Button variant="outline" onClick={() => setShowSuggest(true)}>
-                <Sparkles className="mr-2 h-4 w-4" /> Suggest mentors
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              onClick={onExportCsv}
-              disabled={!filtered || filtered.length === 0}
-            >
-              <Download className="mr-2 h-4 w-4" /> Export CSV
-            </Button>
-          </>
+        actions={
+          canManage
+            ? [
+                { label: 'New pairing', icon: Plus, primary: true, onSelect: () => setShowNew(true) },
+                { label: 'Suggest mentors', icon: Sparkles, onSelect: () => setShowSuggest(true) },
+              ]
+            : undefined
         }
     >
-      <FilterBar>
-        <Input
-          placeholder="Search mentor or mentee…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-xs"
-          aria-label="Search mentor or mentee"
-        />
-        <Select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as MentorshipStatus | '')}
-          aria-label="Filter by status"
-          className="w-auto"
-        >
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>{statusLabel(s)}</option>
-          ))}
-        </Select>
-      </FilterBar>
       <Card>
         <CardContent className="p-0">
-          {loadError ? (
+          {refreshQuery.error ? (
             <div className="p-6">
-              <ErrorBanner>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>{loadError}</span>
-                  <Button size="sm" variant="outline" onClick={refresh}>
-                    Retry
-                  </Button>
-                </div>
-              </ErrorBanner>
+              <QueryError what="mentorships" query={refreshQuery} />
             </div>
-          ) : filtered === null ? (
+          ) : filtered === null || rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
+            // No search, filter or export over an empty list: the empty state
+            // names the two ways to start.
             <EmptyState
               icon={GraduationCap}
-              title={rows && rows.length > 0 ? 'No matches' : 'No mentorships yet'}
-              description={
-                rows && rows.length > 0
-                  ? 'No pairing matches the current search or status filter.'
-                  : 'Pair an experienced person with a newer one to start one.'
+              title="No mentorships yet"
+              description="Pair an experienced person with a newer one, or get mentor suggestions for a skill."
+              action={
+                canManage ? (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button onClick={() => setShowNew(true)}>
+                      <Plus className="mr-2 h-4 w-4" /> New pairing
+                    </Button>
+                    <Button variant="outline" onClick={() => setShowSuggest(true)}>
+                      <Sparkles className="mr-2 h-4 w-4" /> Suggest mentors
+                    </Button>
+                  </div>
+                ) : undefined
               }
             />
           ) : (
             <DataGrid<NonNullable<typeof filtered>[number]>
               id="mentorships"
               caption="Mentorship pairings"
+              noun={{ one: 'pairing', many: 'pairings' }}
               rows={filtered}
               rowKey={(m) => m.id}
-              search={false}
-              urlState={false}
+              search={{ placeholder: 'Search mentor or mentee…' }}
+              urlKey="pairings"
               exportCsv={{ filename: 'mentorships' }}
+              filters={
+                <Select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as MentorshipStatus | '')}
+                  aria-label="Filter by status"
+                  className="w-auto"
+                >
+                  <option value="">All statuses</option>
+                  {STATUSES.map((s) => (
+                    <option key={s} value={s}>{statusLabel(s)}</option>
+                  ))}
+                </Select>
+              }
+              activeFilters={statusFilter ? 1 : 0}
+              onClearFilters={() => setStatusFilter('')}
               columns={[
                 { key: 'mentor', header: 'Mentor', accessor: (m) => m.mentorName, sortable: true, primary: true, className: 'font-medium text-white' },
                 { key: 'mentee', header: 'Mentee', accessor: (m) => m.menteeName, sortable: true, cardMeta: true },

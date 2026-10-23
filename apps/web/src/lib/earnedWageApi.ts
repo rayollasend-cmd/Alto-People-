@@ -46,6 +46,14 @@ export function requestEarnedWage(amount: number): Promise<{ id: string; status:
 export interface EwaDesk {
   settings: { enabled: boolean; capPct: number; fee: number; maxPerPeriod: number };
   outstanding: { count: number; amount: number };
+  /** Advances drawn on the pay period running today. */
+  thisPeriod?: { count: number; amount: number };
+  /** What the latest payroll that recovered anything took back. */
+  lastRecovery?: { runId: string; on: string; amount: number; advances: number } | null;
+  /** Paid advances whose period ended and the check couldn't fully recover. */
+  rolledOver?: { count: number; amount: number };
+  /** People who drew an advance in the last 90 days. */
+  people?: number;
   advances: EwaAdvance[];
 }
 

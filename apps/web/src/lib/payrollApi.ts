@@ -350,6 +350,8 @@ export interface PayrollYtdMonth {
 
 export interface PayrollYtdResponse {
   taxYear: number;
+  /** Paid runs whose stored totals their paychecks don't add up to: their money isn't in this report. */
+  notInReport?: Array<{ id: string; periodStart: string; periodEnd: string; totalGross: number; totalNet: number; paychecks: number }>;
   /** Twelve months of the year (older APIs leave it out). */
   monthly?: PayrollYtdMonth[];
   totals: {

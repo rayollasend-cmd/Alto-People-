@@ -153,3 +153,24 @@ export const RECOMMENDED_CATEGORIES = [
   'Mileage',
   'Other',
 ] as const;
+
+export interface ReimbursementMoney {
+  count: number;
+  amount: number;
+}
+
+/** The desk's numbers over every report in reach (the list itself is capped at 200). */
+export interface ReimbursementSummaryCounts {
+  toApprove: ReimbursementMoney;
+  readyToSettle: ReimbursementMoney;
+  queuedForPayroll: ReimbursementMoney;
+  paidThisMonth: ReimbursementMoney;
+}
+export const getReimbursementSummary = () => apiFetch<ReimbursementSummaryCounts>('/reimbursements/summary');
+
+/** Settle several approved reports at once — each its own settle; the ones that can't are skipped with why. */
+export const settleReimbursementsBulk = (ids: string[], note?: string) =>
+  apiFetch<{ settled: Array<{ id: string; amount: number }>; skipped: Array<{ id: string; code: string; reason: string }>; amount: number }>('/reimbursements/settle-bulk', {
+    method: 'POST',
+    body: note ? { ids, note } : { ids },
+  });

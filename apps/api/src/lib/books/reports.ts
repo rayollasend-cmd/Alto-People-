@@ -172,6 +172,60 @@ export function monthsBetween(from: string, to: string): Array<{ key: string; la
   return out;
 }
 
+/* ---- Comparison ranges ---------------------------------------------------- */
+
+export type CompareKind = 'prior' | 'yoy';
+
+const lastDayOf = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+const parts = (s: string) => s.split('-').map(Number) as [number, number, number];
+const fmtYmd = (y: number, m: number, d: number) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+const isMonthEnd = (s: string) => {
+  const [y, m, d] = parts(s);
+  return d === lastDayOf(y, m);
+};
+
+/** A date `n` months away; the day clamps to the month (Mar 31 − 1 month = Feb 28), or lands on its last day with `toEnd`. */
+export function shiftMonths(s: string, n: number, toEnd = false): string {
+  const [y, m, d] = parts(s);
+  const idx = y * 12 + (m - 1) + n;
+  const ny = Math.floor(idx / 12);
+  const nm = (idx % 12) + 1;
+  const last = lastDayOf(ny, nm);
+  return fmtYmd(ny, nm, toEnd ? last : Math.min(d, last));
+}
+
+function addDays(s: string, n: number): string {
+  return new Date(Date.parse(`${s}T00:00:00.000Z`) + n * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * The range a period statement is compared with. `yoy`: the same dates a
+ * year earlier. `prior`: the same span just before — the month before a
+ * month (or month-to-date), the quarter before a quarter, last year's for
+ * a year (or year-to-date), the same number of months before any other
+ * range that starts on the 1st, and the same number of days before one
+ * that doesn't.
+ */
+export function compareRange(from: string, to: string, kind: CompareKind): { from: string; to: string } {
+  if (kind === 'yoy') return { from: shiftMonths(from, -12), to: shiftMonths(to, -12, isMonthEnd(to)) };
+  const [fy, fm, fd] = parts(from);
+  const [ty, tm] = parts(to);
+  if (fd === 1) {
+    const months = ty * 12 + tm - (fy * 12 + fm) + 1;
+    const sameQuarter = fy === ty && Math.floor((fm - 1) / 3) === Math.floor((tm - 1) / 3);
+    const shift = months === 1 ? 1 : (fm - 1) % 3 === 0 && sameQuarter ? 3 : fm === 1 && fy === ty ? 12 : months;
+    return { from: shiftMonths(from, -shift), to: shiftMonths(to, -shift, isMonthEnd(to)) };
+  }
+  const days = Math.round((Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86_400_000) + 1;
+  const end = addDays(from, -1);
+  return { from: addDays(end, -(days - 1)), to: end };
+}
+
+/** The date a point-in-time statement is compared with: a month earlier (prior) or a year earlier (yoy); a month end stays a month end. */
+export function compareAsOf(asOf: string, kind: CompareKind): string {
+  return shiftMonths(asOf, kind === 'yoy' ? -12 : -1, isMonthEnd(asOf));
+}
+
 /* ---- Balance sheet ------------------------------------------------------- */
 
 /**

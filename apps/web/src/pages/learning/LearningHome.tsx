@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, BookOpen, GraduationCap, Plus, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { downloadCsv } from '@/lib/csv';
-import { fmtDate, ymdLocal } from '@/lib/format';
+import { fmtDate } from '@/lib/format';
 import {
   archiveCourse,
   completeEnrollment,
@@ -57,9 +56,14 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
+import { useUrlParam } from '@/lib/useUrlState';
+import { LEARNING_RELATED, LearningSummary } from './LearningSummary';
 import { toast } from 'sonner';
 
-type Tab = 'courses' | 'enrollments' | 'expiring';
+const TABS = ['courses', 'enrollments', 'expiring'] as const;
+type Tab = (typeof TABS)[number];
+const ENROLLMENT_FILTERS = ['ALL', 'OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'EXPIRED', 'WAIVED'] as const;
+type EnrollmentFilter = (typeof ENROLLMENT_FILTERS)[number];
 type TFn = ReturnType<typeof useI18n>['t'];
 
 function courseStatusLabel(t: TFn, s: CourseStatus): string {
@@ -86,7 +90,8 @@ export function LearningHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const canViewAdmin = user ? hasCapability(user.role, 'view:compliance') : false;
-  const [tab, setTab] = useState<Tab>('courses');
+  // The tab lives in the URL (?tab=expiring), so the tiles and Back land on it.
+  const [tab, setTab] = useUrlParam<Tab>('tab', 'courses', TABS, { history: 'push' });
   const { t } = useI18n();
 
   // Associates got the compliance-admin console (associate search, CSV
@@ -101,8 +106,9 @@ export function LearningHome() {
     <ListTemplate
         title={t('lrn.crumb')}
         subtitle={t('learning.subtitle')}
-        breadcrumbs={[{ label: t('learning.crumbMe') }, { label: t('lrn.crumb') }]}
+        related={LEARNING_RELATED}
     >
+      <LearningSummary />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="courses">
@@ -683,7 +689,8 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const { t } = useI18n();
   const term = useTerm();
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<EnrollmentStatus | 'ALL'>('ALL');
+  // The filter lives in the URL (?status=OPEN), so the "Not finished" tile lands on it.
+  const [statusFilter, setStatusFilter] = useUrlParam<EnrollmentFilter>('status', 'ALL', ENROLLMENT_FILTERS);
   const [completeId, setCompleteId] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
   const [waiveId, setWaiveId] = useState<string | null>(null);
@@ -707,23 +714,10 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
       (!q ||
         e.associateName.toLowerCase().includes(q) ||
         e.courseTitle.toLowerCase().includes(q)) &&
-      (statusFilter === 'ALL' || e.status === statusFilter),
+      (statusFilter === 'ALL' ||
+        (statusFilter === 'OPEN' ? e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS' : e.status === statusFilter)),
   );
 
-  const exportCsv = () => {
-    downloadCsv(`enrollments-${ymdLocal()}.csv`, [
-      [t('learning.colCourse'), term('worker'), t('learning.colStatus'), t('learning.colCompleted'), t('learning.colExpires'), t('learning.colScore'), t('learning.colAssigned')],
-      ...filtered.map((e) => [
-        e.courseTitle,
-        e.associateName,
-        statusLabel(e.status),
-        e.completedAt ? fmtDate(e.completedAt) : '',
-        e.expiresAt ? fmtDate(e.expiresAt) : '',
-        e.score ?? '',
-        fmtDate(e.assignedAt),
-      ]),
-    ]);
-  };
 
   return (
     <div className="space-y-4">
@@ -739,25 +733,17 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
           size="sm"
           className="w-40"
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as EnrollmentStatus | 'ALL')}
+          onChange={(e) => setStatusFilter(e.target.value as EnrollmentFilter)}
           aria-label={t('learning.filterEnrollmentsAria')}
         >
           <option value="ALL">{t('learning.allStatuses')}</option>
+          <option value="OPEN">{t('learning.statusOpen')}</option>
           <option value="ASSIGNED">{t('learning.statusAssigned')}</option>
           <option value="IN_PROGRESS">{t('learning.statusInProgress')}</option>
           <option value="COMPLETED">{t('lrn.done')}</option>
           <option value="EXPIRED">{t('learning.statusExpired')}</option>
           <option value="WAIVED">{t('lrn.waived')}</option>
         </Select>
-        <Button
-          size="sm"
-          variant="secondary"
-          className="ml-auto"
-          onClick={exportCsv}
-          disabled={filtered.length === 0}
-        >
-          {t('learning.exportCsv')}
-        </Button>
       </div>
     <Card>
       <CardContent className="p-0">
@@ -904,18 +890,6 @@ function ExpiringTab() {
     await expiringQuery.refetch();
   };
 
-  const exportCsv = () => {
-    downloadCsv(`expiring-${days}d-${ymdLocal()}.csv`, [
-      [t('learning.colCourse'), term('worker'), t('lrn.required'), t('learning.colExpires'), t('learning.colDaysLeft')],
-      ...(rows ?? []).map((e) => [
-        e.courseTitle,
-        e.associateName,
-        e.isRequired ? t('me.yes') : t('me.no'),
-        fmtDate(e.expiresAt),
-        e.daysLeft,
-      ]),
-    ]);
-  };
 
   return (
     <div className="space-y-4">
@@ -930,15 +904,6 @@ function ExpiringTab() {
             label: t('learning.nDays', { n: w }),
           }))}
         />
-        <Button
-          size="sm"
-          variant="secondary"
-          className="ml-auto"
-          onClick={exportCsv}
-          disabled={!rows || rows.length === 0}
-        >
-          {t('learning.exportCsv')}
-        </Button>
       </div>
       <Card>
         <CardContent className="p-0">

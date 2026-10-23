@@ -1567,6 +1567,10 @@ model Conversation {
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
   lastMessageAt DateTime?        @db.Timestamptz(6)
   lastPreview   String?          @db.VarChar(160)
+  /// F500 G5: a DIRECT thread's two user ids, sorted and joined by ":" — one
+  /// direct thread per pair of people per tenant (two clicks made two). Null
+  /// for groups and store channels.
+  directKey     String?          @db.VarChar(80)
 
   client       Client?                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   location     Site?                     @relation(fields: [locationId], references: [id], onDelete: SetNull)
@@ -1574,6 +1578,7 @@ model Conversation {
   participants ConversationParticipant[]
   messages     Message[]
 
+  @@unique([tenantId, directKey])
   @@index([clientId, kind])
   @@index([lastMessageAt(sort: Desc)])
   @@index([tenantId])
@@ -8629,6 +8634,8 @@ model Report {
   createdAt   DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime?    @db.Timestamptz(6)
+  /// F500 G4: when it last ran — by hand from the list or by a schedule's delivery.
+  lastRunAt   DateTime?    @db.Timestamptz(6)
 
   createdBy User?            @relation("ReportCreator", fields: [createdById], references: [id], onDelete: SetNull)
   schedules ReportSchedule[]
@@ -9474,6 +9481,9 @@ model DisciplinaryAction {
   issuedById      String?          @db.Uuid
   acknowledgedAt  DateTime?        @db.Timestamptz(6)
   acknowledgedSig String?
+  /// F500 G5: the employee's own side, written under the notice (acknowledging is not agreeing). Up to 2,000 characters.
+  employeeResponse    String?
+  employeeRespondedAt DateTime?        @db.Timestamptz(6)
   rescindedAt     DateTime?        @db.Timestamptz(6)
   rescindedReason String?
   rescindedById   String?          @db.Uuid
@@ -13873,6 +13883,22 @@ model StatusIncidentUpdate {
   incident   StatusIncident      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
   @@index([incidentId, at])
+}
+
+/// F500 G5: someone who asked the public status page for incident updates by email.
+/// Double opt-in: updates go only to a confirmed address, and every one carries an
+/// unsubscribe link. The confirm and unsubscribe links are HMAC-signed over the id
+/// (lib/statusSubscribers), so no secret is stored here.
+model StatusSubscriber {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The platform operator's tenant (the status page is the platform's, not a customer's).
+  tenantId    String    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  email       String    @db.VarChar(254)
+  confirmedAt DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
 }
 
 // ===== Labor-demand forecasting (Brief 3-4) =========================// A transparent forecast per site and org week: last year scaled to the

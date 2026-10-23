@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -15,7 +14,7 @@ import { grantAssociateQual } from '@/lib/qualApi';
 import { useAuth, useTenant } from '@/lib/auth';
 import { TransportExpiringSection } from '@/pages/transport/TransportDesk';
 import { hasCapability } from '@/lib/roles';
-import { usePersistentState } from '@/lib/usePersistentState';
+import { useUrlParam, useUrlState, useUrlWriter, urlNumber } from '@/lib/useUrlState';
 import { useSelection, type Selection } from '@/lib/useSelection';
 import {
   Badge,
@@ -34,16 +33,19 @@ import {
   DrawerHeader,
   DrawerTitle,
   ErrorBanner,
+  EmptyState,
   Input,
   SegmentedControl,
   SkeletonRows,
 } from '@/components/ui';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { fmtDate, ymdLocal } from '@/lib/format';
-import { ExpirationAtRisk, ExpirationTimeline, applyRiskFilters, type RiskFilters } from './ExpirationsRisk';
+import { ExpirationAtRisk, ExpirationTimeline, applyRiskFilters, useExpirationRisk, type RiskFilters } from './ExpirationsRisk';
 import type { ExpirationRisk } from '@/lib/expirations113Api';
 import { nextInQueue } from '@/lib/queueNext';
 
@@ -58,6 +60,10 @@ import { nextInQueue } from '@/lib/queueNext';
  * with new acquiredAt + expiresAt. Manage:scheduling required.
  */
 type ExpView = 'risk' | 'timeline' | 'list';
+const VIEWS: readonly ExpView[] = ['risk', 'timeline', 'list'];
+type Within = 30 | 60 | 90;
+const WITHIN = urlNumber({ min: 30, max: 90, integer: true });
+const TYPES = ['all', 'cert'] as const;
 
 /**
  * Expirations, three ways: At risk (what will stop someone working a shift
@@ -67,23 +73,65 @@ type ExpView = 'risk' | 'timeline' | 'list';
 export function ExpirationsHome() {
   const { user } = useAuth();
   const canRenew = user ? hasCapability(user.role, 'manage:scheduling') : false;
-  const [params, setParams] = useSearchParams();
-  const raw = params.get('view');
-  const view: ExpView = raw === 'timeline' || raw === 'list' ? raw : 'risk';
+  const [view, setView] = useUrlParam<ExpView>('view', 'risk', VIEWS);
+  const write = useUrlWriter();
   const [filters, setFilters] = useState<RiskFilters>({ clientId: '', storeId: '', qualificationId: '', q: '' });
   const [renewTarget, setRenewTarget] = useState<ExpirationItem | null>(null);
   const qc = useQueryClient();
-  const setView = (v: ExpView) => {
-    const next = new URLSearchParams(params);
-    if (v === 'risk') next.delete('view');
-    else next.set('view', v);
-    setParams(next, { replace: true });
-  };
+  // The totals over every view: what has lapsed, what lapses within 30
+  // days (the full list's own counts), and what already blocks a shift.
+  const totals = useQuery({
+    queryKey: ['ExpirationsHome', 'totals'],
+    queryFn: () => getExpirations({ days: 30 }),
+  });
+  const risk = useExpirationRisk();
+  const expired = totals.data?.counts.expired;
+  const due30 = totals.data?.counts.dueSoon;
+  const blocking = risk.data?.atRisk.length;
+  /** A tile opens the list it counts: the full list on its bucket. */
+  const openList = (within: Within | null) =>
+    write((p) => {
+      p.set('view', 'list');
+      p.delete('type');
+      if (within && within !== 60) p.set('within', String(within));
+      else p.delete('within');
+    });
+  const allQuiet = expired === 0 && due30 === 0 && blocking === 0;
   return (
     <ListTemplate
       title="Expirations"
       subtitle="Credentials that lapse — first the ones that would stop someone working a shift they’re already on."
-      breadcrumbs={[{ label: 'Compliance', to: '/compliance' }, { label: 'Expirations' }]}
+      summary={
+        totals.data && risk.data ? (
+          <MetricStrip
+            label="Expirations at a glance"
+            empty={allQuiet ? 'Nothing has expired, nothing lapses in the next 30 days, and no shift is blocked.' : undefined}
+          >
+            <MetricCard
+              label="Blocking a shift"
+              value={String(blocking ?? 0)}
+              tone={(blocking ?? 0) > 0 ? 'alert' : 'neutral'}
+              hint="A lapse before a shift that needs it"
+              onClick={() => setView('risk')}
+              selected={view === 'risk'}
+            />
+            <MetricCard
+              label="Expired"
+              value={String(expired ?? 0)}
+              tone={(expired ?? 0) > 0 ? 'alert' : 'neutral'}
+              hint="Lapsed and not renewed"
+              onClick={() => openList(null)}
+            />
+            <MetricCard
+              label="Due in 30 days"
+              value={String(due30 ?? 0)}
+              tone={(due30 ?? 0) > 0 ? 'warning' : 'neutral'}
+              hint="Lapsing this month"
+              onClick={() => openList(30)}
+            />
+          </MetricStrip>
+        ) : undefined
+      }
     >
       <SegmentedControl
         ariaLabel="How to see expirations"
@@ -136,16 +184,11 @@ function ExpirationsListView() {
   const tenant = useTenant();
   const showTransport = !!user && hasCapability(user.role, 'view:transport') && tenant.modules.transportation !== false;
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [days, setDays] = usePersistentState<30 | 60 | 90>(
-    'alto:list.expirations.days.v1',
-    60,
-    (v): v is 30 | 60 | 90 => v === 30 || v === 60 || v === 90,
-  );
-  const [filter, setFilter] = usePersistentState<'all' | 'cert'>(
-    'alto:list.expirations.type.v1',
-    'all',
-    (v): v is 'all' | 'cert' => v === 'all' || v === 'cert',
-  );
+  // The window and the type live in the URL (?within=30&type=cert), so a
+  // tile above can open the list on its bucket and a link keeps the view.
+  const [rawDays, setDays] = useUrlState<number>('within', 60, WITHIN);
+  const days: Within = rawDays === 30 || rawDays === 90 ? rawDays : 60;
+  const [filter, setFilter] = useUrlParam<'all' | 'cert'>('type', 'all', TYPES);
   const [search, setSearch] = useState('');
   const [renewTarget, setRenewTarget] = useState<ExpirationItem | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -312,11 +355,11 @@ function ExpirationsListView() {
           ]}
         />
         <SearchInput
-          className="w-64"
-          wrapperClassName="ml-auto"
+          className="w-full sm:w-72"
+          wrapperClassName="w-full sm:ml-auto sm:w-auto"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search associate or qualification…"
+          placeholder="Search people or credentials"
           aria-label="Search expirations"
         />
         <Button
@@ -341,6 +384,24 @@ function ExpirationsListView() {
         </ErrorBanner>
       ) : data === null ? (
         <Card><CardContent><SkeletonRows count={5} /></CardContent></Card>
+      ) : !q && data.counts.expired + data.counts.dueSoon + data.counts.dueLater === 0 ? (
+        // Three empty grids said "nothing" three times: one state instead.
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="p-0">
+              <EmptyState
+                icon={Clock}
+                title="Nothing expired or expiring within a year"
+                description={
+                  filter === 'cert'
+                    ? 'No certification has lapsed or comes due in the next 365 days.'
+                    : 'No credential has lapsed or comes due in the next 365 days. Credentials with an expiry date show here as they come due.'
+                }
+              />
+            </CardContent>
+          </Card>
+          {showTransport && <TransportExpiringSection days={days} />}
+        </div>
       ) : (
         <div className="space-y-4">
           <Bucket
@@ -583,6 +644,18 @@ function Bucket({
       : []),
   ];
 
+  // An empty bucket is one line, not a card with an empty grid in it.
+  if (items.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex items-center gap-2 px-4 py-3">
+          <Icon className="h-4 w-4 text-silver" aria-hidden="true" />
+          <span className="text-sm uppercase tracking-wider text-silver">{title}</span>
+          <span className="text-sm text-silver/80">· {emptyHint}</span>
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <Card>
       <CardContent className="p-0">

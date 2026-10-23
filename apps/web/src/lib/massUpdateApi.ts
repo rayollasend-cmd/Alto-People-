@@ -17,6 +17,8 @@ export interface MassUpdateChanges {
   departmentId?: string | null;
   managerId?: string | null;
   payrollScheduleId?: string | null;
+  costCenterId?: string | null;
+  jobProfileId?: string | null;
 }
 
 export interface MassUpdatePreviewRow {

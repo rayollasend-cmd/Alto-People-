@@ -25,7 +25,8 @@ export interface PayMenuGroup {
 
 export const PAY_MENU_GROUPS: readonly PayMenuGroup[] = [
   { key: 'run', label: 'Run payroll', children: ['payroll', 'pay-schedules', 'payroll-banking', 'manual-checks', 'daily-pay', 'earned-wage', 'payroll-go-live', 'cash-forecast'] },
-  { key: 'taxes', label: 'Taxes & filings', children: ['payroll-taxes', 'payroll-tax', 'state-tax', 'tax-jurisdictions', 'wotc', 'aca', 'certified-payroll', 'contractors'] },
+  // 'payroll-tax' is Year-end, 'state-tax' is Tax tables (one home each — F500 G3).
+  { key: 'taxes', label: 'Taxes & filings', children: ['payroll-taxes', 'payroll-tax', 'state-tax', 'payroll-compliance', 'wotc', 'aca', 'certified-payroll', 'contractors'] },
   { key: 'deductions', label: 'Deductions', children: ['garnishments', 'retirement', 'benefits', 'carrier-feeds', 'reimbursements', 'tuition', 'equity'] },
   { key: 'billing', label: 'Billing & receivables', children: ['statements', 'pay-bill', 'fieldglass-setup'] },
   { key: 'setup', label: 'Payroll setup', children: ['payrules', 'compensation', 'market-rates'] },

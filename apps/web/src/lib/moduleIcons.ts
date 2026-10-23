@@ -17,7 +17,6 @@ import {
   PhoneOff as CallOutsIcon,
   HeartHandshake as RetentionIcon,
   MapPinned as StateTaxIcon,
-  MapPinHouse as TaxJurisdictionsIcon,
   CalendarCheck2 as PayrollTaxesIcon,
   Construction as CertifiedPayrollIcon,
   FileLock2 as GarnishmentsIcon,
@@ -30,6 +29,7 @@ import {
   Stethoscope as LeaveIcon,
   FileWarning as UnemploymentClaimsIcon,
   HardHat as WorkersCompIcon,
+  TrafficCone,
   Activity,
   Award,
   Briefcase,
@@ -82,6 +82,7 @@ import {
   FileSpreadsheet as StatementsIcon,
   FolderTree as OrgUnitsIcon,
   Gavel as DisciplineIcon,
+  FileBadge as MyNoticesIcon,
   GraduationCap as LearningIcon,
   HandHeart as MentorshipIcon,
   Heart as VolunteerIcon,
@@ -105,7 +106,6 @@ import {
   LogOut as SeparationIcon,
   Map as RegionIcon,
   MapPin as SitesIcon,
-  Megaphone as MegaphoneIcon,
   MessageCircle as HrCasesIcon,
   MessageCircleQuestion as PortalRequestsIcon,
   MessagesSquare as CommunicationsIcon,
@@ -170,6 +170,7 @@ import {
   FolderOpen as MyRecordsIcon,
 } from 'lucide-react';
 import { CalendarSync as DailyPayIcon, NotebookPen as ManualChecksIcon, CalendarCog as PaySchedulesIcon } from 'lucide-react';
+import { ChartNoAxesCombined as PeopleAnalyticsIcon } from 'lucide-react';
 import type { DoorKey } from './modules';
 import type { ModuleKey } from './modules';
 
@@ -248,6 +249,8 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'probation': ProbationIcon,
   'holidays': HolidayIcon,
   'discipline': DisciplineIcon,
+  // An associate's own notices on file — not the HR discipline desk's gavel (one glyph per module).
+  'my-discipline': MyNoticesIcon,
   'separations': SeparationIcon,
   'internal-jobs': InternalJobsIcon,
   'vaccinations': VaccinationsIcon,
@@ -275,6 +278,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'transport': TransportIcon,
   'emergency': EmergencyIcon,
   'programs': ProgramsIcon,
+  'safety-eeo': TrafficCone,
   'season-planner': SeasonPlannerIcon,
   'supervisor-corps': SupervisorCorpsIcon,
   forecast: LineChart,
@@ -311,7 +315,6 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'daily-pay': DailyPayIcon,
   'manual-checks': ManualChecksIcon,
   'state-tax': StateTaxIcon,
-  'tax-jurisdictions': TaxJurisdictionsIcon,
   'wotc': WotcIcon,
   'aca': AcaIcon,
   'payroll-compliance': PayrollComplianceIcon,
@@ -338,7 +341,6 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'sites': SitesIcon,
   'branding': BrandingIcon,
   'billing': BillingIcon,
-  'dircomms': MegaphoneIcon,
   'communications': CommunicationsIcon,
   'analytics': AnalyticsIcon,
   'product-analytics': ProductAnalyticsIcon,
@@ -347,6 +349,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'reliability': Activity,
   'tasks': ListTodo,
   'reports': ReportsIcon,
+  'people-analytics': PeopleAnalyticsIcon,
   'integrations': IntegrationsIcon,
 };
 

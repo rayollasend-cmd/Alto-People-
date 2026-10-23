@@ -97,4 +97,16 @@ describe('Employers of record', () => {
     expect(screen.getByRole('button', { name: 'Add employer' })).toBeDisabled();
     expect(createEmployer).not.toHaveBeenCalled();
   });
+
+  // F500 G4: what the tax forms can't print without, said on the row, with the fix one click away.
+  it('warns on a row with no EIN or address and opens the editor from "Add EIN"', async () => {
+    const user = userEvent.setup();
+    renderAsAdmin(<EmployersAdmin />, '/admin/employers');
+    expect(await screen.findByText('Missing EIN: W-2s can’t be filed')).toBeInTheDocument();
+    expect(screen.getByText('No address')).toBeInTheDocument();
+    // The complete row carries neither warning: one of each, both on Coastal.
+    expect(screen.getAllByText('Missing EIN: W-2s can’t be filed')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Add EIN' }));
+    expect(await screen.findByRole('heading', { name: 'Edit Coastal Payroll Services Inc' })).toBeInTheDocument();
+  });
 });

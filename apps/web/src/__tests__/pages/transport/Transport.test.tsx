@@ -172,7 +172,8 @@ describe('<RideHome> — the associate’s Ride tab', () => {
     await userEvent.click(sign);
     expect(apiFetch).toHaveBeenCalledWith('/transport/me/authorization', { method: 'POST', body: { typedName: 'Kim Nguyen', version: 1 } });
     expect(await screen.findByText('No rides booked')).toBeInTheDocument();
-    // Once signed: when, as whom, and the way out.
+    // Once signed: when, as whom, and the way out — under Charges (F500 G2).
+    await userEvent.click(screen.getByRole('radio', { name: 'Charges' }));
     expect(screen.getByText(/Signed .* as Kim Nguyen/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Signed copy (PDF)' })).toHaveAttribute('href', '/api/documents/doc-1/download');
     expect(screen.getByRole('button', { name: 'Withdraw' })).toBeInTheDocument();
@@ -453,6 +454,28 @@ describe('<TransportHome> — the command center', () => {
     expect(body.driverUserId).toBe('d1');
     expect(body.direction).toBe('TO_WORK');
     expect(body.rides.map((r) => r.rideId)).toEqual(['r1', 'r2']);
+  });
+
+  it('says "needs a van" once (the section, not a tile too), and a quiet day is one line per section (F500 G5)', async () => {
+    routes((path) => {
+      // Answer for the day asked (after 6 PM a quiet board opens on tomorrow).
+      if (path.startsWith('/transport/board')) {
+        const asked = new URL(`http://x${path}`).searchParams.get('date');
+        return { ...board(), ...(asked ? { date: asked } : {}), rides: [], kpis: { ...board().kpis, booked: 0, needsVan: 0, openIssues: 0 } };
+      }
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
+    // The board re-renders once the day settles (after 6 PM a quiet board moves to tomorrow): wait for it, then query fresh.
+    await waitFor(
+      () => {
+        const kpis = screen.getByTestId('transport-kpis');
+        expect(within(kpis).getByText('Booked')).toBeTruthy();
+        expect(within(kpis).queryByText('Needs a van')).toBeNull();
+        expect(screen.getByTestId('needs-van-none').textContent).toMatch(/Everyone has a van/);
+        expect(screen.getByTestId('runs-none').textContent).toMatch(/No runs yet/);
+      },
+      { timeout: 3000 },
+    );
   });
 
   it('the rides list tells a manager’s waiver from a ride nobody could charge, and flags rides that still need a signature', async () => {
@@ -817,6 +840,8 @@ describe('the Ride tab, one tap at a time', () => {
     const past = ride({ id: 'old', status: 'COMPLETED', direction: 'FROM_WORK', targetAt: hoursFromNow(-30) });
     routes((path) => (path === '/transport/me' ? me({ rides: [past] }) : undefined));
     renderAs('ASSOCIATE', <RideHome />);
+    // Past rides are under History (F500 G2).
+    await userEvent.click(await screen.findByRole('radio', { name: 'History' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Book again' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('radio', { name: 'Home' })).toHaveAttribute('aria-checked', 'true');

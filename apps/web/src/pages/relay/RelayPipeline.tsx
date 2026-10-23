@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { DeskChip, FacePile, OwnerControl, SectionHead } from './RelayParts';
 import {
   DESK_BAR,
+  DESK_LABELS,
   STAGE_LABELS,
   claimKey,
   type Claim,
@@ -46,9 +47,12 @@ export function RelayPipeline({
   meId,
   onOpenLane,
   onChanged,
+  onClearLens,
 }: {
   data: RelayBoardData;
   lens: Desk | 'ALL';
+  /** Show every desk's lanes (the desk lens was a filter nobody could see). */
+  onClearLens?: () => void;
   claims: Record<string, Claim>;
   desks: Record<Desk, DeskPerson[]> | undefined;
   meId: string | undefined;
@@ -93,9 +97,9 @@ export function RelayPipeline({
           title="Kept when the first check lands within 21 days of the first shift worked — never late, never short."
         >
           <Trophy className="h-3.5 w-3.5" aria-hidden="true" />
-          {p.keptPct !== null ? `${p.keptPct}% of promises kept` : 'Promise: no checks yet'}
+          {p.keptPct !== null ? `First paycheck on time: ${p.keptPct}%` : 'First paycheck on time: no checks yet'}
           {p.medianDays !== null && <span className="text-gold/70">· median {p.medianDays}d</span>}
-          <span className="text-gold/80">· {p.windowDays} days</span>
+          <span className="text-gold/80">· last {p.windowDays} days</span>
         </span>
       </SectionHead>
 
@@ -158,12 +162,28 @@ export function RelayPipeline({
               {STAGE_LABELS[stage]} ✕
             </Button>
           )}
+          {lens !== 'ALL' && onClearLens && (
+            <Button size="xs" variant="secondary" onClick={onClearLens} aria-label={`Show every desk's lanes, not just ${DESK_LABELS[lens]}'s`}>
+              {DESK_LABELS[lens]}’s lanes ✕
+            </Button>
+          )}
         </div>
         {lanes.length === 0 ? (
           <p className="px-4 py-4 text-sm text-silver">
-            {data.lanes.length === 0
-              ? 'No first-paycheck lanes in flight — every recent hire has been paid.'
-              : 'No lanes match — clear a filter to see the rest.'}
+            {data.lanes.length === 0 ? (
+              'No first-paycheck lanes in flight — every recent hire has been paid.'
+            ) : lens !== 'ALL' && !stage && !stalledOnly && !search.trim() ? (
+              <>
+                None of the {data.lanes.length} lanes is at a {DESK_LABELS[lens]} stage right now.{' '}
+                {onClearLens && (
+                  <button type="button" className="text-gold underline underline-offset-2" onClick={onClearLens}>
+                    Show every desk
+                  </button>
+                )}
+              </>
+            ) : (
+              'No lanes match — clear a filter to see the rest.'
+            )}
           </p>
         ) : (
           <ul className="divide-y divide-navy-secondary/60">

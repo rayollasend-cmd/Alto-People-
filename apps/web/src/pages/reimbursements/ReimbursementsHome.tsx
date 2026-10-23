@@ -3,20 +3,24 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { nextInQueue } from '@/lib/queueNext';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Download, Plus, Receipt, Trash2 } from 'lucide-react';
+import { Plus, Receipt, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, fmtMonthYearTz, parseYmd, ymdLocal } from '@/lib/format';
+import { useUrlParam } from '@/lib/useUrlState';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { DESK_FILTERS, DESK_STATUS, DeskStrip, deskDefault, deskFilters, useDeskWords, type DeskFilter } from './ReimbursementsDesk';
 import {
   addExpenseLine,
   createReimbursement,
   deleteExpenseLine,
   getReimbursement,
+  getReimbursementSummary,
   listReimbursements,
   managerApproveReimbursement,
   RECOMMENDED_CATEGORIES,
   rejectReimbursement,
   settleReimbursement,
+  settleReimbursementsBulk,
   submitReimbursement,
   type ExpenseLineKind,
   type ReimbursementFull,
@@ -24,7 +28,6 @@ import {
   type ReimbursementSummary,
 } from '@/lib/reimbursements97Api';
 
-const REIMBURSEMENT_STATUSES: readonly ReimbursementStatus[] = ['DRAFT', 'SUBMITTED', 'MANAGER_APPROVED', 'SETTLED', 'REJECTED', 'PAID'];
 import { useAuth, useTerm } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -39,11 +42,8 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-  EmptyState,
   ErrorBanner,
-  FilterChip,
   Input,
-  SearchInput,
   Select,
   SkeletonRows,
   Textarea,
@@ -120,15 +120,6 @@ function ReceiptCapture({
 // (MANAGER_APPROVED now reads green like every other approval).
 const REIMB_STATUS_TONES = { SETTLED: 'accent' } as const;
 
-// Domain wording (SETTLED explains itself); tones come from the shared map.
-const STATUS_LABEL: Record<ReimbursementStatus, string> = {
-  DRAFT: 'Draft',
-  SUBMITTED: 'Submitted',
-  MANAGER_APPROVED: 'Manager approved',
-  SETTLED: 'Settled — queued',
-  REJECTED: 'Rejected',
-  PAID: 'Paid',
-};
 
 const KIND_LABEL: Record<ExpenseLineKind, string> = {
   RECEIPT: 'Receipt',
@@ -149,33 +140,39 @@ const lineKindLabel = (
   k: ExpenseLineKind,
 ): string => t(('rmb.kind.' + k) as MessageKey);
 
+/** The associate's own three-way view: open reports, paid ones, everything. */
+type MineFilter = 'open' | 'paid' | 'all';
+const MINE_FILTERS: MineFilter[] = ['open', 'paid', 'all'];
+/** Past this many reports an associate gets a search box; below it, it's noise. */
+const SEARCH_FROM = 10;
+
 export function ReimbursementsHome() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const term = useTerm();
   const { t } = useI18n();
   const canApprove = user ? hasCapability(user.role, 'approve:reimbursement') : false;
   const canSettle = user ? hasCapability(user.role, 'settle:reimbursement') : false;
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const staff = canApprove || canSettle;
+  // Only someone who submits their own expenses gets "New report".
+  const submits = !!user?.associateId && can('submit:reimbursement');
+  const desk = useDeskWords();
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<ReimbursementSummary | null>(null);
-  // The inbox and the "awaiting your approval" notification name the state
-  // (?status=) and the report (?id=) they counted, so the page opens on it.
+  // One ?status= per role: the desk's queue for staff, Open / Paid / All for the person submitting.
+  const [deskFilter, setDeskFilter] = useUrlParam<DeskFilter>('status', deskDefault(canSettle), DESK_FILTERS);
+  const [mineFilter, setMineFilter] = useUrlParam<MineFilter>('status', 'open', MINE_FILTERS);
+  const serverStatus = staff ? DESK_STATUS[deskFilter] : mineFilter === 'paid' ? 'PAID' : null;
+  // The inbox and the notifications name the report (?id=) they counted, so the page opens on it.
   const [params] = useSearchParams();
-  const [statusFilter, setStatusFilter] = useState<ReimbursementStatus | 'ALL'>(() => {
-    const s = params.get('status');
-    return s && REIMBURSEMENT_STATUSES.includes(s as ReimbursementStatus) ? (s as ReimbursementStatus) : 'ALL';
-  });
   const openedFromUrl = useRef(false);
   // The report just created: opened (into Add line) once the list carries it.
   const [openAfterCreate, setOpenAfterCreate] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refreshQuery = useQuery({
-    queryKey: ['ReimbursementsHome', 'rows'],
-    queryFn: () => listReimbursements(),
+    queryKey: ['ReimbursementsHome', 'rows', serverStatus],
+    queryFn: () => listReimbursements(serverStatus ? { status: serverStatus } : undefined),
   });
+  const summaryQuery = useQuery({ queryKey: ['ReimbursementsHome', 'summary'], queryFn: getReimbursementSummary, enabled: staff });
   const rows: ReimbursementSummary[] | null = refreshQuery.data?.reimbursements ?? null;
   // ?id= opens that report once the list is here (once: closing it must stick).
   useEffect(() => {
@@ -192,60 +189,73 @@ export function ReimbursementsHome() {
     const r = rows.find((x) => x.id === openAfterCreate);
     if (r) setActive(r);
   }, [openAfterCreate, rows]);
-  useEffect(() => {
-    const r = refreshQuery.data;
-    if (r === undefined) return;
-    setLoadError(null);
+  const loadError = refreshQuery.isError ? t('rmb.loadFailed') : null;
+  const refresh = () => {
+    void refreshQuery.refetch();
+    void summaryQuery.refetch();
+  };
 
-  }, [refreshQuery.data]);
-  useEffect(() => {
-    if (!refreshQuery.isError) return;
-    setLoadError(t('rmb.loadFailed'))
-  }, [refreshQuery.isError, refreshQuery.error, t]);
-  const refresh = () => void refreshQuery.refetch();
-
-  const q = search.trim().toLowerCase();
-  const visible = (rows ?? []).filter(
-    (r) =>
-      (statusFilter === 'ALL' || r.status === statusFilter) &&
-      (!q ||
-        r.associateName.toLowerCase().includes(q) ||
-        r.title.toLowerCase().includes(q)),
-  );
-  const pending = (rows ?? []).filter(
-    (r) => r.status === 'SUBMITTED' || r.status === 'MANAGER_APPROVED',
-  );
+  const visible = (rows ?? []).filter((r) => staff || mineFilter !== 'open' || (r.status !== 'PAID'));
+  const pending = (rows ?? []).filter((r) => r.status === 'SUBMITTED' || r.status === 'MANAGER_APPROVED');
   const pendingTotal = pending.reduce((s, r) => s + Number(r.totalAmount), 0);
 
-  const onBulkApprove = async () => {
-    const ids = Array.from(selected);
-    if (ids.length === 0) return;
+  // Bulk decisions from the grid's selection: approve on "To approve", settle on "Ready to settle".
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const approveMany = async (ids: string[], clear: () => void) => {
     setBulkBusy(true);
-    const results = await Promise.allSettled(
-      ids.map((id) => managerApproveReimbursement(id)),
-    );
+    const results = await Promise.allSettled(ids.map((id) => managerApproveReimbursement(id)));
     setBulkBusy(false);
     const ok = results.filter((r) => r.status === 'fulfilled').length;
     const failed = results.length - ok;
     if (ok > 0) toast.success(t(ok === 1 ? 'reimbPage.approvedOne' : 'reimbPage.approvedMany', { count: ok }));
     if (failed > 0) toast.error(t(failed === 1 ? 'reimbPage.approvalFailedOne' : 'reimbPage.approvalFailedMany', { count: failed }));
+    clear();
     refresh();
   };
-
-  const onExportCsv = () => {
-    downloadCsv(`reimbursements-${ymdLocal()}.csv`, [
-      ['Title', 'Submitter', 'Status', 'Lines', 'Total', 'Currency', 'Submitted'],
-      ...visible.map((r) => [
-        r.title,
-        r.associateName,
-        STATUS_LABEL[r.status],
-        r.lineCount,
-        Number(r.totalAmount).toFixed(2),
-        r.currency,
-        r.submittedAt ? fmtDate(r.submittedAt) : '',
-      ]),
-    ]);
+  const settleMany = async (ids: string[], clear: () => void) => {
+    setBulkBusy(true);
+    try {
+      const r = await settleReimbursementsBulk(ids);
+      if (r.settled.length) toast.success(desk.settledToast(r.settled.length, r.amount));
+      if (r.skipped.length) toast.error(desk.skippedToast(r.skipped.length, r.skipped[0]!.reason));
+      clear();
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
+    } finally {
+      setBulkBusy(false);
+    }
   };
+  const selectable =
+    staff && deskFilter === 'approve' && canApprove
+      ? {
+          disabled: (r: ReimbursementSummary) => r.status !== 'SUBMITTED',
+          selectAllLabel: desk.selectApprovable,
+          actions: (selected: string[], clear: () => void) => {
+            const chosen = visible.filter((r) => selected.includes(r.id));
+            return (
+              <Button size="sm" loading={bulkBusy} disabled={chosen.length === 0} onClick={() => void approveMany(chosen.map((r) => r.id), clear)}>
+                {desk.approveN(chosen.length, chosen.reduce((s, r) => s + Number(r.totalAmount), 0))}
+              </Button>
+            );
+          },
+        }
+      : staff && deskFilter === 'ready' && canSettle
+        ? {
+            disabled: (r: ReimbursementSummary) => r.status !== 'MANAGER_APPROVED',
+            selectAllLabel: desk.selectSettleable,
+            actions: (selected: string[], clear: () => void) => {
+              const chosen = visible.filter((r) => selected.includes(r.id));
+              return (
+                <Button size="sm" loading={bulkBusy} disabled={chosen.length === 0} onClick={() => void settleMany(chosen.map((r) => r.id), clear)}>
+                  {desk.settleN(chosen.length, chosen.reduce((s, r) => s + Number(r.totalAmount), 0))}
+                </Button>
+              );
+            },
+          }
+        : undefined;
+
+  const emptyCopy = staff ? desk.empty(deskFilter) : { title: t('rmb.emptyTitle'), description: t('rmb.emptyDesc') };
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -253,130 +263,97 @@ export function ReimbursementsHome() {
         title={t('rmb.title')}
         subtitle={
           // Admins keep the fuller workflow line; associates get their own voice.
-          canApprove || canSettle
+          staff
             ? t('reimbPage.subtitleAdmin', { worker: term('worker').toLowerCase() })
             : t('rmb.subtitle')
         }
-        breadcrumbs={[{ label: t('reimbPage.crumbSection') }, { label: t('rmb.title') }]}
-    >
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="text-sm text-silver">
-          {t('rmb.totalPending')}{' '}
-          <span className="font-medium text-white">{fmtMoney(pendingTotal)}</span>{' '}
-          {pending.length === 1
-            ? t('rmb.acrossReportOne')
-            : t('rmb.acrossReports', { count: pending.length })}
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {canApprove && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={onBulkApprove}
-              disabled={bulkBusy || selected.size === 0}
-            >
-              {bulkBusy
-                ? t('reimbPage.approving')
-                : t('reimbPage.approveSelected', { count: selected.size })}
-            </Button>
-          )}
-          <Button size="sm" variant="secondary" onClick={onExportCsv} disabled={visible.length === 0}>
-            <Download className="mr-2 h-4 w-4" /> {t('reimbPage.exportCsv')}
-          </Button>
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> {t('rmb.newReport')}
-          </Button>
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {(
-          ['ALL', ...(Object.keys(STATUS_LABEL) as ReimbursementStatus[])] as (
-            | 'ALL'
-            | ReimbursementStatus
-          )[]
-        ).map(
-          (s) => (
-            <FilterChip
-              key={s}
-              active={statusFilter === s}
-              onClick={() => setStatusFilter(s)}
-            >
-              {s === 'ALL' ? t('rmb.filterAll') : reimbStatusLabel(t, s)}
-            </FilterChip>
-          ),
-        )}
-        <SearchInput
-          wrapperClassName="ml-auto"
-          className="w-56"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={t('rmb.searchPlaceholder')}
-          aria-label={t('reimbPage.searchAria')}
-        />
-      </div>
-      <Card>
-        <CardContent className="p-0">
-          {loadError ? (
-            <div className="p-6">
-              <ErrorBanner
-                action={
-                  <Button size="sm" variant="secondary" onClick={refresh}>
-                    {t('rmb.retry')}
-                  </Button>
-                }
-              >
-                {loadError}
-              </ErrorBanner>
-            </div>
-          ) : rows === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              icon={Receipt}
-              title={t('rmb.emptyTitle')}
-              description={t('rmb.emptyDesc')}
+        actions={[{ label: t('rmb.newReport'), icon: Plus, primary: true, hidden: !submits, onSelect: () => setShowNew(true) }]}
+        summary={
+          staff ? (
+            <DeskStrip summary={summaryQuery.data} canSettle={canSettle} canApprove={canApprove} filter={deskFilter} onFilter={setDeskFilter} />
+          ) : pendingTotal > 0 ? (
+            // The pending total only when there is one — "$0.00 across 0 reports" said nothing.
+            <p className="text-sm text-silver">
+              {t('rmb.totalPending')} <span className="font-medium text-white">{fmtMoney(pendingTotal)}</span>{' '}
+              {pending.length === 1 ? t('rmb.acrossReportOne') : t('rmb.acrossReports', { count: pending.length })}
+            </p>
+          ) : undefined
+        }
+        filters={
+          staff ? (
+            <SegmentedControl
+              ariaLabel={t('reimbPage.searchAria')}
+              value={deskFilter}
+              onChange={setDeskFilter}
+              options={deskFilters(canSettle, canApprove).map((f) => ({ value: f, label: desk.filter(f, canSettle) }))}
             />
-          ) : visible.length === 0 ? (
-            <div className="p-6 text-sm text-silver">
-              {t('rmb.noMatch')}
-            </div>
           ) : (
-            <DataGrid<(typeof visible)[number]>
-              id="reimbursements"
-              caption={t('rmb.title')}
-              rows={visible}
-              rowKey={(r) => r.id}
-              search={false}
-              urlState={false}
-              exportCsv={{ filename: 'reimbursements' }}
-              onRowClick={(r) => setActive(r)}
-              rowActionLabel={(r) => `${t('rmb.colTitle')}: ${r.title}`}
-              selectable={canApprove ? { disabled: (r) => r.status !== 'SUBMITTED', selection: { selected, onChange: setSelected } } : undefined}
-              columns={[
-                { key: 'title', header: t('rmb.colTitle'), accessor: (r) => r.title, sortable: true, primary: true, className: 'font-medium text-white' },
-                {
-                  key: 'submitter',
-                  header: t('rmb.colSubmitter'),
-                  accessor: (r) => r.associateName,
-                  sortable: true,
-                  cardMeta: true,
-                  cell: (r) => <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>,
-                },
-                { key: 'lines', header: t('rmb.colLines'), accessor: (r) => r.lineCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
-                { key: 'total', header: t('rmb.colTotal'), accessor: (r) => Number(r.totalAmount), csv: (r) => fmtMoney(r.totalAmount, { currency: r.currency }), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmtMoney(r.totalAmount, { currency: r.currency }) },
-                {
-                  key: 'status',
-                  header: t('rmb.colStatus'),
-                  accessor: (r) => reimbStatusLabel(t, r.status),
-                  sortable: true,
-                  cell: (r) => <StatusBadge status={r.status} overrides={REIMB_STATUS_TONES} label={reimbStatusLabel(t, r.status)} />,
-                },
-                { key: 'submitted', header: t('rmb.colSubmitted'), accessor: (r) => r.submittedAt, sortable: true, searchable: false, cardMeta: true, cell: (r) => fmtDate(r.submittedAt) },
+            <SegmentedControl
+              ariaLabel={t('reimbPage.searchAria')}
+              value={mineFilter}
+              onChange={setMineFilter}
+              options={[
+                { value: 'open', label: t('rmb.view.open') },
+                { value: 'paid', label: reimbStatusLabel(t, 'PAID') },
+                { value: 'all', label: t('rmb.filterAll') },
               ]}
             />
-          )}
-        </CardContent>
-      </Card>
+          )
+        }
+    >
+      {loadError ? (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              {t('rmb.retry')}
+            </Button>
+          }
+        >
+          {loadError}
+        </ErrorBanner>
+      ) : (
+        <DataGrid<ReimbursementSummary>
+          id={staff ? 'reimbursements-desk' : 'reimbursements'}
+          caption={t('rmb.title')}
+          rows={rows === null ? undefined : visible}
+          loading={rows === null}
+          rowKey={(r) => r.id}
+          // Search is for a long list: always at the desk, past ten for the person submitting.
+          search={staff || visible.length > SEARCH_FROM ? { placeholder: t('rmb.searchPlaceholder', { workerLc: term('worker').toLowerCase() }) } : false}
+          urlState={false}
+          exportCsv={staff ? { filename: 'reimbursements' } : false}
+          onRowClick={(r) => setActive(r)}
+          rowActionLabel={(r) => `${t('rmb.colTitle')}: ${r.title}`}
+          selectable={selectable}
+          empty={{ icon: Receipt, title: emptyCopy.title, description: emptyCopy.description, action: submits && !staff ? <Button size="sm" onClick={() => setShowNew(true)}><Plus className="mr-1 h-4 w-4" />{t('rmb.newReport')}</Button> : undefined }}
+          footnote={staff && rows && rows.length >= 200 ? desk.newest200 : undefined}
+          columns={[
+            { key: 'title', header: t('rmb.colTitle'), accessor: (r) => r.title, sortable: true, primary: true, className: 'font-medium text-white' },
+            ...(staff
+              ? [
+                  {
+                    key: 'submitter',
+                    header: t('rmb.colSubmitter'),
+                    accessor: (r: ReimbursementSummary) => r.associateName,
+                    sortable: true,
+                    cardMeta: true,
+                    cell: (r: ReimbursementSummary) => <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>,
+                  },
+                ]
+              : []),
+            { key: 'lines', header: t('rmb.colLines'), accessor: (r) => r.lineCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', defaultHidden: !staff },
+            { key: 'total', header: t('rmb.colTotal'), accessor: (r) => Number(r.totalAmount), csv: (r) => fmtMoney(r.totalAmount, { currency: r.currency }), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmtMoney(r.totalAmount, { currency: r.currency }) },
+            {
+              key: 'status',
+              header: t('rmb.colStatus'),
+              accessor: (r) => reimbStatusLabel(t, r.status),
+              sortable: true,
+              cell: (r) => <StatusBadge status={r.status} overrides={REIMB_STATUS_TONES} label={reimbStatusLabel(t, r.status)} />,
+            },
+            { key: 'submitted', header: t('rmb.colSubmitted'), accessor: (r) => r.submittedAt, sortable: true, searchable: false, cardMeta: true, cell: (r) => fmtDate(r.submittedAt) },
+          ]}
+        />
+      )}
       {showNew && (
         <NewReportDrawer
           onClose={() => setShowNew(false)}

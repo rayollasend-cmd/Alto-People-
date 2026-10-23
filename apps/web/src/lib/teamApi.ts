@@ -9,10 +9,38 @@ export interface DirectReport {
   employmentType: string;
   departmentName: string | null;
   jobTitle: string | null;
+  /** Their headshot, null when there is none (absent on an older API). */
+  photoUrl?: string | null;
   /** When the last 1:1 with them was held (absent on an older API). */
   lastOneOnOneAt?: string | null;
   /** The next 1:1 on the calendar. */
   nextOneOnOne?: { id: string; scheduledFor: string; cadence: string | null } | null;
+  /** This week's hours, the clock, and lates/no-shows over 7 days (lib/teamNumbers). */
+  week?: TeamPersonWeek | null;
+}
+
+export interface TeamPersonWeek {
+  /** Worked this company week, net of the unpaid meal. */
+  workedHours: number;
+  /** Worked plus what is still scheduled this week. */
+  projectedHours: number;
+  onClock: boolean;
+  /** Unexcused lates and no-call no-shows on the last seven days. */
+  lateOrNoShow7d: number;
+}
+
+/** My team in numbers — one definition each, in apps/api/src/lib/teamNumbers.ts. */
+export interface TeamNumbers {
+  weekStart: string;
+  weekEnd: string;
+  onClockNow: number;
+  scheduledToday: number;
+  hoursWorked: number;
+  hoursScheduled: number;
+  lateOrNoShow7d: number;
+  lateOrNoShowPeople7d: number;
+  overtimeRisk: number;
+  overtimeThresholdHours: number;
 }
 
 /** A manager books a 1:1 with their own report — repeating with a cadence. */
@@ -30,6 +58,8 @@ export interface TeamDashboard {
   pendingReimbursements: number;
   atRiskGoals: number;
   onboardingInProgress: number;
+  /** Absent when there are no reports (and on an older API). */
+  team?: TeamNumbers;
 }
 
 export interface InboxItem {

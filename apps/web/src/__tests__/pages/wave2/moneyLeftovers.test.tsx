@@ -6,7 +6,7 @@ import { renderAs } from '../hrPack/harness';
 
 vi.mock('@/lib/benefitsApi', () => ({
   listMyEnrollments: vi.fn(),
-  listPlans: vi.fn(),
+  listMyPlans: vi.fn(),
   enrollMe: vi.fn(),
   terminateMyEnrollment: vi.fn(),
 }));
@@ -33,7 +33,7 @@ vi.mock('@/lib/api', async (orig) => ({
 }));
 
 import { apiFetch } from '@/lib/api';
-import { enrollMe, listMyEnrollments, listPlans } from '@/lib/benefitsApi';
+import { enrollMe, listMyEnrollments, listMyPlans } from '@/lib/benefitsApi';
 import { getFederalW4, uploadLockInLetter, type FederalW4Facts } from '@/lib/payrollDeskApi';
 import { listTaxForms } from '@/lib/payrollTax91Api';
 import { BenefitsHome } from '@/pages/benefits/BenefitsHome';
@@ -58,7 +58,8 @@ beforeEach(() => {
 describe('group-term life on the enrollment screen', () => {
   it('asks for the coverage amount, allows $0 per check, and sends the face amount in cents', async () => {
     vi.mocked(listMyEnrollments).mockResolvedValue({ enrollments: [] });
-    vi.mocked(listPlans).mockResolvedValue({
+    vi.mocked(listMyPlans).mockResolvedValue({
+      client: { id: 'c1', name: 'Life Co' },
       plans: [{ id: 'p-life', clientId: 'c1', kind: 'LIFE_INSURANCE', name: 'Group life', description: null, employerContributionCentsPerPeriod: 0, employeeContributionDefaultCentsPerPeriod: 0, isActive: true }],
     });
     vi.mocked(enrollMe).mockResolvedValue({} as never);
@@ -124,8 +125,18 @@ describe('finance Today shows the missed payday', () => {
 
 describe('retired payroll addresses', () => {
   it('maps the old pages to the desks that own the work, keeping other parameters', () => {
-    expect(legacyPayrollTarget('/payroll/tax', '')).toBe('/payroll/taxes?tab=returns');
-    expect(legacyPayrollTarget('/payroll/tax', '?from=inbox')).toBe('/payroll/taxes?from=inbox&tab=returns');
+    // Tax forms (W-2, 1099, the 941/940 builders) live on Year-end › Forms (F500 G3: one home for year-end).
+    expect(legacyPayrollTarget('/payroll/tax', '')).toBe('/payroll/year-end?tab=forms');
+    expect(legacyPayrollTarget('/payroll/tax', '?from=inbox')).toBe('/payroll/year-end?from=inbox&tab=forms');
+    // Tax reference in one place: Tax tables.
+    expect(legacyPayrollTarget('/payroll/config', '')).toBe('/payroll/tax-tables');
+    expect(legacyPayrollTarget('/payroll/state-tax', '?filter=all')).toBe('/payroll/tax-tables?filter=all&tab=state');
+    expect(legacyPayrollTarget('/payroll/tax-jurisdictions', '')).toBe('/payroll/tax-tables?tab=local');
+    // Year-end in one place.
+    expect(legacyPayrollTarget('/payroll/year-end-close', '')).toBe('/payroll/year-end');
+    expect(legacyPayrollTarget('/payroll/year-end/reconciliation', '?year=2025')).toBe('/payroll/year-end?year=2025&tab=reconcile');
+    expect(legacyPayrollTarget('/payroll/contractors', '?tab=year-end')).toBe('/payroll/year-end?tab=forms');
+    expect(legacyPayrollTarget('/payroll/contractors', '?tab=tin')).toBeNull();
     expect(legacyPayrollTarget('/payroll/compliance', '?tab=deposits')).toBe('/payroll/taxes?tab=deposits');
     expect(legacyPayrollTarget('/payroll/compliance', '?tab=remittances')).toBe('/payroll/garnishments?tab=remittances');
     expect(legacyPayrollTarget('/payroll/compliance', '?tab=newhire')).toBeNull();
@@ -154,13 +165,13 @@ describe('retired payroll addresses', () => {
     expect(screen.getByText('compliance page')).toBeInTheDocument();
   });
 
-  it('the Returns tab lists the forms an agency rejected, with its reason', async () => {
+  it('Year-end › Forms lists the forms an agency rejected, with its reason', async () => {
     vi.mocked(listTaxForms).mockResolvedValue({
       forms: [
         { id: 'f1', kind: 'W2', taxYear: 2025, quarter: null, associateId: 'a1', associateName: 'Rae Jones', amounts: {}, status: 'DRAFT', filedAt: null, ein: null, recipientCopySentAt: null, createdAt: '2026-01-20T00:00:00Z', efileStatus: 'REJECTED', efileStatusAt: '2026-02-01T00:00:00Z', efileRejectionReason: 'SSN does not match the name.' },
       ],
     });
-    renderAs('FINANCE_ACCOUNTANT', <RejectedFormsCard />, '/payroll/taxes?tab=returns');
+    renderAs('FINANCE_ACCOUNTANT', <RejectedFormsCard />, '/payroll/year-end?tab=forms');
     expect(await screen.findByText('Rejected by the agency (1)')).toBeInTheDocument();
     expect(screen.getByText(/W-2 \(Annual employee\) · 2025 · Rae Jones/)).toBeInTheDocument();
     expect(screen.getByText('SSN does not match the name.')).toBeInTheDocument();
@@ -187,6 +198,55 @@ describe('the cash forecast’s retirement and carrier lines', () => {
     renderAs('FINANCE_ACCOUNTANT', <CashForecastPage />);
     expect(await screen.findByText('Blue Shield premiums — November 2026')).toBeInTheDocument();
     expect(screen.getByText('Benefit carrier · Estimated')).toBeInTheDocument();
-    expect(screen.getByText('Retirement plan · Past due')).toBeInTheDocument();
+    // Past due is a badge beside the amount, said once.
+    const retirement = screen.getByText(/Alto 401\(k\)/).closest('a')!;
+    expect(within(retirement).getByText('Retirement plan')).toBeInTheDocument();
+    expect(within(retirement).getByText('Past due')).toBeInTheDocument();
+  });
+});
+
+describe('the cash forecast is honest about the books (F500 G6)', () => {
+  const base = {
+    generatedAt: '2026-10-22T12:00:00Z',
+    from: '2026-10-22',
+    to: '2026-11-18',
+    minimumCash: null,
+    weeks: [
+      { weekStart: '2026-10-22', weekEnd: '2026-10-28', inflow: 2880, outflow: 4100, net: -1220, cumulative: -1220, balance: -1220 },
+      { weekStart: '2026-10-29', weekEnd: '2026-11-04', inflow: 0, outflow: 0, net: 0, cumulative: -1220, balance: -1220 },
+    ],
+    lines: [
+      { date: '2026-10-28', kind: 'RECEIVABLE', label: 'Coastal Resort — statement No. 0004 (past due)', amount: 2880, confidence: 'overdue', linkUrl: '/clients/statements?statement=s4' },
+      { date: '2026-10-23', kind: 'PAYROLL', label: 'Payday — Oct 23', amount: -4100, confidence: 'scheduled', linkUrl: '/payroll' },
+    ],
+    totals: { inflow: 2880, outflow: 4100, net: -1220 },
+  };
+
+  it('bank accounts with nothing posted: “Cash not in the books yet” and the net movement, not a −$1,220 low point', async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ ...base, opening: { balance: 0, accounts: 2, asOf: '2026-10-22', onFile: false }, lowest: { weekStart: '2026-10-22', balance: -1220, belowMinimum: false } });
+    renderAs('FINANCE_ACCOUNTANT', <CashForecastPage />, '/finance/cash-forecast');
+    const strip = await screen.findByRole('group', { name: 'Cash at a glance' });
+    expect(within(strip).getByText('Cash not in the books yet')).toBeInTheDocument();
+    expect(within(strip).queryByText('Low point')).toBeNull();
+    await waitFor(() => expect(within(strip).getByText('Net movement').parentElement).toHaveTextContent('-$1,220.00'));
+    expect(screen.getByRole('link', { name: 'Post history in Books' })).toHaveAttribute('href', '/books');
+  });
+
+  it('money coming in late stays green, with a Past due badge; the week groups carry subtotals; no second weekly table', async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ ...base, opening: null, lowest: null });
+    renderAs('FINANCE_ACCOUNTANT', <CashForecastPage />, '/finance/cash-forecast');
+    const line = (await screen.findByText(/statement No\. 0004/)).closest('a')!;
+    expect(within(line).getByText('+$2,880.00')).toHaveClass('text-success');
+    expect(within(line).getByText('Past due')).toBeInTheDocument();
+    expect(screen.getByText('+$2,880.00 in')).toBeInTheDocument();
+    expect(screen.getByText('−$4,100.00 out')).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Week' })).toBeNull();
+  });
+
+  it('filters the lines by kind, in the URL', async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ ...base, opening: null, lowest: null });
+    renderAs('FINANCE_ACCOUNTANT', <CashForecastPage />, '/finance/cash-forecast?kind=PAYROLL');
+    expect(await screen.findByText('Payday — Oct 23')).toBeInTheDocument();
+    expect(screen.queryByText(/statement No\. 0004/)).toBeNull();
   });
 });

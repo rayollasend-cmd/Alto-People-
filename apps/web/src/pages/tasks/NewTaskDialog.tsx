@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { WORKER_CAPABILITIES, WORK_TASK_RISKS, WORK_TASK_RISK_LABELS, type LocationSummary, type WorkTaskRisk } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { createTask } from '@/lib/tasksApi';
+import { zonedWallTimeToUtc } from '@/lib/format';
 import { useTerm } from '@/lib/auth';
 import { Button, Input, Select, Textarea } from '@/components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
@@ -12,7 +13,7 @@ import { Field } from '@/components/ui/Field';
 /** The catalog, read loosely: the literal union is for the registry, not a picker. */
 const CAPS: ReadonlyArray<{ code: string; label: string; types: readonly string[] }> = WORKER_CAPABILITIES;
 
-/** A new task; the engine assigns it the moment it is saved. */
+/** A new task; it is assigned the moment it is saved. */
 export function NewTaskDialog({ sites, defaultLocationId, day, onClose, onCreated }: { sites: LocationSummary[]; defaultLocationId: string; day: string; onClose: () => void; onCreated: (id: string) => void }) {
   const term = useTerm();
   const [type, setType] = useState('');
@@ -26,14 +27,22 @@ export function NewTaskDialog({ sites, defaultLocationId, day, onClose, onCreate
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
 
+  const siteZone = sites.find((x) => x.id === locationId)?.timezone ?? null;
+  const atSite = (ymd: string, hhmm: string) => {
+    const [y, m, d] = ymd.split('-').map(Number);
+    const [h, min] = hhmm.split(':').map(Number);
+    return zonedWallTimeToUtc(y!, m!, d!, h ?? 0, min ?? 0, siteZone).toISOString();
+  };
+
   const save = useMutation({
     mutationFn: () =>
       createTask({
         type: type.trim(),
         locationId,
         area: area.trim() || null,
-        windowStart: new Date(`${day}T${startTime}:00`).toISOString(),
-        windowEnd: new Date(`${day}T${endTime}:00`).toISOString(),
+        // The times typed are the store's clock, not the browser's (F500 G2).
+        windowStart: atSite(day, startTime),
+        windowEnd: atSite(day, endTime),
         capability,
         risk,
         estimatedMinutes: Number(minutes) || 30,
@@ -55,7 +64,7 @@ export function NewTaskDialog({ sites, defaultLocationId, day, onClose, onCreate
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New task</DialogTitle>
-          <DialogDescription>The engine ranks everyone free in the window and assigns the task as soon as it is saved, or queues it for you with the reason.</DialogDescription>
+          <DialogDescription>Everyone free in the window is ranked and the task is assigned as soon as it is saved, or queued for you with the reason.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">

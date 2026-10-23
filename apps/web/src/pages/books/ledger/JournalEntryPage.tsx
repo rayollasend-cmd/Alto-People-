@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Ban, ExternalLink, Plus, Trash2 } from 'lucide-react';
+import { Ban, Plus, Trash2 } from 'lucide-react';
 import type { BooksJournalEntryDetail } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
 import { getJournalEntry, postManualEntry, voidJournalEntry } from '@/lib/books/ledgerApi';
 import { fmtDate, fmtDateTime, fmtMoney, ymdLocal } from '@/lib/format';
-import { ListTemplate } from '@/components/templates';
+import { useUrlParam } from '@/lib/useUrlState';
+import { ListTemplate, RecordTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -39,6 +40,7 @@ function ViewEntry({ id }: { id: string }) {
   const prompt = usePrompt();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [tab, setTab] = useUrlParam('tab', 'lines', ENTRY_TABS, { history: 'push' });
   const q = useQuery({ queryKey: ['books', 'journal', 'entry', id], queryFn: () => getJournalEntry(id) });
   const voidIt = useMutation({
     mutationFn: (reason: string) => voidJournalEntry(id, reason),
@@ -69,66 +71,123 @@ function ViewEntry({ id }: { id: string }) {
     });
     if (reason) voidIt.mutate(reason);
   };
+  const postedBy = e.createdByName ?? (e.origin === 'SITE' && !manual ? 'automatically' : null);
   return (
-    <ListTemplate
+    <RecordTemplate
       title={`Journal entry #${e.number}`}
-      subtitle={e.memo ?? sourceLabel(e.source)}
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Journal', to: '/books/journal' }, { label: `#${e.number}` }]}
-      primaryAction={
-        can('manage:books') && manual && e.status === 'POSTED' ? (
-          <Button variant="secondary" onClick={() => void askVoid()} loading={voidIt.isPending}>
-            <Ban className="h-4 w-4" aria-hidden="true" />
-            {e.periodClosed ? 'Reverse' : 'Void'}
-          </Button>
-        ) : undefined
+      subtitle={e.memo ?? `${sourceLabel(e.source)} entry`}
+      status={
+        <span className="flex flex-wrap items-center gap-1">
+          <Badge variant={e.status === 'VOID' ? 'destructive' : 'success'}>{e.status === 'VOID' ? 'Void' : 'Posted'}</Badge>
+          {e.periodClosed && <Badge variant="outline">{e.periodKey} closed</Badge>}
+          {e.reverseOn && <Badge variant="pending">Reverses {fmtDate(e.reverseOn)}</Badge>}
+        </span>
       }
-    >
-      <Card>
-        <CardContent className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Fact label="Date" value={fmtDate(e.date)} />
-          <Fact
-            label="From"
-            value={
-              <span className="flex flex-wrap items-center gap-2">
-                <Badge variant={e.origin === 'QUICKBOOKS' ? 'info' : 'outline'}>{e.origin === 'QUICKBOOKS' ? 'Entered in QuickBooks' : sourceLabel(e.source)}</Badge>
-                {e.sourceLink && (
-                  <Link to={e.sourceLink.to} className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
-                    {e.sourceLink.label}
-                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                  </Link>
-                )}
-              </span>
-            }
-          />
-          <Fact label="Amount" value={<Amount value={e.total} strong />} />
-          <Fact
-            label="Status"
-            value={
-              <span className="flex flex-wrap gap-1">
-                <Badge variant={e.status === 'VOID' ? 'destructive' : 'success'}>{e.status === 'VOID' ? 'Void' : 'Posted'}</Badge>
-                {e.periodClosed && <Badge variant="outline">{e.periodKey} closed</Badge>}
-                {e.reverseOn && <Badge variant="pending">Reverses {fmtDate(e.reverseOn)}</Badge>}
-              </span>
-            }
-          />
-          <Fact label="Posted" value={`${fmtDateTime(e.postedAt)}${e.createdByName ? ` · ${e.createdByName}` : e.origin === 'SITE' && !manual ? ' · automatically' : ''}`} />
-          {e.reverses && <Fact label="Reverses" value={<Link to={`/books/journal/${e.reverses.id}`} className="text-accent hover:underline">Entry #{e.reverses.number}</Link>} />}
-          {e.reversedBy.length > 0 && (
-            <Fact
-              label="Reversed by"
-              value={e.reversedBy.map((r) => (
-                <Link key={r.id} to={`/books/journal/${r.id}`} className="mr-2 text-accent hover:underline">
-                  #{r.number}
+      facts={[
+        { label: 'Date', value: fmtDate(e.date) },
+        { label: 'Amount', value: fmtMoney(e.total) },
+        { label: 'From', value: e.origin === 'QUICKBOOKS' ? 'Entered in QuickBooks' : sourceLabel(e.source) },
+        { label: 'Posted', value: fmtDateTime(e.postedAt) },
+        { label: 'Posted by', value: postedBy ? postedBy.charAt(0).toUpperCase() + postedBy.slice(1) : null },
+        ...(e.reverses ? [{ label: 'Reverses', value: `Entry #${e.reverses.number}`, to: `/books/journal/${e.reverses.id}` }] : []),
+        ...e.reversedBy.map((r) => ({ label: 'Reversed by', value: `Entry #${r.number}`, to: `/books/journal/${r.id}` })),
+      ]}
+      related={e.sourceLink ? [{ label: e.sourceLink.label, to: e.sourceLink.to }] : undefined}
+      // Voiding is destructive and rare: it lives under More, behind its reason prompt.
+      actions={
+        can('manage:books') && manual && e.status === 'POSTED'
+          ? [{ key: 'void', label: e.periodClosed ? 'Reverse entry' : 'Void entry', icon: Ban, destructive: true, loading: voidIt.isPending, onSelect: () => void askVoid() }]
+          : []
+      }
+      activeTab={tab}
+      onTabChange={(k) => setTab(k as (typeof ENTRY_TABS)[number])}
+      tabs={[
+        {
+          key: 'lines',
+          label: 'Lines',
+          count: e.lines.length,
+          content: <EntryLines entry={e} debit={debit} credit={credit} />,
+        },
+        {
+          key: 'history',
+          label: 'History',
+          content: (
+            <Card>
+              <CardContent className="p-4">
+                <ol className="space-y-2 text-sm">
+                  <li className="text-ink">
+                    Posted {fmtDateTime(e.postedAt)}
+                    {postedBy ? <span className="text-ink-muted"> · {postedBy}</span> : null}
+                  </li>
+                  {e.reverses && (
+                    <li className="text-ink">
+                      Reverses{' '}
+                      <Link to={`/books/journal/${e.reverses.id}`} className="text-accent hover:underline">
+                        entry #{e.reverses.number}
+                      </Link>
+                    </li>
+                  )}
+                  {e.reversedBy.map((r) => (
+                    <li key={r.id} className="text-ink">
+                      Reversed by{' '}
+                      <Link to={`/books/journal/${r.id}`} className="text-accent hover:underline">
+                        entry #{r.number}
+                      </Link>
+                    </li>
+                  ))}
+                  {e.status === 'VOID' && (
+                    <li className="text-ink">
+                      Voided{e.voidedAt ? ` ${fmtDateTime(e.voidedAt)}` : ''}
+                      {e.voidedByName ? <span className="text-ink-muted"> · {e.voidedByName}</span> : null}
+                      {e.voidReason ? <span className="block text-ink-muted">“{e.voidReason}”</span> : null}
+                    </li>
+                  )}
+                </ol>
+              </CardContent>
+            </Card>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+const ENTRY_TABS = ['lines', 'history'] as const;
+
+/**
+ * The entry's lines: a table from sm up; below it, one stacked row per line
+ * — the account and its memo on the left, the amount (debit or credit) on
+ * the right — so the money is never off the edge of a phone.
+ */
+function EntryLines({ entry: e, debit, credit }: { entry: BooksJournalEntryDetail; debit: number; credit: number }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <ul className="divide-y divide-line sm:hidden" aria-label="Lines">
+          {e.lines.map((l) => (
+            <li key={l.id} className={cn('flex items-start justify-between gap-3 py-2.5 text-sm', e.status === 'VOID' && 'opacity-60')}>
+              <div className="min-w-0">
+                <Link to={`/books/accounts/${l.account.id}`} className="break-words text-ink hover:underline">
+                  <span className="mr-1.5 tabular-nums text-ink-muted">{l.account.code}</span>
+                  {l.account.name}
                 </Link>
-              ))}
-            />
-          )}
-          {e.status === 'VOID' && <Fact label="Voided" value={`${e.voidedAt ? fmtDateTime(e.voidedAt) : ''}${e.voidedByName ? ` · ${e.voidedByName}` : ''}${e.voidReason ? ` — ${e.voidReason}` : ''}`} />}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="overflow-x-auto p-4">
-          <table className="w-full min-w-[40rem] text-sm">
+                {(l.memo || dimensionWords(l)) && <p className="mt-0.5 break-words text-xs text-ink-muted">{[l.memo, dimensionWords(l)].filter(Boolean).join(' · ')}</p>}
+              </div>
+              <div className="shrink-0 text-right">
+                <Amount value={l.debit > 0 ? l.debit : l.credit} />
+                <p className="text-2xs uppercase tracking-wider text-ink-muted">{l.debit > 0 ? 'Debit' : 'Credit'}</p>
+              </div>
+            </li>
+          ))}
+          <li className="flex items-center justify-between gap-3 pt-2.5 text-sm">
+            <span className="font-semibold text-ink">Total</span>
+            <span className="text-right text-xs text-ink-muted">
+              Debits <Amount value={debit} strong /> · Credits <Amount value={credit} strong />
+            </span>
+          </li>
+        </ul>
+        <div className="hidden overflow-x-auto sm:block">
+          <table className="w-full text-sm">
             <caption className="sr-only">Lines</caption>
             <thead>
               <tr className="border-b border-line text-left text-xs text-ink-muted">
@@ -171,23 +230,14 @@ function ViewEntry({ id }: { id: string }) {
               </tr>
             </tbody>
           </table>
-        </CardContent>
-      </Card>
-    </ListTemplate>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 function dimensionWords(l: BooksJournalEntryDetail['lines'][number]): string {
   return [l.client?.name, l.site?.name, l.department?.name, l.costCenter?.name, l.vendor?.name].filter(Boolean).join(' · ');
-}
-
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-2xs uppercase tracking-wider text-ink-muted">{label}</p>
-      <div className="mt-1 text-sm text-ink">{value}</div>
-    </div>
-  );
 }
 
 /* ---- A manual entry ---------------------------------------------------------- */
@@ -263,15 +313,6 @@ function NewEntry() {
     <ListTemplate
       title="New journal entry"
       subtitle="For what the platform doesn’t post on its own — an adjustment, a loan, owner money, an accrual."
-      breadcrumbs={[{ label: 'Books', to: '/books' }, { label: 'Journal', to: '/books/journal' }, { label: 'New entry' }]}
-      secondaryActions={
-        <Button asChild variant="ghost">
-          <Link to="/books/journal">
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Back
-          </Link>
-        </Button>
-      }
     >
       <Card>
         <CardContent className="grid gap-3 p-4 sm:grid-cols-[12rem_1fr]">
@@ -291,14 +332,17 @@ function NewEntry() {
         <CardContent className="space-y-3 p-4">
           <ol className="space-y-3">
             {lines.map((l, i) => (
-              <li key={l.key} className="grid gap-2 rounded-lg border border-line p-3 md:grid-cols-[minmax(14rem,2fr)_8rem_8rem_auto]" aria-label={`Line ${i + 1}`}>
-                <AccountSelect accounts={accounts.data?.accounts ?? []} value={l.accountId} onChange={(v) => update(l.key, { accountId: v })} label={`Line ${i + 1} account`} />
+              <li key={l.key} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 rounded-lg border border-line p-3 md:grid-cols-[minmax(14rem,2fr)_8rem_8rem_auto]" aria-label={`Line ${i + 1}`}>
+                {/* Phone: the account on its own row, debit and credit side by side under it. */}
+                <div className="col-span-3 md:col-span-1">
+                  <AccountSelect accounts={accounts.data?.accounts ?? []} value={l.accountId} onChange={(v) => update(l.key, { accountId: v })} label={`Line ${i + 1} account`} />
+                </div>
                 <Input inputMode="decimal" aria-label={`Line ${i + 1} debit`} placeholder="Debit" value={l.debit} onChange={(e) => update(l.key, { debit: e.target.value, ...(e.target.value ? { credit: '' } : {}) })} className="text-right tabular-nums" />
                 <Input inputMode="decimal" aria-label={`Line ${i + 1} credit`} placeholder="Credit" value={l.credit} onChange={(e) => update(l.key, { credit: e.target.value, ...(e.target.value ? { debit: '' } : {}) })} className="text-right tabular-nums" />
                 <Button variant="ghost" size="icon-sm" aria-label={`Remove line ${i + 1}`} disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}>
                   <Trash2 className="h-4 w-4" aria-hidden="true" />
                 </Button>
-                <div className="grid gap-2 md:col-span-4 md:grid-cols-4">
+                <div className="col-span-3 grid gap-2 md:col-span-4 md:grid-cols-4">
                   <Input aria-label={`Line ${i + 1} memo`} placeholder="Line memo (optional)" value={l.memo} maxLength={300} onChange={(e) => update(l.key, { memo: e.target.value })} />
                   {(d?.clients.length ?? 0) > 0 && (
                     <Select aria-label={`Line ${i + 1} client`} value={l.clientId} onChange={(e) => update(l.key, { clientId: e.target.value })}>
@@ -345,7 +389,12 @@ function NewEntry() {
             <span className="text-ink-muted">
               Credits <Amount value={totals.credit} strong />
             </span>
-            <span className={cn('font-medium', Math.round(totals.diff * 100) === 0 ? 'text-success' : 'text-alert')}>{Math.round(totals.diff * 100) === 0 ? 'Balanced' : `Off by ${fmtMoney(Math.abs(totals.diff))}`}</span>
+            {/* "Balanced" means something only once there's money on the lines — never a green tick over $0.00. */}
+            {Math.round(totals.diff * 100) !== 0 ? (
+              <span className="font-medium text-alert">Off by {fmtMoney(Math.abs(totals.diff))}</span>
+            ) : totals.debit > 0 ? (
+              <span className="font-medium text-success">Balanced</span>
+            ) : null}
           </div>
           {problems.length > 0 && filled.length > 0 && (
             <ul className="space-y-1 text-sm text-warning" role="status">

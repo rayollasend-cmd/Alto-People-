@@ -104,11 +104,16 @@ export interface CaseComment {
 }
 
 export interface CaseSummary {
+  /** Still being worked: open, in progress, or waiting on the associate. */
   openTotal: number;
+  /** Of those, nobody owns yet (absent on an older API). */
+  unassigned?: number;
   byStatus: Record<string, number>;
   byPriority: Record<string, number>;
   byCategory: Record<string, number>;
   sla: { breached: number; atRisk: number };
+  /** Median hours to the desk's first reply the person can read, on cases filed in the last `days`. */
+  firstReply?: { medianHours: number | null; replied: number; filed: number; days: number };
 }
 
 export const getSlaTargets = () => apiFetch<{ targets: SlaTarget[] }>('/hr-cases-sla');
@@ -162,6 +167,10 @@ export const listCaseQueue = (params: {
   associateId?: string;
   /** Only open cases past their SLA. */
   sla?: 'breached';
+  /** Every case still being worked (open, in progress, waiting). */
+  state?: 'open';
+  /** Nobody owns it yet. */
+  unassigned?: boolean;
 }, page = 0) => {
   const q = new URLSearchParams();
   if (page) q.set('page', String(page));
@@ -170,6 +179,8 @@ export const listCaseQueue = (params: {
   if (params.assignedToMe) q.set('assignedToMe', 'true');
   if (params.associateId) q.set('associateId', params.associateId);
   if (params.sla) q.set('sla', params.sla);
+  if (params.state) q.set('state', params.state);
+  if (params.unassigned) q.set('unassigned', 'true');
   const qs = q.toString();
   // One page; `hasMore` says the server holds more than it sent.
   return apiFetch<{ cases: QueueCaseRow[]; total?: number; hasMore?: boolean }>(

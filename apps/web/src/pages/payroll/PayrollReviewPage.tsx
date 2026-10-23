@@ -17,7 +17,9 @@ import {
   type ReviewRow,
   type ReviewState,
 } from '@/lib/payrollReviewApi';
-import { ListTemplate } from '@/components/templates';
+import { RunPageShell, type RunSubPageProps } from './RunPageShell';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useMediaQuery } from '@/lib/useViewport';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -44,19 +46,20 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
  */
 
 
-export function PayrollReviewPage() {
-  const { id = '' } = useParams<{ id: string }>();
+export function PayrollReviewPage({ runId, embedded = false }: RunSubPageProps = {}) {
+  const params = useParams<{ id: string }>();
+  const id = runId ?? params.id ?? '';
   const q = useQuery({ queryKey: ['payroll', 'review', id], queryFn: () => getPayrollReview(id), enabled: !!id });
-  // "Payroll to review" (?all=1 keeps the list even when this is the only run waiting).
+  // Payroll › the run › Review (F500 G3: run pages name their run).
   const crumbs = [
-    { label: 'Payroll', to: `/payroll?run=${id}` },
-    { label: 'All reviews', to: '/payroll/review?all=1' },
+    { label: 'Payroll', to: '/payroll' },
+    { label: 'Run', to: `/payroll/runs/${id}` },
     { label: 'Review' },
   ];
 
   if (q.isError) {
     return (
-      <ListTemplate title="Review payroll" breadcrumbs={crumbs}>
+      <RunPageShell embedded={embedded} title="Review payroll" breadcrumbs={crumbs}>
         <EmptyState
           title="We couldn’t load this report"
           description={q.error instanceof ApiError ? q.error.message : undefined}
@@ -66,12 +69,12 @@ export function PayrollReviewPage() {
             </Button>
           }
         />
-      </ListTemplate>
+      </RunPageShell>
     );
   }
   if (!q.data) {
     return (
-      <ListTemplate title="Review payroll" breadcrumbs={crumbs}>
+      <RunPageShell embedded={embedded} title="Review payroll" breadcrumbs={crumbs}>
         <Skeleton className="h-20" />
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           {Array.from({ length: 5 }, (_, i) => (
@@ -79,13 +82,13 @@ export function PayrollReviewPage() {
           ))}
         </div>
         <Skeleton className="h-96" />
-      </ListTemplate>
+      </RunPageShell>
     );
   }
-  return <Review report={q.data.report} signoff={q.data.signoff} crumbs={crumbs} />;
+  return <Review report={q.data.report} signoff={q.data.signoff} crumbs={crumbs} embedded={embedded} />;
 }
 
-function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; signoff: ReviewState; crumbs: Array<{ label: string; to?: string }> }) {
+function Review({ report, signoff, crumbs, embedded }: { report: PayrollReviewReport; signoff: ReviewState; crumbs: Array<{ label: string; to?: string }>; embedded: boolean }) {
   const r = report.run;
   const [downloading, setDownloading] = useState<'pdf' | 'xlsx' | null>(null);
   const download = async (format: 'pdf' | 'xlsx') => {
@@ -102,7 +105,8 @@ function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; sign
   const flagged = report.rows.filter((x) => x.flags.length > 0);
 
   return (
-    <ListTemplate
+    <RunPageShell
+      embedded={embedded}
       title="Review payroll"
       topbarTitle="Review"
       subtitle={
@@ -182,7 +186,7 @@ function Review({ report, signoff, crumbs }: { report: PayrollReviewReport; sign
       <Breakdown report={report} />
       <Register rows={report.rows} totals={report.totals} />
       {open && <SignoffPanel report={report} signoff={signoff} />}
-    </ListTemplate>
+    </RunPageShell>
   );
 }
 
@@ -316,13 +320,20 @@ function vsLast(now: number, before: number | undefined, money = true): React.Re
 function Totals({ report }: { report: PayrollReviewReport }) {
   const t = report.totals;
   const p = report.previous;
+  // A phone has the "Cash required" card right below: the tile would say it twice (and strand a fifth tile).
+  const wide = useMediaQuery('(min-width: 640px)');
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-      <MetricCard label="People paid" value={String(t.people)} hint={vsLast(t.people, p?.people, false)} />
-      <MetricCard label="Gross pay" value={fmtMoney(t.gross)} hint={vsLast(t.gross, p?.gross)} />
-      <MetricCard label="Net pay" value={fmtMoney(t.net)} hint={vsLast(t.net, p?.net)} />
-      <MetricCard label="Employer taxes" value={fmtMoney(t.employerTaxes)} hint={`Employer cost ${fmtMoney(t.employerCost)}`} />
-      <MetricCard label="Cash required" value={fmtMoney(report.cash.total)} hint="Pay, taxes and money owed onward" className="col-span-2 lg:col-span-1" />
+    <div className="space-y-1.5">
+      <MetricStrip label="Run totals">
+        <MetricCard label="People paid" value={String(t.people)} hint={p ? vsLast(t.people, p.people, false) : undefined} />
+        <MetricCard label="Gross pay" value={fmtMoney(t.gross)} hint={p ? vsLast(t.gross, p.gross) : undefined} />
+        <MetricCard label="Net pay" value={fmtMoney(t.net)} hint={p ? vsLast(t.net, p.net) : undefined} />
+        {/* The employer cost only when it says something the tile doesn't. */}
+        <MetricCard label="Employer taxes" value={fmtMoney(t.employerTaxes)} hint={Math.abs(t.employerCost - t.employerTaxes) >= 0.005 ? `Employer cost ${fmtMoney(t.employerCost)}` : undefined} />
+        {wide ? <MetricCard label="Cash required" value={fmtMoney(report.cash.total)} hint="Pay, taxes and money owed onward" /> : null}
+      </MetricStrip>
+      {/* Said once, not on every tile. */}
+      {!p && <p className="text-xs text-ink-muted">First payroll: nothing earlier to compare.</p>}
     </div>
   );
 }

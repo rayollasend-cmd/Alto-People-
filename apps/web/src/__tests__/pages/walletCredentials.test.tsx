@@ -4,7 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { renderAs } from './hrPack/harness';
 
 const getMyWallet = vi.fn();
-vi.mock('@/lib/walletApi', async (orig) => ({ ...(await orig<typeof import('@/lib/walletApi')>()), getMyWallet: (...a: unknown[]) => getMyWallet(...a), shareMyWallet: vi.fn() }));
+const getWorkerBadge = vi.fn();
+vi.mock('@/lib/walletApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/walletApi')>()),
+  getMyWallet: (...a: unknown[]) => getMyWallet(...a),
+  getWorkerBadge: (...a: unknown[]) => getWorkerBadge(...a),
+  shareMyWallet: vi.fn(),
+}));
 // The worker badge (another card on the page) is covered by its own tests.
 vi.mock('@/pages/me/WorkerBadgeCard', () => ({ WorkerBadgeCard: () => null }));
 const getMyCredentials = vi.fn();
@@ -23,6 +29,7 @@ const VC = { type: ['VerifiableCredential', 'OpenBadgeCredential'], name: 'Forkl
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getWorkerBadge.mockRejectedValue(new Error('no badge in this test'));
   getMyWallet.mockResolvedValue({
     person: { name: 'Ana Lopez', since: null },
     items: [
@@ -43,13 +50,22 @@ describe('the wallet’s signed credentials', () => {
     await waitFor(() => expect(saveCredentialFile).toHaveBeenCalledWith('Forklift operator', VC));
   });
 
-  it('“Add to a wallet app” shows a QR for a 15-minute link, and can save them all', async () => {
+  it('“Share as a digital credential” (beside the list — "wallet" is only the Apple/Google pass) shows a QR for a 15-minute link, and can save them all', async () => {
     renderAs('ASSOCIATE', <MyWallet />, '/me/wallet', { associateId: 'a1' });
-    await userEvent.click(await screen.findByRole('button', { name: 'Add to a wallet app' }));
+    expect(screen.queryByRole('button', { name: 'Add to a wallet app' })).toBeNull();
+    await userEvent.click(await screen.findByRole('button', { name: 'Share as a digital credential' }));
     expect(await screen.findByRole('img', { name: 'QR code linking to your signed credentials' })).toHaveAttribute('src', 'data:image/png;base64,QR');
     expect(screen.getByText(/This code works for 15 minutes/)).toBeInTheDocument();
     expect(screen.getByText(/Anyone can check them at .*\/verify/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Download all' }));
     expect(saveCredentialFile).toHaveBeenCalledWith('credentials', [VC]);
+  });
+
+  it('the badge is the page’s primary action ("Show badge"); "Share a link" sits with the credentials (F500 G5)', async () => {
+    getWorkerBadge.mockResolvedValue({ workerName: 'Ana Lopez' });
+    renderAs('ASSOCIATE', <MyWallet />, '/me/wallet', { associateId: 'a1' });
+    expect(await screen.findByTestId('wallet-show-badge')).toHaveTextContent('Show badge');
+    expect(screen.getByRole('heading', { name: 'Credentials' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Share a link' })).toBeInTheDocument();
   });
 });

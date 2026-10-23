@@ -5,10 +5,12 @@ import { AlertTriangle, Bot, Cpu, ListTodo, Plus, User } from 'lucide-react';
 import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type WorkTaskStatus, type WorkTaskView } from '@alto-people/shared';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useOrgSites } from '@/lib/useOrgSites';
-import { listTasks, getTaskDay, getTaskSummary } from '@/lib/tasksApi';
+import { listTasks, getTaskDay } from '@/lib/tasksApi';
 import { fmtDateTz, fmtShiftRangeTz, ymdLocal } from '@/lib/format';
+import { urlDay, urlString, useUrlParam, useUrlState } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
-import { Badge, Button, MetricCard, SegmentedControl, Select } from '@/components/ui';
+import { Badge, Button, MetricCard, MetricStrip, Select } from '@/components/ui';
+import { FilterBar } from '@/components/ui/FilterBar';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { cn } from '@/lib/cn';
 import { TaskDrawer } from './TaskDrawer';
@@ -23,13 +25,7 @@ import { NewTaskDialog } from './NewTaskDialog';
 
 type StatusFilter = 'live' | 'queued' | 'exceptions' | 'done' | 'all';
 
-const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
-  { value: 'live', label: 'Live' },
-  { value: 'queued', label: 'Waiting for a person' },
-  { value: 'exceptions', label: 'Exceptions' },
-  { value: 'done', label: 'Done' },
-  { value: 'all', label: 'All' },
-];
+const STATUS_VALUES: readonly StatusFilter[] = ['live', 'queued', 'exceptions', 'done', 'all'];
 
 const LIVE: WorkTaskStatus[] = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'HANDED_OFF'];
 const EXCEPTIONS: WorkTaskStatus[] = ['STALLED', 'FAILED'];
@@ -55,6 +51,21 @@ export function HolderIcon({ type, className }: { type: 'PERSON' | 'AGENT' | 'RO
 }
 
 
+/** Which tile a task's state counts under. */
+function bucketOf(status: WorkTaskStatus): Exclude<StatusFilter, 'all'> {
+  if (LIVE.includes(status)) return 'live';
+  if (status === 'QUEUED') return 'queued';
+  if (EXCEPTIONS.includes(status)) return 'exceptions';
+  return 'done';
+}
+
+export function countByBucket(tasks: WorkTaskView[] | null): Record<Exclude<StatusFilter, 'all'>, number> | null {
+  if (!tasks) return null;
+  const out = { live: 0, queued: 0, exceptions: 0, done: 0 };
+  for (const t of tasks) out[bucketOf(t.status)] += 1;
+  return out;
+}
+
 export function TasksBoard() {
   const { can } = useAuth();
   const term = useTerm();
@@ -62,15 +73,20 @@ export function TasksBoard() {
   const sites = useOrgSites(true);
   const [params, setParams] = useSearchParams();
   const openId = params.get('task');
-  const [locationId, setLocationId] = useState('');
-  const [status, setStatus] = useState<StatusFilter>('live');
+  // Site, day and state live in the URL (?site=&day=&status=), so a link
+  // or a notification opens the same board (F500 G2).
+  const [locationId, setLocationId] = useUrlState<string>('site', '', urlString);
+  const [status, setStatus] = useUrlParam<StatusFilter>('status', 'live', STATUS_VALUES);
   // The site's day (F500 SH-4): "today" on the floor's own clock, from the
   // API (apps/api/src/lib/siteDay.ts) — never the browser's UTC date, which
   // after 5 PM Pacific was already tomorrow. A day the person picks wins.
-  const [pickedDay, setDay] = useState<string | null>(null);
+  const [pickedDay, setDay] = useUrlState<string>('day', '', urlDay);
   const todayQuery = useQuery({ queryKey: ['tasks', 'day', locationId], queryFn: () => getTaskDay(locationId || null), staleTime: 60_000 });
-  const day = pickedDay ?? todayQuery.data?.day ?? (todayQuery.isError ? ymdLocal() : null);
+  const day = pickedDay || todayQuery.data?.day || (todayQuery.isError ? ymdLocal() : null);
   const dayZone = todayQuery.data?.timezone ?? null;
+  // A task's window reads on its own site's clock (it read in UTC: a 9 AM
+  // task in Panama City showed 2:00 PM).
+  const zoneOf = useMemo(() => new Map((sites ?? []).map((site) => [site.id, site.timezone])), [sites]);
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
 
@@ -80,27 +96,13 @@ export function TasksBoard() {
     enabled: day !== null,
     refetchInterval: 30_000,
   });
-  const summaryQuery = useQuery({
-    queryKey: ['tasks', 'summary', { locationId }],
-    queryFn: () => getTaskSummary(locationId || null),
-    refetchInterval: 30_000,
-  });
-
   const rows = useMemo(() => {
     const all = tasksQuery.data?.tasks ?? [];
-    switch (status) {
-      case 'live':
-        return all.filter((t) => LIVE.includes(t.status));
-      case 'queued':
-        return all.filter((t) => t.status === 'QUEUED');
-      case 'exceptions':
-        return all.filter((t) => EXCEPTIONS.includes(t.status));
-      case 'done':
-        return all.filter((t) => t.status === 'DONE' || t.status === 'CANCELLED');
-      default:
-        return all;
-    }
+    return status === 'all' ? all : all.filter((t) => bucketOf(t.status) === status);
   }, [tasksQuery.data, status]);
+  // The tiles count the same day's list the grid shows, so a number and its
+  // rows always agree (the 24h summary disagreed with a per-day list).
+  const counts = useMemo(() => countByBucket(tasksQuery.data?.tasks ?? null), [tasksQuery.data]);
 
   const setOpen = (id: string | null) => {
     const next = new URLSearchParams(params);
@@ -113,8 +115,12 @@ export function TasksBoard() {
     void qc.invalidateQueries({ queryKey: ['tasks'] });
   };
 
-  const s = summaryQuery.data;
   const siteLabel = term('site');
+  const tile = (key: Exclude<StatusFilter, 'all'>) => ({
+    onClick: () => setStatus(status === key ? 'all' : key),
+    selected: status === key,
+  });
+  const activeFilters = (locationId ? 1 : 0) + (pickedDay ? 1 : 0);
 
   return (
     // Design system §4.2: the List template — one filter row, the grid, the drawer.
@@ -131,16 +137,33 @@ export function TasksBoard() {
         ) : undefined
       }
       summary={
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <MetricCard label="Live" value={s ? s.assigned + s.inProgress + s.open : '…'} hint="Assigned or in progress" />
-          <MetricCard label="Waiting for a person" value={s ? s.queued : '…'} hint="The engine could not decide alone" accent={!!s && s.queued > 0} />
-          <MetricCard label="Exceptions" value={s ? s.exceptions : '…'} hint="Stalled or failed" accent={!!s && s.exceptions > 0} deltaPositiveIsGood={false} />
-          <MetricCard label="Done · 24h" value={s ? s.doneToday : '…'} hint="Closed in the last day" />
-        </div>
+        // The tiles ARE the state filter (F500 G2: tiles and a chip row
+        // said the same four things). Tap the picked one again for all.
+        <MetricStrip label="Tasks on this day by state">
+          <MetricCard compact label="Live" value={counts ? counts.live : '…'} hint="Assigned or in progress" {...tile('live')} />
+          <MetricCard compact label="Waiting for a person" value={counts ? counts.queued : '…'} hint="Needs someone to choose who does it" tone={counts && counts.queued > 0 ? 'warning' : 'default'} {...tile('queued')} />
+          <MetricCard compact label="Exceptions" value={counts ? counts.exceptions : '…'} hint="Stalled or failed" tone={counts && counts.exceptions > 0 ? 'alert' : 'default'} {...tile('exceptions')} />
+          <MetricCard compact label="Done" value={counts ? counts.done : '…'} hint="Finished or cancelled" {...tile('done')} />
+        </MetricStrip>
       }
       filters={
-        <div className="flex flex-wrap items-center gap-2">
-          <Select size="sm" aria-label={`${siteLabel}`} value={locationId} onChange={(e) => setLocationId(e.target.value)} className="w-56">
+        <FilterBar
+          bare
+          activeFilters={activeFilters}
+          onClearFilters={() => {
+            setLocationId('');
+            setDay('');
+          }}
+          sheetDescription={`Pick a ${siteLabel.toLowerCase()} and a day.`}
+          actions={
+            status !== 'all' ? (
+              <Button size="sm" variant="ghost" onClick={() => setStatus('all')}>
+                Show every state
+              </Button>
+            ) : undefined
+          }
+        >
+          <Select size="sm" aria-label={`${siteLabel}`} value={locationId} onChange={(e) => setLocationId(e.target.value)} className="w-full sm:w-56">
             <option value="">Every {siteLabel.toLowerCase()}</option>
             {(sites ?? []).map((site) => (
               <option key={site.id} value={site.id}>
@@ -156,8 +179,7 @@ export function TasksBoard() {
             onChange={(e) => e.target.value && setDay(e.target.value)}
             className="h-8 coarse:h-11 rounded-md border border-line bg-surface px-2 text-xs coarse:text-base text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
-          <SegmentedControl options={STATUS_OPTIONS} value={status} onChange={setStatus} ariaLabel="Task state" className="flex-wrap" />
-        </div>
+        </FilterBar>
       }
       drawer={openId ? <TaskDrawer taskId={openId} onClose={() => setOpen(null)} onChanged={refresh} canManage={canManage} /> : null}
     >
@@ -174,8 +196,8 @@ export function TasksBoard() {
         search={{ placeholder: 'Search tasks' }}
         empty={{
           icon: ListTodo,
-          title: status === 'live' ? 'Nothing live on this day' : 'Nothing here',
-          description: status === 'live' ? 'Tasks appear as they are created; the engine assigns each one as it arrives.' : 'Change the day or the state to see more.',
+          title: status === 'live' ? 'Nothing live on this day' : status === 'all' ? 'No tasks on this day' : 'Nothing in this state on this day',
+          description: status === 'live' ? 'Tasks appear as they are created, and each is assigned as it arrives.' : 'Change the day or the state to see more.',
           action: canManage ? (
             <Button onClick={() => setCreating(true)}>
               <Plus className="mr-2 h-4 w-4" /> New task
@@ -214,8 +236,8 @@ export function TasksBoard() {
             className: 'tabular-nums',
             cell: (t) => (
               <span className="flex flex-col">
-                <span>{fmtShiftRangeTz(t.windowStart, t.windowEnd, 'UTC')}</span>
-                <span className="text-xs2 text-ink-muted">{fmtDateTz(t.windowStart, 'UTC')} · {t.estimatedMinutes} min</span>
+                <span>{fmtShiftRangeTz(t.windowStart, t.windowEnd, zoneOf.get(t.locationId) ?? dayZone)}</span>
+                <span className="text-xs2 text-ink-muted">{fmtDateTz(t.windowStart, zoneOf.get(t.locationId) ?? dayZone)} · {t.estimatedMinutes} min</span>
               </span>
             ),
           },

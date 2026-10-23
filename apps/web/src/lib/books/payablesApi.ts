@@ -18,7 +18,8 @@ import { apiFetch } from '@/lib/api';
 
 /** The books — payables (contract: packages/shared/src/books/payables.ts). */
 
-export type BillsTab = 'approve' | 'unpaid' | 'due' | 'paid' | 'draft' | 'all';
+/** The bills list's status filter — the server's ?tab=. 'late' and 'due' never overlap. */
+export type BillsTab = 'approve' | 'unpaid' | 'late' | 'due' | 'paid' | 'draft' | 'all';
 export interface Pending {
   pending: true;
   approvalId: string;

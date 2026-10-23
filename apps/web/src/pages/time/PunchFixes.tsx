@@ -260,7 +260,13 @@ function OffersSection() {
   );
 }
 
-export function PunchFixes() {
+/**
+ * `quiet` (the associate's My time): the page header carries "Fix a punch"
+ * (it opens this dialog through ?fix=1), so no section title or button
+ * here, and "Your requests" shows only when there is one — no empty box
+ * leading every visit.
+ */
+export function PunchFixes({ quiet = false }: { quiet?: boolean } = {}) {
   const { t } = useI18n();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
@@ -285,8 +291,35 @@ export function PunchFixes() {
     setParams(next, { replace: true });
   }, [params, q.data, prompted, setParams]);
 
+  const requestsList = (
+    <ul className="divide-y divide-line rounded-lg border border-line">
+      {recent.map((r) => (
+        <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-sm">
+          <div className="min-w-0">
+            <div className="text-ink">{t(`timefix.kind.${r.kind}` as const)}</div>
+            <div className="text-xs text-ink-muted">
+              {r.workDate ? fmtDate(parseYmd(r.workDate)) : ''}
+              {r.decisionReason ? ` · ${r.decisionReason}` : ''}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge size="sm" variant={statusVariant(r.status)}>
+              {t(`timefix.status.${r.status}` as const)}
+            </Badge>
+            {r.status === 'SUBMITTED' && (
+              <Button size="sm" variant="ghost" onClick={() => withdraw.mutate(r.id)} loading={withdraw.isPending && withdraw.variables === r.id}>
+                {t('timefix.withdraw')}
+              </Button>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+
   return (
-    <div className="mb-5 space-y-4">
+    // empty:hidden — a quiet block with nothing to say takes no room.
+    <div className="mb-5 space-y-4 empty:hidden">
       {prompted.map((r) => (
         <div key={r.id} role="status" className="flex flex-col gap-2 rounded-lg border border-warning/50 bg-warning/10 p-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-ink">{r.workDate ? t('timefix.prompted', { date: fmtDate(parseYmd(r.workDate)) }) : t('timefix.finish')}</p>
@@ -296,6 +329,23 @@ export function PunchFixes() {
         </div>
       ))}
       <OffersSection />
+      {quiet ? (
+        q.isError ? (
+          <Card>
+            <CardContent className="flex items-center justify-between gap-3 p-4 text-sm">
+              <span className="text-ink">{t('timefix.loadError')}</span>
+              <Button size="sm" variant="outline" onClick={() => void q.refetch()}>
+                {t('timefix.retry')}
+              </Button>
+            </CardContent>
+          </Card>
+        ) : recent.length > 0 ? (
+          <section aria-labelledby="punch-fixes" className="space-y-2">
+            <SectionTitle id="punch-fixes" as="h2" icon={Clock3} title={t('timefix.mine')} />
+            {requestsList}
+          </section>
+        ) : null
+      ) : (
       <section aria-labelledby="punch-fixes" className="space-y-2">
         <SectionTitle
           id="punch-fixes"
@@ -323,31 +373,10 @@ export function PunchFixes() {
         ) : recent.length === 0 ? (
           <EmptyState size="sm" icon={FileSignature} title={t('timefix.noneTitle')} />
         ) : (
-          <ul className="divide-y divide-line rounded-lg border border-line">
-            {recent.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-sm">
-                <div className="min-w-0">
-                  <div className="text-ink">{t(`timefix.kind.${r.kind}` as const)}</div>
-                  <div className="text-xs text-ink-muted">
-                    {r.workDate ? fmtDate(parseYmd(r.workDate)) : ''}
-                    {r.decisionReason ? ` · ${r.decisionReason}` : ''}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge size="sm" variant={statusVariant(r.status)}>
-                    {t(`timefix.status.${r.status}` as const)}
-                  </Badge>
-                  {r.status === 'SUBMITTED' && (
-                    <Button size="sm" variant="ghost" onClick={() => withdraw.mutate(r.id)} loading={withdraw.isPending && withdraw.variables === r.id}>
-                      {t('timefix.withdraw')}
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+          requestsList
         )}
       </section>
+      )}
       {q.data && <FixDialog data={q.data} open={open || !!finishing} prompted={finishing} onClose={() => { setOpen(false); setFinishing(null); }} />}
     </div>
   );

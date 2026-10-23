@@ -25,6 +25,10 @@ export interface UpcomingHoliday {
   daysUntil: number;
 }
 
+/** The next holidays, soonest first (the server reads the caller's client). */
+export const listUpcomingHolidays = (days = 365) =>
+  apiFetch<{ days: number; holidays: UpcomingHoliday[] }>(`/holidays/upcoming?days=${days}`);
+
 export const listHolidays = (params: {
   year?: number;
   clientId?: string;

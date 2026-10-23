@@ -61,7 +61,7 @@ export async function postingGaps(db: Db, periodKey: string): Promise<PostingGap
   const stPosted = await postedKeys(db, statements.map((s) => statementKey(s.id)));
   for (const s of statements) {
     if (statementAmounts(s.snapshot).total === 0 || stPosted.has(statementKey(s.id))) continue;
-    gaps.push({ kind: 'STATEMENT', sourceType: 'ClientStatement', sourceId: s.id, label: `${s.client.name} statement ${s.number ?? ''} isn’t in receivables`.replace('  ', ' '), link: `/clients/${s.client.id}?tab=statements` });
+    gaps.push({ kind: 'STATEMENT', sourceType: 'ClientStatement', sourceId: s.id, label: `${s.client.name} statement ${s.number != null ? `No. ${String(s.number).padStart(4, '0')} ` : ''}isn’t in receivables`, link: `/clients/${s.client.id}?tab=statements` });
   }
 
   const taxPayments = await db.taxPayment.findMany({ where: { tenantId, status: 'PAID', paidAt: range }, select: { id: true, jurisdiction: true, periodLabel: true, amount: true } });

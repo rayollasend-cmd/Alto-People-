@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -46,6 +47,9 @@ const BAND = 'rgb(var(--color-chart-1) / 0.18)';
 const hours = (n: number | null | undefined) => (n === null || n === undefined ? '—' : `${Math.round(n).toLocaleString()} h`);
 const pct = (n: number | null | undefined) => (n === null || n === undefined ? '—' : `${n.toFixed(1)}%`);
 const weekLabel = (key: string) => fmtDate(`${key}T12:00:00Z`);
+/** Fewer weeks than one horizon of history: the forecast is a guess, and says so. */
+export const CONFIDENT_HISTORY_WEEKS = 26;
+const lowConfidence = (s: ForecastSiteSummary | null) => s !== null && s.historyWeeks < CONFIDENT_HISTORY_WEEKS;
 
 export function ForecastHome() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -81,43 +85,36 @@ export function ForecastHome() {
     <ListTemplate
       title="Demand forecast"
       subtitle="Verified hours per site and week, twenty-six weeks ahead with the band the model has earned. Start a season plan from it in one click."
-      primaryAction={
-        canManage ? (
-          <Button onClick={() => compute.mutate()} loading={compute.isPending}>
-            <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
-            {run ? 'Recompute' : 'Compute forecast'}
-          </Button>
-        ) : undefined
-      }
-      secondaryActions={
-        canManage ? (
-          <>
-            <Button variant="outline" onClick={() => setSignalsOpen(true)} disabled={!selected}>
-              <SlidersHorizontal className="mr-2 h-4 w-4" aria-hidden="true" />
-              Signals
-            </Button>
-            <Button variant="outline" onClick={() => setPlanOpen(true)} disabled={!run}>
-              <CalendarRange className="mr-2 h-4 w-4" aria-hidden="true" />
-              Start a season plan
-            </Button>
-          </>
-        ) : undefined
-      }
+      actions={[
+        { label: run ? 'Recompute' : 'Compute forecast', icon: RefreshCw, primary: true, onSelect: () => compute.mutate(), loading: compute.isPending, hidden: !canManage },
+        { label: 'Signals', icon: SlidersHorizontal, onSelect: () => setSignalsOpen(true), disabled: !selected, hidden: !canManage },
+        { label: 'Start a season plan', icon: CalendarRange, onSelect: () => setPlanOpen(true), disabled: !run, hidden: !canManage },
+      ]}
       summary={
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <MetricStrip label="Forecast at a glance">
           <MetricCard label="Sites forecast" value={sitesQ.isLoading ? '…' : String(sites.length)} hint={run ? `Computed ${fmtDate(run.generatedAt)}` : 'Not computed yet'} />
           <MetricCard label="Next 4 weeks" value={siteQ.isLoading ? '…' : hours(run ? next4 : null)} hint={site ? site.siteName : 'Pick a site'} />
-          <MetricCard label="Back-test error" value={pct(site?.mapePct ?? null)} hint="Mean absolute error at a four-week lead" />
-          <MetricCard label="History" value={site ? `${site.historyWeeks} wk` : '—'} hint="Weeks of verified hours behind the forecast" />
-        </div>
+          <MetricCard
+            label="Back-test error"
+            value={pct(site?.mapePct ?? null)}
+            hint="Mean absolute error at a four-week lead"
+            nothing={site && site.mapePct === null ? 'Not scored yet' : undefined}
+          />
+          <MetricCard
+            label="History"
+            value={site ? `${site.historyWeeks} wk` : '—'}
+            tone={lowConfidence(site) ? 'warning' : 'default'}
+            hint={lowConfidence(site) ? `Low confidence: ${site!.historyWeeks} of ${CONFIDENT_HISTORY_WEEKS} weeks of history` : 'Weeks of verified hours behind the forecast'}
+          />
+        </MetricStrip>
       }
       filters={
         sites.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <label className="text-xs text-ink-muted" htmlFor="forecast-site">
               Site
             </label>
-            <Select id="forecast-site" size="sm" value={selected} onChange={(e) => setSearchParams((p) => { p.set('site', e.target.value); return p; })} className="w-72">
+            <Select id="forecast-site" size="sm" value={selected} onChange={(e) => setSearchParams((p) => { p.set('site', e.target.value); return p; })} className="w-full sm:w-80">
               {sites.map((s) => (
                 <option key={s.locationId} value={s.locationId}>
                   {s.siteName}
@@ -125,11 +122,6 @@ export function ForecastHome() {
                 </option>
               ))}
             </Select>
-            {run && (
-              <span className="text-xs text-ink-muted">
-                Last year weighs {Math.round(run.weights.lastYearWeight * 100)}% · band {Math.round(run.weights.bandLow * 100)}% to +{Math.round(run.weights.bandHigh * 100)}%
-              </span>
-            )}
           </div>
         ) : undefined
       }
@@ -153,7 +145,7 @@ export function ForecastHome() {
         <Skeleton className="h-72" />
       ) : (
         <>
-          <ForecastChart weeks={weeks} siteName={site?.siteName ?? ''} />
+          <ForecastChart weeks={weeks} site={site} band={run.weights} />
           <div className="grid gap-5 lg:grid-cols-2">
             <DriversCard weeks={future.slice(0, 4)} />
             <AccuracyCard data={siteQ.data} />
@@ -171,7 +163,11 @@ export function ForecastHome() {
 
 /* ---------------------------------------------------------------- chart */
 
-function ForecastChart({ weeks, siteName }: { weeks: ForecastWeek[]; siteName: string }) {
+function ForecastChart({ weeks, site, band }: { weeks: ForecastWeek[]; site: ForecastSiteSummary | null; band: { bandLow: number; bandHigh: number } }) {
+  const siteName = site?.siteName ?? '';
+  const pastWeeks = weeks.filter((w) => w.actualHours !== null).length;
+  // The band as multiples of the forecast, not as signed percents ("band -100% to +15%").
+  const times = (n: number) => `${Math.max(0, 1 + n).toFixed(2).replace(/\.?0+$/, '')}×`;
   const anchor = weeks.find((w) => w.actualHours === null)?.weekStart;
   const data = weeks.map((w) => ({
     week: w.weekStart,
@@ -187,8 +183,19 @@ function ForecastChart({ weeks, siteName }: { weeks: ForecastWeek[]; siteName: s
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{siteName}: hours by week</CardTitle>
-        <CardDescription>The last twenty-six weeks as they were, the next twenty-six as the model expects them, inside the band its back-test earned.</CardDescription>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>{siteName}: hours by week</CardTitle>
+          {lowConfidence(site) && (
+            <Badge variant="pending" size="sm">
+              Low confidence: {site!.historyWeeks} of {CONFIDENT_HISTORY_WEEKS} weeks of history
+            </Badge>
+          )}
+        </div>
+        <CardDescription>
+          {pastWeeks > 0
+            ? `The ${pastWeeks === 1 ? 'week' : `${pastWeeks} weeks`} since this site's first verified hours, the next twenty-six as the model expects them, inside the range its back-test earned.`
+            : 'No verified hours yet: the next twenty-six weeks start from nothing until hours come in.'}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="h-72 w-full">
@@ -210,7 +217,7 @@ function ForecastChart({ weeks, siteName }: { weeks: ForecastWeek[]; siteName: s
         <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-silver/80">
           <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: PALETTE.secondary }} />Verified hours</li>
           <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: PALETTE.primary }} />Forecast</li>
-          <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: BAND }} />Band (10th to 90th)</li>
+          <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: BAND }} />Likely range: {times(band.bandLow)} to {times(band.bandHigh)} the forecast</li>
         </ul>
         <DetailsTable
           label="Details"
@@ -240,7 +247,13 @@ function DriversCard({ weeks }: { weeks: ForecastWeek[] }) {
               const d = w.drivers;
               const parts: string[] = [];
               if (d.lastYearScaled !== null) parts.push(`last year ${Math.round(d.lastYearScaled)} h at ${Math.round(d.lastYearWeight * 100)}%`);
-              parts.push(`recent ${Math.round(d.recentMean)} h${d.trendPerWeek ? ` ${d.trendPerWeek > 0 ? 'rising' : 'falling'} ${Math.abs(Math.round(d.trendPerWeek))} h a week` : ''}`);
+              // The trend's total pull is capped at 20% of the recent level (the API's TREND_CAP),
+              // so a falling site settles instead of sliding to zero: say so when the cap holds.
+              const cap = 0.2 * d.recentMean;
+              const capped = Math.abs(d.trendPerWeek * d.leadWeeks) > cap + 0.05;
+              parts.push(
+                `recent ${Math.round(d.recentMean)} h${d.trendPerWeek ? ` ${d.trendPerWeek > 0 ? 'rising' : 'falling'} ${Math.abs(Math.round(d.trendPerWeek))} h a week` : ''}${capped ? ` (held to ${Math.round(cap)} h ${d.trendPerWeek > 0 ? 'above' : 'below'})` : ''}`,
+              );
               if (d.holidayName) parts.push(`${d.holidayName} ×${d.holidayFactor.toFixed(2)}`);
               for (const s of d.signals) parts.push(`${kindLabel(s.kind)} ×${s.factor.toFixed(2)}${s.source ? ` (${s.source})` : ''}`);
               return (

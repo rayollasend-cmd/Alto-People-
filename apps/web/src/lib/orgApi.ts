@@ -404,9 +404,13 @@ export function deleteShiftPosition(id: string): Promise<void> {
   return apiFetch<void>(`/org/shift-positions/${id}`, { method: 'DELETE' });
 }
 
-export function listOrgAssociates(clientId?: string): Promise<AssociateOrgListResponse> {
-  const q = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
-  return apiFetch<AssociateOrgListResponse>(`/org/associates${q}`);
+export function listOrgAssociates(clientId?: string, opts: { id?: string; former?: boolean } = {}): Promise<AssociateOrgListResponse> {
+  const qs = new URLSearchParams();
+  if (clientId) qs.set('clientId', clientId);
+  if (opts.id) qs.set('id', opts.id);
+  if (opts.former) qs.set('former', '1');
+  const q = qs.toString();
+  return apiFetch<AssociateOrgListResponse>(`/org/associates${q ? `?${q}` : ''}`);
 }
 export function assignOrgFields(
   associateId: string,

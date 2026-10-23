@@ -31,6 +31,7 @@ import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import { FundingBadge, FundingBreakdownList } from './FundingCard';
 import { WebhookHealthTile } from '@/pages/payroll/WebhookHealthTile';
+import { getDisbursementWebhookStatus, type DisbursementWebhookStatus } from '@/lib/payrollApi';
 import { AccountsTab } from './AccountsTab';
 import { DepositsTab } from './DepositsTab';
 import { FilesTab } from './FilesTab';
@@ -58,78 +59,142 @@ const RAIL_LABEL: Record<string, string> = {
 
 export function PayrollBankingPage() {
   const [params, setParams] = useSearchParams();
-  const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'funding') as Tab;
+  const summary = useQuery({ queryKey: ['payroll-banking', 'summary'], queryFn: getBankingSummary });
+  // The provider the platform pays through (Wise, Branch) — the same read the health card makes.
+  const payout = useQuery({ queryKey: ['WebhookHealthTile', 'status'], queryFn: () => getDisbursementWebhookStatus(), retry: false, staleTime: 60_000 });
+  // Funding is only a thing on the company's own ACH; on the platform's provider the page
+  // opens on Direct deposit instead of an empty "Nothing to fund here". ?tab= still wins.
+  const onAch = summary.data?.profile.bankRail === 'ACH';
+  const fallbackTab: Tab | null = summary.data ? (onAch ? 'funding' : 'deposits') : summary.isError ? 'funding' : null;
+  const asked = TABS.includes(params.get('tab') as Tab) ? (params.get('tab') as Tab) : null;
+  const tab = asked ?? fallbackTab;
   const setTab = (t: Tab) => {
     const next = new URLSearchParams(params);
-    if (t === 'funding') next.delete('tab');
+    if (t === fallbackTab) next.delete('tab');
     else next.set('tab', t);
-    setParams(next, { replace: true });
+    // A tab is a place: Back returns to the one you came from.
+    setParams(next);
   };
-  const summary = useQuery({ queryKey: ['payroll-banking', 'summary'], queryFn: getBankingSummary });
+  const [railNoteRead, markRailNoteRead] = useReadOnce('alto.payrollBanking.railNoteRead');
+  const via = summary.data ? railName(summary.data.profile.bankRail, payout.data?.provider ?? null) : null;
 
   return (
     <ListTemplate
       title="Payroll banking"
       subtitle="The money behind each payroll: what to fund and by when, the account it comes from, and every file sent to the bank."
-      breadcrumbs={[{ label: 'Pay & finance' }, { label: 'Payroll banking' }]}
       summary={
         <div className="space-y-3">
-          {/* The payout provider's health in full (the Payroll page shows one line pointing here). */}
+          {/* When payouts are stuck: what happened and how to fix it (the Payroll page shows one line pointing here). */}
           <WebhookHealthTile surface="banking" />
-          {summary.data ? <StatusBanner s={summary.data} onSetup={() => setTab('setup')} /> : null}
+          {summary.data && (summary.data.profile.bankRail === 'ACH' || !railNoteRead) ? (
+            <StatusBanner s={summary.data} via={via} onSetup={() => setTab('setup')} onRead={summary.data.profile.bankRail === 'ACH' ? undefined : markRailNoteRead} />
+          ) : null}
         </div>
       }
     >
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <div className="-mx-1 overflow-x-auto px-1">
-          <TabsList>
-            <TabsTrigger value="funding">Funding</TabsTrigger>
-            <TabsTrigger value="accounts">Bank accounts</TabsTrigger>
-            <TabsTrigger value="deposits">Direct deposit</TabsTrigger>
-            <TabsTrigger value="files">ACH files</TabsTrigger>
-            <TabsTrigger value="calendar">Calendar</TabsTrigger>
-            <TabsTrigger value="setup">Setup</TabsTrigger>
-          </TabsList>
-        </div>
-        <TabsContent value="funding">
-          <FundingTab query={summary} onTab={setTab} highlightRun={params.get('run')} />
-        </TabsContent>
-        <TabsContent value="accounts">
-          <AccountsTab summary={summary.data} />
-        </TabsContent>
-        <TabsContent value="deposits">
-          <DepositsTab requirePrenote={summary.data?.profile.requirePrenote ?? true} onAch={summary.data?.profile.bankRail === 'ACH'} />
-        </TabsContent>
-        <TabsContent value="files">
-          <FilesTab inHouse={!summary.data?.connection} ownAccount={summary.data?.profile.settlement === 'OWN_ACCOUNT'} bankName={summary.data?.profile.immediateDestinationName ?? null} />
-        </TabsContent>
-        <TabsContent value="calendar">
-          <CalendarTab />
-        </TabsContent>
-        <TabsContent value="setup">
-          {summary.data ? <SetupTab summary={summary.data} /> : summary.isError ? <QueryError what="payroll banking" query={summary} /> : <SkeletonRows count={6} />}
-        </TabsContent>
-      </Tabs>
+      {tab === null ? (
+        <SkeletonRows count={5} />
+      ) : (
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+          <div className="-mx-1 overflow-x-auto px-1">
+            <TabsList>
+              <TabsTrigger value="funding">Funding</TabsTrigger>
+              <TabsTrigger value="accounts">Bank accounts</TabsTrigger>
+              <TabsTrigger value="deposits">Direct deposit</TabsTrigger>
+              <TabsTrigger value="files">ACH files</TabsTrigger>
+              <TabsTrigger value="calendar">Calendar</TabsTrigger>
+              <TabsTrigger value="setup">Setup</TabsTrigger>
+            </TabsList>
+          </div>
+          <TabsContent value="funding">
+            <FundingTab query={summary} onTab={setTab} highlightRun={params.get('run')} />
+          </TabsContent>
+          <TabsContent value="accounts">
+            <AccountsTab summary={summary.data} />
+          </TabsContent>
+          <TabsContent value="deposits">
+            <DepositsTab requirePrenote={summary.data?.profile.requirePrenote ?? true} onAch={summary.data?.profile.bankRail === 'ACH'} />
+          </TabsContent>
+          <TabsContent value="files">
+            <FilesTab inHouse={!summary.data?.connection} ownAccount={summary.data?.profile.settlement === 'OWN_ACCOUNT'} bankName={summary.data?.profile.immediateDestinationName ?? null} />
+          </TabsContent>
+          <TabsContent value="calendar">
+            <CalendarTab />
+          </TabsContent>
+          <TabsContent value="setup">
+            {summary.data ? (
+              <div className="space-y-4">
+                {/* The rail note, once read, lives here instead of above every tab. */}
+                {summary.data.profile.bankRail !== 'ACH' && railNoteRead && <StatusBanner s={summary.data} via={via} onSetup={() => undefined} inSetup />}
+                <SetupTab summary={summary.data} />
+              </div>
+            ) : summary.isError ? (
+              <QueryError what="payroll banking" query={summary} />
+            ) : (
+              <SkeletonRows count={6} />
+            )}
+          </TabsContent>
+        </Tabs>
+      )}
     </ListTemplate>
   );
 }
 
+/** Which way bank-account pay goes out, in one name ("Wise", "your own ACH"). */
+export function railName(bankRail: string, provider: DisbursementWebhookStatus['provider'] | null): string {
+  if (bankRail === 'PLATFORM') {
+    if (provider === 'WISE') return 'Wise';
+    if (provider === 'BRANCH') return 'Branch';
+    return 'the platform’s payout provider';
+  }
+  return RAIL_LABEL[bankRail] ?? bankRail;
+}
+
+/** A note someone has read: remembered on this device (a per-person convenience, never state). */
+function useReadOnce(key: string): [boolean, () => void] {
+  const [read, setRead] = useState(() => {
+    try {
+      return window.localStorage.getItem(key) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const mark = () => {
+    setRead(true);
+    try {
+      window.localStorage.setItem(key, '1');
+    } catch {
+      /* private window: it shows again next time */
+    }
+  };
+  return [read, mark];
+}
+
 /* ----- What mode we're in, and what's left to set up ------------------------------ */
 
-function StatusBanner({ s, onSetup }: { s: BankingSummary; onSetup: () => void }) {
+function StatusBanner({ s, via, onSetup, onRead, inSetup = false }: { s: BankingSummary; via: string | null; onSetup: () => void; onRead?: () => void; inSetup?: boolean }) {
   const p = s.profile;
   if (p.bankRail !== 'ACH') {
     return (
       <Card className="border-steel/40 bg-steel/5">
         <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-start">
-          <Info className="mt-0.5 h-5 w-5 shrink-0 text-sky" aria-hidden />
+          <Info className="mt-0.5 hidden h-5 w-5 shrink-0 text-sky sm:block" aria-hidden />
           <div className="min-w-0 flex-1">
-            <p className="font-medium text-ink">{`Bank-account pay goes through ${RAIL_LABEL[p.bankRail] ?? p.bankRail}`}</p>
+            <p className="font-medium text-ink">{`Bank-account pay goes out through ${via ?? 'the platform’s payout provider'}`}</p>
             <p className="text-sm text-ink-muted">Switch to your own ACH to pull payroll from your operating account, send one file per run, and handle returns here.</p>
           </div>
-          <Button size="sm" variant="outline" className="shrink-0" onClick={onSetup}>
-            Set up your own ACH
-          </Button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {!inSetup && (
+              <Button size="sm" variant="outline" onClick={onSetup}>
+                Set up your own ACH
+              </Button>
+            )}
+            {onRead && (
+              <Button size="sm" variant="ghost" onClick={onRead}>
+                Got it
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
     );

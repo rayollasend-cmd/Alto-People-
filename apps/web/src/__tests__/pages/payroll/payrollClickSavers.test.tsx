@@ -101,7 +101,7 @@ describe('the pre-flight list', () => {
   it('sends each kind of problem to the page that fixes it', () => {
     const ex = (kind: string) => ({ associateId: ANA, associateName: 'Ana Reyes', kind, severity: 'BLOCKING', message: '', detail: {} }) as never;
     expect(fixHref(ex('TERMINATED_IN_RUN'))).toBe(`/people/${ANA}?tab=employment`);
-    expect(fixHref(ex('UNSUPPORTED_STATE'))).toBe('/payroll/state-tax');
+    expect(fixHref(ex('UNSUPPORTED_STATE'))).toBe('/payroll/tax-tables?tab=state');
     expect(fixHref(ex('BELOW_PREVAILING_WAGE'))).toBe('/payroll/certified');
     expect(fixHref(ex('UNASSIGNED_SCHEDULE'))).toBe('/payroll/schedules');
     expect(fixHref(ex('UNAPPROVED_TIME'))).toBe(`/time-attendance?tab=queue&associate=${ANA}&name=Ana+Reyes`);

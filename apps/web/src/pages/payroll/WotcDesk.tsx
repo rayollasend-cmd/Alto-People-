@@ -32,6 +32,8 @@ import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, Draw
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { useUrlParam } from '@/lib/useUrlState';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -81,6 +83,7 @@ export const QUESTION_TEXT: Record<WotcQuestion, string> = {
 };
 
 type Filter = 'to-file' | 'filed' | 'certified' | 'all';
+const FILTERS: readonly Filter[] = ['to-file', 'filed', 'certified', 'all'];
 
 function deadlineBadge(s: WotcScreening) {
   if (s.status !== 'LIKELY_ELIGIBLE' || s.daysLeft === null) return null;
@@ -91,7 +94,8 @@ function deadlineBadge(s: WotcScreening) {
 
 export function WotcDesk() {
   const term = useTerm();
-  const [filter, setFilter] = useState<Filter>('to-file');
+  // The view is in the URL (?show=filed), so it can be linked and Back keeps it.
+  const [filter, setFilter] = useUrlParam<Filter>('show', 'to-file', FILTERS);
   const [openId, setOpenId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const summary = useQuery({ queryKey: ['wotc', 'summary'], queryFn: getWotcSummary });
@@ -135,33 +139,35 @@ export function WotcDesk() {
     <ListTemplate
       title="WOTC tax credits"
       subtitle="Screen hires for the Work Opportunity Tax Credit, file with the state inside 28 days of the start date, and watch the credit build with the hours."
-      breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'WOTC tax credits' }]}
-      secondaryActions={
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <a href={wotcExportUrl()}>
-              <Download className="h-3.5 w-3.5" aria-hidden="true" />
-              9061 data (CSV)
-            </a>
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>
-            <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
-            Screening settings
-          </Button>
-        </div>
-      }
+      actions={[
+        { key: 'export', label: 'Download Form 9061 data', icon: Download, href: wotcExportUrl(), download: true },
+        { key: 'settings', label: 'Screening settings', icon: Settings2, onSelect: () => setSettingsOpen(true) },
+      ]}
       summary={
         s ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="space-y-3">
+          {/* Screening off explains every zero below, so it comes first (F500 G3). */}
+          {settings.data && !settings.data.enabled && (
+            <Card>
+              <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <p className="text-sm text-ink">Screening is off: new hires aren’t asked the questions. Turn it on to add them to every new onboarding checklist.</p>
+                <Button size="sm" onClick={() => setSettingsOpen(true)}>
+                  Turn on screening
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+          <MetricStrip label="WOTC at a glance">
             <MetricCard label="Credit earned" value={fmtMoney(s.estimatedCredit)} hint={`${s.certified} certified, by hours worked so far`} />
             <MetricCard label="In the pipeline" value={fmtMoney(s.pipelineCredit)} hint={`up to, across ${s.eligible - s.certified} eligible hires`} />
             <MetricCard
               label="To file"
               value={s.toFile}
               hint={s.overdue ? `${s.overdue} past the 28-day deadline` : s.dueThisWeek ? `${s.dueThisWeek} due this week` : 'none due this week'}
-              accent={s.overdue > 0 || s.dueThisWeek > 0}
+              tone={s.overdue > 0 ? 'alert' : s.dueThisWeek > 0 ? 'warning' : 'default'}
             />
-            <MetricCard label="Filed on time" value={s.submitted ? `${Math.round((s.filedOnTime / s.submitted) * 100)}%` : '—'} hint={`${s.submitted} filed · ${s.screened} screened`} />
+            <MetricCard label="Filed on time" value={s.submitted ? `${Math.round((s.filedOnTime / s.submitted) * 100)}%` : '—'} nothing={s.submitted ? undefined : 'Nothing filed yet'} hint={`${s.submitted} filed · ${s.screened} screened`} />
+          </MetricStrip>
           </div>
         ) : (
           <Skeleton className="h-24" />
@@ -183,16 +189,6 @@ export function WotcDesk() {
       }
     >
       <div className="space-y-5">
-        {settings.data && !settings.data.enabled && (
-          <Card>
-            <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <p className="text-sm text-ink">Screening is off — new hires aren’t asked the questions. Turn it on to add them to every new onboarding checklist.</p>
-              <Button size="sm" onClick={() => setSettingsOpen(true)}>
-                Turn on screening
-              </Button>
-            </CardContent>
-          </Card>
-        )}
         <DataGrid
           id="wotc-screenings"
           caption="WOTC screenings"

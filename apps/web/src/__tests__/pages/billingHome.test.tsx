@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { axe } from 'vitest-axe';
 import { renderAs } from './hrPack/harness';
 
@@ -18,6 +18,11 @@ vi.mock('@/lib/api', async (orig) => ({
     month: '2026-10',
     daysCounted: 14,
     running: { PERSON: 212, AGENT: 3, ROBOT: 1 },
+    history: [
+      { month: '2026-09', daysCounted: 30, counts: { PERSON: 198, AGENT: 2, ROBOT: 1 } },
+      { month: '2026-08', daysCounted: 31, counts: { PERSON: 200, AGENT: 0, ROBOT: 0 } },
+      { month: '2026-07', daysCounted: 0, counts: { PERSON: 0, AGENT: 0, ROBOT: 0 } },
+    ],
     invoices: [
       { id: 'i2', month: '2026-09', status: 'OPEN', totalCents: 9900, lines: [{ type: 'ROBOT', quantity: 1, unitPriceCents: 9900, amountCents: 9900 }], holdReason: null, hostedUrl: 'https://invoice.stripe.test/in_1', lastPaymentError: null, paidAt: null },
       { id: 'i1', month: '2026-08', status: 'DRAFT', totalCents: 0, lines: [{ type: 'PERSON', quantity: 200, unitPriceCents: null, amountCents: 0 }], holdReason: 'prices_missing', hostedUrl: null, lastPaymentError: null, paidAt: null },
@@ -30,9 +35,11 @@ import { BillingHome } from '@/pages/admin/BillingHome';
 describe('BillingHome', () => {
   it('shows the running counts, the invoices and why a draft waits', async () => {
     const { container } = renderAs('HR_ADMINISTRATOR', <BillingHome />, '/admin/billing');
-    expect(await screen.findByText('212')).toBeTruthy();
-    expect(screen.getByText('AI agents')).toBeTruthy();
-    expect(screen.getByText('$99.00')).toBeTruthy();
+    // The running counts are MetricCards that count up; wait for the landed value.
+    const strip = await screen.findByRole('group', { name: 'October 2026 so far' });
+    await waitFor(() => expect(strip).toHaveTextContent('212'), { timeout: 3000 });
+    expect(screen.getAllByText('AI agents').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('$99.00').length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: /view/i }).getAttribute('href')).toBe('https://invoice.stripe.test/in_1');
     expect(screen.getByText('Waiting for your plan’s prices.')).toBeTruthy();
     // The billing contact and the payment method on file (audit 2026-10-21, Tier 3).
@@ -41,7 +48,24 @@ describe('BillingHome', () => {
     expect(screen.getByText('Visa ending 4242, expires 4/2028')).toBeTruthy();
     // An admin can change who the invoices go to.
     expect(screen.getByRole('button', { name: 'Edit contact' })).toBeTruthy();
+    // The last six months beside the invoice each became (F500 G4).
+    const history = screen.getByRole('table', { name: /Billable workers by month/ });
+    expect(history).toHaveTextContent('September 2026');
+    expect(history).toHaveTextContent('198');
+    expect(history).toHaveTextContent('Due');
+    expect(history).toHaveTextContent('No activity counted');
     const results = await axe(container, { rules: { 'color-contrast': { enabled: false }, region: { enabled: false } } });
     expect(results.violations).toHaveLength(0);
+  });
+  it('says in one line when the last six months counted nothing, instead of six rows of zeros', async () => {
+    const { apiFetch } = await import('@/lib/api');
+    vi.mocked(apiFetch).mockImplementationOnce(async () => ({
+      plan: 'internal', invoiced: false, stripe: 'off', month: '2026-10', daysCounted: 3, running: { PERSON: 1, AGENT: 0, ROBOT: 0 },
+      history: ['2026-09', '2026-08', '2026-07', '2026-06', '2026-05', '2026-04'].map((month) => ({ month, daysCounted: 0, counts: { PERSON: 0, AGENT: 0, ROBOT: 0 } })),
+      invoices: [],
+    }) as never);
+    renderAs('HR_ADMINISTRATOR', <BillingHome />, '/admin/billing');
+    expect(await screen.findByText('No activity was counted from April 2026 to September 2026.')).toBeTruthy();
+    expect(screen.queryByRole('table', { name: /Billable workers by month/ })).toBeNull();
   });
 });

@@ -148,10 +148,13 @@ certifiedPayrollRouter.get('/projects/:id', async (req, res, next) => {
       prisma.certifiedPayrollReport.findMany({
         where: { tenantId: tenantIdForWrite(), projectId: project.id },
         orderBy: { weekEnding: 'desc' },
-        select: { id: true, weekEnding: true, payrollNumber: true, isFinal: true, status: true, signatureName: true, signedAt: true, submittedAt: true, submittedTo: true, confirmation: true },
+        select: { id: true, weekEnding: true, payrollNumber: true, isFinal: true, status: true, signatureName: true, signedAt: true, submittedAt: true, submittedTo: true, confirmation: true, snapshot: true },
       }),
       prisma.associate.findMany({ where: { id: { in: project.workers.map((w) => w.associateId) } }, select: { id: true, firstName: true, lastName: true } }),
     ]);
+    // Gross paid on the project to date, as the signed WH-347s report it (each signed week's frozen totals).
+    const signedReports = reports.filter((r) => r.status === 'SIGNED' || r.status === 'SUBMITTED');
+    const grossReported = Math.round(signedReports.reduce((a, r) => a + Number((r.snapshot as { totals?: { grossThisProject?: number } } | null)?.totals?.grossThisProject ?? 0), 0) * 100) / 100;
     const nameOf = new Map(people.map((p) => [p.id, `${p.firstName} ${p.lastName}`.trim()]));
     const byWeek = new Map(reports.map((r) => [ymd(r.weekEnding), r]));
     const weeks = endedWeeks(project)
@@ -187,7 +190,8 @@ certifiedPayrollRouter.get('/projects/:id', async (req, res, next) => {
         })),
       },
       weeks,
-      reports,
+      reports: reports.map(({ snapshot: _snapshot, ...r }) => r),
+      totals: { grossReported, weeksReported: signedReports.length },
     });
   } catch (err) {
     next(err);

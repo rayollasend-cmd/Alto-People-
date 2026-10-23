@@ -102,10 +102,13 @@ describe('succession by store and the 9-box', () => {
     renderAs('HR_ADMINISTRATOR', <SuccessionByStore />);
     expect(await screen.findByText('Front Beach')).toBeInTheDocument();
     expect(screen.getByText('Lee Lead')).toBeInTheDocument();
-    expect(screen.getByText(/^No lead placed at this/)).toBeInTheDocument();
+    // A table now (F500 G1), one row per store; the bench opens under its row.
+    expect(screen.getByText('No lead placed')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Bench at Front Beach' }));
     await userEvent.selectOptions(screen.getByLabelText('Readiness for Ana Next'), 'READY_NOW');
     await waitFor(() => expect(updateBench).toHaveBeenCalledWith('b1', { readiness: 'READY_NOW' }));
-    await userEvent.click(screen.getByRole('button', { name: 'No bench' }));
+    // The tiles are the filter.
+    await userEvent.click(screen.getByRole('button', { name: /^No bench/ }));
     expect(screen.queryByText('Front Beach')).toBeNull();
     expect(screen.getByText('Bay Point')).toBeInTheDocument();
   });

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -19,10 +19,16 @@ import {
   type TermLang,
   type Terminology,
   type UpdateTenantProfileInput,
+  SUPPORTED_TIMEZONES,
 } from '@alto-people/shared';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { getTenantProfile, saveTenantProfile } from '@/lib/tenantProfileApi';
+import { getOrgBranding, patchOrgBranding } from '@/lib/brandingApi';
+import { ORG_SETTINGS_KEY } from '@/lib/orgSettingsKey';
+import { fmtDate, fmtTimeZone } from '@/lib/format';
+import { SettingsSection } from '@/components/templates';
+import { SettingsSaveBar } from '@/pages/settings/SettingsSaveBar';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
@@ -151,6 +157,7 @@ export function TenantProfileHome() {
   const [termDraft, setTermDraft] = useState<Partial<Record<TermKey, Partial<Record<TermLang, string>>>>>({});
 
   const profile = query.data?.profile;
+  const facts = query.data?.facts;
   const model = modelDraft ?? profile?.businessModel ?? 'WORKFORCE_PROVIDER';
   const modules: TenantModules | null = profile ? { ...profile.modules, ...moduleDraft } : null;
   const terms: Terminology | null = useMemo(() => {
@@ -170,7 +177,22 @@ export function TenantProfileHome() {
   const pagesLeaving = moduleChanges.filter(([, on]) => !on).flatMap(([k]) => MODULE_REACH[k].pages);
   const pagesArriving = moduleChanges.filter(([, on]) => on).flatMap(([k]) => MODULE_REACH[k].pages);
 
-  const dirty = modelDraft !== null || Object.keys(moduleDraft).length > 0 || Object.keys(termDraft).length > 0;
+  // The company calendar (the workweek and its time zone) is an org setting
+  // (GET/PATCH /admin/org/settings); it moved here from Branding (F500 G4)
+  // and saves with the rest of the page, from the one bar.
+  const orgSettings = useQuery({ queryKey: ORG_SETTINGS_KEY, queryFn: () => getOrgBranding(), retry: false });
+  const savedCalendar = useMemo(
+    () => (orgSettings.data ? { weekStartsOn: orgSettings.data.weekStartsOn ?? 6, timezone: orgSettings.data.timezone ?? 'America/New_York' } : null),
+    [orgSettings.data],
+  );
+  const [calendar, setCalendar] = useState<{ weekStartsOn: number; timezone: string } | null>(null);
+  useEffect(() => setCalendar(savedCalendar), [savedCalendar]);
+  const calendarChanges =
+    savedCalendar && calendar ? Number(savedCalendar.weekStartsOn !== calendar.weekStartsOn) + Number(savedCalendar.timezone !== calendar.timezone) : 0;
+
+  const profileChanges = (modelDraft !== null ? 1 : 0) + Object.keys(moduleDraft).length + Object.values(termDraft).reduce((n, v) => n + Object.keys(v ?? {}).length, 0);
+  const dirty = profileChanges > 0;
+  const [calendarSaving, setCalendarSaving] = useState(false);
 
   const save = useMutation({
     mutationFn: (body: UpdateTenantProfileInput) => saveTenantProfile(body),
@@ -187,6 +209,17 @@ export function TenantProfileHome() {
   });
 
   const onSave = () => {
+    if (calendarChanges > 0 && calendar) {
+      setCalendarSaving(true);
+      patchOrgBranding({ weekStartsOn: calendar.weekStartsOn, timezone: calendar.timezone })
+        .then((updated) => {
+          queryClient.setQueryData(ORG_SETTINGS_KEY, updated);
+          if (!dirty) toast.success('Workweek and time zone saved.');
+        })
+        .catch((err: unknown) => toast.error(err instanceof Error ? err.message : 'Could not save the workweek.'))
+        .finally(() => setCalendarSaving(false));
+    }
+    if (!dirty) return;
     const body: UpdateTenantProfileInput = {};
     if (modelDraft) body.businessModel = modelDraft;
     if (Object.keys(moduleDraft).length) body.modules = moduleDraft;
@@ -215,23 +248,48 @@ export function TenantProfileHome() {
     <div className="space-y-6">
       <PageHeader
         title="Organization"
-        subtitle={`What kind of organization this is, which modules it runs, and what it calls things. The words here reach the navigation, the roles and ${assistantName}.`}
-        breadcrumbs={[{ label: 'Settings & trust', to: '/admin' }, { label: 'Organization' }]}
+        subtitle={`What kind of organization this is, which modules it runs, what it calls things, and its workweek. The words here reach the navigation, the roles and ${assistantName}.`}
+        facts={[
+          { label: 'Name', value: facts?.name ?? null },
+          { label: 'Plan', value: facts?.plan ? facts.plan.charAt(0).toUpperCase() + facts.plan.slice(1) : null, to: can('manage:org') ? '/admin/billing' : undefined },
+          { label: 'People on the books', value: facts ? facts.onTheBooks.toLocaleString() : null, to: '/people', hint: 'Hired and not separated: the count People and Headcount show.' },
+          { label: term('sites'), value: facts ? facts.sites.toLocaleString() : null, to: can('view:org') ? '/admin/sites' : undefined, hint: 'Active places' },
+          { label: 'Since', value: facts?.createdAt ? fmtDate(facts.createdAt) : null },
+        ]}
       />
 
-      {can('view:org') ? (
-        <nav aria-label="Organization" className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link to="/admin/employers">Employers of record</Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to="/admin/org-units">Cost centers &amp; ledger codes</Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to="/admin/sites">{term('sites')}</Link>
-          </Button>
-        </nav>
-      ) : null}
+      <SettingsSection id="calendar" title="Workweek and time zone" description="The company week for overtime, digests and every weekly number. Each site keeps its own time zone on its record; the week turns at midnight in the company zone.">
+        {orgSettings.isError ? (
+          <QueryError what="the workweek" query={orgSettings} />
+        ) : !calendar ? (
+          <Skeleton className="h-16" />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
+            <Field label="Workweek starts on">
+              {(p) => (
+                <Select {...p} value={calendar.weekStartsOn} onChange={(e) => setCalendar((c) => c && { ...c, weekStartsOn: Number(e.target.value) })} disabled={!canManage}>
+                  {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => (
+                    <option key={d} value={i}>
+                      {d}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Company time zone">
+              {(p) => (
+                <Select {...p} value={calendar.timezone} onChange={(e) => setCalendar((c) => c && { ...c, timezone: e.target.value })} disabled={!canManage}>
+                  {SUPPORTED_TIMEZONES.map((tz) => (
+                    <option key={tz} value={tz}>
+                      {fmtTimeZone(tz)}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          </div>
+        )}
+      </SettingsSection>
 
       {query.isError ? <QueryError what="the organization profile" query={query} /> : null}
       {query.isPending ? <Skeleton className="h-64" /> : null}
@@ -380,18 +438,17 @@ export function TenantProfileHome() {
           </Tabs>
 
           {canManage ? (
-            <div className="sticky bottom-0 flex items-center justify-between gap-3 rounded-lg border border-navy-secondary bg-navy/95 p-3 backdrop-blur">
-              <p className="text-xs text-silver">
-                {dirty ? 'Unsaved changes.' : 'Everything is saved.'} Branding, the assistant's name and the workweek live on the{' '}
-                <Link to="/admin/branding" className="text-gold underline underline-offset-2">
-                  Branding page
-                </Link>
-                .
-              </p>
-              <Button type="button" onClick={onSave} loading={save.isPending} disabled={!dirty || save.isPending}>
-                Save
-              </Button>
-            </div>
+            <SettingsSaveBar
+              dirty={profileChanges + calendarChanges}
+              saving={save.isPending || calendarSaving}
+              onSave={onSave}
+              onDiscard={() => {
+                setModelDraft(null);
+                setModuleDraft({});
+                setTermDraft({});
+                setCalendar(savedCalendar);
+              }}
+            />
           ) : null}
         </>
       ) : null}

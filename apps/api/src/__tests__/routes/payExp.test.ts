@@ -263,7 +263,10 @@ describe('manual checks and third-party sick pay', () => {
     const liab = await prisma.taxLiability.findMany({ where: { payrollRunId: null } });
     expect(liab.some((l) => l.kind === 'FEDERAL_WITHHOLDING' && Number(l.amount) === Math.round((49.6 + 11.6) * 100) / 100)).toBe(true);
     // Voided: off the W-2 and the ledger.
-    await a.post(`/payroll/sick-pay/${r.body.id}/void`).send({});
+    // The page asks why; the reason goes on the audit record.
+    expect((await a.post(`/payroll/sick-pay/${r.body.id}/void`).send({ reason: 'Corrected statement from the insurer' })).status).toBe(200);
+    const audit = await prisma.auditLog.findFirst({ where: { action: 'payroll.third_party_sick_pay.voided', entityId: r.body.id } });
+    expect(audit?.metadata).toEqual({ reason: 'Corrected statement from the insurer' });
     expect((await aggregateW2Wages(prisma, associate.id, 2026)).box13ThirdPartySickPay).toBe(false);
     expect(await prisma.taxLiability.count({ where: { payrollRunId: null } })).toBe(0);
   });

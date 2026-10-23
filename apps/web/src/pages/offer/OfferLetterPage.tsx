@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { CheckCircle2, FileSignature } from 'lucide-react';
+import { CheckCircle2, Download, FileSignature } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { acceptOfferLetter, declineOfferLetter, getOfferLetter } from '@/lib/recruiting90Api';
+import { acceptOfferLetter, declineOfferLetter, getOfferLetter, offerLetterPdfHref, type PublicOfferLetter } from '@/lib/recruiting90Api';
+import { ContactLine, LinkProblem } from '@/components/LinkProblem';
 import { isDateOnly } from '@alto-people/shared';
 import { fmtDate } from '@/lib/format';
 import { Logo } from '@/components/Logo';
@@ -37,7 +38,12 @@ function Shell({ children }: { children: ReactNode }) {
   );
 }
 
-function Notice({ tone = 'neutral', title, children }: { tone?: 'good' | 'neutral'; title: string; children: ReactNode }) {
+/** The recruiter, named — every state of the page points to a person, not "your recruiter" (F500 G5). */
+function RecruiterLine({ recruiter }: { recruiter: PublicOfferLetter['recruiter'] }) {
+  return <ContactLine className="mt-4 justify-start" label="Questions? Your recruiter:" contact={recruiter} />;
+}
+
+function Notice({ tone = 'neutral', title, children, recruiter }: { tone?: 'good' | 'neutral'; title: string; children: ReactNode; recruiter?: PublicOfferLetter['recruiter'] }) {
   return (
     <div
       role="status"
@@ -52,6 +58,7 @@ function Notice({ tone = 'neutral', title, children }: { tone?: 'good' | 'neutra
         {title}
       </div>
       <div className="mt-2 text-silver">{children}</div>
+      {recruiter && <RecruiterLine recruiter={recruiter} />}
     </div>
   );
 }
@@ -108,7 +115,7 @@ export function OfferLetterPage() {
   if (done?.kind === 'signed') {
     return (
       <Shell>
-        <Notice tone="good" title="You've accepted — welcome aboard">
+        <Notice tone="good" title="You've accepted — welcome aboard" recruiter={offer?.recruiter}>
           Signed by {typedName.trim()} on {fmtDate(done.at)}. We've emailed you a copy of the signed letter. Next,
           you'll get an email to set up your account and complete your paperwork.
         </Notice>
@@ -118,7 +125,7 @@ export function OfferLetterPage() {
   if (done?.kind === 'declined') {
     return (
       <Shell>
-        <Notice title="You've declined the offer">
+        <Notice title="You've declined the offer" recruiter={offer?.recruiter}>
           Thanks for letting us know. Your recruiter has been told, and you're welcome to apply for other jobs with us
           anytime.
         </Notice>
@@ -131,12 +138,14 @@ export function OfferLetterPage() {
     return (
       <Shell>
         {gone ? (
-          <Notice title="This offer link can't be opened">
-            It has already been used, or it isn't a real link. If you've signed your offer, you're all set — watch
-            your email for next steps. Otherwise, contact your recruiter for a new link.
-          </Notice>
+          // A used link and a made-up one look the same to the server (a used link retires).
+          <LinkProblem
+            kind="invalid"
+            title="This offer link can’t be opened"
+            reason="It has already been used, or it isn’t a real link. If you’ve signed your offer, you’re all set — your signed copy is in your email. Otherwise, reply to the offer email and your recruiter will send a new link."
+          />
         ) : (
-          <ErrorBanner>{q.error instanceof ApiError ? q.error.message : 'Could not load your offer.'}</ErrorBanner>
+          <LinkProblem kind="error" title="Your offer didn’t load" reason={q.error instanceof ApiError ? q.error.message : 'Check your connection and try again.'} />
         )}
       </Shell>
     );
@@ -162,7 +171,9 @@ export function OfferLetterPage() {
     const [title, body] = why[offer.status] ?? ['This offer is not open', 'Contact your recruiter.'];
     return (
       <Shell>
-        <Notice title={title}>{body}</Notice>
+        <Notice title={title} recruiter={offer.recruiter}>
+          {body}
+        </Notice>
       </Shell>
     );
   }
@@ -170,8 +181,17 @@ export function OfferLetterPage() {
   return (
     <Shell>
       <p className="text-sm uppercase tracking-widest text-gold">Your offer</p>
-      <h1 className="mt-2 font-display text-3xl md:text-4xl text-white">{offer.jobTitle}</h1>
-      <dl className="mt-4 grid grid-cols-1 gap-3 rounded-lg border border-navy-secondary bg-navy/60 p-4 text-sm sm:grid-cols-3">
+      <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+        <h1 className="font-display text-3xl md:text-4xl text-white">{offer.jobTitle}</h1>
+        {/* A copy to keep before deciding (the link retires once used). */}
+        <Button asChild variant="secondary" size="sm">
+          <a href={offerLetterPdfHref(token)} download>
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            Download letter (PDF)
+          </a>
+        </Button>
+      </div>
+      <dl className={`mt-4 grid grid-cols-1 gap-3 rounded-lg border border-navy-secondary bg-navy/60 p-4 text-sm ${offer.expiresAt ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
         <div>
           <dt className="text-2xs uppercase tracking-widest text-silver">Where</dt>
           <dd className="mt-0.5 text-white">{offer.clientName}</dd>
@@ -184,7 +204,15 @@ export function OfferLetterPage() {
           <dt className="text-2xs uppercase tracking-widest text-silver">Pay</dt>
           <dd className="mt-0.5 text-white">{offer.pay}</dd>
         </div>
+        {offer.expiresAt && (
+          // The deadline is a fact of the offer, up here — not a line under the letter.
+          <div>
+            <dt className="text-2xs uppercase tracking-widest text-silver">Respond by</dt>
+            <dd className="mt-0.5 text-ink" data-testid="offer-respond-by">{fmtDate(offer.expiresAt)}</dd>
+          </div>
+        )}
       </dl>
+      <RecruiterLine recruiter={offer.recruiter} />
 
       {offer.letterBody && (
         <article aria-label="Offer letter" className="mt-6 whitespace-pre-wrap rounded-lg border border-navy-secondary bg-navy/40 p-5 leading-relaxed text-silver">
@@ -192,9 +220,6 @@ export function OfferLetterPage() {
         </article>
       )}
 
-      {offer.expiresAt && (
-        <p className="mt-3 text-sm text-silver">Please respond by {fmtDate(offer.expiresAt)}.</p>
-      )}
 
       {!declining ? (
         <form onSubmit={(e) => void sign(e)} className="mt-8 space-y-4 rounded-lg border border-navy-secondary bg-navy/60 p-5 md:p-6">

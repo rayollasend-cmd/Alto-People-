@@ -69,16 +69,27 @@ export const listAgreements = (params: {
   associateId?: string;
   kind?: AgreementKind;
   status?: AgreementStatus;
+  /** The rows behind a summary tile: signed in 30 days, or signed and lapsing within 30. */
+  window?: 'signed30' | 'expiring30';
 }) => {
   const q = new URLSearchParams();
   if (params.associateId) q.set('associateId', params.associateId);
   if (params.kind) q.set('kind', params.kind);
   if (params.status) q.set('status', params.status);
+  if (params.window) q.set('window', params.window);
   const qs = q.toString();
   return apiFetch<{ agreements: AgreementRow[] }>(
     `/agreements${qs ? `?${qs}` : ''}`,
   );
 };
+
+/** GET /agreements/summary — the desk's numbers, same reach as the list. */
+export interface AgreementsSummary {
+  awaitingSignature: number;
+  signed30d: number;
+  expiring30d: number;
+}
+export const getAgreementsSummary = () => apiFetch<AgreementsSummary>('/agreements/summary');
 
 export const listMyAgreements = () =>
   apiFetch<{ agreements: MyAgreement[] }>('/my/agreements');

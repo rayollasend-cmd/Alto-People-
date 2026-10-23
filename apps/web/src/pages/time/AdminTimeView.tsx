@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BreakFlagsDesk, TimeCorrectionsDesk } from './TimeCorrectionsDesk';
-import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link as RouterLink, useSearchParams } from 'react-router-dom';
 import { hereAsReturn, withReturn } from '@/lib/returnPath';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
-  Activity,
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
+  Clock3,
   Coffee,
   Download,
   ExternalLink,
@@ -22,7 +23,8 @@ import {
   Pencil,
   Plus,
   Search,
-  Smartphone,
+  TimerOff,
+  TrendingUp,
   X,
 } from 'lucide-react';
 import {
@@ -32,7 +34,7 @@ import {
   type TimeEntry,
   type TimeEntryStatus,
 } from '@alto-people/shared';
-import { useMediaQuery } from '@/lib/useViewport';
+import { useDesktopTable, useMediaQuery } from '@/lib/useViewport';
 import {
   addTimeEntryBreak,
   adminCreateTimeEntry,
@@ -49,6 +51,7 @@ import {
   exportTimeEntries,
   exportTimeSummary,
   getActiveDashboard,
+  getTimeExceptions,
   listAdminTimeEntries,
   listPayPeriods,
   rejectTimeEntry,
@@ -68,7 +71,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth, useTerm, useTenant } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useListKeyboard } from '@/lib/shortcuts';
 import { useSelection } from '@/lib/useSelection';
@@ -82,8 +85,11 @@ import { fmtPunchDateTime, fmtPunchTime, formatHM, punchDayOffset } from './punc
 import {
   browserTimeZone,
   fmtDateTime,
+  fmtDateOnly,
   fmtDateTz,
+  fmtHours,
   fmtPayRate,
+  fmtTimeTz,
   parseYmd,
   tzAbbrev,
   ymdLocal,
@@ -94,7 +100,6 @@ import {
   zonedWallTimeToUtc,
 } from '@/lib/format';
 import {
-  AssociatePicker,
   Avatar,
   Badge,
   Button,
@@ -109,6 +114,12 @@ import {
   DrawerHeader,
   DrawerTitle,
   Dialog,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -116,11 +127,15 @@ import {
   DialogTitle,
   EmptyState,
   ErrorBanner,
+  FilterBar,
   FilterChip,
   Input,
   Label,
+  MetricCard,
+  MetricStrip,
+  SearchInput,
+  SegmentedControl,
   Select,
-  Skeleton,
   SkeletonRows,
   Tabs,
   TabsList,
@@ -193,6 +208,17 @@ function DurationCell({ entry }: { entry: TimeEntry }) {
   );
 }
 
+/** "Sep 18 · 1:55 PM–9:55 PM CDT · 8.00h" — one punch on one line (the phone's queue row). */
+function punchSpanLabel(e: TimeEntry): string {
+  const tz = e.locationTimezone ?? null;
+  const zone = tz ?? browserTimeZone();
+  const day = fmtDateTz(e.clockInAt, zone);
+  const start = fmtTimeTz(e.clockInAt, zone);
+  const end = e.clockOutAt ? fmtPunchTime(e.clockOutAt, tz) : 'on the clock';
+  const off = e.clockOutAt ? punchDayOffset(e.clockInAt, e.clockOutAt, tz) : 0;
+  return `${day} · ${start}–${end}${off > 0 ? ` (+${off}d)` : ''} · ${formatHM(e.netMinutes ?? e.minutesElapsed)}`;
+}
+
 /** "+1d" tag for punches landing a site-local day after the clock-in, so an
  *  overnight shift's "Out" column stops reading as the same afternoon. */
 function DayOffsetTag({ entry }: { entry: TimeEntry }) {
@@ -208,11 +234,8 @@ function DayOffsetTag({ entry }: { entry: TimeEntry }) {
 // the drawer. 5-minute grace absorbs kiosk-queue jitter.
 const LATE_GRACE_MINUTES = 5;
 function LateChip({ entry }: { entry: TimeEntry }) {
-  if (!entry.shiftStartsAt) return null;
-  const lateMin = Math.floor(
-    (new Date(entry.clockInAt).getTime() - new Date(entry.shiftStartsAt).getTime()) / 60_000,
-  );
-  if (lateMin <= LATE_GRACE_MINUTES) return null;
+  const lateMin = lateMinutes(entry);
+  if (lateMin === null || !entry.shiftStartsAt) return null;
   return (
     <span
       className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
@@ -261,7 +284,11 @@ function FocusBanner({
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-md border border-gold/40 bg-gold/5 px-3 py-2">
-      <Avatar src={associatePhotoUrl(associateId)} name={name} size="sm" />
+      <Avatar
+        src={personPhotoUrl({ photoUrl: list.find((e) => e.associateId === associateId)?.photoUrl, associateId })}
+        name={name}
+        size="sm"
+      />
       <div className="min-w-0">
         <div className="text-sm text-white font-medium truncate">{name}</div>
         <div className="text-xs2 text-silver/70">
@@ -336,55 +363,9 @@ function startOfSaturdayWeek(d: Date): Date {
   return x;
 }
 
-/**
- * The queue's filters, as the screen allows: inline on a desktop; on a
- * phone one "Pending · Oct 10–23 ▾" chip that opens them in a sheet, so
- * the list is the first screen instead of two screens of controls.
- */
-function QueueFilterShell({
-  mobile,
-  open,
-  onOpenChange,
-  summary,
-  children,
-}: {
-  mobile: boolean;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  summary: string;
-  children: ReactNode;
-}) {
-  if (!mobile) return <>{children}</>;
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => onOpenChange(true)}
-        className="inline-flex h-9 items-center gap-1 self-start rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-ink"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        data-testid="queue-filter-chip"
-      >
-        {summary} ▾
-      </button>
-      <Drawer open={open} onOpenChange={onOpenChange}>
-        <DrawerHeader>
-          <DrawerTitle>Filters</DrawerTitle>
-          <DrawerDescription>Narrow the queue, then close to see the list.</DrawerDescription>
-        </DrawerHeader>
-        <DrawerBody>{children}</DrawerBody>
-        <DrawerFooter>
-          <Button variant="primary" onClick={() => onOpenChange(false)}>
-            Done
-          </Button>
-        </DrawerFooter>
-      </Drawer>
-    </>
-  );
-}
-
 /** The first local day a quick-range preset covers. */
-function presetFrom(p: 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14'): string {
+function presetFrom(p: RangePreset): string {
+  if (p === 'TODAY') return ymdLocal(new Date());
   if (p === 'LAST14') return defaultFromYmd();
   const thisWeekStart = startOfSaturdayWeek(new Date());
   if (p === 'THIS_WEEK') return ymdLocal(thisWeekStart);
@@ -428,18 +409,30 @@ function latestClosedPeriod(periods: readonly PayPeriod[], today: string): PayPe
 
 /** The queue's remembered window: a pay period (relative, so it rolls
  *  forward), a quick-range chip, or AUTO (the rule above). */
-type RangeChoice = 'AUTO' | 'CURRENT_PERIOD' | 'LAST_PERIOD' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
-const RANGE_CHOICES: readonly RangeChoice[] = ['AUTO', 'CURRENT_PERIOD', 'LAST_PERIOD', 'THIS_WEEK', 'LAST_WEEK', 'LAST14'];
+type RangeChoice = 'AUTO' | 'CURRENT_PERIOD' | 'LAST_PERIOD' | 'TODAY' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
+const RANGE_CHOICES: readonly RangeChoice[] = ['AUTO', 'CURRENT_PERIOD', 'LAST_PERIOD', 'TODAY', 'THIS_WEEK', 'LAST_WEEK', 'LAST14'];
 
-// Quick-range chips over the From/To inputs. Same stateful-chip semantics
-// as MyTimesheet: hand-editing a date clears the active chip so it never
-// lies about what's shown. Weeks follow the org Sat→Fri convention.
-type RangePreset = 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
+// Quick ranges, offered in the one date picker beside the pay periods (F500
+// G2: the period select, three chips and two date fields were three ways to
+// set one window). Picking a date by hand is "Custom range", which shows the
+// From/To fields. Weeks follow the org Sat→Fri convention.
+type RangePreset = 'TODAY' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
 const RANGE_PRESETS: Array<[RangePreset, string]> = [
+  ['TODAY', 'Today'],
   ['THIS_WEEK', 'This week'],
   ['LAST_WEEK', 'Last week'],
   ['LAST14', 'Last 14 days'],
 ];
+const RANGE_PRESET_KEYS = RANGE_PRESETS.map(([k]) => k as string);
+/** The window picker's value for a hand-picked From/To. */
+const CUSTOM_RANGE = 'CUSTOM';
+
+/** Late by more than the grace: the queue's Late chip, and the Late today lens. */
+function lateMinutes(e: { clockInAt: string; shiftStartsAt?: string | null }): number | null {
+  if (!e.shiftStartsAt) return null;
+  const late = Math.floor((new Date(e.clockInAt).getTime() - new Date(e.shiftStartsAt).getTime()) / 60_000);
+  return late > LATE_GRACE_MINUTES ? late : null;
+}
 
 // "Jun 22 – Jul 5" — compact label for a pay-period option. Bare YYYY-MM-DD
 // parses as UTC midnight, so format in UTC or the day shifts west of GMT.
@@ -697,7 +690,6 @@ function ClientSiteSelects({
 export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTimeViewProps) {
   const term = useTerm();
   const { moduleOn: moduleOnTime } = useTenant();
-  const navigate = useNavigate();
   // Active tab lives in ?tab= — shareable ("send me the queue"), and Back
   // retraces the live↔queue switch instead of leaving the page.
   const [tabParams, setTabParams] = useSearchParams();
@@ -769,9 +761,19 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   // (right now vs a date range), so one shared value would cross-reset.
   const [shiftFilter, setShiftFilter] = useState('');
   const [liveShiftFilter, setLiveShiftFilter] = useState('');
-  // Below md the queue's filters live in a sheet behind one summary chip.
+  // The exception tiles' lenses (F500 G2: the tiles are the filter).
+  // Late today narrows the queue to late punches; Overtime risk opens the
+  // list of people heading past 36 hours. Session-only, like the shift lens.
+  const [lateOnly, setLateOnly] = useState(false);
+  const [otOpen, setOtOpen] = useState(false);
+  // The date fields show only for a hand-picked window ("Custom range").
+  const [customRange, setCustomRange] = useState(false);
+  // Below md the queue's filters live in a sheet behind "Filters (n)".
   const isDesktop = useMediaQuery('(min-width: 768px)');
-  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  // The table (not the phone's cards) is showing — the grid's own rule.
+  const desktopTable = useDesktopTable();
+  // The grid's count and Columns render into the filter row (one tray).
+  const [gridToolbarEl, setGridToolbarEl] = useState<HTMLElement | null>(null);
   // Live-board lenses: longest-elapsed-first surfaces runaway sessions;
   // the off-site lens narrows to geofence violations (also reachable via
   // the Off-site KPI tile).
@@ -925,9 +927,10 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         ...(clientFilter ? { clientId: clientFilter } : {}),
         ...(locationFilter ? { locationId: locationFilter } : {}),
       }),
-    enabled: tab === 'live',
+    // Read on every tab: the Clocked in tile counts it (a "—" there while
+    // the queue was open read as "unknown"). Polled fast only on the board.
     staleTime: 0,
-    refetchInterval: tab === 'live' ? 30_000 : false,
+    refetchInterval: tab === 'live' ? 30_000 : 2 * 60_000,
     refetchOnWindowFocus: true,
   });
   const activeAll: ActiveDashboardEntry[] | null = activeQuery.data?.entries ?? null;
@@ -972,6 +975,26 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     (p: { start: string; end: string }) => pendingByPeriod?.find((b) => b.start === p.start && b.end === p.end)?.count ?? 0,
     [pendingByPeriod],
   );
+
+  // The exceptions a manager acts on (missed punches, late today, overtime
+  // risk this week), counted by the server from the punches and the
+  // schedule, following the client/site filter like the pending count.
+  // "Today" is the reader's day, the same window the Late lens lists.
+  const todayYmd = ymdLocal(new Date());
+  const exceptionsQuery = useQuery({
+    queryKey: ['time', 'exceptions', { clientId: clientFilter, locationId: locationFilter, day: todayYmd }],
+    queryFn: () =>
+      getTimeExceptions({
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
+        dayFrom: ymdToIsoStart(todayYmd),
+        dayTo: ymdToIsoEndExclusive(todayYmd),
+      }),
+    enabled: canManage && !liveOnly,
+    placeholderData: keepPreviousData,
+    refetchInterval: 5 * 60_000,
+  });
+  const exceptions = exceptionsQuery.data ?? null;
 
   // A deep link that names the status (the shared "N timesheets" link
   // carries status=COMPLETED) sets the filter once, so the link opens on
@@ -1204,6 +1227,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   const { refetch: refetchEntries } = entriesQuery;
   const { refetch: refetchActive } = activeQuery;
   const { refetch: refetchPending } = pendingQuery;
+  const { refetch: refetchExceptions } = exceptionsQuery;
   const refresh = useCallback(async () => {
     await refetchEntries();
   }, [refetchEntries]);
@@ -1234,8 +1258,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
 
   const refreshPendingCount = useCallback(async () => {
     if (liveOnly) return;
-    await refetchPending();
-  }, [liveOnly, refetchPending]);
+    // A decision moves the exception tiles too (an approved missed punch).
+    await Promise.all([refetchPending(), canManage ? refetchExceptions() : null]);
+  }, [liveOnly, refetchPending, refetchExceptions, canManage]);
 
   // Refresh after an admin create/edit/clock-out — only the visible tab's
   // data plus the pending-review KPI. The other tab refetches on switch.
@@ -1254,6 +1279,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
 
   const onPickPeriod = (key: string) => {
     setPeriodKey(key);
+    setCustomRange(false);
     if (!key) return; // back to custom range — keep current dates
     const p = (payPeriods ?? []).find((x) => `${x.start}|${x.end}` === key);
     if (!p) return;
@@ -1269,7 +1295,13 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     setActivePreset(p);
     setRangeChoice(p);
     setPeriodKey('');
+    setCustomRange(false);
     const now = new Date();
+    if (p === 'TODAY') {
+      setFromYmd(ymdLocal(now));
+      setToYmd(ymdLocal(now));
+      return;
+    }
     if (p === 'LAST14') {
       setFromYmd(defaultFromYmd());
       setToYmd(ymdLocal(now));
@@ -1315,7 +1347,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         { start: oldestPending.start, end: oldestPending.end, current: false, hasRun: oldestPending.hasRun }
       );
     };
-    if (rangeChoice === 'THIS_WEEK' || rangeChoice === 'LAST_WEEK' || rangeChoice === 'LAST14') {
+    if (rangeChoice === 'TODAY' || rangeChoice === 'THIS_WEEK' || rangeChoice === 'LAST_WEEK' || rangeChoice === 'LAST14') {
       // A preset window with nothing pending inside it while something
       // older waits: open where the work is.
       const older = oldestWithPending();
@@ -1363,6 +1395,121 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     setFromYmd(ymdLocal(new Date(oldestPendingAt)));
     setToYmd(ymdLocal(new Date()));
     if (filter !== 'COMPLETED') setFilter('COMPLETED');
+  };
+
+  // ── The tiles are the filter (F500 G2) ─────────────────────────────────
+  // A lens that switches the (persisted) status filter snapshots it and
+  // puts it back when the lens is cleared, the way focus mode does.
+  const preLensFilterRef = useRef<TimeEntryStatus | 'ALL' | null>(null);
+  const clearLateLens = () => {
+    setLateOnly(false);
+    const prev = preLensFilterRef.current;
+    preLensFilterRef.current = null;
+    if (prev !== null && filterRef.current === 'ALL') setFilter(prev);
+  };
+  /** A window the tile chose, not the reader: never remembered as their choice. */
+  const showWindow = (from: string, to: string, preset: RangePreset | null = null) => {
+    setPeriodKey('');
+    setActivePreset(preset);
+    setCustomRange(false);
+    setFromYmd(from);
+    setToYmd(to);
+  };
+  const dropAnomalyLens = () => {
+    if (anomaliesOnly) setAnomaliesOnly(false);
+    setAnomalyTypes([]);
+  };
+  const openLiveTile = () => {
+    setLiveOffSiteOnly(false);
+    setOtOpen(false);
+    setTab('live');
+  };
+  // Pending review: every finished punch waiting, where it sits — its one
+  // pay period, or from the oldest through today.
+  const openPendingTile = () => {
+    if (focusAssociate) clearFocus();
+    if (lateOnly) clearLateLens();
+    setOtOpen(false);
+    dropAnomalyLens();
+    setFilter('COMPLETED');
+    setTab('queue');
+    if (!pendingCount || !oldestPending) return;
+    const key = `${oldestPending.start}|${oldestPending.end}`;
+    if ((pendingByPeriod?.length ?? 0) === 1 && (payPeriods ?? []).some((p) => `${p.start}|${p.end}` === key)) onPickPeriod(key);
+    else showAllPending();
+  };
+  // Missed punches: pending review, flagged "Forgot clock-out", from the
+  // oldest such punch through today — the rows the tile counted.
+  const openMissedTile = () => {
+    if (focusAssociate) clearFocus();
+    if (lateOnly) clearLateLens();
+    setOtOpen(false);
+    setFilter('COMPLETED');
+    setAnomaliesOnly(true);
+    setAnomalyTypes(['FORGOT_CLOCKOUT']);
+    setTab('queue');
+    const oldest = exceptions?.missedPunches.oldestAt;
+    if (oldest) showWindow(ymdLocal(new Date(oldest)), todayYmd);
+  };
+  // Late today: every status but rejected, today, late past the grace.
+  const openLateTile = () => {
+    if (focusAssociate) clearFocus();
+    setOtOpen(false);
+    dropAnomalyLens();
+    if (!lateOnly && preLensFilterRef.current === null) preLensFilterRef.current = filterRef.current;
+    setLateOnly(true);
+    setFilter('ALL');
+    setTab('queue');
+    showWindow(todayYmd, todayYmd, 'TODAY');
+  };
+  const toggleOtTile = () => {
+    setTab('queue');
+    setOtOpen((v) => !(v && tab === 'queue'));
+  };
+  // One person from the overtime list: their timesheet for this week.
+  const openOtPerson = (p: { associateId: string; name: string }) => {
+    setOtOpen(false);
+    if (lateOnly) clearLateLens();
+    dropAnomalyLens();
+    focusWithAllFilter({ id: p.associateId, name: p.name });
+    showWindow(exceptions?.overtimeRisk.weekStart ?? presetFrom('THIS_WEEK'), todayYmd, 'THIS_WEEK');
+  };
+  // The window picker: a pay period, a quick range, or a hand-picked
+  // From/To ("Custom range", which shows the date fields).
+  const rangeValue = periodKey || (activePreset && !customRange ? activePreset : CUSTOM_RANGE);
+  const onPickRange = (v: string) => {
+    if (v === CUSTOM_RANGE) {
+      setPeriodKey('');
+      setActivePreset(null);
+      setCustomRange(true);
+      return;
+    }
+    if (RANGE_PRESET_KEYS.includes(v)) {
+      applyPreset(v as RangePreset);
+      return;
+    }
+    onPickPeriod(v);
+  };
+  // Filters off their default — the phone's "Filters (n)" and its Clear.
+  const queueActiveFilters =
+    (clientFilter && !boundedClient ? 1 : 0) +
+    (locationFilter ? 1 : 0) +
+    (shiftFilter ? 1 : 0) +
+    (anomaliesOnly ? 1 : 0) +
+    (lateOnly ? 1 : 0);
+  const clearQueueFilters = () => {
+    if (!boundedClient && clientFilter) changeClientFilter('');
+    setLocationFilter('');
+    setShiftFilter('');
+    dropAnomalyLens();
+    if (lateOnly) clearLateLens();
+  };
+  const missedLensOn = anomaliesOnly && anomalyTypes.length === 1 && anomalyTypes[0] === 'FORGOT_CLOCKOUT';
+  const tileSelected = {
+    pending: tab === 'queue' && filter === 'COMPLETED' && !anomaliesOnly && !lateOnly && !otOpen && !focusAssociate,
+    missed: tab === 'queue' && missedLensOn && !otOpen,
+    late: tab === 'queue' && lateOnly && !otOpen,
+    ot: tab === 'queue' && otOpen,
   };
 
   // Ref-mirrored guard so this callback stays identity-stable across
@@ -1705,16 +1852,20 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
   }, [flaggedEntries]);
 
   // A picked type that vanished from the refreshed page would silently
-  // render an empty queue — drop it (same guard as the shift lens).
+  // render an empty queue — drop it (same guard as the shift lens). Only on
+  // a settled read: the Missed punches tile picks its type and a new window
+  // together, and the previous window's rows (still on screen while the new
+  // ones load) must not drop the type it just picked.
+  const entriesSettled = !entriesQuery.isFetching;
   useEffect(() => {
-    if (!flaggedEntries) return;
+    if (!flaggedEntries || !entriesSettled) return;
     setAnomalyTypes((prev) => {
       const next = prev.filter((t) =>
         flaggedEntries.some((e) => e.anomalies?.includes(t)),
       );
       return next.length === prev.length ? prev : next;
     });
-  }, [flaggedEntries]);
+  }, [flaggedEntries, entriesSettled]);
 
   // What the queue actually renders — the shift + anomalies lenses (and
   // the anomaly-type chips inside the latter) apply here so select-all
@@ -1723,6 +1874,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     if (!entries) return null;
     let list = entries;
     if (shiftFilter) list = list.filter((e) => matchesShiftPick(e, shiftFilter));
+    // Late today: the punches the tile counted — late past the grace, not rejected.
+    if (lateOnly) list = list.filter((e) => e.status !== 'REJECTED' && lateMinutes(e) !== null);
     if (!anomaliesOnly) return list;
     list = list.filter((e) => (e.anomalies?.length ?? 0) > 0);
     if (anomalyTypes.length > 0) {
@@ -1732,7 +1885,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
       );
     }
     return list;
-  }, [entries, anomaliesOnly, shiftFilter, anomalyTypes]);
+  }, [entries, anomaliesOnly, shiftFilter, anomalyTypes, lateOnly]);
 
   // The triage walk: the next flagged entry still pending review in the
   // CURRENT view (anomaly-type chips honored), starting after `fromId` and
@@ -1857,7 +2010,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         primary: true,
         cell: (e) => (
           <span className="flex items-center gap-2.5 font-medium">
-            <Avatar src={`/api/associates/${e.associateId}/photo`} name={e.associateName} size="sm" />
+            <Avatar src={personPhotoUrl({ photoUrl: e.photoUrl, associateId: e.associateId })} name={e.associateName} size="sm" />
             <AssociateLink associateId={e.associateId}>{e.associateName}</AssociateLink>
           </span>
         ),
@@ -1990,7 +2143,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             title="View individual timesheet"
             className="flex items-center gap-2.5 rounded text-left font-medium hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
-            <Avatar src={associatePhotoUrl(e.associateId)} name={e.associateName ?? '—'} size="sm" />
+            <Avatar src={personPhotoUrl({ photoUrl: e.photoUrl, associateId: e.associateId })} name={e.associateName ?? '—'} size="sm" />
             <span className="underline-offset-2 hover:underline">{e.associateName ?? '—'}</span>
           </button>
         ),
@@ -2147,6 +2300,57 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     [canManage, focusOn, pendingId, bulkBusy, openEditRow, onApproveAtShiftEnd, onApprove, openRejectOne, term, liveCols.client, isOwnEntry, paidPeriodOf],
   );
 
+  // The phone's queue card: the same columns, folded — "Sep 18 · 1:55 PM–
+  // 9:55 PM · 8.00h" under the name, the status and flags inline, and the
+  // row's actions as the card's trailing pair (F500 G2: a 230px card per
+  // punch put the first one 880px down).
+  const queuePhoneColumns = useMemo<GridColumn<TimeEntry>[]>(() => {
+    const byKey = new Map(queueColumns.map((c) => [c.key, c] as const));
+    const when: GridColumn<TimeEntry> = {
+      key: 'when',
+      header: 'When',
+      accessor: (e) => new Date(e.clockInAt).getTime(),
+      searchable: false,
+      cardMeta: true,
+      cell: (e) => <span className="tabular-nums">{punchSpanLabel(e)}</span>,
+    };
+    const flags: GridColumn<TimeEntry> = {
+      key: 'flags',
+      header: 'Status',
+      accessor: (e) => STATUS_LABELS[e.status],
+      cardMeta: true,
+      cell: (e) => (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          {/* The status the list is filtered to goes without saying. */}
+          {e.status !== filter && <Badge variant={statusVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>}
+          <LateChip entry={e} />
+          {e.status === 'COMPLETED' && paidPeriodOf(e) && (
+            <Badge size="sm" variant="pending">
+              Paid period
+            </Badge>
+          )}
+          {(e.anomalies ?? []).map((a) => (
+            <span
+              key={a}
+              className="whitespace-nowrap rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-2xs uppercase tracking-widest text-warning"
+            >
+              {timeAnomalyLabel(a)}
+            </span>
+          ))}
+        </span>
+      ),
+    };
+    const client = byKey.get('client');
+    const actions = byKey.get('actions');
+    return [
+      byKey.get('associate')!,
+      ...(client ? [{ ...client, cardMeta: true }] : []),
+      when,
+      flags,
+      ...(actions ? [actions] : []),
+    ];
+  }, [queueColumns, paidPeriodOf, filter]);
+
   return (
     <>
       <PullToRefreshIndicator state={pullState} />
@@ -2161,84 +2365,120 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               ? "Live floor view — who's clocked in at your site right now."
               : 'Read-only view of time entries.'
         }
-        secondaryActions={
-          canManage ? (
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => setCreateOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add entry
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => navigate('/time-attendance/timesheets')}
-              >
-                <FileSpreadsheet className="mr-2 h-4 w-4" />
-                Client hours
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => navigate('/time-attendance/kiosk')}
-              >
-                <Smartphone className="mr-2 h-4 w-4" />
-                Kiosk &amp; PINs
-              </Button>
-            </div>
-          ) : undefined
+        // One primary action; the client's weekly hours sheet and the kiosk
+        // are sibling pages, so they are links (F500 G2: "Timesheets" here
+        // opened a third page that shared the word).
+        actions={canManage ? [{ key: 'add', label: 'Add entry', icon: Plus, primary: true, onSelect: () => setCreateOpen(true) }] : undefined}
+        related={
+          canManage
+            ? [
+                { label: 'Client hours', to: '/time-attendance/timesheets' },
+                { label: 'Kiosk & PINs', to: '/time-attendance/kiosk' },
+              ]
+            : undefined
         }
         summary={
               <>
           {personal}
-          {/* KPI strip — mirrors the onboarding analytics pattern. Tiles are
-              shortcuts too: the live trio jumps to the live board (Off-site
-              also applies the off-site lens), Pending review opens the queue. */}
-          <div
-            className={cn(
-              'grid grid-cols-2 gap-3 mb-6',
-              liveOnly ? 'md:grid-cols-3' : 'md:grid-cols-4',
-            )}
+          {/* The numbers a time manager acts on, and each tile is the
+              filter for its rows (F500 G2): who's on the clock, what waits
+              for review, the missed punches, today's late arrivals and the
+              people heading into overtime. On a phone the strip is one
+              row that scrolls sideways, so the list starts on the first
+              screen. */}
+          <MetricStrip
+            label="Time at a glance"
+            className="mb-[var(--d-stack)] max-sm:flex max-sm:snap-x max-sm:overflow-x-auto max-sm:pb-1 max-sm:[&>*]:w-[9.5rem] max-sm:[&>*]:shrink-0 max-sm:[&>*]:snap-start"
           >
-            <KpiCard
-              icon={Activity}
+            <MetricCard
+              key="live"
+              icon={Clock3}
               label="Clocked in"
               value={liveStats.total === null ? '—' : String(liveStats.total)}
-              tone="default"
-              onClick={() => {
-                setLiveOffSiteOnly(false);
-                setTab('live');
-              }}
+              hint={
+                liveStats.total === null
+                  ? undefined
+                  : `${liveStats.onBreak ?? 0} on break · ${liveStats.offSite ?? 0} off-site`
+              }
+              tone="neutral"
+              selected={tab === 'live' && !liveOffSiteOnly}
+              onClick={openLiveTile}
             />
-            <KpiCard
-              icon={Coffee}
-              label="On break"
-              value={liveStats.onBreak === null ? '—' : String(liveStats.onBreak)}
-              tone="warning"
-              onClick={() => {
-                setLiveOffSiteOnly(false);
-                setTab('live');
-              }}
-            />
-            <KpiCard
-              icon={MapPinOff}
-              label="Off-site"
-              value={liveStats.offSite === null ? '—' : String(liveStats.offSite)}
-              tone={liveStats.offSite && liveStats.offSite > 0 ? 'alert' : 'silver'}
-              onClick={() => {
-                setLiveOffSiteOnly(true);
-                setTab('live');
-              }}
-            />
-            {/* Watch-only (FLOOR_SUPERVISOR) never reviews time: no queue, no
-                count — the tile read a permanent "—". */}
-            {!liveOnly && (
-              <KpiCard
+            {liveOnly ? (
+              <MetricCard
+                key="break"
+                icon={Coffee}
+                label="On break"
+                value={liveStats.onBreak === null ? '—' : String(liveStats.onBreak)}
+                tone="neutral"
+                onClick={openLiveTile}
+              />
+            ) : null}
+            {liveOnly ? (
+              <MetricCard
+                key="offsite"
+                icon={MapPinOff}
+                label="Off-site"
+                value={liveStats.offSite === null ? '—' : String(liveStats.offSite)}
+                tone="alert"
+                selected={tab === 'live' && liveOffSiteOnly}
+                onClick={() => {
+                  setLiveOffSiteOnly(true);
+                  setTab('live');
+                }}
+              />
+            ) : null}
+            {/* Watch-only (FLOOR_SUPERVISOR) never reviews time: no queue,
+                no count — the tile read a permanent "—". */}
+            {!liveOnly ? (
+              <MetricCard
+                key="pending"
                 icon={ListChecks}
                 label="Pending review"
                 value={pendingCount === null ? '—' : String(pendingCount)}
-                tone={pendingCount && pendingCount > 0 ? 'warning' : 'success'}
-                onClick={() => setTab('queue')}
+                hint={oldestPending && pendingCount ? `Oldest in ${periodLabel(oldestPending)}` : 'Nothing waiting'}
+                tone="warning"
+                selected={tileSelected.pending}
+                onClick={openPendingTile}
               />
-            )}
-          </div>
+            ) : null}
+            {canManage && !liveOnly ? (
+              <MetricCard
+                key="missed"
+                icon={TimerOff}
+                label="Missed punches"
+                value={exceptions ? String(exceptions.missedPunches.count) : '—'}
+                hint="Forgot to clock out, waiting for review"
+                tone="warning"
+                selected={tileSelected.missed}
+                onClick={openMissedTile}
+              />
+            ) : null}
+            {canManage && !liveOnly ? (
+              <MetricCard
+                key="late"
+                icon={AlertTriangle}
+                label="Late today"
+                value={exceptions ? String(exceptions.lateToday.count) : '—'}
+                hint={`Clocked in ${LATE_GRACE_MINUTES}+ min after their shift began`}
+                tone="warning"
+                selected={tileSelected.late}
+                onClick={openLateTile}
+              />
+            ) : null}
+            {canManage && !liveOnly ? (
+              <MetricCard
+                key="ot"
+                icon={TrendingUp}
+                label="Overtime risk"
+                value={exceptions ? String(exceptions.overtimeRisk.count) : '—'}
+                hint={`${exceptions?.overtimeRisk.thresholdHours ?? 36}h+ worked and scheduled this week`}
+                tone="warning"
+                selected={tileSelected.ot}
+                onClick={toggleOtTile}
+              />
+            ) : null}
+          </MetricStrip>
               </>
         }
         drawer={
@@ -2509,6 +2749,63 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           <AttendanceCard associateId={focusAssociate.id} canManage={canManage} />
         </div>
       )}
+      {/* Overtime risk: who is heading past the line this week — worked so
+          far plus the shifts still on their schedule — with a way into each
+          person's week. Opened by the Overtime risk tile. */}
+      {tab === 'queue' && otOpen && (
+        <Card className="mb-4" data-testid="ot-risk-panel">
+          <CardHeader className="flex-row flex-wrap items-start justify-between gap-2 pb-2">
+            <div className="min-w-0">
+              <CardTitle className="text-base">Overtime risk this week</CardTitle>
+              <p className="mt-1 text-xs text-silver">
+                {exceptions
+                  ? `Worked since ${fmtDateOnly(exceptions.overtimeRisk.weekStart, { weekday: true, year: false })} plus the shifts still on their schedule. ${exceptions.overtimeRisk.thresholdHours} hours or more is listed, while a schedule change can still keep them under 40.`
+                  : 'Worked this week plus the shifts still on their schedule.'}
+              </p>
+            </div>
+            <Button size="icon-sm" variant="ghost" onClick={() => setOtOpen(false)} aria-label="Close overtime risk">
+              <X className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {!exceptions ? (
+              <SkeletonRows count={3} rowHeight="h-10" />
+            ) : exceptions.overtimeRisk.people.length === 0 ? (
+              <p className="text-sm text-silver">
+                No one is on track for {exceptions.overtimeRisk.thresholdHours} hours this week.
+              </p>
+            ) : (
+              <ul className="divide-y divide-navy-secondary">
+                {exceptions.overtimeRisk.people.map((p) => (
+                  <li key={p.associateId} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                    <button
+                      type="button"
+                      onClick={() => openOtPerson(p)}
+                      className="flex min-w-0 items-center gap-2.5 rounded text-left text-sm font-medium text-white hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                      title="Open this week's timesheet"
+                    >
+                      <Avatar src={personPhotoUrl({ photoUrl: p.photoUrl, associateId: p.associateId })} name={p.name} size="sm" />
+                      <span className="truncate underline-offset-2 hover:underline">{p.name}</span>
+                    </button>
+                    <span className="ml-auto text-xs tabular-nums text-silver">
+                      {fmtHours(Math.round(p.workedMinutes / 6) / 10)} worked
+                      {p.scheduledMinutes > 0 ? ` · ${fmtHours(Math.round(p.scheduledMinutes / 6) / 10)} still scheduled` : ''}
+                    </span>
+                    <span
+                      className={cn(
+                        'w-24 text-right text-sm font-semibold tabular-nums',
+                        p.projectedMinutes > 40 * 60 ? 'text-alert' : 'text-warning',
+                      )}
+                    >
+                      {fmtHours(Math.round(p.projectedMinutes / 6) / 10)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
       {tab === 'queue' && (
         <Card>
           <CardHeader className="pb-3 gap-3">
@@ -2524,16 +2821,23 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               <CardTitle className="text-base">
                 {focusAssociate ? `${focusAssociate.name} — timesheet` : 'Time entries'}
               </CardTitle>
-              <div className="flex flex-wrap gap-2">
-                {STATUS_FILTERS.map((f) => (
-                  <FilterChip
-                    key={f.value}
-                    active={filter === f.value}
-                    onClick={() => setFilter(f.value)}
-                  >
-                    {f.label}
-                  </FilterChip>
-                ))}
+              {/* Status: one segmented row; on a phone it scrolls sideways
+                  instead of wrapping onto a second line. */}
+              <div className="-mx-1 max-w-full overflow-x-auto px-1 pb-0.5 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
+                <SegmentedControl<TimeEntryStatus | 'ALL'>
+                  ariaLabel="Status"
+                  className="flex-nowrap sm:flex-wrap"
+                  options={STATUS_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
+                  value={filter}
+                  onChange={(v) => {
+                    // Picking a status by hand ends the Late lens (it chose ALL).
+                    if (lateOnly) {
+                      setLateOnly(false);
+                      preLensFilterRef.current = null;
+                    }
+                    setFilter(v);
+                  }}
+                />
               </div>
             </div>
 
@@ -2542,7 +2846,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                 one-click way over, instead of leaving them hunting. */}
             {canManage && filter !== 'COMPLETED' && selectableIds.length > 0 && (
               <p className="text-xs text-silver/70">
-                Bulk actions live on the Completed filter —{' '}
+                Bulk actions live on the Pending review filter —{' '}
                 <Button
                   variant="link"
                   onClick={() => setFilter('COMPLETED')}
@@ -2553,294 +2857,199 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               </p>
             )}
 
-            {/* Phase 65 — date range + free-text search + export buttons.
-                On a phone the filters sit behind one summary chip and the
-                list is the first screen (role walk floor 8). */}
-            <QueueFilterShell
-              mobile={!isDesktop}
-              open={filterSheetOpen}
-              onOpenChange={setFilterSheetOpen}
-              summary={`${STATUS_FILTERS.find((f) => f.value === filter)?.label ?? 'All'} · ${periodKey && payPeriods ? periodLabel(payPeriods.find((p) => `${p.start}|${p.end}` === periodKey) ?? { start: fromYmd, end: toYmd, current: false, hasRun: false }) : `${fmtDateTz(fromYmd, 'UTC')} – ${fmtDateTz(toYmd, 'UTC')}`}`}
-            >
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
-                  Client / site
-                </label>
-                <div className="flex items-center gap-2">
-                  <ClientSiteSelects
-                    boundedClient={boundedClient}
-                    clients={clients}
-                    clientFilter={clientFilter}
-                    onClientChange={changeClientFilter}
-                    locationFilter={locationFilter}
-                    onLocationChange={setLocationFilter}
-                    locationOptions={locationOptions}
-                  />
-                </div>
-              </div>
-              <div>
-                <label
-                  htmlFor="shift-window-picker"
-                  className="block text-2xs uppercase tracking-wider text-silver mb-1"
-                >
-                  Shift
-                </label>
-                <div
-                  title={
-                    truncated
-                      ? 'Options come from the first 500 loaded entries — narrow the date range to see every window. Exports apply the pick across the whole range.'
-                      : undefined
-                  }
-                >
-                  <ShiftWindowSelect
-                    id="shift-window-picker"
-                    value={shiftFilter}
-                    onChange={setShiftFilter}
-                    options={shiftOptions}
-                  />
-                </div>
-              </div>
-              {payPeriods !== null && payPeriods.length > 0 && (
-                <div>
-                  <label
-                    htmlFor="pay-period-picker"
-                    className="block text-2xs uppercase tracking-wider text-silver mb-1"
-                  >
-                    Pay period
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      id="pay-period-picker"
-                      value={periodKey}
-                      onChange={(e) => onPickPeriod(e.target.value)}
-                      className="h-9 text-sm w-56"
+            {/* ONE filter row (F500 G2 — it was five): the window (pay
+                periods, quick ranges, or a custom From/To), client and site,
+                shift, the flag lens, one people search, and one menu for the
+                downloads and payroll sheets. The grid's count and Columns
+                ride in this row. On a phone the filters fold into a sheet
+                behind "Filters (n)" and the list is the first screen. */}
+            <FilterBar
+              bare
+              data-testid="queue-filters"
+              search={
+                <SearchInput
+                  placeholder={`Search ${term('workers').toLowerCase()}…`}
+                  aria-label={`Search ${term('workers').toLowerCase()} by name`}
+                  value={queueSearch}
+                  onChange={(e) => setQueueSearch(e.target.value)}
+                  className="h-9 text-sm"
+                />
+              }
+              activeFilters={queueActiveFilters}
+              onClearFilters={clearQueueFilters}
+              sheetDescription="Narrow the queue, then close to see the list."
+              count={
+                <span className="flex items-center gap-2">
+                  {canManage && filter === 'COMPLETED' && selected.size === 0 && cleanSelectableIds.length > 0 && (
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => selectIds(cleanSelectableIds)}
+                      disabled={bulkBusy}
+                      title="Select only pending entries with no flags"
                     >
-                      <option value="">Custom range</option>
-                      {payPeriods.map((p) => {
-                        const n = pendingInPeriod(p);
-                        return (
-                          <option key={`${p.start}|${p.end}`} value={`${p.start}|${p.end}`}>
-                            {periodLabel(p)}
-                            {n > 0 ? ` · ${n} pending` : ''}
-                            {p === periodContaining(payPeriods, ymdLocal(new Date())) ? ' · current' : p.hasRun ? ' · paid' : ''}
-                          </option>
-                        );
-                      })}
-                    </Select>
-                    {/* Where the pending work is — one tap opens that period. */}
-                    {oldestPending && pendingCount !== null && pendingCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const key = `${oldestPending.start}|${oldestPending.end}`;
-                          if (payPeriods.some((p) => `${p.start}|${p.end}` === key)) onPickPeriod(key);
-                          else showAllPending();
-                          if (filter !== 'COMPLETED') setFilter('COMPLETED');
-                        }}
-                        className="h-9 whitespace-nowrap rounded-md border border-warning/60 bg-warning/15 px-2.5 text-xs text-warning transition-colors hover:bg-warning/25"
-                        title="Open the oldest pay period with pending entries"
-                        data-testid="pending-period-chip"
-                      >
-                        {pendingCount} pending · {periodLabel(oldestPending)}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-              <div>
-                <span className="block text-2xs uppercase tracking-wider text-silver mb-1">
-                  Range
+                      Select clean ({cleanSelectableIds.length})
+                    </Button>
+                  )}
+                  <span ref={setGridToolbarEl} className="inline-flex items-center gap-2" />
                 </span>
-                <div
-                  className="flex h-9 items-center gap-1.5"
-                  role="group"
-                  aria-label="Quick date range"
-                >
-                  {RANGE_PRESETS.map(([preset, label]) => {
-                    const isActive = activePreset === preset;
-                    return (
-                      <Button
-                        key={preset}
-                        size="xs"
-                        variant="outline"
-                        aria-pressed={isActive}
-                        onClick={() => applyPreset(preset)}
-                        className={cn(
-                          isActive &&
-                            'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-                        )}
-                      >
-                        {label}
+              }
+              actions={
+                // Downloads stay off phones: there is nowhere to put a sheet.
+                (canManage || canProcessPayroll) && isDesktop ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" loading={exportBusy !== null} data-testid="export-menu">
+                        <Download className="h-4 w-4" aria-hidden="true" />
+                        Export &amp; payroll
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
                       </Button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="flex items-end gap-2">
-                <div>
-                  <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
-                    From
-                  </label>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[15rem]">
+                      <DropdownMenuLabel>This list</DropdownMenuLabel>
+                      <DropdownMenuItem onSelect={() => void onExport('csv')} disabled={exportBusy !== null}>
+                        <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                        CSV
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void onExport('pdf')} disabled={exportBusy !== null}>
+                        <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                        PDF
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>Payroll</DropdownMenuLabel>
+                      <DropdownMenuItem onSelect={() => setSummaryOpen(true)}>
+                        <ListChecks className="h-3.5 w-3.5" aria-hidden="true" />
+                        Hours summary…
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setPayrollOpen(true)}>
+                        <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden="true" />
+                        Payroll sheet…
+                      </DropdownMenuItem>
+                      {/* HR Administrator only — export:payroll-pii. Hidden
+                          rather than disabled for everyone else: a greyed-out
+                          item just advertises that the SSN + bank export
+                          exists to roles who can't and shouldn't use it. */}
+                      {canExportPayrollPii && (
+                        <DropdownMenuItem onSelect={() => setExternalOpen(true)} className="text-warning">
+                          <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />
+                          External payroll (SSN and bank)…
+                        </DropdownMenuItem>
+                      )}
+                      {canProcessPayroll && (
+                        <DropdownMenuItem
+                          onSelect={() => setRecordPeriodOpen(true)}
+                          title="Document the whole pay run: one row per paid associate, prefilled from approved time, recorded in a single click."
+                        >
+                          <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden="true" />
+                          Record pay period…
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : undefined
+              }
+            >
+              <Select
+                id="pay-period-picker"
+                aria-label="Pay period or date range"
+                value={rangeValue}
+                onChange={(e) => onPickRange(e.target.value)}
+                className="h-9 w-auto min-w-[12.5rem] text-sm"
+              >
+                {payPeriods !== null && payPeriods.length > 0 && (
+                  <optgroup label="Pay periods">
+                    {payPeriods.map((p) => (
+                      <option key={`${p.start}|${p.end}`} value={`${p.start}|${p.end}`}>
+                        {periodLabel(p)}
+                        {p === periodContaining(payPeriods, todayYmd) ? ' · current' : p.hasRun ? ' · paid' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label="Quick ranges">
+                  {RANGE_PRESETS.map(([preset, label]) => (
+                    <option key={preset} value={preset}>
+                      {label}
+                    </option>
+                  ))}
+                </optgroup>
+                <option value={CUSTOM_RANGE}>Custom range…</option>
+              </Select>
+              {rangeValue === CUSTOM_RANGE && (
+                <div className="flex items-center gap-1.5" role="group" aria-label="Custom range">
                   <Input
                     type="date"
+                    aria-label="From"
                     value={fromYmd}
                     max={toYmd}
                     onChange={(e) => {
                       setPeriodKey('');
                       setActivePreset(null);
+                      setCustomRange(true);
                       setFromYmd(e.target.value || defaultFromYmd());
                     }}
-                    className="h-9 text-sm w-40"
+                    className="h-9 w-[9.5rem] text-sm"
                   />
-                </div>
-                <div>
-                  <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
-                    To
-                  </label>
+                  <span className="text-silver/60" aria-hidden="true">–</span>
                   <Input
                     type="date"
+                    aria-label="To"
                     value={toYmd}
                     min={fromYmd}
                     onChange={(e) => {
                       setPeriodKey('');
                       setActivePreset(null);
+                      setCustomRange(true);
                       setToYmd(e.target.value || defaultToYmd());
                     }}
-                    className="h-9 text-sm w-40"
+                    className="h-9 w-[9.5rem] text-sm"
                   />
                 </div>
-              </div>
-
-              {/* Pick a person directly instead of having to find one of their
-                  rows and click it. Scopes the queue AND the download. */}
-              <div className="w-full sm:w-56">
-                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
-                  Associate
-                </label>
-                <AssociatePicker
-                  value={focusAssociate}
-                  // Picking keeps the current filter (only name-clicks and
-                  // deep links force ALL); clearing restores any snapshot.
-                  onChange={(v) => (v ? setFocusAssociate(v) : clearFocus())}
-                  placeholder="All associates…"
-                  className="h-9 text-sm"
+              )}
+              <ClientSiteSelects
+                boundedClient={boundedClient}
+                clients={clients}
+                clientFilter={clientFilter}
+                onClientChange={changeClientFilter}
+                locationFilter={locationFilter}
+                onLocationChange={setLocationFilter}
+                locationOptions={locationOptions}
+              />
+              <div
+                title={
+                  truncated
+                    ? 'Options come from the first 500 loaded entries — narrow the date range to see every window. Exports apply the pick across the whole range.'
+                    : undefined
+                }
+              >
+                <ShiftWindowSelect
+                  id="shift-window-picker"
+                  aria-label="Shift"
+                  value={shiftFilter}
+                  onChange={setShiftFilter}
+                  options={shiftOptions}
+                  className="h-9 w-auto max-w-48 text-sm"
                 />
               </div>
-
-              <div className="relative flex-1 w-full sm:min-w-[200px]">
-                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
-                  Search
-                </label>
-                <Search className="absolute left-2.5 top-[2.1rem] h-4 w-4 text-silver/70 pointer-events-none" />
-                <Input
-                  placeholder="Associate name…"
-                  value={queueSearch}
-                  onChange={(e) => setQueueSearch(e.target.value)}
-                  className="pl-8 h-9 text-sm"
-                />
-              </div>
-
-              <button
-                type="button"
+              <FilterChip
+                active={anomaliesOnly}
                 onClick={() => {
                   // Turning the lens off retires its type chips too.
                   if (anomaliesOnly) setAnomalyTypes([]);
                   setAnomaliesOnly(!anomaliesOnly);
                 }}
-                className={cn(
-                  'h-9 rounded-md border px-3 text-sm transition-colors self-end',
-                  anomaliesOnly
-                    ? 'border-warning/60 bg-warning/15 text-warning'
-                    : 'border-navy-secondary bg-navy-secondary/40 text-silver hover:text-white',
-                )}
+                className="h-9"
               >
-                <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> Anomalies only
-              </button>
-
-              {/* Read-only exports — also for Finance (process:payroll),
-                  who pulls the hours sheet for Fieldglass without holding
-                  the manage:time write capability. Desktop only: a phone
-                  has nowhere to put a sheet. */}
-              {(canManage || canProcessPayroll) && isDesktop && (
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onExport('csv')}
-                    loading={exportBusy === 'csv'}
-                    disabled={exportBusy !== null}
-                  >
-                    <Download className="h-4 w-4" />
-                    CSV
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onExport('pdf')}
-                    loading={exportBusy === 'pdf'}
-                    disabled={exportBusy !== null}
-                  >
-                    <FileText className="h-4 w-4" />
-                    PDF
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSummaryOpen(true)}
-                    disabled={exportBusy !== null}
-                  >
-                    <ListChecks className="h-4 w-4" />
-                    Summary
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPayrollOpen(true)}
-                    disabled={exportBusy !== null}
-                  >
-                    <FileSpreadsheet className="h-4 w-4" />
-                    Payroll sheet
-                  </Button>
-                  {/* HR Administrator only — export:payroll-pii. Hidden rather
-                      than disabled for everyone else: a greyed-out "External
-                      payroll" button just advertises that the SSN + bank
-                      export exists to roles who can't and shouldn't use it. */}
-                  {canExportPayrollPii && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setExternalOpen(true)}
-                      disabled={exportBusy !== null}
-                      className="border-warning/50 text-warning hover:text-warning"
-                    >
-                      <ShieldAlert className="h-4 w-4" />
-                      External payroll
-                    </Button>
-                  )}
-                  {canProcessPayroll && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setRecordPeriodOpen(true)}
-                      disabled={exportBusy !== null}
-                      title="Document the whole pay run: one row per paid associate, prefilled from approved time, recorded in a single click."
-                    >
-                      <FileSpreadsheet className="h-4 w-4" />
-                      Record pay period
-                    </Button>
-                  )}
-                </div>
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                Anomalies only
+              </FilterChip>
+              {lateOnly && (
+                <FilterChip active onClick={clearLateLens} className="h-9" aria-label="Late arrivals only — clear">
+                  Late arrivals only
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </FilterChip>
               )}
-
-            </div>
-            </QueueFilterShell>
+            </FilterBar>
 
             {/* Anomaly-TYPE chips — only while the anomalies lens is on.
                 Chip styling matches AnomalyChips; multiple picks OR. */}
@@ -2889,98 +3098,70 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             )}
           </CardHeader>
 
-          {/* Bulk-action toolbar — shown when rows are selected, or quietly
-              when clean rows are available to stage with one click. */}
-          {canManage &&
-            filter === 'COMPLETED' &&
-            (selected.size > 0 || cleanSelectableIds.length > 0) && (
+          {/* Bulk-action bar — only while something is selected. */}
+          {canManage && filter === 'COMPLETED' && selected.size > 0 && (
             <div
-              className={cn(
-                'mx-5 mb-3 flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border',
-                selected.size > 0
-                  ? 'border-gold/40 bg-gold/10'
-                  : 'border-navy-secondary bg-navy-secondary/30',
-              )}
+              className="mx-5 mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-gold/40 bg-gold/10 px-3 py-2"
+              data-testid="bulk-bar"
             >
-              <div
-                className={cn(
-                  'text-sm',
-                  selected.size > 0 ? 'text-gold' : 'text-silver',
-                )}
-              >
-                <span className="font-medium tabular-nums">{selected.size}</span>{' '}
-                selected
+              <div className="text-sm text-gold">
+                <span className="font-medium tabular-nums">{selected.size}</span> selected
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {cleanSelectableIds.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={onBulkApprove}
+                  loading={bulkBusy}
+                  disabled={bulkBusy}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Approve {selected.size}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => setRejectOpen({ mode: 'bulk' })}
+                  disabled={bulkBusy}
+                >
+                  Reject {selected.size}
+                </Button>
+                <div className="flex items-center gap-1">
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => selectIds(cleanSelectableIds)}
+                    onClick={onBulkApplyBreak}
                     disabled={bulkBusy}
-                    title="Select only completed entries with no anomaly flags (replaces the current selection)"
+                    title="Book the standard unpaid meal break of the picked length, centered mid-shift, on each selected entry that has none (6h+ shifts only)"
                   >
-                    Select clean ({cleanSelectableIds.length})
+                    <Coffee className="h-4 w-4" />
+                    Apply {bulkBreakMinutes === 60 ? '1h' : `${bulkBreakMinutes}m`}{' '}
+                    break
                   </Button>
-                )}
-                {selected.size > 0 && (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      onClick={onBulkApprove}
-                      loading={bulkBusy}
-                      disabled={bulkBusy}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      Approve {selected.size}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => setRejectOpen({ mode: 'bulk' })}
-                      disabled={bulkBusy}
-                    >
-                      Reject {selected.size}
-                    </Button>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={onBulkApplyBreak}
-                        disabled={bulkBusy}
-                        title="Book the standard unpaid meal break of the picked length, centered mid-shift, on each selected entry that has none (6h+ shifts only)"
-                      >
-                        <Coffee className="h-4 w-4" />
-                        Apply {bulkBreakMinutes === 60 ? '1h' : `${bulkBreakMinutes}m`}{' '}
-                        break
-                      </Button>
-                      <Select
-                        aria-label="Break length"
-                        value={String(bulkBreakMinutes)}
-                        onChange={(e) =>
-                          setBulkBreakMinutes(
-                            Number(e.target.value) as 15 | 30 | 60,
-                          )
-                        }
-                        disabled={bulkBusy}
-                        className="h-8 w-auto text-sm"
-                      >
-                        <option value="15">15 min</option>
-                        <option value="30">30 min</option>
-                        <option value="60">1 h</option>
-                      </Select>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={clearSelection}
-                      disabled={bulkBusy}
-                    >
-                      Clear
-                    </Button>
-                  </>
-                )}
+                  <Select
+                    aria-label="Break length"
+                    value={String(bulkBreakMinutes)}
+                    onChange={(e) =>
+                      setBulkBreakMinutes(
+                        Number(e.target.value) as 15 | 30 | 60,
+                      )
+                    }
+                    disabled={bulkBusy}
+                    className="h-8 w-auto text-sm"
+                  >
+                    <option value="15">15 min</option>
+                    <option value="30">30 min</option>
+                    <option value="60">1 h</option>
+                  </Select>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={clearSelection}
+                  disabled={bulkBusy}
+                >
+                  Clear
+                </Button>
               </div>
             </div>
           )}
@@ -3020,11 +3201,21 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               )}
             {visibleEntries && visibleEntries.length === 0 && (
               <EmptyState
-                title={anomaliesOnly ? 'No flagged entries' : 'Nothing to review'}
+                title={
+                  lateOnly
+                    ? 'No late arrivals'
+                    : anomaliesOnly
+                      ? 'No flagged entries'
+                      : filter === 'COMPLETED'
+                        ? 'Nothing to review'
+                        : 'No time entries'
+                }
                 description={
-                  anomaliesOnly
-                    ? 'No entries in this window carry anomaly flags.'
-                    : 'No time entries match this filter.'
+                  lateOnly
+                    ? 'No one clocked in more than 5 minutes after their shift began in this window.'
+                    : anomaliesOnly
+                      ? 'No entries in this window carry anomaly flags.'
+                      : 'No time entries match this filter.'
                 }
               />
             )}
@@ -3056,8 +3247,13 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                   id="time-queue"
                   keyboard={false}
                   caption="Time entries"
+                  noun={{ one: 'entry', many: 'entries' }}
                   rows={sortedEntries}
-                  columns={queueColumns}
+                  // A phone gets one compact row per punch (name; day ·
+                  // in–out · hours; the flags inline; Approve/Reject), not
+                  // a 2×2 grid of labelled fields.
+                  columns={desktopTable ? queueColumns : queuePhoneColumns}
+                  toolbar={{ into: gridToolbarEl }}
                   rowKey={(e) => e.id}
                   urlState={false}
                   search={false}
@@ -3432,7 +3628,7 @@ function TimeEntryDetailPanel({
     <>
       <DrawerHeader>
         <div className="flex items-center gap-3">
-          <Avatar src={associatePhotoUrl(entry.associateId)} name={entry.associateName ?? '—'} size="md" />
+          <Avatar src={personPhotoUrl({ photoUrl: entry.photoUrl, associateId: entry.associateId })} name={entry.associateName ?? '—'} size="md" />
           <div className="min-w-0">
             <DrawerTitle className="truncate">
               {entry.associateName ?? '—'}
@@ -3696,7 +3892,7 @@ function AssociateSearchField({
   );
 }
 
-function TimeEntryFormDrawer({
+export function TimeEntryFormDrawer({
   mode,
   entry,
   onClose,
@@ -5357,69 +5553,6 @@ function DetailSection({ label, body }: { label: string; body: string }) {
       </div>
     </div>
   );
-}
-
-interface KpiCardProps {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-  tone: 'success' | 'warning' | 'alert' | 'default' | 'silver';
-  /** Present = the tile is a shortcut (renders as a real button). */
-  onClick?: () => void;
-}
-
-// The store manager's stat-tile grammar (portalCharts StatTile): white
-// figures, colour only where it means something — a warning or an alert.
-const TONE_TEXT: Record<KpiCardProps['tone'], string> = {
-  success: 'text-white',
-  warning: 'text-warning',
-  alert: 'text-alert',
-  default: 'text-white',
-  silver: 'text-silver',
-};
-
-const KPI_TILE = 'rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 elev-1';
-
-function KpiCard({ icon: Icon, label, value, tone, onClick }: KpiCardProps) {
-  const head = (
-    <div className="flex items-start justify-between">
-      <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">{label}</div>
-      <Icon className="h-3.5 w-3.5 text-silver/50" />
-    </div>
-  );
-  if (value === '—') {
-    return (
-      <div className={KPI_TILE}>
-        {head}
-        <Skeleton className="mt-2 h-8 w-12" />
-      </div>
-    );
-  }
-  const body = (
-    <>
-      {head}
-      <div className={cn('mt-1.5 text-2xl font-bold tracking-tight tabular-nums sm:text-3xl', TONE_TEXT[tone])}>
-        {value}
-      </div>
-    </>
-  );
-  if (onClick) {
-    // A real <button> so the shortcut is keyboard- and screen-reader
-    // reachable.
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={cn(
-          KPI_TILE,
-          'text-left transition-colors hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-        )}
-      >
-        {body}
-      </button>
-    );
-  }
-  return <div className={KPI_TILE}>{body}</div>;
 }
 
 interface RejectTimeDialogProps {

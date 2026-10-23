@@ -155,14 +155,22 @@ describe('<ManagerDashboard>', () => {
     expect(screen.getByTestId('needs-you-count')).toHaveTextContent('4');
   });
 
-  it('the snapshot follows: on the clock first, then what the queues cannot say, direct reports last', async () => {
+  it('the snapshot follows: on the clock first, then today, out and due — no direct-reports tile, no repeats', async () => {
     renderPage();
-    await screen.findByText('1 of 6');
+    await screen.findByText('of 6 on your team');
     const snapshot = screen.getByRole('region', { name: 'Team snapshot' });
     const labels = within(snapshot)
-      .getAllByText(/On the clock now|Due on your team|Out today|Direct reports/)
+      .getAllByText(/^(On the clock now|Scheduled today|Out today|Due this month|Direct reports)$/)
       .map((el) => el.textContent);
-    expect(labels).toEqual(['On the clock now', 'Due on your team', 'Out today', 'Direct reports']);
+    expect(labels).toEqual(['On the clock now', 'Scheduled today', 'Out today', 'Due this month']);
+    // Zeros say so in words, once: the sections they would repeat are gone.
+    expect(within(snapshot).getByText('Everyone is in')).toBeInTheDocument();
+    expect(within(snapshot).getByText('Nothing due this month')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Today on your team' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Due on your team' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/All clear/)).not.toBeInTheDocument();
+    // The subtitle names the team.
+    expect(screen.getByText('You have 6 direct reports on your team.')).toBeInTheDocument();
     // The queues are counted once, in Needs you — never again as tiles.
     expect(within(snapshot).queryByText('Pending timesheets')).not.toBeInTheDocument();
     expect(within(snapshot).queryByText('Pending time off')).not.toBeInTheDocument();
@@ -191,17 +199,44 @@ describe('<ManagerDashboard>', () => {
     const today = screen.getByRole('region', { name: 'Today on your team' });
     expect(within(today).getByText('Cy Diaz')).toBeInTheDocument();
     expect(within(today).getByText('3 years with us')).toBeInTheDocument();
-    // The tile's number counts up; its hint says whether anything is due.
-    expect(within(screen.getByRole('region', { name: 'Team snapshot' })).getByText('Reviews, 1:1s, probations and expiries.')).toBeInTheDocument();
+    // Only the cards with something in them: no "Shifts today" padding when there are shifts…
+    expect(within(today).getByText('Ann Lee')).toBeInTheDocument();
+    // …and the tiles are the way into those sections, not a second copy of them.
+    const snapshot = screen.getByRole('region', { name: 'Team snapshot' });
+    expect(within(snapshot).getByText('Reviews, 1:1s, probations and expiries')).toBeInTheDocument();
+    expect(within(snapshot).getByRole('button', { name: /Due this month/ })).toBeInTheDocument();
+    expect(within(snapshot).getByRole('button', { name: /Out today/ })).toBeInTheDocument();
   });
 
-  it('with nothing waiting, the decision queue speaks for the section', async () => {
+  it('with nothing waiting, ONE all-clear line speaks for the section', async () => {
     vi.mocked(listTeamTimesheets).mockResolvedValue({ entries: [] });
     vi.mocked(listTeamTimeOff).mockResolvedValue({ requests: [] });
     renderPage();
-    expect(await screen.findByText(/Nothing needs you/)).toBeInTheDocument();
-    expect(screen.getByText(/Your team is clear/)).toBeInTheDocument();
+    expect(await screen.findByText(/Your team is clear/)).toBeInTheDocument();
+    // The queue's own "Nothing needs you." no longer stacks above it.
+    expect(screen.queryByText(/Nothing needs you/)).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Needs you/ })).not.toHaveTextContent(/\d/);
+  });
+
+  it('a manager nobody reports to yet: one setup state leads, the empty team sections are gone', async () => {
+    vi.mocked(getTeamDashboard).mockResolvedValue({ directReports: 0, pendingTimesheets: 0, pendingTimeOff: 0, pendingReimbursements: 0, atRiskGoals: 0, onboardingInProgress: 0 });
+    vi.mocked(listReports).mockResolvedValue({ reports: [] });
+    vi.mocked(listTeamTimesheets).mockResolvedValue({ entries: [] });
+    vi.mocked(listTeamTimeOff).mockResolvedValue({ requests: [] });
+    renderPage();
+    const setup = await screen.findByTestId('manager-no-team');
+    expect(within(setup).getByText('You don’t have a team here yet')).toBeInTheDocument();
+    expect(within(setup).getByRole('link', { name: 'Open My team' })).toHaveAttribute('href', '/team');
+    expect(within(setup).getByRole('link', { name: 'Message HR' })).toHaveAttribute('href', '/messages');
+    // It comes before Needs you, and nothing below repeats it as zeros.
+    const needs = screen.getByRole('heading', { name: /Needs you/ });
+    expect(setup.compareDocumentPosition(needs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const name of ['Team snapshot', 'Today on your team', 'Due on your team', 'My team']) {
+      expect(screen.queryByRole('region', { name })).not.toBeInTheDocument();
+    }
+    // No team to call "clear", and no jargon subtitle.
+    expect(screen.queryByText(/Your team is clear/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/team-scoped/)).not.toBeInTheDocument();
   });
 
   it('greets by first name, and without one greets with no name at all', async () => {

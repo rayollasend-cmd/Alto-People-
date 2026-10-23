@@ -15,10 +15,21 @@ export function vendorLabel(v: IntegrationVendor): string {
 type BadgeVariant = 'success' | 'pending' | 'destructive' | 'outline' | 'default' | 'accent';
 
 /** One badge per connection: the mode when it is healthy, the trouble when it is not. */
+/**
+ * A connection's state in the one vocabulary Integrations uses for every
+ * card and row (F500 G4): Working · Needs attention · Failing. Paused and
+ * sandbox are said beside it (`modeLabel`), not as a fourth and fifth word.
+ */
 export function connectionStatus(c: Pick<IntegrationConnectionSummary, 'status' | 'sandbox'>): { label: string; variant: BadgeVariant } {
-  if (c.status === 'ERROR') return { label: 'Needs attention', variant: 'destructive' };
-  if (c.status === 'PAUSED') return { label: 'Paused', variant: 'outline' };
-  return c.sandbox ? { label: 'Sandbox', variant: 'default' } : { label: 'Connected', variant: 'success' };
+  if (c.status === 'ERROR') return { label: 'Failing', variant: 'destructive' };
+  if (c.status === 'PAUSED') return { label: 'Needs attention', variant: 'pending' };
+  return { label: 'Working', variant: 'success' };
+}
+
+/** "Sandbox", "Paused" or "Live" — how the connection runs, beside its state. */
+export function modeLabel(c: Pick<IntegrationConnectionSummary, 'status' | 'sandbox'>): string {
+  if (c.status === 'PAUSED') return 'Paused';
+  return c.sandbox ? 'Sandbox' : 'Live';
 }
 
 export function runStatus(s: IntegrationSyncStatus): { label: string; variant: BadgeVariant } {

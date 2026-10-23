@@ -147,6 +147,16 @@ describe('GET /time-off/me/balance', () => {
     expect(res.body.recentLedger).toHaveLength(1);
     expect(res.body.recentLedger[0].deltaMinutes).toBe(60);
     expect(res.body.recentLedger[0].reason).toBe('ACCRUAL');
+    // F500 G2: the state's rule rides along, so a 0.0h row can say how it builds up.
+    expect(res.body.sickAccrual).toEqual({ hoursWorkedPerHour: 30 });
+  });
+
+  it('says there is no sick-time rule where the state has none (F500 G2)', async () => {
+    const { assocUser } = await seedWorld('TX');
+    const res = await (await loginAs(assocUser.email)).get('/time-off/me/balance');
+    expect(res.status).toBe(200);
+    expect(res.body.balances).toEqual([]);
+    expect(res.body.sickAccrual).toBeNull();
   });
 
   it('non-associate (HR) → 403', async () => {

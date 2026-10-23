@@ -833,3 +833,84 @@ export const ROLE_MODULE: Partial<Record<Role, 'transportation' | 'clientPortal'
   DRIVER: 'transportation',
   CLIENT_PORTAL: 'clientPortal',
 };
+
+/**
+ * What each capability lets a person do, in the words an administrator
+ * reads on Roles & permissions ("See payroll", not `view:payroll`). The key
+ * stays available as secondary text and in exports; the label is what a
+ * person compares. Record<Capability, …> so a new capability without a
+ * label is a type error.
+ */
+export const CAPABILITY_LABELS: Record<Capability, string> = {
+  'view:dashboard': 'See the home dashboard',
+  'view:onboarding': 'See onboarding',
+  'manage:onboarding': 'Review and approve onboarding',
+  'invite:onboarding': 'Invite new hires',
+  'view:time': 'See time and attendance',
+  'manage:time': 'Approve and edit time',
+  'view:time-live': 'See who is clocked in',
+  'view:scheduling': 'See schedules',
+  'manage:scheduling': 'Build and change schedules',
+  'view:payroll': 'See payroll',
+  'process:payroll': 'Run payroll',
+  'void:payroll': 'Void or amend a paid run',
+  'export:payroll-pii': 'Export full SSNs and bank details',
+  'submit:reimbursement': 'Submit reimbursements',
+  'approve:reimbursement': 'Approve reimbursements',
+  'settle:reimbursement': 'Settle reimbursements into payroll',
+  'view:documents': 'See documents',
+  'manage:documents': 'Manage documents',
+  'view:communications': 'See communications',
+  'manage:communications': 'Send broadcasts and manage channels',
+  'view:clients': 'See clients',
+  'manage:clients': 'Manage clients',
+  'view:analytics': 'See workforce analytics',
+  'view:compliance': 'See compliance',
+  'manage:compliance': 'Manage compliance',
+  'view:performance': 'See performance',
+  'manage:performance': 'Manage reviews and goals',
+  'view:recruiting': 'See recruiting',
+  'manage:recruiting': 'Manage recruiting',
+  'view:audit': 'Read the audit log',
+  'view:hr-admin': 'See HR administration',
+  'view:my-team': 'See my team',
+  'manage:team-time': "Approve my team's time",
+  'manage:team-time-off': "Approve my team's time off",
+  'view:org': 'See the organization',
+  'manage:org': 'Administer the organization',
+  'view:executive': 'See executive reports',
+  'view:product-analytics': 'See product usage',
+  'export:audit-packet': 'Export the audit packet',
+  'view:payroll-documents': "Open another person's pay documents",
+  'view:comp': 'See compensation',
+  'manage:comp': 'Manage compensation',
+  'view:integrations': 'See integrations',
+  'manage:integrations': 'Manage integrations and API keys',
+  'asn:read:schedule': 'ASN: read the schedule',
+  'asn:read:roster': 'ASN: read the roster',
+  'asn:read:clocked-in': 'ASN: read who is clocked in',
+  'asn:read:kpis': 'ASN: read the KPIs',
+  'run:ops-shifts': 'Run store shifts',
+  'assist:ops-shifts': 'Help on store shifts',
+  'view:ops': 'See store operations',
+  'manage:ops-library': 'Edit the store standards',
+  'ride:transport': 'Book a van seat',
+  'drive:transport': 'Drive van runs',
+  'view:transport': 'See transportation',
+  'manage:transport': 'Dispatch and manage vans',
+  'view:emergency': 'See emergencies',
+  'manage:emergency': 'Declare and end an emergency',
+  'report:incident': 'Report an incident',
+  'message:crew': 'Message my crew',
+  'view:marketing': 'See marketing',
+  'manage:marketing': 'Manage marketing',
+  'manage:leave': 'Manage leave cases',
+  'manage:claims': 'Manage claims',
+  'view:books': 'See the books',
+  'manage:books': 'Keep the books',
+};
+
+/** A capability's label, or its key when it has none (a key from an older role). */
+export function capabilityLabel(cap: string): string {
+  return (CAPABILITY_LABELS as Record<string, string>)[cap] ?? cap;
+}

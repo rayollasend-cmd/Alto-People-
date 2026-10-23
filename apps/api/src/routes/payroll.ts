@@ -44,7 +44,7 @@ import { scopePayrollRuns, scopePayrollSchedules, scopeTimeEntries, scopeWhere }
 import { membershipWindows, nextPaydayOn, PAY_RUN_POPULATION_WHERE, periodAfter, scheduleFilterFor, scheduleMembershipFor, todayYmd } from '../lib/payScheduleMembership.js';
 import { assignPeople } from './paySchedules.js';
 import { anyLiveSchedule, nextPaydayFor } from '../lib/associatePayday.js';
-import { runTotalsCheck } from '../lib/payrollRunTotals.js';
+import { runTotalsCheck, runTotalsChecks } from '../lib/payrollRunTotals.js';
 import { applyRideCharges, planRideCharges, releaseRideCharges } from '../lib/transport.js';
 import { round2 } from '../lib/payroll.js';
 import { isStateTaxSupported, primeStateAcknowledgments } from '../lib/payrollTax.js';
@@ -378,7 +378,10 @@ payrollRouter.get('/runs/:id', async (req, res, next) => {
       include: RUN_INCLUDE,
     });
     if (!row) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
-    const payload: PayrollRunDetail = PayrollRunDetailSchema.parse(toDetail(row));
+    // The same lifecycle the runs list carries (payday, sign-off, next step), so the run's own
+    // page (/payroll/runs/:id) and the drawer read one run the way the list does (F500 G3).
+    const lifecycle = await lifecycleForRuns(prisma, [row]);
+    const payload: PayrollRunDetail = PayrollRunDetailSchema.parse({ ...toDetail(row), ...(lifecycle.get(row.id) ?? {}) });
     res.json(payload);
   } catch (err) {
     next(err);
@@ -2755,7 +2758,8 @@ payrollRouter.get('/runs/:id/close', PROCESS, async (req, res, next) => {
             state: run.status === 'DISBURSED' ? 'done' : payPreview.openFlags > 0 ? 'blocked' : payPreview.unanswered > 0 ? 'warn' : 'done',
             blockers: run.status === 'DISBURSED' ? 0 : payPreview.openFlags,
             warnings: run.status === 'DISBURSED' ? 0 : payPreview.unanswered,
-            to: `/payroll/pay-checks?run=${run.id}`,
+            // The run record's Confirmations tab (F500 G3: one home per run).
+            to: `/payroll/runs/${run.id}/confirmations`,
           }]
         : []),
       {
@@ -4828,6 +4832,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
       await Promise.all([
         prisma.payrollRun.count({
           where: {
+            tenantId: tenantIdForWrite(),
             status: { in: ['DRAFT', 'FINALIZED'] },
             OR: [
               { disbursedAt: { gte: yearStart, lt: yearEndExclusive } },
@@ -4845,6 +4850,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
         listF1099MiscEligibleAssociates(prisma, yearParam, null),
         prisma.taxForm.findMany({
           where: {
+            tenantId: tenantIdForWrite(),
             taxYear: yearParam,
             status: { not: 'VOIDED' },
             kind: { in: ['W2', 'F1099_NEC', 'F1099_MISC'] },
@@ -4874,16 +4880,22 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
     const formsDraft = formsForYear.filter((f) => f.status === 'DRAFT').length;
     const formsTotal = formsForYear.length;
     const copiesUnsent = formsForYear.filter((f) => !f.recipientCopySentAt).length;
+    // A year with no one eligible for a W-2 or 1099 has nothing to file or send: those steps are
+    // done, not open forever (a year with nothing to file could never close — F500 G3).
+    const eligibleTotal = allW2EligibleIds.length + allNecEligibleIds.length + allMiscEligibleIds.length;
+    const nothingToFile = eligibleTotal === 0 && formsTotal === 0;
+    const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+    const FORMS = '/payroll/year-end?tab=forms';
 
     const checks = [
       {
         key: 'runs_disbursed',
-        label: 'All payroll runs disbursed',
+        label: 'All payroll runs paid',
         done: openRuns === 0,
         detail:
           openRuns === 0
-            ? 'No DRAFT or FINALIZED runs touching this tax year.'
-            : `${openRuns} run(s) still open. Finalize and disburse before closing.`,
+            ? `No payroll run in ${yearParam} is still waiting to be paid.`
+            : `${n(openRuns, 'run')} ${openRuns === 1 ? 'is' : 'are'} still open. Finalize and pay ${openRuns === 1 ? 'it' : 'them'} before closing.`,
         href: '/payroll',
       },
       {
@@ -4892,9 +4904,11 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
         done: w2Missing === 0,
         detail:
           w2Missing === 0
-            ? `${allW2EligibleIds.length} eligible · ${w2Generated.size} on file.`
-            : `${w2Missing} eligible employee(s) missing a W-2.`,
-        href: '/payroll/taxes?tab=returns',
+            ? allW2EligibleIds.length === 0
+              ? `No one was paid wages in ${yearParam}, so no W-2s are due.`
+              : `${n(allW2EligibleIds.length, 'eligible employee')} · ${w2Generated.size} on file.`
+            : `${n(w2Missing, 'eligible employee')} ${w2Missing === 1 ? 'has' : 'have'} no W-2 yet.`,
+        href: FORMS,
       },
       {
         key: 'nec_generated',
@@ -4902,9 +4916,11 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
         done: necMissing === 0,
         detail:
           necMissing === 0
-            ? `${allNecEligibleIds.length} eligible · ${necGenerated.size} on file.`
-            : `${necMissing} eligible contractor(s) missing a 1099-NEC.`,
-        href: '/payroll/taxes?tab=returns',
+            ? allNecEligibleIds.length === 0
+              ? `No contractor was paid enough in ${yearParam} to need a 1099-NEC.`
+              : `${n(allNecEligibleIds.length, 'eligible contractor')} · ${necGenerated.size} on file.`
+            : `${n(necMissing, 'eligible contractor')} ${necMissing === 1 ? 'has' : 'have'} no 1099-NEC yet.`,
+        href: FORMS,
       },
       {
         key: 'misc_generated',
@@ -4912,33 +4928,37 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
         done: miscMissing === 0,
         detail:
           miscMissing === 0
-            ? `${allMiscEligibleIds.length} eligible · ${miscGenerated.size} on file.`
-            : `${miscMissing} eligible recipient(s) missing a 1099-MISC.`,
-        href: '/payroll/taxes?tab=returns',
+            ? allMiscEligibleIds.length === 0
+              ? `No one was paid in ${yearParam} in a way that needs a 1099-MISC.`
+              : `${n(allMiscEligibleIds.length, 'eligible recipient')} · ${miscGenerated.size} on file.`
+            : `${n(miscMissing, 'eligible recipient')} ${miscMissing === 1 ? 'has' : 'have'} no 1099-MISC yet.`,
+        href: FORMS,
       },
       {
         key: 'forms_filed',
         label: 'All generated forms filed',
-        done: formsTotal > 0 && formsDraft === 0,
-        detail:
-          formsTotal === 0
-            ? 'No forms generated yet for this tax year.'
+        done: nothingToFile || (formsTotal > 0 && formsDraft === 0),
+        detail: nothingToFile
+          ? `Nothing to file for ${yearParam}.`
+          : formsTotal === 0
+            ? `No forms generated yet for ${yearParam}.`
             : formsDraft === 0
-              ? `All ${formsTotal} form(s) marked FILED.`
-              : `${formsDraft} of ${formsTotal} form(s) still in DRAFT.`,
-        href: '/payroll/taxes?tab=returns',
+              ? `All ${n(formsTotal, 'form')} filed.`
+              : `${formsDraft} of ${n(formsTotal, 'form')} ${formsDraft === 1 ? 'is' : 'are'} still a draft.`,
+        href: FORMS,
       },
       {
         key: 'copies_sent',
         label: 'Recipient copies sent',
-        done: formsTotal > 0 && copiesUnsent === 0,
-        detail:
-          formsTotal === 0
-            ? 'No forms generated yet for this tax year.'
+        done: nothingToFile || (formsTotal > 0 && copiesUnsent === 0),
+        detail: nothingToFile
+          ? `No recipient copies to send for ${yearParam}.`
+          : formsTotal === 0
+            ? `No forms generated yet for ${yearParam}.`
             : copiesUnsent === 0
-              ? `All ${formsTotal} recipient copies distributed.`
-              : `${copiesUnsent} of ${formsTotal} form(s) not yet emailed to the worker.`,
-        href: '/payroll/taxes?tab=returns',
+              ? `All ${n(formsTotal, 'recipient copy', 'recipient copies')} sent.`
+              : `${copiesUnsent} of ${n(formsTotal, 'form')} not yet sent to the person.`,
+        href: FORMS,
       },
     ];
 
@@ -4975,11 +4995,14 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
     // PERF: sum in SQL. This used to fetch every payroll item of the year
     // (500 people × 26 periods = 13k rows + 13k joined associates) to add
     // them up in JS; groupBy returns one row per associate.
+    // The runs this person may see: the tenant's, within their reach.
+    const runReach: Prisma.PayrollRunWhereInput = { tenantId: tenantIdForWrite(), ...scopePayrollRuns(req.user!) };
     const groups = await prisma.payrollItem.groupBy({
       by: ['associateId'],
       where: {
         status: { not: 'VOIDED' },
         payrollRun: {
+          ...runReach,
           status: { not: 'CANCELLED' },
           disbursedAt: { gte: yearStart, lt: yearEndExclusive },
         },
@@ -5116,7 +5139,7 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
       by: ['payrollRunId'],
       where: {
         status: { not: 'VOIDED' },
-        payrollRun: { status: { not: 'CANCELLED' }, disbursedAt: { gte: yearStart, lt: yearEndExclusive } },
+        payrollRun: { ...runReach, status: { not: 'CANCELLED' }, disbursedAt: { gte: yearStart, lt: yearEndExclusive } },
       },
       _sum: { grossPay: true, federalWithholding: true, fica: true, medicare: true, stateWithholding: true, netPay: true },
     });
@@ -5140,8 +5163,21 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
       b.runs += 1;
     }
 
+    // Paid runs whose stored totals their paychecks don't add up to (lib/payrollRunTotals): this report
+    // sums paychecks, so their money isn't in it. Said on the page, never left as a silent $0 (F500 G3).
+    const paidRuns = await prisma.payrollRun.findMany({
+      where: { ...runReach, status: 'DISBURSED', disbursedAt: { gte: yearStart, lt: yearEndExclusive } },
+      select: { id: true, status: true, totalGross: true, totalNet: true, periodStart: true, periodEnd: true },
+      take: 2000,
+    });
+    const checks = await runTotalsChecks(prisma, paidRuns);
+    const notInReport = paidRuns
+      .filter((r) => checks.get(r.id)?.totalsAgree === false)
+      .map((r) => ({ id: r.id, periodStart: ymd(r.periodStart), periodEnd: ymd(r.periodEnd), totalGross: round2(Number(r.totalGross)), totalNet: round2(Number(r.totalNet)), paychecks: checks.get(r.id)!.paychecks }));
+
     res.json({
       taxYear: yearParam,
+      notInReport,
       monthly: monthly.map((m) => ({ ...m, gross: round2(m.gross), tax: round2(m.tax), deductions: round2(m.deductions), net: round2(m.net) })),
       totals: {
         gross: round2(totals.gross),

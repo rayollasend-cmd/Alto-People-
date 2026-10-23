@@ -108,7 +108,7 @@ describe('<RecruitingAnalytics>', () => {
     expect(steps).toHaveLength(5);
     expect(steps[1]).toHaveTextContent('Screening3');
     expect(steps[1]).toHaveTextContent('67% to interview');
-    expect(screen.getByText(/Of 4: 1 still in progress, 1 rejected, 1\s+withdrew/)).toBeInTheDocument();
+    expect(screen.getByText(/Of 4 who applied in the range: 1 still in progress, 1 rejected, 1 withdrew/)).toBeInTheDocument();
   });
 
   it('charts hires and cost per hire by source', async () => {
@@ -145,6 +145,16 @@ describe('<RecruitingAnalytics>', () => {
     expect(within(bySource).getByRole('meter', { name: 'Referral stayed 90 days' })).toHaveAttribute('aria-valuenow', '100');
     const byWho = screen.getByRole('table', { name: 'Stayed 90 days, by who hired them' });
     expect(within(byWho).getByText('Dana Reyes')).toBeInTheDocument();
+  });
+
+  it('keeps each section’s definition behind an ⓘ, not under its title (F500 G1)', async () => {
+    const user = renderPage();
+    await screen.findByText('Who stays 90 days');
+    expect(screen.queryByText(/Stayed means not separated/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'How “Who stays 90 days” is counted' }));
+    expect(screen.getByRole('note')).toHaveTextContent(/Stayed means not separated, or separated 90 or more days after their hire date/);
+    // The hub strip, with Analytics as the page you are on.
+    expect(within(screen.getByRole('navigation', { name: 'Recruiting' })).getByRole('link', { name: 'Analytics' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('switches the range from the URL', async () => {

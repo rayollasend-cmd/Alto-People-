@@ -651,7 +651,7 @@ export async function waiveRides(rideIds: string[], reason: string): Promise<Wai
 }
 
 export interface TransportTrendWeek {
-  /** Monday, YYYY-MM-DD. */
+  /** The Saturday that starts the org week (Sat→Fri), YYYY-MM-DD. */
   start: string;
   /** This week, still running. */
   partial: boolean;
@@ -663,7 +663,15 @@ export interface TransportTrendWeek {
   costCents: number;
 }
 /** The last `weeks` weeks (this one last): riders, on-time pickups, no-shows, revenue against cost. */
-export const getTransportTrends = (weeks = 8) => apiFetch<{ weeks: TransportTrendWeek[]; note: string }>(`/transport/trends?weeks=${weeks}`);
+export const getTransportTrends = (weeks = 8) =>
+  apiFetch<{
+    weeks: TransportTrendWeek[];
+    note: string;
+    /** Weeks run Saturday to Friday, the org week. Absent on an older API (Monday weeks). */
+    weekStartsOn?: 'SATURDAY';
+    /** The last day anyone rode (YYYY-MM-DD), or null when nobody ever has. */
+    lastRideDate?: string | null;
+  }>(`/transport/trends?weeks=${weeks}`);
 
 /** Undo a waiver: the charge is owed again (held until they sign, when no authorization covers it). */
 export const unwaiveRide = (id: string, reason: string) =>

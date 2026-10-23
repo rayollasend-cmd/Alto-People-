@@ -241,10 +241,17 @@ describe('store operations, in the portal', () => {
     const res = await manager.get(`/client-portal/ops?date=${localDateKey(started, NY)}`);
     expect(res.status).toBe(200);
     const missed = (res.body.attention as Array<{ kind: string; title: string }>).find((a) => a.kind === 'NOT_STARTED');
-    expect(missed?.title).toBe('Morning — SOP not started');
+    // "Checklist", the client's word; the row's own line carries the department and period (F500 G5).
+    expect(missed?.title).toBe('Checklist not started');
     expect(res.body.summary.notStarted).toBe(1);
     const cell = res.body.grid[0].cells.find((c: { period: string }) => c.period === 'MORNING');
     expect(cell.expected[0]).toMatchObject({ windowLabel: 'Morning', missed: true });
+
+    // Narrowed to another shift ("Last night"), the morning's miss is not on the page (F500 G5).
+    const overnight = await manager.get(`/client-portal/ops?date=${localDateKey(started, NY)}&period=OVERNIGHT`);
+    expect(overnight.status).toBe(200);
+    expect((overnight.body.attention as Array<{ kind: string }>).filter((a) => a.kind === 'NOT_STARTED')).toEqual([]);
+    expect(overnight.body.summary.notStarted).toBe(0);
   });
 
   it('shows photo evidence to its own store only', async () => {

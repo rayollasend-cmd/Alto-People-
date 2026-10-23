@@ -31,6 +31,8 @@ import {
   ScorecardNudgeResponseSchema,
   isDartSeverity,
   OSHA_TRIR_TARGET,
+  OSHA_RATE_MIN_HOURS,
+  oshaRateMeaningful,
   type OshaIncidentSeverity,
   type ScorecardSafetyIncident,
   type ScorecardSafetyResponse,
@@ -1877,7 +1879,11 @@ export async function buildSafetyTile(
   const severity: ScorecardSeverity =
     openSevere || overdueAtt > 0
       ? 'critical'
-      : openRows.length > 0 || dueSoonAtt > 0 || (trir !== null && trir > OSHA_TRIR_TARGET)
+      : openRows.length > 0 ||
+          dueSoonAtt > 0 ||
+          // A rate on too few hours is noise (one case on 1,239 h reads as
+          // TRIR 161): it never moves the tile until the hours are there.
+          (trir !== null && oshaRateMeaningful(hoursWorkedYtd) && trir > OSHA_TRIR_TARGET)
         ? 'warn'
         : 'ok';
 
@@ -2026,10 +2032,13 @@ export async function buildActionsTile(
           sig.key === 'BACKGROUND_CHECK' || sig.key === 'I9_BOTH_SECTIONS' || sig.key === 'E_VERIFY'
             ? 'critical'
             : 'warn',
-        title: `${subject.associateName ?? 'Associate'} — missing ${sig.label.toLowerCase()}`,
+        // The label keeps its own casing: lower-casing it printed
+        // "missing i-9 section 1 + section 2" and "missing e-verify cleared".
+        title: `${subject.associateName ?? 'Associate'} — missing: ${sig.label}`,
         contractClause: sig.contractClause,
         subject,
         link: onboardingFixLink(sig.key, subject.associateId),
+        group: { key: `onb:${sig.key}`, label: sig.label, link: onboardingGroupLink(sig.key) },
       });
     }
   }
@@ -2096,12 +2105,13 @@ export async function buildActionsTile(
       actions.push({
         id: `trn:${sig.tag}:${subject.associateId}`,
         severity: 'warn',
-        title: `${subject.associateName ?? 'Associate'} — missing ${sig.label.toLowerCase()}`,
+        title: `${subject.associateName ?? 'Associate'} — missing: ${sig.label}`,
         contractClause: sig.contractClause,
         subject,
         // Training gaps are fixed on the person record (enrollments live
         // there) — and the People page reads ?associateId=, not ?associate=.
         link: subject.associateId ? `/people?associateId=${subject.associateId}` : null,
+        group: { key: `trn:${sig.tag}`, label: sig.label, link: null },
       });
     }
   }
@@ -2113,7 +2123,7 @@ export async function buildActionsTile(
       id: `saf:${inc.id}`,
       severity:
         inc.severity === 'FATAL' || inc.severity === 'DAYS_AWAY' ? 'critical' : 'warn',
-      title: `${inc.associateName ?? 'Associate'} — unresolved safety incident (${SAFETY_SEVERITY_LABEL[inc.severity]}, ${inc.occurredAt.slice(0, 10)})`,
+      title: `${inc.associateName ?? 'Associate'} — unresolved safety incident (${SAFETY_SEVERITY_LABEL[inc.severity]}, ${new Date(inc.occurredAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })})`,
       contractClause: CLAUSE.OSHA_LOG,
       subject: {
         associateId: inc.associateId,
@@ -2452,11 +2462,18 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
         value:
           safety.trir === null
             ? '— (no hours yet)'
-            : `${safety.trir} (target ≤ ${OSHA_TRIR_TARGET})`,
+            : !oshaRateMeaningful(safety.hoursWorkedYtd)
+              ? `— (shown after ${OSHA_RATE_MIN_HOURS.toLocaleString('en-US')} hours)`
+              : `${safety.trir} (target ≤ ${OSHA_TRIR_TARGET})`,
       },
       {
         label: 'DART (YTD)',
-        value: safety.dart === null ? '— (no hours yet)' : String(safety.dart),
+        value:
+          safety.dart === null
+            ? '— (no hours yet)'
+            : !oshaRateMeaningful(safety.hoursWorkedYtd)
+              ? `— (shown after ${OSHA_RATE_MIN_HOURS.toLocaleString('en-US')} hours)`
+              : String(safety.dart),
       },
       {
         label: 'Recordables YTD',
@@ -2530,6 +2547,24 @@ function onboardingFixLink(
     // Age, W-4, offer letter, policy ack — person-record-level gaps.
     default:
       return `/people?associateId=${associateId}`;
+  }
+}
+
+/** Where a whole signal is worked from — the tab that owns it — for the
+ *  grouped Open actions row. Person-level gaps (age, W-4, offer, policy)
+ *  have no list of their own: each person's row carries its fix. */
+function onboardingGroupLink(key: ScorecardOnboardingSignal['key']): string | null {
+  switch (key) {
+    case 'I9_BOTH_SECTIONS':
+      return '/compliance?tab=i9&status=pending';
+    case 'E_VERIFY':
+      return '/compliance?tab=everify';
+    case 'BACKGROUND_CHECK':
+      return '/compliance?tab=background';
+    case 'DRUG_TEST_60D':
+      return '/compliance?tab=drugtests';
+    default:
+      return null;
   }
 }
 
