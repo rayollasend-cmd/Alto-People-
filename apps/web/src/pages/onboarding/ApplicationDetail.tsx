@@ -143,6 +143,7 @@ function trackLabel(track: string, clientsOn: boolean): string {
 const TASK_LABEL: Record<string, string> = {
   PROFILE_INFO: 'Profile information',
   PROFILE_PHOTO: 'Profile photo',
+  AVAILABILITY: 'Availability',
   DOCUMENT_UPLOAD: 'Identity documents',
   E_SIGN: 'Document e-signatures',
   BACKGROUND_CHECK: 'Background check',
@@ -1657,6 +1658,8 @@ function taskDestination(
         to: `/people?associateId=${associateId}&tab=documents`,
         label: 'Open document vault',
       };
+    case 'AVAILABILITY':
+      return { to: `/scheduling?associate=${associateId}`, label: 'Open their schedule' };
     case 'I9_VERIFICATION':
       return {
         to: i9VerifierHref(associateId, returnTo),

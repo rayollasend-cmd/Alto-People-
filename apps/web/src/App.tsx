@@ -78,6 +78,7 @@ const BackgroundCheckTask = lazyNamed(() => import('@/pages/onboarding/tasks/Bac
 const J1DocsTask = lazyNamed(() => import('@/pages/onboarding/tasks/J1DocsTask'), 'J1DocsTask');
 const EsignTask = lazyNamed(() => import('@/pages/onboarding/tasks/EsignTask'), 'EsignTask');
 const ProfilePhotoTask = lazyNamed(() => import('@/pages/onboarding/tasks/ProfilePhotoTask'), 'ProfilePhotoTask');
+const AvailabilityTask = lazyNamed(() => import('@/pages/onboarding/tasks/AvailabilityTask'), 'AvailabilityTask');
 
 // Time / scheduling / payroll
 const TimeHome = lazyNamed(() => import('@/pages/time/TimeHome'), 'TimeHome');
@@ -503,6 +504,10 @@ const ONBOARDING_ROUTES = [
   {
     path: 'onboarding/me/:applicationId/tasks/profile_photo',
     element: <ProfilePhotoTask />,
+  },
+  {
+    path: 'onboarding/me/:applicationId/tasks/availability',
+    element: <AvailabilityTask />,
   },
   // Every TaskKind has a page above; a bogus kind in the URL is a 404.
   {

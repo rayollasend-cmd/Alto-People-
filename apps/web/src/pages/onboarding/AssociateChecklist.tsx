@@ -143,6 +143,7 @@ const STATUS_BANNER: Record<
 const TASK_LABEL_KEY: Record<string, MessageKey> = {
   PROFILE_INFO: 'ob.check.task.profileInfo',
   PROFILE_PHOTO: 'ob.check.task.profilePhoto',
+  AVAILABILITY: 'ob.check.task.availability',
   DOCUMENT_UPLOAD: 'ob.check.task.documents',
   E_SIGN: 'ob.check.task.esign',
   BACKGROUND_CHECK: 'ob.check.task.background',

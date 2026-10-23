@@ -888,6 +888,20 @@ const SOURCES: SourceDef[] = [
       return { count: 1, description: `${done} of ${tasks.length} tasks done.`, path: `/onboarding/me/${open.id}`, progress: { done, total: tasks.length } };
     },
   },
+  // A new hire with no availability on file is "fully unavailable" to the
+  // schedule and never knows it (role walk supervisor 11): say so on the
+  // home, with the editor one tap away.
+  {
+    key: 'my-availability',
+    label: 'Set when you can work',
+    description: 'The schedule cannot offer you shifts until it knows your availability.',
+    path: '/scheduling#availability',
+    visible: (u) => u.role === 'ASSOCIATE' && !!u.associateId,
+    count: async (u) => {
+      const windows = await prisma.associateAvailability.count({ where: { associateId: u.associateId! } });
+      return windows === 0 ? 1 : 0;
+    },
+  },
   {
     key: 'my-leave-certification',
     label: 'Upload leave certification',

@@ -129,10 +129,11 @@ describe('POST /onboarding/applications (HR creates)', () => {
       include: { checklist: { include: { tasks: true } } },
     });
     expect(created).not.toBeNull();
-    // Template tasks + the injected PROFILE_PHOTO (product policy — see
+    // Template tasks + the injected PROFILE_PHOTO and AVAILABILITY (product policy — see
     // lib/checklistTasks.ts): the test template predates the photo task,
     // exactly like production templates did.
-    expect(created!.checklist?.tasks.length).toBe(template.tasks.length + 1);
+    expect(created!.checklist?.tasks.length).toBe(template.tasks.length + 2);
+    expect(created!.checklist?.tasks.map((t) => t.kind)).toContain('AVAILABILITY');
     expect(created!.checklist?.tasks.map((t) => t.kind)).toContain('PROFILE_PHOTO');
 
     await flushPendingAudits();

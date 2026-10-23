@@ -531,6 +531,12 @@ export function finishProfilePhoto(applicationId: string): Promise<{ ok: true }>
   );
 }
 
+/** Completes the AVAILABILITY task — at least one availability window must
+ *  already be saved (the task embeds the editor), or this 400s. */
+export function finishAvailability(applicationId: string): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(`/onboarding/applications/${applicationId}/availability`, { method: 'POST', body: {} });
+}
+
 /** The consent. `status` is NOT_RUN when no screening provider is connected
  *  (the check never ran), INITIATED when it was ordered — never PASSED. */
 export function authorizeBackgroundCheck(

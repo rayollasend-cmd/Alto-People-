@@ -3033,6 +3033,41 @@ onboardingRouter.post(
   }
 );
 
+// AVAILABILITY ----------------------------------------------------------- */
+// Completes the "when can you work" task (role walk supervisor 11). The
+// windows themselves land via the associate's own availability routes (the
+// task UI embeds that editor); this only checks at least one is on file and
+// flips the checklist task, so it can never read DONE for someone still
+// "fully unavailable".
+onboardingRouter.post(
+  '/applications/:id/availability',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
+      const windows = await prisma.associateAvailability.count({ where: { associateId: app.associateId } });
+      if (windows === 0) {
+        throw new HttpError(400, 'no_availability', 'Pick at least one day you can work first.');
+      }
+      const checklist = await prisma.onboardingChecklist.findUnique({ where: { applicationId: app.id } });
+      if (checklist) {
+        await markTaskDoneByKind(prisma, checklist.id, 'AVAILABILITY');
+      }
+      await flagPostSubmissionEdit(app, req.user!, 'set availability');
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.availability_submitted',
+        applicationId: app.id,
+        clientId: app.clientId,
+        req,
+      });
+      void notifyHrOnApplicationComplete(app.id);
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // BACKGROUND_CHECK ----------------------------------------------------- */
 // The associate types their full legal name (the consent signature). With a
 // screening provider connected the check is ordered through it and stays

@@ -38,12 +38,23 @@ export const WOTC_SCREENING_TASK: Omit<ChecklistTaskCreate, 'order'> = {
   dueOffsetDays: null,
 };
 
+/** When they can work (role walk supervisor 11). A new hire used to land
+ *  "fully unavailable" and the schedule could never offer them a shift
+ *  until someone noticed; the checklist asks, with one-tap presets. */
+export const AVAILABILITY_TASK: Omit<ChecklistTaskCreate, 'order'> = {
+  kind: 'AVAILABILITY',
+  title: 'Tell us when you can work',
+  description: 'Pick the days and hours you are available — a preset is one tap, and you can change it any time from your schedule.',
+  dueOffsetDays: null,
+};
+
 /** Returns the task list with every mandatory task present (appended at
  *  max order + 1 when missing, so template ordering is untouched). */
 export function withMandatoryTasks(tasks: ChecklistTaskCreate[], opts: { wotc?: boolean } = {}): ChecklistTaskCreate[] {
   const out = [...tasks];
   const next = () => Math.max(0, ...out.map((t) => t.order)) + 1;
   if (!out.some((t) => t.kind === 'PROFILE_PHOTO')) out.push({ ...PROFILE_PHOTO_TASK, order: next() });
+  if (!out.some((t) => t.kind === 'AVAILABILITY')) out.push({ ...AVAILABILITY_TASK, order: next() });
   if (opts.wotc && !out.some((t) => t.kind === 'WOTC_SCREENING')) out.push({ ...WOTC_SCREENING_TASK, order: next() });
   return out;
 }

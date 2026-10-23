@@ -62,6 +62,8 @@ export const TaskKindSchema = /* @__PURE__ */ (() => z.enum([
   'PROFILE_PHOTO',
   // WOTC pre-screening (Form 8850 / ETA 9061) — voluntary for the applicant.
   'WOTC_SCREENING',
+  // When they can work, with presets — a new hire used to default to "fully unavailable".
+  'AVAILABILITY',
 ]))();
 export type TaskKind = z.infer<typeof TaskKindSchema>;
 

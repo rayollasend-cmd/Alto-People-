@@ -137,6 +137,9 @@ enum TaskKind {
   // WOTC pre-screening (IRS Form 8850 + ETA 9061 applicant questions).
   // Voluntary for the applicant: "prefer not to answer" completes it.
   WOTC_SCREENING
+  // When they can work, with presets (role walk supervisor 11): a new hire
+  // used to default to "fully unavailable" and never got asked.
+  AVAILABILITY
 }
 
 enum TaskStatus {

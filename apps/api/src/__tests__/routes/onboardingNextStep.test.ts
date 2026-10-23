@@ -150,7 +150,8 @@ describe('E2E: associate next-step after Profile info', () => {
     const assocAgent = await loginAs(associateUser.email);
     const before = await assocAgent.get(`/onboarding/applications/${applicationId}`);
     expect(before.status).toBe(200);
-    expect(before.body.tasks.length).toBe(8);
+    // The template's eight tasks + the injected AVAILABILITY (lib/checklistTasks).
+    expect(before.body.tasks.length).toBe(9);
     expect(before.body.percentComplete).toBe(0);
 
     // 6. Associate submits Profile info.
@@ -169,7 +170,7 @@ describe('E2E: associate next-step after Profile info', () => {
     const after = await assocAgent.get(`/onboarding/applications/${applicationId}`);
     expect(after.status).toBe(200);
     const tasks: Array<{ id: string; kind: string; status: string; order: number }> = after.body.tasks;
-    expect(tasks).toHaveLength(8);
+    expect(tasks).toHaveLength(9);
 
     const profileTask = tasks.find((t) => t.kind === 'PROFILE_INFO')!;
     expect(profileTask.status).toBe('DONE');
