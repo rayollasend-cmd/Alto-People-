@@ -62,7 +62,8 @@ describe('RoleFocusRow — operations', () => {
     const coverage = await screen.findByRole('link', { name: /Coverage today/ });
     expect(within(coverage).getByText('5 / 7')).toBeInTheDocument();
     expect(within(coverage).getByText('2 shifts still open')).toBeInTheDocument();
-    expect(coverage).toHaveAttribute('href', '/scheduling');
+    // Every store at once (role walk HR 6), not the month-long list.
+    expect(coverage).toHaveAttribute('href', '/scheduling/coverage');
     expect(within(tile('Fill rate this week')).getByText('84%')).toBeInTheDocument();
     // 930 worked minutes → 16h (rounded), against 1,200 scheduled → 20h.
     expect(await within(tile('Hours worked this week')).findByText('16')).toBeInTheDocument();

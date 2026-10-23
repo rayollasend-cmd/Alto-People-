@@ -176,7 +176,8 @@ function OpsRow() {
       // "0 / 0 · Every shift filled" read as good news on a day with nothing scheduled.
       nothing: o && shiftsToday === 0 ? 'No shifts today' : undefined,
       hint: o ? (o.today.open > 0 ? `${fmtCount(o.today.open, 'shift')} still open` : 'Every shift filled') : undefined,
-      to: '/scheduling',
+      // Every store at once, not a month-long list (role walk HR 6).
+      to: '/scheduling/coverage',
       icon: CalendarCheck,
       tone: o && o.today.open > 0 ? 'attention' : 'calm',
     },

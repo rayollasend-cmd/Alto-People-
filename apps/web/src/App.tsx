@@ -94,6 +94,7 @@ const TimeOffHome = lazyNamed(() => import('@/pages/timeoff/TimeOffHome'), 'Time
 const SchedulingHome = lazyNamed(() => import('@/pages/scheduling/SchedulingHome'), 'SchedulingHome');
 const LaborCostsHome = lazyNamed(() => import('@/pages/scheduling/LaborCostsHome'), 'LaborCostsHome');
 const SupervisorCorps = lazyNamed(() => import('@/pages/scheduling/SupervisorCorps'), 'SupervisorCorps');
+const CoverageBoard = lazyNamed(() => import('@/pages/scheduling/CoverageBoard'), 'CoverageBoard');
 const OpsHome = lazyNamed(() => import('@/pages/ops/OpsHome'), 'OpsHome');
 const RideHome = lazyNamed(() => import('@/pages/transport/RideHome'), 'RideHome');
 const TransportHome = lazyNamed(() => import('@/pages/transport/TransportHome'), 'TransportHome');
@@ -545,6 +546,8 @@ const LAYOUT_ROUTES = [
   { path: 'messages', element: <MessagesHome /> },
   { path: 'messages/:id', element: <MessagesHome /> },
   { path: 'scheduling', element: <SchedulingHome /> },
+  // Every store's next seven days on one screen (role walk HR 6).
+  { path: 'scheduling/coverage', element: <RequireCapability cap="view:scheduling"><CoverageBoard /></RequireCapability> },
   // The supervisor corps: field leadership places a supervisor at a store and shift.
   { path: 'scheduling/supervisors', element: <RequireCapability cap="manage:org"><SupervisorCorps /></RequireCapability> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },

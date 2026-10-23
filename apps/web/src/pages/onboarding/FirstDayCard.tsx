@@ -290,7 +290,7 @@ function OpenShiftsPicker({
         description="Nothing is open from their start date. Add one on the schedule."
         action={
           <Button asChild size="sm" variant="outline">
-            <Link to={withReturn(`/scheduling?view=week&locationId=${locationId}`, back)}>Open the schedule</Link>
+            <Link to={withReturn(`/scheduling?view=week&location=${locationId}`, back)}>Open the schedule</Link>
           </Button>
         }
       />
