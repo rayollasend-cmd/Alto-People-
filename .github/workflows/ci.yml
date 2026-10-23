@@ -80,9 +80,9 @@ jobs:
     # container is per job), so the suite takes ~40 min instead of ~2.5 h.
     name: API tests (postgres, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # A shard takes ~40 min. A hung test fails here, with its log, instead of
-    # holding main's queue for GitHub's six-hour default.
-    timeout-minutes: 75
+    # A shard takes 30-70 min on a hosted runner. A hung test fails here, with
+    # its log, instead of holding main's queue for GitHub's six-hour default.
+    timeout-minutes: 100
     strategy:
       fail-fast: false
       matrix:
