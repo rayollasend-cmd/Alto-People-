@@ -9,6 +9,7 @@ import {
   MoveInputSchema,
   PayCalendarResponseSchema,
   PayFrequencySchema,
+  PayScheduleChoicesResponseSchema,
   PayScheduleCreateInputSchema,
   PayScheduleDetailSchema,
   PayScheduleHistoryResponseSchema,
@@ -67,6 +68,7 @@ import {
   type World,
 } from '../lib/payScheduleMembership.js';
 import type { ScheduleTrigger } from '../lib/payScheduleTriggers.js';
+import { hireFacts, newHireForSchedule } from '../lib/hirePay.js';
 
 /**
  * Pay schedules and who is on them — the contract in
@@ -1478,12 +1480,58 @@ export async function associateSchedule(associateId: string) {
   });
 }
 
+/** A new hire for the schedule (lib/hirePay's window, a pay change since hire aside): the onboarding desk may choose it on their record too. */
+async function scheduleNewHire(associateId: string): Promise<boolean> {
+  const f = await hireFacts(prisma, associateId);
+  return f !== null && newHireForSchedule(f);
+}
+
 associatePayScheduleRouter.get('/:id/pay-schedule', requireAuth, async (req, res, next) => {
   try {
     const u = req.user!;
     if (!can(u, 'view:payroll') && !can(u, 'manage:onboarding')) throw new HttpError(403, 'forbidden', 'Not allowed');
     const p = await personInReach(u, req.params.id);
-    res.json(await associateSchedule(p.id));
+    res.json({ ...(await associateSchedule(p.id)), newHire: await scheduleNewHire(p.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The schedules this person could be put on, for a picker whose user cannot
+ * read /payroll/pay-schedules (view:payroll) — the onboarding desk. Active
+ * schedules in the caller's reach: name, pattern, the running period and
+ * the first period start from today. Nothing about who else is on them.
+ */
+associatePayScheduleRouter.get('/:id/pay-schedule/choices', requireAuth, async (req, res, next) => {
+  try {
+    const u = req.user!;
+    if (!can(u, 'view:payroll') && !can(u, 'manage:onboarding')) throw new HttpError(403, 'forbidden', 'Not allowed');
+    await personInReach(u, req.params.id);
+    await loadTenantHolidays(prisma);
+    const today = todayYmd();
+    const rows = await prisma.payrollSchedule.findMany({
+      where: scopeWhere<Prisma.PayrollScheduleWhereInput>({ tenantId: tenantIdForWrite(), deletedAt: null, isActive: true }, scopePayrollSchedules(u)),
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      include: { versions: true },
+      take: 200,
+    });
+    res.json(
+      PayScheduleChoicesResponseSchema.parse({
+        schedules: rows.map((s) => {
+          const np = nextPaidPeriod(s);
+          return {
+            id: s.id,
+            name: s.name,
+            pattern: patternSentence(patternOn(s, today)),
+            isActive: s.isActive,
+            isDefault: s.isDefault,
+            nextPeriod: { periodStart: np.periodStart, periodEnd: np.periodEnd, payDate: np.payDate },
+            firstStart: periodStartOnOrAfter(s, today),
+          };
+        }),
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -1529,9 +1577,15 @@ associatePayScheduleRouter.put('/:id/pay-schedule', requireAuth, async (req, res
     if (!can(u, 'process:payroll') && !can(u, 'manage:onboarding')) throw new HttpError(403, 'forbidden', 'Not allowed');
     const body = z.object({ scheduleId: z.string().uuid().nullable(), effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).parse(req.body);
     const p = await personInReach(u, req.params.id);
+    // The onboarding desk chooses a NEW hire's schedule; moving anyone else
+    // between schedules is payroll's (the screen says so too, but the rule
+    // lives here).
+    if (!can(u, 'process:payroll') && !(await scheduleNewHire(p.id))) {
+      throw new HttpError(403, 'not_a_new_hire', 'Moving someone to another pay schedule is a payroll change now — someone with payroll access makes it.');
+    }
     const target = body.scheduleId ? await scheduleInReach(u, body.scheduleId) : null;
     await assignPeople(u, [p.id], body.scheduleId, body.effectiveFrom ?? (await defaultStartFor(p.id, target)));
-    res.json(await associateSchedule(p.id));
+    res.json({ ...(await associateSchedule(p.id)), newHire: await scheduleNewHire(p.id) });
   } catch (err) {
     next(err);
   }

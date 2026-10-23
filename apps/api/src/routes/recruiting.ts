@@ -41,6 +41,7 @@ import { computeRecruitingAnalytics, sourceKey } from '../lib/recruitingAnalytic
 import { computeRecruiterHome } from '../lib/recruiterHome.js';
 import { undoHire } from '../lib/onboardingUndo.js';
 import { INVITE_UNDO_SECONDS } from '../lib/inviteDelivery.js';
+import { isNewHireForPay } from '../lib/hirePay.js';
 
 export const recruitingRouter = Router();
 
@@ -769,8 +770,9 @@ recruitingRouter.post('/candidates/:id/advance', MANAGE, async (req, res, next) 
  * email — from the candidate's own details, and closes the candidate out.
  *
  * The accepted offer's pay becomes their starting rate, when the person
- * hiring may set pay at all (manage:comp). Without it the hire still goes
- * through and the response says the rate wasn't recorded.
+ * hiring may set it: manage:comp, or hire access (set:hire-pay) for a new
+ * hire. Without either the hire still goes through and the response says
+ * the rate wasn't recorded.
  */
 recruitingRouter.post('/candidates/:id/hire', MANAGE, async (req, res, next) => {
   try {
@@ -819,7 +821,13 @@ recruitingRouter.post('/candidates/:id/hire', MANAGE, async (req, res, next) => 
             amount: (offer.hourlyRate ?? offer.salary)!,
           }
         : null;
-    const payRecorded = pay !== null && can(req.user!, 'manage:comp');
+    // Hire access (set:hire-pay, the recruiter) records it too, for someone
+    // who is a new hire for pay (lib/hirePay — a rehire already paid is not):
+    // the offer's pay was held for a compensation approver when it fell
+    // outside the band, so an accepted offer's figure is already sanctioned.
+    const payRecorded =
+      pay !== null &&
+      (can(req.user!, 'manage:comp') || (can(req.user!, 'set:hire-pay') && (await isNewHireForPay(invite.associateId))));
     // The letter they signed goes in their file with the rest of their
     // hiring paperwork.
     const signedLetter = offer?.signedPdfKey ? await getBlobStore().get(offer.signedPdfKey) : null;

@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { hasCapability, toDateOnly } from '@alto-people/shared';
+import { HirePayStatusSchema, can, hasCapability, toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { assertInTenant } from '../lib/sameTenant.js';
 import { loadApprovalPolicy, payChangeNeedsApproval, secondPersonExists } from '../lib/approvalPolicy.js';
@@ -16,6 +16,8 @@ import { namesOf, payChangeContexts, type ProposedChange } from '../lib/payChang
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { enqueueAudit } from '../lib/audit.js';
+import type { SessionUser } from '../types/express.js';
+import { PAY_CHANGE_NOW, assertNewHireForPay, hirePayCeilings, hirePayStatus } from '../lib/hirePay.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -23,7 +25,10 @@ import { enqueueAudit } from '../lib/audit.js';
  * Endpoints
  *   GET    /comp/associates/:id/records       full effective-dated history
  *   GET    /comp/associates/:id/current       single row (effectiveTo IS NULL)
- *   POST   /comp/associates/:id/records       open a new record (closes current)
+ *   POST   /comp/associates/:id/records       open a new record (closes current);
+ *                                             hire access (set:hire-pay) sets the
+ *                                             starting pay of a new hire only
+ *   GET    /comp/associates/:id/hire-pay      a new hire's starting pay (lib/hirePay)
  *
  *   GET    /comp/bands?clientId
  *   POST   /comp/bands
@@ -125,13 +130,17 @@ const RecordCreateSchema = z.object({
   notes: z.string().max(2000).optional().nullable(),
 });
 
+// Pay is read by view:comp — or, for a new hire only, by hire access
+// (set:hire-pay, lib/hirePay.ts); outside the window that is a 403 that
+// says why.
 compensationRouter.get(
   '/associates/:id/records',
-  requireCapability('view:comp'),
+  requireAnyCapability('view:comp', 'set:hire-pay'),
   async (req, res) => {
     await assertSameTenant('associate', String(req.params.id));
     // Pay is only readable for people in the caller's reach.
     await assertAssociateInScope(prisma, req.user!, String(req.params.id));
+    if (!can(req.user!, 'view:comp')) await assertNewHireForPay(prisma, String(req.params.id));
     const associateId = req.params.id;
     const rows = await prisma.compensationRecord.findMany({
       take: 500,
@@ -144,10 +153,11 @@ compensationRouter.get(
 
 compensationRouter.get(
   '/associates/:id/current',
-  requireCapability('view:comp'),
+  requireAnyCapability('view:comp', 'set:hire-pay'),
   async (req, res) => {
     await assertSameTenant('associate', String(req.params.id));
     await assertAssociateInScope(prisma, req.user!, String(req.params.id));
+    if (!can(req.user!, 'view:comp')) await assertNewHireForPay(prisma, String(req.params.id));
     const associateId = req.params.id;
     const row = await prisma.compensationRecord.findFirst({
       where: { associateId, effectiveTo: null },
@@ -156,15 +166,117 @@ compensationRouter.get(
   },
 );
 
+/**
+ * GET /comp/associates/:id/hire-pay — the starting-pay card's one read (the
+ * onboarding page and the person's Employment tab): is this a new hire, the
+ * starting pay and any wage waiting on a second person, what to prefill, and
+ * the ceiling above which a compensation approver decides. Pay figures only
+ * for a caller who may read this person's pay.
+ */
+compensationRouter.get(
+  '/associates/:id/hire-pay',
+  requireAnyCapability('manage:comp', 'set:hire-pay'),
+  async (req, res) => {
+    const id = String(req.params.id);
+    await assertSameTenant('associate', id);
+    await assertAssociateInScope(prisma, req.user!, id);
+    res.json(HirePayStatusSchema.parse(await hirePayStatus(prisma, req.user!, id)));
+  },
+);
+
+type RecordCreateInput = z.infer<typeof RecordCreateSchema>;
+
+/**
+ * Hire access (set:hire-pay without manage:comp; owner 2026-10-23): the
+ * starting pay only (reason HIRE), for a new hire only (lib/hirePay.ts), on
+ * the one pay-change path (applyPayRateChange, which closes the record in
+ * force — so a correction keeps the first figure as history). At or below
+ * the position's ceiling — the band's maximum or the rate card's pay — it
+ * applies at once; above it, or with nothing on file to hold it against, a
+ * compensation approver decides (202), like every gated pay change. Every
+ * write is audited: the pay-rate row when it lands, a hire-pay row beside
+ * the approval's own when it waits.
+ */
+async function setStartingPay(user: SessionUser, associateId: string, input: RecordCreateInput): Promise<{ status: 201 | 202; body: unknown }> {
+  if (input.reason !== 'HIRE') {
+    throw new HttpError(403, 'hire_pay_only', `Hire access sets the starting pay only. ${PAY_CHANGE_NOW}`);
+  }
+  const f = await assertNewHireForPay(prisma, associateId);
+  const effectiveFrom = input.effectiveFrom
+    ? new Date(input.effectiveFrom)
+    : f.startDate
+      ? new Date(`${f.startDate}T00:00:00.000Z`)
+      : new Date();
+  const day = effectiveFrom.toISOString().slice(0, 10);
+  const ceiling = (await hirePayCeilings(prisma, f, day))[input.payType];
+  const above = !ceiling || input.amount > Number(ceiling.amount);
+  const current = await currentComp(prisma, associateId);
+  const fmt = (n: number) => `$${n.toFixed(2)}`;
+  const unit = input.payType === 'SALARY' ? 'per year' : 'per hour';
+  if (above && (await secondPersonExists(prisma, 'manage:comp', user.id))) {
+    const open = await prisma.approvalRequest.findFirst({ where: { kind: 'PAY_RATE_CHANGE', associateId, status: 'PENDING' }, select: { id: true } });
+    if (open) throw new HttpError(409, 'approval_pending', 'A pay change for this person is already waiting on a decision.');
+    const why = ceiling
+      ? `above ${ceiling.label} (${fmt(Number(ceiling.amount))})`
+      : `no pay band or rate card for ${f.position ?? 'this position'} to hold it against`;
+    const request = await createApprovalRequest(prisma, {
+      kind: 'PAY_RATE_CHANGE',
+      subjectType: 'Associate',
+      subjectId: associateId,
+      title: `${f.name}: starting pay ${fmt(input.amount)} ${unit}`,
+      summary: `Starting pay, effective ${day} — ${why}${input.notes ? ` — ${input.notes}` : ''}`,
+      proposed: { associateId, effectiveFrom: effectiveFrom.toISOString(), payType: input.payType, amount: input.amount, reason: 'HIRE', notes: input.notes ?? null },
+      before: current ? { payType: current.payType, amount: current.amount } : null,
+      requesterUserId: user.id,
+      approver: { capability: 'manage:comp' },
+      associateId,
+    });
+    enqueueAudit(
+      {
+        actorUserId: user.id,
+        clientId: f.clientId,
+        action: 'pay.hire_pay_requested',
+        entityType: 'Associate',
+        entityId: associateId,
+        metadata: {
+          approvalRequestId: request.id,
+          after: { payType: input.payType, amount: input.amount },
+          before: current ? { payType: current.payType, amount: current.amount } : null,
+          effectiveFrom: day,
+          ceiling: ceiling ? { amount: Number(ceiling.amount), source: ceiling.source } : null,
+        },
+      },
+      'compensation.hirePay',
+    );
+    return { status: 202, body: pendingResponse(request) };
+  }
+  await applyPayRateChange(prisma, {
+    associateId,
+    effectiveFrom,
+    payType: input.payType,
+    amount: input.amount,
+    reason: 'HIRE',
+    notes: input.notes ?? null,
+    actorUserId: user.id,
+    note: above ? 'No second approver was available.' : current ? 'Starting pay corrected with hire access.' : 'Starting pay set with hire access.',
+  });
+  return { status: 201, body: { ok: true } };
+}
+
 compensationRouter.post(
   '/associates/:id/records',
-  requireCapability('manage:comp'),
+  requireAnyCapability('manage:comp', 'set:hire-pay'),
   async (req, res) => {
     await assertSameTenant('associate', String(req.params.id));
     // A pay change is only for someone active in the caller's reach.
     await assertAssociateInScope(prisma, req.user!, String(req.params.id), { former: false });
     const associateId = req.params.id;
     const input = RecordCreateSchema.parse(req.body);
+    if (!can(req.user!, 'manage:comp')) {
+      const out = await setStartingPay(req.user!, associateId, input);
+      res.status(out.status).json(out.body);
+      return;
+    }
     const associate = await prisma.associate.findUnique({ where: { id: associateId } });
     if (!associate || associate.deletedAt) {
       throw new HttpError(404, 'not_found', 'Associate not found.');

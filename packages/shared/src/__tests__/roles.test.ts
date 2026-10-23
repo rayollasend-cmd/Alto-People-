@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAPABILITY_LABELS,
   HUMAN_ROLES,
   ROLES,
   ROLE_CAPABILITIES,
@@ -87,6 +88,8 @@ describe('hasCapability', () => {
         'view:communications',
         'view:analytics',
         'view:marketing',
+        // A new hire's starting pay (owner, 2026-10-23) — not view:comp.
+        'set:hire-pay',
       ].sort(),
     );
     // What a URL used to reach: SSN reveal (process:payroll), role and user
@@ -101,6 +104,7 @@ describe('hasCapability', () => {
       'view:audit',
       'view:payroll',
       'manage:comp',
+      'view:comp',
       'export:payroll-pii',
       'manage:scheduling',
       'manage:communications',
@@ -108,6 +112,19 @@ describe('hasCapability', () => {
     ] as const) {
       expect(hasCapability('INTERNAL_RECRUITER', c), c).toBe(false);
     }
+  });
+
+  it('set:hire-pay is the recruiter’s, and every admin who can grant the recruiter holds it (owner 2026-10-23)', () => {
+    // A role is granted only by someone holding all of its capabilities, so
+    // the admin family carries it too; they reach the same records through
+    // manage:comp. Nobody who reads pay by accident of this grant.
+    const holders = HUMAN_ROLES.filter((r) => hasCapability(r, 'set:hire-pay')).sort();
+    expect(holders).toEqual(['HR_ADMINISTRATOR', 'INTERNAL_RECRUITER', 'MANAGER', 'OPERATIONS_MANAGER']);
+    for (const r of holders) {
+      if (r !== 'INTERNAL_RECRUITER') expect(hasCapability(r, 'manage:comp'), r).toBe(true);
+      for (const c of ROLE_CAPABILITIES.INTERNAL_RECRUITER) expect(hasCapability(r, c), `${r} ${c}`).toBe(true);
+    }
+    expect(CAPABILITY_LABELS['set:hire-pay']).toBe('Set a new hire’s starting pay');
   });
 
   it('MARKETING_MANAGER holds the employer-brand charter, not an admin clone', () => {

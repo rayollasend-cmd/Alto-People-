@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
+import { scopeActiveAssociates } from '../lib/scope.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { defaultEmployerOrg, employmentHistory } from '../lib/employment.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -111,10 +112,13 @@ employersRouter.patch('/admin/employers/:id', MANAGE, async (req, res) => {
   res.json({ employer: view(row) });
 });
 
-employersRouter.get('/org/associates/:id/employment', VIEW, async (req, res) => {
+// HR reads it; so does the onboarding desk (manage:onboarding — the
+// recruiter opens the spell it approved, owner 2026-10-23), for the people
+// in its reach.
+employersRouter.get('/org/associates/:id/employment', requireAnyCapability('view:hr-admin', 'manage:onboarding'), async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  // The person must be this tenant's; another tenant's id does not exist here.
-  const person = await prisma.associate.findFirst({ where: { id, tenantId: tenantIdForWrite(), deletedAt: null }, select: { id: true } });
+  // The person must be this tenant's and in the caller's reach; anyone else does not exist here.
+  const person = await prisma.associate.findFirst({ where: { AND: [{ id }, scopeActiveAssociates(req.user!, { former: true })] }, select: { id: true } });
   if (!person) throw new HttpError(404, 'associate_not_found', 'No such associate.');
   const rows = await employmentHistory(prisma, id);
   res.json({

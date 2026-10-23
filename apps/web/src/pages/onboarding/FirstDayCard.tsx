@@ -58,9 +58,12 @@ export interface FirstDayCardProps {
   payScheduleUncovered?: boolean;
   /** Inside the approval celebration: no card frame. */
   bare?: boolean;
+  /** The page shows the schedule picker in its "Starting pay & schedule" card:
+   *  this line only says where they stand (one picker per page, F500 G1). */
+  scheduleElsewhere?: boolean;
 }
 
-export function FirstDayCard({ applicationId, associateId, clientId, status, payScheduleName, payScheduleUncovered = false, bare = false }: FirstDayCardProps) {
+export function FirstDayCard({ applicationId, associateId, clientId, status, payScheduleName, payScheduleUncovered = false, bare = false, scheduleElsewhere = false }: FirstDayCardProps) {
   const qc = useQueryClient();
   const key = ['application', applicationId, 'first-day'];
   const q = useQuery({ queryKey: key, queryFn: () => getFirstDay(applicationId) });
@@ -170,12 +173,14 @@ export function FirstDayCard({ applicationId, associateId, clientId, status, pay
           {payScheduleName ? (
             <>
               <span>{payScheduleName}</span>
-              {!bare && (
+              {!bare && !scheduleElsewhere && (
                 <Button size="sm" variant="ghost" onClick={() => setChangingSchedule((v) => !v)} aria-expanded={changingSchedule}>
                   {changingSchedule ? 'Done' : 'Details'}
                 </Button>
               )}
             </>
+          ) : scheduleElsewhere ? (
+            <span className="text-ink-muted">None covers this hire — choose one under Starting pay &amp; schedule.</span>
           ) : payScheduleUncovered && !bare ? (
             <PayScheduleAssignment associateId={associateId} variant={approved ? 'record' : 'hire'} className="w-full" />
           ) : (

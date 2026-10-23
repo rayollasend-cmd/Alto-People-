@@ -158,7 +158,10 @@ describe('who may read and upload answers', () => {
     const { a, carrierId } = await feed();
     const file = await makeFile(a, carrierId);
     const segs = segmentsOf((await a.get(`/benefit-files/${file.id}/download`)).text);
-    const pos = segs.findIndex((s) => s[0] === 'DMG') - segs.findIndex((s) => s[0] === 'ST') + 1;
+    // Ann's birth date: the DMG after her name (the file lists members by id,
+    // so whether Ann or Bo comes first changes from run to run).
+    const annName = segs.findIndex((s) => s[0] === 'NM1' && s[3] === 'LEE');
+    const pos = segs.findIndex((s, i) => i > annName && s[0] === 'DMG') - segs.findIndex((s) => s[0] === 'ST') + 1;
     await a.post(`/benefit-carriers/${carrierId}/acks`).send({ content: rejected(file.controlNumber, [`IK3*DMG*${pos}*2100A*8~`, 'IK4*2*1251*8~', 'IK5*R*5~']) });
 
     const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER' });

@@ -47,7 +47,7 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   CLIENT_PORTAL: 'Read-only access scoped to one client account',
   FINANCE_ACCOUNTANT: 'Time, scheduling, and payroll only — runs pay cycles, no HR data',
   INTERNAL_RECRUITER:
-    'Hire to file: the pipeline, interviews, offers, and the whole onboarding desk — invites, document approval, I-9, compliance and the kiosk code. No payroll, no user or role changes, no settings; lands on the recruiter’s day',
+    'Hire to file: the pipeline, interviews, offers, and the whole onboarding desk — invites, document approval, I-9, compliance, the kiosk code, and a new hire’s starting pay and pay schedule. No payroll, no pay changes after the first paycheck, no user or role changes, no settings; lands on the recruiter’s day',
   MANAGER:
     'Full org-wide access (no payroll void / PII export); lands on the team dashboard — direct reports, approvals, timesheets',
   WORKFORCE_MANAGER:
@@ -150,6 +150,15 @@ export type Capability =
   | 'view:payroll-documents'
   // Phase 83 — compensation: history, bands, merit cycles.
   | 'view:comp' | 'manage:comp'
+  // A new hire's starting pay (owner, 2026-10-23: "the internal recruiter
+  // should be able to set wages and pay schedules while onboarding"). Not
+  // view:comp or manage:comp: it reads and writes ONE kind of record (the
+  // HIRE compensation record) for ONE kind of person — onboarding, or hired
+  // in the last 30 days, never paid on a run, no pay change since the
+  // starting one (lib/hirePay.ts in the API). A wage above the position's
+  // band or rate card goes to a manage:comp holder. In FULL_ADMIN only so
+  // an admin can grant the recruiter role; manage:comp covers all of it.
+  | 'set:hire-pay'
   // Phase 93 — public API keys + outbound webhooks.
   | 'view:integrations' | 'manage:integrations'
   // ASN integration — read-only capabilities issued *only* via API keys
@@ -295,6 +304,9 @@ const FULL_ADMIN: Capability[] = [
   // Marketing too, so an admin can staff the Marketing Manager.
   'view:marketing',
   'manage:marketing',
+  // And a new hire's starting pay, so an admin can staff the recruiter
+  // (manage:comp already does everything it does).
+  'set:hire-pay',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
@@ -477,6 +489,11 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:analytics',
     // The careers-site funnel and source of hire it recruits against.
     'view:marketing',
+    // The hire's starting pay, set and corrected while they onboard (owner,
+    // 2026-10-23) — never view:comp, manage:comp or process:payroll. Past
+    // the new-hire window, or above the band or rate card, it is a
+    // compensation approver's call (API lib/hirePay.ts).
+    'set:hire-pay',
   ]),
   MANAGER: new Set<Capability>([
     ...FULL_ADMIN,
@@ -884,6 +901,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   'view:payroll-documents': "Open another person's pay documents",
   'view:comp': 'See compensation',
   'manage:comp': 'Manage compensation',
+  'set:hire-pay': 'Set a new hire’s starting pay',
   'view:integrations': 'See integrations',
   'manage:integrations': 'Manage integrations and API keys',
   'asn:read:schedule': 'ASN: read the schedule',

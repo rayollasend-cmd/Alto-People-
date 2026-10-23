@@ -1,6 +1,7 @@
 import type {
   AssociatePaySchedule,
   PayCalendarResponse,
+  PayScheduleChoicesResponse,
   PayScheduleListResponse,
   PayScheduleSummary,
   PayrollUpcomingSummary,
@@ -26,6 +27,11 @@ export function getPayScheduleCalendarForFlow(id: string, months = 3, from?: str
 
 export function getAssociatePaySchedule(associateId: string): Promise<AssociatePaySchedule> {
   return apiFetch<AssociatePaySchedule>(`/associates/${associateId}/pay-schedule`);
+}
+
+/** The schedules this person could be put on — for a picker whose user cannot read the payroll list (the onboarding desk). */
+export function listPayScheduleChoices(associateId: string): Promise<PayScheduleChoicesResponse> {
+  return apiFetch<PayScheduleChoicesResponse>(`/associates/${associateId}/pay-schedule/choices`);
 }
 
 export function setAssociatePaySchedule(associateId: string, body: { scheduleId: string; effectiveFrom?: string }): Promise<AssociatePaySchedule> {

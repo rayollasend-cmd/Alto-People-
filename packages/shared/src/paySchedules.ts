@@ -35,6 +35,8 @@ import { z } from 'zod';
  *   GET    /associates/:id/pay-schedule                   → AssociatePaySchedule (view:payroll, or the person's onboarding reviewer)
  *   PUT    /associates/:id/pay-schedule                   { scheduleId, effectiveFrom? } → AssociatePaySchedule
  *          (an INDIVIDUAL rule; used by onboarding and the person's record)
+ *   GET    /associates/:id/pay-schedule/choices           → PayScheduleChoicesResponse (the same readers: the
+ *          schedules this person could be put on, for a picker that cannot read /payroll/pay-schedules)
  */
 
 const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -394,5 +396,24 @@ export const AssociatePayScheduleSchema = z.object({
   /** What the rules would choose with no individual override (for onboarding's "default"). */
   ruleDefault: z.object({ scheduleId: Id, name: z.string(), because: z.string() }).nullable(),
   nextPayDate: Ymd.nullable(),
+  /** A new hire (onboarding, or hired in the last 30 days and never paid on a run): the onboarding desk may choose their schedule on the record too. */
+  newHire: z.boolean().optional(),
 });
 export type AssociatePaySchedule = z.infer<typeof AssociatePayScheduleSchema>;
+
+/** One schedule a person could be put on — what a picker needs and nothing about who else is on it. */
+export const PayScheduleChoiceSchema = z.object({
+  id: Id,
+  name: z.string(),
+  pattern: z.string(),
+  isActive: z.boolean(),
+  isDefault: z.boolean(),
+  /** The period whose pay date is the next payday. */
+  nextPeriod: z.object({ periodStart: Ymd, periodEnd: Ymd, payDate: Ymd }),
+  /** The first period that starts today or later — the default date for a move. */
+  firstStart: Ymd,
+});
+export type PayScheduleChoice = z.infer<typeof PayScheduleChoiceSchema>;
+
+export const PayScheduleChoicesResponseSchema = z.object({ schedules: z.array(PayScheduleChoiceSchema) });
+export type PayScheduleChoicesResponse = z.infer<typeof PayScheduleChoicesResponseSchema>;

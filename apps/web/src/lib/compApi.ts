@@ -1,3 +1,4 @@
+import type { HirePaySaveResult, HirePayStatus } from '@alto-people/shared';
 import { apiFetch } from './api';
 
 export type PayType = 'HOURLY' | 'SALARY';
@@ -85,10 +86,14 @@ export const createRecord = (
     effectiveFrom?: string;
   },
 ) =>
-  apiFetch<{ ok: true }>(`/comp/associates/${associateId}/records`, {
+  // 201 { ok } when it lands; 202 { pending, approvalId } when a second person decides it.
+  apiFetch<HirePaySaveResult>(`/comp/associates/${associateId}/records`, {
     method: 'POST',
     body: input,
   });
+
+/** A new hire's starting pay: the window, the pay in force, a wage waiting on approval, the prefill and the ceiling. */
+export const getHirePay = (associateId: string) => apiFetch<HirePayStatus>(`/comp/associates/${associateId}/hire-pay`);
 
 // Bands
 export const listBands = (clientId?: string) =>

@@ -235,7 +235,7 @@ export function PersonRecord() {
       label: 'Profile',
       content: <ProfileTab associate={a} onAssociateChange={onAssociateChange} />,
     },
-    { key: 'employment', label: 'Employment', content: <EmploymentTab associateId={a.id} /> },
+    { key: 'employment', label: 'Employment', content: <EmploymentTab associateId={a.id} associate={a} /> },
     {
       key: 'pay',
       label: 'Pay',

@@ -114,6 +114,7 @@ import { Select } from '@/components/ui/Select';
 import { listClientLocations } from '@/lib/clientsApi';
 import { getAssociatePaySchedule } from '@/lib/payScheduleFlowApi';
 import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
+import { StartingPayCard } from '@/components/StartingPayCard';
 import { ReadyToWorkLine } from '@/components/ReadyToWorkLine';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
@@ -220,7 +221,7 @@ interface ApplicationDetailBodyProps {
  * is laid out.
  */
 export function ApplicationDetailBody({ applicationId, mode, onCancelled }: ApplicationDetailBodyProps) {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const term = useTerm();
   const workerLc = term('worker').toLowerCase();
   const navigate = useNavigate();
@@ -271,6 +272,9 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
   const canRejectDocs = user
     ? hasCapability(user.role, 'manage:documents')
     : false;
+  // A new hire's starting wage and pay schedule (owner, 2026-10-23): the
+  // recruiter's hire access, or whoever manages compensation.
+  const canSetHirePay = can('set:hire-pay') || can('manage:comp');
 
   const detailQuery = useQuery({
     queryKey: ['application', applicationId],
@@ -693,6 +697,14 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         </CardContent>
       </Card>
 
+      {/* What they are paid and the schedule that pays it (owner, 2026-10-23):
+          the wage, the pay type, from when, and the pay schedule picker. */}
+      {canSetHirePay && detail.status !== 'CANCELLED' && detail.status !== 'REJECTED' && (
+        <section className="mb-6">
+          <StartingPayCard associateId={detail.associateId} variant="application" approved={detail.status === 'APPROVED'} />
+        </section>
+      )}
+
       {/* Day one, made ready from here (role walk HR 11). */}
       {canManage && detail.status !== 'CANCELLED' && detail.status !== 'REJECTED' && (
         <section className="mb-6">
@@ -703,6 +715,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
             status={detail.status}
             payScheduleName={hireScheduleName}
             payScheduleUncovered={hireUncovered}
+            scheduleElsewhere={canSetHirePay}
           />
         </section>
       )}

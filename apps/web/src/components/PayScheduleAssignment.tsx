@@ -10,6 +10,7 @@ import { fmtDate, fmtDayShort, parseYmd, ymdLocal } from '@/lib/format';
 import {
   getAssociatePaySchedule,
   getPayScheduleCalendarForFlow,
+  listPayScheduleChoices,
   listPaySchedulesForFlow,
   PAY_SCHEDULES_FLOW_KEY,
   setAssociatePaySchedule,
@@ -34,6 +35,13 @@ import { cn } from '@/lib/cn';
  *    move never splits a period already under way.
  *
  * Contract: GET/PUT /associates/:id/pay-schedule (packages/shared/src/paySchedules.ts).
+ *
+ * The onboarding desk (manage:onboarding without view:payroll — the
+ * recruiter) changes it on the application, and on the record of someone
+ * still a new hire (the API's `newHire`, lib/hirePay). It cannot read the
+ * payroll schedule list, so its picker reads the person's own choices
+ * (GET /associates/:id/pay-schedule/choices) and names schedules without
+ * linking into payroll.
  */
 export function PayScheduleAssignment({
   associateId,
@@ -45,8 +53,6 @@ export function PayScheduleAssignment({
   className?: string;
 }) {
   const { can } = useAuth();
-  // A hire's schedule is onboarding's call too; a person's record is payroll's.
-  const canChange = can('process:payroll') || (variant === 'hire' && can('manage:onboarding'));
   const queryClient = useQueryClient();
   const key = ['associatePaySchedule', associateId];
   const query = useQuery({
@@ -74,10 +80,15 @@ export function PayScheduleAssignment({
     return <p className={cn('text-xs text-alert', className)}>Couldn't load the pay schedule.</p>;
   }
   const ps = query.data;
+  // A hire's schedule is onboarding's call too — on the application, and on
+  // the record while they are still a new hire; otherwise the record's is payroll's.
+  const canChange = can('process:payroll') || (can('manage:onboarding') && (variant === 'hire' || ps.newHire === true));
+  const readsPayroll = can('view:payroll');
   const uncovered = !ps.current && !ps.pending?.scheduleId && !ps.ruleDefault;
 
   const form = editing || (uncovered && canChange) ? (
     <ChangeForm
+      associateId={associateId}
       variant={variant}
       currentId={ps.current?.scheduleId ?? ps.pending?.scheduleId ?? ps.ruleDefault?.scheduleId ?? null}
       saving={save.isPending}
@@ -98,14 +109,18 @@ export function PayScheduleAssignment({
             {canChange
               ? 'Until one does, no payroll run pays them.'
               : 'Until one does, no payroll run pays them. Payroll or HR can choose it.'}
-            {' '}
-            <Link to="/payroll/schedules" className="text-gold hover:underline">
-              Pay schedules
-            </Link>
+            {readsPayroll && (
+              <>
+                {' '}
+                <Link to="/payroll/schedules" className="text-gold hover:underline">
+                  Pay schedules
+                </Link>
+              </>
+            )}
           </p>
         </div>
       ) : (
-        <Summary ps={ps} variant={variant} canChange={canChange && !editing} onChange={() => setEditing(true)} />
+        <Summary associateId={associateId} ps={ps} variant={variant} canChange={canChange && !editing} onChange={() => setEditing(true)} />
       )}
       {form}
     </section>
@@ -124,19 +139,51 @@ function fmtPayday(ymd: string | null | undefined): string {
 
 const lowerFirst = (t: string) => (t ? t[0]!.toLowerCase() + t.slice(1) : t);
 
+/** What a picker reads of a schedule; the payroll list carries more, the person's choices exactly this. */
+interface ScheduleOption {
+  id: string;
+  name: string;
+  pattern: string;
+  isActive: boolean;
+  nextPeriod: { periodStart: string; payDate: string };
+  /** The first period start from today (the choices carry it; the payroll list asks the calendar). */
+  firstStart?: string;
+}
+
+/**
+ * The schedules to choose from: the payroll list for whoever reads payroll,
+ * the person's own choices for the onboarding desk (which cannot).
+ */
+function useScheduleOptions(associateId: string): { isPending: boolean; schedules: ScheduleOption[]; readsPayroll: boolean } {
+  const { can } = useAuth();
+  const readsPayroll = can('view:payroll');
+  const payroll = useQuery({ queryKey: PAY_SCHEDULES_FLOW_KEY, queryFn: listPaySchedulesForFlow, enabled: readsPayroll, retry: false, staleTime: 60_000 });
+  const choices = useQuery({
+    queryKey: ['payScheduleFlow', 'choices', associateId],
+    queryFn: () => listPayScheduleChoices(associateId),
+    enabled: !readsPayroll,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const q = readsPayroll ? payroll : choices;
+  return { isPending: q.isPending, schedules: (q.data?.schedules ?? []) as ScheduleOption[], readsPayroll };
+}
+
 function Summary({
+  associateId,
   ps,
   variant,
   canChange,
   onChange,
 }: {
+  associateId: string;
   ps: AssociatePaySchedule;
   variant: 'hire' | 'record';
   canChange: boolean;
   onChange: () => void;
 }) {
-  const schedules = useQuery({ queryKey: PAY_SCHEDULES_FLOW_KEY, queryFn: listPaySchedulesForFlow, retry: false, staleTime: 60_000 });
-  const patternOf = (id: string | null | undefined) => (id ? schedules.data?.schedules.find((s) => s.id === id)?.pattern ?? null : null);
+  const options = useScheduleOptions(associateId);
+  const patternOf = (id: string | null | undefined) => (id ? options.schedules.find((s) => s.id === id)?.pattern ?? null : null);
 
   // A hire not yet on a schedule shows what the rules will choose.
   const shown = ps.current
@@ -158,9 +205,13 @@ function Summary({
         {shown ? (
           <>
             <div className="text-sm text-ink">
-              <Link to={`/payroll/schedules/${shown.id}`} className="font-medium hover:text-gold hover:underline">
-                {shown.name}
-              </Link>
+              {options.readsPayroll ? (
+                <Link to={`/payroll/schedules/${shown.id}`} className="font-medium hover:text-gold hover:underline">
+                  {shown.name}
+                </Link>
+              ) : (
+                <span className="font-medium">{shown.name}</span>
+              )}
               {shown.pattern ? <span className="text-silver"> · {shown.pattern}</span> : null}
             </div>
             <p className="text-xs text-silver">
@@ -199,20 +250,22 @@ function Summary({
 }
 
 function ChangeForm({
+  associateId,
   variant,
   currentId,
   saving,
   onCancel,
   onSave,
 }: {
+  associateId: string;
   variant: 'hire' | 'record';
   currentId: string | null;
   saving: boolean;
   onCancel: (() => void) | null;
   onSave: (body: { scheduleId: string; effectiveFrom?: string }) => void;
 }) {
-  const schedules = useQuery({ queryKey: PAY_SCHEDULES_FLOW_KEY, queryFn: listPaySchedulesForFlow, retry: false, staleTime: 60_000 });
-  const active = useMemo(() => (schedules.data?.schedules ?? []).filter((s) => s.isActive), [schedules.data]);
+  const schedules = useScheduleOptions(associateId);
+  const active = useMemo(() => schedules.schedules.filter((s) => s.isActive), [schedules.schedules]);
   const [scheduleId, setScheduleId] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState('');
   const chosen = active.find((s) => s.id === scheduleId) ?? null;
@@ -221,13 +274,15 @@ function ChangeForm({
   const calendar = useQuery({
     queryKey: ['payScheduleFlow', 'calendar', scheduleId],
     queryFn: () => getPayScheduleCalendarForFlow(scheduleId, 3),
-    enabled: variant === 'record' && !!scheduleId,
+    // The calendar is payroll's to read; the onboarding desk's choices carry the first start.
+    enabled: variant === 'record' && !!scheduleId && schedules.readsPayroll,
     retry: false,
     staleTime: 60_000,
   });
   const today = ymdLocal();
   const nextStart =
     calendar.data?.periods.find((p) => p.periodStart >= today)?.periodStart ??
+    chosen?.firstStart ??
     (chosen && chosen.nextPeriod.periodStart >= today ? chosen.nextPeriod.periodStart : null);
 
   // The effective date follows the chosen schedule's next period start
@@ -286,10 +341,16 @@ function ChangeForm({
       </div>
       {!schedules.isPending && active.length === 0 && (
         <p className="text-xs text-silver">
-          <Link to="/payroll/schedules" className="text-gold hover:underline">
-            Set up a pay schedule
-          </Link>{' '}
-          first.
+          {schedules.readsPayroll ? (
+            <>
+              <Link to="/payroll/schedules" className="text-gold hover:underline">
+                Set up a pay schedule
+              </Link>{' '}
+              first.
+            </>
+          ) : (
+            'Payroll sets up pay schedules; ask them for one.'
+          )}
         </p>
       )}
       <div className="flex flex-wrap justify-end gap-2">

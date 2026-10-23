@@ -101,6 +101,7 @@ import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
+import { StartingPayCard } from '@/components/StartingPayCard';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import { PhotoStorageBanner } from '@/components/PhotoStorageBanner';
 import {
@@ -155,6 +156,7 @@ import {
   MetricCard,
   MetricStrip,
   SearchInput,
+  SectionTitle,
   Select,
   Skeleton,
   SkeletonRows,
@@ -2464,22 +2466,38 @@ const REASON_LABEL: Record<CompChangeReason, string> = {
  * Brief 2-1b step 4: who legally employs this person and since when —
  * the employment record the W-2/1099 and the pay statement read. Read
  * only: a spell opens at approval and closes at separation.
+ *
+ * Above it (owner, 2026-10-23: the recruiter should "see employment"):
+ * where they work — start date, employment type, position, client and
+ * site, manager, department — then, for a new hire and someone with hire
+ * access but no compensation view, their starting pay, then the pay
+ * schedule. The employment spells read for HR and the onboarding desk;
+ * anyone else sees the placement without them.
  */
-export function EmploymentTab({ associateId }: { associateId: string }) {
+export function EmploymentTab({ associateId, associate }: { associateId: string; associate?: DirectoryEntry }) {
   const term = useTerm();
   const { can } = useAuth();
-  const canSeePaySchedule = can('process:payroll') || can('view:hr-admin');
+  // The API's own rule for reading it: payroll (view:payroll) or the onboarding desk (manage:onboarding).
+  const canSeePaySchedule = can('process:payroll') || can('view:hr-admin') || can('manage:onboarding');
+  // Hire access without the compensation view (the recruiter): the Pay tab is not theirs, the new hire's starting pay is.
+  const canSetHirePay = can('set:hire-pay') && !can('view:comp');
   const { data, error, isPending } = useQuery({
     queryKey: ['employment-history', associateId],
     queryFn: () => getEmploymentHistory(associateId),
+    retry: false,
   });
   const spells = data?.employment ?? [];
+  // Turned away from the spells (no HR or onboarding access): the rest of the tab still reads.
+  const spellsHidden = error instanceof ApiError && error.status === 403;
   const kindLabel = (kind: 'TENANT' | 'CLIENT' | 'THIRD_PARTY') =>
     kind === 'TENANT' ? 'This organization' : kind === 'CLIENT' ? term('label.client') : 'Third party';
-  if (error) {
+  if (error && !spellsHidden) {
     return <p className="text-sm text-alert">{error instanceof ApiError ? error.message : 'Failed to load.'}</p>;
   }
   if (isPending) return <SkeletonRows count={3} />;
+  // No planned start on the application: the open employment spell's hire date is their start.
+  const placement = associate ? <PlacementCard a={associate} hiredOn={spells.find((sp) => !sp.endDate)?.hireDate ?? null} /> : null;
+  const startingPay = canSetHirePay ? <StartingPayCard associateId={associateId} variant="record" /> : null;
   const paySchedule = canSeePaySchedule ? (
     <Card>
       <CardContent className="py-3">
@@ -2487,9 +2505,20 @@ export function EmploymentTab({ associateId }: { associateId: string }) {
       </CardContent>
     </Card>
   ) : null;
+  if (spellsHidden) {
+    return (
+      <div className="space-y-3">
+        {placement}
+        {startingPay}
+        {paySchedule}
+      </div>
+    );
+  }
   if (spells.length === 0) {
     return (
       <div className="space-y-3">
+        {placement}
+        {startingPay}
         {paySchedule}
         <EmptyState
           icon={Briefcase}
@@ -2501,6 +2530,8 @@ export function EmploymentTab({ associateId }: { associateId: string }) {
   }
   return (
     <div className="space-y-3">
+      {placement}
+      {startingPay}
       {paySchedule}
       {spells.map((sp) => (
         <Card key={sp.id}>
@@ -2527,6 +2558,36 @@ export function EmploymentTab({ associateId }: { associateId: string }) {
       ))}
       <p className="text-xs2 text-silver">The tax forms and the pay statement read the employer from this record.</p>
     </div>
+  );
+}
+
+/** Where they work, at a glance: the facts the directory already holds for them. */
+function PlacementCard({ a, hiredOn }: { a: DirectoryEntry; hiredOn: string | null }) {
+  const term = useTerm();
+  const start = a.startDate ? a.startDate.slice(0, 10) : hiredOn;
+  const facts: Array<[string, string | null]> = [
+    ['Start date', start ? fmtDate(start) : null],
+    ['Employment type', EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType],
+    ['Position', a.position ?? a.jobProfileTitle],
+    [term('label.client'), a.workplaceClientName],
+    [term('label.store'), a.currentLocationName],
+    ['Manager', a.managerName],
+    ['Department', a.departmentName],
+  ];
+  return (
+    <Card>
+      <CardContent className="py-4">
+        <SectionTitle icon={Briefcase} title="Placement" size="sm" />
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 lg:grid-cols-4">
+          {facts.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="text-2xs uppercase tracking-widest text-ink-muted">{label}</dt>
+              <dd className={cn('mt-0.5 break-words text-sm', value ? 'text-ink' : 'text-ink-muted')}>{value ?? 'Not set'}</dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
   );
 }
 

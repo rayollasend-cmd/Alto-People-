@@ -414,7 +414,9 @@ describe('A person’s pay schedule', () => {
       },
     };
     renderAs('SHIFT_SUPERVISOR', <PayScheduleAssignment associateId={PERSON} variant="record" />, '/people');
-    expect(await screen.findByRole('link', { name: 'Biweekly — Seaside' })).toBeInTheDocument();
+    // Named, not linked: the schedule's page is payroll's (view:payroll), and a dead link is worse than none.
+    expect(await screen.findByText('Biweekly — Seaside')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Biweekly — Seaside' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Change' })).not.toBeInTheDocument();
   });
 
