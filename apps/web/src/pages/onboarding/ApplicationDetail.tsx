@@ -73,6 +73,7 @@ import {
   minDocsForSection2List,
 } from '@/pages/compliance/section2Verification';
 import { RejectDocumentDialog } from '@/components/RejectDocumentDialog';
+import { DocumentReviewPanel } from './DocumentReviewPanel';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { statusTone } from '@/lib/status';
@@ -690,6 +691,13 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
             status={detail.status}
             payScheduleName={hireScheduleName}
           />
+        </section>
+      )}
+
+      {/* The hire's uploads, reviewed here — not in the vault and back. */}
+      {canManage && detail.status !== 'CANCELLED' && detail.status !== 'REJECTED' && (
+        <section className="mb-6">
+          <DocumentReviewPanel applicationId={detail.id} associateId={detail.associateId} />
         </section>
       )}
 

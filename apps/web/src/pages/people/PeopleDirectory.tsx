@@ -131,7 +131,7 @@ import {
   type SsnReveal,
 } from '@/lib/orgApi';
 import { listClientLocations } from '@/lib/clientsApi';
-import { emailKioskPin, getAssociateKioskPin } from '@/lib/kiosk99Api';
+import { assignKioskPin, emailKioskPin, getAssociateKioskPin } from '@/lib/kiosk99Api';
 import { useConfirm } from '@/lib/confirm';
 import { AssociatePicker } from '@/components/ui/AssociatePicker';
 import type { LocationSummary } from '@alto-people/shared';
@@ -2911,6 +2911,23 @@ export function CompensationTab({ associate: a }: { associate: DirectoryEntry })
 function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
   const { user } = useAuth();
   const confirm = useConfirm();
+  const queryClient = useQueryClient();
+  const [issuing, setIssuing] = useState(false);
+  // Issue the number right here (the first-day card already does) instead
+  // of Profile → Kiosk admin → drawer → issue → back: five clicks, two loads.
+  const issueHere = async () => {
+    if (!a.workplaceClientId) return;
+    setIssuing(true);
+    try {
+      const r = await assignKioskPin({ associateId: a.id, clientId: a.workplaceClientId });
+      toast.success(`Clock-in number ${r.employeeNumber} issued.`);
+      void queryClient.invalidateQueries({ queryKey: ['kiosk-pin', a.id] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not issue the number.');
+    } finally {
+      setIssuing(false);
+    }
+  };
   // manage:time is the capability the kiosk endpoints enforce — hide the
   // section entirely from roles that would just get a 403.
   const canSee = user ? hasCapability(user.role, 'manage:time') : false;
@@ -3036,6 +3053,10 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
               Open Kiosk admin
             </Link>
           )
+        ) : !pin && a.workplaceClientId ? (
+          <Button size="sm" variant="outline" onClick={() => void issueHere()} loading={issuing}>
+            Issue a number
+          </Button>
         ) : (
           <Link
             to={

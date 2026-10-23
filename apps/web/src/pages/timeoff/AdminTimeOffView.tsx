@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { CalendarCheck, Check, MessageSquarePlus, X } from 'lucide-react';
@@ -98,6 +99,7 @@ export const isInsufficient = (r: TimeOffRequest) =>
 
 export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
   const term = useTerm();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<TimeOffRequestStatus | 'ALL'>('PENDING');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -240,9 +242,17 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
     setQuickApproveId(r.id);
     try {
       await approveAdminRequest(r.id, undefined);
+      const released = r.assignedShiftOverlaps ?? 0;
       toast.success(`Approved ${r.associateName ?? 'request'}.`, {
-        // The approved row leaves the Pending list: keep a way back to it.
-        action: { label: 'View', onClick: () => setDetail({ ...r, status: 'APPROVED' }) },
+        // "Releases N shifts": covering them is the next job — one tap to
+        // the schedule on that day. Otherwise keep a way back to the row,
+        // which leaves the Pending list.
+        ...(released > 0
+          ? {
+              description: `${released} ${released === 1 ? 'shift needs' : 'shifts need'} cover.`,
+              action: { label: `Cover ${released}`, onClick: () => navigate(`/scheduling?open=1&date=${r.startDate}`) },
+            }
+          : { action: { label: 'View', onClick: () => setDetail({ ...r, status: 'APPROVED' }) } }),
       });
       refresh();
       return true;

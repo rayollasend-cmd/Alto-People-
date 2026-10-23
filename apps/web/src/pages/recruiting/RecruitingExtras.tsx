@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Briefcase, ClipboardList, Copy, Download, Gift, Plus, Rss, Send, UserPlus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -535,6 +535,7 @@ function OffersTab({
 
   const offersQuery = useQuery({ queryKey: ['recruiting', 'offers'], queryFn: () => listOffers() });
   const offers: OfferRecord[] | null = offersQuery.data?.offers ?? null;
+  const navigate = useNavigate();
   const error = offersQuery.error ? errMessage(offersQuery.error, 'Failed to load offers.') : null;
   const refresh = () => void offersQuery.refetch();
 
@@ -616,7 +617,14 @@ function OffersTab({
   const onDecide = async (id: string, decision: 'ACCEPTED' | 'DECLINED' | 'WITHDRAWN') => {
     try {
       await decideOffer(id, decision);
-      toast.success(`Offer ${statusLabel(decision).toLowerCase()}.`);
+      const offer = (offers ?? []).find((o) => o.id === id);
+      // An accepted offer's next step is the hire, which starts onboarding —
+      // it lives on the candidate; make it one tap instead of four or five.
+      toast.success(`Offer ${statusLabel(decision).toLowerCase()}.`, {
+        ...(decision === 'ACCEPTED' && offer
+          ? { action: { label: `Hire ${offer.candidateName}`, onClick: () => navigate(`/recruiting?candidateId=${offer.candidateId}`) } }
+          : {}),
+      });
       refresh();
     } catch (err) {
       toast.error(errMessage(err, 'Could not record the decision.'));

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { NEGATIVE_BALANCE_PRESETS } from '@/lib/reasonPresets';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { hapticConfirm } from '@/lib/haptics';
@@ -1165,6 +1165,7 @@ function PendingTimeOffPanel({
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [denyTarget, setDenyTarget] = useState<TimeOffRequest | 'selected' | null>(null);
   // Memoized: a fresh array identity on every render defeats memoization
@@ -1240,7 +1241,17 @@ function PendingTimeOffPanel({
     },
     onSuccess: (_res, r) => {
       hapticConfirm();
-      toast.success(`Approved ${r.associateName ?? 'request'}.`);
+      const released = r.assignedShiftOverlaps ?? 0;
+      // The row said "releases N shifts": covering them is the next job,
+      // and it used to mean Scheduling → find the day → find the shift.
+      toast.success(`Approved ${r.associateName ?? 'request'}.`, {
+        ...(released > 0
+          ? {
+              description: `${released} ${released === 1 ? 'shift needs' : 'shifts need'} cover.`,
+              action: { label: `Cover ${released}`, onClick: () => navigate(`/scheduling?open=1&date=${r.startDate}`) },
+            }
+          : {}),
+      });
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY }),
   });
