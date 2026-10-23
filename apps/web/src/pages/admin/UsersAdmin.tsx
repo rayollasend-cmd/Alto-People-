@@ -635,7 +635,7 @@ export function UsersAdmin() {
                 type="button"
                 onClick={() => setPersonRecordFor(u)}
                 disabled={busy}
-                className="mt-1 flex w-full items-center gap-1 rounded-md border border-warning/40 px-2 py-1 text-left text-xs2 text-warning hover:border-warning hover:text-white"
+                className="mt-1 flex w-full items-center gap-1 rounded-md border border-warning/40 px-2 py-1 text-left text-xs2 text-warning hover:border-warning hover:text-ink"
                 title="No person record — their clock, schedule and pay will not work until one exists. Tap to create or link it."
               >
                 <UserRound className="h-3 w-3 shrink-0" aria-hidden="true" />

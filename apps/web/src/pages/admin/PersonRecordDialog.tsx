@@ -75,7 +75,7 @@ export function PersonRecordDialog({
             <DialogTitle>Set up their person record</DialogTitle>
             <DialogDescription>
               Clocking in, the schedule and pay all key off a person record in People. This creates one for{' '}
-              <span className="text-white">{user.email}</span>, or links the record already there under that email, and
+              <span className="text-ink">{user.email}</span>, or links the record already there under that email, and
               ties it to this login.
             </DialogDescription>
           </DialogHeader>

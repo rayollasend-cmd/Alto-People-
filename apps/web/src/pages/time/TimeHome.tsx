@@ -115,7 +115,7 @@ function ClockNotSetUpStrip() {
       <ScanLine className="h-5 w-5 shrink-0 text-silver" aria-hidden="true" />
       <div className="min-w-[11rem] flex-1">
         <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">{t('timeHome.yourClock')}</div>
-        <div className="text-sm text-white">{t('timeHome.clockNotSetUp')}</div>
+        <div className="text-sm text-ink">{t('timeHome.clockNotSetUp')}</div>
         <div className="text-xs text-silver">{t('timeHome.clockNotSetUpBody', { email: user?.email ?? '' })}</div>
       </div>
     </section>
