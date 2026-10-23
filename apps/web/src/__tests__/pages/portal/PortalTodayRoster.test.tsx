@@ -99,12 +99,15 @@ describe('<PortalToday> — the roster on a phone', () => {
     expect(within(items[1]!).getByRole('link', { name: 'Text Cy Dale' })).toHaveAttribute('href', 'sms:+13055550101');
   });
 
+  // The roster is the heaviest page in this suite; under CI load the first
+  // render alone took 5,013 ms against a 5,000 ms budget (2026-10-23). The
+  // wait and the test get room so a slow runner is not read as a failure.
   it('one text to the whole shift sits in the shift’s header', async () => {
     renderToday('SHIFT_SUPERVISOR');
-    const button = await screen.findByRole('button', { name: 'Text this shift (2)' }, { timeout: 5000 });
+    const button = await screen.findByRole('button', { name: 'Text this shift (2)' }, { timeout: 10_000 });
     await userEvent.click(button);
     expect(await screen.findByRole('dialog')).toHaveTextContent('Text the crew');
-  });
+  }, 20_000);
 
   it('the store manager’s portal reads punch times only — no "late" label, no phone numbers', async () => {
     renderToday('CLIENT_PORTAL');
