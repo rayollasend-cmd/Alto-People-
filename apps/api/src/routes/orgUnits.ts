@@ -73,6 +73,19 @@ orgUnitsRouter.put('/admin/org-units/:id/sites', MANAGE, async (req, res) => {
 });
 
 /**
+ * A site's point, when the address was picked from a suggestion (the
+ * suggestion carries its own coordinates). Both or neither: half a point
+ * is no point. Undefined leaves the point as it is.
+ */
+function sitePoint(input: { latitude?: number | null; longitude?: number | null }): { latitude: number | null; longitude: number | null } | undefined {
+  if (input.latitude === undefined && input.longitude === undefined) return undefined;
+  const both = input.latitude != null && input.longitude != null;
+  const neither = input.latitude == null && input.longitude == null;
+  if (!both && !neither) throw new HttpError(400, 'invalid_point', 'Latitude and longitude go together.');
+  return { latitude: input.latitude ?? null, longitude: input.longitude ?? null };
+}
+
+/**
  * A direct employer's sites carry no client. POST creates one (optionally
  * under a unit); GET lists every site with its unit.
  */
@@ -82,6 +95,7 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
     const unit = await getOrgUnit(prisma, input.orgUnitId);
     if (!unit) throw new HttpError(400, 'org_unit_not_found', 'That unit does not exist.');
   }
+  const point = sitePoint(input);
   const created = await prisma.site.create({
     data: {
       clientId: null,
@@ -94,6 +108,7 @@ orgUnitsRouter.post('/admin/sites', MANAGE, async (req, res) => {
       city: input.city ?? null,
       state: input.state ?? null,
       zip: input.zip ?? null,
+      ...(point ?? {}),
       ...(input.timezone ? { timezone: input.timezone } : {}),
     },
     select: { id: true, name: true, timezone: true, orgUnitId: true, state: true, type: true },
@@ -114,6 +129,7 @@ orgUnitsRouter.patch('/admin/sites/:id', MANAGE, async (req, res) => {
   if (existing.clientId && identity.length > 0) {
     throw new HttpError(409, 'client_store', 'This store belongs to a client — edit it from the client’s page.');
   }
+  const point = sitePoint(input);
   // Where it sits (its cost center) goes through the one placement rule.
   if (input.orgUnitId !== undefined) await placeSite(prisma, id, { orgUnitId: input.orgUnitId }, { allowRegionUnits: true });
   const updated = await prisma.site.update({
@@ -126,6 +142,8 @@ orgUnitsRouter.patch('/admin/sites/:id', MANAGE, async (req, res) => {
       ...(input.city !== undefined ? { city: input.city } : {}),
       ...(input.state !== undefined ? { state: input.state } : {}),
       ...(input.zip !== undefined ? { zip: input.zip } : {}),
+      // A picked address brings its point; the clock-in geofence and the vans' map read it.
+      ...(point ?? {}),
       ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
       ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
     },

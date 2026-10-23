@@ -381,15 +381,15 @@ describe('benefit carriers: how each feed is doing (F500 G6)', () => {
     await a.put(`/benefit-carriers/${blue}/plans`).send({ plans: [{ planId: ppo.id }, { planId: dental.id }] });
 
     const before = (await a.get('/benefit-carriers')).body.carriers as Array<{ id: string; health: { people: number; changesWaiting: number | null; lastFile: unknown } }>;
-    expect(before.find((c) => c.id === blue)!.health).toEqual({ people: 2, changesWaiting: null, lastFile: null });
-    expect(before.find((c) => c.id === eye)!.health).toEqual({ people: 0, changesWaiting: null, lastFile: null });
+    expect(before.find((c) => c.id === blue)!.health).toEqual({ people: 2, changesWaiting: null, lastFile: null, lastAnswer: null });
+    expect(before.find((c) => c.id === eye)!.health).toEqual({ people: 0, changesWaiting: null, lastFile: null, lastAnswer: null });
 
     const full = (await a.post(`/benefit-carriers/${blue}/files`).send({ mode: 'FULL' })).body.file;
     // One change after the file: Bo's PPO election.
     await new Promise((r) => setTimeout(r, 20));
     await prisma.benefitsEnrollment.updateMany({ where: { associateId: bo.id, planId: ppo.id }, data: { electedAmountCentsPerPeriod: 6000 } });
     const after = (await a.get('/benefit-carriers')).body.carriers.find((c: { id: string }) => c.id === blue).health;
-    expect(after).toMatchObject({ people: 2, changesWaiting: 1, lastFile: { mode: 'FULL', status: 'GENERATED', controlNumber: full.controlNumber, memberCount: 2, sentAt: null, error: null } });
+    expect(after).toMatchObject({ people: 2, changesWaiting: 1, lastFile: { mode: 'FULL', status: 'GENERATED', controlNumber: full.controlNumber, memberCount: 2, sentAt: null, error: null, answer: { state: 'NOT_EXPECTED' } }, lastAnswer: null });
     // A failed send is still the last file, with its error.
     const send = await a.post(`/benefit-files/${full.id}/send`);
     expect(send.status).toBe(502);

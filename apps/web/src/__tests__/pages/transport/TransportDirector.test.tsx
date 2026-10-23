@@ -492,3 +492,36 @@ describe('<TransportHome> — the day in the link, and fees waived together', ()
     );
   });
 });
+
+describe('<TransportHome> — a stop added by picking its address', () => {
+  it('keeps the whole address on one line and sends the point it came with', async () => {
+    routes((path, init) => {
+      if (path.startsWith('/transport/board')) return board();
+      if (path.startsWith('/transport/live')) return { date: '', generatedAt: '', runs: [] };
+      if (path === '/transport/stops' && !init?.method) return { stops: [] };
+      if (path.startsWith('/geo/address-suggest')) {
+        return {
+          available: true,
+          provider: 'mapbox',
+          outage: false,
+          results: [{ label: '100 Gulf Boulevard', address: '100 Gulf Boulevard, Destin, Florida 32541', line1: '100 Gulf Boulevard', line2: null, city: 'Destin', state: 'FL', zip: '32541', county: 'Okaloosa County', lat: 30.39, lng: -86.49, precision: 'exact' }],
+        };
+      }
+      if (path === '/transport/stops' && init?.method === 'POST') return { stop: { id: 's9', name: 'Seaside Housing', address: '100 Gulf Boulevard, Destin, Florida 32541', notes: null, isActive: true } };
+    });
+    renderAs('TRANSPORTATION_DIRECTOR', '/transport?tab=stops');
+    await userEvent.click(await screen.findByRole('button', { name: /Add stop/ }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText(/^Name/), 'Seaside Housing');
+    await userEvent.type(within(dialog).getByLabelText(/^Address/), '100 Gulf');
+    await userEvent.click(await within(dialog).findByRole('option', { name: /100 Gulf Boulevard/ }));
+    expect(within(dialog).getByLabelText(/^Address/)).toHaveValue('100 Gulf Boulevard, Destin, Florida 32541');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith('/transport/stops', {
+        method: 'POST',
+        body: { name: 'Seaside Housing', address: '100 Gulf Boulevard, Destin, Florida 32541', notes: null, lat: 30.39, lng: -86.49 },
+      }),
+    );
+  });
+});

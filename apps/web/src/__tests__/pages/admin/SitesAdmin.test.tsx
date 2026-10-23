@@ -11,8 +11,10 @@ vi.mock('@/lib/orgApi', async (orig) => ({
   updateSite: vi.fn(),
 }));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true), usePrompt: () => vi.fn() }));
+vi.mock('@/lib/geoApi', () => ({ suggestAddresses: vi.fn() }));
 
 import { createSite, listSites, updateSite, type SiteRow } from '@/lib/orgApi';
+import { suggestAddresses } from '@/lib/geoApi';
 import { SitesAdmin } from '@/pages/admin/SitesAdmin';
 
 const sites: SiteRow[] = [
@@ -86,6 +88,43 @@ describe('Sites', () => {
       city: null,
       state: 'CO',
       zip: null,
+    });
+  });
+
+  it('adds a place from a picked address: the boxes fill, the zone follows the county, and the point goes with it', async () => {
+    vi.mocked(suggestAddresses).mockResolvedValue({
+      available: true,
+      provider: 'mapbox',
+      outage: false,
+      results: [
+        { label: '382 Flamingo Drive Suite 4', address: '382 Flamingo Drive Suite 4, Destin, Florida 32541', line1: '382 Flamingo Drive', line2: 'Suite 4', city: 'Destin', state: 'FL', zip: '32541', county: 'Okaloosa County', lat: 30.4012, lng: -86.5003, precision: 'exact' },
+      ],
+    });
+    const user = userEvent.setup();
+    renderAsAdmin(<SitesAdmin />, '/admin/sites');
+    await screen.findAllByText('Harbor House');
+    await user.click(screen.getByRole('button', { name: /^Add / }));
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Name'), 'Destin Commons');
+    await user.type(within(dialog).getByLabelText('Address line 1'), '382 Flamingo Suite 4');
+    await user.click(await within(dialog).findByRole('option', { name: /382 Flamingo Drive Suite 4/ }));
+    expect(within(dialog).getByLabelText('City')).toHaveValue('Destin');
+    // Destin is in Florida's Central-time Panhandle.
+    expect(within(dialog).getByLabelText('Time zone')).toHaveValue('America/Chicago');
+    expect(within(dialog).getByText(/Placed on the map from this address/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /^Add / }));
+    await waitFor(() => expect(createSite).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createSite).mock.calls[0]![0]).toEqual({
+      name: 'Destin Commons',
+      type: 'STORE',
+      timezone: 'America/Chicago',
+      addressLine1: '382 Flamingo Drive',
+      addressLine2: 'Suite 4',
+      city: 'Destin',
+      state: 'FL',
+      zip: '32541',
+      latitude: 30.4012,
+      longitude: -86.5003,
     });
   });
 

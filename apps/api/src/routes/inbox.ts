@@ -53,6 +53,7 @@ import { daysPastDue, portalScopeOf, serviceReportToReview, unpaidStatementsWher
 import { portalCalendar } from '../lib/portalMetrics.js';
 import { overdueContractDuties, seesContractDuties } from '../lib/contractDuties.js';
 import { stuckWhere } from '../lib/applicationFilters.js';
+import { carrierAnswersNeedingYou } from '../lib/carrierAcks.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -1130,6 +1131,25 @@ const SOURCES: SourceDef[] = [
     path: '/benefits/aca',
     visible: (u) => can(u, 'process:payroll'),
     count: (u) => acaOffersDue(u),
+  },
+  {
+    key: 'carrier-answers',
+    label: 'Carrier answers',
+    description: 'Enrollment files a carrier rejected, and files sent more than 3 business days ago with no answer from the carrier.',
+    path: '/benefits/carriers',
+    // Carrier feeds are company-wide (routes/benefitCarriers.ts), so the count is too.
+    visible: (u) => can(u, 'process:payroll') && !isClientBoundedRole(u) && !isInternallyScoped(u),
+    count: async () => {
+      const r = await carrierAnswersNeedingYou();
+      const parts = [r.rejected ? `${r.rejected} rejected` : '', r.waiting ? `${r.waiting} with no answer after 3 business days` : ''].filter(Boolean);
+      return {
+        count: r.count,
+        description: parts.length ? `Enrollment files: ${parts.join(' · ')}.` : undefined,
+        // One carrier: open straight onto it.
+        path: r.carrierIds.length === 1 ? `/benefits/carriers?carrier=${r.carrierIds[0]}` : undefined,
+        preview: r.preview,
+      };
+    },
   },
   {
     key: 'state-tax-review',

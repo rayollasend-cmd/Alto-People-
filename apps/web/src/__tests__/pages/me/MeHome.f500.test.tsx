@@ -59,13 +59,41 @@ const settings = vi.hoisted(() => ({ updateProfile: vi.fn(async () => ({ firstNa
 vi.mock('@/lib/settingsApi', async (orig) => ({ ...(await orig<typeof import('@/lib/settingsApi')>()), ...settings }));
 // The photo card is Settings' own uploader; stub it here.
 vi.mock('@/pages/Settings', () => ({ ProfilePhotoCard: () => <div data-testid="photo-card" /> }));
+vi.mock('@/lib/geoApi', () => ({ suggestAddresses: vi.fn() }));
 
 import { MeHome } from '@/pages/me/MeHome';
+import { suggestAddresses } from '@/lib/geoApi';
 
 beforeEach(() => {
   self.getProfile.mockResolvedValue(profile);
   self.updateSelfProfile.mockClear();
   settings.updateProfile.mockClear();
+  // Dev and tests have no type-ahead provider: the street line is a plain box.
+  vi.mocked(suggestAddresses).mockReset();
+  vi.mocked(suggestAddresses).mockResolvedValue({ available: false, reason: 'not_configured', results: [] });
+});
+
+describe('/me — the home address picked from a suggestion', () => {
+  it('fills street, unit, city, the state picker and ZIP, and saves them', async () => {
+    vi.mocked(suggestAddresses).mockResolvedValue({
+      available: true,
+      provider: 'mapbox',
+      outage: false,
+      results: [
+        { label: '382 Flamingo Drive #2', address: '382 Flamingo Drive #2, Destin, Florida 32541', line1: '382 Flamingo Drive', line2: '#2', city: 'Destin', state: 'FL', zip: '32541', county: 'Okaloosa County', lat: 30.4, lng: -86.5, precision: 'exact' },
+      ],
+    });
+    const user = userEvent.setup();
+    renderAs('ASSOCIATE', <MeHome />, '/me', { associateId: 'a1' });
+    await user.click(await screen.findByTestId('me-personal-edit'));
+    await user.type(screen.getByLabelText('Address line 1'), '382 Flamingo #2');
+    await user.click(await screen.findByRole('option', { name: /382 Flamingo Drive/ }));
+    expect(screen.getByLabelText('State')).toHaveValue('FL');
+    await user.click(screen.getByTestId('me-personal-save'));
+    await waitFor(() =>
+      expect(self.updateSelfProfile).toHaveBeenCalledWith({ phone: '8505550101', addressLine1: '382 Flamingo Drive', addressLine2: '#2', city: 'Destin', state: 'FL', zip: '32541' }),
+    );
+  });
 });
 
 describe('/me — read first, edit in one place (F500 G5)', () => {

@@ -164,7 +164,7 @@ describe('<AssociateScheduleView> — no next shift', () => {
     expect(screen.queryByTestId('no-open-shifts')).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /notify me/i })).toHaveLength(1);
     await user.click(within(hero).getByRole('button', { name: /notify me/i }));
-    await waitFor(() => expect(patchNotificationPreference).toHaveBeenCalledWith('scheduling', { inAppEnabled: true, emailEnabled: true }));
+    await waitFor(() => expect(patchNotificationPreference).toHaveBeenCalledWith('scheduling', { inAppEnabled: true, emailEnabled: true, pushEnabled: true }));
   });
 
   it('a next shift is the hero; no empty card', async () => {

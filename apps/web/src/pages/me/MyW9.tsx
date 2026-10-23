@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Download, FileSignature } from 'lucide-react';
 import { downloadMyW9, getMyW9, submitMyW9, type MyW9 as MyW9Data, type W9Submit } from '@/lib/certifiedPayrollApi';
 import { ListTemplate } from '@/components/templates';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -227,7 +228,15 @@ function W9Form({ data, onDone }: { data: MyW9Data; onDone: () => void }) {
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-6">
           <Field label={t('w9.street')} required className="sm:col-span-6">
-            <Input value={f.addressLine1} autoComplete="address-line1" onChange={(e) => set('addressLine1', e.target.value)} />
+            <AddressAutocomplete
+              value={f.addressLine1}
+              onChange={(v) => set('addressLine1', v)}
+              onPick={(s) => {
+                // The W-9 has one street line: a unit rides on it.
+                const p = pickedFields(s, { line2: false });
+                setF((cur) => ({ ...cur, addressLine1: p.line1, city: p.city, state: p.state, zip: p.zip }));
+              }}
+            />
           </Field>
           <Field label={t('w9.city')} required className="sm:col-span-3">
             <Input value={f.city} autoComplete="address-level2" onChange={(e) => set('city', e.target.value)} />

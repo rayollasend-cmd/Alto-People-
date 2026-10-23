@@ -138,7 +138,7 @@ function NotifyMe() {
       onClick={async () => {
         setState('busy');
         try {
-          await patchNotificationPreference('scheduling', { inAppEnabled: true, emailEnabled: true });
+          await patchNotificationPreference('scheduling', { inAppEnabled: true, emailEnabled: true, pushEnabled: true });
           setState('on');
           toast.success(t('sched.notifyOn'));
         } catch (err) {

@@ -14,7 +14,9 @@ const api = {
   getProject: vi.fn(),
   listProjects: vi.fn(),
   updateProject: vi.fn(),
+  createProject: vi.fn(),
 };
+vi.mock('@/lib/geoApi', () => ({ suggestAddresses: vi.fn() }));
 vi.mock('@/lib/certifiedPayrollApi', async (orig) => ({
   ...(await orig<typeof import('@/lib/certifiedPayrollApi')>()),
   getWeek: (...a: unknown[]) => api.getWeek(...a),
@@ -26,6 +28,7 @@ vi.mock('@/lib/certifiedPayrollApi', async (orig) => ({
   getProject: (...a: unknown[]) => api.getProject(...a),
   listProjects: (...a: unknown[]) => api.listProjects(...a),
   updateProject: (...a: unknown[]) => api.updateProject(...a),
+  createProject: (...a: unknown[]) => api.createProject(...a),
 }));
 
 import { CertifiedWeek } from '@/pages/certifiedPayroll/CertifiedWeek';
@@ -33,6 +36,22 @@ import { CertifiedProject } from '@/pages/certifiedPayroll/CertifiedProject';
 import { CertifiedPayrollDesk } from '@/pages/certifiedPayroll/CertifiedPayrollDesk';
 import { MyW9 } from '@/pages/me/MyW9';
 import { ContractorsDesk } from '@/pages/contractors/ContractorsDesk';
+import { suggestAddresses } from '@/lib/geoApi';
+
+/** One Sacramento suggestion, with a suite typed after the street. */
+const SACRAMENTO = {
+  label: '1500 Capitol Mall Suite 3',
+  address: '1500 Capitol Mall Suite 3, Sacramento, California 95814',
+  line1: '1500 Capitol Mall',
+  line2: 'Suite 3',
+  city: 'Sacramento',
+  state: 'CA',
+  zip: '95814',
+  county: 'Sacramento County',
+  lat: 38.577,
+  lng: -121.5,
+  precision: 'exact' as const,
+};
 
 const DAYS = ['2026-08-30', '2026-08-31', '2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-05'];
 const row = (over: Record<string, unknown> = {}) => ({
@@ -111,6 +130,19 @@ describe('the contractor’s W-9', () => {
     expect(submit).toBeEnabled();
     await userEvent.click(submit);
     await waitFor(() => expect(api.submitMyW9).toHaveBeenCalledWith(expect.objectContaining({ tin: '123456789', tinType: 'SSN', certify: true, subjectToBackup: false })));
+  });
+
+  it('the address picked from a suggestion fills the W-9’s one street line (suite included), city, state and ZIP', async () => {
+    vi.mocked(suggestAddresses).mockResolvedValue({ available: true, provider: 'mapbox', outage: false, results: [SACRAMENTO] });
+    api.getMyW9.mockResolvedValue({ required: true, status: 'REQUESTED', signedAt: null, backupWithholding: false, form: { legalName: 'Pat Contractor', businessName: null, taxClassification: null, llcTaxClass: null, exemptPayeeCode: null, fatcaCode: null, addressLine1: null, city: null, state: null, zip: null, tinType: null, tinLast4: null, subjectToBackup: false } });
+    renderAs('ASSOCIATE', <MyW9 />, '/me/w9', { associateId: 'a1' });
+    const street = await screen.findByLabelText(/^Street/);
+    await userEvent.type(street, '1500 Capitol Mall Suite 3');
+    await userEvent.click(await screen.findByRole('option', { name: /1500 Capitol Mall/ }));
+    expect(street).toHaveValue('1500 Capitol Mall Suite 3');
+    expect(screen.getByLabelText(/^City/)).toHaveValue('Sacramento');
+    expect(screen.getByLabelText(/^State/)).toHaveValue('CA');
+    expect(screen.getByLabelText(/^ZIP/)).toHaveValue('95814');
   });
 });
 
@@ -234,5 +266,21 @@ describe('the certified payroll desk', () => {
     expect(await screen.findByText('No prevailing-wage projects')).toBeInTheDocument();
     expect(screen.queryByText('Active projects')).toBeNull();
     expect(screen.queryByText('Waiting for a signature')).toBeNull();
+  });
+
+  it('a new project’s address picked from a suggestion brings its county — the wage determination is by county', async () => {
+    api.listProjects.mockResolvedValue({ projects: [] });
+    api.createProject.mockResolvedValue({ project: { id: 'p9' } });
+    vi.mocked(suggestAddresses).mockResolvedValue({ available: true, provider: 'mapbox', outage: false, results: [SACRAMENTO] });
+    renderAs('FINANCE_ACCOUNTANT', <CertifiedPayrollDesk />, '/payroll/certified');
+    await userEvent.click((await screen.findAllByRole('button', { name: 'New project' }))[0]!);
+    await userEvent.type(screen.getByLabelText(/^Project name/), 'Capitol Annex');
+    await userEvent.type(screen.getByLabelText(/^Street address/), '1500 Capitol Mall');
+    await userEvent.click(await screen.findByRole('option', { name: /1500 Capitol Mall/ }));
+    expect(screen.getByLabelText(/^County/)).toHaveValue('Sacramento');
+    expect(screen.getByLabelText(/^State/)).toHaveValue('CA');
+    await userEvent.click(screen.getByRole('button', { name: /Add project/ }));
+    await waitFor(() => expect(api.createProject).toHaveBeenCalledTimes(1));
+    expect(api.createProject.mock.calls[0]![0]).toMatchObject({ addressLine1: '1500 Capitol Mall Suite 3', city: 'Sacramento', county: 'Sacramento', state: 'CA', zip: '95814' });
   });
 });

@@ -5,7 +5,7 @@ import { getBrandingSync } from './branding.js';
 import { send } from './notifications.js';
 import { tenantIdForWrite } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
-import { sendPushToUser } from './webPush.js';
+import { isPushMuted, sendPushToUser } from './webPush.js';
 
 /**
  * Access pack — when a notification reaches a person, not only whether.
@@ -161,11 +161,28 @@ export async function runNotificationDigest(db: PrismaClient = prisma, now: Date
   }
   const brand = getBrandingSync(tenantId);
   let sent = 0;
-  for (const [key, rows] of groups) {
+  for (const [key, held] of groups) {
     const [userId, channel] = key.split(':') as [string, OutsideChannel];
     const user = await db.user.findUnique({ where: { id: userId }, select: { email: true, status: true } });
-    const ids = rows.map((r) => r.id);
+    const ids = held.map((r) => r.id);
     if (!user || user.status !== 'ACTIVE') {
+      await db.deferredNotification.updateMany({ where: { id: { in: ids } }, data: { sentAt: now } });
+      continue;
+    }
+    // A held push whose category the person has since muted is dropped
+    // here, by the same gate every push passes (lib/webPush isPushMuted).
+    const rows: typeof held = [];
+    if (channel === 'PUSH') {
+      const mutedBy = new Map<string, boolean>();
+      for (const r of held) {
+        const k = r.category ?? '';
+        if (!mutedBy.has(k)) mutedBy.set(k, await isPushMuted(userId, r.category));
+        if (!mutedBy.get(k)) rows.push(r);
+      }
+    } else {
+      rows.push(...held);
+    }
+    if (rows.length === 0) {
       await db.deferredNotification.updateMany({ where: { id: { in: ids } }, data: { sentAt: now } });
       continue;
     }
@@ -176,7 +193,8 @@ export async function runNotificationDigest(db: PrismaClient = prisma, now: Date
       if (channel === 'EMAIL' && user.email) {
         await send({ channel: 'EMAIL', recipient: { userId, phone: null, email: user.email }, subject, body, category: 'digest' });
       } else if (channel === 'PUSH') {
-        await sendPushToUser(userId, { title: subject, body: n === 1 ? rows[0]!.body : `${rows[0]!.body}${n > 1 ? ` and ${n - 1} more` : ''}`, url: n === 1 ? (rows[0]!.linkUrl ?? undefined) : '/inbox' });
+        // category null: each bundled row passed the Push switch above.
+        await sendPushToUser(userId, { title: subject, body: n === 1 ? rows[0]!.body : `${rows[0]!.body}${n > 1 ? ` and ${n - 1} more` : ''}`, url: n === 1 ? (rows[0]!.linkUrl ?? undefined) : '/inbox', category: null });
       }
       // WHATSAPP digests are not sent: the template catalogue is per event, so a held WhatsApp copy is dropped and the bell (and email digest) carries it.
       sent += 1;

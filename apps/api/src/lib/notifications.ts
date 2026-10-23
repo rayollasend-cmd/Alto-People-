@@ -21,6 +21,19 @@ export class PushNotConfiguredError extends Error {
   }
 }
 
+/**
+ * Thrown by send() for a PUSH whose category the recipient turned push off
+ * for (Settings › Notifications). Recorded SUPPRESSED: nothing left, and it
+ * was their choice, not an outage.
+ */
+export class PushMutedError extends Error {
+  readonly code = 'push_muted';
+  constructor() {
+    super('They turned off push for this kind of notice in their settings.');
+    this.name = 'PushMutedError';
+  }
+}
+
 /** A WHATSAPP send reaching the generic sender: WhatsApp only goes out through lib/whatsapp's templates. */
 export class WhatsAppNotRoutedError extends Error {
   readonly code = 'whatsapp_not_routed';
@@ -86,7 +99,7 @@ export function anyPushConfigured(): boolean {
  * write SENT for a message that did not leave.
  */
 export function statusForSendError(err: unknown): Extract<NotificationStatus, 'SUPPRESSED' | 'NOT_CONFIGURED' | 'FAILED'> {
-  if (err instanceof EmailSuppressedError || err instanceof SmsOptedOutError) return 'SUPPRESSED';
+  if (err instanceof EmailSuppressedError || err instanceof SmsOptedOutError || err instanceof PushMutedError) return 'SUPPRESSED';
   if (err instanceof SmsNotConfiguredError || err instanceof PushNotConfiguredError || err instanceof WhatsAppNotRoutedError) return 'NOT_CONFIGURED';
   return 'FAILED';
 }
@@ -209,7 +222,9 @@ function effectiveFrom(): string | undefined {
  *          otherwise SmsNotConfiguredError → NOT_CONFIGURED. A number that
  *          texted STOP → SmsOptedOutError → SUPPRESSED. Never a stub ref.
  *   PUSH   every device of the recipient user (web push + APNs/FCM) when a
- *          transport is configured; otherwise PushNotConfiguredError.
+ *          transport is configured; otherwise PushNotConfiguredError. A
+ *          category the recipient turned push off for → PushMutedError
+ *          (SUPPRESSED).
  *   EMAIL  Resend if RESEND_API_KEY + RESEND_FROM are set; otherwise it logs
  *          the body to the API console (with the magic link visible) and
  *          returns a synthetic STUB-EMAIL-... ref so the dev flow continues.
@@ -341,10 +356,12 @@ async function dispatch(input: SendInput): Promise<SendResult> {
     case 'PUSH': {
       if (!input.recipient.userId) throw new Error('Push needs a signed-in recipient.');
       if (!anyPushConfigured()) throw new PushNotConfiguredError();
-      await sendPushToUser(input.recipient.userId, {
+      const outcome = await sendPushToUser(input.recipient.userId, {
         title: input.subject ?? getBrandingSync().orgName,
         body: input.body,
+        category: input.category,
       });
+      if (outcome === 'muted') throw new PushMutedError();
       return { externalRef: null, providerMessageId: null };
     }
     case 'EMAIL':

@@ -928,9 +928,10 @@ export interface TransportStop {
 }
 
 export const listStops = () => apiFetch<{ stops: TransportStop[] }>('/transport/stops');
-export const createStop = (body: { name: string; address: string; notes?: string | null }) =>
+/** lat/lng: the point a picked address came with — the server looks the address up only without one. */
+export const createStop = (body: { name: string; address: string; notes?: string | null; lat?: number; lng?: number }) =>
   apiFetch<{ stop: TransportStop }>('/transport/stops', { method: 'POST', body });
-export const updateStop = (id: string, body: Partial<Omit<TransportStop, 'id'>>) =>
+export const updateStop = (id: string, body: Partial<Omit<TransportStop, 'id'>> & { lat?: number; lng?: number }) =>
   apiFetch<{ stop: TransportStop }>(`/transport/stops/${id}`, { method: 'PATCH', body });
 
 export interface TransportIssue {

@@ -10,8 +10,10 @@ vi.mock('@/lib/orgApi', async (orig) => ({
   updateEmployer: vi.fn(),
 }));
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true), usePrompt: () => vi.fn() }));
+vi.mock('@/lib/geoApi', () => ({ suggestAddresses: vi.fn() }));
 
 import { createEmployer, listEmployers, type EmployerRow } from '@/lib/orgApi';
+import { suggestAddresses } from '@/lib/geoApi';
 import { EmployersAdmin } from '@/pages/admin/EmployersAdmin';
 
 const rows: EmployerRow[] = [
@@ -84,6 +86,37 @@ describe('Employers of record', () => {
       wcCarrierAddress: null,
       wcCarrierPhone: null,
       wcPolicyNumber: null,
+    });
+  });
+
+  it('fills the employer’s address from a picked suggestion', async () => {
+    vi.mocked(suggestAddresses).mockResolvedValue({
+      available: true,
+      provider: 'mapbox',
+      outage: false,
+      results: [
+        { label: '1 Ocean Drive', address: '1 Ocean Drive, Miami Beach, Florida 33139', line1: '1 Ocean Drive', line2: null, city: 'Miami Beach', state: 'FL', zip: '33139', county: 'Miami-Dade County', lat: 25.77, lng: -80.13, precision: 'exact' },
+      ],
+    });
+    const user = userEvent.setup();
+    renderAsAdmin(<EmployersAdmin />, '/admin/employers');
+    await screen.findByText('Harbor House Hospitality LLC');
+    await user.click(screen.getByRole('button', { name: 'Add employer of record' }));
+    await user.type(screen.getByLabelText('Legal name'), 'New Co');
+    await user.type(screen.getByLabelText('Address line 1'), '1 Ocean');
+    await user.click(await screen.findByRole('option', { name: /1 Ocean Drive/ }));
+    // The carrier's address is one line on the pay notice: a pick fills it whole.
+    await user.type(screen.getByLabelText('Carrier address'), '1 Ocean');
+    await user.click(await screen.findByRole('option', { name: /1 Ocean Drive/ }));
+    expect(screen.getByLabelText('Carrier address')).toHaveValue('1 Ocean Drive, Miami Beach, Florida 33139');
+    await user.click(screen.getByRole('button', { name: 'Add employer' }));
+    await waitFor(() => expect(createEmployer).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createEmployer).mock.calls[0]![0]).toMatchObject({
+      addressLine1: '1 Ocean Drive',
+      city: 'Miami Beach',
+      state: 'FL',
+      zip: '33139',
+      wcCarrierAddress: '1 Ocean Drive, Miami Beach, Florida 33139',
     });
   });
 

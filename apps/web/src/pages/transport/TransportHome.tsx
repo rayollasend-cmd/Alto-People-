@@ -98,6 +98,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
+import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
@@ -3186,12 +3187,15 @@ function StopDialog({ stop, onClose }: { stop: TransportStop | null; onClose: ()
   const queryClient = useQueryClient();
   const [name, setName] = useState(stop?.name ?? '');
   const [address, setAddress] = useState(stop?.address ?? '');
+  // A picked address brings its point, so the stop is on the map without a second lookup.
+  const [point, setPoint] = useState<{ lat: number; lng: number; address: string } | null>(null);
   const [notes, setNotes] = useState(stop?.notes ?? '');
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
     try {
-      const body = { name: name.trim(), address: address.trim(), notes: notes.trim() || null };
+      const picked = point && point.address === address.trim() ? { lat: point.lat, lng: point.lng } : {};
+      const body = { name: name.trim(), address: address.trim(), notes: notes.trim() || null, ...picked };
       if (stop) await updateStop(stop.id, body);
       else await createStop(body);
       toast.success(stop ? 'Stop saved' : 'Stop added');
@@ -3214,7 +3218,20 @@ function StopDialog({ stop, onClose }: { stop: TransportStop | null; onClose: ()
             {(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} placeholder="Seaside Housing" maxLength={120} />}
           </Field>
           <Field label="Address" required>
-            {(p) => <Input {...p} value={address} onChange={(e) => setAddress(e.target.value)} maxLength={300} />}
+            {(p) => (
+              <AddressAutocomplete
+                {...p}
+                autoComplete="street-address"
+                value={address}
+                onChange={setAddress}
+                onPick={(s) => {
+                  // A stop keeps the whole address on one line, the way a driver reads it.
+                  setAddress(s.address);
+                  setPoint({ lat: s.lat, lng: s.lng, address: s.address });
+                }}
+                maxLength={300}
+              />
+            )}
           </Field>
           <Field label="Where to wait">
             {(p) => <Textarea {...p} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} placeholder="By the front office" />}

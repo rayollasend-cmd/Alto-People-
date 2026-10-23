@@ -16,6 +16,8 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
+import { zoneForPickedPlace } from '@/lib/stateTimezone';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
@@ -190,6 +192,8 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
   const [city, setCity] = useState('');
   const [state, setState] = useState(site?.state ?? '');
   const [zip, setZip] = useState('');
+  // A picked address brings its point (the clock-in geofence starts there).
+  const [point, setPoint] = useState<{ lat: number; lng: number } | null>(null);
   const stateValue = state.trim().toUpperCase() || null;
   /** Edit: the fields whose value differs from the row. Nothing changed → empty. */
   const changes = (): SiteUpdateInput => {
@@ -216,6 +220,7 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
             city: city.trim() || null,
             state: stateValue,
             zip: zip.trim() || null,
+            ...(point ? { latitude: point.lat, longitude: point.lng } : {}),
           }),
     onSuccess: async () => {
       toast.success(site ? `${siteNoun} saved.` : `${siteNoun} added.`);
@@ -283,7 +288,25 @@ function SiteDialog({ site, onClose }: { site?: SiteRow; onClose: () => void }) 
             </div>
           ) : (
             <>
-              <Field label="Address line 1">{(p) => <Input {...p} value={line1} onChange={(e) => setLine1(e.target.value)} />}</Field>
+              <Field label="Address line 1" hint={point ? 'Placed on the map from this address; the time zone follows it.' : undefined}>
+                {(p) => (
+                  <AddressAutocomplete
+                    {...p}
+                    value={line1}
+                    onChange={setLine1}
+                    onPick={(s) => {
+                      const f = pickedFields(s);
+                      setLine1(f.line1);
+                      if (f.line2) setLine2(f.line2);
+                      setCity(f.city);
+                      setState(f.state);
+                      setZip(f.zip);
+                      setTimezone((tz) => zoneForPickedPlace(s, { state, timezone: tz }));
+                      setPoint({ lat: s.lat, lng: s.lng });
+                    }}
+                  />
+                )}
+              </Field>
               <Field label="Address line 2">{(p) => <Input {...p} value={line2} onChange={(e) => setLine2(e.target.value)} />}</Field>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="City">{(p) => <Input {...p} value={city} onChange={(e) => setCity(e.target.value)} />}</Field>

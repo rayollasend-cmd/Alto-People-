@@ -5183,6 +5183,11 @@ model NotificationPreference {
   // said it turned off. Checked by notifyUser/notifyAllAdmins before the
   // Notification row is created; mandatory categories ignore both flags.
   inAppEnabled Boolean  @default(true)
+  // The lock screen (web push and the phone apps). Push used to ride the
+  // email switch, so Settings had no way to say "email me, don't buzz me".
+  // Checked by isPushMuted (lib/webPush) inside sendPushToUser, the one
+  // funnel every push passes; mandatory categories ignore it too.
+  pushEnabled  Boolean  @default(true)
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
   /// Brief 2-1: the tenant this row belongs to. Required; the database default (Alto HR) fills a row written outside any tenant context.
   tenantId     String   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
@@ -15972,10 +15977,14 @@ model BenefitCarrier {
   connectionEnc     String?
   lastControlNumber Int      @default(0)
   active            Boolean  @default(true)
+  /// The last look in the carrier's SFTP folder for its answers (lib/carrierAcks), and why it failed.
+  ackCheckedAt      DateTime? @db.Timestamptz(6)
+  ackCheckError     String?   @db.VarChar(500)
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   files Edi834File[]
+  acks  Edi834Ack[]
 
   @@index([tenantId])
 }
@@ -15993,12 +16002,53 @@ model Edi834File {
   status        String    @default("GENERATED") @db.VarChar(12)
   error         String?   @db.VarChar(1000)
   sentAt        DateTime? @db.Timestamptz(6)
+  /// The carrier's answer (Edi834Ack): ACCEPTED | ACCEPTED_WITH_ERRORS | REJECTED | PARTIAL; null = none yet
+  ackStatus     String?   @db.VarChar(24)
+  ackedAt       DateTime? @db.Timestamptz(6)
   createdById   String?   @db.Uuid
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
 
   carrier BenefitCarrier @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+  acks    Edi834Ack[]
 
   @@index([carrierId, createdAt])
+  @@index([tenantId])
+}
+
+/// A carrier's answer to an enrollment file (lib/ediAck): a TA1 for the
+/// interchange or a 999 for the group and its transaction sets, uploaded on
+/// Carrier feeds or picked up from the carrier's SFTP folder. Matched to
+/// the file by carrier + control number; one that matches nothing is kept.
+model Edi834Ack {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  carrierId     String    @db.Uuid
+  /// The file it answers; null when it didn't match a file we sent.
+  fileId        String?   @db.Uuid
+  /// TA1 | 999 | 997 | UNKNOWN (a picked-up file that wasn't an acknowledgment)
+  kind          String    @db.VarChar(8)
+  /// ACCEPTED | ACCEPTED_WITH_ERRORS | REJECTED | PARTIAL | UNREADABLE
+  status        String    @db.VarChar(24)
+  /// The control number it answers: TA101 (ISA13) or AK102 (GS06).
+  controlNumber Int?
+  /// The errors in plain words: [{ message, code, segment?, position?, element?, member? }]
+  errors        Json      @default("[]")
+  errorCount    Int       @default(0)
+  /// The file as received, encrypted (an IK4 can echo a member's SSN).
+  content       String
+  /// UPLOAD | SFTP
+  source        String    @db.VarChar(8)
+  /// What makes it the same answer twice: the upload's sha256, or the SFTP file's name|size|time.
+  sourceRef     String?   @db.VarChar(600)
+  receivedAt    DateTime  @default(now()) @db.Timestamptz(6)
+  receivedById  String?   @db.Uuid
+
+  carrier BenefitCarrier @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+  file    Edi834File?    @relation(fields: [fileId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, carrierId, sourceRef])
+  @@index([carrierId, receivedAt])
+  @@index([fileId])
   @@index([tenantId])
 }
 

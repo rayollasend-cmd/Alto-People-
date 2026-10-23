@@ -10,8 +10,10 @@ import { AuthContext } from '@/lib/auth';
 vi.mock('@/lib/onboardingApi', () => ({
   submitProfile: vi.fn(async () => {}),
 }));
+vi.mock('@/lib/geoApi', () => ({ suggestAddresses: vi.fn() }));
 
 import { submitProfile } from '@/lib/onboardingApi';
+import { suggestAddresses } from '@/lib/geoApi';
 import { ProfileInfoTask } from '@/pages/onboarding/tasks/ProfileInfoTask';
 
 // The page reads through the query layer; every render gets a client.
@@ -60,6 +62,40 @@ function renderTask() {
 beforeEach(() => {
   vi.mocked(submitProfile).mockClear();
   vi.mocked(submitProfile).mockResolvedValue(undefined);
+  // Dev and tests have no type-ahead provider: the street line is a plain box.
+  vi.mocked(suggestAddresses).mockReset();
+  vi.mocked(suggestAddresses).mockResolvedValue({ available: false, reason: 'not_configured', results: [] });
+});
+
+describe('<ProfileInfoTask> — the home address picked, not typed', () => {
+  it('a suggestion fills street, unit, city, state and ZIP, and they are what gets saved', async () => {
+    vi.mocked(suggestAddresses).mockResolvedValue({
+      available: true,
+      provider: 'mapbox',
+      outage: false,
+      results: [
+        { label: '1500 NW 7th Avenue Apt 2', address: '1500 NW 7th Avenue Apt 2, Miami, Florida 33136', line1: '1500 NW 7th Avenue', line2: 'Apt 2', city: 'Miami', state: 'FL', zip: '33136', county: 'Miami-Dade County', lat: 25.79, lng: -80.21, precision: 'exact' },
+      ],
+    });
+    const user = userEvent.setup();
+    renderTask();
+    await user.type(screen.getByLabelText(/first name/i), 'Maria');
+    await user.type(screen.getByLabelText(/last name/i), 'Lopez');
+    await user.type(screen.getByLabelText(/address line 1/i), '1500 nw 7th apt 2');
+    await user.click(await screen.findByRole('option', { name: /1500 NW 7th Avenue/ }));
+    expect(screen.getByLabelText(/address line 2/i)).toHaveValue('Apt 2');
+    expect(screen.getByLabelText(/^city$/i)).toHaveValue('Miami');
+
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(submitProfile).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(submitProfile).mock.calls[0]![1]).toMatchObject({
+      addressLine1: '1500 NW 7th Avenue',
+      addressLine2: 'Apt 2',
+      city: 'Miami',
+      state: 'FL',
+      zip: '33136',
+    });
+  });
 });
 
 describe('<ProfileInfoTask>', () => {

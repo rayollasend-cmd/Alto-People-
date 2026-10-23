@@ -22,8 +22,10 @@ import {
   type AuthUser,
   type InviteSummary,
   type NotificationPreferenceEntry,
+  type NotificationPreferencesResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { pushReachFor } from '../lib/webPush.js';
 import { ssoRequiredFor } from '../lib/identity.js';
 import { breakGlassVerdict, recordBreakGlassUse } from '../lib/breakGlass.js';
 import { loadSecurityPolicy } from '../lib/securityPolicy.js';
@@ -2135,19 +2137,26 @@ authRouter.patch('/me/notification-delivery', requireAuth, async (req, res, next
  * GET /auth/me/notification-preferences
  *
  * Returns one row per category in the catalog, joining the catalog's
- * label/description/mandatory fields with the user's stored emailEnabled.
- * Categories without a stored row default to enabled (the table is
- * append-on-mute, not pre-seeded). Mandatory categories always report
- * emailEnabled=true regardless of any stored row — defence in depth in
- * case a row was inserted directly.
+ * label/description/mandatory fields with the user's stored switches
+ * (email, bell, push). Categories without a stored row default to enabled
+ * (the table is append-on-mute, not pre-seeded). Mandatory categories
+ * always report every switch on regardless of any stored row — defence in
+ * depth in case a row was inserted directly.
+ *
+ * `push` says where a push could reach this person right now (transports
+ * on the server, their own reachable devices), so Settings never implies a
+ * push will arrive when nothing would carry it.
  */
 authRouter.get('/me/notification-preferences', requireAuth, async (req, res, next) => {
   try {
-    const stored = await prisma.notificationPreference.findMany({
-      take: 500,
-      where: { userId: req.user!.id },
-      select: { category: true, emailEnabled: true, inAppEnabled: true },
-    });
+    const [stored, push] = await Promise.all([
+      prisma.notificationPreference.findMany({
+        take: 500,
+        where: { userId: req.user!.id },
+        select: { category: true, emailEnabled: true, inAppEnabled: true, pushEnabled: true },
+      }),
+      pushReachFor(req.user!.id),
+    ]);
     const byCategory = new Map(stored.map((s) => [s.category, s]));
 
     const entries: NotificationPreferenceEntry[] = notificationCategoriesFor(req.user!.role).map((c) => {
@@ -2159,17 +2168,19 @@ authRouter.get('/me/notification-preferences', requireAuth, async (req, res, nex
         mandatory: c.mandatory,
         emailEnabled: c.mandatory ? true : (pref?.emailEnabled ?? true),
         inAppEnabled: c.mandatory ? true : (pref?.inAppEnabled ?? true),
+        pushEnabled: c.mandatory ? true : (pref?.pushEnabled ?? true),
       };
     });
 
-    res.json({ entries });
+    const body: NotificationPreferencesResponse = { entries, push };
+    res.json(body);
   } catch (err) {
     next(err);
   }
 });
 
 /**
- * PATCH /auth/me/notification-preferences { category, emailEnabled }
+ * PATCH /auth/me/notification-preferences { category, emailEnabled?, inAppEnabled?, pushEnabled? }
  *
  * Upserts the (userId, category) row. Refuses to mute mandatory
  * categories — those are formal HR notices / security alerts the
@@ -2181,14 +2192,14 @@ authRouter.patch('/me/notification-preferences', requireAuth, async (req, res, n
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { category, emailEnabled, inAppEnabled } = parsed.data;
+    const { category, emailEnabled, inAppEnabled, pushEnabled } = parsed.data;
     const meta = NOTIFICATION_CATEGORIES.find((c) => c.key === category);
     if (!notificationCategoriesFor(req.user!.role).some((c) => c.key === category)) {
       throw new HttpError(400, 'category_not_available', 'That notification type does not apply to this account.');
     }
-    // Mandatory buckets are undeniable on BOTH channels — muting the bell
+    // Mandatory buckets are undeniable on EVERY channel — muting the bell
     // would hide a formal HR notice just as effectively as muting the mail.
-    if (meta?.mandatory && (emailEnabled === false || inAppEnabled === false)) {
+    if (meta?.mandatory && (emailEnabled === false || inAppEnabled === false || pushEnabled === false)) {
       throw new HttpError(
         400,
         'mandatory_category',
@@ -2204,10 +2215,12 @@ authRouter.patch('/me/notification-preferences', requireAuth, async (req, res, n
         category,
         emailEnabled: emailEnabled ?? true,
         inAppEnabled: inAppEnabled ?? true,
+        pushEnabled: pushEnabled ?? true,
       },
       update: {
         ...(emailEnabled !== undefined ? { emailEnabled } : {}),
         ...(inAppEnabled !== undefined ? { inAppEnabled } : {}),
+        ...(pushEnabled !== undefined ? { pushEnabled } : {}),
       },
     });
     res.status(204).end();

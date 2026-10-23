@@ -5,7 +5,7 @@ import { Route, Routes, useLocation } from 'react-router-dom';
 import { renderAs } from '../hrPack/harness';
 import type { Carrier } from '@/lib/deductionsApi';
 
-const ded = vi.hoisted(() => ({ listCarriers: vi.fn(), list834: vi.fn(), saveCarrierConnection: vi.fn(), updateCarrier: vi.fn() }));
+const ded = vi.hoisted(() => ({ listCarriers: vi.fn(), list834: vi.fn(), listCarrierAcks: vi.fn(), saveCarrierConnection: vi.fn(), updateCarrier: vi.fn() }));
 vi.mock('@/lib/deductionsApi', async (orig) => ({ ...(await orig<typeof import('@/lib/deductionsApi')>()), ...ded }));
 const tax = vi.hoisted(() => ({ getAcaSummary: vi.fn(), listAcaWorkers: vi.fn(), syncAca1095c: vi.fn() }));
 vi.mock('@/lib/taxcompApi', async (orig) => ({ ...(await orig<typeof import('@/lib/taxcompApi')>()), ...tax }));
@@ -52,10 +52,11 @@ function Where() {
 beforeEach(() => {
   for (const f of [...Object.values(ded), ...Object.values(tax), ...Object.values(life)]) f.mockReset();
   ded.list834.mockResolvedValue({ files: [] });
+  ded.listCarrierAcks.mockResolvedValue({ acks: [], truncated: false });
 });
 
 describe('<CarrierFeeds>', () => {
-  it('leads with how the feed is doing — exact — and says acknowledgments aren’t tracked', async () => {
+  it('leads with how the feed is doing — exact — and says how the carrier’s answers arrive', async () => {
     ded.listCarriers.mockResolvedValue({ carriers: [carrier()], plans: [] });
     ded.list834.mockResolvedValue({ files: [{ id: 'f1', mode: 'CHANGE', controlNumber: 12, memberCount: 2, status: 'FAILED', error: 'SFTP login refused', sentAt: null, createdAt: '2026-10-15T12:00:00.000Z' }] });
     renderAs('FINANCE_ACCOUNTANT', <CarrierFeeds />, '/benefits/carriers');
@@ -67,7 +68,10 @@ describe('<CarrierFeeds>', () => {
     expect(within(strip).getByText('Last file').parentElement).toHaveTextContent('Changes · control 12 · 2 members');
     expect(within(strip).getByText('Delivery').parentElement).toHaveTextContent('Failed');
     expect(within(strip).getByText('Delivery').parentElement).toHaveTextContent('SFTP login refused');
-    expect(screen.getByText(/acknowledgment \(999 or TA1\) isn’t received here/)).toBeInTheDocument();
+    expect(within(strip).getByText('Carrier’s answer').parentElement).toHaveTextContent('No answer received yet');
+    // SFTP with no answers folder: said, with the way to set it up.
+    expect(screen.getByText(/Answers aren’t picked up from the carrier’s SFTP/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add the answers folder' })).toBeInTheDocument();
     // "Enrollment file", not "834"; the receiver ID isn't in prime space.
     expect(await screen.findByRole('table', { name: 'Enrollment files' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Download the enrollment file' })).toBeInTheDocument();

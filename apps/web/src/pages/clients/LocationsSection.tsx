@@ -16,6 +16,8 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { tryGetGeolocation } from '@/lib/timeApi';
+import { zoneForPickedPlace } from '@/lib/stateTimezone';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -217,6 +219,11 @@ export function LocationsSection({ clientId }: Props) {
         }}
         clientId={clientId}
         existing={editing}
+        // Suggestions lean toward where this client already is.
+        near={(() => {
+          const at = [editing, ...(items ?? [])].find((l) => l?.latitude != null && l.longitude != null);
+          return at ? { lat: at.latitude!, lng: at.longitude! } : null;
+        })()}
         onSaved={() => {
           setCreating(false);
           setEditing(null);
@@ -266,10 +273,11 @@ interface DialogProps {
   onOpenChange: (v: boolean) => void;
   clientId: string;
   existing: LocationSummary | null;
+  near?: { lat: number; lng: number } | null;
   onSaved: () => void;
 }
 
-function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: DialogProps) {
+function LocationDialog({ open, onOpenChange, clientId, existing, near, onSaved }: DialogProps) {
   const [name, setName] = useState('');
   const [addressLine1, setAddressLine1] = useState('');
   const [addressLine2, setAddressLine2] = useState('');
@@ -282,9 +290,11 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
   const [timezone, setTimezone] = useState<string>('America/New_York');
   const [isActive, setIsActive] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [pickedPoint, setPickedPoint] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    setPickedPoint(false);
     setName(existing?.name ?? '');
     setAddressLine1(existing?.addressLine1 ?? '');
     setAddressLine2(existing?.addressLine2 ?? '');
@@ -386,11 +396,29 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
             )}
           </Field>
 
-          <Field label="Address line 1">
+          <Field
+            label="Address line 1"
+            hint={pickedPoint ? 'The geofence point and time zone below came from this address. Check them before you save.' : undefined}
+          >
             {(p) => (
-              <Input
+              <AddressAutocomplete
                 value={addressLine1}
-                onChange={(e) => setAddressLine1(e.target.value)}
+                onChange={setAddressLine1}
+                near={near}
+                onPick={(s) => {
+                  const f = pickedFields(s);
+                  setAddressLine1(f.line1);
+                  if (f.line2) setAddressLine2(f.line2);
+                  setCity(f.city);
+                  setState(f.state);
+                  setZip(f.zip);
+                  // The suggestion's point is the site's point; the zone follows the place.
+                  setLatitude(s.lat.toFixed(7));
+                  setLongitude(s.lng.toFixed(7));
+                  if (!radius.trim()) setRadius('150');
+                  setTimezone((tz) => zoneForPickedPlace(s, { state, timezone: tz }));
+                  setPickedPoint(true);
+                }}
                 {...p}
               />
             )}

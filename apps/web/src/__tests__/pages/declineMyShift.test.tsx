@@ -146,7 +146,7 @@ describe('empty open shifts and empty availability', () => {
     const user = renderView();
     expect(await screen.findByTestId('no-open-shifts')).toHaveTextContent('No open shifts right now');
     await user.click(screen.getByRole('button', { name: /Notify me/ }));
-    await waitFor(() => expect(patchNotificationPreference).toHaveBeenCalledWith('scheduling', { inAppEnabled: true, emailEnabled: true }));
+    await waitFor(() => expect(patchNotificationPreference).toHaveBeenCalledWith('scheduling', { inAppEnabled: true, emailEnabled: true, pushEnabled: true }));
     expect(await screen.findByTestId('availability-prompt')).toHaveTextContent('Set your availability');
   });
 

@@ -126,7 +126,7 @@ describe('Open shifts for an associate (F500 G2)', () => {
     expect(await screen.findByRole('link', { name: /set my availability/i })).toHaveAttribute('href', '/scheduling?sheet=availability');
     expect(screen.queryByRole('button', { name: /refresh/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /notify me/i }));
-    await waitFor(() => expect(patchNotificationPreference).toHaveBeenCalledWith('scheduling', { inAppEnabled: true, emailEnabled: true }));
+    await waitFor(() => expect(patchNotificationPreference).toHaveBeenCalledWith('scheduling', { inAppEnabled: true, emailEnabled: true, pushEnabled: true }));
     expect(await screen.findByText('You’ll be told when a shift opens')).toBeInTheDocument();
   });
 });

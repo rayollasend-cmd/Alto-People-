@@ -65,6 +65,8 @@ export const QUEUE_REGISTRY: Readonly<Record<string, QueueDef>> = {
   'payroll-missed-paydays': { label: 'Paydays with no run', ownerDesk: 'payroll' },
   'pay-schedule-unassigned': { label: 'People on no pay schedule', ownerDesk: 'payroll' },
   'pay-schedule-moves': { label: 'Pay schedule moves starting this week', ownerDesk: 'payroll' },
+  // Carrier feeds (benefits back office) sit with payroll.
+  'carrier-answers': { label: 'Carrier answers', ownerDesk: 'payroll' },
   'fieldglass-setup': { label: 'Fieldglass setup', ownerDesk: 'ops' },
   'client-requests': { label: 'Client requests', ownerDesk: 'ops' },
   // One word, one meaning: the associate's unread notices are not "the inbox".

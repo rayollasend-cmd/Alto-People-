@@ -11,6 +11,7 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryError } from '@/components/ui/QueryError';
 
@@ -169,7 +170,23 @@ function EmployerDialog({ employer, onClose }: { employer: EmployerRow | null; o
           <Field label="EIN" hint="Nine digits, 12-3456789.">
             {(p) => <Input {...p} value={ein} onChange={(e) => setEin(e.target.value)} inputMode="numeric" placeholder="12-3456789" />}
           </Field>
-          <Field label="Address line 1">{(p) => <Input {...p} value={line1} onChange={(e) => setLine1(e.target.value)} />}</Field>
+          <Field label="Address line 1">
+            {(p) => (
+              <AddressAutocomplete
+                {...p}
+                value={line1}
+                onChange={setLine1}
+                onPick={(s) => {
+                  const f = pickedFields(s);
+                  setLine1(f.line1);
+                  if (f.line2) setLine2(f.line2);
+                  setCity(f.city);
+                  setState(f.state);
+                  setZip(f.zip);
+                }}
+              />
+            )}
+          </Field>
           <Field label="Address line 2">{(p) => <Input {...p} value={line2} onChange={(e) => setLine2(e.target.value)} />}</Field>
           <div className="grid grid-cols-3 gap-3">
             <Field label="City">{(p) => <Input {...p} value={city} onChange={(e) => setCity(e.target.value)} />}</Field>
@@ -183,7 +200,12 @@ function EmployerDialog({ employer, onClose }: { employer: EmployerRow | null; o
             <legend className="px-1 text-sm font-medium text-ink">Workers&rsquo; comp insurance</legend>
             <p className="text-xs text-ink-muted">California names the carrier on every new hire&rsquo;s pay notice.</p>
             <Field label="Carrier">{(p) => <Input {...p} value={wcCarrier} onChange={(e) => setWcCarrier(e.target.value)} maxLength={255} />}</Field>
-            <Field label="Carrier address">{(p) => <Input {...p} value={wcAddress} onChange={(e) => setWcAddress(e.target.value)} maxLength={500} />}</Field>
+            <Field label="Carrier address">
+              {(p) => (
+                // One line on the pay notice: a pick fills the whole address.
+                <AddressAutocomplete {...p} autoComplete="off" value={wcAddress} onChange={setWcAddress} onPick={(s) => setWcAddress(s.address)} maxLength={500} />
+              )}
+            </Field>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Carrier phone">{(p) => <Input {...p} value={wcPhone} onChange={(e) => setWcPhone(e.target.value)} type="tel" inputMode="tel" maxLength={32} />}</Field>
               <Field label="Policy number">{(p) => <Input {...p} value={wcPolicy} onChange={(e) => setWcPolicy(e.target.value)} maxLength={64} />}</Field>

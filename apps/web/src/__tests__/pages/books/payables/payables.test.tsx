@@ -35,7 +35,9 @@ const api = vi.hoisted(() => ({
 vi.mock('@/lib/books/payablesApi', async (orig) => ({ ...(await orig<typeof import('@/lib/books/payablesApi')>()), ...api }));
 const approvals = vi.hoisted(() => ({ decideApprovalRequest: vi.fn() }));
 vi.mock('@/lib/approvalRequestsApi', async (orig) => ({ ...(await orig<typeof import('@/lib/approvalRequestsApi')>()), ...approvals }));
+vi.mock('@/lib/geoApi', () => ({ suggestAddresses: vi.fn() }));
 
+import { suggestAddresses } from '@/lib/geoApi';
 import { BillsPage, billsSummary, legacyBillsParams } from '@/pages/books/payables/BillsPage';
 import { BillDetailPage } from '@/pages/books/payables/BillDetailPage';
 import { VendorDetailPage } from '@/pages/books/payables/VendorDetailPage';
@@ -365,6 +367,27 @@ describe('<BillDetailPage>', () => {
 });
 
 describe('<VendorDetailPage>', () => {
+  it('a new vendor’s address fills from a picked suggestion', async () => {
+    api.payablesOptions.mockResolvedValue(OPTIONS);
+    vi.mocked(suggestAddresses).mockResolvedValue({
+      available: true,
+      provider: 'mapbox',
+      outage: false,
+      results: [
+        { label: '200 Harbor Boulevard Suite 4', address: '200 Harbor Boulevard Suite 4, Destin, Florida 32541', line1: '200 Harbor Boulevard', line2: 'Suite 4', city: 'Destin', state: 'FL', zip: '32541', county: 'Okaloosa County', lat: 30.39, lng: -86.5, precision: 'exact' },
+      ],
+    });
+    const user = userEvent.setup();
+    renderPage(<VendorDetailPage />, '/books/vendors/new', '/books/vendors/:id');
+    await user.type(await screen.findByLabelText('Address'), '200 Harbor Suite 4');
+    await user.click(await screen.findByRole('option', { name: /200 Harbor Boulevard/ }));
+    expect(screen.getByLabelText('Address')).toHaveValue('200 Harbor Boulevard');
+    expect(screen.getByLabelText('Address line 2')).toHaveValue('Suite 4');
+    expect(screen.getByLabelText('City')).toHaveValue('Destin');
+    expect(screen.getByLabelText('State')).toHaveValue('FL');
+    expect(screen.getByLabelText('ZIP')).toHaveValue('32541');
+  });
+
   it('a bank change waits for a second person, and says so', async () => {
     api.getVendor.mockResolvedValue({
       vendor: vendor({ pendingBankChange: { approvalId: 'a9', accountLast4: '7766', requestedAt: '2026-10-18T12:00:00.000Z', requestedByName: 'Fin Person' } }),

@@ -328,6 +328,11 @@ const EnvSchema = z.object({
   // people on shift are removed from incidents past their five-year
   // retainUntil; the report itself stays. 0 turns the sweep off.
   ROBOT_INCIDENT_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // Carrier answers to 834 enrollment files (lib/carrierAcks): each tick
+  // reads new 999 / TA1 files from the inbound folder of every SFTP carrier
+  // that names one; a carrier without an inbound folder is skipped. Default
+  // hourly; 0 turns the pickup off (uploads on Carrier feeds still work).
+  CARRIER_ACK_PICKUP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
   // Kiosk maintenance cron: auto-closes forgotten clock-outs and purges
   // selfies past their retention window. Default 3600 (hourly); 0
   // disables. Thresholds (18h forgotten-shift, 90d selfie retention) are

@@ -17,7 +17,10 @@ import { Settings } from '@/pages/Settings';
 
 function route(path: string) {
   if (path.startsWith('/auth/me/notification-preferences'))
-    return { entries: [{ category: 'SHIFTS', label: 'Shifts', description: 'Shift changes', emailEnabled: true, inAppEnabled: true, mandatory: false }] };
+    return {
+      entries: [{ category: 'SHIFTS', label: 'Shifts', description: 'Shift changes', emailEnabled: true, inAppEnabled: true, pushEnabled: true, mandatory: false }],
+      push: { web: false, native: false, devices: 0 },
+    };
   if (path === '/delegations/mine') return { given: [], received: [], today: '2026-10-22' };
   if (path === '/delegations/candidates')
     return {
@@ -49,10 +52,11 @@ describe('Settings (F500 G5)', () => {
   it('says what the switches do, names the columns once, and puts Out of office behind a status line', async () => {
     vi.mocked(apiFetch).mockImplementation(async (p: string) => route(p) as never);
     renderAs('MANAGER', <Settings />, '/settings');
-    expect(screen.getByText('Choose where each type reaches you — in the bell or by email. Required notices can’t be turned off.')).toBeInTheDocument();
+    expect(screen.getByText('Choose where each type reaches you — in the bell, by email or by push. Required notices can’t be turned off.')).toBeInTheDocument();
     const cols = await screen.findByTestId('notif-columns');
     expect(cols).toHaveTextContent('Bell');
     expect(cols).toHaveTextContent('Email');
+    expect(cols).toHaveTextContent('Push');
     expect(await screen.findByTestId('ooo-status')).toHaveTextContent('No cover set.');
     expect(screen.queryByLabelText('Who covers')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Set cover…' }));

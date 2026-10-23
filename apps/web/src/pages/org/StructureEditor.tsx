@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { timezoneForState } from '@/lib/stateTimezone';
+import { timezoneForState, zoneForPickedPlace } from '@/lib/stateTimezone';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { toast } from 'sonner';
 import { ExternalLink, Trash2 } from 'lucide-react';
 import { SITE_TYPES, SUPPORTED_TIMEZONES, type SiteType } from '@alto-people/shared';
@@ -160,6 +161,8 @@ export function AddSiteDialog({ open, onClose, defaults }: { open: boolean; onCl
     city: '',
     state: '',
     zip: '',
+    /** The point a picked address came with. */
+    point: null as { lat: number; lng: number } | null,
   });
   const [f, setF] = useState(blank);
   useEffect(() => {
@@ -178,6 +181,7 @@ export function AddSiteDialog({ open, onClose, defaults }: { open: boolean; onCl
         city: f.city.trim() || null,
         state: f.state.trim() ? f.state.trim().toUpperCase() : null,
         zip: f.zip.trim() || null,
+        ...(f.point ? { latitude: f.point.lat, longitude: f.point.lng } : {}),
       }),
     onSuccess: (r) => {
       toast.success(`${r.site.name} added.`);
@@ -240,8 +244,28 @@ export function AddSiteDialog({ open, onClose, defaults }: { open: boolean; onCl
               </Select>
             )}
           </Field>
-          <Field label="Street address" className="sm:col-span-2">
-            {(p) => <Input {...p} value={f.addressLine1} maxLength={200} onChange={(e) => setF({ ...f, addressLine1: e.target.value })} />}
+          <Field label="Street address" className="sm:col-span-2" hint={f.point ? 'Placed on the map from this address; the time zone follows it.' : undefined}>
+            {(p) => (
+              <AddressAutocomplete
+                {...p}
+                value={f.addressLine1}
+                maxLength={200}
+                onChange={(v) => setF((cur) => ({ ...cur, addressLine1: v }))}
+                onPick={(s) => {
+                  // No line 2 here: a unit rides on the street line.
+                  const picked = pickedFields(s, { line2: false });
+                  setF((cur) => ({
+                    ...cur,
+                    addressLine1: picked.line1,
+                    city: picked.city,
+                    state: picked.state,
+                    zip: picked.zip,
+                    timezone: zoneForPickedPlace(s, cur),
+                    point: { lat: s.lat, lng: s.lng },
+                  }));
+                }}
+              />
+            )}
           </Field>
           <Field label="City">{(p) => <Input {...p} value={f.city} maxLength={120} onChange={(e) => setF({ ...f, city: e.target.value })} />}</Field>
           <div className="grid grid-cols-2 gap-3">
@@ -533,8 +557,11 @@ function StoreDetails({ node, onClose }: { node: OrgNode; onClose: () => void })
   const details = useQuery({ queryKey: ['org', 'structure', 'site', siteId], queryFn: () => getSiteDetails(siteId) });
   const site = details.data?.site;
   const [f, setF] = useState({ name: '', timezone: '', type: 'STORE' as SiteType, isActive: true, addressLine1: '', city: '', state: '', zip: '', regionId: '', orgUnitId: '' });
+  // A picked address brings its point (the clock-in geofence and the vans' map read it).
+  const [point, setPoint] = useState<{ lat: number; lng: number } | null>(null);
   useEffect(() => {
     if (!site) return;
+    setPoint(null);
     setF({
       name: site.name,
       timezone: site.timezone,
@@ -569,6 +596,7 @@ function StoreDetails({ node, onClose }: { node: OrgNode; onClose: () => void })
           city: f.city.trim() || null,
           state: f.state.trim() ? f.state.trim().toUpperCase() : null,
           zip: f.zip.trim() || null,
+          ...(point ? { latitude: point.lat, longitude: point.lng } : {}),
         });
       }
       const regionChanged = f.regionId !== (site?.regionId ?? '');
@@ -671,8 +699,21 @@ function StoreDetails({ node, onClose }: { node: OrgNode; onClose: () => void })
                       </Select>
                     )}
                   </Field>
-                  <Field label="Street address" className="sm:col-span-2">
-                    {(p) => <Input {...p} value={f.addressLine1} maxLength={200} onChange={(e) => setF({ ...f, addressLine1: e.target.value })} />}
+                  <Field label="Street address" className="sm:col-span-2" hint={point ? 'Placed on the map from this address; the time zone follows it.' : undefined}>
+                    {(p) => (
+                      <AddressAutocomplete
+                        {...p}
+                        value={f.addressLine1}
+                        maxLength={200}
+                        onChange={(v) => setF((cur) => ({ ...cur, addressLine1: v }))}
+                        onPick={(s) => {
+                          // No line 2 here: a unit rides on the street line.
+                          const picked = pickedFields(s, { line2: false });
+                          setF((cur) => ({ ...cur, addressLine1: picked.line1, city: picked.city, state: picked.state, zip: picked.zip, timezone: zoneForPickedPlace(s, cur) }));
+                          setPoint({ lat: s.lat, lng: s.lng });
+                        }}
+                      />
+                    )}
                   </Field>
                   <Field label="City">{(p) => <Input {...p} value={f.city} maxLength={120} onChange={(e) => setF({ ...f, city: e.target.value })} />}</Field>
                   <div className="grid grid-cols-2 gap-3">

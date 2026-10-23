@@ -184,9 +184,12 @@ const NewSite = z.object({
   city: z.string().trim().max(120).nullable().optional(),
   state: z.string().trim().length(2).toUpperCase().nullable().optional(),
   zip: z.string().trim().max(20).nullable().optional(),
+  /** The point a picked address came with — both or neither. */
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
   clientId: z.string().uuid().nullable().optional(),
   regionId: z.string().uuid().nullable().optional(),
-});
+}).refine((s) => (s.latitude == null) === (s.longitude == null), { message: 'Latitude and longitude go together.', path: ['latitude'] });
 
 structureRouter.post('/org/structure/sites', MANAGE, async (req, res) => {
   wholeOrgOnly(req.user!, 'add sites');
@@ -211,6 +214,8 @@ structureRouter.post('/org/structure/sites', MANAGE, async (req, res) => {
         city: input.city ?? null,
         state: input.state ?? null,
         zip: input.zip ?? null,
+        // Picked from a suggestion: the clock-in geofence and the vans' map start from it.
+        ...(input.latitude != null && input.longitude != null ? { latitude: input.latitude, longitude: input.longitude } : {}),
         ...(input.timezone ? { timezone: input.timezone } : {}),
       },
       select: { id: true, name: true, type: true, clientId: true },

@@ -53,6 +53,9 @@ export interface NewSiteInput {
   city?: string | null;
   state?: string | null;
   zip?: string | null;
+  /** The point a picked address came with (both or neither). */
+  latitude?: number | null;
+  longitude?: number | null;
   clientId?: string | null;
   regionId?: string | null;
 }

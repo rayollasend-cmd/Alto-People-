@@ -64,6 +64,8 @@ import {
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
+import { Field } from '@/components/ui/Field';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -647,13 +649,12 @@ function PersonalDrawer({ profile, onClose, onSaved }: { profile: SelfProfile; o
       setSaving(false);
     }
   };
+  // Field, not a wrapping label: a control inside the label inherited its
+  // letter-spacing, so typed names read "M a r i a" next to the address box.
   const field = (label: string, value: string, set: (v: string) => void, extra: { type?: string; inputMode?: 'tel' | 'numeric'; autoComplete?: string; maxLength?: number } = {}) => (
-    <div>
-      <Label>
-        {label}
-        <Input className="mt-1" value={value} onChange={(e) => set(e.target.value)} type={extra.type} inputMode={extra.inputMode} autoComplete={extra.autoComplete} maxLength={extra.maxLength} />
-      </Label>
-    </div>
+    <Field label={label}>
+      {(p) => <Input {...p} value={value} onChange={(e) => set(e.target.value)} type={extra.type} inputMode={extra.inputMode} autoComplete={extra.autoComplete} maxLength={extra.maxLength} />}
+    </Field>
   );
   return (
     <>
@@ -666,14 +667,30 @@ function PersonalDrawer({ profile, onClose, onSaved }: { profile: SelfProfile; o
           {field(t('me.fld.lastName'), lastName, setLastName, { autoComplete: 'family-name', maxLength: 100 })}
         </div>
         {field(t('me.fld.phone'), phone, setPhone, { type: 'tel', inputMode: 'tel', autoComplete: 'tel' })}
-        {field(t('me.fld.addr1'), addressLine1, setAddressLine1, { autoComplete: 'address-line1' })}
+        {/* Suggestions as they type; a pick fills city, state, ZIP and the unit on line 2. */}
+        <Field label={t('me.fld.addr1')}>
+          {(p) => (
+            <AddressAutocomplete
+              {...p}
+              value={addressLine1}
+              onChange={setAddressLine1}
+              onPick={(s) => {
+                const f = pickedFields(s);
+                setAddressLine1(f.line1);
+                if (f.line2) setAddressLine2(f.line2);
+                setCity(f.city);
+                setStateCode((US_STATES as readonly string[]).includes(f.state) ? f.state : '');
+                setZip(f.zip);
+              }}
+            />
+          )}
+        </Field>
         {field(t('me.fld.addr2'), addressLine2, setAddressLine2, { autoComplete: 'address-line2' })}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_7rem_8rem]">
           {field(t('me.fld.city'), city, setCity, { autoComplete: 'address-level2' })}
-          <div>
-            <Label>
-              {t('me.fld.state')}
-              <Select className="mt-1" value={stateCode} onChange={(e) => setStateCode(e.target.value)} autoComplete="address-level1">
+          <Field label={t('me.fld.state')}>
+            {(p) => (
+              <Select {...p} value={stateCode} onChange={(e) => setStateCode(e.target.value)} autoComplete="address-level1">
                 <option value="">—</option>
                 {US_STATES.map((st) => (
                   <option key={st} value={st}>
@@ -681,8 +698,8 @@ function PersonalDrawer({ profile, onClose, onSaved }: { profile: SelfProfile; o
                   </option>
                 ))}
               </Select>
-            </Label>
-          </div>
+            )}
+          </Field>
           {field(t('me.fld.zip'), zip, setZip, { inputMode: 'numeric', autoComplete: 'postal-code', maxLength: 10 })}
         </div>
         {/* Said where the home state is changed (it sat under the old form, about a "work state"). */}

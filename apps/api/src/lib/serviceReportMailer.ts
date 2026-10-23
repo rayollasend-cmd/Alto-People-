@@ -223,7 +223,12 @@ export async function runServiceReportMailSweep(
       },
     });
     emitLiveEvent(u.id, 'notification');
-    if (!muted) void trackNotificationWork(sendPushToUser(u.id, { title: subject, body: bodyText.split('\n')[0] ?? subject, url: linkUrl }));
+    // Push answers to its own switch (sendPushToUser checks it), not the email one.
+    void trackNotificationWork(
+      sendPushToUser(u.id, { title: subject, body: bodyText.split('\n')[0] ?? subject, url: linkUrl, category: CATEGORY }).catch((err: unknown) => {
+        console.warn('[service-report-mail] push failed:', err instanceof Error ? err.message : err);
+      }),
+    );
     sent += 1;
   }
   return { sent, skipped };

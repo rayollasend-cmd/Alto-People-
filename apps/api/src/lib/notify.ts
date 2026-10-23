@@ -50,7 +50,7 @@ import {
 import { prisma } from '../db.js';
 import { activeDelegationsFrom } from './delegations.js';
 import { EmailSuppressedError, anyPushConfigured, send, type SendAttachment } from './notifications.js';
-import { sendPushToUser } from './webPush.js';
+import { isPushMuted, sendPushToUser } from './webPush.js';
 import { holdIfDeferred } from './notificationDelivery.js';
 import { emitLiveEvent } from './liveEvents.js';
 import { sendWhatsAppForUser } from './whatsapp.js';
@@ -145,6 +145,19 @@ async function withBellUnmuted<T extends { id: string }>(
   if (muted.length === 0) return [...users];
   const off = new Set(muted.map((m) => m.userId));
   return users.filter((u) => !off.has(u.id));
+}
+
+/**
+ * The lock-screen copy of a notice, through the person's own Push switch:
+ * muted for this category → nothing (not even a held copy); quiet hours or
+ * the push digest → held for later; otherwise sent now. sendPushToUser
+ * checks the switch again (it is the funnel every push passes); asking
+ * first here keeps a muted push out of the held queue.
+ */
+async function pushFor(userId: string, opts: NotifyOpts, title: string): Promise<'muted' | 'held' | 'sent'> {
+  if (await isPushMuted(userId, opts.category)) return 'muted';
+  if (await holdIfDeferred(userId, 'PUSH', opts)) return 'held';
+  return sendPushToUser(userId, { title, body: opts.body, url: opts.linkUrl, category: opts.category });
 }
 
 const inFlight: Set<Promise<unknown>> = new Set();
@@ -360,10 +373,9 @@ export function notifyUserOn(
           out.IN_APP = 'sent';
         }
       }
-      // Email and push share the one outside-channel mute switch.
-      const outsideMuted = want.has('EMAIL') || want.has('PUSH') ? await isEmailMutedForCategory(userId, opts.category) : false;
+      // Email and push each answer to their own switch for the category.
       if (want.has('EMAIL')) {
-        if (outsideMuted) out.EMAIL = 'muted';
+        if (await isEmailMutedForCategory(userId, opts.category)) out.EMAIL = 'muted';
         else if (!u.email) out.EMAIL = 'failed';
         else if (await holdIfDeferred(userId, 'EMAIL', opts)) out.EMAIL = 'held';
         else {
@@ -372,13 +384,11 @@ export function notifyUserOn(
         }
       }
       if (want.has('PUSH')) {
-        if (outsideMuted) out.PUSH = 'muted';
-        else if (!anyPushConfigured()) out.PUSH = 'not_configured';
-        else if (await holdIfDeferred(userId, 'PUSH', opts)) out.PUSH = 'held';
-        else {
-          await sendPushToUser(userId, { title: opts.subject ?? getBrandingSync().orgName, body: opts.body, url: opts.linkUrl });
-          out.PUSH = 'sent';
-        }
+        out.PUSH = anyPushConfigured()
+          ? await pushFor(userId, opts, opts.subject ?? getBrandingSync().orgName)
+          : (await isPushMuted(userId, opts.category))
+            ? 'muted'
+            : 'not_configured';
       }
       return out;
     })().catch((err: unknown) => {
@@ -402,26 +412,22 @@ export function emailUserForCategory(
 ): Promise<void> {
   return track(
     (async () => {
-      const muted = await isEmailMutedForCategory(userId, opts.category);
-      if (muted) return;
-      // Email + push ride the same mute switch: "don't bother me about
-      // this category" means neither inbox nor lock screen. Each outside
-      // channel then answers to the person's quiet hours / digest choice.
+      // Email and push each answer to their own switch for the category
+      // (WhatsApp still rides the email one); then each outside channel
+      // answers to the person's quiet hours / digest choice.
+      const emailMuted = await isEmailMutedForCategory(userId, opts.category);
       await Promise.all([
         (async () => {
+          if (emailMuted) return;
           if (await holdIfDeferred(userId, 'EMAIL', opts)) return;
           await sendEmailNotification(userId, email, opts);
         })(),
+        pushFor(userId, opts, opts.subject ?? 'Alto People').catch((err: unknown) => {
+          console.warn('[notify] push failed:', err instanceof Error ? err.message : err);
+        }),
+        // WhatsApp, when they opted in — the email mute applies.
         (async () => {
-          if (await holdIfDeferred(userId, 'PUSH', opts)) return;
-          await sendPushToUser(userId, {
-            title: opts.subject ?? 'Alto People',
-            body: opts.body,
-            url: opts.linkUrl,
-          });
-        })(),
-        // WhatsApp, when they opted in — the same mute applies.
-        (async () => {
+          if (emailMuted) return;
           if (await holdIfDeferred(userId, 'WHATSAPP', opts)) return;
           await sendWhatsAppForUser(userId, opts);
         })().catch((err: unknown) => {
@@ -449,26 +455,29 @@ export function notifyUser(
 ): Promise<void> {
   return track(
     (async () => {
-      // A muted bucket means the bell too, not just the email.
-      if (await isInAppMutedForCategory(userId, opts.category)) return;
-      await client.notification.create({
-        data: {
-          channel: 'IN_APP',
-          status: 'SENT',
-          recipientUserId: userId,
-          subject: opts.subject,
-          body: opts.body,
-          category: opts.category ?? null,
-          linkUrl: opts.linkUrl ?? null,
-          byAgentId: opts.byAgentId ?? null,
-          sentAt: new Date(),
-        },
-      });
-      // Live nudge: any open tab refetches the bell (and badge) instantly.
-      emitLiveEvent(userId, 'notification');
-      // Email is best-effort and fired in parallel via its own track().
-      // Skip the send if the user has muted this category bucket; the
-      // IN_APP row above always lands so the bell still surfaces it.
+      // Bell, email and push are three switches per category (Settings ›
+      // Notifications); each one silences only its own channel. Turning the
+      // bell off used to drop the email and push too, so a Push column left
+      // on would have promised pushes that never came.
+      if (!(await isInAppMutedForCategory(userId, opts.category))) {
+        await client.notification.create({
+          data: {
+            channel: 'IN_APP',
+            status: 'SENT',
+            recipientUserId: userId,
+            subject: opts.subject,
+            body: opts.body,
+            category: opts.category ?? null,
+            linkUrl: opts.linkUrl ?? null,
+            byAgentId: opts.byAgentId ?? null,
+            sentAt: new Date(),
+          },
+        });
+        // Live nudge: any open tab refetches the bell (and badge) instantly.
+        emitLiveEvent(userId, 'notification');
+      }
+      // Email and push are best-effort and fired in parallel via their own
+      // track(), each behind its own switch for this category bucket.
       // quiet = the bell row above is the whole delivery.
       if (opts.quiet) return;
       const u = await prisma.user.findUnique({
@@ -476,6 +485,13 @@ export function notifyUser(
         select: { email: true, status: true },
       });
       if (u && u.email && u.status === 'ACTIVE') {
+        // Push has its own switch for the category (pushFor asks it), so a
+        // muted email no longer silences the lock screen, nor the reverse.
+        void track(
+          pushFor(userId, opts, opts.subject ?? 'Alto People').catch((err: unknown) => {
+            console.warn('[notify] push failed:', err instanceof Error ? err.message : err);
+          }),
+        );
         const muted = await isEmailMutedForCategory(userId, opts.category);
         if (!muted) {
           // Access pack: each outside channel answers to the person's quiet
@@ -486,17 +502,11 @@ export function notifyUser(
             (async () => {
               if (await holdIfDeferred(userId, 'EMAIL', opts)) return;
               await sendEmailNotification(userId, email, opts);
-            })(),
-          );
-          void track(
-            (async () => {
-              if (await holdIfDeferred(userId, 'PUSH', opts)) return;
-              await sendPushToUser(userId, {
-                title: opts.subject ?? 'Alto People',
-                body: opts.body,
-                url: opts.linkUrl,
-              });
-            })(),
+            })().catch((err: unknown) => {
+              // A fire-and-forget must never reject unhandled: a database blip
+              // here would otherwise take the API process down.
+              console.warn('[notify] email failed:', err instanceof Error ? err.message : err);
+            }),
           );
           void track(
             (async () => {

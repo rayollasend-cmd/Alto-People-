@@ -92,7 +92,7 @@ export async function buildDataExport(userId: string): Promise<ExportEntry[]> {
 
   const prefs = await prisma.notificationPreference.findMany({
     where: { userId },
-    select: { category: true, emailEnabled: true, updatedAt: true },
+    select: { category: true, emailEnabled: true, inAppEnabled: true, pushEnabled: true, updatedAt: true },
     orderBy: { category: 'asc' },
   });
   entries.push({
@@ -102,6 +102,8 @@ export async function buildDataExport(userId: string): Promise<ExportEntry[]> {
         prefs.map((p) => ({
           category: p.category,
           emailEnabled: p.emailEnabled,
+          inAppEnabled: p.inAppEnabled,
+          pushEnabled: p.pushEnabled,
           updatedAt: p.updatedAt.toISOString(),
         })),
         null,

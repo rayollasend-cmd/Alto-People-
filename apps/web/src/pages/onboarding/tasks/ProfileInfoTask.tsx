@@ -8,6 +8,7 @@ import { usePageHero } from '@/lib/pageTitle';
 import { getApplication, getProfile, submitProfile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { fmtSize } from '@/lib/format';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Select } from '@/components/ui/Select';
@@ -249,12 +250,20 @@ export function ProfileInfoTask() {
           required
           hint={!addressLine1 && (city || zip) ? t('ob.profile.addr1Hint') : undefined}
         >
-          <input
-            type="text"
+          {/* Suggestions as they type; a pick fills city, state, ZIP and the unit on line 2. */}
+          <AddressAutocomplete
             required
-            autoComplete="address-line1"
             value={addressLine1}
-            onChange={(e) => setAddressLine1(e.target.value)}
+            onChange={setAddressLine1}
+            onPick={(s) => {
+              const f = pickedFields(s);
+              dirtyRef.current = true;
+              setAddressLine1(f.line1);
+              if (f.line2) setAddressLine2(f.line2);
+              setCity(f.city);
+              if (STATES.includes(f.state)) setState(f.state);
+              setZip(f.zip);
+            }}
             className={inputCls}
           />
         </Field>

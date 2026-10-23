@@ -184,7 +184,7 @@ describe('native push', () => {
         { userId: user.id, platform: 'IOS', pushToken: 'ios-revoked', revokedAt: new Date() },
       ],
     });
-    await sendPushToUser(user.id, { title: 'Your shift moved', body: 'Now 9:00', url: '/me' });
+    await sendPushToUser(user.id, { title: 'Your shift moved', body: 'Now 9:00', url: '/me', category: 'shift_changed' });
     expect(calls.sort()).toEqual([
       ['android', 'fcm-token-1', ''],
       ['ios', 'ios-token-1', 'Your shift moved'],
@@ -203,7 +203,7 @@ describe('native push', () => {
     });
     const { user } = await createUser({ role: 'ASSOCIATE', email: mail('ana') });
     await prisma.nativeDevice.create({ data: { userId: user.id, platform: 'IOS', pushToken: 'ios-token-2' } });
-    await sendPushToUser(user.id, { title: 'x', body: 'y' });
+    await sendPushToUser(user.id, { title: 'x', body: 'y', category: null });
     expect(called).toBe(false);
   });
 });

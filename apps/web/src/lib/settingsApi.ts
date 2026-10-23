@@ -8,7 +8,7 @@ import type {
   MfaRegenerateResponse,
   MfaStatusResponse,
   NotificationCategory,
-  NotificationPreferenceEntry,
+  NotificationPreferencesResponse,
   RequestEmailChangeInput,
   SupportedTimezone,
   UpdateProfileInput,
@@ -66,19 +66,16 @@ export function updateTimezone(timezone: SupportedTimezone | null): Promise<void
   });
 }
 
-export function getNotificationPreferences(): Promise<{
-  entries: NotificationPreferenceEntry[];
-}> {
-  return apiFetch<{ entries: NotificationPreferenceEntry[] }>(
-    '/auth/me/notification-preferences',
-  );
+/** The switches per category, and where a push could reach this person now. */
+export function getNotificationPreferences(): Promise<NotificationPreferencesResponse> {
+  return apiFetch<NotificationPreferencesResponse>('/auth/me/notification-preferences');
 }
 
-/** Send only the channel being changed — an absent flag leaves the other
- *  one as it was, so the two toggles never overwrite each other. */
+/** Send only the channel being changed — an absent flag leaves the others
+ *  as they were, so the three toggles never overwrite each other. */
 export function patchNotificationPreference(
   category: NotificationCategory,
-  patch: { emailEnabled?: boolean; inAppEnabled?: boolean },
+  patch: { emailEnabled?: boolean; inAppEnabled?: boolean; pushEnabled?: boolean },
 ): Promise<void> {
   return apiFetch<void>('/auth/me/notification-preferences', {
     method: 'PATCH',

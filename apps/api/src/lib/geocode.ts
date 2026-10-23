@@ -42,6 +42,87 @@ export interface AddressSuggestion {
   lat: number;
   lng: number;
   precision: 'exact' | 'approximate';
+  /** The pieces an address form holds, when the provider names them. */
+  parts?: AddressParts;
+}
+
+/**
+ * A suggestion taken apart for a form: street line, city, state, ZIP.
+ *
+ * The rides picker stores the one-line address; every other address in the
+ * app is four fields (Associate, Site, Client, the W-9…), so a pick has to
+ * land in the right boxes rather than all in line 1.
+ */
+export interface AddressParts {
+  /** "382 Flamingo Drive" — number and street. */
+  line1: string | null;
+  /** The unit typed with the street ("Apt 2", "#2"), for line 2. */
+  line2: string | null;
+  city: string | null;
+  /** USPS two-letter code. */
+  state: string | null;
+  zip: string | null;
+  /** "Okaloosa County" — where a state straddles two time zones, the county decides. */
+  county: string | null;
+}
+
+/** A suggestion as searchAddresses hands it out: always taken apart. */
+export type PlacedSuggestion = AddressSuggestion & { parts: AddressParts };
+
+const STATE_CODES: Record<string, string> = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO', connecticut: 'CT',
+  delaware: 'DE', 'district of columbia': 'DC', florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID', illinois: 'IL',
+  indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
+  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS', missouri: 'MO', montana: 'MT',
+  nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+  'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA',
+  'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT',
+  vermont: 'VT', virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY',
+  'puerto rico': 'PR',
+};
+
+/** "FL", "fl", "Florida", "US-FL" → "FL"; anything else → null. */
+export function stateCode(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const t = s.trim().replace(/^US-/i, '');
+  if (/^[A-Za-z]{2}$/.test(t)) return t.toUpperCase();
+  return STATE_CODES[t.toLowerCase()] ?? null;
+}
+
+/** "32541", "32541-1234" kept; a ZIP the post office wouldn't recognise is dropped. */
+function zipOf(s: string | null | undefined): string | null {
+  const m = s?.trim().match(/^(\d{5})(?:-?(\d{4}))?$/);
+  return m ? (m[2] ? `${m[1]}-${m[2]}` : m[1]!) : null;
+}
+
+const clean = (s: string | null | undefined): string | null => (s && s.trim() ? s.trim() : null);
+
+/**
+ * The parts of a one-line US address — "382 Flamingo Drive, Destin,
+ * Florida 32541, United States" — for a provider row that didn't name
+ * them. Street first, the city next to last, state and ZIP last.
+ */
+export function parseAddressLine(address: string): AddressParts {
+  const segs = address
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((s, i, all) => !(i === all.length - 1 && /^(united states( of america)?|usa?)$/i.test(s)));
+  const empty: AddressParts = { line1: null, line2: null, city: null, state: null, zip: null, county: null };
+  if (segs.length === 0) return empty;
+  const last = segs[segs.length - 1]!;
+  const tail = last.match(/^(.*?)[\s,]*(\d{5}(?:-\d{4})?)?$/);
+  const st = stateCode(tail?.[1] ?? null);
+  const zip = zipOf(tail?.[2] ?? null);
+  const hasTail = segs.length > 1 && (st !== null || zip !== null);
+  const body = hasTail ? segs.slice(0, -1) : segs;
+  return {
+    ...empty,
+    line1: clean(body[0]),
+    city: body.length > 1 ? clean(body[body.length - 1]) : null,
+    state: hasTail ? st : null,
+    zip: hasTail ? zip : null,
+  };
 }
 
 const MISS_RETRY_MS = 7 * 86_400_000;
@@ -152,6 +233,10 @@ const mapboxReverse: ReverseLookup = async (p) => {
  * to. `accuracy` is the provider grading its own answer: rooftop and
  * parcel mean it found the building, anything else means it guessed along
  * a line and the rider should see a map.
+ *
+ * No 'poi' in `types`: Geocoding v6 dropped points of interest (they moved
+ * to the Search Box API) and documents only country, region, postcode,
+ * district, place, locality, neighborhood, street and address.
  */
 const mapboxSearch: SearchLookup = async (q, near) => {
   const params = new URLSearchParams({
@@ -159,7 +244,7 @@ const mapboxSearch: SearchLookup = async (q, near) => {
     limit: '6',
     country: 'us',
     autocomplete: 'true',
-    types: 'address,street,poi',
+    types: 'address,street',
     access_token: env.MAPBOX_TOKEN ?? '',
   });
   if (near) params.set('proximity', `${near.lng},${near.lat}`);
@@ -174,6 +259,15 @@ const mapboxSearch: SearchLookup = async (q, near) => {
         place_formatted?: string;
         feature_type?: string;
         coordinates?: { accuracy?: string };
+        context?: {
+          address?: { name?: string };
+          street?: { name?: string };
+          postcode?: { name?: string };
+          place?: { name?: string };
+          locality?: { name?: string };
+          district?: { name?: string };
+          region?: { name?: string; region_code?: string };
+        };
       };
     }>;
   };
@@ -183,6 +277,12 @@ const mapboxSearch: SearchLookup = async (q, near) => {
     const address = f.properties.full_address ?? f.properties.name;
     if (!address || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
     const acc = f.properties.coordinates?.accuracy;
+    const c = f.properties.context ?? {};
+    // An address or street feature's own name is its street line ("382
+    // Flamingo Drive"); the context names everything around it.
+    const line1 = f.properties.feature_type === 'address' || f.properties.feature_type === 'street'
+      ? (f.properties.name ?? c.address?.name ?? null)
+      : (c.address?.name ?? null);
     return [{
       label: f.properties.name ?? address,
       address,
@@ -191,6 +291,14 @@ const mapboxSearch: SearchLookup = async (q, near) => {
       precision: (f.properties.feature_type === 'address' && acc && EXACT.has(acc)
         ? 'exact'
         : 'approximate') as AddressSuggestion['precision'],
+      parts: {
+        line1: clean(line1),
+        line2: null,
+        city: clean(c.place?.name ?? c.locality?.name),
+        state: stateCode(c.region?.region_code ?? c.region?.name),
+        zip: zipOf(c.postcode?.name),
+        county: clean(c.district?.name),
+      },
     }];
   });
 };
@@ -244,6 +352,14 @@ const nominatimSearch: SearchLookup = (q, near) =>
         lng,
         // house_number present means it resolved to a building, not a road.
         precision: (a.house_number ? 'exact' : 'approximate') as AddressSuggestion['precision'],
+        parts: {
+          line1: clean(street),
+          line2: null,
+          city: clean(a.city ?? a.town ?? a.village ?? a.hamlet),
+          state: stateCode(a['ISO3166-2-lvl4'] ?? a.state),
+          zip: zipOf(a.postcode),
+          county: clean(a.county),
+        },
       }];
     });
   });
@@ -251,16 +367,23 @@ const nominatimSearch: SearchLookup = (q, near) =>
 let testLookup: Lookup | null = null;
 let testReverse: ReverseLookup | null = null;
 let testSearch: SearchLookup | null = null;
+let testTypeahead = true;
 
-/** Tests: answer lookups in-process (null restores the configured provider). */
+/**
+ * Tests: answer lookups in-process (null restores the configured provider).
+ * `typeahead: false` makes the fake behave like Nominatim — it answers the
+ * rides picker but may not be asked on every keystroke.
+ */
 export function setGeocoderForTests(
   lookup: Lookup | null,
   reverse: ReverseLookup | null = null,
   search: SearchLookup | null = null,
+  opts: { typeahead?: boolean } = {},
 ): void {
   testLookup = lookup;
   testReverse = reverse;
   testSearch = search;
+  testTypeahead = opts.typeahead ?? true;
   // A provider swap must never serve the previous provider's answers: the
   // in-process suggestion cache outlives truncateAll between tests.
   searchCache.clear();
@@ -271,9 +394,15 @@ interface Provider {
   lookup: Lookup | null;
   reverse: ReverseLookup | null;
   search: SearchLookup | null;
+  /**
+   * May be asked as someone types. Mapbox is built for it (and bills per
+   * request); Nominatim's usage policy forbids autocomplete outright, so it
+   * only ever answers the rides picker's single, hard-debounced search.
+   */
+  typeahead: boolean;
 }
-const NOMINATIM: Provider = { name: 'nominatim', lookup: nominatim, reverse: nominatimReverse, search: nominatimSearch };
-const MAPBOX: Provider = { name: 'mapbox', lookup: mapbox, reverse: mapboxReverse, search: mapboxSearch };
+const NOMINATIM: Provider = { name: 'nominatim', lookup: nominatim, reverse: nominatimReverse, search: nominatimSearch, typeahead: false };
+const MAPBOX: Provider = { name: 'mapbox', lookup: mapbox, reverse: mapboxReverse, search: mapboxSearch, typeahead: true };
 
 /**
  * The providers to try, in order. Mapbox when a token is set — the one
@@ -283,7 +412,7 @@ const MAPBOX: Provider = { name: 'mapbox', lookup: mapbox, reverse: mapboxRevers
  */
 function providers(): Provider[] {
   if (testLookup || testReverse || testSearch) {
-    return [{ name: 'test', lookup: testLookup, reverse: testReverse, search: testSearch }];
+    return [{ name: 'test', lookup: testLookup, reverse: testReverse, search: testSearch, typeahead: testTypeahead }];
   }
   const name = geocoderName();
   if (name === 'mapbox') return [MAPBOX, NOMINATIM];
@@ -295,6 +424,22 @@ function providers(): Provider[] {
 export function activeGeocoder(): { primary: 'mapbox' | 'nominatim' | 'off'; fallback: 'nominatim' | null } {
   const primary = geocoderName();
   return { primary, fallback: primary === 'mapbox' ? 'nominatim' : null };
+}
+
+/**
+ * Whether an address form can offer suggestions as someone types.
+ *
+ * Mapbox (MAPBOX_TOKEN set) can. Nominatim alone can't — not for want of
+ * an answer but by its usage policy — and 'off' has nothing to ask. Either
+ * way the form keeps its plain fields; this is what it is told.
+ */
+export function addressTypeahead():
+  | { available: true; provider: string }
+  | { available: false; reason: 'not_configured' | 'no_typeahead' } {
+  const chain = providers().filter((p) => p.search);
+  const live = chain.find((p) => p.typeahead);
+  if (live) return { available: true, provider: live.name };
+  return { available: false, reason: chain.length > 0 ? 'no_typeahead' : 'not_configured' };
 }
 
 /**
@@ -310,7 +455,7 @@ export function activeGeocoder(): { primary: 'mapbox' | 'nominatim' | 'off'; fal
  */
 const SEARCH_TTL_MS = 5 * 60_000;
 const SEARCH_CACHE_MAX = 300;
-const searchCache = new Map<string, { at: number; results: AddressSuggestion[] }>();
+const searchCache = new Map<string, { at: number; results: PlacedSuggestion[] }>();
 
 /**
  * "Apt 2", "#2", "Unit B" — taken off before the lookup, put back after.
@@ -344,34 +489,39 @@ export function splitUnit(query: string): { street: string; unit: string | null 
   return { street, unit: units.length ? units.join(' ') : null };
 }
 
-/** The unit back on the street line, where a driver reads for it. */
-function withUnit(s: AddressSuggestion, unit: string): AddressSuggestion {
+/** The unit back on the street line, where a driver reads for it — and on line 2, where a form keeps it. */
+function withUnit(s: PlacedSuggestion, unit: string): PlacedSuggestion {
   const label = `${s.label} ${unit}`;
   return {
     ...s,
     label,
     address: s.address.startsWith(s.label) ? label + s.address.slice(s.label.length) : `${unit}, ${s.address}`,
+    parts: { ...s.parts, line2: unit },
   };
 }
 
 export interface AddressSearch {
-  results: AddressSuggestion[];
+  results: PlacedSuggestion[];
   /** Every provider failed or was busy — "try again", not "no such address". */
   unavailable: boolean;
 }
 
-export async function searchAddresses(query: string, near?: GeoPoint | null): Promise<AddressSearch> {
+export async function searchAddresses(
+  query: string,
+  near?: GeoPoint | null,
+  opts: { typeaheadOnly?: boolean } = {},
+): Promise<AddressSearch> {
   const { street: q, unit } = splitUnit(query.trim());
   // Below four characters everything matches and nothing is useful — and
   // on Nominatim it would burn the one-per-second budget on noise.
   if (q.length < 4) return { results: [], unavailable: false };
-  const key = `${normalizeAddress(q)}|${near ? `${near.lat.toFixed(2)},${near.lng.toFixed(2)}` : ''}`;
+  const key = `${opts.typeaheadOnly ? 'ta|' : ''}${normalizeAddress(q)}|${near ? `${near.lat.toFixed(2)},${near.lng.toFixed(2)}` : ''}`;
   const hit = searchCache.get(key);
-  let results: AddressSuggestion[];
+  let results: PlacedSuggestion[];
   if (hit && Date.now() - hit.at < SEARCH_TTL_MS) {
     results = hit.results;
   } else {
-    const chain = providers().filter((p) => p.search);
+    const chain = providers().filter((p) => p.search && (!opts.typeaheadOnly || p.typeahead));
     if (chain.length === 0) return { results: [], unavailable: false };
     // First provider with an answer wins; an empty answer is still an
     // answer, but the next provider gets a chance to do better with it.
@@ -391,7 +541,7 @@ export async function searchAddresses(query: string, near?: GeoPoint | null): Pr
       }
     }
     if (found === null) return { results: [], unavailable: true };
-    results = found;
+    results = found.map((r) => ({ ...r, parts: r.parts ?? parseAddressLine(r.address) }));
     if (searchCache.size >= SEARCH_CACHE_MAX) {
       // Oldest insertion first — Map preserves it, and this runs rarely.
       const oldest = searchCache.keys().next().value;

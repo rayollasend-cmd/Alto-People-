@@ -1,27 +1,32 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, FileText, Plus, Send } from 'lucide-react';
+import { Download, FileText, Inbox, Plus, Send, Upload } from 'lucide-react';
 import {
   createCarrier,
   download834,
   linkCarrierPlans,
   list834,
+  listCarrierAcks,
   listCarriers,
   make834,
   saveCarrierConnection,
   send834,
   updateCarrier,
+  uploadCarrierAck,
   type Carrier,
+  type CarrierAck,
+  type CarrierAckError,
   type CarrierFeedHealth,
   type CarrierInput,
   type CarrierPlan,
   type Edi834File,
+  type FileAnswer,
 } from '@/lib/deductionsApi';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import { useUrlParam } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
-import { Badge } from '@/components/ui/Badge';
+import { Badge, type BadgeProps } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -41,9 +46,16 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
  * additions, ends and changes since the last one.
  *
  * The page leads with how each feed is doing — who is in it, what is
- * waiting for the next file, the last file and whether it was delivered —
- * and keeps the setup (IDs, the SFTP connection) in the carrier's edit
- * dialog, read before edit.
+ * waiting for the next file, the last file, whether it was delivered and
+ * what the carrier answered — and keeps the setup (IDs, the SFTP
+ * connection and its answers folder) in the carrier's edit dialog, read
+ * before edit.
+ *
+ * The carrier's answers (its 999 / TA1 acknowledgments) come in two ways:
+ * "Upload acknowledgment" here, or a pickup from the carrier's SFTP answers
+ * folder. Each file says where it stands — accepted, accepted with errors
+ * (each error in words, with the member it is about), rejected, waiting
+ * (in business days; after 3 the Inbox raises it) or no answer expected.
  */
 
 const LINE_LABEL: Record<string, string> = { HLT: 'Medical', DEN: 'Dental', VIS: 'Vision', LIF: 'Life', LTD: 'Long-term disability', STD: 'Short-term disability', AG: 'Accidental death', ADD: 'AD&D' };
@@ -67,6 +79,85 @@ export function deliveryResult(f: NonNullable<CarrierFeedHealth['lastFile']>): {
   return { label: 'Made, not sent', tone: 'warning' };
 }
 
+type AnswerTone = 'good' | 'warning' | 'alert' | 'info' | 'neutral';
+const ANSWER_BADGE: Record<AnswerTone, BadgeProps['variant']> = { good: 'success', warning: 'pending', alert: 'destructive', info: 'info', neutral: 'outline' };
+const days = (n: number) => `${n} business ${n === 1 ? 'day' : 'days'}`;
+
+/**
+ * Where a file stands with the carrier, in words: accepted, with errors (n),
+ * rejected, waiting (n business days, said under the badge so a phone never
+ * cuts it off), or no answer expected (and why).
+ */
+export function answerWords(answer: FileAnswer | undefined, errorCount = 0): { label: string; tone: AnswerTone; hint?: string } {
+  switch (answer?.state) {
+    case 'ACCEPTED':
+      return { label: 'Accepted', tone: 'good' };
+    case 'ACCEPTED_WITH_ERRORS':
+      return { label: `Accepted with errors (${errorCount})`, tone: 'warning' };
+    case 'PARTIAL':
+      return { label: `Partly accepted (${errorCount})`, tone: 'warning' };
+    case 'REJECTED':
+      return { label: 'Rejected', tone: 'alert' };
+    case 'WAITING': {
+      const n = answer.waitingDays ?? 0;
+      return { label: 'Waiting for an answer', tone: answer.overdue ? 'warning' : 'info', hint: n === 0 ? 'Sent today.' : `${days(n)} so far${answer.overdue ? ': more than 3, so it’s in the Inbox' : ''}.` };
+    }
+    case 'NOT_EXPECTED':
+      return { label: 'No answer expected', tone: 'neutral', hint: answer.why };
+    default:
+      return { label: '—', tone: 'neutral' };
+  }
+}
+
+/** One answer's result: as a file's, or "Couldn’t read" for a picked-up file that wasn't an acknowledgment. */
+export function ackResultWords(a: Pick<CarrierAck, 'status' | 'errorCount'>): { label: string; tone: AnswerTone } {
+  if (a.status === 'UNREADABLE') return { label: 'Couldn’t read', tone: 'neutral' };
+  return answerWords({ state: a.status }, a.errorCount);
+}
+
+const ACK_KIND: Record<CarrierAck['kind'], string> = { TA1: 'Envelope check (TA1)', '999': 'File check (999)', '997': 'File check (997)', UNKNOWN: 'Not an acknowledgment' };
+
+/** How the carrier's answers reach this page, said plainly — including when they can't. */
+export function pickupWords(c: Pick<Carrier, 'transport' | 'connection' | 'ackCheckedAt' | 'ackCheckError'>, sftpAvailable: boolean): { text: string; warn: boolean; setUp: boolean } {
+  if (c.transport !== 'SFTP') return { text: 'Upload the carrier’s answer (999 or TA1) when it sends one.', warn: false, setUp: false };
+  const dir = c.connection.inboundDir;
+  if (!dir) return { text: 'Answers aren’t picked up from the carrier’s SFTP: add its answers folder, or upload each answer here.', warn: false, setUp: true };
+  if (!sftpAvailable) return { text: `SFTP isn’t installed on this server, so answers can’t be picked up from ${dir}. Upload them here instead.`, warn: true, setUp: false };
+  if (c.ackCheckError) return { text: `The last look in ${dir} failed${c.ackCheckedAt ? ` (${fmtDateTime(c.ackCheckedAt)})` : ''}: ${c.ackCheckError}`, warn: true, setUp: false };
+  if (c.ackCheckedAt) return { text: `Answers are picked up from ${dir} · last looked ${fmtDateTime(c.ackCheckedAt)}.`, warn: false, setUp: false };
+  return { text: `Answers will be picked up from ${dir}; the first look hasn’t run yet.`, warn: false, setUp: false };
+}
+
+function AnswerBadge({ words, size }: { words: { label: string; tone: AnswerTone }; size?: 'sm' }) {
+  return (
+    <Badge size={size} variant={ANSWER_BADGE[words.tone]}>
+      {words.label}
+    </Badge>
+  );
+}
+
+/** An answer's errors in words, the member first when the segment points at one. */
+function AckErrorList({ errors, total, limit, onAll, large }: { errors: CarrierAckError[]; total: number; limit?: number; onAll?: () => void; large?: boolean }) {
+  const shown = limit ? errors.slice(0, limit) : errors;
+  return (
+    <ul className={large ? 'space-y-2 text-sm text-ink-muted' : 'space-y-1 text-xs text-ink-muted'}>
+      {shown.map((e, i) => (
+        <li key={`${e.code}-${i}`} className="break-words">
+          {e.member && <span className="font-medium text-ink">{`${e.member}: `}</span>}
+          {e.message}
+        </li>
+      ))}
+      {onAll && total > shown.length && (
+        <li>
+          <button type="button" className="text-gold underline-offset-2 hover:underline" onClick={onAll}>
+            {`All ${total} errors`}
+          </button>
+        </li>
+      )}
+    </ul>
+  );
+}
+
 export function CarrierFeeds() {
   const q = useQuery({ queryKey: ['carriers'], queryFn: listCarriers });
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -88,10 +179,10 @@ export function CarrierFeeds() {
       ) : (
         <div className="space-y-4">
           {carriers.length > 1 && <FeedsGrid carriers={carriers} selectedId={carrier.id} onPick={(id) => setPicked(id === carriers[0]?.id ? '' : id)} />}
-          <CarrierView carrier={carrier} allPlans={q.data?.plans ?? []} onEdit={(connection) => setEditing({ carrier, connection })} />
+          <CarrierView carrier={carrier} allPlans={q.data?.plans ?? []} sftpAvailable={q.data?.sftpAvailable !== false} onEdit={(connection) => setEditing({ carrier, connection })} />
         </div>
       )}
-      {editing && <CarrierDialog carrier={editing.carrier} focusConnection={!!editing.connection} onClose={() => setEditing(null)} />}
+      {editing && <CarrierDialog carrier={editing.carrier} focusConnection={!!editing.connection} sftpAvailable={q.data?.sftpAvailable !== false} onClose={() => setEditing(null)} />}
     </ListTemplate>
   );
 }
@@ -125,15 +216,39 @@ function FeedsGrid({ carriers, selectedId, onPick }: { carriers: Carrier[]; sele
             return <Badge size="sm" variant={r.tone === 'good' ? 'success' : r.tone === 'alert' ? 'destructive' : 'pending'}>{r.label}</Badge>;
           },
         },
+        {
+          key: 'answer',
+          header: 'Carrier’s answer',
+          accessor: (c) => c.health?.lastAnswer?.status ?? c.health?.lastFile?.answer?.state ?? '',
+          cell: (c) => {
+            const a = c.health?.lastAnswer;
+            if (a) return <AnswerBadge size="sm" words={answerWords({ state: a.status as FileAnswer['state'] }, a.errorCount)} />;
+            const waiting = c.health?.lastFile?.answer;
+            if (waiting?.state === 'WAITING') {
+              const w = answerWords(waiting);
+              return (
+                <div className="space-y-0.5">
+                  <AnswerBadge size="sm" words={{ ...w, label: 'Waiting' }} />
+                  <p className="text-xs text-ink-muted">{waiting.waitingDays ? `${days(waiting.waitingDays)}, no answer` : 'Sent today'}</p>
+                </div>
+              );
+            }
+            return <span className="text-ink-muted">—</span>;
+          },
+        },
       ]}
     />
   );
 }
 
-function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans: CarrierPlan[]; onEdit: (connection?: boolean) => void }) {
+function CarrierView({ carrier, allPlans, sftpAvailable, onEdit }: { carrier: Carrier; allPlans: CarrierPlan[]; sftpAvailable: boolean; onEdit: (connection?: boolean) => void }) {
   const qc = useQueryClient();
   const files = useQuery({ queryKey: ['carriers', 'files', carrier.id], queryFn: () => list834(carrier.id) });
+  const acks = useQuery({ queryKey: ['carriers', 'acks', carrier.id], queryFn: () => listCarrierAcks(carrier.id) });
   const [linking, setLinking] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [errorsOf, setErrorsOf] = useState<{ title: string; ack: CarrierAck } | null>(null);
+  const pickup = pickupWords(carrier, sftpAvailable);
   const [excluded, setExcluded] = useState<string[]>([]);
   const make = useMutation({
     mutationFn: (mode: 'FULL' | 'CHANGE') => make834(carrier.id, mode),
@@ -183,6 +298,17 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
         </CardHeader>
         <CardContent className="space-y-4">
           <FeedHealthStrip health={carrier.health} />
+          <p className={pickup.warn ? 'text-xs text-warning' : 'text-xs text-ink-muted'}>
+            {pickup.text}
+            {pickup.setUp && (
+              <>
+                {' '}
+                <button type="button" className="text-gold underline-offset-2 hover:underline" onClick={() => onEdit(true)}>
+                  Add the answers folder
+                </button>
+              </>
+            )}
+          </p>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium text-ink">Plans in this feed</p>
             <Button size="sm" variant="ghost" onClick={() => setLinking(true)}>Choose plans</Button>
@@ -217,9 +343,15 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Send log</CardTitle>
-          <CardDescription>Every enrollment file made for this carrier, with its control number.</CardDescription>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle>Send log</CardTitle>
+            <CardDescription>Every enrollment file made for this carrier, with its control number and the carrier’s answer.</CardDescription>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setUploading(true)}>
+            <Upload className="h-4 w-4" aria-hidden />
+            Upload acknowledgment
+          </Button>
         </CardHeader>
         <CardContent>
           {files.isError ? (
@@ -249,6 +381,26 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
                   ),
                 },
                 {
+                  key: 'answer',
+                  header: 'Carrier’s answer',
+                  // On a phone, under the file's name at full width: the errors need the room.
+                  cardMeta: true,
+                  accessor: (f) => f.answer?.state ?? '',
+                  cell: (f) => {
+                    const words = answerWords(f.answer, f.ack?.errorCount ?? 0);
+                    return (
+                      <div className="min-w-0 max-w-md space-y-1">
+                        <AnswerBadge words={words} />
+                        {words.hint && <p className="text-xs text-ink-muted">{words.hint}</p>}
+                        {f.ack?.kind === 'TA1' && f.ack.status !== 'REJECTED' && <p className="text-xs text-ink-muted">From the envelope check (TA1); the carrier’s file check (999) hasn’t come.</p>}
+                        {f.ack && f.ack.errors.length > 0 && (
+                          <AckErrorList errors={f.ack.errors} total={f.ack.errorCount} limit={2} onAll={() => setErrorsOf({ title: `Errors in control ${f.controlNumber}`, ack: f.ack! })} />
+                        )}
+                      </div>
+                    );
+                  },
+                },
+                {
                   key: 'actions',
                   header: '',
                   searchable: false,
@@ -275,20 +427,195 @@ function CarrierView({ carrier, allPlans, onEdit }: { carrier: Carrier; allPlans
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Answers from the carrier</CardTitle>
+          <CardDescription>Every acknowledgment received, uploaded or picked up, and the file it answers.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {acks.isError ? (
+            <QueryError what="answers" query={acks} />
+          ) : (
+            <DataGrid<CarrierAck>
+              id="carrier-acks"
+              caption="Carrier answers"
+              rows={acks.data?.acks}
+              loading={acks.isLoading}
+              rowKey={(a) => a.id}
+              noun={{ one: 'answer', many: 'answers' }}
+              search={false}
+              exportCsv={false}
+              columns={[
+                {
+                  key: 'received',
+                  header: 'Received',
+                  primary: true,
+                  sortable: true,
+                  accessor: (a) => a.receivedAt,
+                  cell: (a) => (
+                    <div>
+                      <p className="font-medium text-ink">{ACK_KIND[a.kind]}</p>
+                      <p className="text-xs text-ink-muted">{`${fmtDateTime(a.receivedAt)} · ${a.source === 'SFTP' ? 'picked up' : 'uploaded'}`}</p>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'file',
+                  header: 'Answers',
+                  cardMeta: true,
+                  accessor: (a) => a.controlNumber ?? '',
+                  cell: (a) =>
+                    a.file ? (
+                      <span>{`Control ${a.file.controlNumber} · ${a.file.mode === 'FULL' ? 'full file' : 'change file'} of ${fmtDate(a.file.createdAt)}`}</span>
+                    ) : a.status === 'UNREADABLE' ? (
+                      <span className="text-ink-muted">Not read, so not matched</span>
+                    ) : (
+                      <span className="text-warning">{`Didn’t match a file we sent${a.controlNumber !== null ? ` (control ${a.controlNumber})` : ''}`}</span>
+                    ),
+                },
+                {
+                  key: 'result',
+                  header: 'Result',
+                  cardMeta: true,
+                  accessor: (a) => a.status,
+                  cell: (a) => (
+                    <div className="min-w-0 max-w-md space-y-1">
+                      <AnswerBadge words={ackResultWords(a)} />
+                      {a.errors.length > 0 && <AckErrorList errors={a.errors} total={a.errorCount} limit={2} onAll={() => setErrorsOf({ title: a.file ? `Errors in control ${a.file.controlNumber}` : 'Errors in this answer', ack: a })} />}
+                    </div>
+                  ),
+                },
+              ]}
+              empty={{ icon: Inbox, title: 'No answers yet', description: carrier.transport === 'SFTP' && carrier.connection.inboundDir ? 'Answers from the carrier’s folder show here once picked up; you can also upload one.' : 'Upload the carrier’s 999 or TA1 when it sends one.' }}
+            />
+          )}
+        </CardContent>
+      </Card>
+
       {linking && <LinkPlansDialog carrier={carrier} allPlans={allPlans} onClose={() => setLinking(false)} />}
+      {uploading && <UploadAckDialog carrier={carrier} onClose={() => setUploading(false)} />}
+      {errorsOf && (
+        <Dialog open onOpenChange={(o) => !o && setErrorsOf(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{errorsOf.title}</DialogTitle>
+              <DialogDescription>{`${ACK_KIND[errorsOf.ack.kind]} received ${fmtDateTime(errorsOf.ack.receivedAt)}: ${ackResultWords(errorsOf.ack).label}.`}</DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[60vh] overflow-y-auto pr-1 text-sm">
+              <AckErrorList errors={errorsOf.ack.errors} total={errorsOf.ack.errorCount} large />
+              {errorsOf.ack.errorCount > errorsOf.ack.errors.length && <p className="mt-2 text-xs text-ink-muted">{`The first ${errorsOf.ack.errors.length} of ${errorsOf.ack.errorCount} errors.`}</p>}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setErrorsOf(null)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
 
+/** "Upload acknowledgment": a 999 or TA1 as a file or pasted, and what it answered, in words. */
+function UploadAckDialog({ carrier, onClose }: { carrier: Carrier; onClose: () => void }) {
+  const qc = useQueryClient();
+  const ref = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState('');
+  const [fileName, setFileName] = useState<string | null>(null);
+  const m = useMutation({
+    mutationFn: () => uploadCarrierAck(carrier.id, text),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['carriers'] });
+      if (r.duplicate) toast.success('This answer was already received; nothing changed.');
+      else toast.success(r.acks.length === 1 ? 'Answer received.' : `${r.acks.length} answers received.`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{`Upload ${carrier.name}’s acknowledgment`}</DialogTitle>
+          <DialogDescription>The 999 or TA1 the carrier sent back, as a file or pasted. It is matched to the file it answers by control number.</DialogDescription>
+        </DialogHeader>
+        {m.data ? (
+          <div className="space-y-3">
+            {m.data.duplicate && <p className="text-sm text-ink-muted">This exact answer was already received. It’s shown as it was kept.</p>}
+            <ul className="space-y-3">
+              {m.data.acks.map((a) => (
+                <li key={a.id} className="rounded-lg border border-line p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-ink">
+                      {a.file ? `Control ${a.file.controlNumber} · ${a.file.mode === 'FULL' ? 'full file' : 'change file'} of ${fmtDate(a.file.createdAt)}` : `Didn’t match a file we sent${a.controlNumber !== null ? ` (control ${a.controlNumber})` : ''}`}
+                    </p>
+                    <AnswerBadge words={ackResultWords(a)} />
+                  </div>
+                  <p className="text-xs text-ink-muted">{ACK_KIND[a.kind]}</p>
+                  {a.errors.length > 0 && (
+                    <div className="mt-2 max-h-48 overflow-y-auto">
+                      <AckErrorList errors={a.errors} total={a.errorCount} />
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <input
+              ref={ref}
+              type="file"
+              accept=".txt,.edi,.x12,.999,.ta1,.dat,text/plain"
+              className="sr-only"
+              aria-label="Choose the acknowledgment file"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  setFileName(file.name);
+                  void file.text().then(setText);
+                }
+                e.target.value = '';
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => ref.current?.click()}>
+                <Upload className="h-4 w-4" aria-hidden />
+                Choose a file
+              </Button>
+              {fileName && <span className="min-w-0 truncate text-sm text-ink-muted">{fileName}</span>}
+            </div>
+            <Field label="Or paste the text">
+              {(p) => <Textarea {...p} rows={8} className="font-mono text-xs" value={text} placeholder="ISA*00*…" onChange={(e) => { setText(e.target.value); setFileName(null); }} />}
+            </Field>
+          </div>
+        )}
+        <DialogFooter>
+          {m.data ? (
+            <Button onClick={onClose}>Done</Button>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button onClick={() => m.mutate()} loading={m.isPending} disabled={!text.trim()}>Read the answer</Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /**
- * How the feed is doing, from the send log. There is no carrier schedule in
- * the data, so no "due" date is invented; what's waiting is the real count
- * of people whose enrollment changed since the last file.
+ * How the feed is doing, from the send log and the carrier's answers. There
+ * is no carrier schedule in the data, so no "due" date is invented; what's
+ * waiting is the real count of people whose enrollment changed since the
+ * last file the carrier didn't reject.
  */
 function FeedHealthStrip({ health }: { health: CarrierFeedHealth | undefined }) {
   if (!health) return null;
   const f = health.lastFile;
   const result = f ? deliveryResult(f) : null;
+  const a = health.lastAnswer ?? null;
+  const answer = a ? answerWords({ state: a.status as FileAnswer['state'] }, a.errorCount) : null;
+  const lastWaiting = f?.answer?.state === 'WAITING' ? answerWords(f.answer) : null;
   return (
     <div className="space-y-2">
       <MetricStrip
@@ -316,18 +643,22 @@ function FeedHealthStrip({ health }: { health: CarrierFeedHealth | undefined }) 
           label="Delivery"
           value={result?.label ?? '—'}
           tone={result?.tone}
-          hint={f?.status === 'SENT' && f.sentAt ? `Sent ${fmtDate(f.sentAt)}` : f?.error ?? undefined}
+          hint={f?.status === 'SENT' && f.sentAt ? `Sent ${fmtDate(f.sentAt)}${lastWaiting ? ` · no answer, ${f.answer?.waitingDays ? days(f.answer.waitingDays) : 'sent today'}` : ''}` : f?.error ?? undefined}
           nothing={f ? undefined : 'Nothing sent yet'}
         />
+        <MetricCard
+          label="Carrier’s answer"
+          value={answer?.label ?? '—'}
+          tone={answer ? (answer.tone === 'alert' ? 'alert' : answer.tone === 'warning' ? 'warning' : answer.tone === 'good' ? 'good' : 'neutral') : undefined}
+          hint={a ? `${a.kind} · ${a.matched ? `control ${a.controlNumber}` : 'didn’t match a file we sent'} · ${fmtDate(a.receivedAt)}` : undefined}
+          nothing={a ? undefined : 'No answer received yet'}
+        />
       </MetricStrip>
-      {f && <p className="text-xs text-ink-muted">
-        A carrier’s acknowledgment (999 or TA1) isn’t received here, so delivery is as far as this goes — the carrier’s portal shows whether it accepted a file.
-      </p>}
     </div>
   );
 }
 
-function CarrierDialog({ carrier, focusConnection, onClose }: { carrier: Carrier | null; focusConnection: boolean; onClose: () => void }) {
+function CarrierDialog({ carrier, focusConnection, sftpAvailable = true, onClose }: { carrier: Carrier | null; focusConnection: boolean; sftpAvailable?: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const [f, setF] = useState<CarrierInput>(
     carrier
@@ -344,6 +675,7 @@ function CarrierDialog({ carrier, focusConnection, onClose }: { carrier: Carrier
     password: '',
     privateKey: '',
     remoteDir: carrier?.connection.remoteDir ?? '',
+    inboundDir: carrier?.connection.inboundDir ?? '',
   });
   const hasSecret = carrier?.connection.hasSecret ?? false;
   const connTouched =
@@ -354,6 +686,7 @@ function CarrierDialog({ carrier, focusConnection, onClose }: { carrier: Carrier
     conn.host !== (carrier?.connection.host ?? '') ||
     conn.username !== (carrier?.connection.username ?? '') ||
     conn.remoteDir !== (carrier?.connection.remoteDir ?? '') ||
+    conn.inboundDir !== (carrier?.connection.inboundDir ?? '') ||
     conn.port !== '22';
   const m = useMutation({
     mutationFn: async () => {
@@ -362,7 +695,7 @@ function CarrierDialog({ carrier, focusConnection, onClose }: { carrier: Carrier
         await saveCarrierConnection(
           saved.carrier.id,
           f.transport === 'SFTP'
-            ? { host: conn.host || undefined, port: Number(conn.port) || 22, username: conn.username || undefined, password: conn.password || undefined, privateKey: conn.privateKey || undefined, remoteDir: conn.remoteDir || undefined }
+            ? { host: conn.host || undefined, port: Number(conn.port) || 22, username: conn.username || undefined, password: conn.password || undefined, privateKey: conn.privateKey || undefined, remoteDir: conn.remoteDir || undefined, inboundDir: conn.inboundDir.trim() }
             : { baseUrl: conn.baseUrl || undefined, apiKey: conn.apiKey || undefined },
         );
       }
@@ -417,6 +750,7 @@ function CarrierDialog({ carrier, focusConnection, onClose }: { carrier: Carrier
                 {f.transport === 'SFTP' ? 'SFTP connection' : 'Secure upload'}
               </h3>
               <p className="text-xs text-ink-muted">{hasSecret ? 'Connected. Leave a secret blank to keep the one saved; secrets are stored encrypted.' : 'Fill this in to send files from here. Secrets are stored encrypted.'}</p>
+              {f.transport === 'SFTP' && !sftpAvailable && <p className="mt-1 text-xs text-warning">SFTP isn’t installed on this server yet: files can’t be sent or answers picked up over SFTP until it is. Download and upload by hand meanwhile.</p>}
             </div>
             {f.transport === 'SFTP' ? (
               <div className="grid gap-3 sm:grid-cols-2">
@@ -425,6 +759,7 @@ function CarrierDialog({ carrier, focusConnection, onClose }: { carrier: Carrier
                 <Field label="User name">{(p) => <Input {...p} autoComplete="off" value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} />}</Field>
                 <Field label="Password">{(p) => <Input {...p} type="password" autoComplete="new-password" value={conn.password} placeholder={hasSecret ? 'Saved' : ''} onChange={(e) => setConn({ ...conn, password: e.target.value })} />}</Field>
                 <Field label="Folder">{(p) => <Input {...p} value={conn.remoteDir} placeholder="/inbound" onChange={(e) => setConn({ ...conn, remoteDir: e.target.value })} />}</Field>
+                <Field label="Answers folder" hint="Where the carrier leaves its 999 and TA1 files; they’re picked up from here. Blank: upload them by hand.">{(p) => <Input {...p} value={conn.inboundDir} placeholder="/outbound" onChange={(e) => setConn({ ...conn, inboundDir: e.target.value })} />}</Field>
                 <Field label="Private key, instead of a password" className="sm:col-span-2">{(p) => <Textarea {...p} rows={3} value={conn.privateKey} placeholder={hasSecret ? 'Saved' : ''} onChange={(e) => setConn({ ...conn, privateKey: e.target.value })} />}</Field>
               </div>
             ) : (

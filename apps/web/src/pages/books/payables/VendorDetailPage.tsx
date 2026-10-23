@@ -15,6 +15,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -108,7 +109,20 @@ function VendorFields({ value, onChange, vendor }: { value: VendorForm; onChange
         <Field label="Name" required className="sm:col-span-2">{(p) => <Input value={value.name} maxLength={160} onChange={(e) => set({ name: e.target.value })} {...p} />}</Field>
         <Field label="Email">{(p) => <Input type="email" value={value.email} maxLength={200} onChange={(e) => set({ email: e.target.value })} {...p} />}</Field>
         <Field label="Phone">{(p) => <Input type="tel" value={value.phone} maxLength={40} onChange={(e) => set({ phone: e.target.value })} {...p} />}</Field>
-        <Field label="Address" className="sm:col-span-2">{(p) => <Input value={value.addressLine1} maxLength={200} onChange={(e) => set({ addressLine1: e.target.value })} {...p} />}</Field>
+        <Field label="Address" className="sm:col-span-2">
+          {(p) => (
+            <AddressAutocomplete
+              value={value.addressLine1}
+              maxLength={200}
+              onChange={(v) => set({ addressLine1: v })}
+              onPick={(s) => {
+                const f = pickedFields(s);
+                set({ addressLine1: f.line1, ...(f.line2 ? { addressLine2: f.line2 } : {}), city: f.city, state: f.state, zip: f.zip });
+              }}
+              {...p}
+            />
+          )}
+        </Field>
         <Field label="Address line 2" className="sm:col-span-2">{(p) => <Input value={value.addressLine2} maxLength={200} onChange={(e) => set({ addressLine2: e.target.value })} {...p} />}</Field>
         <Field label="City">{(p) => <Input value={value.city} maxLength={100} onChange={(e) => set({ city: e.target.value })} {...p} />}</Field>
         <div className="grid grid-cols-2 gap-3 [&>*]:min-w-0">

@@ -388,6 +388,8 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
         recipient: { userId: created.recipientUserId, phone: created.recipientPhone, email: created.recipientEmail },
         subject: created.subject,
         body: created.body,
+        // A push answers to the person's Push switch for this category.
+        category: created.category,
         audit: false,
       });
       const sent = await prisma.notification.update({

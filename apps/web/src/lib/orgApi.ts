@@ -591,6 +591,9 @@ export interface SiteCreateInput {
   city?: string | null;
   state?: string | null;
   zip?: string | null;
+  /** The point a picked address came with (both or neither); the geofence and the vans' map read it. */
+  latitude?: number | null;
+  longitude?: number | null;
   orgUnitId?: string | null;
 }
 

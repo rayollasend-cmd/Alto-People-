@@ -5773,7 +5773,7 @@ export const NOTIFICATION_CATEGORIES = [
     key: 'broadcast',
     label: 'Company announcements',
     description:
-      'Broadcast messages from HR. Muting this (or using the unsubscribe link in an announcement email) stops the emails; the in-app copy still arrives.',
+      'Broadcast messages from HR. The unsubscribe link in an announcement email turns off the email here; the bell and push keep their own switches.',
     mandatory: false,
     audience: 'staff',
   },
@@ -6041,9 +6041,10 @@ export const PatchNotificationPreferenceInputSchema = /* @__PURE__ */ (() => z
     // at a time, and an absent field leaves that channel as it was.
     emailEnabled: z.boolean().optional(),
     inAppEnabled: z.boolean().optional(),
+    pushEnabled: z.boolean().optional(),
   })
-  .refine((v) => v.emailEnabled !== undefined || v.inAppEnabled !== undefined, {
-    message: 'Provide emailEnabled, inAppEnabled, or both.',
+  .refine((v) => v.emailEnabled !== undefined || v.inAppEnabled !== undefined || v.pushEnabled !== undefined, {
+    message: 'Provide emailEnabled, inAppEnabled or pushEnabled.',
   }))();
 export type PatchNotificationPreferenceInput = z.infer<
   typeof PatchNotificationPreferenceInputSchema
@@ -6057,6 +6058,30 @@ export interface NotificationPreferenceEntry {
   emailEnabled: boolean;
   /** The bell. Muting this stops the in-app row being written at all. */
   inAppEnabled: boolean;
+  /** The lock screen (web push and the phone apps). Its own switch; it
+   *  used to follow emailEnabled. */
+  pushEnabled: boolean;
+}
+
+/**
+ * Where a push can actually reach this person right now — so Settings never
+ * implies a push will arrive when nothing would carry it. Counts only
+ * devices a configured transport can reach (a phone with the app and no
+ * APNs key behind it is not counted).
+ */
+export interface NotificationPushReach {
+  /** Web push (VAPID) is set up on the server, so a browser can subscribe. */
+  web: boolean;
+  /** APNs or FCM is set up, so the phone apps can receive. */
+  native: boolean;
+  /** This person's browsers and phones a push would go to. */
+  devices: number;
+}
+
+/** GET /auth/me/notification-preferences */
+export interface NotificationPreferencesResponse {
+  entries: NotificationPreferenceEntry[];
+  push: NotificationPushReach;
 }
 
 /* -------------------------------------------------------------------------- *

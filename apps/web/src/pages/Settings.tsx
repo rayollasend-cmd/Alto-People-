@@ -6,7 +6,7 @@ import { DevicesCard } from '@/components/settings/DevicesCard';
 import { PhonesCard } from '@/components/settings/PhonesCard';
 import { WhatsAppCard } from '@/components/WhatsAppCard';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon, type LucideIcon } from 'lucide-react';
+import { AtSign, Bell, BellOff, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -34,7 +34,8 @@ import {
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import { Link } from 'react-router-dom';
-import { getPushStatus, subscribeToPush, unsubscribeFromPush } from '@/lib/push';
+import { unsubscribeFromPush } from '@/lib/push';
+import { pushColumnNote, pushIsNativeHere, thisDevicePushStatus, turnOnPushHere, type DevicePushStatus } from '@/lib/thisDevicePush';
 import { fmtDate, fmtDateTime, fmtTimeZone } from '@/lib/format';
 import {
   listPasskeys,
@@ -50,6 +51,7 @@ import {
   TIMEZONE_LABELS,
   type EmailLanguage,
   type NotificationPreferenceEntry,
+  type NotificationPreferencesResponse,
   type SupportedTimezone,
 } from '@/lib/roles';
 import { Avatar } from '@/components/ui/Avatar';
@@ -1010,12 +1012,7 @@ function EmailCard() {
   );
 }
 
-type PushRowStatus =
-  | 'loading'
-  | 'unsupported'
-  | 'denied'
-  | 'subscribed'
-  | 'available';
+type Channel = 'inAppEnabled' | 'emailEnabled' | 'pushEnabled';
 
 function NotificationsCard() {
   const { t } = useI18n();
@@ -1023,18 +1020,19 @@ function NotificationsCard() {
   const term = useTerm();
   const { user } = useAuth();
   const isPortal = user?.role === 'CLIENT_PORTAL';
+  const native = pushIsNativeHere();
   // `${category}:${channel}` — each switch spins on its own, not both.
   const [pending, setPending] = useState<string | null>(null);
 
-  // Push subscription state for this device. Settings is the recovery
-  // path for users who dismissed the dashboard's one-time enable card
-  // (that dismissal writes a permanent localStorage flag).
-  const [pushStatus, setPushStatus] = useState<PushRowStatus>('loading');
+  // Push on THIS device (the browser's subscription, or the phone app's
+  // notifications). The Push column's header says when a push would not
+  // reach it, and turns it on from there.
+  const [pushStatus, setPushStatus] = useState<DevicePushStatus | 'loading'>('loading');
   const [pushBusy, setPushBusy] = useState(false);
 
   const pushStatusQuery = useQuery({
     queryKey: ['NotificationsCard', 'pushStatus'],
-    queryFn: () => getPushStatus(),
+    queryFn: () => thisDevicePushStatus(),
   });
   useEffect(() => {
     const s = pushStatusQuery.data;
@@ -1042,20 +1040,35 @@ function NotificationsCard() {
     setPushStatus(s);
   }, [pushStatusQuery.data]);
 
+  const { data: prefs, error: prefsError } = useQuery({
+    queryKey: ['notification-preferences'],
+    queryFn: () => getNotificationPreferences(),
+  });
+  const entries = prefs?.entries;
+  const reach = prefs?.push ?? null;
+  const error = prefsError
+    ? prefsError instanceof Error
+      ? prefsError.message
+      : t('settingsPage.notif.loadFailed')
+    : null;
+
   const onEnablePush = async () => {
     setPushBusy(true);
     try {
-      await subscribeToPush();
-      setPushStatus('subscribed');
-      toast.success(t('settingsPage.notif.pushOnToast'));
+      const next = await turnOnPushHere();
+      setPushStatus(next);
+      if (next === 'subscribed') toast.success(t('settingsPage.notif.pushOnToast'));
+      else if (next === 'denied') toast.error(t('settingsPage.notif.pushEnableFailed'));
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : t('settingsPage.notif.pushEnableFailed'),
       );
       // Permission may have just been denied — re-read the real state.
-      getPushStatus().then(setPushStatus);
+      thisDevicePushStatus().then(setPushStatus);
     } finally {
       setPushBusy(false);
+      // The device count behind the header note.
+      void queryClient.invalidateQueries({ queryKey: ['notification-preferences'] });
     }
   };
 
@@ -1067,61 +1080,40 @@ function NotificationsCard() {
       toast.success(t('settingsPage.notif.pushOffToast'));
     } finally {
       setPushBusy(false);
+      void queryClient.invalidateQueries({ queryKey: ['notification-preferences'] });
     }
   };
 
-  const { data: entries, error: entriesError } = useQuery({
-    queryKey: ['notification-preferences'],
-    queryFn: async () => (await getNotificationPreferences()).entries,
-  });
-  const error = entriesError
-    ? entriesError instanceof Error
-      ? entriesError.message
-      : t('settingsPage.notif.loadFailed')
-    : null;
-
   const setEntries = (
-    updater: (
-      prev: NotificationPreferenceEntry[] | null,
-    ) => NotificationPreferenceEntry[] | null,
+    updater: (prev: NotificationPreferenceEntry[]) => NotificationPreferenceEntry[],
   ) => {
-    queryClient.setQueryData<NotificationPreferenceEntry[]>(
+    queryClient.setQueryData<NotificationPreferencesResponse>(
       ['notification-preferences'],
-      (old) => updater(old ?? null) ?? old,
+      (old) => (old ? { ...old, entries: updater(old.entries) } : old),
     );
   };
 
   /**
-   * One handler, either channel. Muting a category used to stop the email
+   * One handler, any channel. Muting a category used to stop the email
    * and leave the bell ringing, so the switch turned off half of what it
-   * claimed to; the bell is now its own switch and its own server flag.
+   * claimed to; the bell, email and push are now a switch each and a
+   * server flag each.
    */
-  const onToggle = async (
-    entry: NotificationPreferenceEntry,
-    channel: 'emailEnabled' | 'inAppEnabled',
-  ) => {
+  const onToggle = async (entry: NotificationPreferenceEntry, channel: Channel) => {
     if (entry.mandatory) return;
     setPending(`${entry.category}:${channel}`);
     const next = !entry[channel];
     // Optimistic update — reverts on failure.
     setEntries((prev) =>
-      prev
-        ? prev.map((e) =>
-            e.category === entry.category ? { ...e, [channel]: next } : e,
-          )
-        : prev,
+      prev.map((e) => (e.category === entry.category ? { ...e, [channel]: next } : e)),
     );
     try {
       await patchNotificationPreference(entry.category, { [channel]: next });
     } catch (err) {
       setEntries((prev) =>
-        prev
-          ? prev.map((e) =>
-              e.category === entry.category
-                ? { ...e, [channel]: entry[channel] }
-                : e,
-            )
-          : prev,
+        prev.map((e) =>
+          e.category === entry.category ? { ...e, [channel]: entry[channel] } : e,
+        ),
       );
       toast.error(err instanceof ApiError ? err.message : t('settingsPage.updateFailed'));
     } finally {
@@ -1129,9 +1121,11 @@ function NotificationsCard() {
     }
   };
 
+  const note = pushColumnNote(pushStatus, reach, native);
+
   const channelToggle = (
     e: NotificationPreferenceEntry,
-    channel: 'emailEnabled' | 'inAppEnabled',
+    channel: Channel,
     label: string,
   ) => (
     <label
@@ -1145,6 +1139,7 @@ function NotificationsCard() {
         checked={e[channel]}
         disabled={e.mandatory || pending === `${e.category}:${channel}`}
         aria-label={t('settingsPage.notif.toggleAria', { channel: label, category: e.label })}
+        aria-describedby={channel === 'pushEnabled' && note ? 'push-column-note' : undefined}
         onChange={() => onToggle(e, channel)}
       />
       <div className="w-11 h-6 bg-navy-secondary peer-focus-visible:ring-2 peer-focus-visible:ring-gold rounded-full peer peer-checked:bg-gold/80 transition relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition peer-checked:after:translate-x-5" />
@@ -1173,10 +1168,41 @@ function NotificationsCard() {
           </div>
         ) : (
           <>
-          {/* One header row names the columns (it repeated over all 14 rows). */}
-          <div className="flex items-end justify-end gap-3 border-b border-navy-secondary pb-1.5 text-2xs font-medium uppercase tracking-wide text-silver" data-testid="notif-columns">
-            <span className="w-11 text-center">{t('settingsPage.notif.bell')}</span>
-            <span className="w-11 text-center">{t('settingsPage.notif.email')}</span>
+          {/* One header names the columns (it repeated over all 14 rows).
+              When a push would not reach this device, the header says so
+              above the Push column and turns it on from there. */}
+          <div className="border-b border-navy-secondary pb-1.5" data-testid="notif-columns">
+            {note && (
+              <div
+                id="push-column-note"
+                data-testid="push-column-note"
+                className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2"
+              >
+                <BellOff className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+                <p className="min-w-0 flex-1 basis-52 text-xs text-ink">
+                  {t(note.lead)}
+                  {note.tail ? ` ${t(note.tail)}` : ''}
+                </p>
+                {note.canTurnOn && (
+                  <Button size="sm" variant="secondary" onClick={onEnablePush} loading={pushBusy}>
+                    <Smartphone className="h-3.5 w-3.5" aria-hidden="true" />
+                    {t('settingsPage.notif.pushTurnOnHere')}
+                  </Button>
+                )}
+              </div>
+            )}
+            <div className="flex items-end justify-end gap-3 text-2xs font-medium uppercase tracking-wide text-silver">
+              <span className="w-11 text-center">{t('settingsPage.notif.bell')}</span>
+              <span className="w-11 text-center">{t('settingsPage.notif.email')}</span>
+              <span className="w-11 text-center" data-testid="push-column-head">
+                {t('settingsPage.notif.push')}
+                {note && (
+                  <span className="ml-0.5 text-warning" aria-hidden="true">
+                    •
+                  </span>
+                )}
+              </span>
+            </div>
           </div>
           <ul className="divide-y divide-navy-secondary">
             {entries.map((e) => (
@@ -1184,8 +1210,8 @@ function NotificationsCard() {
                 key={e.category}
                 className="flex items-start justify-between gap-4 py-3"
               >
-                <div className="flex-1">
-                  <div className="text-sm text-white flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-ink flex flex-wrap items-center gap-x-2">
                     {e.label}
                     {e.mandatory && (
                       <span className="inline-flex items-center gap-1 text-xs text-silver">
@@ -1199,6 +1225,7 @@ function NotificationsCard() {
                 <span className="flex shrink-0 items-start gap-3">
                   {channelToggle(e, 'inAppEnabled', t('settingsPage.notif.bell'))}
                   {channelToggle(e, 'emailEnabled', t('settingsPage.notif.email'))}
+                  {channelToggle(e, 'pushEnabled', t('settingsPage.notif.push'))}
                 </span>
               </li>
             ))}
@@ -1206,47 +1233,33 @@ function NotificationsCard() {
           </>
         )}
 
-        {/* Push — device-level, separate from the per-category email
-            toggles above. */}
-        <div className="mt-4 pt-4 border-t border-navy-secondary flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex-1 min-w-48">
-            <div className="text-sm text-white flex items-center gap-2">
-              <Smartphone className="h-3.5 w-3.5 text-gold" />
-              {t('settingsPage.notif.pushTitle')}
-              {pushStatus === 'subscribed' && (
+        {/* This device, when push reaches it: what arrives, and the way
+            to stop it here (a browser; the phone app's notifications are
+            the phone's own setting). */}
+        {pushStatus === 'subscribed' && entries && !note && (
+          <div className="mt-4 pt-4 border-t border-navy-secondary flex items-start justify-between gap-4 flex-wrap" data-testid="push-this-device">
+            <div className="flex-1 min-w-48">
+              <div className="text-sm text-ink flex items-center gap-2">
+                <Smartphone className="h-3.5 w-3.5 text-gold" />
+                {t('settingsPage.notif.pushTitle')}
                 <span className="inline-flex items-center gap-1 text-xs text-success">
                   <CheckCircle2 className="h-3 w-3" />
                   {t('settingsPage.notif.pushOn')}
                 </span>
-              )}
-            </div>
-            <div className="text-xs text-silver mt-0.5">
-              {pushStatus === 'subscribed'
-                ? isPortal
+              </div>
+              <div className="text-xs text-silver mt-0.5">
+                {isPortal
                   ? t('settingsPage.notif.pushSubscribedPortal')
-                  : t('settingsPage.notif.pushSubscribed')
-                : pushStatus === 'available'
-                  ? isPortal
-                    ? t('settingsPage.notif.pushAvailablePortal')
-                    : t('settingsPage.notif.pushAvailable')
-                  : pushStatus === 'denied'
-                    ? t('settingsPage.notif.pushDenied')
-                    : pushStatus === 'unsupported'
-                      ? t('settingsPage.notif.pushUnsupported')
-                      : t('settingsPage.notif.pushChecking')}
+                  : t('settingsPage.notif.pushSubscribed')}
+              </div>
             </div>
+            {!native && (
+              <Button variant="ghost" onClick={onDisablePush} loading={pushBusy}>
+                {t('settingsPage.notif.disable')}
+              </Button>
+            )}
           </div>
-          {pushStatus === 'subscribed' && (
-            <Button variant="ghost" onClick={onDisablePush} loading={pushBusy}>
-              {t('settingsPage.notif.disable')}
-            </Button>
-          )}
-          {pushStatus === 'available' && (
-            <Button onClick={onEnablePush} loading={pushBusy}>
-              {t('settingsPage.notif.enable')}
-            </Button>
-          )}
-        </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -213,6 +213,7 @@ import { retentionRouter } from './routes/retention.js';
 import { walletRouter } from './routes/wallet.js';
 import { transportRouter } from './routes/transport.js';
 import { transportOpsRouter } from './routes/transportOps.js';
+import { geoRouter } from './routes/geo.js';
 import { orgSettingsRouter } from './routes/orgSettings.js';
 import { tenancyRouter } from './routes/tenancy.js';
 import { requireModule } from './lib/tenantProfile.js';
@@ -895,6 +896,8 @@ export function createApp() {
   app.use('/', retentionRouter);
   // The credential wallet: mine, and the link I share (public by its token).
   app.use('/', walletRouter);
+  // Address suggestions for every address form (routes/geo.ts) — staff and associates, no module gate.
+  app.use('/geo', requireAuth, geoRouter);
   // Transportation — the Alto vans: rides, dispatch, drivers, the
   // director's command center. Gated per route (routes/transport.ts).
   // Brief 2-1b: an off module answers 404 on its whole mount.

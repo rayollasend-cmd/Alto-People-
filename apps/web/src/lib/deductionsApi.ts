@@ -182,7 +182,15 @@ export const downloadAdvicePdf = (id: string) => download(`/payroll/garnishment-
 /* ----- 401(k) ------------------------------------------------------------ */
 
 export type RecordkeeperId = 'GUIDELINE' | 'VESTWELL' | 'EMPOWER_SFTP' | 'GENERIC_SFTP';
-export interface ConnectionView { host: string | null; username: string | null; remoteDir: string | null; baseUrl: string | null; hasSecret: boolean }
+export interface ConnectionView {
+  host: string | null;
+  username: string | null;
+  remoteDir: string | null;
+  /** SFTP carriers: the folder the carrier puts its answers (999 / TA1) in; null = no pickup. */
+  inboundDir?: string | null;
+  baseUrl: string | null;
+  hasSecret: boolean;
+}
 
 export interface RetirementPlan {
   id: string;
@@ -275,23 +283,68 @@ export interface Carrier {
   active: boolean;
   plans: CarrierPlan[];
   lastFile: { createdAt: string; mode: string; status: string } | null;
+  /** The last look in the carrier's SFTP folder for its answers, and why it failed. */
+  ackCheckedAt?: string | null;
+  ackCheckError?: string | null;
   /** How the feed is doing (GET /benefit-carriers only). */
   health?: CarrierFeedHealth;
 }
+/** The carrier's answer to a file: a 999 / TA1 result, still waiting, or none expected here. */
+export type AckStatus = 'ACCEPTED' | 'ACCEPTED_WITH_ERRORS' | 'REJECTED' | 'PARTIAL';
+export interface FileAnswer {
+  state: AckStatus | 'WAITING' | 'NOT_EXPECTED';
+  /** WAITING: business days since the file went out; overdue after 3. */
+  waitingDays?: number;
+  overdue?: boolean;
+  /** NOT_EXPECTED: why. */
+  why?: string;
+}
+/** One error in a carrier's answer, in words; `member` is who the segment is about (company-wide callers only). */
+export interface CarrierAckError { message: string; code: string; segment?: string; position?: number; element?: string; badValue?: string; member?: string }
+export interface CarrierAck {
+  id: string;
+  kind: 'TA1' | '999' | '997' | 'UNKNOWN';
+  status: AckStatus | 'UNREADABLE';
+  controlNumber: number | null;
+  receivedAt: string;
+  source: 'UPLOAD' | 'SFTP';
+  fileId: string | null;
+  /** The file it answers; null when it didn't match a file we sent. */
+  file: { id: string; controlNumber: number; mode: string; createdAt: string } | null;
+  errorCount: number;
+  errors: CarrierAckError[];
+}
 /**
  * People the next full file carries, people whose enrollment changed since
- * the last file made (null before the first file), and the newest file with
- * its delivery result. Carriers' acknowledgments aren't received here.
+ * the last file made (null before the first file; a file the carrier
+ * rejected doesn't count), the newest file with its delivery and answer,
+ * and the carrier's newest answer.
  */
 export interface CarrierFeedHealth {
   people: number;
   changesWaiting: number | null;
-  lastFile: { createdAt: string; mode: string; status: string; controlNumber: number; memberCount: number; sentAt: string | null; error: string | null } | null;
+  lastFile: { createdAt: string; mode: string; status: string; controlNumber: number; memberCount: number; sentAt: string | null; error: string | null; answer?: FileAnswer } | null;
+  lastAnswer?: { kind: string; status: string; receivedAt: string; controlNumber: number | null; matched: boolean; errorCount: number; source: string } | null;
 }
 export type CarrierInput = Pick<Carrier, 'name' | 'receiverId' | 'receiverQualifier' | 'senderId' | 'senderQualifier' | 'sponsorTaxId' | 'policyNumber' | 'usageIndicator' | 'transport'> & { active?: boolean };
-export interface Edi834File { id: string; mode: 'FULL' | 'CHANGE'; controlNumber: number; memberCount: number; status: 'GENERATED' | 'SENT' | 'FAILED'; error: string | null; sentAt: string | null; createdAt: string }
+export interface Edi834File {
+  id: string;
+  mode: 'FULL' | 'CHANGE';
+  controlNumber: number;
+  memberCount: number;
+  status: 'GENERATED' | 'SENT' | 'FAILED';
+  error: string | null;
+  sentAt: string | null;
+  createdAt: string;
+  ackStatus?: AckStatus | null;
+  ackedAt?: string | null;
+  /** GET /benefit-carriers/:id/files: where the file stands with the carrier, and the answer that decided it. */
+  answer?: FileAnswer;
+  ack?: CarrierAck | null;
+}
 
-export const listCarriers = () => apiFetch<{ carriers: Carrier[]; plans: CarrierPlan[] }>('/benefit-carriers');
+/** `sftpAvailable` false: this server can't pick up answers from an SFTP folder (the SFTP library isn't installed). */
+export const listCarriers = () => apiFetch<{ carriers: Carrier[]; plans: CarrierPlan[]; sftpAvailable?: boolean }>('/benefit-carriers');
 export const createCarrier = (body: CarrierInput) => apiFetch<{ carrier: Carrier }>('/benefit-carriers', { method: 'POST', body });
 export const updateCarrier = (id: string, body: CarrierInput) => apiFetch<{ carrier: Carrier }>(`/benefit-carriers/${id}`, { method: 'PUT', body });
 export const saveCarrierConnection = (id: string, body: Record<string, unknown>) => apiFetch<{ connection: ConnectionView }>(`/benefit-carriers/${id}/connection`, { method: 'PUT', body });
@@ -301,3 +354,6 @@ export const make834 = (id: string, mode: 'FULL' | 'CHANGE') => apiFetch<{ file:
 export const list834 = (id: string) => apiFetch<{ files: Edi834File[] }>(`/benefit-carriers/${id}/files`);
 export const download834 = (id: string) => download(`/benefit-files/${id}/download`, 'enrollment-834.edi');
 export const send834 = (id: string) => apiFetch<{ file: Edi834File }>(`/benefit-files/${id}/send`, { method: 'POST' });
+/** Upload a carrier's 999 or TA1 (the text as the carrier gave it). `duplicate`: this exact answer was already received. */
+export const uploadCarrierAck = (id: string, content: string) => apiFetch<{ acks: CarrierAck[]; duplicate: boolean }>(`/benefit-carriers/${id}/acks`, { method: 'POST', body: { content } });
+export const listCarrierAcks = (id: string) => apiFetch<{ acks: CarrierAck[]; truncated: boolean }>(`/benefit-carriers/${id}/acks`);

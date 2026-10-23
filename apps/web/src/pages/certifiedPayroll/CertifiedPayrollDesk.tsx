@@ -12,6 +12,7 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Select } from '@/components/ui/Select';
@@ -174,7 +175,22 @@ function NewProjectDialog({ open, onOpenChange, onCreated }: { open: boolean; on
             </Select>
           </Field>
           <Field label="Street address" className="sm:col-span-2">
-            <Input value={form.addressLine1 ?? ''} onChange={(e) => set('addressLine1', e.target.value || null)} />
+            <AddressAutocomplete
+              value={form.addressLine1 ?? ''}
+              onChange={(v) => set('addressLine1', v || null)}
+              onPick={(s) => {
+                // One street line here: a unit rides on it. The county picks the wage determination.
+                const p = pickedFields(s, { line2: false });
+                setForm((f) => ({
+                  ...f,
+                  addressLine1: p.line1,
+                  city: p.city || null,
+                  county: s.county ? s.county.replace(/\s+(County|Parish)$/i, '') : f.county,
+                  state: p.state || null,
+                  zip: p.zip || null,
+                }));
+              }}
+            />
           </Field>
           <Field label="City">
             <Input value={form.city ?? ''} onChange={(e) => set('city', e.target.value || null)} />

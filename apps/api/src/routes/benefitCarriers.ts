@@ -19,15 +19,19 @@ import {
   type Edi834Member,
   type MaintenanceType,
 } from '../lib/edi834.js';
-import { deliverFile, DeliveryError, describeConnection, openConnection, sealConnection, type Transport } from '../lib/fileDelivery.js';
+import { deliverFile, deliveryDeps, DeliveryError, describeConnection, openConnection, sealConnection, type Transport } from '../lib/fileDelivery.js';
+import { AckParseError, type AckError } from '../lib/ediAck.js';
+import { answerFor, decidingAck, ingestAcknowledgment, type FileAnswer } from '../lib/carrierAcks.js';
 import type { SessionUser } from '../types/express.js';
 
 /**
  * Benefit carrier feeds: a carrier connection per insurer, the plans it
  * covers, and EDI 834 enrollment files (full and change) built from
  * benefit enrollments, covered dependents and life events — with a send
- * log. Gate: process:payroll (the benefits admin capability); downloading
- * an 834 (every member's SSN) is a bulk PII export.
+ * log, and the carrier's answer to each file (its 999 / TA1, uploaded here
+ * or picked up from its SFTP folder: lib/carrierAcks). Gate: process:payroll
+ * (the benefits admin capability); downloading an 834 (every member's SSN)
+ * is a bulk PII export.
  */
 export const benefitCarriersRouter = Router();
 const PROCESS = requireCapability('process:payroll');
@@ -63,6 +67,9 @@ function shapeCarrier(c: Prisma.BenefitCarrierGetPayload<object>, extra: { plans
     transport: c.transport,
     connection: describeConnection(c.connectionEnc),
     active: c.active,
+    /** The last look in the carrier's SFTP folder for its answers, and why it failed. */
+    ackCheckedAt: c.ackCheckedAt?.toISOString() ?? null,
+    ackCheckError: c.ackCheckError,
     plans: extra.plans ?? [],
     lastFile: extra.lastFile ? { createdAt: extra.lastFile.createdAt.toISOString(), mode: extra.lastFile.mode, status: extra.lastFile.status } : null,
   };
@@ -77,26 +84,36 @@ function shapeCarrier(c: Prisma.BenefitCarrierGetPayload<object>, extra: { plans
  *                     the last file made (what the next change file
  *                     carries); null before the first file — that's a full;
  *   lastFile        — the newest file: made when, full or changes, its
- *                     control number, how many members, and whether it was
- *                     delivered. Carriers' 999/TA1 acknowledgments aren't
- *                     received here, so delivery is as far as it goes.
+ *                     control number, how many members, whether it was
+ *                     delivered, and where it stands with the carrier;
+ *   lastAnswer      — the carrier's newest answer (999 or TA1), matched to
+ *                     a file or not.
+ * A file the carrier rejected is no baseline: the next change file carries
+ * its changes again.
  */
 export interface FeedHealth {
   people: number;
   changesWaiting: number | null;
-  lastFile: { createdAt: string; mode: string; status: string; controlNumber: number; memberCount: number; sentAt: string | null; error: string | null } | null;
+  lastFile: { createdAt: string; mode: string; status: string; controlNumber: number; memberCount: number; sentAt: string | null; error: string | null; answer: FileAnswer } | null;
+  lastAnswer: { kind: string; status: string; receivedAt: string; controlNumber: number | null; matched: boolean; errorCount: number; source: string } | null;
 }
+
+/** The last file made that the carrier didn't reject: what a change file is measured from. */
+const BASELINE_FILE: Prisma.Edi834FileWhereInput = { status: { in: ['GENERATED', 'SENT'] }, OR: [{ ackStatus: null }, { ackStatus: { not: 'REJECTED' } }] };
 
 export async function feedHealthFor(carrierIds: string[], now: Date = new Date()): Promise<Map<string, FeedHealth>> {
   const tenantId = tenantIdForWrite();
   const out = new Map<string, FeedHealth>();
   if (carrierIds.length === 0) return out;
   const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
-  const [plans, newest, baselines] = await Promise.all([
+  const [carriers, plans, newest, baselines, answers] = await Promise.all([
+    prisma.benefitCarrier.findMany({ where: { tenantId, id: { in: carrierIds } }, select: { id: true, transport: true } }),
     prisma.benefitsPlan.findMany({ where: { tenantId, carrierId: { in: carrierIds } }, select: { id: true, carrierId: true } }),
     prisma.edi834File.findMany({ where: { tenantId, carrierId: { in: carrierIds } }, orderBy: { createdAt: 'desc' }, distinct: ['carrierId'] }),
-    // The change file's own baseline: the last file made (a failed send still counts as made).
-    prisma.edi834File.findMany({ where: { tenantId, carrierId: { in: carrierIds }, status: { in: ['GENERATED', 'SENT'] } }, orderBy: { createdAt: 'desc' }, distinct: ['carrierId'], select: { carrierId: true, createdAt: true } }),
+    // The change file's own baseline: the last file made (a failed send still counts as made), less one the carrier rejected.
+    prisma.edi834File.findMany({ where: { tenantId, carrierId: { in: carrierIds }, ...BASELINE_FILE }, orderBy: { createdAt: 'desc' }, distinct: ['carrierId'], select: { carrierId: true, createdAt: true } }),
+    // The carrier's newest answer (a picked-up file that wasn't one doesn't count).
+    prisma.edi834Ack.findMany({ where: { tenantId, carrierId: { in: carrierIds }, status: { not: 'UNREADABLE' } }, orderBy: { receivedAt: 'desc' }, distinct: ['carrierId'] }),
   ]);
   const enrolled = plans.length
     ? await prisma.benefitsEnrollment.findMany({
@@ -115,10 +132,15 @@ export async function feedHealthFor(carrierIds: string[], now: Date = new Date()
         : [];
       changesWaiting = changed.length;
     }
+    const answer = answers.find((x) => x.carrierId === id);
+    const carrier = carriers.find((x) => x.id === id) ?? { transport: 'DOWNLOAD' };
     out.set(id, {
       people: new Set(enrolled.filter((e) => planIds.has(e.planId)).map((e) => e.associateId)).size,
       changesWaiting,
-      lastFile: f ? { createdAt: f.createdAt.toISOString(), mode: f.mode, status: f.status, controlNumber: f.controlNumber, memberCount: f.memberCount, sentAt: f.sentAt?.toISOString() ?? null, error: f.error } : null,
+      lastFile: f
+        ? { createdAt: f.createdAt.toISOString(), mode: f.mode, status: f.status, controlNumber: f.controlNumber, memberCount: f.memberCount, sentAt: f.sentAt?.toISOString() ?? null, error: f.error, answer: answerFor(f, carrier, !!answer, now) }
+        : null,
+      lastAnswer: answer ? { kind: answer.kind, status: answer.status, receivedAt: answer.receivedAt.toISOString(), controlNumber: answer.controlNumber, matched: !!answer.fileId, errorCount: answer.errorCount, source: answer.source } : null,
     });
   }
   return out;
@@ -132,15 +154,18 @@ benefitCarriersRouter.get('/benefit-carriers', PROCESS, async (_req, res) => {
     prisma.edi834File.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' }, distinct: ['carrierId'], select: { carrierId: true, createdAt: true, mode: true, status: true } }),
   ]);
   const health = await feedHealthFor(carriers.map((c) => c.id));
+  // Whether the SFTP pickup can run here at all — said plainly on the page when it can't.
+  const sftpAvailable = carriers.some((c) => c.transport === 'SFTP') ? (await deliveryDeps.loadSftp()) !== null : true;
   res.json({
     carriers: carriers.map((c) => ({
       ...shapeCarrier(c, {
         plans: plans.filter((p) => p.carrierId === c.id),
         lastFile: lastFiles.find((f) => f.carrierId === c.id) ?? null,
       }),
-      health: health.get(c.id) ?? { people: 0, changesWaiting: null, lastFile: null },
+      health: health.get(c.id) ?? { people: 0, changesWaiting: null, lastFile: null, lastAnswer: null },
     })),
     plans: plans.map((p) => ({ ...p, defaultLine: INSURANCE_LINE_BY_KIND[p.kind] ?? null })),
+    sftpAvailable,
   });
 });
 
@@ -191,11 +216,18 @@ benefitCarriersRouter.put('/benefit-carriers/:id/connection', PROCESS, async (re
       password: z.string().max(500).optional(),
       privateKey: z.string().max(10_000).optional(),
       remoteDir: z.string().max(300).optional(),
+      /** The carrier's folder for its answers; '' clears it (and stops the pickup). */
+      inboundDir: z.string().trim().max(300).optional(),
     })
     .parse(req.body ?? {});
-  const next = { ...openConnection(c.connectionEnc), ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined && v !== '')) };
+  const { inboundDir, ...rest } = input;
+  const next = { ...openConnection(c.connectionEnc), ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined && v !== '')) };
+  if (inboundDir !== undefined) {
+    if (inboundDir) next.inboundDir = inboundDir;
+    else delete next.inboundDir;
+  }
   const updated = await prisma.benefitCarrier.update({ where: { id: c.id }, data: { connectionEnc: sealConnection(next) } });
-  audit(req, 'benefits.carrier_connection_saved', 'BenefitCarrier', c.id, { host: next.host ?? null });
+  audit(req, 'benefits.carrier_connection_saved', 'BenefitCarrier', c.id, { host: next.host ?? null, inboundDir: next.inboundDir ?? null });
   res.json({ connection: describeConnection(updated.connectionEnc) });
 });
 
@@ -355,7 +387,50 @@ export async function membersFor(carrierId: string, mode: 'FULL' | 'CHANGE', sin
 }
 
 function shapeFile(f: Prisma.Edi834FileGetPayload<object>) {
-  return { id: f.id, mode: f.mode, controlNumber: f.controlNumber, memberCount: f.memberCount, status: f.status, error: f.error, sentAt: f.sentAt?.toISOString() ?? null, createdAt: f.createdAt.toISOString() };
+  return {
+    id: f.id,
+    mode: f.mode,
+    controlNumber: f.controlNumber,
+    memberCount: f.memberCount,
+    status: f.status,
+    error: f.error,
+    sentAt: f.sentAt?.toISOString() ?? null,
+    createdAt: f.createdAt.toISOString(),
+    ackStatus: f.ackStatus,
+    ackedAt: f.ackedAt?.toISOString() ?? null,
+  };
+}
+
+/* ----- the carrier's answers (999 / TA1) ------------------------------- */
+
+type AckRow = Prisma.Edi834AckGetPayload<object>;
+const ACK_FILE = { select: { id: true, controlNumber: true, mode: true, createdAt: true } } as const;
+type AckWithFile = Prisma.Edi834AckGetPayload<{ include: { file: typeof ACK_FILE } }>;
+
+/** An answer's errors as a page shows them: the member's name only to a company-wide caller. */
+function errorsView(errors: Prisma.JsonValue, showMembers: boolean, limit = 100): AckError[] {
+  const list = Array.isArray(errors) ? (errors as unknown as AckError[]) : [];
+  return list.slice(0, limit).map((e) => {
+    if (showMembers || !e.member) return e;
+    const { member: _member, ...rest } = e;
+    return rest;
+  });
+}
+
+function shapeAck(a: AckRow | AckWithFile, showMembers: boolean) {
+  const file = 'file' in a ? a.file : undefined;
+  return {
+    id: a.id,
+    kind: a.kind,
+    status: a.status,
+    controlNumber: a.controlNumber,
+    receivedAt: a.receivedAt.toISOString(),
+    source: a.source,
+    fileId: a.fileId,
+    file: file ? { id: file.id, controlNumber: file.controlNumber, mode: file.mode, createdAt: file.createdAt.toISOString() } : null,
+    errorCount: a.errorCount,
+    errors: errorsView(a.errors, showMembers),
+  };
 }
 
 benefitCarriersRouter.post('/benefit-carriers/:id/files', PROCESS, async (req, res) => {
@@ -364,7 +439,7 @@ benefitCarriersRouter.post('/benefit-carriers/:id/files', PROCESS, async (req, r
   const { mode } = z.object({ mode: z.enum(['FULL', 'CHANGE']) }).parse(req.body ?? {});
   const tenantId = tenantIdForWrite();
   const sponsor = await prisma.employerOrganization.findFirst({ where: { tenantId, isDefault: true } });
-  const last = await prisma.edi834File.findFirst({ where: { carrierId: c.id, status: { in: ['GENERATED', 'SENT'] } }, orderBy: { createdAt: 'desc' } });
+  const last = await prisma.edi834File.findFirst({ where: { tenantId, carrierId: c.id, ...BASELINE_FILE }, orderBy: { createdAt: 'desc' } });
   const now = new Date();
   const { members, excluded } = await membersFor(c.id, mode, last?.createdAt ?? null, now);
   if (!members.length) {
@@ -389,8 +464,55 @@ benefitCarriersRouter.post('/benefit-carriers/:id/files', PROCESS, async (req, r
 
 benefitCarriersRouter.get('/benefit-carriers/:id/files', PROCESS, async (req, res) => {
   const c = await carrierOr404(String(req.params.id));
-  const files = await prisma.edi834File.findMany({ where: { carrierId: c.id, tenantId: tenantIdForWrite() }, orderBy: { createdAt: 'desc' }, take: 200 });
-  res.json({ files: files.map(shapeFile), truncated: files.length === 200 });
+  const tenantId = tenantIdForWrite();
+  const files = await prisma.edi834File.findMany({ where: { carrierId: c.id, tenantId }, orderBy: { createdAt: 'desc' }, take: 200 });
+  const [acks, answered] = await Promise.all([
+    files.length ? prisma.edi834Ack.findMany({ where: { tenantId, fileId: { in: files.map((f) => f.id) }, status: { not: 'UNREADABLE' } } }) : Promise.resolve([] as AckRow[]),
+    prisma.edi834Ack.count({ where: { tenantId, carrierId: c.id, status: { not: 'UNREADABLE' } } }),
+  ]);
+  const showMembers = !isInternallyScoped(req.user!);
+  const now = new Date();
+  res.json({
+    files: files.map((f) => {
+      const deciding = decidingAck(acks.filter((a) => a.fileId === f.id));
+      return { ...shapeFile(f), answer: answerFor(f, c, answered > 0, now), ack: deciding ? shapeAck(deciding, showMembers) : null };
+    }),
+    truncated: files.length === 200,
+  });
+});
+
+/**
+ * Upload a carrier's answer (999 or TA1 text, as the carrier or its portal
+ * gave it). Each acknowledgment in it is kept and matched to its file by
+ * control number; one that matches nothing is kept and listed as such.
+ * The same file twice is not kept twice.
+ */
+benefitCarriersRouter.post('/benefit-carriers/:id/acks', PROCESS, async (req, res) => {
+  refuseNarrowed(req.user!);
+  const c = await carrierOr404(String(req.params.id));
+  const { content } = z.object({ content: z.string().min(1, 'The file is empty.').max(1_000_000) }).parse(req.body ?? {});
+  let result: Awaited<ReturnType<typeof ingestAcknowledgment>>;
+  try {
+    result = await ingestAcknowledgment(c, content, { source: 'UPLOAD', receivedById: req.user!.id });
+  } catch (err) {
+    if (err instanceof AckParseError) throw new HttpError(400, 'not_an_acknowledgment', err.message);
+    throw err;
+  }
+  const rows = await prisma.edi834Ack.findMany({ where: { tenantId: tenantIdForWrite(), id: { in: result.acks.map((a) => a.id) } }, include: { file: ACK_FILE } });
+  const order = result.acks.map((a) => a.id);
+  rows.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  if (!result.duplicate) {
+    for (const a of result.acks) audit(req, 'benefits.carrier_ack_received', 'Edi834Ack', a.id, { carrierId: c.id, source: 'UPLOAD', kind: a.kind, status: a.status, controlNumber: a.controlNumber, matched: !!a.fileId });
+  }
+  res.status(result.duplicate ? 200 : 201).json({ acks: rows.map((r) => shapeAck(r, true)), duplicate: result.duplicate });
+});
+
+/** Every answer from this carrier, newest first, matched or not (and any picked-up file that wasn't one). */
+benefitCarriersRouter.get('/benefit-carriers/:id/acks', PROCESS, async (req, res) => {
+  const c = await carrierOr404(String(req.params.id));
+  const rows = await prisma.edi834Ack.findMany({ where: { tenantId: tenantIdForWrite(), carrierId: c.id }, include: { file: ACK_FILE }, orderBy: { receivedAt: 'desc' }, take: 200 });
+  const showMembers = !isInternallyScoped(req.user!);
+  res.json({ acks: rows.map((r) => shapeAck(r, showMembers)), truncated: rows.length === 200 });
 });
 
 async function fileOr404(id: string) {

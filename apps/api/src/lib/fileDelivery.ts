@@ -29,6 +29,8 @@ export interface ConnectionSettings {
   password?: string;
   privateKey?: string;
   remoteDir?: string;
+  /** SFTP: the carrier's folder for its answers (999 / TA1); unset = no pickup (lib/carrierAcks). */
+  inboundDir?: string;
 }
 
 export function sealConnection(c: ConnectionSettings): string {
@@ -45,12 +47,13 @@ export function openConnection(enc: string | null | undefined): ConnectionSettin
 }
 
 /** What a page may show: where it goes, never the secret. */
-export function describeConnection(enc: string | null | undefined): { host: string | null; username: string | null; remoteDir: string | null; baseUrl: string | null; hasSecret: boolean } {
+export function describeConnection(enc: string | null | undefined): { host: string | null; username: string | null; remoteDir: string | null; inboundDir: string | null; baseUrl: string | null; hasSecret: boolean } {
   const c = openConnection(enc);
   return {
     host: c.host ?? null,
     username: c.username ?? null,
     remoteDir: c.remoteDir ?? null,
+    inboundDir: c.inboundDir ?? null,
     baseUrl: c.baseUrl ?? null,
     hasSecret: !!(c.password || c.privateKey || c.apiKey),
   };
@@ -63,9 +66,14 @@ export class DeliveryError extends Error {
   }
 }
 
-interface SftpClient {
+/** The part of ssh2-sftp-client this file and lib/carrierAcks use. */
+export interface SftpClient {
   connect(o: Record<string, unknown>): Promise<unknown>;
   put(input: Buffer, remotePath: string): Promise<unknown>;
+  /** A folder's entries: type '-' is a file. */
+  list(remoteDir: string): Promise<Array<{ type: string; name: string; size: number; modifyTime: number }>>;
+  /** A file's bytes. */
+  get(remotePath: string): Promise<Buffer | string | NodeJS.WritableStream>;
   end(): Promise<unknown>;
 }
 

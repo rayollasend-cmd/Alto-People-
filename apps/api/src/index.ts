@@ -32,6 +32,7 @@ import { startClientNpsCron } from './lib/clientNps.js';
 import { startMarketWageCron } from './lib/marketWages.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
 import { startRobotIncidentRetentionCron } from './lib/robotIncidentRetention.js';
+import { startCarrierAckPickupCron } from './lib/carrierAcks.js';
 import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
 import { startCaseSlaCron } from './lib/hrCaseSla.js';
 import { startPolicyCampaignCron } from './lib/policyCampaigns.js';
@@ -164,6 +165,8 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startKioskMaintenanceCron();
   // Robot incident evidence past its five-year retention is removed daily (the report stays).
   startRobotIncidentRetentionCron();
+  // Carriers' 999 / TA1 answers to enrollment files, from each SFTP carrier's inbound folder (none set = nothing read).
+  startCarrierAckPickupCron();
   startDocumentMaintenanceCron();
   startStatementDunningCron();
   startDailyPayCron();

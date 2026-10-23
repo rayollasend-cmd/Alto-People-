@@ -5,6 +5,7 @@ import type { ClientStatus, ClientSummary, ClientUpdateInput } from '@alto-peopl
 import { ApiError } from '@/lib/api';
 import { updateClient } from '@/lib/clientsApi';
 import { statusLabel, StatusBadge } from '@/lib/status';
+import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
@@ -77,11 +78,17 @@ export function ClientBasicsCard({
 }) {
   const [form, setForm] = useState<Form>(() => formOf(client));
   const [saving, setSaving] = useState(false);
+  // The state a picked billing address is in, when it isn't the client's
+  // state on file — that one sets tax and labor rules and changes in Settings.
+  const [otherState, setOtherState] = useState<string | null>(null);
   const initial = formOf(client);
 
   // A fresh record (a save elsewhere, another client's URL) resets the form while it is closed.
   useEffect(() => {
-    if (!editing) setForm(formOf(client));
+    if (!editing) {
+      setForm(formOf(client));
+      setOtherState(null);
+    }
   }, [client, editing]);
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -90,6 +97,7 @@ export function ClientBasicsCard({
 
   const cancel = () => {
     setForm(formOf(client));
+    setOtherState(null);
     onEditingChange(false);
   };
 
@@ -205,8 +213,23 @@ export function ClientBasicsCard({
               <Field label="Contact email" hint="The account's general address. People go under Contacts.">
                 {(p) => <Input type="email" value={form.contactEmail} onChange={(e) => set('contactEmail', e.target.value)} maxLength={254} {...p} />}
               </Field>
-              <Field label="Address line 1">
-                {(p) => <Input value={form.addressLine1} onChange={(e) => set('addressLine1', e.target.value)} maxLength={255} autoComplete="address-line1" {...p} />}
+              <Field
+                label="Address line 1"
+                hint={otherState ? `This address is in ${otherState}. The client’s state on file, ${client.state}, changes in Settings.` : undefined}
+              >
+                {(p) => (
+                  <AddressAutocomplete
+                    value={form.addressLine1}
+                    onChange={(v) => set('addressLine1', v)}
+                    onPick={(s) => {
+                      const f = pickedFields(s);
+                      setForm((cur) => ({ ...cur, addressLine1: f.line1, addressLine2: f.line2 ?? cur.addressLine2, city: f.city, zip: f.zip }));
+                      setOtherState(f.state && client.state && f.state !== client.state ? f.state : null);
+                    }}
+                    maxLength={255}
+                    {...p}
+                  />
+                )}
               </Field>
               <Field label="Address line 2">
                 {(p) => <Input value={form.addressLine2} onChange={(e) => set('addressLine2', e.target.value)} maxLength={255} autoComplete="address-line2" {...p} />}
