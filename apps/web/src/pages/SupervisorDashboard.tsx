@@ -849,7 +849,8 @@ export function SupervisorDashboard() {
                   : undefined
               }
             />
-            <TileLink to="/scheduling">
+            {/* The tile counts open shifts: open the schedule on them, today. */}
+            <TileLink to="/scheduling?open=1">
               <StatTile
                 className="h-full"
                 label={t('sup.openNext7')}

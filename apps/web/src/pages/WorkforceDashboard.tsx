@@ -564,7 +564,7 @@ export function WorkforceDashboard() {
                 </h2>
                 {data.readyToSchedule.count > 0 && (
                   <Link
-                    to="/scheduling"
+                    to="/scheduling?open=1"
                     className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
                   >
                     {t('wf.goScheduling')}
@@ -682,7 +682,7 @@ export function WorkforceDashboard() {
                   ))}
                 </ul>
                 <Link
-                  to="/scheduling"
+                  to="/scheduling?open=1"
                   className="mt-2 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
                 >
                   {t('wf.goScheduling')}
@@ -722,7 +722,8 @@ export function WorkforceDashboard() {
                 )}
                 {data.close.pendingApprovals > 0 && (
                   <Link
-                    to="/time-attendance"
+                    // The count is the approval queue; /time-attendance alone opens the Live board.
+                    to="/time-attendance?tab=queue"
                     className="inline-flex items-center gap-1 text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
                   >
                     {t('wf.goLive')}

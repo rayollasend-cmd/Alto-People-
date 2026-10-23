@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CalendarCheck2, HardHat, Plus, Trash2, Users } from 'lucide-react';
@@ -76,7 +76,6 @@ export function CertifiedProject() {
 }
 
 function WeeksTab({ projectId, weeks }: { projectId: string; weeks: WeekRow[] }) {
-  const navigate = useNavigate();
   const columns: GridColumn<WeekRow>[] = [
     { key: 'week', header: 'Week ending', primary: true, accessor: (w) => w.weekEnding, cell: (w) => <span className="font-medium text-ink">{fmtDate(w.weekEnding)}</span> },
     { key: 'number', header: 'Payroll no.', accessor: (w) => w.payrollNumber ?? '', align: 'right', className: 'tabular-nums' },
@@ -94,7 +93,7 @@ function WeeksTab({ projectId, weeks }: { projectId: string; weeks: WeekRow[] })
       rowKey={(w) => w.weekEnding}
       search={false}
       urlState={false}
-      onRowClick={(w) => navigate(`/payroll/certified/${projectId}/weeks/${w.weekEnding}`)}
+      rowHref={(w) => `/payroll/certified/${projectId}/weeks/${w.weekEnding}`}
       rowActionLabel={(w) => `Open the week ending ${fmtDate(w.weekEnding)}`}
       empty={{ icon: CalendarCheck2, title: 'No weeks have ended yet', description: 'The first reporting week appears here the day after it ends.' }}
     />

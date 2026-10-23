@@ -99,7 +99,7 @@ export function CertifiedPayrollDesk() {
         loading={projects.isLoading}
         error={projects.isError ? 'The projects could not be loaded.' : null}
         onRetry={() => void projects.refetch()}
-        onRowClick={(p) => navigate(`/payroll/certified/${p.id}`)}
+        rowHref={(p) => `/payroll/certified/${p.id}`}
         rowActionLabel={(p) => `Open ${p.name}`}
         empty={{
           icon: HardHat,

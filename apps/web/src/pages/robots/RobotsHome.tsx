@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardCheck, Cpu, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -26,7 +26,6 @@ import { BatteryMeter, RobotStatusBadge, sampleLine } from './robotUi';
  */
 export function RobotsHome() {
   const { can } = useAuth();
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const canManage = can('manage:org');
   const q = useQuery({ queryKey: ['robots', 'list'], queryFn: listRobots, refetchInterval: 60_000 });
@@ -172,7 +171,7 @@ export function RobotsHome() {
       ) : q.data.robots.length === 0 ? (
         <EmptyState icon={Cpu} title="No robots yet" description="Add a robot on the Workforce roster; its profile, commissioning and checklist live here." />
       ) : (
-        <DataGrid id="robots" caption="Robots" rows={q.data.robots} rowKey={(r) => r.id} columns={columns} onRowClick={(r) => navigate(`/robots/${r.id}`)} rowActionLabel={(r) => `Open ${r.name}`} />
+        <DataGrid id="robots" caption="Robots" rows={q.data.robots} rowKey={(r) => r.id} columns={columns} rowHref={(r) => `/robots/${r.id}`} rowActionLabel={(r) => `Open ${r.name}`} />
       )}
     </ListTemplate>
   );

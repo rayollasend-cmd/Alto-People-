@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import type { BooksVendor } from '@alto-people/shared';
@@ -12,7 +12,6 @@ import { METHOD_LABEL, errText, money, useBooksWrite } from './payablesKit';
 
 /** Vendors: who the company pays, what it owes each, and who gets a 1099. */
 export function VendorsPage() {
-  const navigate = useNavigate();
   const write = useBooksWrite();
   const q = useQuery({ queryKey: [...PAYABLES_KEY, 'vendors', 'all'], queryFn: () => listVendors({ active: 'all' }) });
   const vendors = q.data?.vendors ?? [];
@@ -73,7 +72,7 @@ export function VendorsPage() {
         columns={columns}
         rowKey={(v) => v.id}
         defaultSort={{ key: 'name', direction: 'asc' }}
-        onRowClick={(v) => navigate(`/books/vendors/${v.id}`)}
+        rowHref={(v) => `/books/vendors/${v.id}`}
         rowActionLabel={(v) => `Open ${v.name}`}
         empty={{ title: 'No vendors yet', description: 'Add the companies you pay — rent, insurance, utilities, software — and enter their bills.' }}
       />

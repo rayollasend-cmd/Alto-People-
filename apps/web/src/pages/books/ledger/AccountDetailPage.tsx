@@ -1,4 +1,4 @@
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { LEDGER_SUBTYPE_LABELS, LEDGER_TYPE_LABELS, type BooksDimensionsFilter, type LedgerAccountDetailRow } from '@alto-people/shared';
 import { getAccountDetail } from '@/lib/books/ledgerApi';
@@ -21,7 +21,6 @@ import { Amount, DimensionFilters, sourceLabel, yearStart } from './ledgerKit';
  */
 export function AccountDetailPage() {
   const { id = '' } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const today = ymdLocal();
   const from = params.get('from') ?? yearStart(today);
@@ -110,7 +109,7 @@ export function AccountDetailPage() {
         urlState={false}
         search={{ placeholder: 'Search memos' }}
         exportCsv={{ filename: d ? `${d.account.code}-${from}-to-${to}` : 'account' }}
-        onRowClick={(r) => navigate(`/books/journal/${r.entryId}`)}
+        rowHref={(r) => `/books/journal/${r.entryId}`}
       />
     </ListTemplate>
   );

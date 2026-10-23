@@ -801,7 +801,7 @@ export function AgentRegistryAdmin() {
         exportCsv={{ filename: 'agents' }}
         columnChooser
         columns={columns}
-        onRowClick={(a) => navigate(`/agents/${a.id}`)}
+        rowHref={(a) => `/agents/${a.id}`}
         rowActionLabel={(a) => `Open ${a.name}`}
         defaultSort={{ key: 'family', direction: 'asc' }}
         empty={{

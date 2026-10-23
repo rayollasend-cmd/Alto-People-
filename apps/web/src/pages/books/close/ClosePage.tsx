@@ -78,7 +78,7 @@ export function ClosePage() {
         onRetry={() => void q.refetch()}
         columns={columns}
         rowKey={(m) => m.periodKey}
-        onRowClick={(m) => navigate(`/books/close/${m.periodKey}`)}
+        rowHref={(m) => `/books/close/${m.periodKey}`}
         search={false}
         empty={{ icon: CalendarCheck, title: 'No months yet', description: 'The close starts with the first month the books cover.' }}
       />

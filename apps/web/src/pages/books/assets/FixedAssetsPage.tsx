@@ -144,7 +144,7 @@ export function FixedAssetsPage() {
         onRetry={() => void q.refetch()}
         columns={columns}
         rowKey={(a) => a.id}
-        onRowClick={(a) => navigate(`/books/assets/${a.id}`)}
+        rowHref={(a) => `/books/assets/${a.id}`}
         empty={{ icon: Warehouse, title: 'No fixed assets on the register', description: 'Add a vehicle, a fleet of tablets or an office build-out to depreciate it.' }}
       />
       <AddAssetDialog open={!!adding} onOpenChange={(o) => !o && setAdding(null)} from={adding?.from ?? null} onMade={(id) => navigate(`/books/assets/${id}`)} />

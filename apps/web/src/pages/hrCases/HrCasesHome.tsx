@@ -29,6 +29,11 @@ import {
   type MyCaseRow,
   type QueueCaseRow,
 } from '@/lib/hrCases123Api';
+
+// The URL's ?status= and ?category= are validated against these before they
+// become state (a typo in a link falls back to the defaults).
+const CASE_STATUS_VALUES: readonly CaseStatus[] = ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE', 'RESOLVED', 'CLOSED'];
+const CASE_CATEGORY_VALUES: readonly CaseCategory[] = ['BENEFITS', 'PAYROLL', 'TIME_OFF', 'PERSONAL_INFO', 'WORKPLACE_CONCERN', 'HARASSMENT', 'PERFORMANCE', 'OTHER'];
 import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
@@ -127,8 +132,11 @@ export function HrCasesHome() {
     : false;
   // Desk staff without an associate record have no "mine" — land on the
   // queue instead of an empty tab.
+  // ?tab=&status=&category=&assigned=me — the Finance home's payroll-case
+  // button and the inbox name the slice they counted; open on it.
+  const initial = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
   const [tab, setTab] = useState<'mine' | 'queue'>(
-    canManage && !user?.associateId ? 'queue' : 'mine',
+    initial.get('tab') === 'queue' && canManage ? 'queue' : canManage && !user?.associateId ? 'queue' : 'mine',
   );
   const [showNew, setShowNew] = useState(false);
   // HR opens a case for someone who called or walked in (HR walk 13).
@@ -136,11 +144,15 @@ export function HrCasesHome() {
   const canFileOnBehalf = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [showOnBehalf, setShowOnBehalf] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<CaseStatus | 'ALL'>('OPEN');
-  const [categoryFilter, setCategoryFilter] = useState<CaseCategory | 'ALL'>(
-    'ALL',
-  );
-  const [assignedToMe, setAssignedToMe] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<CaseStatus | 'ALL'>(() => {
+    const s = initial.get('status');
+    return s && (CASE_STATUS_VALUES as readonly string[]).includes(s) ? (s as CaseStatus) : s === 'ALL' ? 'ALL' : 'OPEN';
+  });
+  const [categoryFilter, setCategoryFilter] = useState<CaseCategory | 'ALL'>(() => {
+    const c = initial.get('category');
+    return c && (CASE_CATEGORY_VALUES as readonly string[]).includes(c) ? (c as CaseCategory) : 'ALL';
+  });
+  const [assignedToMe, setAssignedToMe] = useState(initial.get('assigned') === 'me');
   const [search, setSearch] = useState('');
   // ?sla=breached (the Inbox's deep link): only open cases past their target.
   const [breachedOnly, setBreachedOnly] = useState(false);

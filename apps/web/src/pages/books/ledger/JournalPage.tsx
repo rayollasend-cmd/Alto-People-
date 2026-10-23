@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { JOURNAL_SOURCE_LABELS, type BooksJournalRow } from '@alto-people/shared';
@@ -23,7 +23,6 @@ import { Amount, AccountSelect, sourceLabel, useLedgerAccounts, yearStart } from
 const PAGE = 200;
 
 export function JournalPage() {
-  const navigate = useNavigate();
   const { can } = useAuth();
   const [params, setParams] = useSearchParams();
   const today = new Date().toISOString().slice(0, 10);
@@ -153,7 +152,7 @@ export function JournalPage() {
         search={false}
         urlState={false}
         exportCsv={{ filename: 'journal' }}
-        onRowClick={(r) => navigate(`/books/journal/${r.id}`)}
+        rowHref={(r) => `/books/journal/${r.id}`}
       />
       {total > PAGE && (
         <div className="flex items-center justify-between text-sm text-ink-muted">

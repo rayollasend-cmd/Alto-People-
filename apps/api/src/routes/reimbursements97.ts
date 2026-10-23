@@ -352,7 +352,8 @@ reimbursements97Router.post('/reimbursements/:id/submit', SUBMIT, async (req, re
     subject: 'Expense report awaiting your approval',
     body: `"${updated.title}" — $${Number(updated.totalAmount).toFixed(2)} — was submitted and is awaiting your approval.`,
     category: 'reimbursements',
-    linkUrl: '/reimbursements',
+    // Straight to this report, not the list.
+    linkUrl: `/reimbursements?id=${updated.id}`,
   };
   const assoc = await prisma.associate.findUnique({
     where: { id: r.associateId },

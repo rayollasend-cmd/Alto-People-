@@ -638,7 +638,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     try {
       const updated = await disbursePayrollRun(selected.id);
       setSelected(updated);
-      toast.success('Run disbursed.');
+      // A disbursed run leaves the default Open view: keep a way to it.
+      toast.success('Run disbursed.', { action: { label: 'View in All', onClick: () => setFilter('ALL') } });
       refresh();
       setConfirmDisburse(false);
     } catch (err) {

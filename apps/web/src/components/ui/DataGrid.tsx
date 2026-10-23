@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createPortal } from 'react-dom';
-import { useInRouterContext, useLocation } from 'react-router-dom';
+import { Link, useInRouterContext, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronRight, Columns3, Download, Inbox, MoreHorizontal, type LucideIcon } from 'lucide-react';
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { cn } from '@/lib/cn';
@@ -175,6 +175,13 @@ export interface DataGridProps<T> {
     selectAllLabel?: string;
   };
   onRowClick?: (row: T) => void;
+  /**
+   * The row IS a link: the primary cell renders an <a> to this path (so
+   * open-in-new-tab and middle-click work) and a click anywhere on the row
+   * navigates there. Prefer this over `onRowClick={() => navigate(…)}`.
+   * Ignored outside a router.
+   */
+  rowHref?: (row: T) => string;
   /** Label for the row's click affordance, for screen readers. */
   rowActionLabel?: (row: T) => string;
   /** Extra classes on a row (an overdue tint, a highlighted match). */
@@ -326,6 +333,10 @@ const URL_WRITE_DELAY_MS = 300;
 
 function RoutedGrid<T>(props: DataGridProps<T>) {
   const location = useLocation();
+  const navigate = useNavigate();
+  // `rowHref` makes the whole row navigate; an explicit onRowClick wins.
+  const rowHref = props.rowHref;
+  const onRowClick = props.onRowClick ?? (rowHref ? (row: T) => navigate(rowHref(row)) : undefined);
   const write = useUrlWriter();
   const urlOn = Boolean(props.urlKey) || props.urlState !== false;
   const prefix = props.urlKey ? `${props.urlKey}.` : '';
@@ -392,6 +403,7 @@ function RoutedGrid<T>(props: DataGridProps<T>) {
   return (
     <GridCore
       {...props}
+      onRowClick={onRowClick}
       activeFilters={props.activeFilters ?? keyedActive}
       onClearFilters={props.onClearFilters ?? (filterKeys ? clearKeyed : undefined)}
       q={q}
@@ -404,7 +416,8 @@ function RoutedGrid<T>(props: DataGridProps<T>) {
 
 function LocalStateGrid<T>(props: DataGridProps<T>) {
   const [q, setQ] = React.useState('');
-  return <GridCore {...props} q={q} setQ={setQ} />;
+  // No router here: a row link has nowhere to go, so the grid stays inert.
+  return <GridCore {...props} rowHref={undefined} q={q} setQ={setQ} />;
 }
 
 /**
@@ -442,6 +455,7 @@ function GridCore<T>({
   columnsState,
   selectable,
   onRowClick,
+  rowHref,
   rowActionLabel,
   rowClassName,
   rowId,
@@ -1400,7 +1414,15 @@ function GridCore<T>({
                             className={cn(alignClass(c.align), c.className, child && i === 0 && 'pl-8')}
                             onClick={c.stopRowClick ? (e) => e.stopPropagation() : undefined}
                           >
-                            {c.cell ? c.cell(row) : (c.accessor(row) ?? <span className="text-silver/50">—</span>)}
+                            {rowHref && !child && c === primary ? (
+                              // A real link in the primary cell: middle-click, ⌘-click
+                              // and "open in new tab" work; the row click navigates too.
+                              <Link to={rowHref(row)} className="hover:underline" onClick={(e) => e.stopPropagation()}>
+                                {c.cell ? c.cell(row) : (c.accessor(row) ?? <span className="text-silver/50">—</span>)}
+                              </Link>
+                            ) : (
+                              c.cell ? c.cell(row) : (c.accessor(row) ?? <span className="text-silver/50">—</span>)
+                            )}
                           </TableCell>
                         ))}
                       </TableRow>

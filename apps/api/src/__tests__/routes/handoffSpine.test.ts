@@ -198,6 +198,7 @@ describe('manager-approved reimbursement → settlement bell', () => {
     expect(note).not.toBeNull();
     expect(note?.subject).toContain('Ana Reyes');
     expect(note?.subject).toContain('84.50');
-    expect(note?.linkUrl).toBe('/reimbursements');
+    // Straight to the report, not the list (ease-of-use sweep).
+    expect(note?.linkUrl).toMatch(/^\/reimbursements\?id=/);
   });
 });

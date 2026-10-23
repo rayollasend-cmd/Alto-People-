@@ -169,7 +169,7 @@ function PlansList() {
                 urlState={false}
                 columnChooser={false}
                 exportCsv={{ filename: 'season-plans' }}
-                onRowClick={(p) => navigate(`/season-planner?plan=${p.id}`)}
+                rowHref={(p) => `/season-planner?plan=${p.id}`}
                 columns={[
                   { key: 'name', header: 'Plan', accessor: (p) => p.name, sortable: true, primary: true, cell: (p) => (<span className="flex items-center gap-2">{p.name}{p.archivedAt && <Badge variant="outline">Archived</Badge>}</span>) },
                   { key: 'client', header: 'Client', accessor: (p) => p.clientName ?? 'All clients', sortable: true, cardMeta: true },

@@ -91,7 +91,12 @@ export function ClientStatementsRollup() {
   const agingForPay = useQuery({ queryKey: [...RECEIVABLES_KEY, 'aging'], queryFn: () => getReceivablesAging(), enabled: !!recording });
 
   const [busy, setBusy] = useState<string | null>(null);
-  const [filter, setFilter] = useState<StatusFilter>('ALL');
+  // ?status= — the Finance home's receivables tile and the inbox's "drafts
+  // to finalize" name the slice they counted.
+  const [filter, setFilter] = useState<StatusFilter>(() => {
+    const s = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('status');
+    return s === 'DRAFT' || s === 'UNPAID' || s === 'PAID' ? s : 'ALL';
+  });
   const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [payTarget, setPayTarget] = useState<RollupRow | null>(null);
 

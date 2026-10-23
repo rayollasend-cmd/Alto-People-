@@ -8,15 +8,14 @@ import { useAuth } from '@/lib/auth';
  *
  * The 2026-08 navigation audit found ~40 pages rendering associate names as
  * dead text — seeing someone's record meant menu → People → find them again.
- * This renders the standard deep link (/people?associateId=…, which opens
- * their profile drawer) whenever the viewer can actually open the People
- * directory, and degrades to a plain span for roles that can't (bounded
- * supervisors lack view:org — a dead 403 link is worse than no link).
+ * This renders the person's full record (/people/:id) whenever the viewer
+ * can actually open People, and degrades to a plain span for roles that
+ * can't (bounded supervisors lack view:org — a dead 403 link is worse than
+ * no link).
  *
- * The link also carries a `return` leg by default: the profile drawer shows
- * a "Back to <where you came from>" chip so the round trip has a way home.
- * PeopleDirectory validates and consumes the param; links clicked while
- * already on /people skip it (the directory IS home).
+ * The link also carries a `return` leg by default: the record's header
+ * shows a "Back to <where you came from>" link so the round trip has a way
+ * home. Links clicked while already on /people skip it (People IS home).
  *
  * Inline by design: drop it wherever the name already renders. Row onClick
  * handlers across the codebase already ignore clicks on <a>, so it nests
@@ -59,13 +58,16 @@ export function AssociateLink({
   // People" chip on a People drawer is noise.
   const onPeople =
     location.pathname === '/people' || location.pathname.startsWith('/people/');
-  const returnLeg =
-    carryReturn && !newTab && !onPeople
-      ? `&return=${encodeURIComponent(location.pathname + location.search)}`
-      : '';
+  // The full record, not the directory drawer: the drawer needed a second
+  // click ("Open full record") on ~48 call sites (ease-of-use sweep,
+  // 2026-10-22). The record page reads ?tab= and renders the ?return= link.
+  const q = new URLSearchParams();
+  if (tab) q.set('tab', tab);
+  if (carryReturn && !newTab && !onPeople) q.set('return', location.pathname + location.search);
+  const qs = q.toString();
   return (
     <Link
-      to={`/people?associateId=${associateId}${tab ? `&tab=${tab}` : ''}${returnLeg}`}
+      to={`/people/${associateId}${qs ? `?${qs}` : ''}`}
       target={newTab ? '_blank' : undefined}
       rel={newTab ? 'noopener noreferrer' : undefined}
       className={cn(

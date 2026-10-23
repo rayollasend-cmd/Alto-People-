@@ -379,7 +379,9 @@ function NeedsYou({
               count={c.count}
               label={c.label}
               hint={c.hint}
-              to="/team"
+              // The card counted one queue: open My team on that tab, not
+              // on the inbox with another click to go.
+              to={`/team?tab=${c.key === 'timesheets' || c.key === 'timeoff' ? c.key : 'inbox'}`}
               cta={c.cta}
               severity={c.severity}
               show

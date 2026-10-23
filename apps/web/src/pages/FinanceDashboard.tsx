@@ -217,7 +217,7 @@ export function FinanceDashboard() {
         />
         {receivablesOn && (
         <FinKpi
-          to="/clients/statements"
+          to="/clients/statements?status=UNPAID"
           label={t('fin.kpiAr')}
           value={fmtMoney(data.receivables.outstandingTotal)}
           hot={pastDue > 0}
@@ -388,7 +388,7 @@ export function FinanceDashboard() {
         {/* The payroll case desk — PAYROLL-category HR cases routed to
             Finance; the pill is the "assigned to you" count. */}
         <Link
-          to="/hr-cases"
+          to="/hr-cases?tab=queue&category=PAYROLL&assigned=me"
           className="group flex min-h-12 items-center gap-2 rounded-md border border-navy-secondary bg-navy px-3 py-3 text-sm text-white transition-colors hover:border-gold/50 hover:bg-navy/80 active:border-gold/50 active:bg-navy-secondary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           <Inbox

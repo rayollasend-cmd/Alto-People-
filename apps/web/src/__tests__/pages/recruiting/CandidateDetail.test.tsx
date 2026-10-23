@@ -322,10 +322,11 @@ describe('<RecruitingHome> candidate detail', () => {
     const drawer = await openMaria(user);
 
     const link = drawer.getByRole('link', { name: /maria lopez/i });
-    // AssociateLink appends a return leg (the current path) by default so
-    // the profile drawer can offer a "Back to …" chip.
+    // AssociateLink opens the full record (not the directory drawer, which
+    // needed a second click) and appends a return leg (the current path)
+    // so the record's header can offer "Back to …".
     expect(link.getAttribute('href')).toMatch(
-      /^\/people\?associateId=assoc-9&return=/,
+      /^\/people\/assoc-9\?return=/,
     );
   });
 

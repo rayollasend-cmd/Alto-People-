@@ -75,7 +75,7 @@ export function BudgetsPage() {
         onRetry={() => void q.refetch()}
         columns={columns}
         rowKey={(b) => b.id}
-        onRowClick={(b) => navigate(`/books/budgets/${b.id}`)}
+        rowHref={(b) => `/books/budgets/${b.id}`}
         empty={{ icon: Target, title: 'No budgets yet', description: 'Start one from last year’s actuals, or from a blank grid.', action: manage ? <Button onClick={() => setOpen(true)}>New budget</Button> : undefined }}
       />
       <NewBudgetDialog open={open} onOpenChange={setOpen} onMade={(id) => navigate(`/books/budgets/${id}`)} />

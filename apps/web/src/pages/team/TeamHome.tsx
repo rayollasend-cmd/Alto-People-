@@ -63,8 +63,15 @@ const teamKeys = {
   timeoff: (status: string) => [...teamKeys.all, 'timeoff', status] as const,
 };
 
+type TeamTab = 'inbox' | 'overview' | 'timesheets' | 'timeoff';
+const TEAM_TABS: readonly TeamTab[] = ['inbox', 'overview', 'timesheets', 'timeoff'];
+
 export function TeamHome() {
-  const [tab, setTab] = useState<'inbox' | 'overview' | 'timesheets' | 'timeoff'>('inbox');
+  // ?tab= — the manager home's cards name the queue they counted.
+  const [tab, setTab] = useState<TeamTab>(() => {
+    const t = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('tab');
+    return t && (TEAM_TABS as readonly string[]).includes(t) ? (t as TeamTab) : 'inbox';
+  });
 
   const dashboardQ = useQuery({
     queryKey: teamKeys.dashboard(),

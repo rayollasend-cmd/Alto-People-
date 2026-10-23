@@ -313,7 +313,7 @@ function ExistingVendor({ id }: { id: string }) {
                 columns={billCols}
                 rowKey={(b) => b.id}
                 defaultSort={{ key: 'due', direction: 'desc' }}
-                onRowClick={(b) => navigate(`/books/bills/${b.id}`)}
+                rowHref={(b) => `/books/bills/${b.id}`}
                 rowActionLabel={(b) => `Open bill ${b.billNumber ?? fmtDate(b.billDate)}`}
                 empty={{ title: 'No bills from this vendor', description: write ? 'Enter their next invoice with New bill.' : undefined }}
               />

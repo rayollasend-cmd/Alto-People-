@@ -366,7 +366,7 @@ export async function computeRoleDecisions(
         detail: 'Associates fronted this money — a quick decision keeps trust intact.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/reimbursements',
+        linkUrl: '/reimbursements?status=SUBMITTED',
       });
     }
   }
@@ -383,7 +383,8 @@ export async function computeRoleDecisions(
         detail: 'People are holding plans on your answer.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/time-off',
+        // The approvals desk has the bulk and keyboard queue for these.
+        linkUrl: '/approvals?tab=time-off',
       });
     }
   }
@@ -546,7 +547,8 @@ export async function computeRoleDecisions(
           detail: `The Compliance agent asked them ${c.stage} time${c.stage === 1 ? '' : 's'}; nothing newer is on file. Collect the renewal, or waive it on the scorecard.`,
           stakes: null,
           ageDays: Math.max(0, Math.floor((now.getTime() - c.expiresAt.getTime()) / DAY_MS)),
-          linkUrl: `/people?associateId=${c.associateId}`,
+          // Their documents, not the profile's first tab.
+          linkUrl: `/people/${c.associateId}?tab=documents`,
         });
       }
     } else if (expired.length > 5) {
@@ -558,7 +560,7 @@ export async function computeRoleDecisions(
         detail: 'Nothing newer is on file. Collect the renewals, or waive them on the scorecard.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/expirations',
+        linkUrl: '/expirations?view=list',
       });
     }
     const expiring = await prisma.documentRecord.findMany({
@@ -581,7 +583,7 @@ export async function computeRoleDecisions(
         detail: 'Expired documents block legal work — collect renewals now.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/expirations',
+        linkUrl: '/expirations?view=list',
       });
     }
   }
@@ -629,7 +631,7 @@ export async function computeRoleDecisions(
         detail: 'Fold them into the next regular payroll run.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/reimbursements',
+        linkUrl: '/reimbursements?status=MANAGER_APPROVED',
       });
     }
   }
@@ -672,7 +674,7 @@ export async function computeRoleDecisions(
         detail: 'Drafts idle over a week are unbilled revenue.',
         stakes: total || null,
         ageDays: null,
-        linkUrl: '/clients/statements',
+        linkUrl: '/clients/statements?status=DRAFT',
       });
     }
     // Per-statement, with keys IDENTICAL to the executive engine's, so a
