@@ -17,6 +17,82 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+// 2026-10-22: the internal recruiter could not clock in from the app — her
+// login had no person record and nothing in the app could make one.
+describe('POST /admin/users/:id/person-record', () => {
+  it('creates the person record for a staff login and links it, with a worker', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER', email: 'britney.recruits@example.com' });
+    expect(recruiter.associateId).toBeNull();
+
+    const a = agent();
+    await loginAs(a, hr.email, DEFAULT_TEST_PASSWORD);
+    const res = await a.post(`/admin/users/${recruiter.id}/person-record`).send({ firstName: 'Britney', lastName: 'Recruits' });
+    expect(res.status).toBe(201);
+    expect(res.body.created).toBe(true);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: recruiter.id } });
+    expect(after.associateId).toBe(res.body.associateId);
+    const person = await prisma.associate.findUniqueOrThrow({ where: { id: res.body.associateId } });
+    expect(person.email).toBe('britney.recruits@example.com');
+    expect(person.firstName).toBe('Britney');
+    expect(await prisma.worker.findUnique({ where: { associateId: person.id } })).not.toBeNull();
+
+    // Now she can clock in from the app.
+    const her = agent();
+    await loginAs(her, recruiter.email, DEFAULT_TEST_PASSWORD);
+    const punch = await her.post('/time/me/clock-in').send({});
+    expect(punch.status).toBe(201);
+    await flushPendingAudits();
+  });
+
+  it('links the person record already in People under the same email instead of making a second one', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const existing = await createAssociate({ firstName: 'Already', lastName: 'There', email: 'already.there@example.com' });
+    const { user: staff } = await createUser({ role: 'MANAGER', email: 'Already.There@example.com' });
+
+    const a = agent();
+    await loginAs(a, hr.email, DEFAULT_TEST_PASSWORD);
+    const res = await a.post(`/admin/users/${staff.id}/person-record`).send({ firstName: 'Already', lastName: 'There' });
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({ associateId: existing.id, created: false });
+    expect(await prisma.associate.count({ where: { email: { equals: 'already.there@example.com', mode: 'insensitive' } } })).toBe(1);
+    await flushPendingAudits();
+  });
+
+  it('refuses a record already claimed by another login, an associate, and a login that is already linked', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = agent();
+    await loginAs(a, hr.email, DEFAULT_TEST_PASSWORD);
+
+    const person = await createAssociate({ email: 'Taken.Person@example.com' });
+    await createUser({ role: 'MANAGER', email: 'other.login@example.com', associateId: person.id });
+    const { user: late } = await createUser({ role: 'INTERNAL_RECRUITER', email: 'taken.person@example.com' });
+    const claimed = await a.post(`/admin/users/${late.id}/person-record`).send({ firstName: 'T', lastName: 'P' });
+    expect(claimed.status).toBe(409);
+    expect(claimed.body.error?.code).toBe('person_record_claimed');
+
+    const { user: hourly } = await createUser({ role: 'ASSOCIATE' });
+    const assoc = await a.post(`/admin/users/${hourly.id}/person-record`).send({ firstName: 'A', lastName: 'B' });
+    expect(assoc.status).toBe(400);
+    expect(assoc.body.error?.code).toBe('role_not_staff');
+
+    const linkedPerson = await createAssociate();
+    const { user: linked } = await createUser({ role: 'MANAGER', email: linkedPerson.email, associateId: linkedPerson.id });
+    const again = await a.post(`/admin/users/${linked.id}/person-record`).send({ firstName: 'A', lastName: 'B' });
+    expect(again.status).toBe(409);
+    expect(again.body.error?.code).toBe('already_linked');
+  });
+
+  it('is a manage:org write — a recruiter cannot do it for herself', async () => {
+    const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER' });
+    const a = agent();
+    await loginAs(a, recruiter.email, DEFAULT_TEST_PASSWORD);
+    const res = await a.post(`/admin/users/${recruiter.id}/person-record`).send({ firstName: 'B', lastName: 'S' });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('GET /admin/users', () => {
   it('lists all non-deleted users for HR admin', async () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });

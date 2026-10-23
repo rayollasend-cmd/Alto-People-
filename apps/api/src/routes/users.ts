@@ -32,6 +32,7 @@ import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js
 import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
 import { isElevation } from '../lib/accessChanges.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { ensureWorkerForAssociate } from '../lib/workers.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -767,6 +768,88 @@ usersRouter.post('/admin/users/:id/reactivate', requireCapability('manage:org'),
   const id = z.string().uuid().parse(req.params.id);
   const result = await reactivateUser(prisma, { userId: id, actorUserId: req.user!.id, ip: req.ip ?? null, userAgent: req.headers['user-agent'] ?? null });
   res.json(result);
+});
+
+/**
+ * The person record behind a staff login (2026-10-22).
+ *
+ * Schedule, time and pay all key off `user.associateId`. A hire gets the
+ * link from onboarding; a staff login made here in Users admin never did,
+ * and nothing in the app could make one — the onboarding invite refuses an
+ * email that already has an active login, and there is no "add person"
+ * anywhere else. The internal recruiter could therefore never clock in
+ * from the app. This creates the record (or links the one already in
+ * People under the same email) and links the login, in one step.
+ */
+const PersonRecordInputSchema = z.object({
+  firstName: z.string().trim().min(1).max(80),
+  lastName: z.string().trim().min(1).max(80),
+});
+
+usersRouter.post('/admin/users/:id/person-record', requireCapability('manage:org'), async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  await assertSameTenant('user', id);
+  const input = PersonRecordInputSchema.parse(req.body ?? {});
+  const target = await prisma.user.findFirst({ where: { id, deletedAt: null } });
+  if (!target) throw new HttpError(404, 'not_found', 'User not found');
+  if (target.associateId) throw new HttpError(409, 'already_linked', 'This login already has a person record.');
+  if (target.role === 'ASSOCIATE' || target.role === 'CLIENT_PORTAL') {
+    throw new HttpError(
+      400,
+      'role_not_staff',
+      'Associates get their person record through onboarding; client-portal logins never have one.',
+    );
+  }
+  const email = target.email.trim().toLowerCase();
+  const tenantId = tenantIdForWrite();
+
+  const result = await prisma.$transaction(async (tx) => {
+    const existing = await tx.associate.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' }, tenantId },
+      select: { id: true, deletedAt: true },
+    });
+    if (existing?.deletedAt) {
+      throw new HttpError(
+        409,
+        'email_belongs_to_removed_associate',
+        'This email belongs to a removed person record. Restore that record first, or change the login email.',
+      );
+    }
+    let associateId: string;
+    let created = false;
+    if (existing) {
+      const claimed = await tx.user.findFirst({ where: { associateId: existing.id, NOT: { id } }, select: { id: true } });
+      if (claimed) {
+        throw new HttpError(409, 'person_record_claimed', 'The person record under this email already belongs to another login.');
+      }
+      associateId = existing.id;
+    } else {
+      const a = await tx.associate.create({
+        data: { tenantId, email, firstName: input.firstName, lastName: input.lastName },
+        select: { id: true },
+      });
+      associateId = a.id;
+      created = true;
+    }
+    // Brief 1D-1: every person is a PERSON worker with an owner from day one.
+    await ensureWorkerForAssociate(tx, associateId, req.user!.id);
+    await tx.user.update({ where: { id }, data: { associateId } });
+    return { associateId, created };
+  });
+
+  invalidateUserCache(id);
+  await recordCriticalAudit(
+    {
+      actorUserId: req.user!.id,
+      clientId: target.clientId ?? null,
+      action: 'admin.user_person_record_linked',
+      entityType: 'User',
+      entityId: id,
+      metadata: { associateId: result.associateId, created: result.created, email, ip: req.ip ?? null },
+    },
+    'admin.person_record',
+  );
+  res.status(201).json(result);
 });
 
 usersRouter.post(

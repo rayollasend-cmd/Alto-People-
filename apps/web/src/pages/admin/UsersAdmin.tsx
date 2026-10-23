@@ -4,6 +4,7 @@ import { Clock, KeyRound, Lock, MapPin, RefreshCw, Repeat, ShieldAlert, ShieldCh
 import { toast } from 'sonner';
 import { ROLES, type Role } from '@/lib/roles';
 import { SecondRoleDialog } from './SecondRoleDialog';
+import { PersonRecordDialog } from './PersonRecordDialog';
 import { ElevateAccessDialog } from './ElevateAccessDialog';
 import { isPending } from '@/lib/approvalRequestsApi';
 import { useAuth, useTenant, useTerm, useRoleLabel } from '@/lib/auth';
@@ -122,6 +123,7 @@ export function UsersAdmin() {
   const [role, setRole] = useState<Role | ''>('');
   // Whose second-role dialog is open.
   const [secondRoleFor, setSecondRoleFor] = useState<AdminUser | null>(null);
+  const [personRecordFor, setPersonRecordFor] = useState<AdminUser | null>(null);
   const [status, setStatus] = useState<UserStatus | ''>('');
 
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -623,6 +625,21 @@ export function UsersAdmin() {
                 ) : (
                   <span className="truncate text-silver/50">also works as…</span>
                 )}
+              </button>
+            )}
+            {/* A staff login with no person record cannot clock in, be
+                scheduled or be paid — and until 2026-10-22 nothing here
+                said so or could fix it. One tap creates (or links) it. */}
+            {!u.associateId && u.role !== 'ASSOCIATE' && u.role !== 'CLIENT_PORTAL' && !draftRole[u.id] && (
+              <button
+                type="button"
+                onClick={() => setPersonRecordFor(u)}
+                disabled={busy}
+                className="mt-1 flex w-full items-center gap-1 rounded-md border border-warning/40 px-2 py-1 text-left text-xs2 text-warning hover:border-warning hover:text-white"
+                title="No person record — their clock, schedule and pay will not work until one exists. Tap to create or link it."
+              >
+                <UserRound className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <span className="truncate">No person record · set it up</span>
               </button>
             )}
             {u.activeRole && u.activeRole !== u.role && (
@@ -1170,6 +1187,14 @@ export function UsersAdmin() {
 
         />
 
+      )}
+      {personRecordFor && (
+        <PersonRecordDialog
+          user={personRecordFor}
+          open
+          onOpenChange={(o) => !o && setPersonRecordFor(null)}
+          onSaved={() => void load()}
+        />
       )}
       {elevateFor && (
         <ElevateAccessDialog user={elevateFor} onClose={() => setElevateFor(null)} onChanged={() => load()} />

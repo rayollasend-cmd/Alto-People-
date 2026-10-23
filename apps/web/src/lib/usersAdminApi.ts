@@ -238,3 +238,12 @@ export function deactivateUsers(userIds: string[], reason: string): Promise<Deac
 export function reactivateUser(id: string): Promise<{ id: string; status: 'ACTIVE' | 'INVITED' }> {
   return apiFetch(`/admin/users/${id}/reactivate`, { method: 'POST' });
 }
+
+/** Create the person record behind a staff login (or link the one already in
+ *  People under the same email) so their clock, schedule and pay work. */
+export function createPersonRecord(
+  id: string,
+  body: { firstName: string; lastName: string },
+): Promise<{ associateId: string; created: boolean }> {
+  return apiFetch(`/admin/users/${id}/person-record`, { method: 'POST', body });
+}
