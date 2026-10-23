@@ -20,7 +20,11 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A pull request's newer push replaces its older run. On main a run is
+  # never cancelled mid-way: main moves faster than a full run, and
+  # cancelling meant the API suite never finished there. A newer push
+  # waits for the running one instead.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-web-tests:
@@ -72,8 +76,14 @@ jobs:
       - run: npm -w packages/shared run test
 
   api-tests:
-    name: API tests (postgres)
+    # Four shards, each against its own throwaway Postgres (the service
+    # container is per job), so the suite takes ~40 min instead of ~2.5 h.
+    name: API tests (postgres, shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:16-alpine
@@ -110,7 +120,7 @@ jobs:
       - run: npm ci
       - run: npm -w @alto-people/shared run build
       - run: npm -w apps/api exec prisma generate
-      - run: npm -w apps/api run test
+      - run: npm -w apps/api exec -- vitest run --shard=${{ matrix.shard }}/4
 
   # Full-stack browser suite: real API + real Postgres + Vite dev server,
   # driven through Chromium's Pixel 7 profile. This is the only layer that
