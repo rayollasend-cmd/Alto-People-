@@ -128,23 +128,11 @@ test('issuing from a People profile: "Back to People" lands on that profile, and
   await issueAndReveal(page);
 
   await page.getByRole('button', { name: /back to people/i }).click();
-  // The profile opens (the People page resolves the id and drops the param).
-  await expect(page.getByRole('dialog').getByText('Ana Lopez').first()).toBeVisible();
-  await expect.poll(() => here(page)).toBe('/people');
-  // The kiosk's reveal names Ana too and stays on screen for a frame while the
-  // route changes, so the check above can pass before the profile drawer has
-  // parked its Back sentinel. A Back pressed in that window leaves /people
-  // outright (one run in ten, 2026-10-15, reproduced against a production
-  // build with the history calls logged). Back closes an overlay only once its
-  // sentinel is the current entry: wait for that.
-  await expect.poll(() => page.evaluate(() => (history.state as { altoOverlay?: boolean } | null)?.altoOverlay === true)).toBe(true);
-
-  // Back closes the profile; Back again is the kiosk page, not the void.
-  await page.goBack();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  // The drawer's history handover finishes after the dialog is gone (the
-  // sibling test waits the same way). Under CI's two workers, going Back
-  // inside that window skipped the kiosk entry in three runs of eight.
+  // The old ?associateId= link opens the person's record: People has no
+  // drawer now (F500 G1), and the redirect replaces its own history entry.
+  await expect.poll(() => here(page)).toBe(`/people/${A1}`);
+  await expect(page.getByRole('heading', { name: 'Ana Lopez', level: 1 })).toBeVisible();
+  // Back from the record is the kiosk page, not the void.
   await settleHistory(page);
   await page.goBack();
   await expect.poll(() => here(page)).toBe('/time-attendance/kiosk?tab=pins');
@@ -154,8 +142,9 @@ test('a profile deep link finds someone the loaded list does not have', async ({
   // The list answers with nobody; only the lookup knows her.
   await page.route('**/api/people/directory', (route) => route.fulfill({ json: { associates: [], nextCursor: null } }));
   await page.goto(`/people?associateId=${A1}`);
-  await expect(page.getByRole('dialog').getByText('Ana Lopez').first()).toBeVisible();
-  await expect.poll(() => here(page)).toBe('/people');
+  // The person's record loads her by id, whatever the list holds.
+  await expect.poll(() => here(page)).toBe(`/people/${A1}`);
+  await expect(page.getByRole('heading', { name: 'Ana Lopez', level: 1 })).toBeVisible();
 });
 
 test('the issue drawer lists an approved hire whose directory badge says Inactive (never clocked in yet)', async ({ page }) => {
@@ -183,7 +172,11 @@ test('opened for someone still onboarding: nobody is preselected and the drawer 
   await page.goto(`/time-attendance/kiosk?tab=pins&issue=${P1}&client=${C1}`);
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText(/Deontay Smith.s onboarding hasn.t been approved yet/)).toBeVisible();
-  await expect(dialog.getByRole('link', { name: /open their application/i })).toHaveAttribute('href', `/onboarding/applications/${APP}`);
+  // The application, carrying the way back to this drawer (?return=).
+  await expect(dialog.getByRole('link', { name: /open their application/i })).toHaveAttribute(
+    'href',
+    `/onboarding/applications/${APP}?return=${encodeURIComponent(`/time-attendance/kiosk?tab=pins&issue=${P1}`)}`,
+  );
   // Not Ana — Issue must never land on someone other than the person HR came for.
   await expect(dialog.getByRole('combobox')).toHaveValue('');
 });

@@ -2372,7 +2372,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         related={
           canManage
             ? [
-                { label: 'Client hours', to: '/time-attendance/timesheets' },
+                // Client hours are the hours billed to clients: a company with
+                // no clients (a hotel running its own staff) has none to show.
+                ...(moduleOnTime('clientPortal') ? [{ label: 'Client hours', to: '/time-attendance/timesheets' }] : []),
                 { label: 'Kiosk & PINs', to: '/time-attendance/kiosk' },
               ]
             : undefined

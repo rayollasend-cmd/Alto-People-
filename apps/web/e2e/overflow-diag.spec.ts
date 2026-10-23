@@ -26,10 +26,14 @@ async function collectOffenders(page: Page, routes: string[]): Promise<string[]>
       const limit = main.clientWidth;
       const out: string[] = [];
       main.querySelectorAll('*').forEach((el) => {
-        // Skip content inside intentional horizontal scrollers (the
-        // Table primitive wraps in overflow-auto; grids use
-        // overflow-x-auto).
-        if (el.closest('.overflow-x-auto, .overflow-auto')) return;
+        // Skip content inside intentional horizontal scrollers: the Table
+        // primitive wraps in overflow-auto, grids use overflow-x-auto, and a
+        // phone-only strip uses max-sm:overflow-x-auto — so read the
+        // computed style, not the class name.
+        for (let a = el.parentElement; a && a !== main; a = a.parentElement) {
+          const ox = getComputedStyle(a).overflowX;
+          if (ox === 'auto' || ox === 'scroll') return;
+        }
         const r = el.getBoundingClientRect();
         if (r.width > 0 && (r.right > limit + 1 || r.left < -1)) {
           const e = el as HTMLElement;

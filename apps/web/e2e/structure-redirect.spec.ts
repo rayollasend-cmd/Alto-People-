@@ -32,6 +32,7 @@ test('an old link to Regions lands on the Org chart’s field view, where region
   await page.goto('/admin/regions');
   await expect(page).toHaveURL(/\/org\/chart\?view=field/);
   await expect(page.getByRole('heading', { name: 'Org chart', level: 1 })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Region', exact: true })).toBeVisible();
+  // Regions are added from the chart's header (F500: actions name what they do).
+  await expect(page.getByRole('button', { name: 'Add region', exact: true })).toBeVisible();
   await expect(page.getByTestId('org-canvas').getByText('Panhandle')).toBeVisible();
 });
