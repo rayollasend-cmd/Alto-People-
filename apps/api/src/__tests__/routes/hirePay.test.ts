@@ -153,7 +153,7 @@ describe('the starting pay, inside the new-hire window', () => {
     expect(await prisma.auditLog.count({ where: { action: 'pay.hire_pay_requested', entityId: ana.id } })).toBe(1);
   });
 
-  it('the ceiling is the band maximum where there is no card, the lower of the two where both exist, and nothing on file goes to a second person', async () => {
+  it('the ceiling is the band maximum where there is no card, the lower of the two where both exist, and with nothing on file the wage applies at once', async () => {
     const s = await seed();
     const bay = await createClient('Bay Group');
     await prisma.compBand.create({ data: { clientId: bay.id, name: 'Front desk', payType: 'HOURLY', minAmount: 13, midAmount: 14, maxAmount: 15, effectiveFrom: d('2026-01-01') } });
@@ -172,12 +172,13 @@ describe('the starting pay, inside the new-hire window', () => {
     expect((await s.rec.get(`/comp/associates/${ana.id}/hire-pay`)).body.ceilings.HOURLY).toMatchObject({ amount: '16.50', source: 'RATE_CARD' });
     expect((await s.rec.post(`/comp/associates/${ana.id}/records`).send({ payType: 'HOURLY', amount: 17, reason: 'HIRE' })).status).toBe(202);
 
-    // Nothing to hold the wage against: a compensation approver decides.
+    // Nothing to hold the wage against: it applies at once (owner 2026-10-23).
     const harbor = await createClient('Harbor Grill');
     const dee = await onboardingHire(harbor.id, 'Line cook', 'Dee');
     const none = await s.rec.post(`/comp/associates/${dee.id}/records`).send({ payType: 'HOURLY', amount: 14, reason: 'HIRE' });
-    expect(none.status).toBe(202);
-    expect((await prisma.approvalRequest.findUniqueOrThrow({ where: { id: none.body.approvalId } })).summary).toContain('no pay band or rate card for Line cook');
+    expect(none.status).toBe(201);
+    expect(await prisma.approvalRequest.count({ where: { associateId: dee.id, status: 'PENDING' } })).toBe(0);
+    expect(Number((await open(dee.id)).amount)).toBe(14);
   });
 
   it('a hire approved within 30 days and not yet paid is still a new hire', async () => {

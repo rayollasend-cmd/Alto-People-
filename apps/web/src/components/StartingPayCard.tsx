@@ -31,8 +31,9 @@ import { PayScheduleAssignment } from '@/components/PayScheduleAssignment';
  *    only (it renders nothing for anyone else).
  *
  * At or below the position's ceiling (its pay band's top or the rate card's
- * pay) a wage applies at once; above it someone with compensation access
- * approves it, and the card says "Waiting for approval" until they do.
+ * pay), or with neither on file, a wage applies at once; above it someone
+ * with compensation access approves it, and the card says "Waiting for
+ * approval" until they do.
  *
  * Contract: GET /comp/associates/:id/hire-pay, POST /comp/associates/:id/records
  * (packages/shared/src/hirePay.ts).
@@ -197,7 +198,8 @@ function StartingPayForm({
   const value = Number(amount);
   const valid = Number.isFinite(value) && value > 0 && /^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom);
   const ceiling = status.compAccess ? null : status.ceilings[payType];
-  const goesToApproval = !status.compAccess && valid && (!ceiling || value > Number(ceiling.amount));
+  // No band or rate card on file: nothing to hold the wage against, so it applies now (owner 2026-10-23).
+  const goesToApproval = !status.compAccess && valid && !!ceiling && value > Number(ceiling.amount);
   const unit = payType === 'SALARY' ? 'per year' : 'per hour';
   const amountHint = !touched && status.suggested && !current && status.suggested.payType === payType ? status.suggested.label : undefined;
 
@@ -268,7 +270,7 @@ function StartingPayForm({
               ? goesToApproval
                 ? `Above ${fmtPayRate(ceiling.amount, payType)}, ${ceiling.label}: someone with compensation access approves it.`
                 : `Up to ${fmtPayRate(ceiling.amount, payType)} applies now${amountHint && status.suggested?.source === ceiling.source ? '' : ` — ${ceiling.label}`}. Above it, someone with compensation access approves it.`
-              : `No pay band or rate card covers ${status.position ?? 'this position'}${payType === 'SALARY' ? ' on salary' : ''}, so someone with compensation access approves the wage.`}
+              : `No pay band or rate card covers ${status.position ?? 'this position'}${payType === 'SALARY' ? ' on salary' : ''}, so the wage applies now.`}
           </span>
         </p>
       )}

@@ -90,11 +90,11 @@ describe('the recruiter sets a new hire’s pay', () => {
     const client = await createClient('Hire Pay Client');
     const person = await createAssociate();
     await prisma.application.create({ data: { associateId: person.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'SUBMITTED', position: 'Cashier' } });
-    // No band or rate card for Cashier: it waits on a compensation approver, if there is one.
+    // No band or rate card for Cashier: nothing to hold it against, so it applies at once (owner 2026-10-23).
     await createUser({ role: 'HR_ADMINISTRATOR' });
     const pay = await a.post(`/comp/associates/${person.id}/records`).send({ payType: 'HOURLY', amount: 15, reason: 'HIRE' });
-    expect(pay.status).toBe(202);
-    expect((await a.get(`/comp/associates/${person.id}/hire-pay`)).body).toMatchObject({ newHire: true, canSet: true, pending: { amount: '15.00' } });
+    expect(pay.status).toBe(201);
+    expect((await a.get(`/comp/associates/${person.id}/hire-pay`)).body).toMatchObject({ newHire: true, canSet: true, pending: null });
     expect((await a.get(`/comp/associates/${person.id}/records`)).status).toBe(200);
     expect((await a.get(`/associates/${person.id}/pay-schedule`)).status).toBe(200);
     expect((await a.get(`/associates/${person.id}/pay-schedule/choices`)).status).toBe(200);

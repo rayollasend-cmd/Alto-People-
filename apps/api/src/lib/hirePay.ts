@@ -22,7 +22,7 @@ import { tenantIdForWrite } from './tenant.js';
  * The ceiling a starting wage may reach without a second person: the
  * position's pay band maximum or the rate card's pay for the client and
  * position (the lower, when both exist). With neither on file there is
- * nothing to hold the wage against, so it goes to a compensation approver.
+ * nothing to hold the wage against, and it applies at once (owner 2026-10-23).
  */
 
 type Db = PrismaClient | Prisma.TransactionClient;

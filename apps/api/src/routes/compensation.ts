@@ -191,8 +191,8 @@ type RecordCreateInput = z.infer<typeof RecordCreateSchema>;
  * starting pay only (reason HIRE), for a new hire only (lib/hirePay.ts), on
  * the one pay-change path (applyPayRateChange, which closes the record in
  * force — so a correction keeps the first figure as history). At or below
- * the position's ceiling — the band's maximum or the rate card's pay — it
- * applies at once; above it, or with nothing on file to hold it against, a
+ * the position's ceiling — the band's maximum or the rate card's pay — or
+ * with neither on file (owner 2026-10-23), it applies at once; above it a
  * compensation approver decides (202), like every gated pay change. Every
  * write is audited: the pay-rate row when it lands, a hire-pay row beside
  * the approval's own when it waits.
@@ -209,16 +209,16 @@ async function setStartingPay(user: SessionUser, associateId: string, input: Rec
       : new Date();
   const day = effectiveFrom.toISOString().slice(0, 10);
   const ceiling = (await hirePayCeilings(prisma, f, day))[input.payType];
-  const above = !ceiling || input.amount > Number(ceiling.amount);
+  // With no band or rate card on file there is nothing to hold the wage
+  // against, and it applies at once (owner 2026-10-23).
+  const above = !!ceiling && input.amount > Number(ceiling.amount);
   const current = await currentComp(prisma, associateId);
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const unit = input.payType === 'SALARY' ? 'per year' : 'per hour';
   if (above && (await secondPersonExists(prisma, 'manage:comp', user.id))) {
     const open = await prisma.approvalRequest.findFirst({ where: { kind: 'PAY_RATE_CHANGE', associateId, status: 'PENDING' }, select: { id: true } });
     if (open) throw new HttpError(409, 'approval_pending', 'A pay change for this person is already waiting on a decision.');
-    const why = ceiling
-      ? `above ${ceiling.label} (${fmt(Number(ceiling.amount))})`
-      : `no pay band or rate card for ${f.position ?? 'this position'} to hold it against`;
+    const why = `above ${ceiling!.label} (${fmt(Number(ceiling!.amount))})`;
     const request = await createApprovalRequest(prisma, {
       kind: 'PAY_RATE_CHANGE',
       subjectType: 'Associate',
