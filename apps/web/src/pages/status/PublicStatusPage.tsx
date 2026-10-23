@@ -99,7 +99,7 @@ function UptimeBar({ days, label }: { days: StatusDayPublic[]; label: string }) 
           />
         ))}
       </div>
-      <div className="mt-1 flex justify-between text-2xs text-ink-subtle" aria-hidden="true">
+      <div className="mt-1 flex justify-between text-2xs text-ink-muted" aria-hidden="true">
         <span>90 days ago</span>
         <span>Today</span>
       </div>
@@ -119,7 +119,7 @@ function ComponentRow({ c }: { c: StatusComponentPublic }) {
         <div className="flex items-center gap-4">
           {c.uptime90d !== null && (
             <span className="text-xs2 tabular-nums text-ink-muted">
-              {c.uptime90d}% <span className="text-ink-subtle">· 90 days</span>
+              {c.uptime90d}% <span>· 90 days</span>
             </span>
           )}
           {stateBadge(c.state)}

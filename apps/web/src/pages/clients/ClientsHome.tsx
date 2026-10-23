@@ -328,7 +328,7 @@ export function ClientsHome() {
             {c.accountOwner.name.includes('@') ? c.accountOwner.name.split('@')[0] : c.accountOwner.name}
           </span>
         ) : (
-          <span className="whitespace-nowrap text-ink-subtle">No owner</span>
+          <span className="whitespace-nowrap text-ink-muted">No owner</span>
         ),
     },
     {
@@ -341,7 +341,7 @@ export function ClientsHome() {
       cell: (c) => {
         const n = c.onAssignment ?? c.activeAssociateCount;
         return (
-          <Link to={peopleHref(c)} className={cn('hover:underline', n > 0 ? 'text-ink' : 'text-ink-subtle')} title={`${n} working at ${c.name} now`}>
+          <Link to={peopleHref(c)} className={cn('hover:underline', n > 0 ? 'text-ink' : 'text-ink-muted')} title={`${n} working at ${c.name} now`}>
             {n.toLocaleString('en-US')}
           </Link>
         );
@@ -357,7 +357,7 @@ export function ClientsHome() {
       className: 'tabular-nums',
       cell: (c) =>
         c.fillRatePct == null || !c.shiftsNext7 ? (
-          <span className="whitespace-nowrap text-ink-subtle" title="No shifts start in the next 7 days">No shifts</span>
+          <span className="whitespace-nowrap text-ink-muted" title="No shifts start in the next 7 days">No shifts</span>
         ) : (
           <Link to={fillHref(c)} className="inline-flex flex-col items-end leading-tight hover:underline">
             <span className={c.fillRatePct < 80 ? 'text-alert' : c.fillRatePct < 95 ? 'text-warning' : 'text-ink'}>{pct(c.fillRatePct)}</span>
@@ -377,7 +377,7 @@ export function ClientsHome() {
       className: 'tabular-nums',
       cell: (c) =>
         !c.hoursThisWeek ? (
-          <span className="whitespace-nowrap text-ink-subtle" title="No hours worked here yet this week">No hours</span>
+          <span className="whitespace-nowrap text-ink-muted" title="No hours worked here yet this week">No hours</span>
         ) : (
           <Link to={hoursHref(c)} className="text-ink hover:underline">
             {hoursText(c.hoursThisWeek)}
@@ -396,9 +396,9 @@ export function ClientsHome() {
             className: 'tabular-nums',
             cell: (c) =>
               c.billedInRange == null ? (
-                <span className="text-ink-subtle">—</span>
+                <span className="text-ink-muted">—</span>
               ) : c.billedInRange === 0 ? (
-                <span className="text-ink-subtle">$0</span>
+                <span className="text-ink-muted">$0</span>
               ) : (
                 <Link to={moneyHref(c)} className="text-ink hover:underline" title={fmtMoney(c.billedInRange)}>
                   {fmtMoneyCompact(c.billedInRange)}
@@ -414,8 +414,8 @@ export function ClientsHome() {
             align: 'right',
             className: 'tabular-nums',
             cell: (c) => {
-              if (c.outstanding == null) return <span className="text-ink-subtle">—</span>;
-              if (c.outstanding === 0) return <span className="text-ink-subtle">$0</span>;
+              if (c.outstanding == null) return <span className="text-ink-muted">—</span>;
+              if (c.outstanding === 0) return <span className="text-ink-muted">$0</span>;
               const late = (c.healthReasons ?? []).some((r) => r.includes('past due'));
               return (
                 <Link to={moneyHref(c)} className={cn('hover:underline', late ? 'text-alert' : 'text-ink')} title={fmtMoney(c.outstanding)}>
@@ -441,7 +441,7 @@ export function ClientsHome() {
       csv: (c) => c.lastPayrollDisbursedAt ?? '',
       sortable: true,
       className: 'whitespace-nowrap text-ink-muted',
-      cell: (c) => (c.lastPayrollDisbursedAt ? <span title={fmtDate(c.lastPayrollDisbursedAt)}>{fmtRelativeDate(c.lastPayrollDisbursedAt)}</span> : <span className="text-ink-subtle">None yet</span>),
+      cell: (c) => (c.lastPayrollDisbursedAt ? <span title={fmtDate(c.lastPayrollDisbursedAt)}>{fmtRelativeDate(c.lastPayrollDisbursedAt)}</span> : <span className="text-ink-muted">None yet</span>),
     },
     {
       key: 'status',
@@ -451,7 +451,7 @@ export function ClientsHome() {
       cell: (c) => <StatusBadge status={c.status} />,
     },
     { key: 'industry', header: 'Industry', accessor: (c) => c.industry, sortable: true, defaultHidden: true, className: 'text-ink-muted' },
-    { key: 'state', header: 'State', accessor: (c) => c.state, sortable: true, defaultHidden: true, cell: (c) => (c.state ? <span className="text-ink-muted">{c.state}</span> : <span className="text-ink-subtle">—</span>) },
+    { key: 'state', header: 'State', accessor: (c) => c.state, sortable: true, defaultHidden: true, cell: (c) => (c.state ? <span className="text-ink-muted">{c.state}</span> : <span className="text-ink-muted">—</span>) },
     {
       key: 'openApplications',
       header: 'Open apps',
@@ -732,7 +732,7 @@ export function ClientsHome() {
 
 function ContractEnds({ date, today }: { date: string | null; today: string }) {
   const days = daysUntil(date, today);
-  if (!date || days === null) return <span className="text-ink-subtle">Not set</span>;
+  if (!date || days === null) return <span className="text-ink-muted">Not set</span>;
   const tone = days < 0 || days <= 30 ? 'text-alert' : days <= 60 ? 'text-warning' : 'text-ink-muted';
   const when = days < 0 ? 'ended' : days === 0 ? 'today' : `in ${days} day${days === 1 ? '' : 's'}`;
   return (
@@ -828,7 +828,7 @@ function ClientCard({ client: c, today }: { client: ClientListItem; today: strin
         <div className="min-w-0 flex-1">
           <div className="break-words text-base font-medium leading-snug text-ink transition-colors group-hover:text-gold-bright">{c.name}</div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-ink-muted">
-            {c.accountOwner ? <span>Owner: {c.accountOwner.name}</span> : <span className="text-ink-subtle">No owner</span>}
+            {c.accountOwner ? <span>Owner: {c.accountOwner.name}</span> : <span className="text-ink-muted">No owner</span>}
             {c.state && (
               <>
                 <span aria-hidden="true">·</span>
@@ -847,7 +847,7 @@ function ClientCard({ client: c, today }: { client: ClientListItem; today: strin
           <HealthDot health={c.health} className="mt-1" />
           <span className={c.health === 'good' ? 'text-ink-muted' : c.health === 'watch' ? 'text-warning' : 'text-alert'}>
             {c.health === 'good' ? 'In good shape' : (c.healthReasons ?? [])[0] ?? ''}
-            {(c.healthReasons ?? []).length > 1 && <span className="text-ink-subtle"> · {(c.healthReasons ?? []).length - 1} more</span>}
+            {(c.healthReasons ?? []).length > 1 && <span className="text-ink-muted"> · {(c.healthReasons ?? []).length - 1} more</span>}
           </span>
         </div>
       )}
@@ -869,7 +869,7 @@ function CardNumber({ label, value, muted, tone }: { label: string; value: strin
   return (
     <div className="min-w-0">
       <dt className="text-2xs font-medium uppercase tracking-wider text-ink-muted">{label}</dt>
-      <dd className={cn('mt-0.5 text-base font-semibold tabular-nums', tone === 'alert' ? 'text-alert' : tone === 'warning' ? 'text-warning' : muted ? 'text-ink-subtle' : 'text-ink')}>{value}</dd>
+      <dd className={cn('mt-0.5 text-base font-semibold tabular-nums', tone === 'alert' ? 'text-alert' : tone === 'warning' ? 'text-warning' : muted ? 'text-ink-muted' : 'text-ink')}>{value}</dd>
     </div>
   );
 }

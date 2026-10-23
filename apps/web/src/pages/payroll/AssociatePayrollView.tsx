@@ -323,9 +323,10 @@ function MoneySplit({ item }: { item: PayrollItem }) {
   return (
     <section aria-label={t('pay.split.title')}>
       <h4 className="mb-2 text-2xs uppercase tracking-widest text-silver/70">{t('pay.split.title')}</h4>
+      {/* Hidden from assistive tech, so no keyboard layer (its svg tab stop would sit inside aria-hidden). */}
       <div className="h-3 w-full" aria-hidden="true">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={[row]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barCategoryGap={0}>
+          <BarChart accessibilityLayer={false} data={[row]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barCategoryGap={0}>
             <XAxis type="number" hide domain={[0, total]} />
             <YAxis type="category" hide />
             {parts.map((p, i) => (

@@ -515,26 +515,28 @@ function ProfilePanel({
             </Button>
           </div>
           <dl className="mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
-            <div className="flex gap-2">
-              <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
-              <div className="min-w-0">
-                <dt className="text-xs text-silver">{t('me.fld.name')}</dt>
-                <dd className="text-ink">{`${profile.firstName} ${profile.lastName}`}</dd>
-              </div>
+            {/* Each item is one div of dt + dd (the only grouping a <dl> allows);
+                the icon rides in the term, the value lines up under the words. */}
+            <div className="min-w-0">
+              <dt className="flex items-center gap-2 text-xs text-silver">
+                <UserRound className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {t('me.fld.name')}
+              </dt>
+              <dd className="pl-6 text-ink">{`${profile.firstName} ${profile.lastName}`}</dd>
             </div>
-            <div className="flex gap-2">
-              <Phone className="mt-0.5 h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
-              <div className="min-w-0">
-                <dt className="text-xs text-silver">{t('me.fld.phone')}</dt>
-                <dd className={profile.phone ? 'text-ink' : 'text-silver'}>{profile.phone ? fmtPhone(profile.phone) : t('me.personal.none')}</dd>
-              </div>
+            <div className="min-w-0">
+              <dt className="flex items-center gap-2 text-xs text-silver">
+                <Phone className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {t('me.fld.phone')}
+              </dt>
+              <dd className={profile.phone ? 'pl-6 text-ink' : 'pl-6 text-silver'}>{profile.phone ? fmtPhone(profile.phone) : t('me.personal.none')}</dd>
             </div>
-            <div className="flex gap-2">
-              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
-              <div className="min-w-0">
-                <dt className="text-xs text-silver">{t('me.personal.address')}</dt>
-                <dd className={address ? 'break-words text-ink' : 'text-silver'} data-testid="me-address">{address ?? t('me.personal.none')}</dd>
-              </div>
+            <div className="min-w-0">
+              <dt className="flex items-center gap-2 text-xs text-silver">
+                <MapPin className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {t('me.personal.address')}
+              </dt>
+              <dd className={address ? 'break-words pl-6 text-ink' : 'pl-6 text-silver'} data-testid="me-address">{address ?? t('me.personal.none')}</dd>
             </div>
           </dl>
         </section>

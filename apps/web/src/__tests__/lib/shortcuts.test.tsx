@@ -116,7 +116,8 @@ describe('useListKeyboard', () => {
     expect(onApprove).toHaveBeenCalledWith({ id: 'b' });
     act(() => { fireEvent.keyDown(window, { key: 'd' }); });
     expect(onDecline).toHaveBeenCalledWith({ id: 'b' });
-    expect(result.current.rowProps('b')['aria-selected']).toBe(true);
+    expect(result.current.rowProps('b')['aria-current']).toBe('true');
+    expect(result.current.rowProps('a')['aria-current']).toBeUndefined();
     expect(result.current.rowProps('a')['data-kb-cursor']).toBeUndefined();
     // Enter on a button is the button's, not "open the cursor row".
     const button = document.createElement('button');

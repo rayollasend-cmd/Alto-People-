@@ -810,7 +810,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       type="button"
       aria-label={label}
       title={label}
-      className="inline-flex shrink-0 items-center rounded p-1 text-silver/60 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40"
+      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/60 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40"
       onClick={(e) => {
         e.stopPropagation();
         navigator.clipboard
@@ -865,7 +865,7 @@ function directoryColumns(opts: {
               {r.firstName} {r.lastName}
             </Link>
             <div className="flex min-w-0 items-center gap-1 text-xs text-silver">
-              <a href={`mailto:${r.email}`} onClick={(e) => e.stopPropagation()} className="truncate hover:text-ink" title={r.email}>
+              <a href={`mailto:${r.email}`} onClick={(e) => e.stopPropagation()} className="inline-flex min-h-6 min-w-0 items-center truncate hover:text-ink" title={r.email}>
                 {r.email}
               </a>
               <CopyButton text={r.email} label={`Copy ${r.email}`} />
@@ -912,7 +912,8 @@ function directoryColumns(opts: {
               <Link
                 to={`/clients/${r.workplaceClientId}`}
                 onClick={(e) => e.stopPropagation()}
-                className="block truncate hover:text-white"
+                // 24px tall to the finger (WCAG 2.5.8) without moving the line: the padding is given back as margin.
+                className="-my-0.5 block truncate py-0.5 hover:text-white"
                 title={client}
               >
                 {client}

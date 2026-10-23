@@ -254,7 +254,7 @@ function UsersAdminPage() {
       sortable: true,
       searchable: false,
       className: 'whitespace-nowrap tabular-nums text-ink-muted',
-      cell: (u) => (u.lastSeenAt ? fmtRelativeDate(u.lastSeenAt) : <span className="text-ink-muted/70">Never</span>),
+      cell: (u) => (u.lastSeenAt ? fmtRelativeDate(u.lastSeenAt) : <span className="text-ink-muted">Never</span>),
     },
     {
       key: 'mfa',

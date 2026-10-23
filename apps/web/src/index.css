@@ -434,7 +434,16 @@
 :root[data-theme='light'] .bg-gold\/15 .text-gold,
 :root[data-theme='light'] .bg-gold\/20 .text-gold,
 :root[data-theme='light'] .bg-gold\/30 .text-gold,
-:root[data-theme='light'] .bg-navy-secondary .text-gold {
+:root[data-theme='light'] .bg-navy-secondary .text-gold,
+/* The job-named twins (2026-10-23 axe sweep): text-accent IS gold, and
+   bg-surface-raised IS navy-secondary, so the same 4.24 pair came back
+   under the new names — an "N unread" count on a raised group header and
+   a gold total on a raised payroll tile. */
+:root[data-theme='light'] .text-accent.bg-surface-raised,
+:root[data-theme='light'] .text-gold.bg-surface-raised,
+:root[data-theme='light'] .bg-surface-raised .text-accent,
+:root[data-theme='light'] .bg-surface-raised .text-gold,
+:root[data-theme='light'] .bg-navy-secondary .text-accent {
   color: rgb(var(--color-gold-bright));
 }
 
@@ -446,6 +455,65 @@
 :root:not([data-theme='light']) .text-silver\/40,
 :root:not([data-theme='light']) .text-silver\/50 {
   color: rgb(120 134 154); /* 4.78:1 on navy, 5.19:1 on midnight */
+}
+
+/* Dark mode's twin of the light gold rule above. The status hues are
+   tuned to navy, and the raised surface (navy-secondary, #142B52) is a
+   step lighter: bare alert text measures 4.24 there, and a status chip —
+   same-hue text on a /15 wash of itself — success 3.74, steel 4.24. The
+   2026-10-23 axe sweep caught the payroll "Last run" tile (a raised card
+   carrying a Paid chip and the totals-mismatch notice). On a raised
+   surface the three take one lighter step of their own hue: each clears
+   4.5 on its own /15 wash over navy-secondary, and gains on navy. */
+:root:not([data-theme='light']) .bg-surface-raised .text-success,
+:root:not([data-theme='light']) .bg-surface-raised .text-positive,
+:root:not([data-theme='light']) .bg-navy-secondary .text-success,
+:root:not([data-theme='light']) .bg-navy-secondary .text-positive {
+  color: rgb(93 185 144); /* #5DB990 — 4.74:1 on a success/15 wash over navy-secondary */
+}
+:root:not([data-theme='light']) .bg-surface-raised .text-alert,
+:root:not([data-theme='light']) .bg-surface-raised .text-negative,
+:root:not([data-theme='light']) .bg-navy-secondary .text-alert,
+:root:not([data-theme='light']) .bg-navy-secondary .text-negative {
+  color: rgb(238 136 126); /* #EE887E — 4.84:1 on an alert/15 wash over navy-secondary */
+}
+:root:not([data-theme='light']) .bg-surface-raised .text-steel,
+:root:not([data-theme='light']) .bg-surface-raised .text-info,
+:root:not([data-theme='light']) .bg-navy-secondary .text-steel,
+:root:not([data-theme='light']) .bg-navy-secondary .text-info {
+  color: rgb(121 179 251); /* #79B3FB — 4.98:1 on a steel/15 wash over navy-secondary */
+}
+
+/* recharts' stock tooltip paints each row in its series colour as an
+   inline style — gold at 3.25 and the "Other" grey at 3.63 on the light
+   tooltip (the 2026-10-23 sweep, /transport). TOOLTIP_ITEM_STYLE fixes a
+   chart that passes it; a dozen hand-built charts pass only
+   contentStyle, so the rule lives here: rows read in the text colour, on
+   every stock tooltip, whether or not the chart remembered. (Every stock
+   tooltip in the app carries TOOLTIP_STYLE's themed surface, so the text
+   colour always has its own background under it.) */
+.recharts-default-tooltip .recharts-tooltip-item {
+  color: rgb(var(--color-fg)) !important;
+}
+
+/* A day that has passed, on the schedule grids (week, time-grid, day).
+   It was `opacity-60`, which faded the text with the chrome: a past
+   shift's times measured 3.73 and its red "Unfilled" 2.38 (2026-10-23
+   axe sweep). A past day still holds shifts someone has to close out, so
+   it keeps its ink. It reads as done instead by losing colour (saturate
+   preserves luminance, so contrast holds) and sinking toward the page
+   background — a wash painted as a background IMAGE so it layers over
+   whatever tint the cell already has (today, time off, a drag target)
+   without fighting those bg-* utilities. */
+.past-day {
+  filter: saturate(0.4);
+  background-image: linear-gradient(rgb(var(--color-midnight) / 0.45), rgb(var(--color-midnight) / 0.45));
+}
+/* Light's page background is all but white, so the wash there is a touch
+   of the divider grey instead (#F3F6F9 on a white card; the floored
+   secondary text still measures 5.1 on it). */
+:root[data-theme='light'] .past-day {
+  background-image: linear-gradient(rgb(var(--color-navy-secondary) / 0.4), rgb(var(--color-navy-secondary) / 0.4));
 }
 
 /* ---------------------------------------------------------------------------

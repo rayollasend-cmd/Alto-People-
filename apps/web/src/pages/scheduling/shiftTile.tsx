@@ -99,10 +99,11 @@ export function useTileDensityKey(): TileDensity {
  * WCAG 2.2 SC 2.5.8 asks for 24×24 CSS px. The old drag grip was a bare
  * 12px icon and the resize rail 6px wide — fine with a mouse, unusable on
  * the tablets these schedules get built on. The icon stays visually small;
- * the padding around it does the work.
+ * the padding around it does the work: 5px a side around the 14px icon is
+ * exactly 24 (p-1 made it 22, which the axe sweep flagged on 2026-10-23).
  */
 export const GRIP_HIT =
-  'p-1 text-silver/60 hover:text-gold cursor-grab active:cursor-grabbing no-print';
+  'p-[5px] text-silver/60 hover:text-gold cursor-grab active:cursor-grabbing no-print';
 export const GRIP_ICON = 'h-3.5 w-3.5';
 
 /**

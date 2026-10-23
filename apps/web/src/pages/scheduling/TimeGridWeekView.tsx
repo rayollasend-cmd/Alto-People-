@@ -407,7 +407,7 @@ export function TimeGridWeekView({
                 className={cn(
                   'border-b border-r border-navy-secondary px-2 py-2 sticky top-0 z-10 bg-navy/95 backdrop-blur',
                   isToday && 'bg-gold/10',
-                  pastKeys.has(dayKeys[i]) && 'opacity-60',
+                  pastKeys.has(dayKeys[i]) && 'past-day',
                 )}
               >
                 <div
@@ -919,7 +919,8 @@ const TimeCell = memo(function TimeCell({
         !isConflictTarget && isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
         tplOver && 'bg-gold/20 outline-2 outline outline-gold/70 -outline-offset-1',
         variant === 'unassigned' && !isOver && !isConflictTarget && !tplOver && 'bg-warning/[0.04]',
-        isPast && 'opacity-60',
+        // Muted, not faded: a past day's shifts keep AA ink (index.css .past-day).
+        isPast && 'past-day',
       )}
       data-past={isPast ? 'true' : undefined}
       style={{

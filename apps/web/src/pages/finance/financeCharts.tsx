@@ -151,10 +151,14 @@ export const AGING_COLORS = { current: PALETTE.good, days1to30: 'rgb(var(--color
 export function AgingBar({ buckets }: { buckets: Array<{ key: keyof typeof AGING_COLORS; label: string; amount: number }> }) {
   const row = Object.fromEntries(buckets.map((b) => [b.key, b.amount]));
   const shown = buckets.filter((b) => b.amount > 0);
+  // A picture of the numbers printed beside it — its callers hide it
+  // (aria-hidden) or label it (role="img"), so recharts' keyboard layer
+  // (a tab stop on the svg) is off: a focusable inside aria-hidden is a
+  // serious axe finding (finance home, 2026-10-23).
   return (
     <div className="h-3 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={[row]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barCategoryGap={0}>
+        <BarChart accessibilityLayer={false} data={[row]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barCategoryGap={0}>
           <XAxis type="number" hide domain={[0, 'dataMax']} />
           <YAxis type="category" hide />
           <Tooltip cursor={false} content={<ChartTooltipContent series={Object.fromEntries(buckets.map((b) => [b.key, { name: b.label, color: AGING_COLORS[b.key] }]))} format={(v) => fmtMoney(v)} />} />

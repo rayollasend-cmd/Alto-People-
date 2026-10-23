@@ -3227,7 +3227,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             {tzHint && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" className="shrink-0 text-silver/70 hover:text-ink" aria-label="Time zone note">
+                  <button type="button" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/70 hover:text-ink coarse:h-11 coarse:w-11" aria-label="Time zone note">
                     <Clock className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
                 </TooltipTrigger>
@@ -3238,7 +3238,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             {!isPhone && (view === 'week' || view === 'day' || view === 'month') && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" className="shrink-0 text-silver/70 hover:text-ink" aria-label="Status key">
+                  <button type="button" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/70 hover:text-ink coarse:h-11 coarse:w-11" aria-label="Status key">
                     <Info className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
                 </TooltipTrigger>

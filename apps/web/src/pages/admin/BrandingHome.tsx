@@ -153,19 +153,19 @@ export function BrandingHome() {
       />
       <p className="text-sm text-ink-muted">
         Looking for something that used to be here? Two-step sign-in is on{' '}
-        <Link to="/admin/sign-in" className="text-accent underline-offset-2 hover:underline">
+        <Link to="/admin/sign-in" className="text-accent underline underline-offset-2">
           Sign-in
         </Link>
         , the finance mailbox and remit-to on{' '}
-        <Link to="/admin/finance" className="text-accent underline-offset-2 hover:underline">
+        <Link to="/admin/finance" className="text-accent underline underline-offset-2">
           Finance
         </Link>
         , second-person rules on{' '}
-        <Link to="/admin/approvals" className="text-accent underline-offset-2 hover:underline">
+        <Link to="/admin/approvals" className="text-accent underline underline-offset-2">
           Approval rules
         </Link>
         , and the workweek and time zone on{' '}
-        <Link to="/admin/organization" className="text-accent underline-offset-2 hover:underline">
+        <Link to="/admin/organization" className="text-accent underline underline-offset-2">
           Organization
         </Link>
         .

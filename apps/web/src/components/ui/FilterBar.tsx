@@ -162,7 +162,7 @@ FilterBarCore.displayName = 'FilterBarCore';
 /** The count inside a chip: "Open 3". */
 export function FilterCount({ value, className }: { value: number; className?: string }) {
   const { lang } = useI18n();
-  return <span className={cn('tabular-nums text-xs opacity-80', className)}>{value.toLocaleString(lang)}</span>;
+  return <span className={cn('tabular-nums text-xs', className)}>{value.toLocaleString(lang)}</span>;
 }
 
 /**

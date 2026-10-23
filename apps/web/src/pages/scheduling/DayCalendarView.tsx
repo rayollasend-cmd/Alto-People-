@@ -198,7 +198,7 @@ export function DayCalendarView({
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div
-        className={cn('rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain', isPast && 'opacity-60')}
+        className={cn('rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain', isPast && 'past-day')}
         data-past={isPast ? 'true' : undefined}
       >
         <div className="flex min-w-[700px]">

@@ -365,7 +365,7 @@ export function AssociateTimeOffView() {
       {/* Time off and protected leave are two pages; each points to the other. */}
       <p className="text-sm text-silver" data-testid="leave-pointer">
         {t('timeoff.leavePointer')}{' '}
-        <Link to="/leave" className="text-gold underline-offset-2 hover:underline">
+        <Link to="/leave" className="text-gold underline underline-offset-2">
           {t('timeoff.leavePointerLink')}
         </Link>
       </p>

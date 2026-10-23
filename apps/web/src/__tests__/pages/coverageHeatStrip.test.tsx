@@ -98,12 +98,18 @@ describe('<CoverageHeatStrip>', () => {
         onCoverageGap={onGap}
       />,
     );
-    const short = screen.getByRole('button', { name: /Thu Oct 22 2p: 2 scheduled vs 4 — 2 short/ });
+    // The hour cells are a pointer shortcut, out of the tab order and the
+    // accessibility tree (the day's "N short" button and the Table view
+    // carry the same numbers and action); the hour's reading is its tooltip.
+    const short = screen.getByTitle(/Thu Oct 22 2p: 2 scheduled vs 4 — 2 short/);
+    expect(short.tagName).toBe('BUTTON');
+    expect(short).toHaveAttribute('aria-hidden', 'true');
+    expect(short).toHaveAttribute('tabindex', '-1');
     expect(short).toHaveAttribute('data-short', 'true');
     await user.click(short);
     expect(onGap).toHaveBeenCalledWith(new Date(2026, 9, 22), 2);
     // A covered hour is not a control.
-    expect(screen.getByRole('button', { name: /Thu Oct 22 9a: 4 scheduled vs 4$/ })).toBeDisabled();
+    expect(screen.getByTitle(/Thu Oct 22 9a: 4 scheduled vs 4$/)).toBeDisabled();
     expect(screen.getByText(/1 of 1 days run under the floor target of 4/)).toBeInTheDocument();
   });
 });
@@ -147,6 +153,12 @@ describe('<WeekCalendarView> coverage strip and past columns', () => {
     expect(screen.getAllByText('Coverage by hour').length).toBeGreaterThan(0);
     // Oct 19 2026 is long over: the column is dimmed and its open shift went unfilled.
     expect(document.querySelectorAll('[data-past="true"]').length).toBeGreaterThan(0);
+    // Muted, not faded: opacity-60 took the past tile's "Unfilled" to 2.38:1
+    // (2026-10-23 axe sweep). A past day desaturates and keeps its ink.
+    for (const el of document.querySelectorAll('[data-past="true"]')) {
+      expect(el.classList.contains('past-day')).toBe(true);
+      expect(el.classList.contains('opacity-60')).toBe(false);
+    }
     expect(screen.getByTestId('unfilled-tag')).toHaveTextContent('Unfilled');
     // F500 G2: the tag is its own line inside the tile (it truncates there)
     // instead of a pill pushed past the tile's edge.

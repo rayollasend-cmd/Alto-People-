@@ -17,8 +17,11 @@ import { openKeyboardShortcuts } from '@/components/KeyboardShortcutsDialog';
  *   One hook for lists (useListKeyboard): `j`/`k` or ↑/↓ move a cursor
  *   over the rows, Enter opens, `a` approves and `d` declines when the
  *   list offers those. The hook owns the cursor and returns props for
- *   each row (`aria-selected`, a data attribute the CSS highlights, and
+ *   each row (`aria-current`, a data attribute the CSS highlights, and
  *   scroll-into-view), so a page adds keyboard support in three lines.
+ *   `aria-current`, not `aria-selected`: the rows are plain list items
+ *   (and divs, and table rows), and aria-selected is only allowed on
+ *   option/row/tab/gridcell — axe rates it critical on an <li>.
  */
 
 export type GoTo = { key: string; path: string; label: string };
@@ -118,7 +121,7 @@ export interface ListKeyboard {
   cursor: string | null;
   setCursor: (id: string | null) => void;
   /** Spread on each row. */
-  rowProps: (id: string) => { 'data-kb-cursor': 'true' | undefined; 'aria-selected': boolean; ref: (el: HTMLElement | null) => void };
+  rowProps: (id: string) => { 'data-kb-cursor': 'true' | undefined; 'aria-current': 'true' | undefined; ref: (el: HTMLElement | null) => void };
   /** Spread on the list container. */
   listProps: { tabIndex: 0; onFocus: () => void; ref: (el: HTMLElement | null) => void };
 }
@@ -200,7 +203,7 @@ export function useListKeyboard<T>({ items, idOf, onOpen, onApprove, onDecline, 
   const rowProps = useCallback(
     (id: string) => ({
       'data-kb-cursor': (current === id ? 'true' : undefined) as 'true' | undefined,
-      'aria-selected': current === id,
+      'aria-current': (current === id ? 'true' : undefined) as 'true' | undefined,
       ref: (el: HTMLElement | null) => {
         if (el) rows.current.set(id, el);
         else rows.current.delete(id);

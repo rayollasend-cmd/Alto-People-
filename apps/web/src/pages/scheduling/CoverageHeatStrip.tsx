@@ -146,12 +146,16 @@ function DayCells({
             onClick={clickable ? () => onCoverageGap!(day.dayStart, short) : undefined}
             disabled={!clickable}
             data-short={short > 0 ? 'true' : 'false'}
+            // A pointer shortcut: the day's "N short" button in the totals row
+            // (and the chart's Table view) carry the same action and numbers
+            // for keyboards and screen readers, at a full-size target.
+            tabIndex={-1}
+            aria-hidden="true"
             className={cn(
               'relative m-px h-5 rounded-sm bg-navy-secondary/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-gold coarse:h-6',
               clickable ? 'cursor-pointer hover:brightness-125' : 'cursor-default',
             )}
             title={text}
-            aria-label={text}
           >
             {n > 0 && (
               <span

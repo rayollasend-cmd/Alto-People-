@@ -344,7 +344,7 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
                     </span>
                     <span className="ml-auto text-ink-muted">
                       {t(group.entries.length === 1 ? 'inbox.message' : 'inbox.messages', { count: group.entries.length })}
-                      {unreadInGroup > 0 && <span className="ml-1 text-gold">{t('inbox.unreadInGroup', { count: unreadInGroup })}</span>}
+                      {unreadInGroup > 0 && <span className="ml-1 text-accent">{t('inbox.unreadInGroup', { count: unreadInGroup })}</span>}
                     </span>
                   </div>
                   <ul className="divide-y divide-line">

@@ -174,3 +174,45 @@ describe.each([
     expect(ratio(hover, card)).toBeGreaterThanOrEqual(ratio(CONTROL_BORDER, card));
   });
 });
+
+/** The colour a rule in index.css sets — read from the file, so the test follows the CSS. */
+function ruleColor(selector: string): RGB {
+  const at = css.indexOf(selector);
+  if (at === -1) throw new Error(`rule not found in index.css: ${selector}`);
+  const open = css.indexOf('{', at);
+  const m = css.slice(open, css.indexOf('}', open)).match(/color:\s*rgb\((\d+)\s+(\d+)\s+(\d+)\)/);
+  if (!m) throw new Error(`no rgb() colour in the rule for ${selector}`);
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+/**
+ * The raised surface (navy-secondary) — a hover, a selected row, and the
+ * odd raised card. The 2026-10-23 sweep found status text and gold failing
+ * there in both themes (payroll's "Last run" tile, the inbox group header).
+ */
+describe('text on a raised surface', () => {
+  const darkRaised = DARK['navy-secondary'];
+
+  it.each([
+    ['success', ":root:not([data-theme='light']) .bg-surface-raised .text-success,"],
+    ['alert', ":root:not([data-theme='light']) .bg-surface-raised .text-alert,"],
+    ['steel', ":root:not([data-theme='light']) .bg-surface-raised .text-steel,"],
+  ])('dark: %s takes a lighter step that clears AA on the surface and on its own /15 wash there', (token, selector) => {
+    const fg = ruleColor(selector);
+    expect(ratio(fg, darkRaised)).toBeGreaterThanOrEqual(AA);
+    expect(ratio(fg, over(DARK[token], darkRaised, 0.15))).toBeGreaterThanOrEqual(AA);
+    // Still clears the plain card, for a raised wrapper around a card.
+    expect(ratio(fg, [11, 24, 50])).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('light: gold and accent text there take gold-bright, which clears AA', () => {
+    expect(css).toContain(":root[data-theme='light'] .bg-surface-raised .text-accent");
+    expect(css).toContain(":root[data-theme='light'] .bg-surface-raised .text-gold");
+    expect(ratio(LIGHT.gold, LIGHT['navy-secondary'])).toBeLessThan(AA);
+    expect(ratio(LIGHT['gold-bright'], LIGHT['navy-secondary'])).toBeGreaterThanOrEqual(AA);
+  });
+
+  it("recharts' stock tooltip rows read in the text colour, never the series colour", () => {
+    expect(css).toMatch(/\.recharts-default-tooltip \.recharts-tooltip-item \{\s*color: rgb\(var\(--color-fg\)\) !important;/);
+  });
+});
