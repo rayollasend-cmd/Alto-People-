@@ -2779,6 +2779,8 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'timeHome.yourClock': 'Saatiniz',
   'timeHome.onClockSince': '{time} itibarıyla mesaide',
   'timeHome.notClockedIn': 'Giriş yapılmadı',
+  'timeHome.clockNotSetUp': 'Saatiniz henüz kurulmadı',
+  'timeHome.clockNotSetUpBody': 'Uygulamadan giriş yapabilmek için Kişiler bölümündeki kaydınızda şu e-posta olmalı: {email}. İK ekibinden kaydı oluşturmasını veya e-postayı düzeltmesini isteyin; saatiniz bir sonraki oturum açışınızda burada görünür.',
   'whatsNewPage.audience.all': 'Herkes',
   'whatsNewPage.audience.admin': 'Yöneticiler ve müdürler',
   'whatsNewPage.audience.associate': '{workers}',

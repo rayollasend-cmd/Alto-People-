@@ -253,14 +253,19 @@ async function attachUserResolved(
       return next();
     }
 
-    // Self-healing associate link. An ASSOCIATE login with no linked
-    // Associate row sees an empty app — schedule, time, and pay all key off
+    // Self-healing associate link. A login with no linked Associate row
+    // sees an empty app — schedule, time, and pay all key off
     // user.associateId, and it silently being null was how published shifts
     // "disappeared" for SCIM-provisioned logins (which never set the link).
+    // Staff too (2026-10-22): a recruiter whose login was made in Users
+    // admin and whose person record HR added in People under the same
+    // email could never clock in from the app, because only associates
+    // were matched. Every human role but the client portal is matched now,
+    // on the same rules — one unclaimed record, same tenant, exact email.
     // Runs on cache-miss only (≤ once per TTL per user) and stops firing
     // the moment a link exists.
     let { associate, associateId } = user;
-    if (user.role === 'ASSOCIATE' && !associateId) {
+    if (!associateId && user.role !== 'CLIENT_PORTAL') {
       const linked = await autoLinkAssociateByEmail({
         id: user.id,
         email: user.email,

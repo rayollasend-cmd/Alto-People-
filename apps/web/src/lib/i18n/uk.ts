@@ -2780,6 +2780,8 @@ export const uk: Partial<Record<MessageKey, string>> = {
   'timeHome.yourClock': 'Ваш облік часу',
   'timeHome.onClockSince': 'На зміні з {time}',
   'timeHome.notClockedIn': 'Прихід не відмічено',
+  'timeHome.clockNotSetUp': 'Ваш годинник ще не налаштовано',
+  'timeHome.clockNotSetUpBody': 'Щоб відмічатися з застосунку, ваш запис у розділі Люди має містити цю електронну адресу: {email}. Попросіть HR створити запис або виправити адресу; годинник з’явиться тут під час наступного входу.',
   'whatsNewPage.audience.all': 'Усі',
   'whatsNewPage.audience.admin': 'Адміністратори й менеджери',
   'whatsNewPage.audience.associate': '{workers}',

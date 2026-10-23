@@ -2780,6 +2780,8 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'timeHome.yourClock': 'Seu ponto',
   'timeHome.onClockSince': 'Em serviço desde {time}',
   'timeHome.notClockedIn': 'Sem ponto de entrada',
+  'timeHome.clockNotSetUp': 'O seu relógio ainda não está configurado',
+  'timeHome.clockNotSetUpBody': 'Para bater ponto pelo app, o seu registo em Pessoas precisa deste e-mail: {email}. Peça ao RH que o crie ou corrija o e-mail; o relógio aparece aqui na próxima vez que iniciar sessão.',
   'whatsNewPage.audience.all': 'Todos',
   'whatsNewPage.audience.admin': 'Administradores e gerentes',
   'whatsNewPage.audience.associate': '{workers}',

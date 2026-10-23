@@ -100,6 +100,34 @@ describe('POST /time/me/clock-in', () => {
     expect(dup.body.error?.code).toBe('already_clocked_in');
   });
 
+  // 2026-10-22: the internal recruiter could not clock in from the app. Her
+  // login was made in Users admin, her person record in People under the
+  // same email, and the sign-in link only ran for ASSOCIATE logins.
+  it('links a staff login to the person record under the same email at sign-in, so they can clock in', async () => {
+    const associate = await createAssociate({ firstName: 'Britney', lastName: 'Recruits' });
+    const { user } = await createUser({ role: 'INTERNAL_RECRUITER', email: associate.email });
+    expect(user.associateId).toBeNull();
+
+    const a = await loginAs(user.email);
+    const res = await a.post('/time/me/clock-in').send({});
+    expect(res.status).toBe(201);
+    expect(res.body.associateId).toBe(associate.id);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.associateId).toBe(associate.id);
+  });
+
+  it('never links a client-portal login to a person record, even under the same email', async () => {
+    const client = await createClient();
+    const associate = await createAssociate({ firstName: 'Store', lastName: 'Manager' });
+    const { user } = await createUser({ role: 'CLIENT_PORTAL', email: associate.email, clientId: client.id });
+
+    const a = await loginAs(user.email);
+    await a.get('/auth/me');
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.associateId).toBeNull();
+  });
+
   it('returns 403 when caller has no associate profile', async () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);

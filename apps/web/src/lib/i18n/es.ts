@@ -4777,6 +4777,8 @@ export const es: Record<MessageKey, string> = {
   'timeHome.yourClock': 'Tu reloj',
   'timeHome.onClockSince': 'Trabajando desde las {time}',
   'timeHome.notClockedIn': 'Sin marcar entrada',
+  'timeHome.clockNotSetUp': 'Tu reloj aún no está configurado',
+  'timeHome.clockNotSetUpBody': 'Para marcar desde la app, tu ficha en Personas debe tener este correo: {email}. Pide a RR. HH. que la cree o corrija el correo; tu reloj aparecerá aquí la próxima vez que inicies sesión.',
   'whatsNewPage.audience.all': 'Todos',
   'whatsNewPage.audience.admin': 'Administradores y gerentes',
   'whatsNewPage.audience.associate': '{workers}',

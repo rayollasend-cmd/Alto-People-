@@ -84,10 +84,13 @@ export function TimeHome() {
     return <AdminTimeView canManage={canManage} personal={<AssociateTimeView variant="strip" />} />;
   }
 
-  // Managers without an associate record (e.g. the bootstrap HR_ADMIN before
-  // an Associate row has been provisioned for them) see only the queue.
+  // Staff without a person record (the bootstrap HR_ADMIN before one is
+  // provisioned; a recruiter whose login was made in Users admin): the
+  // queue, with a row that says their clock is not set up and what HR
+  // must do. It used to be the queue alone — "I can't clock in" with
+  // nothing on the screen saying why (2026-10-22).
   if (canManage) {
-    return <AdminTimeView canManage={canManage} />;
+    return <AdminTimeView canManage={canManage} personal={<ClockNotSetUpStrip />} />;
   }
 
   // Non-associate, non-manager roles with view:time (e.g. EXECUTIVE_CHAIRMAN,
@@ -95,7 +98,28 @@ export function TimeHome() {
   if (hasAssociateRecord) {
     return <AssociateTimeView />;
   }
-  return <AdminTimeView canManage={false} />;
+  return <AdminTimeView canManage={false} personal={<ClockNotSetUpStrip />} />;
+}
+
+/** A staff viewer who may clock in from the app but has no person record
+ *  linked yet: the server would refuse with no_associate_record, so say so
+ *  here, with the email HR must match. */
+function ClockNotSetUpStrip() {
+  const { t } = useI18n();
+  const { user } = useAuth();
+  return (
+    <section
+      aria-label={t('timeHome.ownClockAria')}
+      className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-navy-secondary bg-navy-secondary/20 px-4 py-3"
+    >
+      <ScanLine className="h-5 w-5 shrink-0 text-silver" aria-hidden="true" />
+      <div className="min-w-[11rem] flex-1">
+        <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">{t('timeHome.yourClock')}</div>
+        <div className="text-sm text-white">{t('timeHome.clockNotSetUp')}</div>
+        <div className="text-xs text-silver">{t('timeHome.clockNotSetUpBody', { email: user?.email ?? '' })}</div>
+      </div>
+    </section>
+  );
 }
 
 /** The viewer's own clock, read-only — for someone who punches at the

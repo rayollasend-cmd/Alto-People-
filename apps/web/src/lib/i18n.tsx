@@ -4879,6 +4879,8 @@ const en = {
   'timeHome.yourClock': 'Your clock',
   'timeHome.onClockSince': 'On the clock since {time}',
   'timeHome.notClockedIn': 'Not clocked in',
+  'timeHome.clockNotSetUp': 'Your clock is not set up yet',
+  'timeHome.clockNotSetUpBody': 'Clocking in from the app needs your person record in People under this email: {email}. Ask HR to add it or fix the email; your clock appears here the next time you sign in.',
   'whatsNewPage.audience.all': 'Everyone',
   'whatsNewPage.audience.admin': 'Admins & managers',
   'whatsNewPage.audience.associate': '{workers}',

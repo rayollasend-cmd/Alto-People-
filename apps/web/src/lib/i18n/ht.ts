@@ -2780,6 +2780,8 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'timeHome.yourClock': 'Revèy ou',
   'timeHome.onClockSince': 'Ap travay depi {time}',
   'timeHome.notClockedIn': 'Ou poko ponche antre',
+  'timeHome.clockNotSetUp': 'Revèy ou poko konfigire',
+  'timeHome.clockNotSetUpBody': 'Pou w ponche nan app la, dosye ou nan Moun dwe gen imèl sa a: {email}. Mande RH kreye l oswa korije imèl la; revèy ou ap parèt isit la pwochen fwa ou konekte.',
   'whatsNewPage.audience.all': 'Tout moun',
   'whatsNewPage.audience.admin': 'Administratè ak manadjè',
   'whatsNewPage.audience.associate': '{workers}',
