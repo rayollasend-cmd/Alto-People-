@@ -8,6 +8,7 @@ import { getFirstDay, patchFirstDay, type FirstDay } from '@/lib/onboardingApi';
 import { assignKioskPin } from '@/lib/kiosk99Api';
 import { assignShift, listShifts } from '@/lib/schedulingApi';
 import { fmtDate, fmtShiftTz, parseYmd } from '@/lib/format';
+import { withReturn } from '@/lib/returnPath';
 import { cn } from '@/lib/cn';
 import { AssociatePicker } from '@/components/ui/AssociatePicker';
 import { Button } from '@/components/ui/Button';
@@ -220,6 +221,7 @@ export function FirstDayCard({ applicationId, associateId, clientId, status, pay
               associateId={associateId}
               locationId={fd.store.id}
               from={fd.startDate}
+              back={`/onboarding/applications/${applicationId}`}
               onBooked={() => {
                 setBooking(false);
                 void q.refetch();
@@ -236,7 +238,7 @@ export function FirstDayCard({ applicationId, associateId, clientId, status, pay
             <span className="text-ink-muted">Due 3 business days after the start date.</span>
           )}
           {!fd.i9.section2CompletedAt && (
-            <Link to={`/compliance?tab=i9&associateId=${associateId}`} className="text-accent hover:underline">
+            <Link to={withReturn(`/compliance?tab=i9&associateId=${associateId}`, `/onboarding/applications/${applicationId}`)} className="text-accent hover:underline">
               Open the I-9
             </Link>
           )}
@@ -262,11 +264,14 @@ function OpenShiftsPicker({
   locationId,
   from,
   onBooked,
+  back,
 }: {
   associateId: string;
   locationId: string;
   from: string | null;
   onBooked: () => void;
+  /** The application to come back to from the schedule. */
+  back: string;
 }) {
   const fromIso = from ? `${from}T00:00:00.000Z` : new Date().toISOString();
   const q = useQuery({
@@ -285,7 +290,7 @@ function OpenShiftsPicker({
         description="Nothing is open from their start date. Add one on the schedule."
         action={
           <Button asChild size="sm" variant="outline">
-            <Link to={`/scheduling?view=week&locationId=${locationId}`}>Open the schedule</Link>
+            <Link to={withReturn(`/scheduling?view=week&locationId=${locationId}`, back)}>Open the schedule</Link>
           </Button>
         }
       />

@@ -61,7 +61,7 @@ import type {
 import { directoryQuery, directorySummaryQuery, getDirectoryEntry, listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
 import { PeopleStatusBadge, workStatusEnglish, workStatusKeys, workStatusOf } from '@/components/ui/PeopleStatusBadge';
 import { useI18n } from '@/lib/i18n';
-import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
+import { returnPathLabel, sanitizeReturnPath, withReturn } from '@/lib/returnPath';
 import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtPayRate, parseYmd, ymdLocal } from '@/lib/format';
@@ -581,6 +581,7 @@ export function PeopleDirectory() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
+      returnLink={false}
         title={term('nav.people')}
         subtitle={`Every ${term('worker').toLowerCase()} on record — where they stand, where they work, their pay and contact — in one row.`}
         breadcrumbs={[{ label: term('nav.people') }]}
@@ -3056,7 +3057,7 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
   );
 }
 
-function TransferDialog({
+export function TransferDialog({
   open,
   onOpenChange,
   associate: a,
@@ -5586,7 +5587,7 @@ export function DocumentsTab({ associateId }: { associateId: string }) {
                     // associateId rides along so tabs that support person
                     // deep-links (I-9 today) open THIS person; others
                     // ignore it harmlessly.
-                    to={`/compliance?tab=${cat.complianceTab}&associateId=${associateId}`}
+                    to={withReturn(`/compliance?tab=${cat.complianceTab}&associateId=${associateId}`, `/people?associateId=${associateId}`)}
                     className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
                   >
                     Open in Compliance

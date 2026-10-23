@@ -27,6 +27,8 @@ export interface ListTemplateProps {
   topbarTitle?: string;
   /** Leave out for the nav's trail; `[]` for none. */
   breadcrumbs?: BreadcrumbSegment[];
+  /** False for a page that paints its own "Back to …" (see PageHeader). */
+  returnLink?: boolean;
   /** The header's actions, as data (see PageHeader). */
   actions?: PageAction[];
   /** Legacy: the primary CTA as a node. */
@@ -52,7 +54,7 @@ export interface ListTemplateProps {
   headerClassName?: string;
 }
 
-export function ListTemplate({ title, subtitle, topbarTitle, breadcrumbs, actions, primaryAction, secondaryActions, facts, related, status, filters, summary, children, drawer, className, headerClassName }: ListTemplateProps) {
+export function ListTemplate({ title, subtitle, topbarTitle, breadcrumbs, returnLink, actions, primaryAction, secondaryActions, facts, related, status, filters, summary, children, drawer, className, headerClassName }: ListTemplateProps) {
   return (
     <div className={cn('space-y-[var(--d-stack)]', className)} data-template="list">
       <PageHeader
@@ -61,6 +63,7 @@ export function ListTemplate({ title, subtitle, topbarTitle, breadcrumbs, action
         subtitle={subtitle}
         topbarTitle={topbarTitle}
         breadcrumbs={breadcrumbs}
+        returnLink={returnLink}
         actions={actions}
         primaryAction={primaryAction}
         secondaryActions={secondaryActions}

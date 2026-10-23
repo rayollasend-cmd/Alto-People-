@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { sanitizeReturnPath } from '@/lib/returnPath';
 import { Building2, Check, MapPin, Search, UserMinus, UserPlus, Users } from 'lucide-react';
 import type { MembershipChangeInput, ScheduleCandidate } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -378,6 +380,8 @@ export function AddPeopleBuilder({
   initialInclude?: ScheduleCandidate[];
 }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
   const hasClients = useTenant().moduleOn('clientPortal');
   const [step, setStep] = useState<'choose' | 'review'>('choose');
   const [sel, setSel] = useState<BuilderSelection>(() => emptySelection(schedule.nextPeriodStart));
@@ -411,6 +415,10 @@ export function AddPeopleBuilder({
       toast.success(`${r.impact.joins} ${r.impact.joins === 1 ? 'person joins' : 'people join'} ${schedule.name} from ${payDay(r.impact.effectiveFrom, false)}. Payroll was told.`);
       void qc.invalidateQueries({ queryKey: ['paySchedules'] });
       onOpenChange(false);
+      // Sent here from the run-payroll wizard (?return=): the people are on
+      // the schedule now, so go straight back to the run.
+      const back = sanitizeReturnPath(params.get('return'));
+      if (back) navigate(back);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not add them.'),
   });

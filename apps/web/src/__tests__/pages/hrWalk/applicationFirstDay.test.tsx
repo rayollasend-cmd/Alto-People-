@@ -63,7 +63,8 @@ describe('<FirstDayCard> (HR 11)', () => {
     expect(screen.getByText('Biweekly (Sat–Fri)')).toBeInTheDocument();
     expect(screen.getByText(/Filed under another client/)).toBeInTheDocument();
     expect(screen.getByText(/Due .* 3 business days after the start/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open the I-9' })).toHaveAttribute('href', '/compliance?tab=i9&associateId=a1');
+    // …and the I-9 carries the way back to this application (?return=).
+    expect(screen.getByRole('link', { name: 'Open the I-9' })).toHaveAttribute('href', '/compliance?tab=i9&associateId=a1&return=%2Fonboarding%2Fapplications%2Fapp1');
 
     // One change, one save.
     fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2026-11-02' } });

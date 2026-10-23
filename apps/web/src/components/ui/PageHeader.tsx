@@ -6,6 +6,7 @@ import { useConfirmIfMounted, type ConfirmOptions } from '@/lib/confirm';
 import { useI18n } from '@/lib/i18n';
 import { useResolvedCrumbs } from '@/lib/navTrail';
 import { useHeroObserver, usePublishPageTitle } from '@/lib/pageTitle';
+import { ReturnLink } from '@/components/ui/ReturnLink';
 import { useMediaQuery } from '@/lib/useViewport';
 import { Breadcrumb, headerCrumbs, type BreadcrumbSegment } from './Breadcrumb';
 import { Button } from './Button';
@@ -458,6 +459,12 @@ interface PageHeaderProps {
   topbarTitle?: string;
   /** Leave out for the nav's trail; `[]` for none; your own for a drill-down. */
   breadcrumbs?: BreadcrumbSegment[];
+  /**
+   * The "← Back to …" link when the page was opened with `?return=` (on by
+   * default, so every page honors it). A page that paints its own way back
+   * (People, the kiosk admin) passes false.
+   */
+  returnLink?: boolean;
   /** Status badges beside the title. */
   status?: React.ReactNode;
   /** The key facts under the title (label · value), each linking to its list. */
@@ -482,6 +489,7 @@ export function PageHeader({
   subtitle,
   topbarTitle,
   breadcrumbs,
+  returnLink = true,
   status,
   facts,
   related,
@@ -511,6 +519,9 @@ export function PageHeader({
 
   return (
     <header className={cn('mb-5 md:mb-[var(--d-stack-lg)]', className)}>
+      {/* Opened from another desk with ?return=: one click back, above
+          everything, on every page (lib/returnPath). */}
+      {returnLink && <ReturnLink className="mb-2" />}
       {/* Phones read like an app's large-title header: no breadcrumb trail
           (the top bar names the page and carries Back). */}
       {trail && (

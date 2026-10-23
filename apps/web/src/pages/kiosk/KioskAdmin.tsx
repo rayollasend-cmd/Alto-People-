@@ -60,7 +60,7 @@ import { usePersistentState } from '@/lib/usePersistentState';
 import { useAuth, useTerm } from '@/lib/auth';
 import { errorText } from '@/lib/errorText';
 import { pickOne } from '@/lib/validationCopy';
-import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
+import { returnPathLabel, sanitizeReturnPath, withReturn } from '@/lib/returnPath';
 import { leaveFromOverlay } from '@/lib/useOverlayBackButton';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { boundedClientOf, hasCapability } from '@/lib/roles';
@@ -180,6 +180,7 @@ export function KioskAdmin() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
+      returnLink={false}
         title={term('nav.kiosk')}
         subtitle="Register tablets, issue 4-digit clock-in numbers, and review the punch log."
         breadcrumbs={[{ label: 'Time & attendance', to: '/time-attendance' }, { label: term('nav.kiosk') }]}
@@ -2304,7 +2305,8 @@ function FocusNotice({
 }) {
   const name = `${focus.firstName} ${focus.lastName}`;
   const appLink = focus.applicationId ? (
-    <Link to={`/onboarding/applications/${focus.applicationId}`} className="font-medium underline">
+    // Approve there, come straight back to issuing this person's number.
+    <Link to={withReturn(`/onboarding/applications/${focus.applicationId}`, `/time-attendance/kiosk?tab=pins&issue=${focus.id}`)} className="font-medium underline">
       Open their application
     </Link>
   ) : null;

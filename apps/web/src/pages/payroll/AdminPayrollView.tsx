@@ -522,15 +522,28 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // ?new=run (⌘K "Run payroll"): open the next payday's run — resume its
   // draft if one exists, else the wizard seeded like the hero's button.
   const newParam = searchParams.get('new');
+  // ?new=run&schedule=&from=&to= — the wizard's own links carry this as their
+  // way back, so fixing a blocker (add people, approve time, assign a
+  // schedule) returns to the same run instead of losing the wizard.
+  const seedSchedule = searchParams.get('schedule');
+  const seedFrom = searchParams.get('from');
+  const seedTo = searchParams.get('to');
   useEffect(() => {
-    if (newParam !== 'run' || !upcoming) return;
+    if (newParam !== 'run') return;
+    const explicit = seedSchedule && seedFrom && seedTo ? { scheduleId: seedSchedule, periodStart: seedFrom, periodEnd: seedTo } : null;
+    if (!explicit && !upcoming) return;
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      next.delete('new');
+      for (const k of ['new', 'schedule', 'from', 'to']) next.delete(k);
       return next;
     }, { replace: true });
     if (!canProcess) return;
-    const nr = upcoming.nextRun;
+    if (explicit) {
+      setWizardSeed(explicit);
+      setShowCreate(true);
+      return;
+    }
+    const nr = upcoming!.nextRun;
     if (nr?.draftRunId) {
       void openRun(nr.draftRunId);
       return;
@@ -539,7 +552,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     setShowCreate(true);
     // openRun is a plain function re-created each render; the param drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newParam, upcomingQuery.data, upcomingQuery.isError, canProcess, setSearchParams]);
+  }, [newParam, seedSchedule, seedFrom, seedTo, upcomingQuery.data, upcomingQuery.isError, canProcess, setSearchParams]);
 
   const openRun = async (id: string) => {
     try {

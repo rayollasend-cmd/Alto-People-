@@ -163,7 +163,10 @@ describe('Run payroll wizard', () => {
     openWizard();
 
     expect(await screen.findByText('No one is on this schedule yet')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Add people/ })).toHaveAttribute('href', `/payroll/schedules/${SCH}`);
+    // Carries the way back into this run (?return=) — fixing a blocker must not lose the wizard.
+    expect(screen.getByRole('link', { name: /Add people/ }).getAttribute('href')).toBe(
+      `/payroll/schedules/${SCH}?return=${encodeURIComponent(`/payroll?new=run&schedule=${SCH}&from=2027-01-02&to=2027-01-15`)}`,
+    );
     expect(screen.getByText('0 on this schedule')).toBeInTheDocument();
     // Never a green "all clear" for an empty run.
     expect(screen.queryByText(/No exceptions for/)).not.toBeInTheDocument();
@@ -178,9 +181,8 @@ describe('Run payroll wizard', () => {
     openWizard();
 
     expect(await screen.findByText('3 people are on this schedule, but none has approved time in this period')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Approve time' })).toHaveAttribute(
-      'href',
-      `/time-attendance?tab=queue&from=${period.periodStart}&to=${period.periodEnd}`,
+    expect(screen.getByRole('link', { name: 'Approve time' }).getAttribute('href')).toMatch(
+      new RegExp(`^/time-attendance\\?tab=queue&from=${period.periodStart}&to=${period.periodEnd}&return=`),
     );
     expect(screen.getByRole('button', { name: /Create run/ })).toBeDisabled();
   });
@@ -225,7 +227,8 @@ describe('Run payroll wizard', () => {
     expect(
       await screen.findByText('2 people worked this period but are on no pay schedule — they won’t be paid by this run.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Assign them' })).toHaveAttribute('href', '/payroll/schedules');
+    // Opens the unassigned bucket, and carries the way back into this run.
+    expect(screen.getByRole('link', { name: 'Assign them' }).getAttribute('href')).toMatch(/^\/payroll\/schedules\?view=unassigned&return=/);
   });
 });
 

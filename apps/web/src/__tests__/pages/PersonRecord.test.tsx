@@ -348,7 +348,8 @@ describe('<PersonRecord> life-cycle actions (HR walk 12 and 13)', () => {
     expect(await screen.findByRole('menuitem', { name: 'Transfer…' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Promote…' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('menuitem', { name: 'Separate…' }));
-    expect(lastLocation).toBe(`/separations?associateId=${ID}`);
+    // …with the way back to this record (?return=), so the desk lands here again.
+    expect(lastLocation).toBe(`/separations?associateId=${ID}&return=${encodeURIComponent(`/people/${ID}`)}`);
   });
 
   it('no Separate for someone already separated', async () => {

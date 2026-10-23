@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BreakFlagsDesk, TimeCorrectionsDesk } from './TimeCorrectionsDesk';
 import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
+import { hereAsReturn, withReturn } from '@/lib/returnPath';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
@@ -5042,13 +5043,18 @@ function ExternalPayrollSheetDialog({
                         </span>
                         <span className="block text-silver">
                           {c.oldSummary} → {c.newSummary} · by {c.by} · {c.status === 'HELD' ? 'held' : 'unverified'}
+                          {' · '}
+                          {/* Straight to this change in the Finance queue, and back here to export. */}
+                          <RouterLink to={withReturn(`/payroll/financial-changes?id=${c.id}`, hereAsReturn())} className="text-gold underline">
+                            Verify it
+                          </RouterLink>
                         </span>
                       </span>
                     </label>
                   </li>
                 ))}
               </ul>
-              <RouterLink to="/payroll/financial-changes" className="text-gold underline">
+              <RouterLink to={withReturn('/payroll/financial-changes', hereAsReturn())} className="text-gold underline">
                 Open the Finance queue
               </RouterLink>
             </div>

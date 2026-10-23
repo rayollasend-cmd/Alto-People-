@@ -23,7 +23,7 @@ import {
 } from '@/lib/separation119Api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
-import { listDirectory } from '@/lib/directoryApi';
+import { getDirectoryEntry } from '@/lib/directoryApi';
 import { statusTone } from '@/lib/status';
 import {
   AssociatePicker,
@@ -71,6 +71,7 @@ export function SeparationHome() {
   const [filter, setFilter] = useState<SeparationStatus | 'ALL'>('PLANNED');
   const [showNew, setShowNew] = useState(false);
   const [openRow, setOpenRow] = useState<SeparationRow | null>(null);
+  const [openAfterSave, setOpenAfterSave] = useState<string | null>(null);
 
   // ?associateId= deep-links straight into "Initiate separation" with the
   // person pre-selected (PeopleDirectory's profile drawer links here).
@@ -88,23 +89,21 @@ export function SeparationHome() {
     const next = new URLSearchParams(searchParams);
     next.delete('associateId');
     setSearchParams(next, { replace: true });
-    // Resolve the name from the same directory the picker searches —
-    // there's no single-associate getter, so match within the list.
+    // One person by id — the list lookup it replaced stopped at 500 rows,
+    // so in a larger org the deep link said "couldn't find that associate".
     // eslint-disable-next-line no-restricted-syntax -- one-shot resolve of a consumed URL param that then opens the drawer; not a cacheable read
-    listDirectory({ limit: 500 })
-      .then((r) => {
-        const match = r.associates.find((a) => a.id === associateId);
-        if (match) {
-          setNewDrawerAssoc({
-            id: match.id,
-            name: `${match.firstName} ${match.lastName}`.trim(),
-          });
-        } else {
-          toast.error("Couldn't find that associate — pick them manually.");
-        }
+    getDirectoryEntry(associateId)
+      .then((match) => {
+        setNewDrawerAssoc({
+          id: match.id,
+          name: `${match.firstName} ${match.lastName}`.trim(),
+        });
         setShowNew(true);
       })
-      .catch(() => setShowNew(true));
+      .catch(() => {
+        toast.error("Couldn't find that associate — pick them manually.");
+        setShowNew(true);
+      });
   }, [searchParams, setSearchParams, canManage]);
 
   // Keeps the previous rows on screen while the refetch is in flight —
@@ -124,6 +123,15 @@ export function SeparationHome() {
     setOpenRow((prev) =>
       prev ? r.separations.find((s) => s.id === prev.id) ?? prev : prev,
     );
+    if (openAfterSave) {
+      const created = r.separations.find((s) => s.associateId === openAfterSave);
+      if (created) {
+        setOpenRow(created);
+        setOpenAfterSave(null);
+      }
+    }
+    // openAfterSave is consumed here on purpose; the list refetch drives it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshQuery.data]);
   const refresh2Query = useQuery({
     queryKey: ['SeparationHome', 'summary', filter],
@@ -362,9 +370,12 @@ export function SeparationHome() {
             setShowNew(false);
             setNewDrawerAssoc(null);
           }}
-          onSaved={() => {
+          onSaved={(associateId) => {
             setShowNew(false);
             setNewDrawerAssoc(null);
+            // Open the record just created once the list carries it — the
+            // next steps (final pay, equipment, access) live on it.
+            setOpenAfterSave(associateId);
             refresh();
           }}
         />
@@ -416,7 +427,8 @@ function NewSeparationDrawer({
   /** Pre-selected associate (the ?associateId= deep link). */
   initialAssociate?: PickedAssociate | null;
   onClose: () => void;
-  onSaved: () => void;
+  /** Called with the person's id so the list can open their new record. */
+  onSaved: (associateId: string) => void;
 }) {
   const term = useTerm();
   // Mounted fresh on every open (conditional render), so seeding initial
@@ -483,7 +495,7 @@ function NewSeparationDrawer({
         finalPaycheckDate: finalPaycheckDate || null,
       });
       toast.success('Separation initiated.');
-      onSaved();
+      onSaved(assoc.id);
     } catch (err) {
       toast.error(
         err instanceof ApiError

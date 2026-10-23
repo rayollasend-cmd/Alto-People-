@@ -19,6 +19,7 @@ import { ChangesVsLastRun } from './ChangesVsLastRun';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { withReturn } from '@/lib/returnPath';
 import {
   AlertCircle,
   AlertTriangle,
@@ -1029,12 +1030,17 @@ function RunTruthPanel({
   periodStart,
   periodEnd,
   unassigned,
+  back,
 }: {
   truth: RunTruth;
   preview: PayrollRunPreviewResponse | null;
   periodStart: string;
   periodEnd: string;
   unassigned: number;
+  // Every link out of the wizard carries the way back INTO it, with this
+  // schedule and period — fixing a blocker used to lose the wizard and cost
+  // six to eight clicks to reopen it on the same run.
+  back?: string;
 }) {
   const withTime = preview ? preview.items.length : null;
   return (
@@ -1056,7 +1062,7 @@ function RunTruthPanel({
             <span className="block font-medium text-ink">{EMPTY_SCHEDULE}</span>
             <span className="block text-xs text-silver/80">A run pays only the people on its schedule. Add people to {truth.scheduleName ?? 'it'}, then run payroll.</span>
           </span>
-          <Link to={`/payroll/schedules/${truth.scheduleId}`} className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2">
+          <Link to={withReturn(`/payroll/schedules/${truth.scheduleId}`, back)} className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2">
             <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
             Add people
           </Link>
@@ -1071,7 +1077,7 @@ function RunTruthPanel({
             </span>
             <span className="block text-xs text-silver/80">Approve their time for {fmtPeriod(periodStart, periodEnd)}, or check the period.</span>
           </span>
-          <Link to={`/time-attendance?tab=queue&from=${periodStart}&to=${periodEnd}`} className="text-xs text-gold underline underline-offset-2">
+          <Link to={withReturn(`/time-attendance?tab=queue&from=${periodStart}&to=${periodEnd}`, back)} className="text-xs text-gold underline underline-offset-2">
             Approve time
           </Link>
         </div>
@@ -1087,7 +1093,7 @@ function RunTruthPanel({
           <span className="min-w-0 flex-1 text-ink">
             {unassigned} {unassigned === 1 ? 'person' : 'people'} worked this period but {unassigned === 1 ? 'is' : 'are'} on no pay schedule — they won’t be paid by this run.
           </span>
-          <Link to="/payroll/schedules" className="text-xs text-gold underline underline-offset-2">
+          <Link to={withReturn('/payroll/schedules?view=unassigned', back)} className="text-xs text-gold underline underline-offset-2">
             Assign them
           </Link>
         </div>
@@ -1597,7 +1603,14 @@ function Step2({
   }
   return (
     <div className="space-y-3 text-sm">
-      <RunTruthPanel truth={truth} preview={preview} periodStart={periodStart} periodEnd={periodEnd} unassigned={unassigned} />
+      <RunTruthPanel
+        truth={truth}
+        preview={preview}
+        periodStart={periodStart}
+        periodEnd={periodEnd}
+        unassigned={unassigned}
+        back={`/payroll?new=run${truth.scheduleId ? `&schedule=${truth.scheduleId}` : ''}&from=${periodStart}&to=${periodEnd}`}
+      />
 
       <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} error={exceptionsError} onRecheck={onRecheck} paychecks={preview?.items.length ?? 0} period={{ start: periodStart, end: periodEnd, ...runCut }} onTimeApproved={onRetry} />
 
@@ -1766,7 +1779,14 @@ function QuickReview({
   const exMap = exceptionsByAssociate(exceptions);
   return (
     <div className="space-y-3 text-sm">
-      <RunTruthPanel truth={truth} preview={preview} periodStart={periodStart} periodEnd={periodEnd} unassigned={unassigned} />
+      <RunTruthPanel
+        truth={truth}
+        preview={preview}
+        periodStart={periodStart}
+        periodEnd={periodEnd}
+        unassigned={unassigned}
+        back={`/payroll?new=run${truth.scheduleId ? `&schedule=${truth.scheduleId}` : ''}&from=${periodStart}&to=${periodEnd}`}
+      />
 
       <ExceptionStrip
         exceptions={exceptions}

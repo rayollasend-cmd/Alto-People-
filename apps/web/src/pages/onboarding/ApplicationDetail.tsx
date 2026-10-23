@@ -80,6 +80,7 @@ import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
 import { DocumentViewer } from '@/components/DocumentViewer';
 import { previewDocumentUrl } from '@/lib/documentsApi';
+import { ReturnLink } from '@/components/ui/ReturnLink';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
@@ -522,6 +523,8 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
 
   return (
     <>
+      {/* Opened from the kiosk admin or a case with ?return= — one click back. */}
+      {mode === 'page' && <ReturnLink className="mb-2" />}
       {/* Header. In `page` mode this is the H1 + metadata + actions row.
           In `drawer` mode the parent Drawer paints the title, so we drop
           the H1 and keep the metadata + actions below it. */}

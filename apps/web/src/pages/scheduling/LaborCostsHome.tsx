@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { disambiguateStores } from '@/lib/laborCostLabels';
+import { withReturn } from '@/lib/returnPath';
 import { termizeText } from '@/lib/modules';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -2162,7 +2163,7 @@ export function LaborCostsHome() {
                 {grand.scheduledNoRate} shift{grand.scheduledNoRate === 1 ? '' : 's'}{' '}
                 in range {grand.scheduledNoRate === 1 ? 'has' : 'have'} no pay rate
                 and contribute $0 — set per-position defaults in{' '}
-                <Link to="/clients" className="text-gold hover:underline">
+                <Link to={withReturn('/clients', '/labor-costs')} className="text-gold hover:underline">
                   Clients → Rate defaults
                 </Link>
                 .{' '}

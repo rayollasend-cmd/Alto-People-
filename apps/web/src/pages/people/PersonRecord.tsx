@@ -42,7 +42,8 @@ import { getPerfTimeline, listGoals, listOneOnOnes, listPips, type PerfTimelineE
 import { getLadder, KIND_LABELS, type DisciplineKind } from '@/lib/discipline118Api';
 import { CATEGORY_LABELS as CASE_CATEGORY_LABELS, listCaseQueue, type QueueCaseRow } from '@/lib/hrCases123Api';
 import { StatusBadge, statusLabel, statusTone } from '@/lib/status';
-import { CompensationTab, DocumentsTab, EmploymentTab, PaymentsTab, ProfileTab } from './PeopleDirectory';
+import { CompensationTab, DocumentsTab, EmploymentTab, PaymentsTab, ProfileTab, TransferDialog } from './PeopleDirectory';
+import { withReturn } from '@/lib/returnPath';
 import { PromoteDialog } from './PromoteDialog';
 import { OnBehalfCaseDrawer } from '../hrCases/OnBehalfCaseDrawer';
 import { PunchPhotoCard } from '@/components/PunchPhotoCard';
@@ -72,6 +73,7 @@ export function PersonRecord() {
   const { can, user } = useAuth();
   const [textOpen, setTextOpen] = useState(false);
   const [promoteOpen, setPromoteOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const { moduleOn } = useTenant();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -281,10 +283,12 @@ export function PersonRecord() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => navigate(`/org?tab=people&associateId=${a.id}`)}>Transfer…</DropdownMenuItem>
+              {/* The directory drawer transfers inline; the full record used to
+                  leave for /org. Same dialog, no trip. */}
+              <DropdownMenuItem onSelect={() => (a.workplaceClientId ? setTransferOpen(true) : navigate(withReturn(`/org?tab=people&associateId=${a.id}`, `/people/${a.id}`)))}>Transfer…</DropdownMenuItem>
               {can('manage:comp') && <DropdownMenuItem onSelect={() => setPromoteOpen(true)}>Promote…</DropdownMenuItem>}
               {canSeparate && (
-                <DropdownMenuItem onSelect={() => navigate(`/separations?associateId=${a.id}`)} className="text-alert focus:text-alert">
+                <DropdownMenuItem onSelect={() => navigate(withReturn(`/separations?associateId=${a.id}`, `/people/${a.id}`))} className="text-alert focus:text-alert">
                   Separate…
                 </DropdownMenuItem>
               )}
@@ -292,6 +296,23 @@ export function PersonRecord() {
           </DropdownMenu>
           </div>
           {textOpen && <TextDialog phone={a.phone!} name={name} onClose={() => setTextOpen(false)} />}
+          {transferOpen && (
+            <TransferDialog
+              open={transferOpen}
+              onOpenChange={setTransferOpen}
+              associate={a}
+              onSaved={(r) => {
+                onAssociateChange({
+                  currentLocationId: r.locationId,
+                  currentLocationName: r.locationName,
+                  workplaceClientId: r.clientId,
+                  workplaceClientName: r.clientName,
+                  ...(r.crossClient ? { managerId: null, managerName: null, departmentId: null, departmentName: null, jobProfileId: null, jobProfileTitle: null } : {}),
+                });
+                setTransferOpen(false);
+              }}
+            />
+          )}
           {promoteOpen && (
             <PromoteDialog
               associate={{ id: a.id, firstName: a.firstName, lastName: a.lastName }}
@@ -363,9 +384,9 @@ export function PersonRecord() {
             { label: 'Quick view', onSelect: () => navigate(`/people?associateId=${a.id}`) },
             { label: 'Schedule', onSelect: () => navigate(`/scheduling?associate=${a.id}`) },
             ...(canSeeTime ? [{ label: term('label.timesheet'), onSelect: () => navigate(`/time-attendance?associate=${a.id}&name=${encodeURIComponent(name)}`) }] : []),
-            { label: 'Edit org assignment', onSelect: () => navigate(`/org?tab=people&associateId=${a.id}`) },
+            { label: 'Edit org assignment', onSelect: () => navigate(withReturn(`/org?tab=people&associateId=${a.id}`, `/people/${a.id}`)) },
             ...(can('manage:comp') ? [{ label: 'Promote', onSelect: () => setPromoteOpen(true) }] : []),
-            ...(canSeparate ? [{ label: 'Separate…', onSelect: () => navigate(`/separations?associateId=${a.id}`) }] : []),
+            ...(canSeparate ? [{ label: 'Separate…', onSelect: () => navigate(withReturn(`/separations?associateId=${a.id}`, `/people/${a.id}`)) }] : []),
           ]}
         />
         </>

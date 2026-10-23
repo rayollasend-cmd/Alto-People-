@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { nextInQueue, prevInQueue } from '@/lib/queueNext';
+import { withReturn } from '@/lib/returnPath';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -738,7 +739,7 @@ function NewCaseDrawer({
 // free text and external links would be a phishing surface.
 const INTERNAL_PATH_RE = /(^|\s)(\/[a-z][\w-]*(?:\/[\w-]+)*(?:\?[\w=&-]+)?)/g;
 
-function LinkifiedBody({ text }: { text: string }) {
+function LinkifiedBody({ text, returnTo }: { text: string; returnTo?: string }) {
   const nodes: ReactNode[] = [];
   let last = 0;
   INTERNAL_PATH_RE.lastIndex = 0;
@@ -752,7 +753,8 @@ function LinkifiedBody({ text }: { text: string }) {
     nodes.push(
       <Link
         key={start}
-        to={m[2]}
+        // Fix the punch, come straight back to the case to close it.
+        to={withReturn(m[2], returnTo)}
         className="text-gold hover:underline underline-offset-4"
       >
         {m[2]}
@@ -864,7 +866,7 @@ function CaseDetailDrawer({
               {fmtDateTime(data.createdAt)}
             </div>
             <div className="text-sm text-white whitespace-pre-wrap p-3 rounded border border-navy-secondary bg-midnight">
-              <LinkifiedBody text={data.description} />
+              <LinkifiedBody text={data.description} returnTo={`/hr-cases?case=${caseId}`} />
             </div>
 
             {canManage && (
@@ -905,7 +907,7 @@ function CaseDetailDrawer({
                         )}
                       </div>
                       <div className="text-sm text-white whitespace-pre-wrap">
-                        <LinkifiedBody text={c.body} />
+                        <LinkifiedBody text={c.body} returnTo={`/hr-cases?case=${caseId}`} />
                       </div>
                     </div>
                   ))}
