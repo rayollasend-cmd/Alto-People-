@@ -531,6 +531,15 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
 
   const surveysQuery = useQuery({ queryKey: ['dirComms', 'surveys'], queryFn: () => listSurveys() });
   const rows: Survey[] | null = surveysQuery.data?.surveys ?? null;
+  const [openQuestionsAfter, setOpenQuestionsAfter] = useState<string | null>(null);
+  useEffect(() => {
+    if (!openQuestionsAfter || !rows) return;
+    const created = rows.find((s) => s.id === openQuestionsAfter);
+    if (created) {
+      setQuestionsFor(created);
+      setOpenQuestionsAfter(null);
+    }
+  }, [openQuestionsAfter, rows]);
   const error = surveysQuery.error
     ? surveysQuery.error instanceof ApiError
       ? surveysQuery.error.message
@@ -651,8 +660,11 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
       {showNew && (
         <NewSurveyDrawer
           onClose={() => setShowNew(false)}
-          onSaved={() => {
+          onSaved={(id) => {
             setShowNew(false);
+            // Open the questions editor for the survey just created — "add
+            // questions, then open it" was two more trips through the list.
+            setOpenQuestionsAfter(id);
             refresh();
           }}
         />
@@ -674,7 +686,7 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
   );
 }
 
-function NewSurveyDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function NewSurveyDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: (id: string) => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isAnonymous, setIsAnonymous] = useState(true);
@@ -686,13 +698,13 @@ function NewSurveyDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: (
     }
     setSaving(true);
     try {
-      await createSurvey({
+      const created = await createSurvey({
         title: title.trim(),
         description: description.trim() || null,
         isAnonymous,
       });
-      toast.success('Survey draft created. Add questions, then open it.');
-      onSaved();
+      toast.success('Survey draft created — add its questions.');
+      onSaved(created.id);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not create the survey.');
     } finally {

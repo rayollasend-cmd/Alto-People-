@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Building2, FileText, KanbanSquare, LayoutGrid, List, MapPin, Plus } from 'lucide-react';
 import type { ClientListItem } from '@alto-people/shared';
@@ -146,6 +146,7 @@ export function ClientsHome() {
 
   /* ----- The list's state lives in the URL (Back restores it; a view is a link) ----- */
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [hidden, setHiddenState] = useState<string[]>(
     () => readStored(colsKey(me), (raw) => {
       const v: unknown = JSON.parse(raw);
@@ -714,7 +715,15 @@ export function ClientsHome() {
         </div>
       )}
 
-      <NewClientDialog open={showNew} onOpenChange={setShowNew} onCreated={() => void clientsQuery.refetch()} />
+      {/* The next jobs (sites, jobs, rates) live on the record: open it. */}
+      <NewClientDialog
+        open={showNew}
+        onOpenChange={setShowNew}
+        onCreated={(c) => {
+          void clientsQuery.refetch();
+          navigate(`/clients/${c.id}`);
+        }}
+      />
     </ListTemplate>
   );
 }

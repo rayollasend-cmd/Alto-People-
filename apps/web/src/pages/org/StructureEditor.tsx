@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { timezoneForState } from '@/lib/stateTimezone';
 import { toast } from 'sonner';
 import { ExternalLink, Trash2 } from 'lucide-react';
 import { SITE_TYPES, SUPPORTED_TIMEZONES, type SiteType } from '@alto-people/shared';
@@ -244,7 +245,22 @@ export function AddSiteDialog({ open, onClose, defaults }: { open: boolean; onCl
           </Field>
           <Field label="City">{(p) => <Input {...p} value={f.city} maxLength={120} onChange={(e) => setF({ ...f, city: e.target.value })} />}</Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="State">{(p) => <Input {...p} value={f.state} maxLength={2} onChange={(e) => setF({ ...f, state: e.target.value.toUpperCase() })} placeholder="FL" />}</Field>
+            <Field label="State">
+              {(p) => (
+                <Input
+                  {...p}
+                  value={f.state}
+                  maxLength={2}
+                  // The state sets the clock: a Florida store is on Eastern
+                  // time whatever the HR desk's browser says. Still editable above.
+                  onChange={(e) => {
+                    const state = e.target.value.toUpperCase();
+                    setF({ ...f, state, timezone: timezoneForState(state) ?? f.timezone });
+                  }}
+                  placeholder="FL"
+                />
+              )}
+            </Field>
             <Field label="ZIP">{(p) => <Input {...p} value={f.zip} maxLength={20} onChange={(e) => setF({ ...f, zip: e.target.value })} />}</Field>
           </div>
         </div>

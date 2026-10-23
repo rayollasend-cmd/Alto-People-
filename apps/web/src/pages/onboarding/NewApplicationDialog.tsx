@@ -163,7 +163,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [position, setPosition] = useState('');
+  const [position, setPosition] = useState(lastUsed.position ?? '');
   const [startDate, setStartDate] = useState('');
   const [clientId, setClientId] = useState(lastUsed.clientId);
   const [locationId, setLocationId] = useState('');
@@ -188,7 +188,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
     setFirstName('');
     setLastName('');
     setEmail('');
-    setPosition('');
+    // The position stays: a wave of hires is usually the same role.
     setInviteLink(null);
   };
 
@@ -329,6 +329,10 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
       setTemplateId('');
     }
   }, [templates, visibleTemplates, templateId]);
+  // One template to choose from: choose it (the location already does this).
+  useEffect(() => {
+    if (templates && !templateId && visibleTemplates.length === 1) setTemplateId(visibleTemplates[0]!.id);
+  }, [templates, visibleTemplates, templateId]);
 
   /** `keepOpen` — "Create & invite another": stay open, clear only the
    *  per-person fields, and hand focus back to First name. */
@@ -370,7 +374,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
           ...(locationId ? { locationId } : {}),
           ...(hire.offer ? { offerId: hire.offer.id } : {}),
         });
-        setLastUsed({ clientId, locationId, templateId, employmentType });
+        setLastUsed({ clientId, locationId, templateId, employmentType, position });
         hire.onHired(res);
         if (res.inviteUrl) {
           setInviteLink(res.inviteUrl);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { nextInQueue } from '@/lib/queueNext';
@@ -538,6 +538,8 @@ function CreateReviewDialog({
   const [goals, setGoals] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set by the "Create & submit" button just before the form submits.
+  const submitAfterRef = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -564,7 +566,7 @@ function CreateReviewDialog({
     setError(null);
     setSubmitting(true);
     try {
-      await createReview({
+      const created = await createReview({
         associateId: associate.id,
         periodStart,
         periodEnd,
@@ -574,6 +576,10 @@ function CreateReviewDialog({
         improvements: improvements || undefined,
         goals: goals || undefined,
       });
+      // "Create & submit": the review the manager just wrote is the one they
+      // mean to submit — no second trip through the list, Submit and a confirm.
+      if (submitAfterRef.current) await submitReview(created.id);
+      submitAfterRef.current = false;
       onCreated();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the review.');
@@ -653,8 +659,18 @@ function CreateReviewDialog({
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button type="submit" loading={submitting} disabled={submitting}>
+            <Button type="submit" variant="secondary" loading={submitting && !submitAfterRef.current} disabled={submitting}>
               Save draft
+            </Button>
+            <Button
+              type="submit"
+              loading={submitting && submitAfterRef.current}
+              disabled={submitting}
+              onClick={() => {
+                submitAfterRef.current = true;
+              }}
+            >
+              Create &amp; submit
             </Button>
           </DialogFooter>
         </form>

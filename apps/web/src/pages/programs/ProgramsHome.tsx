@@ -339,9 +339,31 @@ interface Draft {
   documentIds: string[];
 }
 
+// A season's programs share a type and a sponsor: start the next one where
+// the last one left off (per browser), instead of a blank sponsor every time.
+const PROGRAM_LAST_KEY = 'alto:programs.lastDraft.v1';
+function lastProgramDefaults(): { type: Draft['type']; sponsorId: string } {
+  try {
+    const raw = typeof window !== 'undefined' ? window.localStorage.getItem(PROGRAM_LAST_KEY) : null;
+    if (raw) {
+      const v = JSON.parse(raw) as { type?: unknown; sponsorId?: unknown };
+      if (typeof v.type === 'string' && typeof v.sponsorId === 'string') return { type: v.type as Draft['type'], sponsorId: v.sponsorId };
+    }
+  } catch {
+    // Private mode: no memory, just the defaults.
+  }
+  return { type: 'J1_SWT', sponsorId: '' };
+}
+function rememberProgramDefaults(v: { type: Draft['type']; sponsorId: string }): void {
+  try {
+    window.localStorage.setItem(PROGRAM_LAST_KEY, JSON.stringify(v));
+  } catch {
+    // Private mode.
+  }
+}
+
 const blankDraft = (): Draft => ({
-  type: 'J1_SWT',
-  sponsorId: '',
+  ...lastProgramDefaults(),
   ds2019Number: '',
   ds2019IssuedOn: '',
   ds2019ExpiresOn: '',
@@ -441,6 +463,7 @@ function ProgramDialog(
       };
       if (props.mode === 'create') {
         const body: ProgramInput = { associateId: associate!.id, type: d.type, ...common };
+        rememberProgramDefaults({ type: d.type, sponsorId: d.sponsorId });
         return createProgram(body);
       }
       const body: ProgramUpdate = common;

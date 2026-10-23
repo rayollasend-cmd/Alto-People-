@@ -308,6 +308,8 @@ interface NewShiftLast {
   position?: string;
   startTime?: string;
   endTime?: string;
+  /** "Publish immediately" used to reset to off on every open. */
+  publishImmediately?: boolean;
 }
 function readNewShiftLast(): NewShiftLast {
   try {
@@ -6121,7 +6123,7 @@ export function CreateShiftDialog({
       setNotes('');
       setLateNoticeReason('');
       setShowAdvanced(false);
-      setPublishImmediately(false);
+      setPublishImmediately(readNewShiftLast().publishImmediately ?? false);
       setSubmitting(false);
       setAssignIds(seededAssignIds);
       setOpenSlots(seededOpenSlots);
@@ -6329,7 +6331,7 @@ export function CreateShiftDialog({
         toast.success('Shift created.');
       }
       onPositionUsed?.(position);
-      writeNewShiftLast({ ...(clientsOn ? { clientId } : {}), locationId, position, startTime, endTime });
+      writeNewShiftLast({ ...(clientsOn ? { clientId } : {}), locationId, position, startTime, endTime, publishImmediately });
       onCreated();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Create failed.');
@@ -7003,6 +7005,7 @@ function TemplatesDialog({
         <CreateTemplateDialog
           open={showCreate}
           clients={clients}
+          defaultClientId={activeClientId ?? ''}
           onOpenChange={setShowCreate}
           onCreated={() => {
             setShowCreate(false);
@@ -7020,11 +7023,14 @@ function CreateTemplateDialog({
   clients,
   onOpenChange,
   onCreated,
+  defaultClientId = '',
 }: {
   open: boolean;
   clients: ClientSummary[];
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
+  /** The page's client filter: a template made while looking at one client is for that client. */
+  defaultClientId?: string;
 }) {
   const { moduleOn } = useTenant();
   // The client bill rate is never a store-bound role's to see or set.
@@ -7046,14 +7052,16 @@ function CreateTemplateDialog({
     if (open) {
       setName('');
       setPosition('');
-      setClientId('');
+      // Seeded from the filter: "Global" by default made "Pick a client
+      // filter first" the next thing the person read when applying it.
+      setClientId(defaultClientId);
       setDayOfWeek(1);
       setStartTime('09:00');
       setEndTime('17:00');
       setHourlyRate('');
       setSubmitting(false);
     }
-  }, [open]);
+  }, [open, defaultClientId]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -183,7 +183,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props)
     setPreviewError(null);
     setExceptions(null);
     setOverrideBlocking(false);
-    setScheduleId(seed?.scheduleId ?? '');
+    // One schedule in the company: it is the one. (Seeded runs keep theirs.)
+    setScheduleId(seed?.scheduleId ?? (schedules?.length === 1 ? schedules[0]!.id : ''));
     setPeriodStart(seed?.periodStart ?? '');
     setPeriodEnd(seed?.periodEnd ?? '');
     seededPeriodRef.current = !!seed;

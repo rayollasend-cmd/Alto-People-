@@ -13,6 +13,8 @@ export interface InviteLastUsed {
   locationId: string;
   templateId: string;
   employmentType: EmploymentType;
+  /** The last position typed — a hiring wave is usually one role. Older stored values lack it. */
+  position?: string;
 }
 
 export const INVITE_LAST_USED_KEY = 'alto:invite.lastUsed.v1';

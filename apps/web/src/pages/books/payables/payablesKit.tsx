@@ -125,7 +125,10 @@ export function LinesEditor({ lines, onChange, disabled }: { lines: DraftLine[];
     <div className="space-y-3">
       <ol className="space-y-3">
         {lines.map((l, i) => {
-          const siteChoices = hasClients ? (l.clientId ? sites.filter((s) => s.clientId === l.clientId) : []) : sites;
+          // Every site belongs to a client, so the site picker can carry the
+          // client: with no client chosen it lists every site, and picking
+          // one sets both. ("Choose a client first" was a step for nothing.)
+          const siteChoices = hasClients ? (l.clientId ? sites.filter((s) => s.clientId === l.clientId) : sites) : sites;
           return (
             <li key={l.key} className="rounded-lg border border-line p-3">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] [&>*]:min-w-0">
@@ -169,8 +172,16 @@ export function LinesEditor({ lines, onChange, disabled }: { lines: DraftLine[];
                 )}
                 <Field label={term('site')}>
                   {(p) => (
-                    <Select value={l.siteId} onChange={(e) => set(l.key, { siteId: e.target.value })} disabled={disabled || (hasClients && !l.clientId)} {...p}>
-                      <option value="">{!hasClients || l.clientId ? 'All' : 'Choose a client first'}</option>
+                    <Select
+                      value={l.siteId}
+                      onChange={(e) => {
+                        const picked = sites.find((s) => s.id === e.target.value);
+                        set(l.key, { siteId: e.target.value, ...(hasClients && picked?.clientId ? { clientId: picked.clientId } : {}) });
+                      }}
+                      disabled={disabled}
+                      {...p}
+                    >
+                      <option value="">All</option>
                       {siteChoices.map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.name}

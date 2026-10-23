@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CANDIDATE_REJECT_PRESETS, CANDIDATE_WITHDRAW_PRESETS } from '@/lib/reasonPresets';
+import { usePersistentState } from '@/lib/usePersistentState';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -1113,9 +1114,12 @@ export function RecruitingHome() {
         onOpenChange={setShowCreate}
         postings={postings}
         defaultPostingId={postingFilter}
-        onCreated={() => {
+        onCreated={(id) => {
           setShowCreate(false);
           void refresh();
+          // Open the candidate just added: the next step (screen, schedule,
+          // submit) starts here, not with a search of the list.
+          setDetailId(id);
         }}
       />
 
@@ -1446,7 +1450,8 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
 interface CreateCandidateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: () => void;
+  /** The new candidate's id, so the board opens them. */
+  onCreated: (id: string) => void;
   /** The job postings they could be added against (only OPEN ones are offered). */
   postings?: JobPostingRecord[];
   /** The board's current ?posting= filter — a candidate added there belongs to it. */
@@ -1466,6 +1471,7 @@ function CreateCandidateDialog({
   const [phone, setPhone] = useState('');
   const [position, setPosition] = useState('');
   const [source, setSource] = useState('');
+  const [lastSource, setLastSource] = usePersistentState<string>('alto:recruiting.newCandidate.source.v1', '', (v): v is string => typeof v === 'string');
   const [jobPostingId, setJobPostingId] = useState('');
   const [resumeUrl, setResumeUrl] = useState('');
   const [linkedinUrl, setLinkedinUrl] = useState('');
@@ -1493,13 +1499,15 @@ function CreateCandidateDialog({
       setEmail('');
       setPhone('');
       setPosition('');
-      setSource('');
+      // The source is the same for a whole intake session (a job fair, a
+      // referral batch): start from the last one used.
+      setSource(lastSource);
       setJobPostingId(defaultPostingId);
       setResumeUrl('');
       setLinkedinUrl('');
       setError(null);
     }
-  }, [open, defaultPostingId]);
+  }, [open, defaultPostingId, lastSource]);
 
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1508,7 +1516,7 @@ function CreateCandidateDialog({
     setError(null);
     setSubmitting(true);
     try {
-      await createCandidate({
+      const created = await createCandidate({
         firstName,
         lastName,
         email,
@@ -1520,7 +1528,8 @@ function CreateCandidateDialog({
         resumeUrl: resumeUrl.trim() || undefined,
         linkedinUrl: linkedinUrl.trim() || undefined,
       });
-      onCreated();
+      setLastSource(source);
+      onCreated(created.id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Create failed.');
     } finally {

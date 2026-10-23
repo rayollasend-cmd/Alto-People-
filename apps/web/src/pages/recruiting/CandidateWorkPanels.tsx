@@ -842,6 +842,19 @@ export function SubmitToClientDialog({
     setPitch('');
   }, [open]);
 
+  // The posting names the client: start there instead of a blank picker.
+  const postingsForClient = useQuery({
+    queryKey: ['recruiting', 'postings'],
+    queryFn: () => listJobPostings(),
+    enabled: open && Boolean(candidate.jobPostingId),
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (!open || clientId || !candidate.jobPostingId) return;
+    const posting = postingsForClient.data?.postings.find((p) => p.id === candidate.jobPostingId);
+    if (posting?.clientId) setClientId(posting.clientId);
+  }, [open, clientId, candidate.jobPostingId, postingsForClient.data]);
+
   const stores = useQuery({
     queryKey: ['clients', clientId, 'locations'],
     queryFn: () => listClientLocations(clientId),

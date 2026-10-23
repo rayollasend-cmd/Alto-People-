@@ -505,16 +505,17 @@ export function NewOfferDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        {oneStep ? (
-          <Button onClick={() => void onSubmit(true)} loading={saving} disabled={saving}>
-            <Send className="h-4 w-4" />
-            Create &amp; send
-          </Button>
-        ) : (
-          <Button onClick={() => void onSubmit(false)} loading={saving} disabled={saving}>
+        {/* "Create & send" is the main button everywhere (it used to be
+            only in the candidate drawer); a draft is the secondary path. */}
+        {!oneStep && (
+          <Button variant="secondary" onClick={() => void onSubmit(false)} loading={saving} disabled={saving}>
             Create draft
           </Button>
         )}
+        <Button onClick={() => void onSubmit(true)} loading={saving} disabled={saving}>
+          <Send className="h-4 w-4" />
+          Create &amp; send
+        </Button>
       </DrawerFooter>
     </Drawer>
   );

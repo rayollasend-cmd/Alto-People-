@@ -193,13 +193,28 @@ function NewCampaignDrawer({ onClose, onSaved }: { onClose: () => void; onSaved:
     kind === 'ALL' ? { kind: 'ALL' } : kind === 'ROLE' ? (roles.length ? { kind: 'ROLE', roles } : null) : ids.length ? ({ kind, ids } as PolicyAudience) : null;
   const size = useQuery({ queryKey: ['policy-campaigns', 'audience-size', audience], queryFn: () => audienceSize(audience!), enabled: audience !== null });
 
+  const body = () => ({ name: name.trim(), templateId, audience: audience!, dueOn, reminderEveryDays: Math.max(1, Math.min(30, Number(every) || 3)) });
   const create = useMutation({
-    mutationFn: () => createPolicyCampaign({ name: name.trim(), templateId, audience: audience!, dueOn, reminderEveryDays: Math.max(1, Math.min(30, Number(every) || 3)) }),
+    mutationFn: () => createPolicyCampaign(body()),
     onSuccess: (r) => {
       toast.success('Campaign drafted. Launch it when the audience looks right.');
       onSaved(r.id);
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not create the campaign.'),
+  });
+  // The drawer already shows how many people it reaches: create and send in
+  // one step instead of draft → open → Send → confirm.
+  const createAndSend = useMutation({
+    mutationFn: async () => {
+      const r = await createPolicyCampaign(body());
+      const sent = await launchPolicyCampaign(r.id);
+      return { id: r.id, recipients: sent.recipients };
+    },
+    onSuccess: (r) => {
+      toast.success(`Sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'}.`);
+      onSaved(r.id);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not send the campaign.'),
   });
 
   const toggle = (list: string[], v: string, set: (xs: string[]) => void) => set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
@@ -284,8 +299,12 @@ function NewCampaignDrawer({ onClose, onSaved }: { onClose: () => void; onSaved:
         <Button variant="secondary" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={() => create.mutate()} loading={create.isPending} disabled={!name.trim() || !templateId || audience === null || !dueOn}>
+        <Button variant="secondary" onClick={() => create.mutate()} loading={create.isPending} disabled={createAndSend.isPending || !name.trim() || !templateId || audience === null || !dueOn}>
           Save draft
+        </Button>
+        <Button onClick={() => createAndSend.mutate()} loading={createAndSend.isPending} disabled={create.isPending || !name.trim() || !templateId || audience === null || !dueOn || !size.data}>
+          <Send className="h-4 w-4" />
+          Create &amp; send{size.data ? ` to ${size.data.count}` : ''}
         </Button>
       </DrawerFooter>
     </Drawer>
