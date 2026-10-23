@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Check, UserCheck, X } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate } from '@/lib/format';
 import { onLiveEvent } from '@/lib/liveEvents';
@@ -111,6 +112,7 @@ export function PortalCandidates() {
 
   // The candidate being answered, and which way.
   const [deciding, setDeciding] = useState<{ row: PortalCandidate; decision: 'APPROVED' | 'DECLINED' } | null>(null);
+  const confirm = useConfirm();
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -118,6 +120,30 @@ export function PortalCandidates() {
   }, [deciding]);
 
   const passing = deciding?.decision === 'DECLINED';
+  // A wave of submittals used to be one dialog each. Approve the whole
+  // waiting list in one go; passing on one stays a per-person decision.
+  const [approvingAll, setApprovingAll] = useState(false);
+  const approveAll = async (waiting: PortalCandidate[]) => {
+    if (waiting.length === 0) return;
+    const ok = await confirm({
+      title: t('portal.candApproveAllTitle', { n: waiting.length }),
+      description: t('portal.candApproveAllDesc'),
+      confirmLabel: t('portal.candApproveAll', { n: waiting.length }),
+    });
+    if (!ok) return;
+    setApprovingAll(true);
+    try {
+      const results = await Promise.allSettled(
+        waiting.map((r) => apiFetch(`/client-portal/candidates/${r.id}/decision`, { method: 'POST', body: { decision: 'APPROVED' } })),
+      );
+      const done = results.filter((x) => x.status === 'fulfilled').length;
+      if (done === waiting.length) toast.success(t('portal.candApproveAllDone', { n: done }));
+      else toast.warning(t('portal.candApproveAllDone', { n: done }));
+      void queryClient.invalidateQueries({ queryKey: ['clientPortal', 'candidates'] });
+    } finally {
+      setApprovingAll(false);
+    }
+  };
   const submit = async () => {
     if (!deciding) return;
     setBusy(true);
@@ -238,15 +264,23 @@ export function PortalCandidates() {
         <>
           <Card className="animate-enter">
             <CardContent>
-              <SectionTitle
-                size="sm"
-                title={
-                  <span className="flex items-center gap-2">
-                    {t('portal.candWaiting')}
-                    {waiting.length > 0 && <Badge variant="pending">{waiting.length}</Badge>}
-                  </span>
-                }
-              />
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <SectionTitle
+                  size="sm"
+                  title={
+                    <span className="flex items-center gap-2">
+                      {t('portal.candWaiting')}
+                      {waiting.length > 0 && <Badge variant="pending">{waiting.length}</Badge>}
+                    </span>
+                  }
+                />
+                {canDecide && waiting.length > 1 && (
+                  <Button size="sm" variant="secondary" onClick={() => void approveAll(waiting)} loading={approvingAll}>
+                    <Check className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                    {t('portal.candApproveAll', { n: waiting.length })}
+                  </Button>
+                )}
+              </div>
               {waiting.length === 0 ? (
                 <p className="text-sm text-silver/60">{t('portal.candNone')}</p>
               ) : (

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Clock3, FileSignature, Hourglass } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtDateTz, parseYmd } from '@/lib/format';
 import { fmtPunchTime } from './punchFormat';
@@ -167,7 +168,28 @@ function FixDialog({ data, open, onClose, prompted }: { data: MyCorrections; ope
             {(p) => <Input {...p} type="datetime-local" value={cout || (kind === 'WRONG_TIME' ? toLocalInput(entry?.clockOutAt) : '')} onChange={(e) => setCout(e.target.value)} />}
           </Field>
           <Field label={t('timefix.reason')} required hint={t('timefix.reasonHint')}>
-            {(p) => <Textarea {...p} rows={2} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} />}
+            {(p) => (
+              <div className="space-y-2">
+                {/* The usual reasons, one tap; the field stays editable. */}
+                <div className="flex flex-wrap gap-1.5">
+                  {(['timefix.preset.forgotOut', 'timefix.preset.kioskDown', 'timefix.preset.phoneDied', 'timefix.preset.wrongTime'] as const).map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setReason(t(k))}
+                      aria-pressed={reason === t(k)}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-xs transition-colors coarse:min-h-9',
+                        reason === t(k) ? 'border-gold bg-gold/15 text-gold-bright' : 'border-line text-ink-muted hover:border-gold/50 hover:text-ink',
+                      )}
+                    >
+                      {t(k)}
+                    </button>
+                  ))}
+                </div>
+                <Textarea {...p} rows={2} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} />
+              </div>
+            )}
           </Field>
           <label className="flex items-start gap-3 rounded-md border border-line p-3 text-sm text-ink coarse:min-h-11">
             <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 coarse:h-6 coarse:w-6" checked={attested} onChange={(e) => setAttested(e.target.checked)} />

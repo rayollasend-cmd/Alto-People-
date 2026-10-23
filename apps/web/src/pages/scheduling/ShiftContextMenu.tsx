@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
+import { useAuth } from '@/lib/auth';
 import {
+  Clock,
   Copy as CopyIcon,
   Pencil,
+  UserRound,
   Trash2,
   UserMinus,
   UserPlus,
@@ -60,6 +64,10 @@ const MENU_ITEM_HEIGHT = 32;
 
 export function ShiftContextMenu({ active, onClose, canManage, actions }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const navigate = useNavigate();
+  const { can } = useAuth();
+  const canSeePeople = can('view:org');
+  const canSeeTime = can('view:time');
 
   // Top-ranked candidate for an OPEN (unassigned) shift — the one-click
   // "Assign → <name>" item. undefined = loading, null = none available.
@@ -113,6 +121,34 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
     | { kind: 'item'; label: string; icon: typeof Pencil; onClick: () => void; danger?: boolean; disabled?: boolean }
     | { kind: 'sep' }
   > = [];
+
+  // "Who is this, and did they clock in?" used to mean a search in People
+  // or Time: the person and their timesheet are one click from the chip.
+  if (active.shift.assignedAssociateId && canSeePeople) {
+    const who = active.shift.assignedAssociateName ?? 'this person';
+    const id = active.shift.assignedAssociateId;
+    items.push({
+      kind: 'item',
+      label: `Open ${who}`,
+      icon: UserRound,
+      onClick: () => {
+        navigate(`/people/${id}`);
+        onClose();
+      },
+    });
+    if (canSeeTime) {
+      items.push({
+        kind: 'item',
+        label: 'View their time',
+        icon: Clock,
+        onClick: () => {
+          navigate(`/time-attendance?associate=${id}&name=${encodeURIComponent(who)}`);
+          onClose();
+        },
+      });
+    }
+    items.push({ kind: 'sep' });
+  }
 
   if (canManage) {
     items.push({
