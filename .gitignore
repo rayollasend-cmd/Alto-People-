@@ -55,6 +55,17 @@ apps/web/public/face-models/
 # local settings and locks stay out.
 !.claude/skills/
 
+# Turborepo: the local task cache (.turbo/cache) and per-package run logs
+.turbo/
+
+# Storybook static build (npm -w apps/web run build-storybook)
+storybook-static/
+build-storybook.log
+
+# Lighthouse CI working dir (npm -w apps/web run lhci); reports land in
+# apps/web/e2e-results/lighthouse
+.lighthouseci/
+
 # Playwright artifacts
 apps/web/e2e-results/
 

@@ -1,0 +1,76 @@
+// Turborepo task graph — docs/turborepo.md. The root scripts (npm run build,
+// typecheck, lint, test) run through it; the local cache lives in .turbo/cache.
+{
+  "$schema": "https://turborepo.com/schema.json",
+  // Turbo learns the package manager from package.json's
+  // `devEngines.packageManager` (npm ^11, onFail "warn"), not from a pinned
+  // `packageManager` field: Railway's builder reads that field to choose the
+  // npm it installs with, and the deploy must build exactly as before.
+  // Tasks see the whole environment, as plain `npm run` did (Railway's
+  // VITE_* / SENTRY_* / DATABASE_URL reach the builds). Only the variables
+  // named in `env` / `globalEnv` change a cache key.
+  "envMode": "loose",
+  "noUpdateNotifier": true,
+  // Always this checkout's own cache (CI saves and restores this folder).
+  // Without it, a git worktree borrows the main checkout's .turbo/cache.
+  "cacheDir": ".turbo/cache",
+  "globalDependencies": ["tsconfig.base.json"],
+  "globalEnv": ["NODE_ENV"],
+  "tasks": {
+    // apps/api only: `prisma generate` writes the client into node_modules,
+    // outside anything a cache can restore, so it runs every time (seconds).
+    // Builds, typechecks and API tests that need the client wait for it.
+    "db:generate": {
+      "cache": false
+    },
+    // shared → (web, api). The API's own build script keeps its
+    // prebuild `prisma generate`; it compiles with TypeScript 7 (native).
+    "build": {
+      "dependsOn": ["^build", "db:generate"],
+      "outputs": ["dist/**"]
+    },
+    "@alto-people/web#build": {
+      "dependsOn": ["^build"],
+      // Specs, Lighthouse config and docs never reach dist.
+      "inputs": ["$TURBO_DEFAULT$", "!e2e/**", "!lighthouse/**", "!**/*.md"],
+      "outputs": ["dist/**"],
+      // Inlined into the bundle (VITE_*) or deciding the sourcemap upload.
+      "env": ["VITE_*", "SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "db:generate"],
+      "outputs": []
+    },
+    "lint": {
+      "outputs": []
+    },
+    "lint:design": {
+      "outputs": []
+    },
+    "lint:i18n": {
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+    // Runs against a database: never answered from cache.
+    "@alto-people/api#test": {
+      "dependsOn": ["^build", "db:generate"],
+      "cache": false
+    },
+    "build-storybook": {
+      "dependsOn": ["^build"],
+      "outputs": ["storybook-static/**"]
+    },
+    "test-storybook": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    // The visual regression screenshots render in a container: not cached.
+    "test:visual": {
+      "dependsOn": ["^build"],
+      "cache": false
+    }
+  }
+}

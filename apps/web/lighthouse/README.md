@@ -1,0 +1,83 @@
+# Lighthouse CI
+
+Lighthouse scores for the **production build** of the web app — what ships, not
+the dev server (which serves unbundled modules and would score nothing like
+production).
+
+| Run | Pages | Signed in as | Emulation |
+| --- | --- | --- | --- |
+| public | `/login`, `/careers`, `/status`, `/trust-center` | nobody | phone |
+| admin | `/`, `/clients`, `/scheduling`, `/payroll` | admin@altohr.com | desktop |
+| associate | the associate's home (`/?lhci=associate`) | maria.lopez@example.com | phone |
+
+"Phone" is Lighthouse's mobile emulation (Moto G Power, simulated slow 4G, 4x
+CPU slowdown); "desktop" is its desktop preset. The associate's home is
+`/?lhci=associate` only so its URL differs from the admin's `/` — LHCI groups
+results by URL.
+
+## Run it locally
+
+You need the API on :3001 with the dev seed (`LOGIN_IP_LIMIT=500 npm -w apps/api run dev`)
+for the signed-in pages, and Playwright's Chromium (`npx playwright install chromium`).
+
+```sh
+npm -w apps/web run build    # the production build → apps/web/dist
+npm -w apps/web run lhci     # serves dist, runs all three, asserts, writes reports
+```
+
+`lhci` (`lighthouse/run.mjs`) starts `vite preview` on :4173 itself when nothing
+is listening there. `vite preview` inherits the dev server's settings from
+`vite.config.ts` — host 127.0.0.1 and the `/api` proxy to :3001 — so the built
+app talks to the API exactly as it does in development; the preview server
+gzips like production. Then it runs `lhci collect` once per run, `lhci assert`,
+`lhci upload`, and prints a table of the scores.
+
+| Variable | Default | |
+| --- | --- | --- |
+| `LHCI_ONLY` | `public,admin,associate` | a subset; `public` needs no API |
+| `LHCI_RUNS` | `1` | runs per page; the median is kept (use 3 before tightening a budget) |
+| `LHCI_BASE_URL` | `http://127.0.0.1:4173` | measure a server that is already up instead |
+| `LHCI_CHROME_PATH` | Playwright's Chromium | |
+| `LHCI_ADMIN_EMAIL` / `_PASSWORD`, `LHCI_ASSOCIATE_EMAIL` / `_PASSWORD` | the dev seed's accounts | |
+
+Reports: `apps/web/e2e-results/lighthouse/` (one HTML and one JSON per page,
+plus `manifest.json`). Open the HTML in a browser.
+
+## How the signed-in pages sign in
+
+Every run goes through LHCI's puppeteer hook (`puppeteerScript`, using the
+`puppeteer-core` that Lighthouse already ships, so nothing downloads a Chrome).
+`lighthouse/login.cjs` opens `/login` once per run, types the persona's email
+and password, and checks `/api/auth/me` names that person. The session cookie
+lives in the Chrome that Lighthouse then drives. Between pages Lighthouse clears
+caches, service workers and IndexedDB (the app's persisted query cache) — every
+page is a cold load — but keeps cookies, so the session holds.
+
+## Budgets
+
+In `lighthouse/lighthouserc.cjs`, with today's numbers written above them:
+
+- **Accessibility below 0.95 fails** the run (and the CI job). Every page scores
+  100 today.
+- Performance, best practices, LCP, CLS and TBT are **warnings**, set just past
+  today's numbers, so a warning means "worse than on 2026-10-23". Tighten them,
+  and turn them into errors, as the pages get faster. Where to start: the
+  associate's home on a phone (LCP 9–10 s, CLS 0.10–0.18) and the admin home's
+  layout shift (0.10–0.13).
+
+## In CI
+
+The **E2E (Playwright, full stack)** job already has Postgres seeded and the API
+running. After the Playwright suite it builds the web app, runs `npm -w apps/web
+run lhci`, writes the score table into the job summary, and keeps the reports
+as the `lighthouse-reports` artifact (14 days). CI runners are slower than a
+laptop, so expect lower performance scores there; the assertions on them are
+warnings.
+
+**Reports are never uploaded to temporary-public-storage** (LHCI's free public
+host): the signed-in pages show company data. `upload.target` is `filesystem`,
+and the only copy leaves the runner as a GitHub artifact, visible to people with
+access to the repository.
+
+A private LHCI server (with history and diffs between commits) would need
+hosting; nothing here depends on one.

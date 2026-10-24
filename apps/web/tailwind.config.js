@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  // Stories (Storybook, *.stories.tsx) are left out: a class only a story
+  // uses must not grow the app's CSS. Storybook renders with this same CSS.
+  content: ['./index.html', './src/**/*.{ts,tsx}', '!./src/**/*.stories.tsx'],
   theme: {
     extend: {
       // 100vh on iOS is the height with the URL bar hidden — taller than the
