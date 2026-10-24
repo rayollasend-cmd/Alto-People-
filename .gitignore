@@ -59,6 +59,10 @@ apps/web/public/face-models/
 storybook-static/
 build-storybook.log
 
+# Lighthouse CI working dir (npm -w apps/web run lhci); reports land in
+# apps/web/e2e-results/lighthouse
+.lighthouseci/
+
 # Playwright artifacts
 apps/web/e2e-results/
 

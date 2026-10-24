@@ -186,6 +186,10 @@ jobs:
       APP_BASE_URL: http://127.0.0.1:5173
       RESEND_API_KEY: ''
       RESEND_FROM: ''
+      # Lighthouse CI signs the admin and the associate in once more after
+      # the suite's own sign-ins; the per-email limiter (5 / 15 min) is a
+      # production guard, not a test subject.
+      LOGIN_EMAIL_LIMIT: '500'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -222,6 +226,27 @@ jobs:
           E2E_FULLSTACK: '1'
           E2E_BASE_URL: http://127.0.0.1:5173
         run: npm -w apps/web exec -- playwright test --workers=1
+      # Lighthouse CI (apps/web/lighthouse/README.md) on the PRODUCTION
+      # build — vite build, served by `vite preview` with /api proxied to the
+      # API started above: the public pages signed out (phone), the admin's
+      # home, clients, scheduling and payroll signed in (desktop), the
+      # associate's home signed in (phone). Accessibility under 0.95 fails
+      # the job; performance, best practices and the LCP/CLS/TBT budgets
+      # warn. The scores land in the job summary; the reports go to this
+      # run's artifacts only — never temporary-public-storage, because the
+      # signed-in pages hold company data.
+      - name: Build the web app (production)
+        run: npm -w apps/web run build
+      - name: Lighthouse CI
+        run: npm -w apps/web run lhci
+      - name: Upload the Lighthouse reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: apps/web/e2e-results/lighthouse/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4

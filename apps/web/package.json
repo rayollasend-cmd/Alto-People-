@@ -15,6 +15,7 @@
     "build-storybook": "storybook build -o storybook-static",
     "test-storybook": "vitest run --config vitest.storybook.config.ts && VITE_SB_THEME=dark vitest run --config vitest.storybook.config.ts",
     "chromatic": "chromatic --build-script-name build-storybook --exit-zero-on-changes",
+    "lhci": "node lighthouse/run.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -72,6 +73,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.61.1",
     "@sentry/vite-plugin": "^5.4.0",
     "@storybook/addon-a11y": "^10.6.3",
