@@ -55,6 +55,10 @@ apps/web/public/face-models/
 # local settings and locks stay out.
 !.claude/skills/
 
+# Storybook static build (npm -w apps/web run build-storybook)
+storybook-static/
+build-storybook.log
+
 # Playwright artifacts
 apps/web/e2e-results/
 

@@ -1,0 +1,12 @@
+{
+  // Typechecks Storybook's own files and the story-test config, which sit
+  // outside the app's `src` include. The stories themselves are under src/
+  // and typecheck with the app (tsc -b). Run by `npm -w apps/web run typecheck`.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["vite/client", "node"]
+  },
+  "include": ["./*.ts", "./*.tsx", "../vitest.storybook.config.ts", "../src/vite-env.d.ts"],
+  "exclude": []
+}

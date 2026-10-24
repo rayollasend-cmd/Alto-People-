@@ -75,6 +75,35 @@ jobs:
       # formatting) that nothing else exercised in CI.
       - run: npm -w packages/shared run test
 
+  # Storybook (apps/web/.storybook/README.md): the UI kit, the page templates
+  # and the shell pieces, every story rendered in Chromium at its viewport
+  # (390 or 1440) with axe on the result — WCAG 2.2 AA, the full-stack
+  # sweep's rules — once in the light theme and once in the dark. A
+  # violation fails the job. No Postgres and no API: stories answer /api/*
+  # from their own mocks.
+  storybook:
+    name: Storybook
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm -w @alto-people/shared run build
+      - run: npm -w apps/web run build-storybook
+      - run: npm -w apps/web exec playwright install --with-deps chromium
+      - run: npm -w apps/web run test-storybook
+      - name: Upload the static Storybook
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storybook-static
+          path: apps/web/storybook-static/
+          retention-days: 7
+
   api-tests:
     # Four shards, each against its own throwaway Postgres (the service
     # container is per job), so the suite takes ~40 min instead of ~2.5 h.
