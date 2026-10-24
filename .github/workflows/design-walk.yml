@@ -74,7 +74,7 @@ jobs:
         run: npm -w apps/web exec -- playwright test e2e/design-walk.spec.ts --workers=1 --reporter=line
       - name: Upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: design-walk
           path: |
