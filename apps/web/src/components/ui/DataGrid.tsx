@@ -1184,7 +1184,7 @@ function GridCore<T>({
           )}
         </div>
       ) : loading && !rows ? (
-        <div className="space-y-2" aria-busy="true" aria-label={t('grid.loadingAria', { caption })}>
+        <div className="space-y-2" role="status" aria-busy="true" aria-label={t('grid.loadingAria', { caption })}>
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-11 w-full rounded-md" />
           ))}

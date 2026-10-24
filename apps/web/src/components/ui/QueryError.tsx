@@ -125,7 +125,7 @@ export function QueryError({
           ? t('queryError.offline')
           : t('queryError.server')}
       {kind === 'server' && requestId && (
-        <details className="mt-1 text-xs opacity-80">
+        <details className="mt-1 text-xs">
           <summary className="cursor-pointer">{t('queryError.details')}</summary>
           {t('queryError.reference', { id: requestId })}
         </details>

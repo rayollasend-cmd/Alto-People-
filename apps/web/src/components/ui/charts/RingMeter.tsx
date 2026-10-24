@@ -31,10 +31,8 @@ export function RingMeter({
         width={size}
         height={size}
         viewBox={`0 0 ${size} ${size}`}
-        role="meter"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent ?? undefined}
+        // A meter needs a value; with no reading it's a labelled picture.
+        {...(percent === null ? { role: 'img' } : { role: 'meter', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': percent })}
         aria-label={label}
       >
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeOpacity={0.18} strokeWidth={8} />

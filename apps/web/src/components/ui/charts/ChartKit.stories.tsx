@@ -54,16 +54,8 @@ export const RingMeters: Story = {
   ),
 };
 
-/**
- * No reading: an empty ring, not a 0% one.
- *
- * KNOWN FINDING (axe, 2026-10-23): with percent={null} the svg keeps
- * role="meter" but drops aria-valuenow, which the role requires
- * (aria-required-attr). RingMeter should drop the meter role (an img with
- * its label) when there is no value; until then the rule is off here only.
- */
+/** No reading: an empty ring, not a 0% one — a labelled picture (role img), since a meter needs a value. */
 export const RingMeterNoReading: Story = {
-  parameters: { a11y: { config: { rules: [{ id: 'aria-required-attr', enabled: false }] } } },
   render: () => (
     <div className="text-ink">
       <RingMeter percent={null} label="No readings yet">

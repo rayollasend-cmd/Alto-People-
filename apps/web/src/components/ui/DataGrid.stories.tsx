@@ -110,16 +110,9 @@ export const FilteredEmpty: Story = {
   },
 };
 
-/**
- * KNOWN FINDING (axe, 2026-10-23): the loading skeleton is a plain <div>
- * with aria-busy and aria-label; axe 4.12 rejects aria-label on an element
- * with no role (aria-prohibited-attr), so the name is never announced. A
- * role="status" (or a visually hidden line) on the skeleton fixes it in
- * DataGrid; until then this one rule is off for this story only.
- */
+/** The first load: skeleton rows inside a named status region ("Loading <caption>"). */
 export const Loading: Story = {
   args: { rows: undefined, loading: true },
-  parameters: { a11y: { config: { rules: [{ id: 'aria-prohibited-attr', enabled: false }] } } },
 };
 
 export const LoadError: Story = {

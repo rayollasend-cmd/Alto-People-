@@ -55,18 +55,18 @@ Storybook, then the story tests; the static build is kept as an artifact.
 
 ### Known findings
 
-The first run found four real accessibility problems in the kit. Each is
-switched off for the one story that shows it, with the reason written on the
-story — find them with `grep -rn "KNOWN FINDING" src`:
+The first run (2026-10-23) found four real accessibility problems in the kit;
+all four are fixed and their stories now check them in both themes:
 
 | Component | Problem | Fix |
 | --- | --- | --- |
-| `QueryError` | "Details for support" is `text-xs opacity-80` in the alert banner: 4.06:1 in the light theme | drop the opacity |
-| `DataGrid` | the loading skeleton has `aria-label` on a role-less `div` (`aria-prohibited-attr`) | `role="status"` on it |
-| `RingMeter` | `percent={null}` keeps `role="meter"` without `aria-valuenow` | no meter role without a value |
-| `Toaster` | sonner's light success toast is 4.25:1 | own success colours |
+| `QueryError` | "Details for support" was `text-xs opacity-80` in the alert banner: 4.06:1 in the light theme | opacity dropped |
+| `DataGrid` | the loading skeleton had `aria-label` on a role-less `div` (`aria-prohibited-attr`) | `role="status"` on it |
+| `RingMeter` | `percent={null}` kept `role="meter"` without `aria-valuenow` | `role="img"` without a value |
+| `Toaster` | sonner's light success toast was 4.25:1 (warning ~3:1) | sonner's colour variables set from the status tokens (index.css) |
 
-When one is fixed, delete its exception: the story then guards the fix.
+A new finding gets the same treatment: switch the one rule off for the one
+story, write `KNOWN FINDING` and the reason on the story, and list it here.
 
 ## Chromatic (needs the owner's Chromatic account)
 

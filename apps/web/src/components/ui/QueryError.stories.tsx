@@ -41,14 +41,10 @@ export const NotFound: Story = {
 
 /**
  * 5xx: our fault, with Retry and the reference tucked away for support.
- *
- * KNOWN FINDING (axe, 2026-10-23): the "Details for support" summary is
- * text-xs at opacity-80 inside the alert banner, 4.06:1 on the light
- * theme's alert tint (4.5:1 needed). Excluded here, with this reason,
- * until QueryError drops the opacity — the rest of the story is checked.
+ * (The "Details for support" line was text-xs at opacity-80, 4.06:1 on the
+ * light theme's alert tint; it's full strength now and this story checks it.)
  */
 export const ServerError: Story = {
-  parameters: { a11y: { context: { exclude: ['details > summary'] } } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.getByRole('button', { name: 'Retry' })).toBeInTheDocument();

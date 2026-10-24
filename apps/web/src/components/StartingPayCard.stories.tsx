@@ -121,15 +121,8 @@ export const SetStartingPay: Story = {
   },
 };
 
-/**
- * Saving at or under the ceiling applies at once.
- *
- * KNOWN FINDING (axe, 2026-10-23): the success toast (sonner's rich
- * colours in the light theme) is 4.25:1, under 4.5:1. The toaster is left
- * out of this story's check until Toaster.tsx sets its own success colours.
- */
+/** Saving at or under the ceiling applies at once — and says so in a success toast (checked in both themes). */
 export const SaveApplies: Story = {
-  parameters: { a11y: { context: { exclude: ['[data-sonner-toaster]'] } } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const form = await canvas.findByRole('group', { name: 'Set the starting pay' });
