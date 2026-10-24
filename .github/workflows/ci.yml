@@ -279,3 +279,44 @@ jobs:
             api.log
             web.log
           retention-days: 14
+
+  # Visual regression (apps/web/e2e/visual/README.md): the key pages, desktop
+  # and phone, each served from its recorded API responses (e2e/visual/hars)
+  # with the browser clock frozen at the recording instant, compared with the
+  # approved pictures in e2e/visual/__screenshots__. No Postgres and no API:
+  # only the code can move a pixel. It runs in the Playwright image the
+  # baselines were drawn in (`npm -w apps/web run test:visual` uses the same
+  # one); keep the tag equal to the installed @playwright/test, or the job
+  # fails at once on a missing browser.
+  visual:
+    name: Visual regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm -w @alto-people/shared run build
+      - name: Build the web app
+        working-directory: apps/web
+        run: npx vite build --outDir e2e-results/visual-dist --emptyOutDir --logLevel warn
+      - name: Compare with the baselines
+        working-directory: apps/web
+        env:
+          VISUAL_DIST: e2e-results/visual-dist
+        run: npx playwright test -c e2e/visual/playwright.config.ts
+      # Expected / actual / diff for every page that moved, plus the HTML
+      # report that shows them side by side.
+      - name: Upload the differences
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diff
+          path: apps/web/e2e-results/visual/
+          retention-days: 14
