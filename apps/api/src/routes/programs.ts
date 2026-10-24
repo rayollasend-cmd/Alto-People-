@@ -11,7 +11,7 @@ import {
   type SponsorReportResponse,
   type TransitionCalendarResponse,
 } from '@alto-people/shared';
-import { ROLE_CAPABILITIES } from '@alto-people/shared';
+import { ROLE_CAPABILITIES, patchSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -138,7 +138,7 @@ programsRouter.post('/sponsors', MANAGE, async (req, res, next) => {
 programsRouter.patch('/sponsors/:id', MANAGE, async (req, res, next) => {
   try {
     const id = Id.parse(req.params.id);
-    res.json(await updateSponsor(prisma, id, SponsorInputSchema.partial().parse(req.body)));
+    res.json(await updateSponsor(prisma, id, patchSchema(SponsorInputSchema).parse(req.body)));
   } catch (err) {
     next(err);
   }

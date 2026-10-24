@@ -170,7 +170,7 @@ export const TermKeySchema = /* @__PURE__ */ (() => z.enum(TERM_KEYS))();
 
 export type Terminology = Record<TermKey, TermText>;
 export const TerminologySchema = /* @__PURE__ */ (() => z
-  .record(TermKeySchema, TermTextSchema)
+  .partialRecord(TermKeySchema, TermTextSchema)
   .refine((t) => TERM_KEYS.every((k) => k in t), { message: 'Every term key must be present.' }) as unknown as z.ZodType<Terminology>)();
 
 const t = (en: string, es: string, tr: string): TermText => ({ en, es, tr });
@@ -248,7 +248,7 @@ export type TenantProfile = z.infer<typeof TenantProfileSchema>;
 export const UpdateTenantProfileInputSchema = /* @__PURE__ */ (() => z.object({
   businessModel: BusinessModelSchema.optional(),
   modules: TenantModulesSchema.partial().strict().optional(),
-  terminology: z.record(TermKeySchema, TermTextSchema.partial()).optional(),
+  terminology: z.partialRecord(TermKeySchema, TermTextSchema.partial()).optional(),
   /** Reset modules and terminology to the business model's defaults before applying the rest. */
   resetToDefaults: z.boolean().optional(),
 }))();

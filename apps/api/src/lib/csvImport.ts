@@ -74,11 +74,16 @@ function isValidYmd(s: string): boolean {
 
 // Field-level checks. Blank cells are stripped to `undefined` BEFORE this
 // runs, so optional() means "column empty or absent is fine".
+// A blank cell arrives as undefined: name the column rather than zod's
+// generic "expected string, received undefined".
+const requiredCell = (column: string) => ({
+  error: (iss: { input?: unknown }) => (iss.input === undefined ? `${column} is required` : undefined),
+});
 const RowFieldsSchema = z.object({
-  firstName: z.string().min(1, 'firstName is required').max(100, 'firstName is too long'),
-  lastName: z.string().min(1, 'lastName is required').max(100, 'lastName is too long'),
+  firstName: z.string(requiredCell('firstName')).min(1, 'firstName is required').max(100, 'firstName is too long'),
+  lastName: z.string(requiredCell('lastName')).min(1, 'lastName is required').max(100, 'lastName is too long'),
   email: z
-    .string({ required_error: 'email is required' })
+    .string(requiredCell('email'))
     .min(1, 'email is required')
     .max(254, 'email is too long')
     .email('invalid email'),

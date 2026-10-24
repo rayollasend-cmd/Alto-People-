@@ -102,7 +102,7 @@ export interface IntegrationSyncErrorRow {
 }
 
 const MappingSchema = /* @__PURE__ */ (() =>
-  z.record(z.enum(['worker', 'schedule', 'timesheet', 'payroll', 'workOrder']), z.record(z.string().min(1).max(80), z.string().min(1).max(120))))();
+  z.partialRecord(z.enum(['worker', 'schedule', 'timesheet', 'payroll', 'workOrder']), z.record(z.string().min(1).max(80), z.string().min(1).max(120))))();
 
 export const IntegrationConnectionCreateSchema = /* @__PURE__ */ (() =>
   z.object({

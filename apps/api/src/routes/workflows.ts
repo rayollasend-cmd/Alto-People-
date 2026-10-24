@@ -7,7 +7,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { emit, runWorkflowQueue } from '../lib/workflow.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
-import { HUMAN_ROLES } from '@alto-people/shared';
+import { HUMAN_ROLES, patchSchema } from '@alto-people/shared';
 import { enqueueAudit } from '../lib/audit.js';
 
 export const workflowsRouter = Router();
@@ -37,7 +37,7 @@ const ActionSchema = z.object({
     'WEBHOOK',
     'REQUIRE_APPROVAL',
   ]),
-  params: z.record(z.unknown()).default({}),
+  params: z.record(z.string(), z.unknown()).default({}),
 });
 
 /** The capabilities an approval gate may name: the ones that decide something. */
@@ -62,7 +62,7 @@ const DefinitionInputSchema = z.object({
   name: z.string().min(1).max(120),
   description: z.string().max(500).optional().nullable(),
   trigger: TriggerSchema,
-  conditions: z.record(z.unknown()).optional(),
+  conditions: z.record(z.string(), z.unknown()).optional(),
   actions: z.array(ActionSchema).default([]),
   isActive: z.boolean().optional(),
 });
@@ -128,7 +128,7 @@ workflowsRouter.post('/', MANAGE, async (req: Request, res: Response) => {
 
 workflowsRouter.put('/:id', MANAGE, async (req: Request, res: Response) => {
   const id = req.params.id;
-  const input = DefinitionInputSchema.partial().parse(req.body);
+  const input = patchSchema(DefinitionInputSchema).parse(req.body);
   const gate = input.actions ? gateProblems(input.actions) : null;
   if (gate) throw new HttpError(400, 'invalid_gate', gate);
   const existing = await prisma.workflowDefinition.findUnique({ where: { id } });

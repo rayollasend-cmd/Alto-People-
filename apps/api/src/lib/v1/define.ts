@@ -141,8 +141,8 @@ export function defineRoute<P extends z.ZodTypeAny = z.ZodTypeAny, Q extends z.Z
     ...(spec.description ? { description: spec.description } : {}),
     ...(spec.scopes ? { security: [{ oauth2: [...spec.scopes] }] } : { security: [] }),
     request: {
-      ...(spec.params ? { params: spec.params as unknown as z.AnyZodObject } : {}),
-      ...(spec.query ? { query: spec.query as unknown as z.AnyZodObject } : {}),
+      ...(spec.params ? { params: spec.params as unknown as z.ZodObject } : {}),
+      ...(spec.query ? { query: spec.query as unknown as z.ZodObject } : {}),
       ...(spec.body ? { body: { content: { 'application/json': { schema: spec.body } } } } : {}),
       ...(spec.method === 'post' && spec.scopes ? { headers: z.object({ 'Idempotency-Key': z.string().max(200) }) } : {}),
     },

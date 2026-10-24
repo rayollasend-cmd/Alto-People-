@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { patchSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -112,7 +113,7 @@ learningPaths114Router.get('/learning-paths/:id', VIEW, async (req, res) => {
 });
 
 learningPaths114Router.put('/learning-paths/:id', MANAGE, async (req, res) => {
-  const input = PathInputSchema.partial().parse(req.body);
+  const input = patchSchema(PathInputSchema).parse(req.body);
   const status = z
     .enum(['DRAFT', 'PUBLISHED', 'ARCHIVED'])
     .optional()

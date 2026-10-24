@@ -50,26 +50,6 @@
       "acceptedBy": "engineering, for owner review",
       "acceptedOn": "2026-10-20",
       "expires": "2027-01-20"
-    },
-    {
-      "package": "zod",
-      "via": "zod (the API's and the shared contracts' validation)",
-      "severity": "high",
-      "advisory": "Zod can exhaust memory while validating oversized constrained collections (GHSA-mrhx-c7xc-m3w5, <4.6.6)",
-      "reason": "Every 3.x release is affected and the fix is zod 4 (a major version across the shared contracts, the API and the web). The input that reaches validation is bounded before zod sees it: JSON bodies are capped at 2 MB (express.json limit in app.ts) and uploads by multer's per-route fileSize limits, so a collection can't be grown past what those caps allow. The zod 4 migration is planned work, not a CI fix.",
-      "acceptedBy": "engineering (2026-10-23 CI repair), for owner review",
-      "acceptedOn": "2026-10-23",
-      "expires": "2026-12-23"
-    },
-    {
-      "package": "@asteasolutions/zod-to-openapi",
-      "via": "@asteasolutions/zod-to-openapi > zod",
-      "severity": "high",
-      "advisory": "Inherited from zod above (fixed only in 9.x, which requires zod 4)",
-      "reason": "Same as zod; it moves with the zod 4 migration.",
-      "acceptedBy": "engineering (2026-10-23 CI repair), for owner review",
-      "acceptedOn": "2026-10-23",
-      "expires": "2026-12-23"
     }
   ]
 }

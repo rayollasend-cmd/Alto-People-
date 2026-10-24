@@ -408,7 +408,7 @@ export type ApplicationListResponse = z.infer<
 // pull every row just to count statuses.
 export const ApplicationStatsResponseSchema = /* @__PURE__ */ (() => z.object({
   total: z.number().int().nonnegative(),
-  byStatus: z.record(ApplicationStatusSchema, z.number().int().nonnegative()),
+  byStatus: z.partialRecord(ApplicationStatusSchema, z.number().int().nonnegative()),
   inFlight: z.number().int().nonnegative(),
   stale: z.number().int().nonnegative(),
   bounced: z.number().int().nonnegative(),
@@ -533,7 +533,7 @@ export const OnboardingAnalyticsResponseSchema = /* @__PURE__ */ (() => z.object
   // Lookback window in days for medianDays / p90Days / breakdown stats.
   windowDays: z.number().int().positive(),
   // Snapshot of all non-deleted applications by status.
-  byStatus: z.record(z.number().int().nonnegative()),
+  byStatus: z.record(z.string(), z.number().int().nonnegative()),
   // Org-wide completion stats over the lookback window.
   completion: OnboardingCompletionStatsSchema,
   byTrack: z.array(OnboardingTrackBreakdownSchema),
@@ -978,7 +978,7 @@ export const AuditLogEntrySchema = /* @__PURE__ */ (() => z.object({
   actorUserId: UuidSchema.nullable(),
   actorEmail: z.string().email().nullable(),
   createdAt: z.string().datetime(),
-  metadata: z.record(z.unknown()).nullable(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
 }))();
 export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
 
@@ -1156,7 +1156,7 @@ export const AuditSearchEntrySchema = /* @__PURE__ */ (() => z.object({
   /** Where the record lives in the app, when it has a page. */
   entityHref: z.string().nullable().optional(),
   clientId: UuidSchema.nullable(),
-  metadata: z.record(z.unknown()).nullable(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
   createdAt: z.string().datetime(),
 }))();
 export type AuditSearchEntry = z.infer<typeof AuditSearchEntrySchema>;
@@ -3441,7 +3441,7 @@ export const PayrollItemYtdResponseSchema = /* @__PURE__ */ (() => z.object({
   employerFuta: z.number(),
   employerSuta: z.number(),
   /** Earning kind → YTD amount, for the earnings table's YTD column. */
-  byKind: z.record(PayrollEarningKindSchema, z.number()),
+  byKind: z.partialRecord(PayrollEarningKindSchema, z.number()),
   /** Van ride charges inside postTaxDeductions, YTD. */
   transport: z.number().optional(),
   /** State program code → YTD withheld (CA_SDI, NJ_TDI …). */
@@ -3583,7 +3583,7 @@ export const PayrollExceptionSchema = /* @__PURE__ */ (() => z.object({
   /** Short human-readable summary for the UI. */
   message: z.string(),
   /** Optional structured detail (e.g. terminationDate, otHours). */
-  detail: z.record(z.unknown()).optional(),
+  detail: z.record(z.string(), z.unknown()).optional(),
 }))();
 export type PayrollException = z.infer<typeof PayrollExceptionSchema>;
 
@@ -4449,7 +4449,7 @@ export const DashboardKPIsSchema = /* @__PURE__ */ (() => z.object({
   /** Sum of NET pay across DRAFT + FINALIZED runs (pending disbursement). */
   netPendingDisbursement: z.number().nonnegative(),
   /** Bucketed counts for chart rendering. */
-  applicationStatusCounts: z.record(z.number().int().nonnegative()),
+  applicationStatusCounts: z.record(z.string(), z.number().int().nonnegative()),
   /** The window (in days) the time-bounded fields above were computed for.
    *  Default 30; overridable via ?days=N on /analytics/dashboard. The legacy
    *  field names retain "30d"/"Next30d" for back-compat. */
@@ -4457,7 +4457,7 @@ export const DashboardKPIsSchema = /* @__PURE__ */ (() => z.object({
   /** Optional weekly micro-trends keyed by series name (`hoursWorked`,
    *  `shiftsScheduled`, `applications`, `hires`). All-optional so older
    *  clients — and older servers — interop without a lockstep deploy. */
-  trends: z.record(KpiTrendSchema).optional(),
+  trends: z.record(z.string(), KpiTrendSchema).optional(),
 }))();
 export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
 
@@ -6600,7 +6600,7 @@ export type PayChangeRow = z.infer<typeof PayChangeRowSchema>;
 
 export const PositionHeadcountSchema = /* @__PURE__ */ (() => z.object({
   total: z.number().int().nonnegative(),
-  byStatus: z.record(PositionStatusSchema, z.number().int().nonnegative()),
+  byStatus: z.partialRecord(PositionStatusSchema, z.number().int().nonnegative()),
   fteAuthorized: z.string(),
   fteFilled: z.string(),
 }))();

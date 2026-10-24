@@ -32,3 +32,4 @@ export * from './peopleStatus.js';
 export * from './queues.js';
 export * from './auditLog.js';
 export * from './hirePay.js';
+export * from './zodPatch.js';

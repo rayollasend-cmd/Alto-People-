@@ -1734,8 +1734,12 @@ const PunchInputSchema = z.object({
     .optional()
     .nullable(),
   // Phase 102 — offline queue support. Both optional: a kiosk that's
-  // never been offline doesn't need to send either.
-  idempotencyKey: z.string().uuid().optional().nullable(),
+  // never been offline doesn't need to send either. The key is made on the
+  // tablet (lib/kioskQueue) and is only a dedup token, never a row id, so it
+  // is checked for shape (z.guid, zod 3's .uuid()) rather than RFC version
+  // bits: a punch queued offline must never be refused over how its key
+  // was generated.
+  idempotencyKey: z.guid().optional().nullable(),
   clientPunchedAt: z
     .string()
     .datetime({ offset: true })

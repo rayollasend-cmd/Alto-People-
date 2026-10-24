@@ -43,9 +43,10 @@ export function safeHref(value: string | null | undefined): string | undefined {
 /**
  * Zod schema for user-supplied links: valid URL AND an http(s) scheme.
  *
- * Use `httpUrl(max)` when a length cap is needed — `.refine()` returns a
- * ZodEffects, which has no `.max()`, so the cap has to be applied to the
- * string before the scheme check rather than chained after it.
+ * Use `httpUrl(max)` when a length cap is needed: the cap is applied to the
+ * string before the scheme check. (Under zod 3 `.refine()` returned a
+ * ZodEffects with no `.max()`; zod 4 would allow chaining it, but the cap
+ * still belongs before the URL parse.)
  */
 export function httpUrl(maxLength = 2000) {
   return z

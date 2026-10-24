@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { patchSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
@@ -46,7 +47,7 @@ const ConnectionInput = z
   })
   .strict();
 
-const ConnectionUpdate = ConnectionInput.partial().strict();
+const ConnectionUpdate = patchSchema(ConnectionInput).strict();
 
 /* ------------------------------------------- Access pack: security policy */
 
@@ -222,7 +223,7 @@ identityRouter.post('/saml-connections', MANAGE, async (req, res) => {
 
 identityRouter.patch('/saml-connections/:id', MANAGE, async (req, res) => {
   const id = Id.parse(req.params.id);
-  const input = SamlInput.partial().strict().parse(req.body);
+  const input = patchSchema(SamlInput).strict().parse(req.body);
   const tenantId = tenantIdForWrite();
   const before = await prisma.identityConnection.findFirst({ where: { id, tenantId, kind: 'SAML' } });
   if (!before) throw new HttpError(404, 'connection_not_found', 'Connection not found.');

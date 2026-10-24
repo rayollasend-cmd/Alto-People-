@@ -150,6 +150,20 @@ describe('SSO required for staff (decision 4)', () => {
   });
 });
 
+describe('editing a connection changes only what the edit names', () => {
+  it('a rename leaves a disabled connection disabled and its SSO rule as it was (zod 4 .partial() would write the defaults back)', async () => {
+    const { a, connectionId } = await tenantTwo();
+    expect((await a.patch(`/identity/connections/${connectionId}`).send({ enabled: false, ssoRequiredForStaff: true, jitPolicy: 'NONE' })).status).toBe(200);
+    expect((await a.patch(`/identity/connections/${connectionId}`).send({ displayName: 'Acme Okta (EU)' })).status).toBe(200);
+    expect(await prisma.identityConnection.findUniqueOrThrow({ where: { id: connectionId }, select: { displayName: true, enabled: true, ssoRequiredForStaff: true, jitPolicy: true } })).toEqual({
+      displayName: 'Acme Okta (EU)',
+      enabled: false,
+      ssoRequiredForStaff: true,
+      jitPolicy: 'NONE',
+    });
+  });
+});
+
 describe('SCIM per tenant', () => {
   it('a tenant’s token creates in its tenant, sees only its people, and stops when revoked', async () => {
     const { a } = await tenantTwo();

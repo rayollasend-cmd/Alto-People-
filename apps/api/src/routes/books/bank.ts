@@ -13,6 +13,7 @@ import {
   BankSuggestionsBatchInputSchema,
   BankUndoInputSchema,
   BankTickInputSchema,
+  patchSchema,
 } from '@alto-people/shared';
 import { prisma } from '../../db.js';
 import { requireCapability } from '../../middleware/auth.js';
@@ -202,7 +203,7 @@ booksBankRouter.post('/rules/apply', MANAGE, async (req, res) => {
 });
 
 booksBankRouter.patch('/rules/:id', MANAGE, async (req, res) => {
-  const rule = await updateRule(prisma, Uuid.parse(req.params.id), BankRuleInputSchema.partial().parse(req.body ?? {}));
+  const rule = await updateRule(prisma, Uuid.parse(req.params.id), patchSchema(BankRuleInputSchema).parse(req.body ?? {}));
   audit(req.user!.id, 'books.bank.rule_updated', 'BankRule', rule.id, { fields: Object.keys(req.body ?? {}) });
   res.json({ rule });
 });

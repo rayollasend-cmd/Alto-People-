@@ -554,7 +554,7 @@ describe('threads on the work (/work-notes)', () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const ghost = await (await loginAs(hr.email)).post('/work-notes').send({
       subjectType: 'ASSOCIATE',
-      subjectKey: '00000000-0000-0000-0000-000000000001',
+      subjectKey: '00000000-0000-4000-8000-00000000dead', // a well-formed (RFC 4122) id of nothing
       body: 'Note on nobody.',
       mentionDesks: [],
     });
