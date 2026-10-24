@@ -296,7 +296,8 @@ describe('workers’ comp claims', () => {
     expect(await screen.findByText(/Still to fill: employer FEIN, policy number, nature of injury, cause\./)).toBeInTheDocument();
     expect(screen.getByText(/A 5-day window for CA by default/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /record it as sent/i })).toBeInTheDocument();
-    expect(screen.getByText('No open shift in the next two weeks fits these restrictions.')).toBeInTheDocument();
+    // Its own request (duty matches) can land after the summary's on a slow runner: wait for it.
+    expect(await screen.findByText('No open shift in the next two weeks fits these restrictions.')).toBeInTheDocument();
   });
 });
 
