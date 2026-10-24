@@ -44,6 +44,7 @@ import { queryClient } from '@/lib/queryClient';
 // hop, no FOUT from Google Fonts, and the browser caches them with the
 // rest of the app.
 import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import '@fontsource-variable/cormorant-garamond';
 
 import './index.css';

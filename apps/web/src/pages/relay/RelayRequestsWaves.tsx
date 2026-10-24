@@ -246,7 +246,7 @@ export function WavesSection({ cohorts, canManage, onChanged }: { cohorts: Cohor
                     </span>
                   </div>
                   <div className="mt-2 flex items-baseline gap-2 text-sm tabular-nums">
-                    <span className="font-display text-2xl leading-none text-gold-bright">{c.completed}</span>
+                    <span className="font-display text-2xl leading-none tabular-nums text-gold-bright">{c.completed}</span>
                     <span className="text-silver/60">/ {c.targetHeadcount} ready</span>
                     <span className="text-silver/40">
                       · {c.inFlight} in flight

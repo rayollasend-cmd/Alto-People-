@@ -79,6 +79,9 @@ export default {
         // kiosk clock rendered in Georgia for months) can never fall
         // through to the platform serif again.
         serif: ['"Cormorant Garamond Variable"', '"Cormorant Garamond"', 'Georgia', 'serif'],
+        // IDs, codes, PINs and reference numbers: one face on every device
+        // (it was Consolas on Windows, SF Mono on a Mac, Droid on Android).
+        mono: ['"Geist Mono Variable"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
       fontSize: {
         // The micro tier the app actually uses — previously 585 arbitrary

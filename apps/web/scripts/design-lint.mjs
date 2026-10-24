@@ -17,6 +17,8 @@
  *   empty-text     a bare "No … yet" / "Nothing …" sentence: use <EmptyState>
  *   raw-heading    an <h1> or <h2 className=…> in a page: use <PageHeader> / <SectionTitle>
  *   loading-text   a literal "Loading…" string: use <Skeleton> / <SkeletonRows>
+ *   small-serif    `font-display` below text-2xl: Cormorant's x-height is ~27% under Geist's and its
+ *                  hairlines fade at small sizes (index.css); use the sans, or add tabular-nums on a number
  */
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -33,6 +35,7 @@ const PATTERNS = {
   'empty-text': />\s*(No [a-z][^<{]{2,60} yet|Nothing [^<{]{2,60})\.?\s*</g,
   'raw-heading': /<h[12]\s+className=/g,
   'loading-text': />\s*Loading(…|\.\.\.)\s*</g,
+  'small-serif': /font-display(?![^"'`]*tabular-nums)[^"'`]*\btext-(?:2xs|xs|sm|base|lg|xl)\b|\btext-(?:2xs|xs|sm|base|lg|xl)\b(?![^"'`]*tabular-nums)[^"'`]*font-display/g,
 };
 
 /** Page code only: the UI kit and lib are where the patterns are supposed to live. */

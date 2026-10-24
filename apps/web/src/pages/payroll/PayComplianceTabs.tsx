@@ -178,7 +178,7 @@ export function NewHireReportsTab() {
             <CardContent>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2 text-sm text-ink-muted">
-                  <span className="font-display text-lg text-ink">{state}</span>
+                  <span className="text-base font-semibold text-ink">{state}</span>
                   <span>
                     {list.length} due · {ready} ready
                   </span>
