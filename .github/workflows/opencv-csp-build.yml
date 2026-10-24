@@ -96,7 +96,7 @@ jobs:
           node apps/web/scripts/verify-opencv-csp.mjs opencv-out/opencv.js
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: opencv-js-strict-csp-${{ inputs.opencv_ref }}
           path: opencv-out/
