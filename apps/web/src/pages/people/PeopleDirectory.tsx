@@ -2564,12 +2564,14 @@ export function EmploymentTab({ associateId, associate }: { associateId: string;
 /** Where they work, at a glance: the facts the directory already holds for them. */
 function PlacementCard({ a, hiredOn }: { a: DirectoryEntry; hiredOn: string | null }) {
   const term = useTerm();
+  // A company with no clients (a hotel running its own staff) has no client to place them at.
+  const hasClients = useTenant().moduleOn('clientPortal');
   const start = a.startDate ? a.startDate.slice(0, 10) : hiredOn;
   const facts: Array<[string, string | null]> = [
     ['Start date', start ? fmtDate(start) : null],
     ['Employment type', EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType],
     ['Position', a.position ?? a.jobProfileTitle],
-    [term('label.client'), a.workplaceClientName],
+    ...(hasClients ? ([[term('label.client'), a.workplaceClientName]] as Array<[string, string | null]>) : []),
     [term('label.store'), a.currentLocationName],
     ['Manager', a.managerName],
     ['Department', a.departmentName],
