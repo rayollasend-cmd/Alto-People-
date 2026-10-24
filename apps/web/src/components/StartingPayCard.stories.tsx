@@ -129,7 +129,7 @@ export const SetStartingPay: Story = {
  * out of this story's check until Toaster.tsx sets its own success colours.
  */
 export const SaveApplies: Story = {
-  parameters: { a11y: { context: { include: ['body'], exclude: ['[data-sonner-toaster]'] } } },
+  parameters: { a11y: { context: { exclude: ['[data-sonner-toaster]'] } } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const form = await canvas.findByRole('group', { name: 'Set the starting pay' });
@@ -184,6 +184,6 @@ export const Loading: Story = {
 /** The QueryError inside the card (its "Details for support" contrast is a known finding — see Kit/QueryError). */
 export const ServerError: Story = {
   parameters: {
-    a11y: { context: { include: ['body'], exclude: ['details > summary'] } },
+    a11y: { context: { exclude: ['details > summary'] } },
     api:[{ path: '/comp/associates/:id/hire-pay', status: 500, body: { error: { code: 'internal', message: 'boom', requestId: 'req-31c' } } }] },
 };

@@ -48,7 +48,7 @@ export const NotFound: Story = {
  * until QueryError drops the opacity — the rest of the story is checked.
  */
 export const ServerError: Story = {
-  parameters: { a11y: { context: { include: ['body'], exclude: ['details > summary'] } } },
+  parameters: { a11y: { context: { exclude: ['details > summary'] } } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
