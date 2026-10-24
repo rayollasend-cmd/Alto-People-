@@ -100,6 +100,12 @@ function proxy(req, res) {
 
 const server = http2.createSecureServer({ ...certificate(), allowHTTP1: true }, (req, res) => {
   const url = new URL(req.url, 'https://x');
+  // Product analytics stop here: the API would relay them to PostHog, and a
+  // sweep's synthetic visits are nobody's usage.
+  if (url.pathname === '/api/ux' || url.pathname.startsWith('/api/ux/')) {
+    res.writeHead(204);
+    return res.end();
+  }
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return proxy(req, res);
   const asFile = fileFor(url.pathname);
   const file = asFile ?? path.join(DIST, url.pathname === '/kiosk' || url.pathname.startsWith('/kiosk/') ? 'kiosk.html' : 'index.html');

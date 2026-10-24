@@ -4,8 +4,8 @@
  * the rules this file enforces:
  *
  *  - Off unless VITE_POSTHOG_KEY is set at build time (never in tests, CI or
- *    the visual baselines). Loaded after the page has settled, as its own
- *    chunk, so it never competes with the first screen.
+ *    the visual baselines). Loaded once the first screen has painted
+ *    (whenFirstScreenSettled), as its own chunk, so it never competes with it.
  *  - Everything goes through our own origin (/api/ux, the API's relay), so
  *    the CSP stays 'self', no third-party script is ever loaded, and PostHog
  *    never sees an employee's IP address.
@@ -229,17 +229,61 @@ export function initAnalytics(): void {
   if (!KEY || import.meta.env.MODE === 'test') return;
   // Opened straight onto the hotline or the kiosk: don't even load the SDK.
   if (isUntrackedPath(window.location.pathname)) return;
-  const start = () => {
-    const idle = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
-    // Best-effort: a blocked or failed load leaves the app exactly as it was.
-    const load = () => {
-      loadAnalytics(KEY).catch(() => {});
-    };
-    if (idle) idle(load, { timeout: 5000 });
-    else window.setTimeout(load, 2000);
-  };
+  // Best-effort: a blocked or failed load leaves the app exactly as it was.
+  const start = () => whenFirstScreenSettled(() => void loadAnalytics(KEY).catch(() => {}));
   if (document.readyState === 'complete') start();
   else window.addEventListener('load', start, { once: true });
+}
+
+/** No new largest paint for this long after `load`: the first screen is in. */
+const SETTLE_MS = 2500;
+/** …or this long after `load` regardless, so a page that keeps painting still gets counted. */
+const SETTLE_CAP_MS = 10_000;
+
+/**
+ * Run `fn` once the first screen has painted, then idle. PostHog is 121 KB gz:
+ * started at `load` + idle, as it was, it downloaded alongside the page's own
+ * chunks and data — in a single-page app `load` fires once main.js is in, and
+ * a phone waiting on the network is "idle" — and took the bandwidth a slow-4G
+ * phone needed for the page itself (production's sign-in page, phone: LCP
+ * 4.1 s, against 2.7 s for the same build without it).
+ *
+ * "Painted" is the browser's own largest-contentful-paint entries going quiet;
+ * the first tap or key press counts too (the person is using the page). The
+ * web-vitals extension reads buffered entries, so LCP and CLS are still
+ * reported for the load that came before it. Where there are no LCP entries
+ * (Safari), the quiet timer alone decides.
+ */
+function whenFirstScreenSettled(fn: () => void): void {
+  let done = false;
+  let quiet = 0;
+  let observer: PerformanceObserver | null = null;
+  const go = () => {
+    if (done) return;
+    done = true;
+    window.clearTimeout(quiet);
+    window.clearTimeout(cap);
+    observer?.disconnect();
+    window.removeEventListener('pointerdown', go, true);
+    window.removeEventListener('keydown', go, true);
+    const idle = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
+    if (idle) idle(fn, { timeout: 5000 });
+    else window.setTimeout(fn, 0);
+  };
+  const rearm = () => {
+    window.clearTimeout(quiet);
+    quiet = window.setTimeout(go, SETTLE_MS);
+  };
+  const cap = window.setTimeout(go, SETTLE_CAP_MS);
+  try {
+    observer = new PerformanceObserver(rearm);
+    observer.observe({ type: 'largest-contentful-paint', buffered: true });
+  } catch {
+    observer = null;
+  }
+  rearm();
+  window.addEventListener('pointerdown', go, true);
+  window.addEventListener('keydown', go, true);
 }
 
 async function loadAnalytics(key: string): Promise<void> {
