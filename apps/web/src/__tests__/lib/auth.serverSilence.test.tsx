@@ -40,7 +40,7 @@ function jsonResponse(status: number, body: unknown = {}): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-let meScript: Array<() => Response>;
+let meScript: Array<() => Response | Promise<Response>>;
 let meCalls = 0;
 
 function stubFetch() {
@@ -128,10 +128,17 @@ describe('isServerSilence', () => {
 describe('AuthProvider when the server does not answer /auth/me', () => {
   it('a 503 keeps the remembered session, shows reconnecting, and a later 200 brings the session back online', async () => {
     saveOfflineSession(dana);
+    // The server comes back only when the test says so: with the retries in
+    // milliseconds, a busy CI runner otherwise reached the 200 before the
+    // "reconnecting" state below was read (it read "online").
+    let serverBack!: () => void;
+    const back = new Promise<void>((resolve) => {
+      serverBack = resolve;
+    });
     meScript = [
       () => jsonResponse(503, { error: { code: 'unavailable', message: 'Service Unavailable' } }),
       () => jsonResponse(502, { error: { code: 'bad_gateway', message: 'Bad Gateway' } }),
-      () => jsonResponse(200, { user: dana }),
+      () => back.then(() => jsonResponse(200, { user: dana })),
     ];
     renderApp();
 
@@ -143,6 +150,8 @@ describe('AuthProvider when the server does not answer /auth/me', () => {
 
     // The probe retried on its own until the server answered.
     await waitFor(() => expect(meCalls).toBeGreaterThanOrEqual(3), { timeout: 4_000 });
+    expect(screen.getByTestId('offline')).toHaveTextContent('offline');
+    serverBack();
     await waitFor(() => expect(screen.getByTestId('offline')).toHaveTextContent('online'));
     expect(screen.getByTestId('email')).toHaveTextContent('dana@altohr.com');
     expect(screen.queryByTestId('login')).not.toBeInTheDocument();
