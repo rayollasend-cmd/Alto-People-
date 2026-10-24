@@ -43,7 +43,8 @@ async function seed() {
   return { client, store, dana };
 }
 
-const shift = (clientId: string, locationId: string, status: 'ASSIGNED' | 'OPEN', assignedAssociateId: string | null, startsAt = new Date(Date.now() + H)) =>
+// Defaults to starting now: "in an hour" is tomorrow in the store's zone after 11 PM there.
+const shift = (clientId: string, locationId: string, status: 'ASSIGNED' | 'OPEN', assignedAssociateId: string | null, startsAt = new Date()) =>
   prisma.shift.create({
     data: { clientId, locationId, position: 'Housekeeper', startsAt, endsAt: new Date(startsAt.getTime() + 4 * H), status, assignedAssociateId, publishedAt: new Date() },
   });

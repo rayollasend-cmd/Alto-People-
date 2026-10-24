@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -61,9 +62,10 @@ describe('GET /ops/shift-preview', () => {
     });
     await prisma.storeShiftSop.create({ data: { locationId: store.id, label: 'Swing', templateId: template.id } });
 
-    // Dana's own shift later today, and a crew member's.
+    // Dana's own shift, running now, and a crew member's. Not "in an hour":
+    // after 11 PM on the company calendar that lands on tomorrow.
     const now = Date.now();
-    const start = new Date(now + 1 * H);
+    const start = new Date(now);
     await prisma.shift.create({
       data: { clientId: client.id, locationId: store.id, position: 'Shift Supervisor', startsAt: start, endsAt: new Date(start.getTime() + 8 * H), status: 'ASSIGNED', assignedAssociateId: dana.id },
     });
@@ -86,7 +88,7 @@ describe('GET /ops/shift-preview', () => {
         position: 'Shift Supervisor',
         department: 'Frozen & Dairy',
         period: 'MORNING',
-        dateKey: new Date(now).toISOString().slice(0, 10),
+        dateKey: orgDateKey(new Date(now)),
         status: 'CLOSED',
         openedById: prev.id,
         openedAt: new Date(now - 10 * H),
