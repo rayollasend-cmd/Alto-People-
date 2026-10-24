@@ -26,8 +26,8 @@ gh api repos/rayollasend-cmd/Alto-People-/actions/jobs/<jobId>/logs | sed 's/^[0
 | Accessibility | axe findings | Skill `alto-e2e-local`; fix at the source. |
 | API shard | fails in CI, passes locally | A date bomb (UTC vs the company calendar), queued side effects, or ordering. See skill `alto-api-tests`. |
 | Visual regression | screenshots moved | Skill `alto-visual`: an intended change gets `test:visual:update` and its PNGs committed; an unintended one gets fixed. |
-| Railway build | heap out of memory | The API build runs tsc with `--max-old-space-size=6144` (apps/api/package.json). |
 | Railway build | `failed to solve: secret <Word> not found`, right after "install apt packages" | Railpack passes every service variable to the build as a secret, and a variable name with a space breaks that (`Railway source maps` → secret `Railway`). List the names (`railway variables --json`, names only) and rename the bad one to a real env name. |
+| Railway build | out of memory in the API build | The API build runs TypeScript 7 (native, `node_modules/typescript-native`, peaks ~3.5 GB with 4 checkers). Lower it with `--checkers 2` or `--singleThreaded` in apps/api/package.json's `build`. TypeScript 5's JS compiler needed `--max-old-space-size=6144`. |
 
 ## Verify production after a fix lands
 `curl -s https://people.altohr.com/api/health/version` shows the deployed SHA, and `/api/health/ready` should be `{"ok":true,"db":"ok"}`. Railway deploy status is on the GitHub deployment for the SHA (`gh api repos/rayollasend-cmd/Alto-People-/deployments`).

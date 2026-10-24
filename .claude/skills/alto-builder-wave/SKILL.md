@@ -22,7 +22,7 @@ description: Run a large Alto People change as parallel builder agents in one wo
 
 ## The merge
 1. `npm -w @alto-people/shared run build`; `prisma generate`; `prisma validate`.
-2. Gates: API `tsc --noEmit` + `npm run typecheck:test`; web `tsc -b`; eslint (api and web); `node scripts/design-lint.mjs` (run `--write` only to lock in reductions); `node scripts/i18n-check.mjs`; shared tests.
+2. Gates: `npm run typecheck` (TypeScript 7: shared, API, API tests, web `-b`; ~10 s); eslint (api and web); `node scripts/design-lint.mjs` (run `--write` only to lock in reductions); `node scripts/i18n-check.mjs`; shared tests.
 3. **The full suite as four shards** (skill `alto-api-tests`): rerun every failure alone; fix the real ones; flakes pass alone.
 4. **Review data-rewriting migrations yourself** (FKs that cascade, triggers, live-data safety). Back up dev and test them on a restored copy.
 5. **Commit with a message that says what users get**, ending `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.

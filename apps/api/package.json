@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "prebuild": "prisma generate",
-    "build": "node --max-old-space-size=6144 ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "build": "node ../../node_modules/typescript-native/bin/tsc -p tsconfig.json",
     "prestart": "prisma migrate deploy",
     "start": "node --import ./dist/instrument.js dist/index.js",
     "test": "vitest run",
@@ -17,7 +17,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "db:studio": "prisma studio",
-    "typecheck:test": "tsc -p tsconfig.test.json",
+    "typecheck": "node ../../node_modules/typescript-native/bin/tsc -p tsconfig.json --noEmit",
+    "typecheck:test": "node ../../node_modules/typescript-native/bin/tsc -p tsconfig.test.json",
     "lint": "eslint src"
   },
   "prisma": {
