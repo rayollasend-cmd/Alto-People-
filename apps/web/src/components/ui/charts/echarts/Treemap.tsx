@@ -49,6 +49,11 @@ export function readableOn(color: string): string {
 
 const total = (nodes: TreeNode[]) => nodes.reduce((s, n) => s + n.value, 0);
 
+/** Levels in a node's subtree, the node's own included. */
+function depthOf(n: TreeNode): number {
+  return 1 + Math.max(0, ...(n.children ?? []).filter((ch) => ch.value > 0).map(depthOf));
+}
+
 export function treemapOption(data: TreeNode[], c: EChartColors, format: (n: number) => string = plain, rootName = 'All'): EChartsCoreOption {
   const grand = total(data);
   const paint = (n: TreeNode, group: string, depth: number): Record<string, unknown> => {
@@ -84,6 +89,13 @@ export function treemapOption(data: TreeNode[], c: EChartColors, format: (n: num
         bottom: 30,
         roam: false,
         nodeClick: 'zoomToNode',
+        // Every level shown — and, because it is set, the breadcrumb names
+        // where the reader is (the view's root: "All" until they zoom in).
+        // Unset, ECharts ends the breadcrumb at whichever block happens to
+        // sit at the chart's exact centre (its own "FIXME" in TreemapView),
+        // so it read "All › Coastal Resort Holdings › Front Beach 218" or
+        // "… › Deli associate" on a one-pixel difference in layout.
+        leafDepth: Math.max(1, ...sorted.map(depthOf)),
         squareRatio: 0.5 * (1 + Math.sqrt(5)),
         data: sorted.map((n, i) => paint(n, c.series[i] ?? c.other, 0)),
         label: {

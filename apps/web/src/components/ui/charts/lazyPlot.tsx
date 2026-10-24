@@ -15,7 +15,7 @@ import { trackChunk } from '@/lib/chunkLoading';
  * placeholder fills that box until the drawing lands, so nothing moves.
  *
  * A chart further down the page waits until it is within a few hundred
- * pixels of view: the transport director's trends sit under the day's board,
+ * pixels of view (and every chart until the web fonts are in — useNearScreen): the transport director's trends sit under the day's board,
  * and on a phone their 120 KB was still competing with the board's own data
  * (LCP 4.4 s on /transport, the slowest page swept). Where there is no
  * IntersectionObserver (jsdom) the drawing loads at once.
@@ -32,7 +32,8 @@ export function lazyPlot<C extends ComponentType<any>>(load: () => Promise<{ def
   function LazyPlot(props: ComponentProps<C>) {
     const near = useNearScreen();
     const box = 'h-full w-full animate-pulse rounded-md bg-navy-secondary/40';
-    if (!near.seen) return <div ref={near.ref} className={box} aria-hidden="true" />;
+    // Busy once it's on screen and waiting only for the fonts: it will draw.
+    if (!near.seen) return <div ref={near.ref} className={box} aria-busy={near.near || undefined} aria-hidden="true" />;
     return (
       <Suspense fallback={<div className={box} aria-busy="true" aria-hidden="true" />}>
         <Plot {...(props as ComponentProps<typeof Plot>)} />
@@ -54,21 +55,43 @@ function scrollerOf(el: HTMLElement): HTMLElement | null {
   return null;
 }
 
-/** Whether the element has come within AHEAD of its scroller's view (latched: once seen, always). */
+/** The web fonts, loaded — or, where the browser can't say (jsdom), now. */
+function fontsLoaded(): Promise<unknown> {
+  return typeof document !== 'undefined' && document.fonts ? document.fonts.ready : Promise.resolve();
+}
+
+/**
+ * Whether the element has come within AHEAD of its scroller's view
+ * (latched: once seen, always) — and the web fonts have loaded. recharts
+ * measures each axis label's width once, when it first draws, to decide where
+ * to wrap it, and remembers the answer: measured in the fallback face, "Seaside
+ * Hospitality Group" wrapped on three lines in Geist's room for two, and which
+ * face it got depended on a race with the font download (the visual baselines
+ * flipped between machines).
+ */
 function useNearScreen() {
   const ref = useRef<HTMLDivElement>(null);
-  const [seen, setSeen] = useState(() => typeof IntersectionObserver === 'undefined');
+  const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined');
+  const [fonts, setFonts] = useState(() => typeof document === 'undefined' || !document.fonts || document.fonts.status === 'loaded');
+  useEffect(() => {
+    if (fonts) return;
+    let live = true;
+    void fontsLoaded().then(() => live && setFonts(true));
+    return () => {
+      live = false;
+    };
+  }, [fonts]);
   useEffect(() => {
     const el = ref.current;
-    if (seen || !el) return;
+    if (near || !el) return;
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) setSeen(true);
+        if (entries.some((e) => e.isIntersecting)) setNear(true);
       },
       { root: scrollerOf(el), rootMargin: AHEAD },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [seen]);
-  return { ref, seen };
+  }, [near]);
+  return { ref, near, seen: near && fonts };
 }
