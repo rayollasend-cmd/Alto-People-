@@ -7,7 +7,7 @@ production).
 | Run | Pages | Signed in as | Emulation |
 | --- | --- | --- | --- |
 | public | `/login`, `/careers`, `/status`, `/trust-center` | nobody | phone |
-| admin | `/`, `/clients`, `/scheduling`, `/payroll` | admin@altohr.com | desktop |
+| admin | `/`, `/clients`, `/scheduling`, `/payroll`, `/recruiting/analytics`, `/labor-costs`, `/call-outs` | admin@altohr.com | desktop |
 | associate | the associate's home (`/?lhci=associate`) | maria.lopez@example.com | phone |
 
 "Phone" is Lighthouse's mobile emulation (Moto G Power, simulated slow 4G, 4x
@@ -19,6 +19,9 @@ results by URL.
 
 You need the API on :3001 with the dev seed (`LOGIN_IP_LIMIT=500 npm -w apps/api run dev`)
 for the signed-in pages, and Playwright's Chromium (`npx playwright install chromium`).
+The three chart pages (recruiting analytics, labor costs, the call-outs desk) are
+only worth measuring with something to draw: `npm -w apps/api run db:seed:analytics`
+gives them a year of history (CI runs it before this step).
 
 ```sh
 npm -w apps/web run build    # the production build → apps/web/dist
@@ -58,7 +61,7 @@ page is a cold load — but keeps cookies, so the session holds.
 In `lighthouse/lighthouserc.cjs`, with today's numbers written above them:
 
 - **Accessibility below 0.95 fails** the run (and the CI job). Every page scores
-  100 today.
+  100 today, the three chart pages included.
 - Performance, best practices, LCP, CLS and TBT are **warnings**, set just past
   today's numbers, so a warning means "worse than on 2026-10-23". Tighten them,
   and turn them into errors, as the pages get faster. Where to start: the
@@ -69,11 +72,28 @@ In `lighthouse/lighthouserc.cjs`, with today's numbers written above them:
   ran before the boot splash's first paint in the recorded trace); compare
   medians of 3, never single runs.
 
+The three ECharts pages share the admin desktop budgets. Their numbers on
+2026-10-24 (median of 3, local, with `db:seed:analytics` history):
+
+| Page | Perf | A11y | Best practices | LCP | CLS | TBT |
+| --- | --: | --: | --: | --: | --: | --: |
+| `/recruiting/analytics` (the Sankey) | 95 | 100 | 100 | 1.5 s | 0.002 | 0 ms |
+| `/labor-costs` (the treemap) | 94 | 100 | 100 | 1.6 s | 0.010 | 0 ms |
+| `/labor-costs?from=…&to=…`, last pay period | 94 | 100 | 100 | 1.6 s | 0.005 | 0 ms |
+| `/call-outs` (the calendar heatmap) | 95 | 100 | 100 | 1.5 s | 0.002 | 0 ms |
+
+`/labor-costs` opens on this pay period to date, and that morning was a period's
+first day, so its default range held almost nothing; the last-period row is the
+same page with fourteen days of rows (measured by hand, not part of the run). One
+run in three of it read CLS 0.072 — the sidebar settling, not the report — so
+compare medians there too.
+
 ## In CI
 
 The **E2E (Playwright, full stack)** job already has Postgres seeded and the API
-running. After the Playwright suite it builds the web app, runs `npm -w apps/web
-run lhci`, writes the score table into the job summary, and keeps the reports
+running. After the Playwright suite it adds the analytics history (`npm -w
+apps/api run db:seed:analytics`, after the suite so no spec's expectations move),
+builds the web app, runs `npm -w apps/web run lhci`, writes the score table into the job summary, and keeps the reports
 as the `lighthouse-reports` artifact (14 days). CI runners are slower than a
 laptop, so expect lower performance scores there; the assertions on them are
 warnings.

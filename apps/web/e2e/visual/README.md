@@ -1,6 +1,6 @@
 # Visual regression
 
-Fourteen pages, held to an approved picture. A change that moves a pixel on one of
+Seventeen pages, held to an approved picture. A change that moves a pixel on one of
 them fails CI ("Visual regression") with the expected, actual and diff images, so a
 wording slip (a hotel reading "Client hours"), a contrast drop or a broken layout
 shows up in the pull request that caused it.
@@ -24,11 +24,22 @@ screenshots for a person to look at. This suite *compares*.
 | Books home (`/books`) | admin | dark | dark |
 | Approvals (`/approvals`) | admin | dark | dark |
 | Settings › Users & access (`/admin/users`) | admin | dark | dark |
+| Recruiting › Analytics (`/recruiting/analytics`, 90 days) | admin | dark | dark |
+| Labor costs (`/labor-costs`, on "Last period") | admin | dark | dark |
+| The call-outs desk (`/call-outs`) | admin | dark, light | dark, light |
 | The associate's home (`/`) | associate (Maria) | — | dark |
 | Store portal home (`/portal`) | portal-store | dark | dark |
 
-That is 33 full-page screenshots. The list lives in `pages.ts`; the personas come
+That is 41 full-page screenshots. The list lives in `pages.ts`; the personas come
 from `e2e/walkPersonas.ts`.
+
+Recruiting › Analytics, Labor costs and the call-outs desk hold the ECharts
+figures — the Sankey ("How candidates move"), the treemap ("Where the money goes")
+and the calendar heatmap ("The year in call-outs") — drawn from the year of
+history `npm -w apps/api run db:seed:analytics` writes
+(`apps/api/scripts/seed-demo-analytics.ts`). Labor costs is recorded on its "Last
+period" preset (`pages.ts` picks it the way a reader does): the report's default,
+this pay period to date, can be a day old.
 
 ## How it stays deterministic
 
@@ -45,8 +56,10 @@ from `e2e/walkPersonas.ts`.
   (`alto.theme`). Timezone `America/Los_Angeles`, locale `en-US`, a fixed user agent,
   service workers blocked, reduced motion, animations disabled.
 - **Loaded, not loading.** Before a shot: network quiet, no `aria-label="Loading"`
-  (the auth splash and route fallbacks) and no `aria-busy` skeleton, fonts ready
-  (`settle.ts`). Playwright then takes screenshots until two in a row match.
+  (the auth splash and route fallbacks) and no `aria-busy` skeleton, every ECharts
+  box with a size holding drawn shapes (the engine is its own lazy chunk, and the
+  figure is drawn an effect after its skeleton goes), fonts ready (`settle.ts`).
+  Playwright then takes screenshots until two in a row match.
 - **The whole page.** The app scrolls inside `<main>`, not the window, so Playwright's
   `fullPage` alone would stop at the fold. The window grows to the height the page's
   own scroller needs (capped at 6000 px) before the shot, at the same width; the
@@ -67,7 +80,8 @@ from `e2e/walkPersonas.ts`.
   one it composites on its own, and a page that first paints when `FirstLoadGate`
   reveals it can land either way from run to run: the store portal's desktop shot
   failed on main with 189 px of text edges and nothing else changed. Baselines from
-  2026-10-24 on are drawn this way, and three runs in a row matched 33/33.
+  2026-10-24 on are drawn this way, and three runs in a row matched 33/33; with the
+  three chart pages added the same day, three more runs matched 41/41.
 
 Tolerance: no pixel may differ beyond Playwright's per-pixel colour threshold (0.2,
 which absorbs anti-aliasing noise): `maxDiffPixels: 0` in `playwright.config.ts`.
@@ -129,10 +143,13 @@ A page that starts calling a new endpoint, or reads a new field, needs a new
 recording. The replay says so: "requests missing from the recording", with the list.
 
 1. Start the full stack on `alto_dev`'s demo data (see `.claude/skills/alto-e2e-local`):
-   API on :3001 with `LOGIN_IP_LIMIT=500`. The web dev server is not needed: the
-   recorder serves the fresh build on :4799 with `/api` proxied to :3001, so it records
-   exactly the requests the bundle under test makes. It runs on the host (a HAR holds
-   responses, not pixels), with the host's Chromium (`npx playwright install chromium`).
+   API on :3001 with `LOGIN_IP_LIMIT=500`. The three chart pages need the
+   analytics history on that database (`npm -w apps/api run db:seed:analytics`;
+   a no-op once it's there, `-- --replace` re-anchors it on today). The web dev
+   server is not needed: the recorder serves the fresh build on :4799 with `/api`
+   proxied to :3001, so it records exactly the requests the bundle under test makes.
+   It runs on the host (a HAR holds responses, not pixels), with the host's Chromium
+   (`npx playwright install chromium`).
 2. Run `npm -w apps/web run test:visual:record`. To re-record a few pages and keep
    the rest: `VISUAL_ONLY=clients,books npm -w apps/web run test:visual:record`.
    Each persona signs in once (logins are rate-limited) and the session is reused

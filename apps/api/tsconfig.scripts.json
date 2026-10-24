@@ -1,0 +1,13 @@
+{
+  // The scripts CI and demo databases run (the seeds) are typechecked like
+  // src: the main config compiles src only, so a seed could drift from the
+  // schema unnoticed until the E2E job ran it. Other one-off scripts under
+  // scripts/ are not held to this yet. Run via `npm -w apps/api run typecheck`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "prisma/seed.ts", "scripts/seed-demo.ts", "scripts/seed-demo-shifts.ts", "scripts/seed-demo-analytics.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

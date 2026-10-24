@@ -9,13 +9,25 @@ import { settleWalk } from '../walkPersonas';
  * fallbacks carry aria-label="Loading", and every Skeleton aria-busy="true".
  * Network quiet alone is not enough: a big chunk can take longer to parse
  * than the 500 ms networkidle waits for.
+ *
+ * An ECharts figure (components/ui/charts/echarts) is drawn after its
+ * skeleton has gone: the engine's chunk loads, the box is initialised (it
+ * gets an `_echarts_instance_` attribute), and only the next effect draws
+ * the shapes into its <svg>. So every such box with a size must hold a
+ * drawn shape too; a zero-size box never draws and is not waited for.
  */
 export async function waitForApp(page: Page) {
   await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => undefined);
   await page.waitForFunction(
-    () =>
-      !document.querySelector('[aria-label="Loading"], [aria-busy="true"]') &&
-      (document.body?.innerText.trim().length ?? 0) > 0,
+    () => {
+      if (document.querySelector('[aria-label="Loading"], [aria-busy="true"]')) return false;
+      if ((document.body?.innerText.trim().length ?? 0) === 0) return false;
+      for (const box of Array.from(document.querySelectorAll<HTMLElement>('[_echarts_instance_]'))) {
+        if (box.clientWidth === 0 || box.clientHeight === 0) continue;
+        if (!box.querySelector('svg path, svg rect, svg text')) return false;
+      }
+      return true;
+    },
     undefined,
     { timeout: 30_000, polling: 100 },
   );

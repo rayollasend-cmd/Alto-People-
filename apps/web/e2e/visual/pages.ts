@@ -8,7 +8,7 @@ import { ASSOCIATE, WALK_PERSONAS, type WalkPersona } from '../walkPersonas';
  * hars/<key>.har) and replayed from that recording (visual.spec.ts), so the
  * picture depends on the code alone — never on what the database holds that
  * day. Desktop is 1440×900 and phone 390×844; every page is shot in dark,
- * and the first three in light as well.
+ * and the first three and the call-outs desk in light as well.
  */
 
 export type Form = 'desktop' | 'phone';
@@ -60,6 +60,20 @@ async function hrefOf(page: Page, listRoute: string, name: RegExp, prefix: strin
   return new URL(href, 'http://x').pathname;
 }
 
+/**
+ * The labor-cost report on its "Last period" preset: a whole pay period of
+ * shifts and punches, where the report's default (this period to date) can
+ * be a single day old. Picked the way a reader picks it, so the URL carries
+ * the period the app itself computes.
+ */
+async function lastPayPeriod(page: Page): Promise<string> {
+  await page.goto('/labor-costs');
+  await page.getByRole('radiogroup', { name: 'Date range' }).getByRole('radio', { name: 'Last period' }).click({ timeout: 30_000 });
+  await page.waitForURL(/[?&]from=\d{4}-\d{2}-\d{2}/, { timeout: 30_000 });
+  const url = new URL(page.url());
+  return url.pathname + url.search;
+}
+
 const BOTH: Form[] = ['desktop', 'phone'];
 
 export const VISUAL_PAGES: VisualPage[] = [
@@ -89,6 +103,10 @@ export const VISUAL_PAGES: VisualPage[] = [
   { key: 'books', title: 'Books home', persona: 'admin', route: '/books', forms: BOTH, themes: ['dark'] },
   { key: 'approvals', title: 'Approvals', persona: 'admin', route: '/approvals', forms: BOTH, themes: ['dark'] },
   { key: 'users-access', title: 'Settings › Users & access', persona: 'admin', route: '/admin/users', forms: BOTH, themes: ['dark'] },
+  // The ECharts figures (db:seed:analytics gives them a year of data to draw).
+  { key: 'recruiting-analytics', title: 'Recruiting › Analytics', persona: 'admin', route: '/recruiting/analytics', forms: BOTH, themes: ['dark'] },
+  { key: 'labor-costs', title: 'Labor costs (last pay period)', persona: 'admin', route: lastPayPeriod, forms: BOTH, themes: ['dark'] },
+  { key: 'call-outs', title: 'The call-outs desk', persona: 'admin', route: '/call-outs', forms: BOTH, themes: ['dark', 'light'] },
   { key: 'associate-home', title: "The associate's home", persona: 'associate', route: '/', forms: ['phone'], themes: ['dark'] },
   { key: 'portal-home', title: 'Store portal home', persona: 'portal-store', route: '/portal', forms: BOTH, themes: ['dark'] },
 ];

@@ -245,11 +245,19 @@ jobs:
           E2E_FULLSTACK: '1'
           E2E_BASE_URL: http://127.0.0.1:5173
         run: npm -w apps/web exec -- playwright test --workers=1
+      # A year of demo history for the analytics figures Lighthouse measures
+      # (recruiting analytics, labor costs, the call-outs desk): a crew, its
+      # shifts, punches and call-outs, and ten months of recruiting. Seeded
+      # only now, after the Playwright suite, so no spec's expectations move;
+      # it writes nothing that hasn't already ended, so no sweep acts on it.
+      - name: Seed the analytics demo data
+        run: npm -w apps/api run db:seed:analytics
       # Lighthouse CI (apps/web/lighthouse/README.md) on the PRODUCTION
       # build — vite build, served by `vite preview` with /api proxied to the
       # API started above: the public pages signed out (phone), the admin's
-      # home, clients, scheduling and payroll signed in (desktop), the
-      # associate's home signed in (phone). Accessibility under 0.95 fails
+      # home, clients, scheduling, payroll, recruiting analytics, labor costs
+      # and the call-outs desk signed in (desktop), the associate's home
+      # signed in (phone). Accessibility under 0.95 fails
       # the job; performance, best practices and the LCP/CLS/TBT budgets
       # warn. The scores land in the job summary; the reports go to this
       # run's artifacts only — never temporary-public-storage, because the
@@ -315,8 +323,12 @@ jobs:
       - run: npm -w apps/api exec prisma generate
       # The same seed the E2E job and the design walk use: every persona the
       # accessibility sweep signs in as, with a realistic schedule behind them.
+      # The analytics history too: the sweep opens labor costs (finance) and
+      # the Workforce home's year-in-call-outs calendar, which should be
+      # audited drawn, not empty.
       - run: npm -w apps/api run db:seed
       - run: npm -w apps/api exec tsx scripts/seed-demo-shifts.ts
+      - run: npm -w apps/api run db:seed:analytics
       - run: npm -w apps/web exec playwright install --with-deps chromium
       - name: Start API + web dev servers
         run: |

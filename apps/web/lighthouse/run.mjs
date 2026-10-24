@@ -110,7 +110,8 @@ for (const f of readdirSync(dir).filter((x) => x.startsWith('lhr-') && x.endsWit
   const lhr = JSON.parse(readFileSync(path.join(dir, f), 'utf8'));
   byUrl.set(lhr.requestedUrl, [...(byUrl.get(lhr.requestedUrl) ?? []), lhr]);
 }
-const order = (u) => ['/login', '/careers', '/status', '/trust-center', '/', '/clients', '/scheduling', '/payroll'].indexOf(new URL(u).pathname + new URL(u).search) >>> 0;
+const order = (u) =>
+  ['/login', '/careers', '/status', '/trust-center', '/', '/clients', '/scheduling', '/payroll', '/recruiting/analytics', '/labor-costs', '/call-outs'].indexOf(new URL(u).pathname + new URL(u).search) >>> 0;
 const rows = [...byUrl.entries()]
   .sort(([a], [b]) => order(a) - order(b))
   .map(([, runs]) => {

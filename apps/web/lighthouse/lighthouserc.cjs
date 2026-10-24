@@ -6,7 +6,8 @@
  *
  * Three collect runs share this file; LHCI_RUN picks one:
  *   public     /login /careers /status /trust-center — signed out, phone
- *   admin      / /clients /scheduling /payroll — signed in as the admin, desktop
+ *   admin      / /clients /scheduling /payroll, and the three ECharts pages
+ *              /recruiting/analytics /labor-costs /call-outs — signed in as the admin, desktop
  *   associate  the associate's home (/?lhci=associate) — signed in, phone
  * Each signed-in run logs in once (lighthouse/login.cjs) and reuses the
  * session. The associate's home is `/?lhci=associate` only so it is a
@@ -32,14 +33,14 @@ function chromePath() {
 
 const RUNS = {
   public: { paths: ['/login', '/careers', '/status', '/trust-center'], desktop: false },
-  admin: { paths: ['/', '/clients', '/scheduling', '/payroll'], desktop: true },
+  admin: { paths: ['/', '/clients', '/scheduling', '/payroll', '/recruiting/analytics', '/labor-costs', '/call-outs'], desktop: true },
   associate: { paths: ['/?lhci=associate'], desktop: false },
 };
 const run = RUNS[RUN];
 if (!run) throw new Error(`LHCI_RUN must be one of ${Object.keys(RUNS).join(', ')} (got "${RUN}")`);
 
 /** URL patterns for the assertion matrix (LHCI matches the full URL). */
-const DESKTOP_URL = '^[^?]*/(clients|scheduling|payroll)?$';
+const DESKTOP_URL = '^[^?]*/(clients|scheduling|payroll|recruiting/analytics|labor-costs|call-outs)?$';
 const PUBLIC_URL = '/(login|careers|status|trust-center)$';
 const ASSOCIATE_URL = '\\?lhci=associate$';
 
@@ -64,6 +65,18 @@ const ASSOCIATE_URL = '\\?lhci=associate$';
  *   /scheduling          desktop  95     100   100   1.4 s   0.008  0 ms
  *   /payroll             desktop  93     100   100   1.7 s   0.002  0 ms
  *   associate home       phone    72–76  100   100   6.6 s   0.001  14 ms
+ *
+ * The three ECharts pages — 2026-10-24 (morning), same machine and method,
+ * on the year of history `npm -w apps/api run db:seed:analytics` writes;
+ * they share the desktop budgets below:
+ *
+ *   /recruiting/analytics desktop 95    100   100   1.5 s   0.002  0 ms
+ *   /labor-costs          desktop 94    100   100   1.6 s   0.010  0 ms
+ *     (that morning was a pay period's first day, so its default range held
+ *      almost nothing; on "Last period", 14 days of rows: 94, 100, 100,
+ *      1.6 s, 0.005, 0 ms — one run in three read CLS 0.072, the sidebar
+ *      settling, not the report)
+ *   /call-outs            desktop 95    100   100   1.5 s   0.002  0 ms
  *
  * The phone pages' perf moves 4–5 points run to run on FCP alone: the
  * preview server answers in a few ms, so in the trace Lighthouse records

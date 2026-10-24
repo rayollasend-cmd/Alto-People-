@@ -969,7 +969,10 @@ function directoryColumns(opts: {
         const href = phoneHref(r.phone);
         return href ? (
           <span className="inline-flex items-center gap-1">
-            <a href={href} onClick={(e) => e.stopPropagation()} className="hover:text-white">
+            {/* A 24px-tall tap target (WCAG 2.2 target size: on a phone the
+                row's own button sits right beside it); the negative margin
+                keeps the row's height as it was. */}
+            <a href={href} onClick={(e) => e.stopPropagation()} className="-my-1 py-1 hover:text-white">
               {fmtPhone(r.phone)}
             </a>
             <CopyButton text={fmtPhone(r.phone)} label={`Copy ${fmtPhone(r.phone)}`} />
