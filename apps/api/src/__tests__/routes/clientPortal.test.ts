@@ -205,7 +205,9 @@ async function seedStore() {
       clientId: clientA.id,
       kind: 'NO_CALL_NO_SHOW',
       points: 4,
-      occurredOn: now,
+      // occurredOn is a calendar date: the company's today, not UTC's (on a
+      // Friday evening Pacific, UTC's date is already Saturday, the next store week).
+      occurredOn: new Date(`${todayKey}T00:00:00.000Z`),
     },
   });
   await prisma.attendanceEvent.create({
@@ -214,7 +216,7 @@ async function seedStore() {
       clientId: clientA.id,
       kind: 'LATE',
       points: 1,
-      occurredOn: now,
+      occurredOn: new Date(`${todayKey}T00:00:00.000Z`),
       excusedAt: now,
     },
   });

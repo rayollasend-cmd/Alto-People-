@@ -3,6 +3,7 @@ import { seasonWeeks } from '../../lib/seasonPlanner.js';
 import { activeAssociateIds } from '../../lib/activeDefinition.js';
 import { agent, loginAs } from '../../../test/http.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 
 /**
  * The Season Planner (Brief 1C-3 acceptance).
@@ -132,7 +133,10 @@ describe('the 2027 summer plan', () => {
 
     // A plan for the season already under way: actuals fill in.
     const now = new Date();
-    const thisWeekStart = seasonWeeks(now.toISOString().slice(0, 10), now.toISOString().slice(0, 10))[0]!;
+    // The company's today, not UTC's: on a Friday evening Pacific, UTC's date is
+    // already Saturday, which starts the next store week.
+    const today = orgDateKey(now);
+    const thisWeekStart = seasonWeeks(today, today)[0]!;
     const assoc = await createAssociate({ firstName: 'Ana', lastName: 'Lopez' });
     await prisma.associateAssignment.create({ data: { associateId: assoc.id, locationId: fb.id, startedAt: new Date('2026-01-01') } });
     await prisma.shift.create({

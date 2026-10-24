@@ -114,7 +114,7 @@ describe('<MarketingHome> — F500 G4', () => {
   it('is headed "Marketing" with the greeting on the quiet line, plain tab labels, and no second way to the Postings tab', async () => {
     renderHome();
     expect(await screen.findByRole('heading', { level: 1, name: 'Marketing' })).toBeInTheDocument();
-    expect(screen.getByTestId('home-meta')).toHaveTextContent(/Good (morning|afternoon|evening), Mo/);
+    expect(screen.getByTestId('home-meta')).toHaveTextContent(/(?:Good (?:morning|afternoon|evening)|Up late), Mo/);
     // Postings & boards is a tab; the shortcuts row no longer repeats it.
     expect(screen.getAllByText('Postings & boards')).toHaveLength(1);
     expect(screen.getByRole('tab', { name: 'Employer brand' }).querySelector('svg')).toBeNull();
