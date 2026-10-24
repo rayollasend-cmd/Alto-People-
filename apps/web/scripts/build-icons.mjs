@@ -16,7 +16,9 @@
  *                 icon tag whose className says icon-active, or — where a
  *                 file puts icon-active on an icon it was handed (`<Icon>`)
  *                 — every icon that file, or a module it imports, holds as a
- *                 value (the nav's MODULE_ICONS, the tab bar's tab list);
+ *                 value (the nav's MODULE_ICONS, the tab bar's tab list) —
+ *                 except where Phosphor's fill is a tile with the line cut
+ *                 out (see "tile fills"): those stay bold when active;
  *        duotone  sized h-8 (32 px) or larger, an illustration — found the
  *                 same two ways;
  *   3. reads those SVGs, rounds every path number to one decimal (a tenth of
@@ -39,6 +41,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
 import ts from 'typescript';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -298,6 +301,94 @@ for (const name of [...used.keys()].sort()) {
   byGlyph.set(glyph, g);
 }
 
+// ---------------------------------------------------------------- tile fills
+
+/**
+ * Where a glyph is only a line (a pulse, a chart, a list of checks),
+ * Phosphor's fill weight is not the glyph filled in: it is a solid tile — a
+ * rounded square, or a disk — with the line cut out of it. As the current
+ * nav row's icon that reads as a blob, so those glyphs get no fill and stay
+ * bold when active; the row's colour and background already mark it.
+ *
+ * Measured, not picked by eye: both weights are rasterized at 24 px and the
+ * fill is a tile when it
+ *   - inks at least 55% of its bounding box,
+ *   - has an outline (the fill with its holes closed) that is a rectangle
+ *     (≥ 95% of its box) or a disk (a square box, 72–84% of it), and
+ *   - that outline is at least 1.5× the bold's: the tile is not a shape the
+ *     glyph already has. A calendar, a card or a tray filled in measures
+ *     about 1.0× and keeps its fill.
+ * Tuned on pulse, chart-line, chart-line-up, checks, signature,
+ * chart-scatter, check-square-offset, list-checks and list-numbers
+ * (1.8–4.3×) against house, tray, chat-circle, map-pin and bank (≤ 1.0×);
+ * heartbeat (1.5×, a heart) is the nearest that is not a tile. The same rule
+ * also finds currency-dollar, whose fill is a disk with the $ cut out.
+ * The summary line of every run names the glyphs it dropped the fill for.
+ */
+const TILE = { px: 24, ink: 0.55, rect: 0.95, disk: [0.72, 0.84], grow: 1.5 };
+/** Tiles the measure cannot see: named, with the reason. */
+const TILE_BY_EYE = new Map([
+  // Its fill keeps the frame and fills the header and side panel solid: a
+  // block at 16–24 px. By the numbers it is its own frame filled in, like
+  // tray or calendar, so the measure passes it.
+  ['layout', 'a block, its header and side panel filled solid inside the frame (named in TILE_BY_EYE)'],
+]);
+
+async function inkMask(paths) {
+  const n = TILE.px;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}" viewBox="0 0 256 256">${paths.map((d) => `<path d="${d}"/>`).join('')}</svg>`;
+  const { data } = await sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return Array.from({ length: n * n }, (_, i) => data[i * 4 + 3] > 127);
+}
+/** The ink with its holes closed: every pixel not reachable from the edge through blank ones. */
+function outline(mask) {
+  const n = TILE.px;
+  const out = mask.map(() => true);
+  const stack = [];
+  const open = (p) => { if (out[p] && !mask[p]) { out[p] = false; stack.push(p); } };
+  for (let i = 0; i < n; i++) [i, (n - 1) * n + i, i * n, i * n + n - 1].forEach(open);
+  while (stack.length) {
+    const p = stack.pop(), x = p % n, y = (p - x) / n;
+    if (x > 0) open(p - 1);
+    if (x < n - 1) open(p + 1);
+    if (y > 0) open(p - n);
+    if (y < n - 1) open(p + n);
+  }
+  return out;
+}
+function box(mask) {
+  const n = TILE.px;
+  let x0 = n, y0 = n, x1 = -1, y1 = -1;
+  mask.forEach((on, p) => { if (on) { const x = p % n, y = (p - x) / n; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } });
+  return { w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+const count = (mask) => mask.filter(Boolean).length;
+
+/** Why a glyph's fill is a tile, or null. */
+async function tileFill(glyph) {
+  if (TILE_BY_EYE.has(glyph)) return TILE_BY_EYE.get(glyph);
+  const bold = await inkMask(readGlyph(glyph, 'bold').map((p) => p.d));
+  const fillMask = await inkMask(readGlyph(glyph, 'fill').map((p) => p.d));
+  const { w, h } = box(fillMask);
+  const ink = count(fillMask) / (w * h);
+  const shape = count(outline(fillMask)) / (w * h);
+  const grow = count(outline(fillMask)) / Math.max(1, count(outline(bold)));
+  const rectangle = shape >= TILE.rect;
+  const disk = Math.abs(w - h) <= 1 && shape >= TILE.disk[0] && shape <= TILE.disk[1];
+  if (ink < TILE.ink || !(rectangle || disk) || grow < TILE.grow) return null;
+  // No measured numbers in the output: it must come out the same on any machine.
+  return `a ${rectangle ? 'square' : 'round'} tile with the line cut out of it`;
+}
+
+const tiles = new Map(); // glyph → why its fill is not generated
+if (problems.length === 0) {
+  for (const [glyph, g] of byGlyph) {
+    if (!g.weights.has('fill')) continue;
+    const why = await tileFill(glyph);
+    if (why) { g.weights.delete('fill'); tiles.set(glyph, why); }
+  }
+}
+
 const expected = new Map(); // path → content
 if (problems.length === 0) {
   for (const [glyph, g] of [...byGlyph].sort(([a], [b]) => (a < b ? -1 : 1))) {
@@ -314,6 +405,7 @@ if (problems.length === 0) {
       [
         HEADER,
         `// Phosphor "${glyph}" (${[...g.weights].join(', ')}), drawn for ${g.names.join(', ')}.`,
+        ...(tiles.has(glyph) ? [`// No fill: Phosphor's is ${tiles.get(glyph)} — bold when active.`] : []),
         `import { createIcon } from '../createIcon';`,
         '',
         `export const ${pascal(glyph)} = /* @__PURE__ */ createIcon(${q(pascal(glyph))}, {`,
@@ -334,7 +426,7 @@ if (problems.length === 0) {
 }
 
 if (JSON_OUT) {
-  const plan = Object.fromEntries([...byGlyph].flatMap(([glyph, g]) => g.names.map((n) => [n, { glyph, weights: [...g.weights] }])));
+  const plan = Object.fromEntries([...byGlyph].flatMap(([glyph, g]) => g.names.map((n) => [n, { glyph, weights: [...g.weights], ...(tiles.has(glyph) ? { noFill: tiles.get(glyph) } : {}) }])));
   console.log(JSON.stringify(plan, null, 2));
   process.exit(problems.length ? 1 : 0);
 }
@@ -343,7 +435,7 @@ const unusedMappings = keys.filter((k) => !used.has(k));
 const summary = () => {
   const w = (k) => [...byGlyph.values()].filter((g) => g.weights.has(k)).length;
   const bytes = [...expected.values()].reduce((s, c) => s + c.length, 0);
-  return `icons: ${used.size} names → ${byGlyph.size} glyphs (fill ${w('fill')}, duotone ${w('duotone')}), ${(bytes / 1024).toFixed(1)} KB source` +
+  return `icons: ${used.size} names → ${byGlyph.size} glyphs (fill ${w('fill')}, duotone ${w('duotone')}; no fill, a tile: ${[...tiles.keys()].sort().join(' ') || 'none'}), ${(bytes / 1024).toFixed(1)} KB source` +
     (unusedMappings.length ? `; ${unusedMappings.length} mapped name(s) no file imports: ${unusedMappings.join(', ')}` : '');
 };
 

@@ -1,8 +1,8 @@
 // generated — do not edit; run npm -w apps/web run icons:build
-// Phosphor "chart-line" (bold, fill), drawn for LineChart.
+// Phosphor "chart-line" (bold), drawn for LineChart.
+// No fill: Phosphor's is a square tile with the line cut out of it — bold when active.
 import { createIcon } from '../createIcon';
 
 export const ChartLine = /* @__PURE__ */ createIcon('ChartLine', {
   b: 'M236,208a12,12,0,0,1-12,12H32a12,12,0,0,1-12-12V48a12,12,0,0,1,24,0v85.6L88.1,95a12,12,0,0,1,15.1-.6l56.2,42.2L216.1,87A12,12,0,1,1,231.9,105l-64,56a12,12,0,0,1-15.1.6L96.6,119.4,44,165.5V196H224A12,12,0,0,1,236,208Z',
-  f: 'M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM200,176a8,8,0,0,1,0,16H56a8,8,0,0,1-8-8V72a8,8,0,0,1,16,0v62.9l34.9-29a8,8,0,0,1,9.5-.6l43,28.7,43.4-36.1a8,8,0,0,1,10.3,12.3l-48,40a8,8,0,0,1-9.6.5l-43-28.7L64,155.8V176Z',
 });

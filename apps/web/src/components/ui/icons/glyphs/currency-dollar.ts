@@ -1,8 +1,8 @@
 // generated — do not edit; run npm -w apps/web run icons:build
-// Phosphor "currency-dollar" (bold, fill), drawn for DollarSign.
+// Phosphor "currency-dollar" (bold), drawn for DollarSign.
+// No fill: Phosphor's is a round tile with the line cut out of it — bold when active.
 import { createIcon } from '../createIcon';
 
 export const CurrencyDollar = /* @__PURE__ */ createIcon('CurrencyDollar', {
   b: 'M152,116H140V60h4a28,28,0,0,1,28,28,12,12,0,0,0,24,0,52.1,52.1,0,0,0-52-52h-4V24a12,12,0,0,0-24,0V36h-4a52,52,0,0,0,0,104h4v56H104a28,28,0,0,1-28-28,12,12,0,0,0-24,0,52.1,52.1,0,0,0,52,52h12v12a12,12,0,0,0,24,0V220h12a52,52,0,0,0,0-104Zm-40,0a28,28,0,0,1,0-56h4v56Zm40,80H140V140h12a28,28,0,0,1,0,56Z',
-  f: 'M160,152a16,16,0,0,1-16,16h-8V136h8A16,16,0,0,1,160,152Zm72-24A104,104,0,1,1,128,24,104.1,104.1,0,0,1,232,128Zm-56,24a32,32,0,0,0-32-32h-8V88h4a16,16,0,0,1,16,16,8,8,0,0,0,16,0,32,32,0,0,0-32-32h-4V64a8,8,0,0,0-16,0v8h-4a32,32,0,0,0,0,64h4v32h-8a16,16,0,0,1-16-16,8,8,0,0,0-16,0,32,32,0,0,0,32,32h8v8a8,8,0,0,0,16,0v-8h8A32,32,0,0,0,176,152Zm-76-48a16,16,0,0,0,16,16h4V88h-4A16,16,0,0,0,100,104Z',
 });

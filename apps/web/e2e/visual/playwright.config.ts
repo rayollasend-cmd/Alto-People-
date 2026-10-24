@@ -69,7 +69,13 @@ export default defineConfig({
     // No zygote: Chromium's forked zygote dies under the x86 emulation an
     // Apple-silicon laptop runs the image in. Set everywhere (CI too) so
     // every run launches the browser the same way; rendering is unchanged.
-    launchOptions: { args: ['--no-zygote'] },
+    //
+    // No LCD text: Chromium draws text with subpixel (LCD) antialiasing on
+    // an opaque layer and greyscale on one it composites separately, and a
+    // page revealed by an opacity change (FirstLoadGate) can land on either,
+    // run to run — the store portal's desktop shot once differed by 189 px of
+    // text edges alone. Greyscale everywhere makes that choice once.
+    launchOptions: { args: ['--no-zygote', '--disable-lcd-text'] },
     // A fixed agent for recording and replay alike (the app reads it for
     // platform hints); Linux because the replay runs on Linux.
     userAgent:

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
 import { createRef } from 'react';
-import { ChevronDown, House, Home, Inbox, Lock, Settings, Settings2 } from '@/components/ui/icons';
+import { Activity, ChevronDown, House, Home, Inbox, Lock, Settings, Settings2 } from '@/components/ui/icons';
 
 /**
  * The icon component (docs/design-system.md §6): a Phosphor glyph on its
@@ -49,6 +49,11 @@ describe('icons', () => {
     // ChevronDown is never an active nav icon or an illustration: it has bold only.
     expect(pathsOf(svgOf(<ChevronDown className="h-4 w-4 icon-active" />))).toEqual(pathsOf(svgOf(<ChevronDown className="h-4 w-4" />)));
     expect(pathsOf(svgOf(<ChevronDown className="h-10 w-10" />))).toEqual(pathsOf(svgOf(<ChevronDown />)));
+  });
+
+  it('keeps a line-only glyph bold when active: its Phosphor fill is a tile with the line cut out', () => {
+    // Activity (pulse) is a nav icon, so it would have had a fill; build-icons measured it as a tile.
+    expect(pathsOf(svgOf(<Activity className="h-4 w-4 icon-active" />))).toEqual(pathsOf(svgOf(<Activity className="h-4 w-4" />)));
   });
 
   it('makes names mapped to one glyph the same component', () => {

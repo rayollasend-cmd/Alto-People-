@@ -61,6 +61,13 @@ from `e2e/walkPersonas.ts`.
   `mcr.microsoft.com/playwright:v<installed @playwright/test>-noble`, on
   `linux/amd64`, locally and in CI. The spec refuses to run on a Mac host, where fonts
   and anti-aliasing differ.
+- **Greyscale text.** Chromium is launched with `--disable-lcd-text` (in
+  `playwright.config.ts`, so recording, `run.mjs` and the CI job all get it). Without
+  it Chromium draws text with subpixel antialiasing on an opaque layer and greyscale on
+  one it composites on its own, and a page that first paints when `FirstLoadGate`
+  reveals it can land either way from run to run: the store portal's desktop shot
+  failed on main with 189 px of text edges and nothing else changed. Baselines from
+  2026-10-24 on are drawn this way, and three runs in a row matched 33/33.
 
 Tolerance: no pixel may differ beyond Playwright's per-pixel colour threshold (0.2,
 which absorbs anti-aliasing noise): `maxDiffPixels: 0` in `playwright.config.ts`.

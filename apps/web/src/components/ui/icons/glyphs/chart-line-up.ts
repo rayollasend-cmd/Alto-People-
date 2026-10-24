@@ -1,8 +1,8 @@
 // generated — do not edit; run npm -w apps/web run icons:build
-// Phosphor "chart-line-up" (bold, fill), drawn for ChartSpline.
+// Phosphor "chart-line-up" (bold), drawn for ChartSpline.
+// No fill: Phosphor's is a square tile with the line cut out of it — bold when active.
 import { createIcon } from '../createIcon';
 
 export const ChartLineUp = /* @__PURE__ */ createIcon('ChartLineUp', {
   b: 'M236,208a12,12,0,0,1-12,12H32a12,12,0,0,1-12-12V48a12,12,0,0,1,24,0v99l43.5-43.5a12,12,0,0,1,17,0L128,127l43-43H160a12,12,0,0,1,0-24h40a12,12,0,0,1,12,12v40a12,12,0,0,1-24,0V101l-51.5,51.5a12,12,0,0,1-17,0L96,129,44,181v15H224A12,12,0,0,1,236,208Z',
-  f: 'M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM200,192H56a8,8,0,0,1-8-8V72a8,8,0,0,1,16,0v76.7l34.3-34.4a8,8,0,0,1,11.4,0L128,132.7,172.7,88H144a8,8,0,0,1,0-16h48a8,8,0,0,1,8,8v48a8,8,0,0,1-16,0V99.3l-50.3,50.4a8,8,0,0,1-11.4,0L104,131.3l-40,40V176H200a8,8,0,0,1,0,16Z',
 });
