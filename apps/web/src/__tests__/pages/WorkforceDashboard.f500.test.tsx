@@ -13,6 +13,7 @@ vi.mock('@/lib/api', async (orig) => ({ ...(await orig<typeof import('@/lib/api'
 vi.mock('@/lib/attendanceInsightsApi', () => ({
   getAttendanceTrends: vi.fn(async () => ({ generatedAt: '', siteId: null, fillTargetPct: 95, weeks: [] })),
   getAttendanceHeatmap: vi.fn(async () => ({ metric: 'late', from: '', to: '', siteId: null, by: 'site', unit: 'count', days: [], rows: [], max: 0, total: 0 })),
+  getAttendanceCalendar: vi.fn(async () => ({ metric: 'callouts', from: '', to: '', siteId: null, firstDay: 6, days: [], total: 0, busiest: null, weekdayTotals: [0, 0, 0, 0, 0, 0, 0] })),
 }));
 
 import { apiFetch } from '@/lib/api';

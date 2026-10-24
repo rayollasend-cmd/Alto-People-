@@ -1,13 +1,15 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { performWithUndo } from '@/lib/undoToast';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Waypoints } from 'lucide-react';
 import type { RecruitingAnalytics as Analytics } from '@alto-people/shared';
 type SourceRow = Analytics['sources'][number];
 type ClientRow = Analytics['clients'][number];
 type RetentionRow = Analytics['retention']['bySource'][number];
+type Flow = NonNullable<Analytics['flow']>;
+type FlowExit = Flow['exits'][number];
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtMoney, fmtPercent, ymdLocal } from '@/lib/format';
@@ -45,6 +47,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
+import { FlowChart, type FlowLink, type FlowNode } from '@/components/ui/charts';
 import { ListTemplate } from '@/components/templates';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
@@ -63,6 +66,8 @@ import { CANDIDATE_SOURCES, SOURCE_LABEL, STAGE_LABEL } from './recruitingLabels
  * A handful of ratios read best as stat tiles and a dozen clients as rows;
  * the funnel and the sources are drawn — one hue, every bar labeled — each
  * with its table a click away (and always there for a screen reader).
+ * Beside the funnel, a flow shows where the applicants who stopped did so,
+ * and how: rejected, withdrew, or still in progress.
  */
 
 type Preset = '30d' | '90d' | '12m' | 'ytd';
@@ -180,6 +185,96 @@ function Funnel({ funnel }: { funnel: Analytics['funnel'] }) {
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+    </ChartFrame>
+  );
+}
+
+const FLOW_STEPS = ['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER', 'HIRED'] as const;
+const FLOW_OUTCOMES: Record<FlowExit['outcome'], { label: string; tone: NonNullable<FlowNode['tone']>; left: string; exit: string }> = {
+  REJECTED: { label: 'Rejected', tone: 'bad', left: 'were rejected', exit: 'rejection' },
+  WITHDRAWN: { label: 'Withdrew', tone: 'warn', left: 'withdrew', exit: 'withdrawal' },
+  OPEN: { label: 'Still in progress', tone: 'neutral', left: '', exit: '' },
+};
+const AT_STEP: Record<FlowExit['stage'], string> = {
+  APPLIED: 'at application',
+  SCREENING: 'at screening',
+  INTERVIEW: 'at interview',
+  OFFER: 'at offer',
+};
+/** Steps in pipeline order (Hired is an outcome, in its colour); then the ways out. Node ids are the stage and outcome keys. */
+const FLOW_NODES: FlowNode[] = [
+  ...FLOW_STEPS.map((st) => ({ id: st, label: STAGE_LABEL[st], ...(st === 'HIRED' ? { tone: 'good' as const } : {}) })),
+  ...(['REJECTED', 'WITHDRAWN', 'OPEN'] as const).map((o) => ({ id: `out:${o}`, label: FLOW_OUTCOMES[o].label, tone: FLOW_OUTCOMES[o].tone })),
+];
+const FLOW_LABEL = new Map(FLOW_NODES.map((x) => [x.id, x.label]));
+
+/** Each step feeds the next and the ways out of it — the Sankey's links, also the table's rows. */
+function flowLinks(flow: Flow): FlowLink[] {
+  const links: FlowLink[] = [];
+  FLOW_STEPS.slice(0, -1).forEach((st, i) => {
+    links.push({ source: st, target: FLOW_STEPS[i + 1]!, value: flow.reached[FLOW_STEPS[i + 1]!] });
+    for (const e of flow.exits) if (e.stage === st) links.push({ source: st, target: `out:${e.outcome}`, value: e.count });
+  });
+  return links.filter((l) => l.value > 0);
+}
+
+/** "Of 240 applicants, 31 were hired; most who left were rejected at screening (88)." */
+function flowSummary(flow: Flow): string {
+  const applied = flow.reached.APPLIED;
+  if (applied === 0) return 'No one applied in this range.';
+  const hired = flow.reached.HIRED;
+  const hiredPart =
+    hired === 0 ? 'none were hired' : hired === applied && applied > 1 ? `all ${applied} were hired` : `${hired} ${hired === 1 ? 'was' : 'were'} hired`;
+  const head = `Of ${applied} applicant${applied === 1 ? '' : 's'}, ${hiredPart}`;
+  const left = flow.exits.filter((e) => e.outcome !== 'OPEN' && e.count > 0);
+  const leftTotal = left.reduce((n, e) => n + e.count, 0);
+  if (leftTotal === 0) {
+    const open = applied - hired;
+    return open > 0 ? `${head}; no one has left — ${open} still in progress.` : `${head}.`;
+  }
+  // The biggest exit; a tie goes to the earlier step.
+  const top = left.reduce((best, e) => (e.count > best.count ? e : best));
+  const o = FLOW_OUTCOMES[top.outcome];
+  return top.count * 2 > leftTotal
+    ? `${head}; most who left ${o.left} ${AT_STEP[top.stage]} (${top.count}).`
+    : `${head}; the biggest exit was ${o.exit} ${AT_STEP[top.stage]} (${top.count}).`;
+}
+
+/** The funnel's applicants as a flow: where each one stopped, and how. */
+function CandidateFlow({ flow }: { flow: Flow }) {
+  const links = useMemo(() => flowLinks(flow), [flow]);
+  const autoClosed = flow.exits.reduce((n, e) => n + e.autoClosed, 0);
+  const rows = links.map((l) => ({ from: FLOW_LABEL.get(l.source), to: FLOW_LABEL.get(l.target), candidates: l.value }));
+  return (
+    <ChartFrame
+      title="How candidates move"
+      description={
+        // The ⓘ at the line's end, opening leftward, so its note stays on a phone's screen.
+        <div className="flex items-start justify-between gap-2">
+          <span className="min-w-0">
+            Where this range’s applicants stopped, and how — the widest exit is the step to fix.
+            {autoClosed > 0 && ` ${autoClosed} ${autoClosed === 1 ? 'was' : 'were'} closed automatically for no response.`}
+          </span>
+          <InfoTip label="How “How candidates move” is counted" align="end" className="mt-0.5 shrink-0">
+            Everyone who applied in the range, counted once: hired, or at the furthest step they reached — rejected,
+            withdrew, or still in progress there. A skipped step counts as passed through. An undone hire is not a hire,
+            and someone who applied again after being removed starts over at Applied. Withdrew includes candidates closed
+            automatically for no response.
+          </InfoTip>
+        </div>
+      }
+      summary={flowSummary(flow)}
+      csvName="how-candidates-move"
+      height={280}
+      columns={[
+        { key: 'from', label: 'From' },
+        { key: 'to', label: 'To' },
+        { key: 'candidates', label: 'Candidates', numeric: true },
+      ]}
+      rows={flow.reached.APPLIED === 0 ? [] : rows}
+      empty={<EmptyState size="sm" icon={Waypoints} title="No one applied in this range" description="When they do, this shows where each one stopped, and how." />}
+    >
+      <FlowChart nodes={FLOW_NODES} links={links} />
     </ChartFrame>
   );
 }
@@ -503,55 +598,60 @@ export function RecruitingAnalytics() {
             />
           </MetricStrip>
 
+          {/* One story: how far applicants get (the funnel), and where and how the rest stopped (the flow). */}
           <div className="grid gap-4 2xl:grid-cols-5">
-            <div className="2xl:col-span-2">
+            <div className={data.flow ? 'min-w-0 2xl:col-span-2' : 'min-w-0 2xl:col-span-5'}>
               <Funnel funnel={data.funnel} />
             </div>
-            <div className="min-w-0 2xl:col-span-3">
-              <Section
-                title="Where hires come from"
-                hint="Spend counts every month the range touches."
-                action={
-                  canManage ? (
-                    <Button size="sm" variant="outline" onClick={() => setSpendOpen(true)}>
-                      Record spend
-                    </Button>
-                  ) : null
-                }
-              >
-                {data.sources.length === 0 ? (
-                  <p className="text-sm text-silver/70">No applicants, hires or spend in this range.</p>
-                ) : (
-                  <DataGrid<SourceRow>
-                    id="recruiting-sources"
-                    caption="Where hires come from"
-                    rows={data.sources}
-                    rowKey={(r) => r.source ?? 'none'}
-                    search={false}
-                    urlState={false}
-                    columnChooser={false}
-                    exportCsv={{ filename: `hires-by-source-${range.from}-to-${range.to}` }}
-                    columns={[
-                      { key: 'source', header: 'Source', accessor: (r) => sourceName(r.source), primary: true, sortable: true, className: 'text-white' },
-                      { key: 'applicants', header: 'Applied', accessor: (r) => r.applicants, align: 'right', sortable: true, className: 'tabular-nums' },
-                      { key: 'hires', header: 'Hired', accessor: (r) => r.hires, align: 'right', sortable: true, className: 'tabular-nums' },
-                      { key: 'conv', header: 'Applied → hired', accessor: (r) => r.applicantToHirePct, align: 'right', sortable: true, className: 'tabular-nums', cell: (r) => fmtPercent(r.applicantToHirePct) },
-                      { key: 'spend', header: 'Spend', accessor: (r) => r.spend, align: 'right', sortable: true, className: 'tabular-nums', cell: (r) => (r.spend === null ? '—' : fmtMoney(r.spend)) },
-                      {
-                        key: 'cph',
-                        header: 'Per hire',
-                        accessor: (r) => r.costPerHire,
-                        align: 'right',
-                        sortable: true,
-                        className: 'tabular-nums',
-                        cell: (r) => (r.costPerHire !== null ? fmtMoney(r.costPerHire) : r.spend !== null ? 'No hires' : '—'),
-                      },
-                    ]}
-                  />
-                )}
-              </Section>
-            </div>
+            {data.flow && (
+              <div className="min-w-0 2xl:col-span-3">
+                <CandidateFlow flow={data.flow} />
+              </div>
+            )}
           </div>
+
+          <Section
+            title="Where hires come from"
+            hint="Spend counts every month the range touches."
+            action={
+              canManage ? (
+                <Button size="sm" variant="outline" onClick={() => setSpendOpen(true)}>
+                  Record spend
+                </Button>
+              ) : null
+            }
+          >
+            {data.sources.length === 0 ? (
+              <p className="text-sm text-silver/70">No applicants, hires or spend in this range.</p>
+            ) : (
+              <DataGrid<SourceRow>
+                id="recruiting-sources"
+                caption="Where hires come from"
+                rows={data.sources}
+                rowKey={(r) => r.source ?? 'none'}
+                search={false}
+                urlState={false}
+                columnChooser={false}
+                exportCsv={{ filename: `hires-by-source-${range.from}-to-${range.to}` }}
+                columns={[
+                  { key: 'source', header: 'Source', accessor: (r) => sourceName(r.source), primary: true, sortable: true, className: 'text-white' },
+                  { key: 'applicants', header: 'Applied', accessor: (r) => r.applicants, align: 'right', sortable: true, className: 'tabular-nums' },
+                  { key: 'hires', header: 'Hired', accessor: (r) => r.hires, align: 'right', sortable: true, className: 'tabular-nums' },
+                  { key: 'conv', header: 'Applied → hired', accessor: (r) => r.applicantToHirePct, align: 'right', sortable: true, className: 'tabular-nums', cell: (r) => fmtPercent(r.applicantToHirePct) },
+                  { key: 'spend', header: 'Spend', accessor: (r) => r.spend, align: 'right', sortable: true, className: 'tabular-nums', cell: (r) => (r.spend === null ? '—' : fmtMoney(r.spend)) },
+                  {
+                    key: 'cph',
+                    header: 'Per hire',
+                    accessor: (r) => r.costPerHire,
+                    align: 'right',
+                    sortable: true,
+                    className: 'tabular-nums',
+                    cell: (r) => (r.costPerHire !== null ? fmtMoney(r.costPerHire) : r.spend !== null ? 'No hires' : '—'),
+                  },
+                ]}
+              />
+            )}
+          </Section>
 
           <SourceCharts sources={data.sources} />
 

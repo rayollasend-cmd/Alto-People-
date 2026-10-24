@@ -5,6 +5,8 @@ import {
   LATE_GRACE_MINUTES,
   NO_SHOW_RISK_MINUTES,
   can,
+  type AttendanceCalendarMetric,
+  type AttendanceCalendarResponse,
   type AttendanceHeatmapMetric,
   type AttendanceHeatmapResponse,
   type AttendanceHeatmapRow,
@@ -29,9 +31,9 @@ import { companyWorkweek, dateKeyInZone, endOfWeekUTC, startOfWeekUTC, utcInstan
 /**
  * Attendance insights (packages/shared/src/attendanceInsights.ts is the
  * contract): week-by-week fill, no-shows, call-outs, lates and overtime;
- * where in the week (and at which store, or which hour) they cluster; who
- * hasn't punched in for a shift that already started; and a line manager's
- * team hours against forty.
+ * where in the week (and at which store, or which hour) they cluster; the
+ * year of them day by day; who hasn't punched in for a shift that already
+ * started; and a line manager's team hours against forty.
  *
  * Every query stands on the caller's tenant and reach: shifts through
  * scopeShifts, time through scopeTimeEntries, people through
@@ -193,16 +195,26 @@ async function scopedEvents(user: SessionUser, kinds: EventKind[], fromKey: stri
  * as "can't make it", never confirmed) isn't a call-out yet.
  */
 async function scopedCallOuts(user: SessionUser, from: Date, to: Date, siteId?: string): Promise<ShiftRef[]> {
-  const rows = await prisma.callOut.findMany({
-    where: {
-      tenantId: tenantIdForWrite(),
-      status: 'CONFIRMED',
-      shift: scopeWhere<ShiftWhere>(shiftScope(user, siteId), { startsAt: { gte: from, lt: to } }),
-    },
-    select: { shift: { select: { id: true, startsAt: true, locationId: true, locationRel: { select: { timezone: true } } } } },
-    take: 20_000,
-  });
-  return rows.map((r) => ({ id: r.shift.id, startsAt: r.shift.startsAt, locationId: r.shift.locationId, timezone: r.shift.locationRel?.timezone ?? companyWorkweek().timezone }));
+  const where: Prisma.CallOutWhereInput = {
+    tenantId: tenantIdForWrite(),
+    status: 'CONFIRMED',
+    shift: scopeWhere<ShiftWhere>(shiftScope(user, siteId), { startsAt: { gte: from, lt: to } }),
+  };
+  // Page by page: a year of a large company's call-outs runs past any one fetch.
+  const out: ShiftRef[] = [];
+  for (let cursor: string | undefined; ; ) {
+    const page = await prisma.callOut.findMany({
+      where,
+      select: { id: true, shift: { select: { id: true, startsAt: true, locationId: true, locationRel: { select: { timezone: true } } } } },
+      orderBy: { id: 'asc' },
+      take: PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    for (const r of page) out.push({ id: r.shift.id, startsAt: r.shift.startsAt, locationId: r.shift.locationId, timezone: r.shift.locationRel?.timezone ?? companyWorkweek().timezone });
+    if (page.length < PAGE) break;
+    cursor = page[page.length - 1]!.id;
+  }
+  return out;
 }
 
 /**
@@ -226,6 +238,53 @@ function mergeCallOuts(logged: ShiftRef[], events: ScopedEvent[]): Array<{ at: D
     } else {
       out.push({ at: null, dayKey: e.occurredOn, shift: null });
     }
+  }
+  return out;
+}
+
+type CountedMetric = 'late' | 'noshows' | 'callouts';
+
+interface DayPoint {
+  /** The day on its store's calendar. */
+  dayKey: string;
+  at: Date | null;
+  shift: ShiftRef | null;
+}
+
+/**
+ * Each late arrival, no-show or call-out whose day falls in [fromKey,
+ * toKey], inside the caller's reach. The day is the shift's start on its
+ * store's clock; occurredOn (written as the UTC date of that start) only
+ * places an event with no shift. A late or a no-show the policy excused
+ * isn't counted, as on the trend lines; an excused call-out still is —
+ * nobody came either way, which is what the call-outs desk counts too.
+ */
+async function dayPoints(user: SessionUser, metric: CountedMetric, fromKey: string, toKey: string, siteId?: string): Promise<DayPoint[]> {
+  const orgTz = companyWorkweek().timezone;
+  const afterTo = addDaysKey(toKey, 1);
+  // A day either side, so every store's own calendar day is covered (and a
+  // UTC occurredOn a day off the store's).
+  const eventsFrom = addDaysKey(fromKey, -1);
+  const eventsTo = addDaysKey(afterTo, 1);
+  const out: DayPoint[] = [];
+  const keep = (at: Date | null, dayKey: string, shift: ShiftRef | null) => {
+    const key = at && shift ? dateKeyInZone(at, shift.timezone) : dayKey;
+    if (key >= fromKey && key <= toKey) out.push({ dayKey: key, at, shift });
+  };
+  if (metric === 'callouts') {
+    const [events, logged] = await Promise.all([
+      scopedEvents(user, ['CALL_OUT'], eventsFrom, eventsTo, siteId),
+      scopedCallOuts(
+        user,
+        new Date(utcInstantOfLocalMidnight(fromKey, orgTz).getTime() - DAY_MS),
+        new Date(utcInstantOfLocalMidnight(afterTo, orgTz).getTime() + DAY_MS),
+        siteId,
+      ),
+    ]);
+    for (const c of mergeCallOuts(logged, events)) keep(c.at, c.dayKey, c.shift);
+  } else {
+    const events = await scopedEvents(user, [metric === 'late' ? 'LATE' : 'NO_CALL_NO_SHOW'], eventsFrom, eventsTo, siteId);
+    for (const e of events) if (!e.excused) keep(e.shift?.startsAt ?? null, e.occurredOn, e.shift);
   }
   return out;
 }
@@ -413,36 +472,26 @@ export async function attendanceHeatmap(
   if (fromKey > toKey) throw new HttpError(400, 'invalid_range', 'The start date is after the end date.');
   const span = (Date.parse(`${toKey}T00:00:00Z`) - Date.parse(`${fromKey}T00:00:00Z`)) / DAY_MS + 1;
   if (span > MAX_HEATMAP_DAYS) throw new HttpError(400, 'range_too_long', `Pick a range of ${MAX_HEATMAP_DAYS} days or fewer.`);
-  const afterTo = addDaysKey(toKey, 1);
-  // A day either side, so every store's own calendar day is covered.
-  const from = new Date(utcInstantOfLocalMidnight(fromKey, orgTz).getTime() - DAY_MS);
-  const to = new Date(utcInstantOfLocalMidnight(afterTo, orgTz).getTime() + DAY_MS);
   const by: 'site' | 'hour' = q.siteId ? 'hour' : 'site';
 
   // Each point: its store, its day on that store's calendar, its hour.
   const points: Array<{ siteId: string | null; dayKey: string; hour: number | null; value: number }> = [];
-  const place = (at: Date | null, dayKey: string, shift: { locationId: string | null; timezone: string } | null, value: number) => {
-    const key = at && shift ? dateKeyInZone(at, shift.timezone) : dayKey;
-    if (key < fromKey || key > toKey) return;
-    points.push({ siteId: shift?.locationId ?? null, dayKey: key, hour: at && shift ? hourInZone(at, shift.timezone) : null, value });
-  };
-
-  if (q.metric === 'late') {
-    const events = await scopedEvents(user, ['LATE'], addDaysKey(fromKey, -1), addDaysKey(afterTo, 1), q.siteId);
-    for (const e of events) if (!e.excused) place(e.shift?.startsAt ?? null, e.occurredOn, e.shift, 1);
-  } else if (q.metric === 'callouts') {
-    const [events, logged] = await Promise.all([
-      scopedEvents(user, ['CALL_OUT'], addDaysKey(fromKey, -1), addDaysKey(afterTo, 1), q.siteId),
-      scopedCallOuts(user, from, to, q.siteId),
-    ]);
-    for (const c of mergeCallOuts(logged, events)) place(c.at, c.dayKey, c.shift, 1);
-  } else {
+  if (q.metric === 'overtime') {
+    // A day either side, so every store's own calendar day is covered.
+    const from = new Date(utcInstantOfLocalMidnight(fromKey, orgTz).getTime() - DAY_MS);
+    const to = new Date(utcInstantOfLocalMidnight(addDaysKey(toKey, 1), orgTz).getTime() + DAY_MS);
     // Overtime is weekly: walk whole workweeks so the line at 40 is right.
     const weeks: Week[] = [];
     for (let w = startOfWeekUTC(from); w < to; w = endOfWeekUTC(w)) weeks.push({ start: w, end: endOfWeekUTC(w), key: dateKeyInZone(w, orgTz) });
     for (const s of await overtimeSlices(user, weeks, now)) {
       if (q.siteId && s.locationId !== q.siteId) continue;
-      place(s.at, '', s, s.hours);
+      const key = dateKeyInZone(s.at, s.timezone);
+      if (key < fromKey || key > toKey) continue;
+      points.push({ siteId: s.locationId, dayKey: key, hour: hourInZone(s.at, s.timezone), value: s.hours });
+    }
+  } else {
+    for (const p of await dayPoints(user, q.metric, fromKey, toKey, q.siteId)) {
+      points.push({ siteId: p.shift?.locationId ?? null, dayKey: p.dayKey, hour: p.at && p.shift ? hourInZone(p.at, p.shift.timezone) : null, value: 1 });
     }
   }
 
@@ -497,6 +546,36 @@ function hourLabel(h: number): string {
   if (h === 0) return '12 AM';
   if (h === 12) return '12 PM';
   return h < 12 ? `${h} AM` : `${h - 12} PM`;
+}
+
+/* ---- The year, day by day ------------------------------------------------ */
+
+/**
+ * One count per day for the last `days` days, today (the company's) last:
+ * call-outs, no-shows or late arrivals, each on its store's own day, in the
+ * caller's reach — the same points the heatmap folds by day of the week.
+ */
+export async function attendanceCalendar(
+  user: SessionUser,
+  q: { metric: AttendanceCalendarMetric; days: number; siteId?: string },
+  now = new Date(),
+): Promise<AttendanceCalendarResponse> {
+  const { timezone: orgTz, weekStartsOn } = companyWorkweek();
+  const toKey = dateKeyInZone(now, orgTz);
+  const fromKey = addDaysKey(toKey, -(q.days - 1));
+  const counts = new Map<string, number>();
+  for (const p of await dayPoints(user, q.metric, fromKey, toKey, q.siteId)) counts.set(p.dayKey, (counts.get(p.dayKey) ?? 0) + 1);
+
+  const days = [...counts].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, value]) => ({ date, value }));
+  const weekdayTotals = [0, 0, 0, 0, 0, 0, 0];
+  let total = 0;
+  let busiest: AttendanceCalendarResponse['busiest'] = null;
+  for (const d of days) {
+    total += d.value;
+    weekdayTotals[new Date(`${d.date}T12:00:00Z`).getUTCDay()]! += d.value;
+    if (!busiest || d.value >= busiest.value) busiest = d;
+  }
+  return { metric: q.metric, from: fromKey, to: toKey, siteId: q.siteId ?? null, firstDay: weekStartsOn, days, total, busiest, weekdayTotals };
 }
 
 /* ---- Not in yet ---------------------------------------------------------- */

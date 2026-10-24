@@ -1,4 +1,6 @@
 import type {
+  AttendanceCalendarMetric,
+  AttendanceCalendarResponse,
   AttendanceHeatmapMetric,
   AttendanceHeatmapResponse,
   AttendanceTrendsResponse,
@@ -10,11 +12,14 @@ import { apiFetch } from './api';
 /**
  * Attendance insights (routes/attendanceInsights.ts on the API; contract in
  * packages/shared/src/attendanceInsights.ts): weekly trends, the heatmap,
- * who isn't in yet, and a manager's team hours. All clamped to the caller's
+ * the year day by day, who isn't in yet, and a manager's team hours. All clamped to the caller's
  * reach on the server.
  */
 
 export type {
+  AttendanceCalendarDay,
+  AttendanceCalendarMetric,
+  AttendanceCalendarResponse,
   AttendanceHeatmapMetric,
   AttendanceHeatmapResponse,
   AttendanceTrendsResponse,
@@ -37,6 +42,9 @@ export const getAttendanceTrends = (o: { weeks?: number; siteId?: string } = {})
 
 export const getAttendanceHeatmap = (o: { metric: AttendanceHeatmapMetric; from?: string; to?: string; siteId?: string }) =>
   apiFetch<AttendanceHeatmapResponse>(`/attendance/heatmap${qs(o)}`);
+
+export const getAttendanceCalendar = (o: { metric: AttendanceCalendarMetric; days?: number; siteId?: string }) =>
+  apiFetch<AttendanceCalendarResponse>(`/attendance/calendar${qs(o)}`);
 
 export const getLateNow = (o: { siteId?: string } = {}) => apiFetch<LateNowResponse>(`/attendance/late-now${qs(o)}`);
 

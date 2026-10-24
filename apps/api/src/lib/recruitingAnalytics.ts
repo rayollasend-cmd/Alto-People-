@@ -1,4 +1,5 @@
-import type { RecruitingAnalytics } from '@alto-people/shared';
+import type { Prisma } from '@prisma/client';
+import type { RecruitingAnalytics, RecruitingFlow } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
 
@@ -6,9 +7,15 @@ import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
  * The recruiting dashboard's numbers, computed from what recruiting
  * already records — no stored aggregates.
  *
- * FUNNEL: candidates who applied in the range, and how far each got. A
- * rejected candidate still counts as having reached Interview if their
- * timeline says they did — the current stage alone would lose that.
+ * FUNNEL: candidates who applied in the range, and how far each got on
+ * their current journey (see journeyOf). A rejected candidate still counts
+ * as having reached Interview if their timeline says they did — the
+ * current stage alone would lose that — but an undone hire is not a hire,
+ * and a re-applicant's earlier journey doesn't count.
+ *
+ * FLOW: the same cohort and the same journeys drawn as a flow — how many
+ * reached each step (the funnel's numbers), and where and how everyone not
+ * hired stopped.
  *
  * SPEED: time to hire runs from application to hire, for hires in the
  * range. Time to fill runs from the day a posting opened to the hire that
@@ -60,6 +67,66 @@ function tally<K>(map: Map<K, number>, key: K, by = 1) {
   map.set(key, (map.get(key) ?? 0) + by);
 }
 
+type JourneyEvent = { kind: string; toStage: string | null; metadata: Prisma.JsonValue };
+export type FlowOutcome = 'HIRED' | 'REJECTED' | 'WITHDRAWN' | 'OPEN';
+
+/**
+ * Where a candidate's CURRENT journey got to, and how it ended — the funnel
+ * and the flow both count from it. `events` are their STAGE_CHANGED, HIRED,
+ * HIRE_UNDONE and RESTORED events, oldest first.
+ *
+ * - furthest: the highest step reached (0 Applied … 4 Hired), counting the
+ *   current stage. A step skipped on the way (Applied straight to Interview)
+ *   counts as passed through.
+ * - A re-application after removal (RESTORED with a toStage — the careers
+ *   page puts them back at Applied) starts a new journey: what came before
+ *   no longer counts. A recruiter's restore (no toStage) picks up where the
+ *   candidate left off, so the history stands.
+ * - An undone hire (HIRE_UNDONE) is not a hire: the journey falls back to
+ *   the furthest it got before the hire, or the stage the undo returned them
+ *   to (Offer, as a rule), whichever is further.
+ * - Only a candidate hired now ends at Hired; anyone else stops at Offer at
+ *   the latest, so every applicant lands exactly once — hired, or in one exit.
+ * - outcome: from the current stage. Withdrawn includes the quiet-candidate
+ *   sweep (lib/recruitingCleanup), flagged `autoClosed` when the move that
+ *   withdrew them was automatic.
+ */
+export function journeyOf(
+  stage: string,
+  events: readonly JourneyEvent[],
+): { furthest: number; outcome: FlowOutcome; autoClosed: boolean } {
+  let furthest = 0;
+  let beforeHire = 0;
+  let autoClosed = false;
+  for (const e of events) {
+    const rank = e.toStage ? RANK[e.toStage] : undefined;
+    if (e.kind === 'RESTORED') {
+      if (rank === undefined) continue;
+      furthest = beforeHire = rank;
+      autoClosed = false;
+    } else if (e.kind === 'HIRE_UNDONE') {
+      furthest = Math.max(furthest === 4 ? beforeHire : furthest, rank ?? RANK.OFFER!);
+    } else if (e.kind === 'HIRED' || e.toStage === 'HIRED') {
+      if (furthest < 4) beforeHire = furthest;
+      furthest = 4;
+    } else if (e.kind === 'STAGE_CHANGED') {
+      if (rank !== undefined) furthest = Math.max(furthest, rank);
+      if (e.toStage === 'WITHDRAWN') {
+        const m = e.metadata;
+        autoClosed = !!m && typeof m === 'object' && !Array.isArray(m) && m.automatic === true;
+      }
+    }
+  }
+  if (stage === 'HIRED') return { furthest: 4, outcome: 'HIRED', autoClosed: false };
+  furthest = Math.min(Math.max(furthest, RANK[stage] ?? 0), RANK.OFFER!);
+  if (stage === 'REJECTED') return { furthest, outcome: 'REJECTED', autoClosed: false };
+  if (stage === 'WITHDRAWN') return { furthest, outcome: 'WITHDRAWN', autoClosed };
+  return { furthest, outcome: 'OPEN', autoClosed: false };
+}
+
+const FLOW_STEPS = ['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER'] as const;
+const FLOW_OUTCOMES = ['REJECTED', 'WITHDRAWN', 'OPEN'] as const;
+
 export async function computeRecruitingAnalytics(input: {
   /** Start of the first day, inclusive. */
   from: Date;
@@ -83,7 +150,13 @@ export async function computeRecruitingAnalytics(input: {
       select: {
         source: true,
         stage: true,
-        events: { where: { kind: { in: ['STAGE_CHANGED', 'HIRED'] } }, select: { kind: true, toStage: true } },
+        events: {
+          where: { kind: { in: ['STAGE_CHANGED', 'HIRED', 'HIRE_UNDONE', 'RESTORED'] } },
+          // Oldest first: journeyOf replays them. Events written in one
+          // transaction share its timestamp, but no write records two of these.
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          select: { kind: true, toStage: true, metadata: true },
+        },
       },
     }),
     prisma.candidate.findMany({
@@ -139,25 +212,46 @@ export async function computeRecruitingAnalytics(input: {
   let inProgress = 0;
   const cohortHiredBySource = new Map<string | null, number>();
   const applicantsBySource = new Map<string | null, number>();
+  const flowExits = new Map<string, { count: number; autoClosed: number }>();
   for (const c of cohort) {
-    let furthest = RANK[c.stage] ?? 0;
-    for (const e of c.events) {
-      if (e.kind === 'HIRED') furthest = 4;
-      else if (e.toStage && RANK[e.toStage] !== undefined) furthest = Math.max(furthest, RANK[e.toStage]!);
-    }
-    for (let i = 0; i <= furthest; i++) reached[i]! += 1;
+    // One journey per candidate for the funnel and the flow, so the two
+    // cards on the page always agree.
+    const j = journeyOf(c.stage, c.events);
+    for (let i = 0; i <= j.furthest; i++) reached[i]! += 1;
     if (c.stage === 'REJECTED') rejected += 1;
     else if (c.stage === 'WITHDRAWN') withdrawn += 1;
     else if (OPEN_STAGES.has(c.stage)) inProgress += 1;
     const key = sourceKey(c.source);
     tally(applicantsBySource, key);
     if (c.stage === 'HIRED') tally(cohortHiredBySource, key);
+    if (j.outcome !== 'HIRED') {
+      const k = `${FLOW_STEPS[j.furthest]}:${j.outcome}`;
+      const x = flowExits.get(k) ?? { count: 0, autoClosed: 0 };
+      x.count += 1;
+      if (j.autoClosed) x.autoClosed += 1;
+      flowExits.set(k, x);
+    }
   }
   const stages = PIPELINE.map((stage, i) => ({
     stage,
     reached: reached[i]!,
     toNextPct: i < PIPELINE.length - 1 ? pct(reached[i + 1]!, reached[i]!) : null,
   }));
+  const flow: RecruitingFlow = {
+    reached: {
+      APPLIED: reached[0]!,
+      SCREENING: reached[1]!,
+      INTERVIEW: reached[2]!,
+      OFFER: reached[3]!,
+      HIRED: reached[4]!,
+    },
+    exits: FLOW_STEPS.flatMap((stage) =>
+      FLOW_OUTCOMES.map((outcome) => {
+        const x = flowExits.get(`${stage}:${outcome}`);
+        return { stage, outcome, count: x?.count ?? 0, autoClosed: x?.autoClosed ?? 0 };
+      }),
+    ),
+  };
 
   /* ----- Speed, and fill ----- */
   const daysToHire = hires.map((h) => (h.hiredAt!.getTime() - h.createdAt.getTime()) / DAY);
@@ -330,6 +424,7 @@ export async function computeRecruitingAnalytics(input: {
   return {
     range: { from: fromKey, to: toKey },
     funnel: { applicants: cohort.length, stages, rejected, withdrawn, inProgress },
+    flow,
     speed: {
       hires: hires.length,
       medianDaysToHire: median(daysToHire),

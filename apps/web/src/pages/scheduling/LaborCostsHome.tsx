@@ -25,7 +25,7 @@ import type {
   LaborCostRow,
   StaffingTargetLocation,
 } from '@alto-people/shared';
-import { PALETTE, Sparkline as KitSparkline, StackedBarChart, TrendLineChart } from '@/components/ui/charts';
+import { PALETTE, Sparkline as KitSparkline, StackedBarChart, Treemap, TrendLineChart, type TreeNode } from '@/components/ui/charts';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
@@ -54,6 +54,7 @@ import { downloadCsv } from '@/lib/csv';
 import { fmtDateOnly, fmtDateOnlyRange, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useMinWidth } from '@/lib/useViewport';
 import { urlDay, useUrlParam, useUrlState, useUrlWriter } from '@/lib/useUrlState';
 import { ymd } from './calendarDates';
 // Despite the legacy name, this is the ORG workweek start (Saturday).
@@ -184,6 +185,197 @@ function CostByGroupCard({
       height={height}
     >
       <StackedBarChart data={data} x="name" series={SERIES} stacked={false} layout="horizontal" format={moneyCompact} />
+    </ChartFrame>
+  );
+}
+
+/* ----- Where the money goes ------------------------------------------------
+ * The range's labor cost as nested blocks — client, then store, then the
+ * shift positions inside it — sized by scheduled or worked cost. The server
+ * splits every (day, client, store) row by position so the parts add up to
+ * the row to the cent; this folds the days together.
+ */
+const MONEY_SIDES = ['scheduled', 'worked'] as const;
+type MoneySide = (typeof MONEY_SIDES)[number];
+/** Where the blocks start: every client, one client's stores, or one store's positions. */
+type MoneyDepth = 'client' | 'store' | 'position';
+
+interface MoneyLeaf {
+  clientKey: string;
+  client: string;
+  storeKey: string;
+  store: string;
+  positionKey: string;
+  position: string;
+  scheduled: number;
+  worked: number;
+}
+
+const roundCents = (v: number) => Math.round(v * 100) / 100;
+const shareText = (v: number, total: number): string => {
+  if (total <= 0) return '0%';
+  const pct = (v / total) * 100;
+  return pct > 0 && pct < 1 ? '<1%' : `${Math.round(pct)}%`;
+};
+
+/** The (client, store, position) cells of the rows, their days added together. */
+function moneyLeaves(rows: LaborCostRow[], names: { noClient: string; noStore: string }): MoneyLeaf[] {
+  const byKey = new Map<string, MoneyLeaf>();
+  for (const r of rows) {
+    // A row with no breakdown (an older server) counts whole, as "All positions".
+    const parts: Array<{ key: string; label: string; scheduled: number; worked: number }> = r.positions
+      ? r.positions.map((p) => ({
+          key: p.position === null ? '\u0000unscheduled' : p.position,
+          // null = punches tied to no shift.
+          label: p.position === null ? 'Unscheduled' : p.position || 'No position',
+          scheduled: p.scheduledCost,
+          worked: p.workedCost,
+        }))
+      : [{ key: '\u0000all', label: 'All positions', scheduled: r.scheduledCost, worked: r.workedCost }];
+    for (const p of parts) {
+      const key = `${r.clientId ?? ''}|${r.locationId ?? ''}|${p.key}`;
+      const leaf = byKey.get(key) ?? {
+        clientKey: r.clientId ?? '',
+        client: r.clientName ?? names.noClient,
+        storeKey: r.locationId ?? '',
+        store: r.locationName ?? names.noStore,
+        positionKey: p.key,
+        position: p.label,
+        scheduled: 0,
+        worked: 0,
+      };
+      leaf.scheduled += p.scheduled;
+      leaf.worked += p.worked;
+      byKey.set(key, leaf);
+    }
+  }
+  return [...byKey.values()].map((l) => ({ ...l, scheduled: roundCents(l.scheduled), worked: roundCents(l.worked) }));
+}
+
+const LEVELS: Record<MoneyDepth, Array<(l: MoneyLeaf) => [key: string, name: string]>> = {
+  client: [(l) => [l.clientKey, l.client], (l) => [l.storeKey, l.store], (l) => [l.positionKey, l.position]],
+  store: [(l) => [l.storeKey, l.store], (l) => [l.positionKey, l.position]],
+  position: [(l) => [l.positionKey, l.position]],
+};
+
+/** Nest the cells level by level, biggest first; empty blocks are dropped. */
+function moneyTree(leaves: MoneyLeaf[], side: MoneySide, levels: Array<(l: MoneyLeaf) => [string, string]>): TreeNode[] {
+  const [level, ...rest] = levels;
+  if (!level) return [];
+  const groups = new Map<string, { name: string; items: MoneyLeaf[] }>();
+  for (const l of leaves) {
+    const [key, name] = level(l);
+    const g = groups.get(key) ?? { name, items: [] };
+    g.items.push(l);
+    groups.set(key, g);
+  }
+  return [...groups.values()]
+    .map((g): TreeNode => {
+      const value = roundCents(g.items.reduce((s, l) => s + l[side], 0));
+      return rest.length > 0 ? { name: g.name, value, children: moneyTree(g.items, side, rest) } : { name: g.name, value };
+    })
+    .filter((n) => n.value > 0)
+    .sort((a, z) => z.value - a.value || a.name.localeCompare(z.name));
+}
+
+/** "$48,210.00 scheduled this pay period; Front Beach is 41%, led by Housekeeper ($9,870.00)." */
+function moneySummary(tree: TreeNode[], side: MoneySide, when: string, start: MoneyDepth): string {
+  const total = roundCents(tree.reduce((s, n) => s + n.value, 0));
+  const top = tree[0];
+  if (!top || total <= 0) return `No ${side} labor cost ${when}.`;
+  const head = `${money(total)} ${side} ${when}`;
+  const share =
+    tree.length === 1 ? `all of it ${start === 'position' ? 'on' : 'at'} ${top.name}` : `${top.name} is ${shareText(top.value, total)}`;
+  if (start === 'position') return `${head}; ${share} (${money(top.value)}).`;
+  // The biggest position inside the biggest block (through its stores, from the client level).
+  let lead: { name: string; value: number; store?: string } | null = null;
+  for (const child of top.children ?? []) {
+    if (start === 'store') {
+      if (!lead || child.value > lead.value) lead = { name: child.name, value: child.value };
+      continue;
+    }
+    for (const pos of child.children ?? []) {
+      if (!lead || pos.value > lead.value) lead = { name: pos.name, value: pos.value, store: child.name };
+    }
+  }
+  if (!lead) return `${head}; ${share}.`;
+  return `${head}; ${share}, led by ${lead.name}${lead.store ? ` at ${lead.store}` : ''} (${money(lead.value)}).`;
+}
+
+function MoneyTreemapCard({
+  rows,
+  start,
+  when,
+  hasClients,
+  term,
+}: {
+  rows: LaborCostRow[];
+  start: MoneyDepth;
+  /** "this pay period", "last pay period", "in Sep 1 – Oct 1". */
+  when: string;
+  hasClients: boolean;
+  term: Parameters<typeof termizeText>[1];
+}) {
+  // The page's primary measure is the plan: scheduled first, worked one tap away.
+  const [side, setSide] = useUrlParam<MoneySide>('money', 'scheduled', MONEY_SIDES);
+  // A phone's column is narrow: a squarer box keeps the blocks readable.
+  const wide = useMinWidth(640);
+  const noStore = termizeText('No store', term);
+  const leaves = useMemo(() => moneyLeaves(rows, { noClient: 'No client set', noStore }), [rows, noStore]);
+  const tree = useMemo(() => moneyTree(leaves, side, LEVELS[start]), [leaves, side, start]);
+  const total = useMemo(() => roundCents(tree.reduce((s, n) => s + n.value, 0)), [tree]);
+  const tableRows = useMemo(
+    () =>
+      leaves
+        .filter((l) => l[side] > 0)
+        .sort((a, z) => z[side] - a[side])
+        .map((l) => ({ client: l.client, store: l.store, position: l.position, cost: l[side], share: total > 0 ? l[side] / total : 0 })),
+    [leaves, side, total],
+  );
+  const sized = side === 'scheduled' ? 'scheduled cost (shift hours at their pay rates)' : 'worked cost (punches at their pay, overtime included)';
+  const inside = termizeText(start === 'client' ? ', inside its store and client' : start === 'store' ? ', inside its store' : ' at this store', term);
+  return (
+    <ChartFrame
+      title="Where the money goes"
+      description={
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <span className="min-w-0 flex-1 basis-64">
+            Which jobs the labor money pays for. Each block is a position&rsquo;s {sized}
+            {inside}; tap one to zoom in.
+            {side === 'worked' && ' Time worked on no shift shows as Unscheduled.'}
+          </span>
+          <SegmentedControl<MoneySide>
+            ariaLabel="Size blocks by"
+            value={side}
+            onChange={setSide}
+            options={[
+              { value: 'scheduled', label: 'Scheduled' },
+              { value: 'worked', label: 'Worked' },
+            ]}
+          />
+        </div>
+      }
+      summary={moneySummary(tree, side, when, start)}
+      columns={[
+        ...(hasClients ? [{ key: 'client', label: 'Client' }] : []),
+        { key: 'store', label: termizeText('Store', term) },
+        { key: 'position', label: 'Position' },
+        { key: 'cost', label: side === 'scheduled' ? 'Scheduled cost' : 'Worked cost', numeric: true, format: (v) => money(Number(v)) },
+        { key: 'share', label: 'Share', numeric: true, format: (v) => shareText(Number(v), 1) },
+      ]}
+      rows={tableRows}
+      csvName={`labor-cost-by-position-${side}`}
+      height={wide ? 420 : 360}
+      empty={
+        <EmptyState
+          size="sm"
+          icon={DollarSign}
+          title={side === 'scheduled' ? 'No scheduled cost in this range' : 'No worked cost in this range'}
+          description={side === 'scheduled' ? 'Shifts show here once they are on the schedule.' : 'Punches show here once people clock out.'}
+        />
+      }
+    >
+      <Treemap data={tree} format={moneyCompact} />
     </ChartFrame>
   );
 }
@@ -2070,6 +2262,14 @@ export function LaborCostsHome() {
               {groupData.length > 0 && (
                 <CostByGroupCard title={byStore ? termizeText('Cost by store', term) : 'Cost by client'} data={groupData} />
               )}
+              {/* Then the detail inside the split: client → store → position. */}
+              <MoneyTreemapCard
+                rows={visible}
+                start={locationFilter ? 'position' : byStore ? 'store' : 'client'}
+                when={range.preset === 'period' ? 'this pay period' : range.preset === 'last' ? 'last pay period' : `in ${rangeText}`}
+                hasClients={hasClients}
+                term={term}
+              />
             </div>
           )}
 

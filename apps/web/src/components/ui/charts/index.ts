@@ -16,3 +16,8 @@ export { StackedBarChart, type StackedBarChartProps, type BarSeries } from './St
 export { CoverageCurve, CoverageHeatmap, HoursChart, ReliabilityChart, StoreBarChart, WeekFillChart, type HeatDay, type HourPoint } from './coverage';
 export { InChartFrame } from './frame';
 export { AXIS, Y_AXIS_WIDTH, dateTicks, fmtDateTick, parseAxisDate, dateHeading, type DateGrain } from './axes';
+// ECharts figures — the engine loads on first use, as its own chunk (echarts/setup).
+export { EChart, type EChartProps } from './echarts/EChart';
+export { FlowChart, flowOption, type FlowChartProps, type FlowNode, type FlowLink } from './echarts/FlowChart';
+export { CalendarHeatmap, calendarOption, type CalendarHeatmapProps, type CalendarDay } from './echarts/CalendarHeatmap';
+export { Treemap, treemapOption, type TreemapProps, type TreeNode } from './echarts/Treemap';

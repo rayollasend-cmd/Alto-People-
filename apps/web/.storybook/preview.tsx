@@ -1,6 +1,7 @@
 import type { Preview } from '@storybook/react-vite';
 // The app's fonts and tokens, exactly as main.tsx loads them.
 import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import '@fontsource-variable/cormorant-garamond';
 import '../src/index.css';
 import { withAppProviders } from './decorators';

@@ -13,6 +13,8 @@ vi.mock('@/lib/schedulingApi', async (orig) => ({
   storeTrends: vi.fn(),
   listStaffingTargets: vi.fn(),
 }));
+// The page draws an ECharts treemap; jsdom never loads the real engine.
+vi.mock('@/components/ui/charts/echarts/engine', () => ({ loadEcharts: () => new Promise(() => {}) }));
 
 import { floorNow, laborCostPeriods, laborCosts, otOutlook, storeTrends } from '@/lib/schedulingApi';
 import { LaborCostsHome } from '@/pages/scheduling/LaborCostsHome';

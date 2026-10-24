@@ -12,6 +12,8 @@ import { z } from 'zod';
  *   GET /attendance/trends?weeks=8&siteId?                     → AttendanceTrendsResponse
  *   GET /attendance/heatmap?metric=late|overtime|callouts&from&to&siteId?
  *                                                              → AttendanceHeatmapResponse
+ *   GET /attendance/calendar?metric=callouts|noshows|late&days=365&siteId?
+ *                                                              → AttendanceCalendarResponse
  *   GET /attendance/late-now?siteId?                           → LateNowResponse
  *   GET /attendance/team-hours                                 → TeamHoursResponse
  *
@@ -21,7 +23,9 @@ import { z } from 'zod';
  * event are counted as the attendance policy records them; a call-out is a
  * worker saying they can't make a shift (the call-out log, or a missed
  * shift a time-off request covered). Overtime is each person's weekly hours
- * past 40, net of unpaid meal breaks.
+ * past 40, net of unpaid meal breaks. A day is the store's own: a shift's
+ * start on its store's clock (an evening shift in Eastern time is that
+ * evening's day, not the next UTC date).
  */
 
 export const ATTENDANCE_OVERTIME_THRESHOLD_HOURS = 40;
@@ -115,6 +119,46 @@ export const AttendanceHeatmapResponseSchema = z.object({
   total: z.number(),
 });
 export type AttendanceHeatmapResponse = z.infer<typeof AttendanceHeatmapResponseSchema>;
+
+/* ---- The year in attendance (one cell per day) -------------------------- */
+
+export const ATTENDANCE_CALENDAR_METRICS = ['callouts', 'noshows', 'late'] as const;
+export type AttendanceCalendarMetric = (typeof ATTENDANCE_CALENDAR_METRICS)[number];
+/** The most days one calendar covers: a year, and the days that square off its first week. */
+export const ATTENDANCE_CALENDAR_MAX_DAYS = 371;
+
+export const AttendanceCalendarQuerySchema = z.object({
+  metric: z.enum(ATTENDANCE_CALENDAR_METRICS).default('callouts'),
+  /** How many days back from today (today included). */
+  days: z.coerce.number().int().min(1).max(ATTENDANCE_CALENDAR_MAX_DAYS).default(365),
+  siteId: z.string().uuid().optional(),
+});
+export type AttendanceCalendarQuery = z.infer<typeof AttendanceCalendarQuerySchema>;
+
+export const AttendanceCalendarDaySchema = z.object({
+  /** The day on its store's calendar, YYYY-MM-DD. */
+  date: YmdSchema,
+  value: z.number().int().nonnegative(),
+});
+export type AttendanceCalendarDay = z.infer<typeof AttendanceCalendarDaySchema>;
+
+export const AttendanceCalendarResponseSchema = z.object({
+  metric: z.enum(ATTENDANCE_CALENDAR_METRICS),
+  /** Inclusive range, YYYY-MM-DD: `to` is today on the company's calendar. */
+  from: YmdSchema,
+  to: YmdSchema,
+  siteId: z.string().uuid().nullable(),
+  /** The workweek's first day, 0 = Sunday … 6 = Saturday (stores run Saturday to Friday). */
+  firstDay: z.number().int().min(0).max(6),
+  /** Only the days with any, oldest first — a missing day is a zero. */
+  days: z.array(AttendanceCalendarDaySchema),
+  total: z.number().int().nonnegative(),
+  /** The day with the most (the latest of a tie); null when there were none. */
+  busiest: AttendanceCalendarDaySchema.nullable(),
+  /** The range's count by day of the week, index 0 = Sunday … 6 = Saturday. */
+  weekdayTotals: z.array(z.number().int().nonnegative()).length(7),
+});
+export type AttendanceCalendarResponse = z.infer<typeof AttendanceCalendarResponseSchema>;
 
 /* ---- Not in yet --------------------------------------------------------- */
 

@@ -2628,8 +2628,26 @@ export const LaborCostRowSchema = /* @__PURE__ */ (() => z.object({
       }),
     )
     .optional(),
+  /** Where the row's money went by shift position. Each side adds up to
+   *  the row's own scheduled / worked minutes and cost exactly (costs to
+   *  the cent). A shift counts under its position; a punch under the
+   *  position of the shift it fulfilled, its overtime share included; a
+   *  punch tied to no shift under `position: null` ("Unscheduled").
+   *  Empty buckets are left out. Optional for back-compat. */
+  positions: z
+    .array(
+      z.object({
+        position: z.string().nullable(),
+        scheduledMinutes: z.number().int().nonnegative(),
+        scheduledCost: z.number().nonnegative(),
+        workedMinutes: z.number().int().nonnegative(),
+        workedCost: z.number().nonnegative(),
+      }),
+    )
+    .optional(),
 }))();
 export type LaborCostRow = z.infer<typeof LaborCostRowSchema>;
+export type LaborCostPosition = NonNullable<LaborCostRow['positions']>[number];
 
 /* Staffing targets ======================================================== */
 
@@ -4991,7 +5009,7 @@ const RateSchema = /* @__PURE__ */ (() => z.number().min(0).max(100).nullable())
 
 export const RecruitingFunnelStageSchema = /* @__PURE__ */ (() => z.object({
   stage: z.enum(['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER', 'HIRED']),
-  /** Candidates from the range who got at least this far. */
+  /** Candidates from the range who got at least this far on their current journey (an undone hire is not a hire). */
   reached: z.number().int(),
   /** Of those, the share who reached the next stage. */
   toNextPct: RateSchema,
@@ -5032,6 +5050,36 @@ export const RecruitingRetentionRowSchema = /* @__PURE__ */ (() => z.object({
   stayedPct: RateSchema,
 }))();
 
+/* ----- How candidates move ----------------------------------------------- *
+ * The funnel's cohort (candidates who applied in the range) as a flow: how
+ * many reached each step, and where and how everyone not hired stopped.
+ * Each applicant lands exactly once — hired, or in one exit — so
+ * reached[step] = reached[next step] + that step's exits.
+ * ------------------------------------------------------------------------- */
+export const RecruitingFlowExitSchema = /* @__PURE__ */ (() => z.object({
+  /** The furthest step they reached on their current journey. */
+  stage: z.enum(['APPLIED', 'SCREENING', 'INTERVIEW', 'OFFER']),
+  /** Rejected, withdrew (the auto-close sweep included), or still in progress at that step. */
+  outcome: z.enum(['REJECTED', 'WITHDRAWN', 'OPEN']),
+  count: z.number().int(),
+  /** Of a WITHDRAWN row, how many the quiet-candidate sweep closed for no response; 0 on the others. */
+  autoClosed: z.number().int(),
+}))();
+
+export const RecruitingFlowSchema = /* @__PURE__ */ (() => z.object({
+  /** Candidates who got at least this far. A skipped step counts as passed through. */
+  reached: z.object({
+    APPLIED: z.number().int(),
+    SCREENING: z.number().int(),
+    INTERVIEW: z.number().int(),
+    OFFER: z.number().int(),
+    HIRED: z.number().int(),
+  }),
+  /** Every step and outcome in pipeline order, zeros included (4 steps x 3 outcomes). */
+  exits: z.array(RecruitingFlowExitSchema),
+}))();
+export type RecruitingFlow = z.infer<typeof RecruitingFlowSchema>;
+
 export const RecruitingAnalyticsSchema = /* @__PURE__ */ (() => z.object({
   range: z.object({ from: z.string(), to: z.string() }),
   funnel: z.object({
@@ -5069,6 +5117,8 @@ export const RecruitingAnalyticsSchema = /* @__PURE__ */ (() => z.object({
     bySource: z.array(RecruitingRetentionRowSchema),
     byRecruiter: z.array(RecruitingRetentionRowSchema),
   }),
+  /** The funnel's cohort as a flow. Optional: an API from before it existed sends none. */
+  flow: RecruitingFlowSchema.optional(),
 }))();
 export type RecruitingAnalytics = z.infer<typeof RecruitingAnalyticsSchema>;
 

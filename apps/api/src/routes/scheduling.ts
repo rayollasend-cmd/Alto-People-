@@ -1090,6 +1090,33 @@ schedulingRouter.get('/labor-costs/periods', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED,
 });
 
 /**
+ * Round `parts` to cents so they add up to `total` rounded to cents — not a
+ * cent over or under (largest remainder: the parts whose dropped fractions
+ * were biggest take the leftover cents). Rounding each part on its own can
+ * drift a cent or two from the rounded total.
+ */
+function centsAddingUp(parts: readonly number[], total: number): number[] {
+  const raw = parts.map((v) => v * 100);
+  const cents = raw.map((v) => Math.floor(v + 1e-6));
+  let left = Math.round(total * 100) - cents.reduce((s, c) => s + c, 0);
+  // Biggest dropped fraction first; a negative leftover (float noise) takes back from the smallest.
+  const order = raw.map((v, i) => ({ i, frac: v - cents[i]! })).sort((a, z) => z.frac - a.frac);
+  for (let k = 0; left !== 0 && order.length > 0; k++) {
+    if (left > 0) {
+      cents[order[k % order.length]!.i]! += 1;
+      left -= 1;
+    } else {
+      const j = order[order.length - 1 - (k % order.length)]!.i;
+      if (cents[j]! > 0) {
+        cents[j]! -= 1;
+        left += 1;
+      }
+    }
+  }
+  return cents.map((c) => c / 100);
+}
+
+/**
  * GET /scheduling/labor-costs?from=ISO&to=ISO&clientId?&locationId?
  *
  * Day-by-day labor cost, one row per (site-local day, client, store):
@@ -1101,6 +1128,12 @@ schedulingRouter.get('/labor-costs/periods', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED,
  * labor-rules engine as the paycheck splits them (each person's whole week,
  * every client): overtime and double time cost what pay will cost. Rows with no resolvable rate are counted per bucket so a $0
  * cell reads as "rates missing", never as "free labor".
+ *
+ * Each row also carries `positions` — where its money went by shift
+ * position, priced in the same pass so the parts add up to the row to the
+ * cent: a shift under its own position, a punch under the position of the
+ * shift it fulfilled (TimeEntry.shiftId) with its overtime share riding
+ * along, and a punch tied to no shift under null ("Unscheduled").
  *
  * MANAGE + the usual tenant clamp: supervisors get their own client only
  * (they already see per-shift rates), org roles see everything.
@@ -1161,6 +1194,9 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
           locationId: true,
           payRate: true,
           status: true,
+          // The shift the punch fulfilled — its position names where the
+          // worked money went. Read only for the breakdown; pay never sees it.
+          shift: { select: { position: true } },
         },
       }),
     ]);
@@ -1331,6 +1367,11 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
       associateCost: number;
       scheduledRevenue: number;
       revenueNoRate: number;
+      /** Per-position sub-totals; null = punches tied to no shift. */
+      positionAgg: Map<
+        string | null,
+        { scheduledMinutes: number; scheduledCost: number; workedMinutes: number; workedCost: number }
+      >;
       /** Per-shift-window sub-totals, keyed by window label ('__other'
        *  catches activity outside every defined window). */
       windowAgg: Map<
@@ -1363,6 +1404,14 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
         b.windowAgg.set(label, w);
       }
       return w;
+    };
+    const positionAggFor = (b: Bucket, position: string | null) => {
+      let p = b.positionAgg.get(position);
+      if (!p) {
+        p = { scheduledMinutes: 0, scheduledCost: 0, workedMinutes: 0, workedCost: 0 };
+        b.positionAgg.set(position, p);
+      }
+      return p;
     };
     const buckets = new Map<string, Bucket>();
     const bucketFor = (
@@ -1399,6 +1448,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
           associateCost: 0,
           scheduledRevenue: 0,
           revenueNoRate: 0,
+          positionAgg: new Map(),
           windowAgg: new Map(),
         };
         buckets.set(key, b);
@@ -1465,6 +1515,9 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
         b.heads.add(s.assignedAssociateId);
         if (isLead) b.leadHeadIds.add(s.assignedAssociateId);
       }
+      const pos = positionAggFor(b, s.position);
+      pos.scheduledMinutes += minutes;
+      pos.scheduledCost += cost;
       if (winAgg) {
         winAgg.scheduledShifts += 1;
         winAgg.scheduledMinutes += minutes;
@@ -1521,6 +1574,9 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
       b.workedMinutes += minutes;
       if (entryRate != null) b.workedCost += entryCost;
       else b.workedNoRate += 1;
+      const pos = positionAggFor(b, e.shift?.position ?? null);
+      pos.workedMinutes += minutes;
+      pos.workedCost += entryCost;
       // APPROVED = the in-system record of Fieldglass-approved (billable)
       // hours. worked − approved is the billed-vs-worked gap.
       if (e.status === 'APPROVED') {
@@ -1536,7 +1592,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
 
     const round2 = (v: number) => Math.round(v * 100) / 100;
     const rows = [...buckets.values()]
-      .map(({ heads, leadHeadIds, windowAgg, ...b }) => {
+      .map(({ heads, leadHeadIds, windowAgg, positionAgg, ...b }) => {
         // Per-window sub-rows: one per defined window (with its own
         // target), plus "Other times" when activity fell outside them.
         const defs = windowsFor(b.locationId, b.date);
@@ -1582,6 +1638,26 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
                 })(),
               ]
             : undefined;
+        // Where the money went by position, to the cent: each side's parts
+        // are rounded so they add up to the row's own rounded total. Buckets
+        // with nothing in them are left out (the payload spans 92 days).
+        const posList = [...positionAgg.entries()];
+        const posScheduled = centsAddingUp(posList.map(([, p]) => p.scheduledCost), b.scheduledCost);
+        const posWorked = centsAddingUp(posList.map(([, p]) => p.workedCost), b.workedCost);
+        const positions = posList
+          .map(([position, p], i) => ({
+            position,
+            scheduledMinutes: p.scheduledMinutes,
+            scheduledCost: posScheduled[i]!,
+            workedMinutes: p.workedMinutes,
+            workedCost: posWorked[i]!,
+          }))
+          .filter((p) => p.scheduledMinutes > 0 || p.scheduledCost > 0 || p.workedMinutes > 0 || p.workedCost > 0)
+          .sort(
+            (a, z) =>
+              z.scheduledCost + z.workedCost - (a.scheduledCost + a.workedCost) ||
+              (a.position ?? '\uffff').localeCompare(z.position ?? '\uffff'),
+          );
         return {
           ...b,
           scheduledCost: round2(b.scheduledCost),
@@ -1598,6 +1674,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
           associateHeads: heads.size - leadHeadIds.size,
           targetHeads: targetFor(b.locationId, b.date),
           ...(windows ? { windows } : {}),
+          ...(positions.length > 0 ? { positions } : {}),
         };
       })
       .sort(

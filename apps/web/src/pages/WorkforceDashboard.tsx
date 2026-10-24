@@ -39,6 +39,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { AttendanceTrendTiles, useAttendanceTrends } from '@/components/attendance/AttendanceTrendTiles';
 import { AttendanceHeatmapCard } from '@/components/attendance/AttendanceHeatmapCard';
+import { AttendanceCalendarCard } from '@/components/attendance/AttendanceCalendarCard';
 
 /**
  * The Workforce Manager's COMMAND CENTER — the engine room of the
@@ -810,15 +811,16 @@ export function WorkforceDashboard() {
         </div>
       </div>
 
-      {/* ---- THE TREND: eight workweeks, and where in the week ------- */}
+      {/* ---- THE TREND: eight workweeks, where in the week, the year -- */}
       <section aria-label="Attendance trends" className="space-y-3">
         <SectionTitle
           icon={TrendingUp}
-          title="The last eight weeks"
-          description="Fill, no-shows, call-outs and lates by workweek — then which days and places they gather on."
+          title="Attendance trends"
+          description="Fill, no-shows, call-outs and lates over the last eight weeks and which days and places they gather on — then the whole year, day by day."
         />
         <AttendanceTrendTiles />
         <AttendanceHeatmapCard />
+        <AttendanceCalendarCard />
       </section>
     </HomeTemplate>
   );

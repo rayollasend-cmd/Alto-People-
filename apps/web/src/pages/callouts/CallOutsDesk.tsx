@@ -12,6 +12,7 @@ import { useUrlParam } from '@/lib/useUrlState';
 import { assignShift, getAutoFillBatch, listShifts } from '@/lib/schedulingApi';
 import type { AutoFillResponse } from '@alto-people/shared';
 import { ListTemplate } from '@/components/templates';
+import { AttendanceCalendarCard } from '@/components/attendance/AttendanceCalendarCard';
 import { Avatar } from '@/components/ui/Avatar';
 import { QueryError } from '@/components/ui/QueryError';
 import { Textarea } from '@/components/ui/Input';
@@ -323,6 +324,9 @@ function RecordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
 export function CallOutsDesk() {
   const { can } = useAuth();
   const canManage = can('manage:scheduling');
+  // The year behind today's list is read under the attendance-insights gate
+  // (routes/attendanceInsights.ts), wider than this desk's view:scheduling.
+  const canSeeYear = can('manage:time') || canManage || can('view:time-live');
   // The range and the site live in the URL, so a link or Back keeps the view.
   const [range, setRange] = useUrlParam<CallOutRange>('range', 'today', RANGES);
   const [site, setSite] = useUrlParam<string>('site', '');
@@ -467,6 +471,8 @@ export function CallOutsDesk() {
               {(d.repeatCallers?.length ?? 0) > 0 && <RepeatCallers callers={d.repeatCallers!} range={range} />}
             </>
           )}
+          {/* Context under the live list: the last twelve months day by day, for the same site. */}
+          {canSeeYear && <AttendanceCalendarCard siteId={site || undefined} />}
         </div>
       )}
       <RecordDialog open={recording} onOpenChange={setRecording} />

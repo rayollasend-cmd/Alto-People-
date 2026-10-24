@@ -267,6 +267,11 @@ export default defineConfig({
           if (id.includes('/recharts/') || id.includes('/d3-')) {
             return 'recharts';
           }
+          // ECharts (the flow, calendar and treemap figures) and its
+          // renderer: only the pages that draw one ever fetch it.
+          if (id.includes('/node_modules/echarts/') || id.includes('/node_modules/zrender/')) {
+            return 'echarts';
+          }
           // NOTE '/node_modules/react/' (not '/react/') — the loose test
           // used to also match @sentry/react, shipping the whole Sentry
           // SDK in the blocking react-vendor chunk even with no DSN set.

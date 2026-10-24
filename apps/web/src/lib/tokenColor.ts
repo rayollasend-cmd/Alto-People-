@@ -14,14 +14,25 @@
  * `tokenVar('gold-fill')` — so it repaints with the theme on its own.
  */
 
-/** The tokens the map draws with, with their dark-theme values (index.css :root). */
+/** The tokens the map and the ECharts figures draw with, with their dark-theme values (index.css :root). */
 const FALLBACK = {
   'gold-fill': '217 185 103',
   'on-accent': '11 24 50',
   'on-solid': '255 255 255',
   navy: '11 24 50',
+  'navy-secondary': '20 43 82',
   silver: '192 208 224',
+  fg: '255 255 255',
+  'chart-1': '176 140 46',
   'chart-2': '59 130 246',
+  'chart-3': '13 148 136',
+  'chart-4': '144 133 233',
+  'chart-5': '213 81 129',
+  'chart-other': '93 107 128',
+  alert: '233 98 85',
+  warning: '237 178 60',
+  success: '52 168 116',
+  steel: '96 165 250',
 } as const;
 
 export type ColorToken = keyof typeof FALLBACK;

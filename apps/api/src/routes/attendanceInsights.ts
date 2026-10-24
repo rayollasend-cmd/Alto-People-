@@ -1,13 +1,14 @@
 import { Router } from 'express';
-import { AttendanceHeatmapQuerySchema, AttendanceTrendsQuerySchema, LateNowQuerySchema } from '@alto-people/shared';
+import { AttendanceCalendarQuerySchema, AttendanceHeatmapQuerySchema, AttendanceTrendsQuerySchema, LateNowQuerySchema } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
-import { attendanceHeatmap, attendanceTrends, lateNow, teamHours } from '../lib/attendanceInsights.js';
+import { attendanceCalendar, attendanceHeatmap, attendanceTrends, lateNow, teamHours } from '../lib/attendanceInsights.js';
 
 /**
  * Attendance insights — the trend lines, the heatmap and the "not in yet"
- * list on the Workforce and Supervisor homes, and the team-hours chart on
- * the Manager home (lib/attendanceInsights.ts; contract in
+ * list on the Workforce and Supervisor homes, the year-at-a-glance calendar
+ * (Workforce home, call-outs desk), and the team-hours chart on the Manager
+ * home (lib/attendanceInsights.ts; contract in
  * packages/shared/src/attendanceInsights.ts).
  *
  * The floor reads are for whoever runs time or the schedule, or watches
@@ -36,6 +37,14 @@ attendanceInsightsRouter.get('/trends', FLOOR, async (req, res, next) => {
 attendanceInsightsRouter.get('/heatmap', FLOOR, async (req, res, next) => {
   try {
     res.json(await attendanceHeatmap(req.user!, parse(AttendanceHeatmapQuerySchema, req.query)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+attendanceInsightsRouter.get('/calendar', FLOOR, async (req, res, next) => {
+  try {
+    res.json(await attendanceCalendar(req.user!, parse(AttendanceCalendarQuerySchema, req.query)));
   } catch (err) {
     next(err);
   }
