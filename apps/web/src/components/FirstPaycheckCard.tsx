@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Circle, Banknote } from 'lucide-react';
+import { CheckCircle2, Circle, Banknote } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate } from '@/lib/format';

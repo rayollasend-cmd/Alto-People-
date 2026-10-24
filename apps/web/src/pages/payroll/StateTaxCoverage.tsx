@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { fmtDate, fmtMoney, fmtPercent } from '@/lib/format';

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, CircleSlash, Mail, MessageCircle, Plug } from 'lucide-react';
+import { CheckCircle2, CircleSlash, Mail, MessageCircle, Plug } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { CATEGORY_ROLE_ROUTING, ROLE_LABELS, type NotificationChannel, type Role } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

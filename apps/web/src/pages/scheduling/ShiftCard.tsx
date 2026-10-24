@@ -35,7 +35,7 @@ import {
   tzAbbrev,
 } from '@/lib/format';
 import { Link } from 'react-router-dom';
-import { ArrowLeftRight, CalendarOff, Check, ChevronDown, MapPin, Users, X } from 'lucide-react';
+import { ArrowLeftRight, CalendarOff, Check, ChevronDown, MapPin, Users, X } from '@/components/ui/icons';
 import { hapticConfirm } from '@/lib/haptics';
 import { enterStagger } from '@/lib/motion';
 import { useI18n, type Translate } from '@/lib/i18n';
@@ -143,11 +143,11 @@ function TileMark({
   } else {
     switch (shift.status) {
       case 'COMPLETED':
-        shape = <Check className="h-3.5 w-3.5 text-success icon-bold" />;
+        shape = <Check className="h-3.5 w-3.5 text-success" />;
         label = t('shift.worked');
         break;
       case 'CANCELLED':
-        shape = <X className="h-3.5 w-3.5 text-alert icon-bold" />;
+        shape = <X className="h-3.5 w-3.5 text-alert" />;
         label = t('shift.cancelled');
         break;
       case 'OPEN':

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { CalendarCheck, Mail, MapPin, Phone } from 'lucide-react';
+import { CalendarCheck, Mail, MapPin, Phone } from '@/components/ui/icons';
 import { Avatar } from '@/components/ui/Avatar';
 import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';

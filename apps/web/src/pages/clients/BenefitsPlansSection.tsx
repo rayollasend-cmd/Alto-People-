@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { HeartPulse, Pencil, Plus } from 'lucide-react';
+import { HeartPulse, Pencil, Plus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { BenefitsPlan, BenefitsPlanKind } from '@alto-people/shared';
 import {

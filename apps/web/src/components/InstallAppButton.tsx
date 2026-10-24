@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
-import { Download } from 'lucide-react';
+import { Download } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import {
   isStandaloneDisplay,

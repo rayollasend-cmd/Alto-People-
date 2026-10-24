@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, MessageCircle } from 'lucide-react';
+import { Copy, MessageCircle } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { TERM_LANGS, type WhatsAppMessageRow, type WhatsAppMessageStatus } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';

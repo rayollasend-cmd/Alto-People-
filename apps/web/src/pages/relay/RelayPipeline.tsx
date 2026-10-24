@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CalendarCheck, MessageSquare, Search, Trophy, Waypoints } from 'lucide-react';
+import { CalendarCheck, MessageSquare, Search, Trophy, Waypoints } from '@/components/ui/icons';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';

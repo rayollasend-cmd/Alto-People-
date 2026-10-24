@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { FileCheck2, Mail, ShieldAlert, UserX } from 'lucide-react';
+import { FileCheck2, Mail, ShieldAlert, UserX } from '@/components/ui/icons';
 import {
   Badge,
   Button,

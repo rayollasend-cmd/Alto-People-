@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, Globe, Plane, Plus } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Globe, Plane, Plus } from '@/components/ui/icons';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
 import { sanitizeReturnPath } from './section2Verification';
 import type { J1Profile } from '@alto-people/shared';

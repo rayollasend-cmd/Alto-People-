@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { CalendarCheck, Check, MessageSquarePlus, X } from 'lucide-react';
+import { CalendarCheck, Check, MessageSquarePlus, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   isEventBasedTimeOffCategory,

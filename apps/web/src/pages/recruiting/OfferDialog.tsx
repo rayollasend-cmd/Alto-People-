@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Send, X } from 'lucide-react';
+import { Send, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { Candidate } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

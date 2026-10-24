@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Banknote, Building2, Calculator, CalendarCheck2, Check, Copy, CreditCard, FlaskConical, Landmark, Plug, ShieldCheck, UserSearch, type LucideIcon } from 'lucide-react';
+import { Banknote, Building2, Calculator, CalendarCheck2, Check, Copy, CreditCard, FlaskConical, Landmark, Plug, ShieldCheck, UserSearch, type LucideIcon } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ProviderConnection, ProviderHealth, ProviderKind } from '@/lib/providersApi';
 import { fmtDateTime, fmtRelativeDate } from '@/lib/format';

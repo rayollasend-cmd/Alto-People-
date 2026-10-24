@@ -14,7 +14,7 @@ import {
   Plus,
   Trash2,
   X,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { REPORT_PERIOD_LABELS, REPORT_PERIOD_TOKENS, type Capability } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { errorText } from '@/lib/errorText';

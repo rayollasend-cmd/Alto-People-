@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AtSign, ShieldCheck } from 'lucide-react';
+import { AtSign, ShieldCheck } from '@/components/ui/icons';
 import { ApiError, NetworkError } from '@/lib/api';
 import { confirmEmailChange } from '@/lib/settingsApi';
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';

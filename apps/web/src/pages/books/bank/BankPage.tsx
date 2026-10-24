@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CreditCard, Landmark, Plus, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CreditCard, Landmark, Plus, RefreshCw } from '@/components/ui/icons';
 import type { BankFeedAccountView } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { BANK_KEY, listBankAccounts } from '@/lib/books/bankApi';

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, FileStack, Landmark, RotateCcw, Upload } from 'lucide-react';
+import { Download, FileStack, Landmark, RotateCcw, Upload } from '@/components/ui/icons';
 import { centsToMoney, downloadAchFile, listAchEntries, listAchFiles, markAchFileUploaded, uploadReturnFile, type AchEntryRow, type AchFileRow } from '@/lib/bankingApi';
 import { useConfirm } from '@/lib/confirm';
 import { Badge, type BadgeProps } from '@/components/ui/Badge';

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CalendarPlus, Mail, Phone, UserCheck } from 'lucide-react';
+import { CalendarPlus, Mail, Phone, UserCheck } from '@/components/ui/icons';
 import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';

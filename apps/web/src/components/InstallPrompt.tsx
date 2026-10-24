@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useI18n } from '@/lib/i18n';
 import { useMinWidth } from '@/lib/useViewport';
-import { Download, Share, X } from 'lucide-react';
+import { Download, Share, X } from '@/components/ui/icons';
 import { Button } from '@/components/ui';
 import {
   installPromptAvailable,

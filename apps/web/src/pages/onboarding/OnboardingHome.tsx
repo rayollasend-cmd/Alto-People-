@@ -1,6 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Briefcase, AlertCircle } from 'lucide-react';
+import { Briefcase, AlertCircle } from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { listApplications } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';

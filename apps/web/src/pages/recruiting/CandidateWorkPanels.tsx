@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CalendarClock, MessageSquare, X } from 'lucide-react';
+import { AlertTriangle, CalendarClock, MessageSquare, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   InterviewScorecardSchema,

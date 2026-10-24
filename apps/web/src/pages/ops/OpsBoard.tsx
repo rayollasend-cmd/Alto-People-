@@ -12,7 +12,7 @@ import {
   Flag,
   Thermometer,
   Users,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import {
   Area,
   AreaChart,

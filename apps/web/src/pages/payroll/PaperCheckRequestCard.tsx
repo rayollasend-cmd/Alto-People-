@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Banknote, CheckCircle2, Clock, Info } from 'lucide-react';
+import { Banknote, CheckCircle2, Clock, Info } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate } from '@/lib/format';

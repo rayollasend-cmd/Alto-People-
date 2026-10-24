@@ -12,7 +12,7 @@ import {
   Download,
   ExternalLink,
   ShieldCheck,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import { DeadlineStrip, matchesDeadlineDay } from './DeadlineStrip';
 import { sanitizeReturnPath } from './section2Verification';

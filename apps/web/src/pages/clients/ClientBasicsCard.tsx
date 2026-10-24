@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Building2, Pencil, Save } from 'lucide-react';
+import { Building2, Pencil, Save } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ClientStatus, ClientSummary, ClientUpdateInput } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

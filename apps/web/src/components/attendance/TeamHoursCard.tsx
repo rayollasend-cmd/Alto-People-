@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Clock } from 'lucide-react';
+import { Clock } from '@/components/ui/icons';
 import { getTeamHours } from '@/lib/attendanceInsightsApi';
 import { fmtDate } from '@/lib/format';
 import { ChartFrame } from '@/components/ui/ChartFrame';

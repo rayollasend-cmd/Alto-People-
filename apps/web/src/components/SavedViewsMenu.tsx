@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Bookmark, Check, ChevronDown, Users } from 'lucide-react';
+import { Bookmark, Check, ChevronDown, Users } from '@/components/ui/icons';
 import type { SavedView, SavedViewScope } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';

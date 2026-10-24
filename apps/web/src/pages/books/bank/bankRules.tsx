@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Trash2, Wand2 } from 'lucide-react';
+import { Pencil, Plus, Trash2, Wand2 } from '@/components/ui/icons';
 import type { BankFeedAccountView, BankRuleInput, BankRuleView } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';

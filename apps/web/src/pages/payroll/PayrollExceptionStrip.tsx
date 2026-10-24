@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Info, Loader2, ShieldAlert } from '@/components/ui/icons';
 import type { PayrollException, PayrollExceptionsResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { approveRunCleanTime } from '@/lib/payrollApi';

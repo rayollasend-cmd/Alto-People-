@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CalendarDays, Check, CheckCircle2, Link2, Plus, X } from 'lucide-react';
+import { ArrowRight, CalendarDays, Check, CheckCircle2, Link2, Plus, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { ymdLocal } from '@/lib/format';
@@ -95,7 +95,7 @@ function CheckCircle({
     >
       <Check
         className={cn(
-          'h-3 w-3 icon-bold transition-all duration-200',
+          'h-3 w-3 transition-all duration-200',
           done ? 'scale-100 opacity-100' : 'scale-50 opacity-0',
         )}
         aria-hidden="true"
@@ -273,7 +273,7 @@ export function MyPlanCard() {
                     className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-success text-navy"
                     aria-hidden="true"
                   >
-                    <Check className="h-2.5 w-2.5 icon-bold" />
+                    <Check className="h-2.5 w-2.5" />
                   </span>
                 )}
               </button>

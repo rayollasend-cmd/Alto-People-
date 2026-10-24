@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { History } from 'lucide-react';
+import { History } from '@/components/ui/icons';
 import { LEDGER_TYPE_LABELS, LEDGER_ACCOUNT_TYPES, JOURNAL_SOURCE_LABELS, type BooksDimensionsFilter, type LedgerAccountRow, type PostingBackfillResult } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

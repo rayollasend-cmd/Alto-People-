@@ -19,7 +19,7 @@ import {
   UserCheck,
   Users,
   X,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type {
   ApplicationStatsResponse,
   ApplicationStatus,

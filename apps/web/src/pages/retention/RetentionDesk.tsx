@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { HeartHandshake, RefreshCw } from 'lucide-react';
+import { HeartHandshake, RefreshCw } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';

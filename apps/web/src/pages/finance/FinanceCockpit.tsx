@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { AlarmClock, AlertTriangle, ScrollText, ArrowRight, Banknote, CalendarRange, Check, CheckCircle2, ClipboardCheck, ClockAlert, FileWarning, Inbox, Receipt, Scale, ShieldCheck, TrendingUp, UserCheck, Wallet } from 'lucide-react';
+import { AlarmClock, AlertTriangle, ScrollText, ArrowRight, Banknote, CalendarRange, Check, CheckCircle2, ClipboardCheck, ClockAlert, FileWarning, Inbox, Receipt, Scale, ShieldCheck, TrendingUp, UserCheck, Wallet } from '@/components/ui/icons';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDateOnly, fmtDateTz, fmtHours, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { cn } from '@/lib/cn';

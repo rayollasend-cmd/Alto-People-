@@ -1,4 +1,4 @@
-import type { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from '@/components/ui/icons';
 import {
   PlaneTakeoff as PayrollGoLiveIcon,
   Library as BooksIcon,
@@ -48,7 +48,7 @@ import {
   ShieldCheck,
   Timer,
   UserPlus,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import {
   BadgeCheck as TrustCenterIcon,
   BadgeDollarSign as PayRulesIcon,
@@ -151,7 +151,7 @@ import {
   Rocket as MarketingIcon,
   ThumbsUp as ClientNpsIcon,
   Handshake as ClientPipelineIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import {
   UserRound as MeDoorIcon,
   UsersRound as TeamDoorIcon,
@@ -168,9 +168,9 @@ import {
   CalendarDays as MyScheduleIcon,
   Wallet as MyPayIcon,
   FolderOpen as MyRecordsIcon,
-} from 'lucide-react';
-import { CalendarSync as DailyPayIcon, NotebookPen as ManualChecksIcon, CalendarCog as PaySchedulesIcon } from 'lucide-react';
-import { ChartNoAxesCombined as PeopleAnalyticsIcon } from 'lucide-react';
+} from '@/components/ui/icons';
+import { CalendarSync as DailyPayIcon, NotebookPen as ManualChecksIcon, CalendarCog as PaySchedulesIcon } from '@/components/ui/icons';
+import { ChartNoAxesCombined as PeopleAnalyticsIcon } from '@/components/ui/icons';
 import type { DoorKey } from './modules';
 import type { ModuleKey } from './modules';
 
@@ -179,7 +179,7 @@ import type { ModuleKey } from './modules';
  *
  * App.tsx imports MODULES eagerly to generate routes, and it only reads
  * path/key/label/description. While the icon components hung off those same
- * objects, importing the route metadata dragged ~78 lucide icons into the
+ * objects, importing the route metadata dragged ~78 icons into the
  * blocking `main` chunk — downloaded by everyone who opened /login and
  * rendered by none of them.
  *
@@ -191,12 +191,15 @@ import type { ModuleKey } from './modules';
  *   1. The meaning table in docs/design-system.md §6 wins: Analytics =
  *      BarChart3, Clients = Building2, Compliance = ShieldCheck, Payroll =
  *      Wallet, Scheduling = CalendarDays, Time = Clock, People = Users,
- *      Agents = Bot, Audit = ScrollText, Settings = Settings2.
+ *      Agents = Bot, Audit = ScrollText, Settings = Settings2. (The names
+ *      are Lucide's; each draws the Phosphor glyph
+ *      scripts/icons/lucide-to-phosphor.json maps it to.)
  *   2. No two modules share a glyph. In a rail that is icons only, the
  *      glyph IS the label — two modules with the same icon are one module
- *      to the eye. Lucide aliases (Users2 = UsersRound, UserCircle =
- *      CircleUser, House = Home) are the same component, so they count as
- *      the same glyph; pick from different families.
+ *      to the eye. Names mapped to the same Phosphor glyph (Users2 and
+ *      UsersRound, House and Home, Settings and Settings2) are the same
+ *      component, so they count as the same glyph; pick from different
+ *      families.
  */
 export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   inbox: InboxIcon,
@@ -356,7 +359,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
 /** Icon for the Dashboard entry, which isn't a module. Home is a house. */
 export const DASHBOARD_ICON: LucideIcon = DashboardIcon;
 
-// Re-exported so nav components don't need their own lucide imports.
+// Re-exported so nav components don't need their own icon imports.
 export {
   Award,
   Briefcase,

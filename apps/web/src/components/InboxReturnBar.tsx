@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, CheckCircle2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, X } from '@/components/ui/icons';
 import { INBOX_QUERY_KEY, getInbox, inboxLink } from '@/lib/inboxApi';
 import { useI18n } from '@/lib/i18n';
 

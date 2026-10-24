@@ -65,43 +65,43 @@ function preloadLatinFonts(): Plugin {
 }
 
 /**
- * The lucide icons that go into one shared `icons` chunk, by file name
- * ("calendar-off"), worked out once per build.
+ * The icon glyphs that go into one shared `icons` chunk, by glyph name
+ * ("calendar-slash"), worked out once per build.
  *
- * Every icon is its own module, and Rollup gives each set of importers its
- * own chunk, so an icon used by two lazy pages became a ~600-byte chunk of
- * its own: 183 of them, about 110 fetched one by one before the associate's
- * home could render — each a round trip on a phone. Those go into one
- * chunk instead, fetched with the first signed-in page.
+ * Every glyph is its own module (src/components/ui/icons/glyphs/, generated
+ * by scripts/build-icons.mjs), and Rollup gives each set of importers its
+ * own chunk, so a glyph used by two lazy pages would become a tiny chunk
+ * of its own: with Lucide that was 183 of them, about 110 fetched one
+ * by one before the associate's home could render — each a round trip on a
+ * phone. Those go into one chunk instead, fetched with the first signed-in
+ * page.
  *
- * Left where Rollup puts them: icons the entry chunk's own code uses (an
+ * Left where Rollup puts them: glyphs the entry chunk's own code uses (an
  * app module src/main.tsx reaches through static imports — what lands in
- * main), so the sign-in page never waits on the shared chunk; and icons only
+ * main), so the sign-in page never waits on the shared chunk; and glyphs only
  * one module imports, which already travel inside that module's chunk.
- * Names map to files through the package's own export list.
+ * Lucide names map to glyphs through scripts/icons/lucide-to-phosphor.json.
  */
+const ICON_GLYPHS: Record<string, string> = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, 'scripts/icons/lucide-to-phosphor.json'), 'utf8'),
+);
+const GLYPH_MODULE = /\/src\/components\/ui\/icons\/glyphs\/([a-z0-9-]+)\.ts$/;
 function sharedIconFiles(meta: Rollup.ManualChunkMeta): Set<string> {
   const ids = [...meta.getModuleIds()];
-  const fileByName = new Map<string, string>();
-  const barrel = ids.find((id) => /\/lucide-react\/dist\/esm\/lucide-react\.mjs$/.test(id));
-  const exportList = (barrel ? meta.getModuleInfo(barrel)?.code : null) ?? '';
-  for (const m of exportList.matchAll(/export \{([^}]*)\} from '\.\/icons\/([a-z0-9-]+)\.mjs'/g)) {
-    for (const spec of m[1]!.split(',')) fileByName.set(spec.replace(/^\s*default as\s*/, '').trim(), m[2]!);
-  }
   const iconsOf = (id: string): Set<string> => {
-    const files = new Set<string>();
-    for (const m of (meta.getModuleInfo(id)?.code ?? '').matchAll(/import\s*\{([^}]*)\}\s*from\s*["']lucide-react["']/g)) {
+    const glyphs = new Set<string>();
+    for (const m of (meta.getModuleInfo(id)?.code ?? '').matchAll(/import\s*\{([^}]*)\}\s*from\s*["']@\/components\/ui\/icons["']/g)) {
       for (const spec of m[1]!.split(',')) {
-        const file = fileByName.get(spec.split(/\s+as\s+/)[0]!.trim());
-        if (file) files.add(file);
+        const glyph = ICON_GLYPHS[spec.split(/\s+as\s+/)[0]!.trim()];
+        if (glyph) glyphs.add(glyph);
       }
     }
-    return files;
+    return glyphs;
   };
   const importers = new Map<string, number>();
   for (const id of ids) {
     if (id.includes('/node_modules/')) continue;
-    for (const file of iconsOf(id)) importers.set(file, (importers.get(file) ?? 0) + 1);
+    for (const glyph of iconsOf(id)) importers.set(glyph, (importers.get(glyph) ?? 0) + 1);
   }
   const inEntry = new Set<string>();
   const seen = new Set<string>();
@@ -110,10 +110,10 @@ function sharedIconFiles(meta: Rollup.ManualChunkMeta): Set<string> {
     const id = queue.pop()!;
     if (seen.has(id) || id.includes('/node_modules/')) continue;
     seen.add(id);
-    for (const file of iconsOf(id)) inEntry.add(file);
+    for (const glyph of iconsOf(id)) inEntry.add(glyph);
     queue.push(...(meta.getModuleInfo(id)?.importedIds ?? []));
   }
-  return new Set([...importers].filter(([file, n]) => n > 1 && !inEntry.has(file)).map(([file]) => file));
+  return new Set([...importers].filter(([glyph, n]) => n > 1 && !inEntry.has(glyph)).map(([glyph]) => glyph));
 }
 let sharedIcons: Set<string> | null = null;
 
@@ -300,22 +300,18 @@ export default defineConfig({
       },
       output: {
         manualChunks(id, meta) {
-          if (!id.includes('node_modules')) return undefined;
           // Icons several lazy pages share: one chunk, not one each (sharedIconFiles).
-          const icon = /\/node_modules\/lucide-react\/dist\/esm\/icons\/([a-z0-9-]+)\.mjs$/.exec(id);
-          if (icon) {
+          const glyph = GLYPH_MODULE.exec(id);
+          if (glyph) {
             sharedIcons ??= sharedIconFiles(meta);
-            return sharedIcons.has(icon[1]!) ? 'icons' : undefined;
+            return sharedIcons.has(glyph[1]!) ? 'icons' : undefined;
           }
-          // lucide's own runtime (createLucideIcon and the base <svg>), which
-          // the entry's icons need too. Unassigned, Rollup moved it into the
-          // `icons` chunk with the icons that import it, and that whole chunk
-          // became part of the first load.
-          // Only the runtime files: the package's index re-exports every icon,
-          // and Rollup would follow it and pull them all in too.
-          if (/\/node_modules\/lucide-react\/dist\/esm\/(createLucideIcon|Icon|defaultAttributes|context|shared\/)/.test(id)) {
-            return 'style-utils';
-          }
+          // The icon runtime (createIcon and the base <svg>), which the
+          // entry's icons need too. Unassigned, Rollup would move it into the
+          // `icons` chunk with the glyphs that import it, and that whole chunk
+          // would become part of the first load.
+          if (id.endsWith('/src/components/ui/icons/createIcon.ts')) return 'style-utils';
+          if (!id.includes('node_modules')) return undefined;
           // PERF: tiny styling utils get their own named bucket FIRST.
           // Without this, Rollup's min-chunk-size merging folded clsx
           // (imported by every component via lib/cn.ts) into the recharts

@@ -23,7 +23,7 @@ import {
   TrendingUp,
   Wallet,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   NOTIFICATION_CATEGORIES,

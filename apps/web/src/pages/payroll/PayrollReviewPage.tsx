@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowRight, Download, FileSearch, FileSpreadsheet, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Download, FileSearch, FileSpreadsheet, ShieldAlert, ShieldCheck, ShieldQuestion } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, fmtHours, fmtMoney, fmtMoneyCompact, fmtPercent } from '@/lib/format';

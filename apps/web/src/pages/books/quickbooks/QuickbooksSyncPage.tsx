@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Info, Link2, Pause, Play, RefreshCcw, Unplug } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Info, Link2, Pause, Play, RefreshCcw, Unplug } from '@/components/ui/icons';
 import type { QboSyncStatus } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDateTime } from '@/lib/format';

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { CheckCircle2, Download, XCircle } from 'lucide-react';
+import { CheckCircle2, Download, XCircle } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import {

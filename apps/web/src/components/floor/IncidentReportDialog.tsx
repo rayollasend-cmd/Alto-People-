@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Camera, ShieldAlert, X } from 'lucide-react';
+import { Camera, ShieldAlert, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { reportIncident, type IncidentSeverity } from '@/lib/floorApi';
 import { Button } from '@/components/ui/Button';

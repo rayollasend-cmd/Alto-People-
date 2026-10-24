@@ -7,7 +7,7 @@ import {
   DoorOpen,
   Flag,
   Thermometer,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { FilterChip } from '@/components/ui/FilterBar';

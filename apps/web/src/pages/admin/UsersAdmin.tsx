@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { KeyRound, Lock, UserPlus, Users } from 'lucide-react';
+import { KeyRound, Lock, UserPlus, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ROLES, type Role } from '@/lib/roles';

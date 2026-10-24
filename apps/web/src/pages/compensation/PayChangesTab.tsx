@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ScrollText, TrendingUp } from 'lucide-react';
+import { ScrollText, TrendingUp } from '@/components/ui/icons';
 import type { PayChangeRow, Promotion } from '@alto-people/shared';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Badge } from '@/components/ui/Badge';

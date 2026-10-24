@@ -1,0 +1,7 @@
+// generated — do not edit; run npm -w apps/web run icons:build
+// Phosphor "camera" (bold), drawn for Camera.
+import { createIcon } from '../createIcon';
+
+export const Camera = /* @__PURE__ */ createIcon('Camera', {
+  b: 'M208,52H182.4L170,33.3A12,12,0,0,0,160,28H96a12,12,0,0,0-10,5.3L73.6,52H48A28,28,0,0,0,20,80V192a28,28,0,0,0,28,28H208a28,28,0,0,0,28-28V80A28,28,0,0,0,208,52Zm4,140a4,4,0,0,1-4,4H48a4,4,0,0,1-4-4V80a4,4,0,0,1,4-4H80a12,12,0,0,0,10-5.3L102.4,52h51.2L166,70.7A12,12,0,0,0,176,76h32a4,4,0,0,1,4,4ZM128,84a48,48,0,1,0,48,48A48.1,48.1,0,0,0,128,84Zm0,72a24,24,0,1,1,24-24A24,24,0,0,1,128,156Z',
+});

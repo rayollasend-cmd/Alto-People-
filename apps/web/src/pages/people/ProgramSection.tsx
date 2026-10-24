@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Plane } from 'lucide-react';
+import { Plane } from '@/components/ui/icons';
 import { PROGRAM_TYPE_LABELS, type ProgramSummary } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { Skeleton } from '@/components/ui/Skeleton';

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Banknote, ChevronDown, ChevronUp } from 'lucide-react';
+import { Banknote, ChevronDown, ChevronUp } from '@/components/ui/icons';
 import {
   FUNDING_LABEL,
   centsToMoney,

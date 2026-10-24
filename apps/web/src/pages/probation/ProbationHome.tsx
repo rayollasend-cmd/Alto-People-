@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { CheckCircle2, Clock, Plus, ShieldQuestion, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Plus, ShieldQuestion, XCircle } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {

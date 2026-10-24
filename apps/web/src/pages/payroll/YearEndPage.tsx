@@ -1,4 +1,4 @@
-import { FileSpreadsheet } from 'lucide-react';
+import { FileSpreadsheet } from '@/components/ui/icons';
 import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TaxYearSelect } from '@/components/ui/TaxYearSelect';

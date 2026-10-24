@@ -3,7 +3,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { PayFrequencyKind, PayScheduleSummary, ReadinessLevel, RosterPerson, SchedulePeriod } from '@alto-people/shared';
 import { getPayCalendar } from '@/lib/paySchedulesApi';
-import { CalendarClock, MoveRight } from 'lucide-react';
+import { CalendarClock, MoveRight } from '@/components/ui/icons';
 import { Avatar, type AvatarSize } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';

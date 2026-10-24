@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { Download, UserPlus } from 'lucide-react';
+import { Download, UserPlus } from '@/components/ui/icons';
 import { PEOPLE, type StoryPerson } from '../../../.storybook/fixtures';
 import { Badge } from '@/components/ui/Badge';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Cake, PartyPopper } from 'lucide-react';
+import { Cake, PartyPopper } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 

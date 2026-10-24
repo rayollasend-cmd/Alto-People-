@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, FileSignature } from 'lucide-react';
+import { CheckCircle2, FileSignature } from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import {

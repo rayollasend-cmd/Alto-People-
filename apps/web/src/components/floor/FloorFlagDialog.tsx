@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Flag } from 'lucide-react';
+import { Flag } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { raiseFloorFlag, type FloorFlagKind } from '@/lib/floorApi';

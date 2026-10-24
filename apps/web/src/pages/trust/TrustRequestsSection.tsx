@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, FileUp, X } from 'lucide-react';
+import { Check, FileUp, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { TRUST_DOCUMENT_KINDS, TRUST_DOCUMENT_LABELS, type TrustDocumentKind, type TrustDownloadRequestSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

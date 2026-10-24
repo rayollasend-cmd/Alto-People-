@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useUrlParam } from '@/lib/useUrlState';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import { useQuery } from '@tanstack/react-query';
-import { Coins, Plus } from 'lucide-react';
+import { Coins, Plus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';

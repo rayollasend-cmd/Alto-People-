@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Archive, CalendarPlus, ChevronDown, FileText, Mail, MoreHorizontal, Pencil } from 'lucide-react';
+import { Archive, CalendarPlus, ChevronDown, FileText, Mail, MoreHorizontal, Pencil } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

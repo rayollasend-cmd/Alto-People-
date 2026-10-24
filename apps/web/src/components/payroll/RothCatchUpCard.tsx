@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { PiggyBank } from 'lucide-react';
+import { PiggyBank } from '@/components/ui/icons';
 import { fmtMoney } from '@/lib/format';
 import { getPersonRothCatchUp, ROTH_STATUS_LABEL, type RothCatchUpStatus } from '@/lib/payComplianceApi';
 import { Badge, Card, CardContent, SectionTitle } from '@/components/ui';

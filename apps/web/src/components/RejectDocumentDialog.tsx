@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { XCircle } from 'lucide-react';
+import { XCircle } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { DOCUMENT_KIND_LABEL, rejectDocument } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';

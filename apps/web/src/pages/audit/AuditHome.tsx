@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { ChevronDown, Download, FileSearch, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, Download, FileSearch, RefreshCw, SlidersHorizontal } from '@/components/ui/icons';
 import {
   AUDIT_CATEGORIES,
   AUDIT_CATEGORY_DEFS,

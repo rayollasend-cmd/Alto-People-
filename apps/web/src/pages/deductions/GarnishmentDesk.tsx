@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, Download, FileUp, Inbox, Landmark, Plus, Scale, Send } from 'lucide-react';
+import { CheckCircle2, Download, FileUp, Inbox, Landmark, Plus, Scale, Send } from '@/components/ui/icons';
 import {
   acceptEiwo,
   createNotice,

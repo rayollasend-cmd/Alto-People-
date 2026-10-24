@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ChevronDown, Download, FileText, Lock, RefreshCw } from 'lucide-react';
+import { ChevronDown, Download, FileText, Lock, RefreshCw } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ClientStatement } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

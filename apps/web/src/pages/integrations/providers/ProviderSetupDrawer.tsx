@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { CheckCircle2, CircleAlert } from 'lucide-react';
+import { CheckCircle2, CircleAlert } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { createProviderConnection, testProviderConnection, type ProviderInfo, type ProviderKind } from '@/lib/providersApi';
 import { Badge } from '@/components/ui/Badge';

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Bot, Cpu, Hand, ListChecks, OctagonX, Play, RefreshCw, ShieldAlert, ShieldCheck, Users } from 'lucide-react';
+import { AlertTriangle, Bot, Cpu, Hand, ListChecks, OctagonX, Play, RefreshCw, ShieldAlert, ShieldCheck, Users } from '@/components/ui/icons';
 import { ROBOT_STATUS_LABELS, WORKER_STATUS_LABELS, type ControlRoomException, type ControlRoomResponse, type ControlRoomRobot, type ControlRoomWaiting } from '@alto-people/shared';
 import { DeskTemplate } from '@/components/templates';
 import type { PageAction } from '@/components/ui/PageHeader';

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarCheck } from 'lucide-react';
+import { CalendarCheck } from '@/components/ui/icons';
 import type { Shift as ShiftRecord } from '@alto-people/shared';
 import { listShifts } from '@/lib/schedulingApi';
 import { useTerm } from '@/lib/auth';

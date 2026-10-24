@@ -4,7 +4,7 @@ import { onLiveEvent } from '@/lib/liveEvents';
 import { useAuth } from '@/lib/auth';
 import { useUrlParam } from '@/lib/useUrlState';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Repeat, ThumbsDown, ThumbsUp, Trash2, UserRound, Wallet } from 'lucide-react';
+import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Repeat, ThumbsDown, ThumbsUp, Trash2, UserRound, Wallet } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';

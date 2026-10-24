@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, RotateCcw, Upload, X } from 'lucide-react';
+import { Camera, RotateCcw, Upload, X } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import { trackChunk } from '@/lib/chunkLoading';
 import { cn } from '@/lib/cn';

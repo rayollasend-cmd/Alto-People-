@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { ArrowUp, Check, Sparkles, X } from 'lucide-react';
+import { ArrowUp, Check, Sparkles, X } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAssistant } from '@/lib/assistantContext';

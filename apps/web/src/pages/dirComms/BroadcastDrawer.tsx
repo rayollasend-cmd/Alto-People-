@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookmarkPlus, Users } from 'lucide-react';
+import { BookmarkPlus, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { CostCenter, Department } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

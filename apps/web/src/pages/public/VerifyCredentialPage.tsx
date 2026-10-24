@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Check, CircleAlert, CircleHelp, Clock, FileJson, Lock, ShieldCheck, ShieldX, X, type LucideIcon } from 'lucide-react';
+import { Check, CircleAlert, CircleHelp, Clock, FileJson, Lock, ShieldCheck, ShieldX, X, type LucideIcon } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { calendarDay, fmtDate } from '@/lib/format';
 import { verifyCredential, type VerifyResult } from '@/lib/credentialsApi';

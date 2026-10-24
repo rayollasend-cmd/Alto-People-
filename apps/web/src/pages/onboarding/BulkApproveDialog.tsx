@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { CheckCircle2, UserCheck, X as XIcon } from 'lucide-react';
+import { CheckCircle2, UserCheck, X as XIcon } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ApplicationSummary, BulkApproveResultRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

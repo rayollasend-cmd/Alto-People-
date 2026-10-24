@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ClipboardCheck, Cpu, RefreshCw } from 'lucide-react';
+import { ClipboardCheck, Cpu, RefreshCw } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { FLEET_PROVIDERS, type RobotRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

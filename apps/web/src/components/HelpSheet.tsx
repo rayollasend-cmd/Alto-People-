@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, Keyboard, LifeBuoy, Sparkles } from 'lucide-react';
+import { BookOpen, Keyboard, LifeBuoy, Sparkles } from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { helpFor } from '@/lib/help';
 import { useI18n } from '@/lib/i18n';

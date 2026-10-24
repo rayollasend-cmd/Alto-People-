@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ChevronDown, ReceiptText, TrendingUp } from 'lucide-react';
+import { ChevronDown, ReceiptText, TrendingUp } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { displayLocale, fmtMoney } from '@/lib/format';

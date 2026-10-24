@@ -35,7 +35,7 @@ import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Clock, CalendarRange, ChevronDown } from 'lucide-react';
+import { Clock, CalendarRange, ChevronDown } from '@/components/ui/icons';
 import { ShiftTimeline } from './ShiftTimeline';
 import { AttendanceCard } from './AttendanceCard';
 import { TimesheetWeeks } from './TimesheetWeeks';

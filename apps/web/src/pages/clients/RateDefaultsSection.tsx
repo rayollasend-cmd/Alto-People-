@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { DollarSign, Plus, Trash2 } from 'lucide-react';
+import { DollarSign, Plus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ShiftPosition, ShiftRateDefault } from '@alto-people/shared';
 import {

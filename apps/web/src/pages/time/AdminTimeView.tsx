@@ -26,7 +26,7 @@ import {
   TimerOff,
   TrendingUp,
   X,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import {
   oldestPendingPeriod,
   type ActiveDashboardEntry,

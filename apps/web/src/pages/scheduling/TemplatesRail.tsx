@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, LayoutTemplate, Plus, Settings2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LayoutTemplate, Plus, Settings2 } from '@/components/ui/icons';
 import type { ShiftTemplate } from '@alto-people/shared';
 import { listShiftTemplates } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';

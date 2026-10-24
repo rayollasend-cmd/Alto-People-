@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { BarChart3, Download, Table2, LineChart } from 'lucide-react';
+import { BarChart3, Download, Table2, LineChart } from '@/components/ui/icons';
 import { downloadCsv } from '@/lib/csv';
 import { ymdLocal } from '@/lib/format';
 import { Button } from './Button';

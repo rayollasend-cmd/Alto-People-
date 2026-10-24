@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Award, BadgeCheck, Copy, Download, Expand, GraduationCap, IdCard, QrCode, Share2, type LucideIcon } from 'lucide-react';
+import { Award, BadgeCheck, Copy, Download, Expand, GraduationCap, IdCard, QrCode, Share2, type LucideIcon } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getMyWallet, getWorkerBadge, shareMyWallet, type WalletItem } from '@/lib/walletApi';

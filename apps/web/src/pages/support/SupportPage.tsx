@@ -1,7 +1,7 @@
 import { useContext, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, ExternalLink, Search } from 'lucide-react';
+import { BookOpen, ExternalLink, Search } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { StatusState } from '@alto-people/shared';
 import { ApiError, apiFetch } from '@/lib/api';

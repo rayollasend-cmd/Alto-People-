@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
-import { Eye, EyeOff, MapPin, Pencil, Phone, Plus, Trash2, UserRound } from 'lucide-react';
+import { Eye, EyeOff, MapPin, Pencil, Phone, Plus, Trash2, UserRound } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { isPending } from '@/lib/approvalRequestsApi';
 import {

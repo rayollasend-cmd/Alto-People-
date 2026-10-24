@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Crosshair, Maximize2, X } from 'lucide-react';
+import { Crosshair, Maximize2, X } from '@/components/ui/icons';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';

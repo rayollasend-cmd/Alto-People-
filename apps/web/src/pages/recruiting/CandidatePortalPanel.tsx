@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, FileText, Link2, Plus, Send } from 'lucide-react';
+import { ExternalLink, FileText, Link2, Plus, Send } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { usePrompt } from '@/lib/confirm';

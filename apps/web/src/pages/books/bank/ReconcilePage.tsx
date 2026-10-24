@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Download, Scale, Undo2 } from 'lucide-react';
+import { CheckCircle2, Download, Scale, Undo2 } from '@/components/ui/icons';
 import type { BankReconciliationDetail, BankReconLine } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

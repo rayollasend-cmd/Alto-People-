@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clock } from 'lucide-react';
+import { Clock } from '@/components/ui/icons';
 import { fmtShiftWindow } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';

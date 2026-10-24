@@ -3,7 +3,7 @@ import { isNative } from '@/lib/native/platform';
 import { openInSystemBrowser } from '@/lib/native/shell';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useLocation, useParams } from 'react-router-dom';
-import { Building2, Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
+import { Building2, Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from '@/components/ui/icons';
 import type { MfaEnrollStartResponse } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { safeNextPath } from '@/lib/safeNextPath';

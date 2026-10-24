@@ -21,7 +21,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
-import { Activity } from 'lucide-react';
+import { Activity } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { CopyValue, HEALTH_BADGE, WHAT_TO_DO, kindLook, environmentLabel, healthLine, useSafeConfirm } from './providerShared';
 

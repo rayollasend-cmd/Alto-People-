@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, CheckCircle2, Clock, Flag, MessageSquareText, Phone, UserX } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Clock, Flag, MessageSquareText, Phone, UserX } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { getLateNow, type LateNowPerson } from '@/lib/attendanceInsightsApi';

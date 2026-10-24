@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Users } from 'lucide-react';
+import { Users } from '@/components/ui/icons';
 import { isOnTheBooks, type TimeOffCategory } from '@alto-people/shared';
 import { listDirectory } from '@/lib/directoryApi';
 import { useClients } from '@/lib/useClients';

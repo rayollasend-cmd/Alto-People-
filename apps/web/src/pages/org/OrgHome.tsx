@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, Briefcase, Building2, CalendarClock, FolderTree, GripVertical, Hash, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Briefcase, Building2, CalendarClock, FolderTree, GripVertical, Hash, Plus, Sparkles, Trash2 } from '@/components/ui/icons';
 import { OrgAssignmentDrawer } from './OrgAssignmentDrawer';
 import { PositionsTab } from './PositionsTab';
 import { CustomFieldsTab } from './CustomFieldsTab';

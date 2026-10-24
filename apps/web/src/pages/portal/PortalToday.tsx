@@ -12,7 +12,7 @@ import {
   Printer,
   Users,
   FileText,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { LATE_GRACE_MINUTES } from '@alto-people/shared';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

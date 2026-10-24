@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CalendarClock, Clock, Scale } from 'lucide-react';
+import { CalendarClock, Clock, Scale } from '@/components/ui/icons';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';

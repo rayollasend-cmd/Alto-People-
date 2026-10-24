@@ -10,7 +10,7 @@ import {
   FileText,
   MapPin,
   Timer,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   ActiveTimeEntryResponse,

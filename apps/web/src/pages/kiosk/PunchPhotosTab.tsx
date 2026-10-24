@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Camera, CameraOff } from 'lucide-react';
+import { Camera, CameraOff } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useTenant } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';

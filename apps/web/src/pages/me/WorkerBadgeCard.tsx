@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Expand, Eye, EyeOff, IdCard, Wallet } from 'lucide-react';
+import { Expand, Eye, EyeOff, IdCard, Wallet } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getAppleWalletLink, getGoogleWalletLink, getWorkerBadge, type WorkerBadge } from '@/lib/walletApi';

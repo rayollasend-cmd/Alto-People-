@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight } from 'lucide-react';
+import { AlertTriangle, ArrowRight } from '@/components/ui/icons';
 import { becauseSentence, type MembershipImpact, type MoveInput, type PayScheduleSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { applyMove, previewMove } from '@/lib/paySchedulesApi';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Archive } from 'lucide-react';
+import { Archive } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { DocumentKind } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

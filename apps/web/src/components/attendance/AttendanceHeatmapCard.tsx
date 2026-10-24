@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Grid3x3 } from 'lucide-react';
+import { Grid3x3 } from '@/components/ui/icons';
 import { getAttendanceHeatmap, type AttendanceHeatmapMetric, type AttendanceHeatmapResponse } from '@/lib/attendanceInsightsApi';
 import { fmtDate } from '@/lib/format';
 import { ChartFrame, type ChartColumn } from '@/components/ui/ChartFrame';

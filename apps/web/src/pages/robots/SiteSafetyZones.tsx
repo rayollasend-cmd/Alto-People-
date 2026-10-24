@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pentagon, ShieldAlert, Undo2, Users } from 'lucide-react';
+import { Pentagon, ShieldAlert, Undo2, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { SiteSafetyZoneSummary, ZoneShape } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

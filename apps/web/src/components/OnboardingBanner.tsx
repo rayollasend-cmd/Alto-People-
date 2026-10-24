@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, Sparkles } from '@/components/ui/icons';
 import type { ApplicationSummary, TaskKind } from '@alto-people/shared';
 import { listApplications } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';

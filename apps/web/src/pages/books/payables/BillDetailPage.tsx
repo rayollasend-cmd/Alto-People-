@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Clock3, FileUp, Paperclip, ShieldCheck, SkipForward } from 'lucide-react';
+import { CheckCircle2, Clock3, FileUp, Paperclip, ShieldCheck, SkipForward } from '@/components/ui/icons';
 import type { BooksBill, BooksBillInput } from '@alto-people/shared';
 import { decideApprovalRequest } from '@/lib/approvalRequestsApi';
 import { usePrompt } from '@/lib/confirm';

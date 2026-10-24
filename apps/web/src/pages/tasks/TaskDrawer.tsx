@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Check, ChevronDown, Hand, PlayCircle, X } from 'lucide-react';
+import { Check, ChevronDown, Hand, PlayCircle, X } from '@/components/ui/icons';
 import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type AssignmentReason, type WorkTaskEventKind, type RankedCandidate, type WorkTaskAssignmentView, type WorkTaskDetailView } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { fmtDateTime, fmtMoney } from '@/lib/format';

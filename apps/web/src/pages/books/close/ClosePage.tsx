@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, CalendarCheck } from 'lucide-react';
+import { ArrowRight, CalendarCheck } from '@/components/ui/icons';
 import type { CloseMonthSummary } from '@alto-people/shared';
 import { listCloseMonths } from '@/lib/books/closeApi';
 import { fmtDate, ymdLocal } from '@/lib/format';

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { authorizeBackgroundCheck } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';

@@ -2,7 +2,7 @@ import { ListTemplate } from '@/components/templates';
 import { WEBHOOK_EVENTS } from '@alto-people/shared';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, Download, Key, ShieldCheck, Webhook } from 'lucide-react';
+import { BookOpen, Download, Key, ShieldCheck, Webhook } from '@/components/ui/icons';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';

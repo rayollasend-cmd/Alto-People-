@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, AtSign, CheckCircle2, ClipboardList, Gavel, MessagesSquare, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { ArrowRight, AtSign, CheckCircle2, ClipboardList, Gavel, MessagesSquare, ThumbsDown, ThumbsUp } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';

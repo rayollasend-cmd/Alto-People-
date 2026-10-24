@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { FileText, Inbox, Paperclip, Plus } from 'lucide-react';
+import { FileText, Inbox, Paperclip, Plus } from '@/components/ui/icons';
 import {
   createNotice,
   getNotice,

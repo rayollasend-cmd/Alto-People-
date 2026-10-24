@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, ShieldQuestion } from '@/components/ui/icons';
 import { TRUST_AREA_STATUS_LABELS, type Soc2Stage, type TrustAreaPublic, type TrustAreaStatus, type TrustSummaryPublic } from '@alto-people/shared';
 import { getTrustPublic } from '@/lib/trustApi';
 import { fmtDateTime } from '@/lib/format';

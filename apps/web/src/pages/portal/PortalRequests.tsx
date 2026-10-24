@@ -7,7 +7,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { MessageSquarePlus, Send } from 'lucide-react';
+import { MessageSquarePlus, Send } from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate } from '@/lib/format';

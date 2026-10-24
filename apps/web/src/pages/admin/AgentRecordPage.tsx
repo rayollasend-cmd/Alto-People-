@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, ShieldAlert } from 'lucide-react';
+import { Pencil, ShieldAlert } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { AGENT_ENVIRONMENT_LABELS, AGENT_SCOPES, WORKER_STATUS_LABELS, type AgentDetail } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';

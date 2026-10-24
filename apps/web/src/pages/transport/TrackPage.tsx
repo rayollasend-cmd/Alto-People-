@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Bus, Clock, MapPin } from 'lucide-react';
+import { Bus, Clock, MapPin } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtTimeTz } from '@/lib/format';
 import { getPublicTrip } from '@/lib/transportApi';

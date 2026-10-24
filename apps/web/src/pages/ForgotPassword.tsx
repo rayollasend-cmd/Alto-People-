@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronLeft, Mail, ShieldCheck } from 'lucide-react';
+import { ChevronLeft, Mail, ShieldCheck } from '@/components/ui/icons';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';

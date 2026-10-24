@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlarmClock, AlertTriangle, Check, ClipboardCopy, FileUp, MessageSquare, RotateCcw, SkipForward } from 'lucide-react';
+import { AlarmClock, AlertTriangle, Check, ClipboardCopy, FileUp, MessageSquare, RotateCcw, SkipForward } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { FieldglassStatus, TimesheetAssociateDetailResponse, TimesheetRow, TimesheetWeekResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BadgeCheck, BarChart3, Plus, Search, Sparkles, ShieldCheck, Trash2, UserRound } from 'lucide-react';
+import { BadgeCheck, BarChart3, Plus, Search, Sparkles, ShieldCheck, Trash2, UserRound } from '@/components/ui/icons';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';

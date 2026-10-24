@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Plug, Plus } from 'lucide-react';
+import { Plug, Plus } from '@/components/ui/icons';
 import type { IntegrationConnectionSummary } from '@alto-people/shared';
 import { listIntegrationConnections, listIntegrationVendors } from '@/lib/integrationsApi';
 import { Badge } from '@/components/ui/Badge';

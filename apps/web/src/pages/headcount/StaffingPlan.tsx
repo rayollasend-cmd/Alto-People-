@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { STOCK_LEGEND } from '@/components/ui/charts';
-import { Briefcase, CalendarRange } from 'lucide-react';
+import { Briefcase, CalendarRange } from '@/components/ui/icons';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { postingForGapHref } from '@/pages/recruiting/postingSeed';
 import { getStaffingPlan, largestGap, type StaffingStore, type StaffingWeek } from '@/pages/recruiting/staffingGaps';

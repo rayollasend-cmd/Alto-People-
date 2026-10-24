@@ -19,7 +19,7 @@ import {
   ShieldAlert,
   Scale,
   Wallet,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { FieldglassQueueList } from './fieldglass/FieldglassQueue';
 import type { FinanceOverview } from './finance/financeTypes';

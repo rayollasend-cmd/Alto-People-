@@ -1,7 +1,7 @@
 import { API_SCOPES, API_SCOPE_LABELS, type ApiClientIssued, type ApiClientSummary, type ApiScope } from '@alto-people/shared';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, ExternalLink, Plus, ShieldCheck } from 'lucide-react';
+import { Copy, ExternalLink, Plus, ShieldCheck } from '@/components/ui/icons';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';

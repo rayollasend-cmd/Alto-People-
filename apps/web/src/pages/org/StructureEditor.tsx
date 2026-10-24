@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { timezoneForState, zoneForPickedPlace } from '@/lib/stateTimezone';
 import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';
 import { toast } from 'sonner';
-import { ExternalLink, Trash2 } from 'lucide-react';
+import { ExternalLink, Trash2 } from '@/components/ui/icons';
 import { SITE_TYPES, SUPPORTED_TIMEZONES, type SiteType } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { inviteRegionUser, listRegions } from '@/lib/regionsApi';

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Printer } from 'lucide-react';
+import { AlertTriangle, Printer } from '@/components/ui/icons';
 import { getPayrollYtd, type PayrollYtdMonth, type PayrollYtdResponse } from '@/lib/payrollApi';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { StackedBarChart } from '@/components/ui/charts';

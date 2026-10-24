@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, CalendarCheck, PhoneOff, Repeat, ShieldAlert } from 'lucide-react';
+import { ArrowRight, CalendarCheck, PhoneOff, Repeat, ShieldAlert } from '@/components/ui/icons';
 import { getOpsActivity, type OpsActivityKind } from '@/lib/opsActivityApi';
 import { fmtRelativeDate } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/Card';

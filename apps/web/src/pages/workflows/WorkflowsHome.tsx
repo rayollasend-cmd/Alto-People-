@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ClipboardCheck, ListTodo, Plus, RefreshCw, Trash2, Workflow, X, Zap } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, ListTodo, Plus, RefreshCw, Trash2, Workflow, X, Zap } from '@/components/ui/icons';
 import { ApprovalGateEditor, deciderOf } from './ApprovalGateEditor';
 import { finishWorkflowTask, listWorkflowTasks, type WorkflowTask } from '@/lib/approvalRequestsApi';
 import {

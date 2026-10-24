@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Plus, Trash2, Users, X } from 'lucide-react';
+import { AlertTriangle, Plus, Trash2, Users, X } from '@/components/ui/icons';
 import type { ShiftTeam, ShiftTeamDetailResponse } from '@alto-people/shared';
 import {
   addShiftTeamMember,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CalendarClock, ChevronDown, Columns3, MoreHorizontal, Plus, Star, Table2, UserPlus } from 'lucide-react';
+import { AlertTriangle, CalendarClock, ChevronDown, Columns3, MoreHorizontal, Plus, Star, Table2, UserPlus } from '@/components/ui/icons';
 import type { PayScheduleSummary, RosterPerson } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useTenant } from '@/lib/auth';

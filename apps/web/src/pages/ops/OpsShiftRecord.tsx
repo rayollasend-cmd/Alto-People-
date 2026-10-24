@@ -9,7 +9,7 @@ import {
   Flag,
   Users,
   X,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
@@ -369,9 +369,9 @@ function RecordTaskLine({ task, isFollowUp = false }: { task: OpsTaskRow; isFoll
           )}
         >
           {isDone ? (
-            <Check className="h-3 w-3 icon-bold" />
+            <Check className="h-3 w-3" />
           ) : task.status === 'BLOCKED' ? (
-            <X className="h-3 w-3 icon-bold" />
+            <X className="h-3 w-3" />
           ) : (
             <span className="h-1.5 w-1.5 rounded-full bg-current" />
           )}

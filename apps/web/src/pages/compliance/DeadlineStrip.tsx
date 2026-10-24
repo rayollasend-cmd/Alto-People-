@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { X } from '@/components/ui/icons';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, StackedBarChart } from '@/components/ui/charts';
 import { Button } from '@/components/ui';

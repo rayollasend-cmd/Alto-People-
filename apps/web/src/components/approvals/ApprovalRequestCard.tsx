@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Check, ClipboardCheck, Clock, X } from 'lucide-react';
+import { Check, ClipboardCheck, Clock, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { APPROVAL_REQUEST_KIND_LABELS, type ApprovalRequestSummary } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';

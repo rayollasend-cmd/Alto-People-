@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight } from '@/components/ui/icons';
 import { OPEN_PROSPECT_STAGES, type OpenProspectStage, type ProspectRow, type ProspectStageKey } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { fmtMoneyCompact } from '@/lib/format';

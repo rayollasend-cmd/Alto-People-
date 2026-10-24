@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { BookUser, Bot, Copy, LayoutGrid, MoreHorizontal, Plus, Settings2, ShieldAlert, TableProperties } from 'lucide-react';
+import { BookUser, Bot, Copy, LayoutGrid, MoreHorizontal, Plus, Settings2, ShieldAlert, TableProperties } from '@/components/ui/icons';
 import { AgentCards } from '@/components/agents/AgentCards';
 import { ProposalList } from '@/components/agents/ProposalDecision';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';

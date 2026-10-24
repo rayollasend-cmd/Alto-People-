@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Bus } from 'lucide-react';
+import { Bus } from '@/components/ui/icons';
 import { fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
 import { getVanArrivals, type VanArrival } from '@/lib/transportApi';
 import { Avatar } from '@/components/ui/Avatar';

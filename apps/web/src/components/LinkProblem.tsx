@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Clock, Link2Off, Mail, Phone, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { Clock, Link2Off, Mail, Phone, TriangleAlert, type LucideIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { fmtPhone, phoneHref } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';

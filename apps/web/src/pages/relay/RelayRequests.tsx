@@ -14,7 +14,7 @@ import {
   Send,
   SendHorizonal,
   X,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useOptimisticMutation } from '@/lib/optimistic';
 import { useAuth } from '@/lib/auth';

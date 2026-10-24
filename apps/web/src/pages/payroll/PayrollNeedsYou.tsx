@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CircleDot } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CircleDot } from '@/components/ui/icons';
 import type { PayrollRunSummary } from '@alto-people/shared';
 import { useInbox } from '@/lib/inboxApi';
 import { getDisbursementWebhookStatus, getPayrollReadiness, listPayrollRuns } from '@/lib/payrollApi';

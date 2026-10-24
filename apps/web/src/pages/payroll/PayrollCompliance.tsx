@@ -1,4 +1,4 @@
-import { FileSignature, PiggyBank, ScrollText, UserPlus } from 'lucide-react';
+import { FileSignature, PiggyBank, ScrollText, UserPlus } from '@/components/ui/icons';
 import { useUrlParam } from '@/lib/useUrlState';
 import { NewHireReportsTab, PayNoticesTab, PaystubRulesTab, RothCatchUpTab } from './PayComplianceTabs';
 import { ListTemplate } from '@/components/templates';

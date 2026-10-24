@@ -18,7 +18,7 @@ import {
   ScanLine,
   ShieldCheck,
   Upload,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, Repeat, Trash2 } from 'lucide-react';
+import { Check, Repeat, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/format';

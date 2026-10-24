@@ -25,7 +25,7 @@ import {
   UserPlus,
   Users,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type { Capability } from '@alto-people/shared';
 import { DASHBOARD_NAV, useActiveNavPath } from '@/lib/modules';
 import { prefetchRoute } from '@/lib/prefetch';

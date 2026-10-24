@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { MapPin, MapPinOff, Navigation, Users } from 'lucide-react';
+import { MapPin, MapPinOff, Navigation, Users } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';

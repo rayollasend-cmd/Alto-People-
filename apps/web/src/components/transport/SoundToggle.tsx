@@ -1,4 +1,4 @@
-import { Volume2, VolumeX } from 'lucide-react';
+import { Volume2, VolumeX } from '@/components/ui/icons';
 import { useRideSounds } from '@/lib/rideAlerts';
 import { Button } from '@/components/ui/Button';
 

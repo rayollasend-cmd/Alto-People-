@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ImageOff } from 'lucide-react';
+import { ImageOff } from '@/components/ui/icons';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui';

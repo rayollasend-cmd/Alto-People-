@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRightLeft, MessageSquare, UserRound, Users } from 'lucide-react';
+import { ArrowRightLeft, MessageSquare, UserRound, Users } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtShiftTz, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';

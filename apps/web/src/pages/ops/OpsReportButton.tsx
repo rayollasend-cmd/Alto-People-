@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download, FileBarChart2, Mail } from 'lucide-react';
+import { Download, FileBarChart2, Mail } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import {

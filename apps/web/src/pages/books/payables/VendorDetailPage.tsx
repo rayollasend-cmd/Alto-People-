@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ShieldAlert } from 'lucide-react';
+import { Plus, ShieldAlert } from '@/components/ui/icons';
 import type { BooksBill, BooksBillPayment, BooksVendor, BooksVendorInput, BooksVendorPaymentMethod } from '@alto-people/shared';
 import { usePrompt } from '@/lib/confirm';
 import { fmtDate, fmtDateTime } from '@/lib/format';

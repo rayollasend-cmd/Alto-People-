@@ -5,7 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { NineBox, SuccessionByStore } from './SuccessionStores';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Crown, Download, Plus, Trash2, Users } from 'lucide-react';
+import { Crown, Download, Plus, Trash2, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {

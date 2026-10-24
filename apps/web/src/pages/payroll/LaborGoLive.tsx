@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Landmark, Scale } from 'lucide-react';
+import { Landmark, Scale } from '@/components/ui/icons';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateOnlyRange, fmtMoney, parseYmd } from '@/lib/format';

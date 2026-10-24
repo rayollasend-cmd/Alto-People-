@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
-import { Briefcase, MapPin, Plus, Send, Users } from 'lucide-react';
+import { Briefcase, MapPin, Plus, Send, Users } from '@/components/ui/icons';
 import { Link } from 'react-router-dom';
 import { useUrlParam } from '@/lib/useUrlState';
 import { toast } from 'sonner';

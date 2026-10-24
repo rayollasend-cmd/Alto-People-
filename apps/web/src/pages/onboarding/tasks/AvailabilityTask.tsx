@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { finishAvailability } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';

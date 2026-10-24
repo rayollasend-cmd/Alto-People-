@@ -9,7 +9,7 @@ import {
   Trash2,
   UserPlus,
   X,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';

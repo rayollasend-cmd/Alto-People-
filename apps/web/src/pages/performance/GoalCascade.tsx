@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Building2, ChevronDown, ChevronRight, Target, Users } from 'lucide-react';
+import { Building2, ChevronDown, ChevronRight, Target, Users } from '@/components/ui/icons';
 import type { Goal, GoalStatus } from '@/lib/perf84Api';
 import { Badge } from '@/components/ui';
 import { cn } from '@/lib/cn';

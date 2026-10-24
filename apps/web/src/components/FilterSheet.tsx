@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from '@/components/ui/icons';
 import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, ChevronRight, Download, FolderTree } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, FolderTree } from '@/components/ui/icons';
 import type { Department } from '@alto-people/shared';
 import { useTerm } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';

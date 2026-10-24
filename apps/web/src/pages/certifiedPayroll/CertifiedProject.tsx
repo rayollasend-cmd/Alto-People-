@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CalendarCheck2, HardHat, Plus, Trash2, Users } from 'lucide-react';
+import { CalendarCheck2, HardHat, Plus, Trash2, Users } from '@/components/ui/icons';
 import { addRate, addWorker, endWorker, getProject, removeRate, updateProject, type ProjectDetail, type ProjectRate, type ProjectWorker, type WeekRow } from '@/lib/certifiedPayrollApi';
 import { RecordTemplate } from '@/components/templates';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';

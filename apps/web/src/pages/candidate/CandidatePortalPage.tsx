@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { CalendarCheck, CalendarClock, CheckCircle2, FileText, MapPin, Upload, UserRound } from 'lucide-react';
+import { CalendarCheck, CalendarClock, CheckCircle2, FileText, MapPin, Upload, UserRound } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { confirmPortalInterview, getCandidatePortal, submitPortalEeo, uploadPortalDocument, type CandidatePortal } from '@/lib/candidatePortalApi';
 import { EeoSelfIdCard } from '@/pages/onboarding/EeoSelfIdCard';

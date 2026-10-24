@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download, Plus } from 'lucide-react';
+import { Download, Plus } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { errorText } from '@/lib/errorText';
 import { useConfirm } from '@/lib/confirm';

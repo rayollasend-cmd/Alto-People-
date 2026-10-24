@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Download, Plus, Target, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, Download, Plus, Target, Trash2, XCircle } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { urlBoolean, useUrlState } from '@/lib/useUrlState';

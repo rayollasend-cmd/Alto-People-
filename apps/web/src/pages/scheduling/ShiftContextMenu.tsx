@@ -15,7 +15,7 @@ import {
   CalendarPlus,
   Send,
   FileText,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { wentUnfilled, type AutoFillCandidate, type Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import type { QuickActions } from './ShiftHoverCard';

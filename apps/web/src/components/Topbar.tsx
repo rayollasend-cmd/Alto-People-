@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, Sparkles, User, WifiOff, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, Sparkles, User, WifiOff, X } from '@/components/ui/icons';
 import { useI18n } from '@/lib/i18n';
 import { Link } from 'react-router-dom';
 import { useAuth, useRoleLabel } from '@/lib/auth';

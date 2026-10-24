@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, History as HistoryIcon } from 'lucide-react';
+import { AlertTriangle, History as HistoryIcon } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtMoney } from '@/lib/format';

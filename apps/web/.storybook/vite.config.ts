@@ -50,7 +50,6 @@ export default defineConfig({
       '@radix-ui/react-slot',
       '@radix-ui/react-tooltip',
       'recharts',
-      'lucide-react',
       'sonner',
       'clsx',
       'tailwind-merge',

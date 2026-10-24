@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, AlertTriangle, Gauge, TrendingUp, Users } from 'lucide-react';
+import { Activity, AlertTriangle, Gauge, TrendingUp, Users } from '@/components/ui/icons';
 import { ROLE_LABELS, type Role, type WebVitalMetric, type WebVitalRating, type WebVitalRouteRow } from '@alto-people/shared';
 import {
   getActiveUsers,

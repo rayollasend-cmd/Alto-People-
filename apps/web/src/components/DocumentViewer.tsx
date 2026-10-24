@@ -8,7 +8,7 @@ import {
   X,
   ZoomIn,
   ZoomOut,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import {
   downloadAllDocumentsUrl,

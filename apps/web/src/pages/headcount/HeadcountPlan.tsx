@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Wallet } from 'lucide-react';
+import { Wallet } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useTenant, useTerm } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';

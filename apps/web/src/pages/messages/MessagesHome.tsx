@@ -11,7 +11,7 @@ import {
   Send,
   Store,
   Users,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';

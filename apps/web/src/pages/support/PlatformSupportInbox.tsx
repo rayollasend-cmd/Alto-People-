@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Inbox } from 'lucide-react';
+import { Inbox } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDateTime, fmtRelativeDate } from '@/lib/format';

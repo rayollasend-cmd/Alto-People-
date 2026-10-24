@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRight, ExternalLink } from 'lucide-react';
+import { ArrowRight, ExternalLink } from '@/components/ui/icons';
 import type { ControlStatus, TrustControlPublic } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { getTrust } from '@/lib/trustApi';

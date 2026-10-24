@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { nextInQueue } from '@/lib/queueNext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Landmark, PhoneCall, ShieldAlert } from 'lucide-react';
+import { Landmark, PhoneCall, ShieldAlert } from '@/components/ui/icons';
 import type { FinancialChangeRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth, useRoleLabel } from '@/lib/auth';

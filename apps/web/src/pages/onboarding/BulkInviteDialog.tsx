@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Send, X as XIcon } from 'lucide-react';
+import { CheckCircle2, Send, X as XIcon } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   BulkInviteApplicant,

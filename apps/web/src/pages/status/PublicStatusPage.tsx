@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Activity, CheckCircle2, CircleDashed, Mail, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { Activity, CheckCircle2, CircleDashed, Mail, ShieldAlert, TriangleAlert } from '@/components/ui/icons';
 import {
   STATUS_INCIDENT_STATE_LABELS,
   STATUS_STATE_LABELS,

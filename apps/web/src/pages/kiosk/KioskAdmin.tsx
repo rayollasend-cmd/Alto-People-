@@ -22,7 +22,7 @@ import {
   Search,
   Stethoscope,
   Tablet,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import {
   assignKioskPin,

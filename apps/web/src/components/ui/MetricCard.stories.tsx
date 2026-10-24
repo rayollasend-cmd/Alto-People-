@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { Clock, Users } from 'lucide-react';
+import { Clock, Users } from '@/components/ui/icons';
 import { expect, within } from 'storybook/test';
 import { MetricCard } from './MetricCard';
 

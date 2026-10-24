@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
-import { Download, Trash2 } from 'lucide-react';
+import { Download, Trash2 } from '@/components/ui/icons';
 
 // The header's shape depends on the screen: desktop unless a test says phone.
 let wide = true;

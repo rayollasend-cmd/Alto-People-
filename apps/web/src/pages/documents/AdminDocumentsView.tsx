@@ -19,7 +19,7 @@ import {
   X,
   XCircle,
   FilePlus2,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   DocumentKind,
@@ -70,7 +70,7 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import { RequestDocumentDialog } from './RequestDocumentDialog';
 import { QueryError } from '@/components/ui/QueryError';
-import { Eye, EyeOff, FolderInput, LayoutGrid, Rows3 } from 'lucide-react';
+import { Eye, EyeOff, FolderInput, LayoutGrid, Rows3 } from '@/components/ui/icons';
 import { REJECT_PRESETS, RejectDocumentDialog } from '@/components/RejectDocumentDialog';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { Input, Textarea } from '@/components/ui/Input';

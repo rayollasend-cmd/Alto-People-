@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, ShieldQuestion } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { CONTROL_STATUS_LABELS, SOC2_STAGE_LABELS, TRUST_DOCUMENT_KINDS, TRUST_DOCUMENT_LABELS, type ControlStatus, type Soc2Progress, type Soc2Stage, type TrustControlPublic, type TrustDocumentKind, type TrustDownloadRequestInput, type TrustStatus, type TrustSummaryPublic } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

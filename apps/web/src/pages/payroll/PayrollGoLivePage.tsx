@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CheckCircle2, Info, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Info, RefreshCw, XCircle } from '@/components/ui/icons';
 import type { GoLiveCheck, GoLiveStatus, PayrollGoLive } from '@alto-people/shared';
 import { apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';

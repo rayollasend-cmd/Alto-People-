@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ChevronDown, ChevronUp, Scale } from 'lucide-react';
+import { ChevronDown, ChevronUp, Scale } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { getRotation, offerShift, recordOfferAnswer, type RotationCandidate } from '@/lib/laborLiveApi';
 import { Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Field, SkeletonRows, Textarea } from '@/components/ui';

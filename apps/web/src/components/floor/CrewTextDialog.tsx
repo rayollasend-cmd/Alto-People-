@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageSquareText } from 'lucide-react';
+import { MessageSquareText } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { textCrew, type CrewTextResult } from '@/lib/floorApi';

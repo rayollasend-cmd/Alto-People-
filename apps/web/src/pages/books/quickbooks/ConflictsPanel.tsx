@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, ExternalLink } from 'lucide-react';
+import { CheckCircle2, ExternalLink } from '@/components/ui/icons';
 import type { QboConflictRow } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
 import { listQboConflicts, QBO_KEY, resolveQboConflict } from '@/lib/books/quickbooksApi';

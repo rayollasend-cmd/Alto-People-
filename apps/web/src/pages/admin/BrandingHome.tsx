@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ImagePlus, Trash2 } from 'lucide-react';
+import { ImagePlus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   ASSISTANT_NAME_PROMPT,

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRightLeft, Clock } from 'lucide-react';
+import { ArrowRightLeft, Clock } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { fmtShiftWindow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Briefcase, Plus, Trash2, Users } from 'lucide-react';
+import { Briefcase, Plus, Trash2, Users } from '@/components/ui/icons';
 import type {
   CostCenter,
   Department,

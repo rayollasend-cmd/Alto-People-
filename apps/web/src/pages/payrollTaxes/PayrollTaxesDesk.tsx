@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, CalendarCheck2, Download, FileText, History, Inbox, Landmark, RefreshCw, Scale, ShieldCheck, Wallet } from 'lucide-react';
+import { AlertTriangle, CalendarCheck2, Download, FileText, History, Inbox, Landmark, RefreshCw, Scale, ShieldCheck, Wallet } from '@/components/ui/icons';
 import {
   cancelTaxPayment,
   createTaxPayment,

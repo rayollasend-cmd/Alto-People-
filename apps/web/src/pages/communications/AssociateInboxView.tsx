@@ -18,7 +18,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
-import { ArrowUpRight, CheckCheck, Inbox, Megaphone } from 'lucide-react';
+import { ArrowUpRight, CheckCheck, Inbox, Megaphone } from '@/components/ui/icons';
 import { toast } from 'sonner';
 
 /**

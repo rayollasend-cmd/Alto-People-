@@ -11,7 +11,7 @@ import {
   Search,
   Trash2,
   Upload,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';

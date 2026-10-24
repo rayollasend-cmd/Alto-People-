@@ -1,6 +1,6 @@
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useMemo, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X } from '@/components/ui/icons';
 import type { Shift, ShiftStatus } from '@alto-people/shared';
 import {
   Tooltip,

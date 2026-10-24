@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link } from 'react-router-dom';
-import { MoreHorizontal, type LucideIcon } from 'lucide-react';
+import { MoreHorizontal, type LucideIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { useConfirmIfMounted, type ConfirmOptions } from '@/lib/confirm';
 import { useI18n } from '@/lib/i18n';

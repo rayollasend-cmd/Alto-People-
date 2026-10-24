@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Building2, CalendarDays, Clock, Inbox, ScrollText, ShieldCheck, Users, Wallet, BarChart3 } from 'lucide-react';
+import { Bot, Building2, CalendarDays, Clock, Inbox, ScrollText, ShieldCheck, Users, Wallet, BarChart3 } from '@/components/ui/icons';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';

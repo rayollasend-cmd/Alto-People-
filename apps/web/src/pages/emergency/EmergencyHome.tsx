@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, CheckCircle2, LifeBuoy, MapPin, Phone, Siren, Users } from 'lucide-react';
+import { AlertTriangle, Bus, CheckCircle2, LifeBuoy, MapPin, Phone, Siren, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { EmergencyBoardRow, EmergencyDeclareInput, EmergencySiteRef, EmergencySummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

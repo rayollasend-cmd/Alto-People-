@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { HardHat, Plus } from 'lucide-react';
+import { HardHat, Plus } from '@/components/ui/icons';
 import { createProject, listProjects, type FringeMode, type ProjectInput, type ProjectSummary } from '@/lib/certifiedPayrollApi';
 import { listSites } from '@/lib/orgApi';
 import { ListTemplate } from '@/components/templates';

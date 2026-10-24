@@ -12,7 +12,7 @@ import {
   LogOut,
   Upload,
   UserCheck,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   ApplicationDetail as ApplicationDetailType,

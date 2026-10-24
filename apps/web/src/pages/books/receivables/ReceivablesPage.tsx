@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { HandCoins, Plus, RotateCcw } from 'lucide-react';
+import { HandCoins, Plus, RotateCcw } from '@/components/ui/icons';
 import {
   AGING_BUCKET_KEYS,
   AGING_BUCKET_LABELS,

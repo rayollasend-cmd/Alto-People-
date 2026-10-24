@@ -1,4 +1,4 @@
-import { Coffee, LogIn, LogOut, Play } from 'lucide-react';
+import { Coffee, LogIn, LogOut, Play } from '@/components/ui/icons';
 import type { TimeEntry } from '@alto-people/shared';
 import { browserTimeZone, fmtDateTz, tzAbbrev } from '@/lib/format';
 import { cn } from '@/lib/cn';

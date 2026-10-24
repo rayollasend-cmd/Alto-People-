@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp } from '@/components/ui/icons';
 import type { AuditLogEntry } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
 import { EmptyState } from '@/components/ui/EmptyState';

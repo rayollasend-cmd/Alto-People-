@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, BedDouble, CalendarRange, Copy, Download, FileText, Plus, TrendingUp } from 'lucide-react';
+import { ArrowLeft, BedDouble, CalendarRange, Copy, Download, FileText, Plus, TrendingUp } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   RECRUITING_CHANNELS,

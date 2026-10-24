@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, Copy, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
+import { ChevronDown, Copy, ShieldAlert, ShieldCheck, ShieldQuestion } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

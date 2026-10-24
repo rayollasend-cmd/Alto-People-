@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeftRight } from 'lucide-react';
+import { ArrowLeftRight } from '@/components/ui/icons';
 import type { ShiftSwapRequest, ShiftSwapStatus } from '@alto-people/shared';
 import {
   cancelSwap,

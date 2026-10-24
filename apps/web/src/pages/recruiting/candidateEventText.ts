@@ -1,4 +1,4 @@
-import type { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from '@/components/ui/icons';
 import {
   ArrowRight,
   ArchiveRestore,
@@ -20,7 +20,7 @@ import {
   Upload,
   UserPlus,
   XCircle,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type { CandidateEvent } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
 import { SOURCE_LABEL, STAGE_LABEL } from './recruitingLabels';

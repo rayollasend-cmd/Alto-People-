@@ -10,7 +10,7 @@ import {
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { GripVertical, Plus } from 'lucide-react';
+import { GripVertical, Plus } from '@/components/ui/icons';
 import { wentUnfilled, type AssociateLite, type Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';

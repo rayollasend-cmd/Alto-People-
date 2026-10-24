@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Banknote, Building2, CheckCircle2, Info, Landmark } from 'lucide-react';
+import { AlertTriangle, Banknote, Building2, CheckCircle2, Info, Landmark } from '@/components/ui/icons';
 import {
   centsToMoney,
   clockText,

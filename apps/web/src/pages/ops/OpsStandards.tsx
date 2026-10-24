@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { termizeText } from '@/lib/modules';
 import { useTerm } from '@/lib/auth';
-import { AlertTriangle, CheckCircle2, Clock, Thermometer } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Thermometer } from '@/components/ui/icons';
 import {
   Bar,
   CartesianGrid,

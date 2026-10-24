@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CalendarClock, Copy, Mail, UserPlus } from 'lucide-react';
+import { CalendarClock, Copy, Mail, UserPlus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   Candidate,

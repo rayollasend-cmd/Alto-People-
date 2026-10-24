@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Minus, TrendingDown, TrendingUp } from 'lucide-react';
+import { Minus, TrendingDown, TrendingUp } from '@/components/ui/icons';
 import {
   Bar,
   BarChart,

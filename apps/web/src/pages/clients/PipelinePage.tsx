@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, Info, Plus, Target } from 'lucide-react';
+import { Building2, Info, Plus, Target } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   OPEN_PROSPECT_STAGES,

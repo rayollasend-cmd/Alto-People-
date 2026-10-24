@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { nextInQueue } from '@/lib/queueNext';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { ClipboardList, Download, Plus, Star } from 'lucide-react';
+import { ClipboardList, Download, Plus, Star } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   PerformanceReview,

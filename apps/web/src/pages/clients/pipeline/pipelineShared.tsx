@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRightLeft, Building2, CalendarClock, UserRound } from 'lucide-react';
+import { ArrowRightLeft, Building2, CalendarClock, UserRound } from '@/components/ui/icons';
 import {
   OPEN_PROSPECT_STAGES,
   PROSPECT_STAGE_LABELS,

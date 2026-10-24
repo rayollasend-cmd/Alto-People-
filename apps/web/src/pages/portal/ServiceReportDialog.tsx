@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FileText } from 'lucide-react';
+import { FileText } from '@/components/ui/icons';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';

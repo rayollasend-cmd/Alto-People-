@@ -21,7 +21,7 @@ import {
   UserCheck,
   Users,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type { RecruiterHome } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

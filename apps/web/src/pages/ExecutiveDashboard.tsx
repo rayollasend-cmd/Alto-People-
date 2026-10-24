@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowDownRight, ArrowUpRight, Download, TrendingUp } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, Download, TrendingUp } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';

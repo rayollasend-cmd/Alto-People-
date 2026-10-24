@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Bus, Gauge, HeartPulse, RefreshCw, ScanFace } from 'lucide-react';
+import { AlertTriangle, Bus, Gauge, HeartPulse, RefreshCw, ScanFace } from '@/components/ui/icons';
 import type { ReliabilityIssueRow, ReliabilityRouteRow, ReliabilityWeekRow } from '@alto-people/shared';
 import { getReliability } from '@/lib/reliabilityApi';
 import { fmtDateOnly, fmtDateTime } from '@/lib/format';

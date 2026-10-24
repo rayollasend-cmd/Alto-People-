@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, CalendarClock, Check, Fuel, IdCard, Plus, ShieldAlert, Siren, ThumbsDown, ThumbsUp, Trash2, Wrench } from 'lucide-react';
+import { AlertTriangle, Bus, CalendarClock, Check, Fuel, IdCard, Plus, ShieldAlert, Siren, ThumbsDown, ThumbsUp, Trash2, Wrench } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';

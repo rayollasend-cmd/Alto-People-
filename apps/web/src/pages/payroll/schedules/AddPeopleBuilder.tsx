@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sanitizeReturnPath } from '@/lib/returnPath';
-import { Building2, Check, MapPin, Search, UserMinus, UserPlus, Users } from 'lucide-react';
+import { Building2, Check, MapPin, Search, UserMinus, UserPlus, Users } from '@/components/ui/icons';
 import type { MembershipChangeInput, ScheduleCandidate } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useTenant } from '@/lib/auth';

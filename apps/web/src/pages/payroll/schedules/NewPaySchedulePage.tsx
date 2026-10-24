@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Check, Star } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Star } from '@/components/ui/icons';
 import type { PayFrequencyKind } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useTenant } from '@/lib/auth';

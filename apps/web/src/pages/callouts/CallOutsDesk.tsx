@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarSearch, ChevronDown, ChevronRight, PhoneCall, PhoneOff, UserCheck } from 'lucide-react';
+import { CalendarSearch, ChevronDown, ChevronRight, PhoneCall, PhoneOff, UserCheck } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';

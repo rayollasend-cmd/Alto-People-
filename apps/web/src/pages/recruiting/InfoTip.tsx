@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Info } from 'lucide-react';
+import { Info } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 
 /**

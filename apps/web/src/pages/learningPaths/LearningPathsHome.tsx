@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Route as RouteIcon, Trash2, ArrowUp, ArrowDown, X } from 'lucide-react';
+import { Plus, Route as RouteIcon, Trash2, ArrowUp, ArrowDown, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {

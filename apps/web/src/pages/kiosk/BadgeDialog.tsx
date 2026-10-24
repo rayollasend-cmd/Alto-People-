@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Nfc, RefreshCcw, Smartphone, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, Nfc, RefreshCcw, Smartphone, TriangleAlert } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api';

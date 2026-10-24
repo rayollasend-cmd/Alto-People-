@@ -1,6 +1,6 @@
 import { useContext, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, CalendarClock, ChevronRight, Inbox } from 'lucide-react';
+import { ArrowRight, CalendarClock, ChevronRight, Inbox } from '@/components/ui/icons';
 import { INBOX_URGENCIES, rankInboxSources, type InboxSource, type InboxUrgency } from '@alto-people/shared';
 import { ListTemplate } from '@/components/templates';
 import { Badge, Card, EmptyState, SkeletonRows, buttonVariants } from '@/components/ui';

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Compass, Home, Search } from 'lucide-react';
+import { ArrowLeft, Compass, Home, Search } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import { usePageHero } from '@/lib/pageTitle';
 

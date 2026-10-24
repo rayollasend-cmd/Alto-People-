@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Mail, MoreHorizontal, Phone, Plus, Star, Users } from 'lucide-react';
+import { Mail, MoreHorizontal, Phone, Plus, Star, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   CLIENT_CONTACT_ROLE_LABELS,

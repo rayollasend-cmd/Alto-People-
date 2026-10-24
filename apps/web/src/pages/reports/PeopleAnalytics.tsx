@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { STOCK_LEGEND, seriesColor } from '@/components/ui/charts';
-import { Download, Users } from 'lucide-react';
+import { Download, Users } from '@/components/ui/icons';
 import { useTenant, useTerm } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';
 import { fmtMonth, ymdLocal } from '@/lib/format';

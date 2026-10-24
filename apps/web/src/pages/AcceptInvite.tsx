@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { safeNextPath } from '@/lib/safeNextPath';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Eye, EyeOff, Lock } from 'lucide-react';
+import { Eye, EyeOff, Lock } from '@/components/ui/icons';
 import type {
   AcceptInviteResponse,
   InviteSummary,

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { termizeText } from '@/lib/modules';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowUp, Scale, Settings2, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, Scale, Settings2, TrendingDown, TrendingUp } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { HeadcountOverview, HeadcountRow, ReconciliationSummary } from '@alto-people/shared';
 import { getHeadcountOverview, getTurnover } from '@/lib/headcount110Api';

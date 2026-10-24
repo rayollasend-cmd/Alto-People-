@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Info } from 'lucide-react';
+import { Info } from '@/components/ui/icons';
 import type { PayrollConfig, PayrollConfigBracket } from '@alto-people/shared';
 import { getPayrollConfig } from '@/lib/payrollApi';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';

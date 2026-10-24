@@ -25,7 +25,7 @@ import {
   type FaceModelsState,
 } from '@/lib/faceMatch';
 import { Logo } from '@/components/Logo';
-import { AlertTriangle, Check, ClipboardList, Delete, Timer } from 'lucide-react';
+import { AlertTriangle, Check, ClipboardList, Delete, Timer } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
 import {
@@ -1518,7 +1518,7 @@ export function KioskPage() {
           className="fixed inset-0 flex flex-col items-center justify-center text-center focus:outline-none"
         >
           <div className="mb-6 text-alert">
-            <AlertTriangle className="h-16 w-16" strokeWidth={2} aria-hidden="true" />
+            <AlertTriangle className="h-16 w-16" aria-hidden="true" />
           </div>
           <div role="alert" className="text-3xl text-alert max-w-2xl px-8">{error}</div>
           <div className="mt-8 text-base text-silver/80">{t.tapToDismiss}</div>
@@ -1534,7 +1534,7 @@ export function KioskPage() {
           className="fixed inset-0 flex flex-col items-center justify-center text-center focus:outline-none"
         >
           <div className="mb-6 text-gold">
-            <Timer className="h-16 w-16" strokeWidth={2} aria-hidden="true" />
+            <Timer className="h-16 w-16" aria-hidden="true" />
           </div>
           <div role="status" className="max-w-2xl px-8">
             <div className="text-3xl text-white">{t.notOnScheduleTitle}</div>
@@ -2264,7 +2264,7 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
           style={{ animation: 'kiosk-celebrate-in 0.5s cubic-bezier(.34,1.56,.64,1) both' }}
         >
           <div className="mx-auto mb-5 h-28 w-28 rounded-full border-4 border-current grid place-items-center text-warning">
-            <Timer className="h-16 w-16" strokeWidth={2.5} aria-hidden="true" />
+            <Timer className="h-16 w-16" aria-hidden="true" />
           </div>
           <div className="text-sm uppercase tracking-[0.3em] text-silver/80 mb-3">
             {known ? `${t.resultPrefix[result.action]}, ${result.associateName}` : t.punchSaved}
@@ -2336,7 +2336,7 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
         <div
           className={`mx-auto mb-5 h-28 w-28 rounded-full border-4 border-current grid place-items-center ${accent}`}
         >
-          <Check className="h-16 w-16" strokeWidth={3} aria-hidden="true" />
+          <Check className="h-16 w-16" aria-hidden="true" />
         </div>
         <div className="text-sm uppercase tracking-[0.3em] text-silver/80 mb-3">
           {greeting}
@@ -2508,7 +2508,7 @@ function SopBlockScreen({
   return (
     <div className="flex max-h-[100dvh] w-full max-w-xl flex-col overflow-y-auto px-6 py-10 text-left">
       <div className="mb-4 text-warning">
-        <ClipboardList className="h-14 w-14" strokeWidth={2} aria-hidden="true" />
+        <ClipboardList className="h-14 w-14" aria-hidden="true" />
       </div>
       <div className="text-3xl text-ink">{t.sopTitle}</div>
       <p className="mt-2 text-lg text-silver">

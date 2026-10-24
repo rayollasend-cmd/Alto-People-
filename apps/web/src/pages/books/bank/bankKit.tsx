@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileUp, Landmark, Link2 } from 'lucide-react';
+import { FileUp, Landmark, Link2 } from '@/components/ui/icons';
 import type { BankCsvMapping, BankImportPreview, BankLedgerAccountOption, BankPlaidAccount } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {

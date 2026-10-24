@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bus, CheckCircle2, LifeBuoy, Siren } from 'lucide-react';
+import { Bus, CheckCircle2, LifeBuoy, Siren } from '@/components/ui/icons';
 import type { EmergencyCheckInStatus, MyEmergencyResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { emergencyCheckIn, getMyEmergency } from '@/lib/emergencyApi';

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { CalendarClock, ShieldCheck } from 'lucide-react';
+import { CalendarClock, ShieldCheck } from '@/components/ui/icons';
 import { getExpirationRisk, type ExpirationRisk, type RiskItem } from '@/lib/expirations113Api';
 import { useTenant, useTerm } from '@/lib/auth';
 import { fmtDate, fmtDateTz, fmtDayShort, fmtShiftTz, fmtWeekdayTz } from '@/lib/format';

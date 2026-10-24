@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { X } from 'lucide-react';
+import { X } from '@/components/ui/icons';
 import { listDirectory } from '@/lib/directoryApi';
 import { useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';

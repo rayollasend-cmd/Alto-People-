@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCw, ScanLine, Wand2 } from 'lucide-react';
+import { RotateCw, ScanLine, Wand2 } from '@/components/ui/icons';
 import {
   Button,
   Dialog,

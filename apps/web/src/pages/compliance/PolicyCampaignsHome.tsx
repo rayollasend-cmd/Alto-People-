@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Megaphone, Plus, Send } from 'lucide-react';
+import { Megaphone, Plus, Send } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ROLE_LABELS, type Role } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

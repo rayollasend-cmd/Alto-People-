@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, CheckCircle2, ChevronDown } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ChevronDown } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { timesheetQueuePath, type TimeEntry } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

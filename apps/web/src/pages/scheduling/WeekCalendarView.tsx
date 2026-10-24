@@ -13,7 +13,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { VirtualizedRows } from './VirtualizedRows';
-import { AlertTriangle, ArrowDown, ArrowUp, Plus, GripVertical, UserMinus } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Plus, GripVertical, UserMinus } from '@/components/ui/icons';
 import { wentUnfilled, type AssociateLite, type Shift } from '@alto-people/shared';
 import {
   dayIsPast,

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { UNSAFE_LocationContext, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { PageHeader, isPageActions, type PageAction, type PageFact } from '@/components/ui/PageHeader';

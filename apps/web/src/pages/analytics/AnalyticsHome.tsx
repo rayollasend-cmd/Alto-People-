@@ -9,7 +9,7 @@ import {
   DollarSign,
   Download,
   ShieldCheck,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type { DashboardKPIs, KpiTrend } from '@alto-people/shared';
 import { PALETTE } from '@/components/ui/charts/palette';
 import { getDashboardKPIs } from '@/lib/analyticsApi';

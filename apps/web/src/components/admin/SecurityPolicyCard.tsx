@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTenant } from '@/lib/auth';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getSecurityPolicy, putSecurityPolicy, type SecurityPolicy } from '@/lib/identityApi';

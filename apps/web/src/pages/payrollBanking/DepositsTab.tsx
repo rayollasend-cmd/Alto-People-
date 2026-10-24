@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Send, Users } from 'lucide-react';
+import { Send, Users } from '@/components/ui/icons';
 import { centsToMoney, getDeposits, sendPrenotes, type DepositAccount } from '@/lib/bankingApi';
 import { Badge, type BadgeProps } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';

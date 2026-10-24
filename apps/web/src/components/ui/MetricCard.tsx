@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
-import type { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from './Card';
 import { Sparkline as KitSparkline } from './charts/Sparkline';

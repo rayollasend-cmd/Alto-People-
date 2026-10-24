@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { CheckCircle2, Store, Target } from 'lucide-react';
+import { CheckCircle2, Store, Target } from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';

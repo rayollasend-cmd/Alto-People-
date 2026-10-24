@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Sparkles, X } from 'lucide-react';
+import { Sparkles, X } from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { getLatestReleaseNote } from '@/lib/releaseNotesApi';

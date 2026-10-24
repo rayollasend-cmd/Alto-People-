@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Camera, CheckCircle2, FileText, Save, Trash2, Upload } from 'lucide-react';
+import { Camera, CheckCircle2, FileText, Save, Trash2, Upload } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';

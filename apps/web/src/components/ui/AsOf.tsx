@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { fmtTime } from '@/lib/format';
 import { Button } from './Button';

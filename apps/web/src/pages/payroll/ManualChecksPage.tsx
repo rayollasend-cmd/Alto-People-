@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FileText, Plus } from 'lucide-react';
+import { FileText, Plus } from '@/components/ui/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';

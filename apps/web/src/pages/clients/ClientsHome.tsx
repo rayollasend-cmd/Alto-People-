@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Building2, FileText, KanbanSquare, LayoutGrid, List, MapPin, Plus } from 'lucide-react';
+import { Building2, FileText, KanbanSquare, LayoutGrid, List, MapPin, Plus } from '@/components/ui/icons';
 import type { ClientListItem } from '@alto-people/shared';
 import { clientServiceReportUrl, listClients } from '@/lib/clientsApi';
 import { listProspects, PROSPECTS_KEY } from '@/lib/prospectsApi';

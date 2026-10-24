@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Search } from 'lucide-react';
+import { Search } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { useMinWidth } from '@/lib/useViewport';
 import { useI18n } from '@/lib/i18n';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTerm } from '@/lib/auth';
-import { Send } from 'lucide-react';
+import { Send } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { nudgeApplicant } from '@/lib/onboardingApi';

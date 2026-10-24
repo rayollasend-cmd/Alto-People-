@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarPlus, Check, Clock, Minus } from 'lucide-react';
+import { CalendarPlus, Check, Clock, Minus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { coverShift, type CoverStep } from '@/lib/floorApi';

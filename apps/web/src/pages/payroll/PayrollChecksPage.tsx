@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowRight, Ban, FileDown, MoreHorizontal, Printer, RefreshCw, Ruler, Settings2, ShieldCheck, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Ban, FileDown, MoreHorizontal, Printer, RefreshCw, Ruler, Settings2, ShieldCheck, Undo2 } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { usePrompt } from '@/lib/confirm';

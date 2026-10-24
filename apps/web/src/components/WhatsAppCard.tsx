@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageCircle } from 'lucide-react';
+import { MessageCircle } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { WhatsAppMeResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

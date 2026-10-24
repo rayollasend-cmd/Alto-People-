@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Apple, Smartphone, Share, MoreVertical, Plus, Download, ChevronRight, ShieldCheck } from 'lucide-react';
+import { Apple, Smartphone, Share, MoreVertical, Plus, Download, ChevronRight, ShieldCheck } from '@/components/ui/icons';
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { QR_COLORS } from '@/lib/qrColors';

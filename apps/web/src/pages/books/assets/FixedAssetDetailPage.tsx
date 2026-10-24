@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { PackageX, Pencil } from 'lucide-react';
+import { PackageX, Pencil } from '@/components/ui/icons';
 import { FIXED_ASSET_CATEGORY_LABELS, type FixedAssetDetail } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

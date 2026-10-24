@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ChevronRight, HeartHandshake, PhoneOff } from 'lucide-react';
+import { ChevronRight, HeartHandshake, PhoneOff } from '@/components/ui/icons';
 import { useAuth, useTerm } from '@/lib/auth';
 import { listCallOuts } from '@/lib/callOutsApi';
 import { getCrewRisk } from '@/lib/retentionApi';

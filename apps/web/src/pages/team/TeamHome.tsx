@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getMyDelegations } from '@/lib/delegationsApi';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Users } from 'lucide-react';
+import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Users } from '@/components/ui/icons';
 import {
   approveTeamTimeOff,
   approveTeamTimesheet,

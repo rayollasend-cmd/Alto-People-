@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTenant, useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from '@/components/ui/icons';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import { DeadlineStrip, matchesDeadlineDay } from './DeadlineStrip';
 import type { I9DocumentList, I9ListResponse, I9NotStarted, I9Verification } from '@alto-people/shared';

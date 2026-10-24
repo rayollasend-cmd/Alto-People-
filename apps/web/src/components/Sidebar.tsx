@@ -16,7 +16,7 @@ import {
   Sun,
   User,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { Logo } from '@/components/Logo';
 import { useI18n } from '@/lib/i18n';
 import {

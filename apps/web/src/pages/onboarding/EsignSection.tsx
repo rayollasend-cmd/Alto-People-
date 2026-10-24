@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, ChevronUp, FileSignature, Plus } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronUp, FileSignature, Plus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ChecklistTask } from '@alto-people/shared';
 import {

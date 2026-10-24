@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, ChevronRight, Circle, CircleDot, FileText } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Circle, CircleDot, FileText } from '@/components/ui/icons';
 import type { PolicyForApplication } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import {

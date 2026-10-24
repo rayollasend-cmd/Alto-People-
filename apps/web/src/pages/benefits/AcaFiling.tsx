@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, FileSpreadsheet } from 'lucide-react';
+import { Download, FileSpreadsheet } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';

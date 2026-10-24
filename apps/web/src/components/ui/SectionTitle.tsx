@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 
 /**
@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
  *
  * Anatomy:
  *   - Title in text-base font-medium text-white
- *   - Optional Lucide icon (h-4) pulled to text-silver/80 so gold stays
+ *   - Optional icon (h-4) pulled to text-silver/80 so gold stays
  *     reserved for actual data + CTAs.
  *   - Optional eyebrow rendered above (the micro-label tier) when you
  *     want both rungs visible.

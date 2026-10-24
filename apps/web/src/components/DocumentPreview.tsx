@@ -1,4 +1,4 @@
-import { Download, ExternalLink, FileText, FileWarning } from 'lucide-react';
+import { Download, ExternalLink, FileText, FileWarning } from '@/components/ui/icons';
 import type { DocumentRecord } from '@alto-people/shared';
 import {
   Dialog,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Nfc, ScanQrCode, X } from 'lucide-react';
+import { CheckCircle2, Nfc, ScanQrCode, X } from '@/components/ui/icons';
 import { isNative } from '@/lib/native/platform';
 import { NfcError, nfcAvailability, readBadge } from '@/lib/native/nfc';
 import { hapticConfirm, hapticError } from '@/lib/haptics';

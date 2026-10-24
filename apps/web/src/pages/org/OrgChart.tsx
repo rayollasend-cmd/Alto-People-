@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { ChevronDown, ChevronUp, Download, MapPinPlus, Network, Plus, Printer, UserCog } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, MapPinPlus, Network, Plus, Printer, UserCog } from '@/components/ui/icons';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { getOrgChart, getStoreCrew, searchFieldPeople, type OrgChartView, type OrgNode } from '@/lib/orgChartApi';
 import { useClients } from '@/lib/useClients';

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Briefcase, Check, MapPinned, Sparkles } from 'lucide-react';
+import { Briefcase, Check, MapPinned, Sparkles } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';

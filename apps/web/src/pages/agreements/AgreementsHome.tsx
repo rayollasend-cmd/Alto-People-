@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
-import { FileSignature, Plus, Trash2 } from 'lucide-react';
+import { FileSignature, Plus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate, parseYmd } from '@/lib/format';

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ExternalLink, ImagePlus, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, ImagePlus, Plus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getEmployerBrand, removeBrandPhoto, saveEmployerBrand, uploadBrandPhoto, type EmployerBrand } from '@/lib/marketingApi';

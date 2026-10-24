@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, ChevronRight, Info, Users } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronRight, Info, Users } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDateTime, fmtMoney } from '@/lib/format';

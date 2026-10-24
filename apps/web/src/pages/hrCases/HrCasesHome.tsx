@@ -6,7 +6,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Avatar } from '@/components/ui/Avatar';
 import { associatePhotoUrl } from '@/lib/photoUrl';
-import { Lock, MessageCircle, Plus, Tag, Timer } from 'lucide-react';
+import { Lock, MessageCircle, Plus, Tag, Timer } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {

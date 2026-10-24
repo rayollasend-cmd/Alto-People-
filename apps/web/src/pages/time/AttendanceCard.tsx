@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarX2 } from 'lucide-react';
+import { CalendarX2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { AttendanceEvent, AttendanceListResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

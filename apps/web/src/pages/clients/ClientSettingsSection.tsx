@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, FileOutput, MapPin, Percent, Save } from 'lucide-react';
+import { CalendarDays, FileOutput, MapPin, Percent, Save } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

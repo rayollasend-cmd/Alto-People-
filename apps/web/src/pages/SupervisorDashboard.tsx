@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, CalendarDays, ClipboardCheck, Flag, MapPin, ShieldAlert, Timer, Users } from 'lucide-react';
+import { ArrowRight, CalendarDays, ClipboardCheck, Flag, MapPin, ShieldAlert, Timer, Users } from '@/components/ui/icons';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';

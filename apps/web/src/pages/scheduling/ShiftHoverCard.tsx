@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
-import { Calendar, Clock, MapPin, StickyNote, User, X } from 'lucide-react';
+import { Calendar, Clock, MapPin, StickyNote, User, X } from '@/components/ui/icons';
 import type { AutoFillCandidate, Shift } from '@alto-people/shared';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';

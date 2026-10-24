@@ -13,7 +13,7 @@ import {
   Lock,
   RefreshCw,
   CheckCircle2,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   TimesheetWeekResponse,

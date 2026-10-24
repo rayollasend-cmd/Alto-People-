@@ -7,10 +7,13 @@
  *                 accessible name (aria-label, aria-labelledby, title, or a
  *                 visually hidden child). A screen reader would say
  *                 "button" and nothing else.
- *   stroke        a strokeWidth prop on a Lucide icon up to 24px. Stroke
- *                 weight is set once, per size, in index.css; `icon-bold`
- *                 is the one sanctioned emphasis. (From h-8 an icon is an
- *                 illustration and its line may be set for it.)
+ *   source        an icon from anywhere but the icon module: an import from
+ *                 lucide-react or @phosphor-icons/*, or the icon module
+ *                 reached by any path but '@/components/ui/icons' (its
+ *                 generated glyphs are the one place icons come from, and
+ *                 vite.config.ts groups them by that import). Checked in
+ *                 every TS/TSX file under src/ and .storybook/, tests and
+ *                 stories included; only src/components/ui/icons is exempt.
  *   size          an icon sized off the scale (h-2.5 10px only as a mark inside
  *                 a badge, h-3 12px inline with text-xs,
  *                 h-3.5 14px in dense rows, h-4 16px default, h-5 20px,
@@ -24,7 +27,7 @@
  * name may come in with them.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
@@ -40,8 +43,8 @@ const CONTROLS = new Set([
 ]);
 const NAME_ATTRS = new Set(['aria-label', 'aria-labelledby', 'title']);
 const SIZE_OK = new Set(['2.5', '3', '3.5', '4', '5', '6', '8', '10', '12', '14', '16']);
-/** From h-8 an icon is an illustration: its line scales with it, and may be set for it. */
-const ILLUSTRATION = (h) => h !== undefined && Number(h) >= 8;
+const ICON_MODULE = '@/components/ui/icons';
+const ICONS_DIR = join(SRC, 'components/ui/icons');
 
 function files(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -50,6 +53,17 @@ function files(dir, out = []) {
       if (name === '__tests__') continue;
       files(p, out);
     } else if (/\.tsx$/.test(name) && !/\.(test|stories)\.tsx$/.test(name)) out.push(p);
+  }
+  return out;
+}
+
+/** Every TS/TSX file, tests and stories too, outside the icon module itself. */
+function allSources(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (p === ICONS_DIR) continue;
+    if (statSync(p).isDirectory()) allSources(p, out);
+    else if (/\.tsx?$/.test(name)) out.push(p);
   }
   return out;
 }
@@ -105,12 +119,31 @@ function hasHiddenText(node) {
 
 const findings = [];
 
+for (const file of [...allSources(SRC), ...allSources(join(ROOT, '.storybook'))]) {
+  const text = readFileSync(file, 'utf8');
+  if (!/lucide-react|@phosphor-icons|ui\/icons/.test(text)) continue;
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const rel = relative(ROOT, file).replace(/\\/g, '/');
+  const check = (node, spec) => {
+    const wrongPath = spec !== ICON_MODULE && (/(^|\/)ui\/icons(\/|$)/.test(spec) || (spec.startsWith('.') && resolve(dirname(file), spec).startsWith(ICONS_DIR)));
+    if (spec === 'lucide-react' || spec.startsWith('@phosphor-icons/') || wrongPath) {
+      findings.push({ rule: 'source', where: `${rel}:${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1}`, what: `import from '${spec}' — icons come from '${ICON_MODULE}'` });
+    }
+  };
+  const visit = (n) => {
+    if ((ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) check(n, n.moduleSpecifier.text);
+    else if (ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === 'require')) && n.arguments[0] && ts.isStringLiteral(n.arguments[0])) check(n, n.arguments[0].text);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+}
+
 for (const file of files(SRC)) {
   const text = readFileSync(file, 'utf8');
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const icons = new Set();
   for (const st of sf.statements) {
-    if (ts.isImportDeclaration(st) && st.moduleSpecifier.text === 'lucide-react' && st.importClause?.namedBindings && ts.isNamedImports(st.importClause.namedBindings)) {
+    if (ts.isImportDeclaration(st) && st.moduleSpecifier.text === ICON_MODULE && st.importClause?.namedBindings && ts.isNamedImports(st.importClause.namedBindings)) {
       for (const el of st.importClause.namedBindings.elements) icons.add(el.name.text);
     }
   }
@@ -138,15 +171,10 @@ for (const file of files(SRC)) {
     if (o) {
       const tag = tagName(o);
       const { out, spread } = attrs(o);
-      // An icon handed in as a value (`icon: Icon`, `const Icon = …`) is still a Lucide icon.
-      if (!icons.has(tag) && /^(?:Icon|[A-Z]\w*Icon)$/.test(tag) && out.has('strokeWidth')) {
-        findings.push({ rule: 'stroke', where: at(o), what: `${tag} strokeWidth` });
-      }
       if (icons.has(tag)) {
         const cls = stringAttr(out.get('className')) ?? '';
         const h = /(?:^|\s|['"`])h-(\d+(?:\.5)?)(?=$|\s|['"`])/.exec(cls)?.[1];
         const w = /(?:^|\s|['"`])w-(\d+(?:\.5)?)(?=$|\s|['"`])/.exec(cls)?.[1];
-        if (out.has('strokeWidth') && !ILLUSTRATION(h)) findings.push({ rule: 'stroke', where: at(o), what: `${tag} strokeWidth` });
         if (h && !SIZE_OK.has(h)) findings.push({ rule: 'size', where: at(o), what: `${tag} h-${h}` });
         else if (h && w && h !== w) findings.push({ rule: 'size', where: at(o), what: `${tag} h-${h} w-${w}` });
       }
@@ -177,7 +205,7 @@ for (const file of files(SRC)) {
 }
 
 const by = (r) => findings.filter((f) => f.rule === r);
-const summary = ['unlabeled', 'stroke', 'size'].map((r) => `${r}=${by(r).length}`).join(' ');
+const summary = ['unlabeled', 'source', 'size'].map((r) => `${r}=${by(r).length}`).join(' ');
 if (process.argv.includes('--list') || findings.length > 0) {
   for (const f of findings) console.log(`  ${f.rule.padEnd(9)} ${f.where}  ${f.what}`);
 }

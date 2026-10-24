@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { CalendarDays, Inbox } from 'lucide-react';
+import { CalendarDays, Inbox } from '@/components/ui/icons';
 import { Button } from './Button';
 import { Card, CardContent } from './Card';
 import { EmptyState } from './EmptyState';

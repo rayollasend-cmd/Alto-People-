@@ -25,7 +25,7 @@ import {
   ClipboardCheck,
   Megaphone,
   Workflow,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { applyTerms, MODULES, type ModuleKey } from '@/lib/modules';
@@ -83,7 +83,7 @@ export function useSettingsRail(): SettingsRailEntry[] {
   const tenant = useTenant();
   const term = useTerm();
   return useMemo<SettingsRailEntry[]>(() => {
-    // (`Map` here is the lucide icon; the lookup is a plain record.)
+    // (`Map` here is the icon; the lookup is a plain record.)
     const named: Partial<Record<ModuleKey, string>> = Object.fromEntries(applyTerms(MODULES, term, tenant.modules).map((m) => [m.key, m.label]));
     const items: Array<SettingsRailEntry & { show: boolean }> = [
       // Organization

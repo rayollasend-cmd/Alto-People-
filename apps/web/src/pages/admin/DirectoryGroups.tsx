@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2 } from 'lucide-react';
+import { Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { Role } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

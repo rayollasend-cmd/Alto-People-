@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Megaphone, Users } from 'lucide-react';
+import { Megaphone, Users } from '@/components/ui/icons';
 import { useGreeting, greetingName } from '@/lib/greeting';
 import { useAuth } from '@/lib/auth';
 import { getMarketingOverview } from '@/lib/marketingApi';

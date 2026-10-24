@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Cake, PartyPopper, Send } from 'lucide-react';
+import { Cake, PartyPopper, Send } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {

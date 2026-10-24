@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Check, ChevronDown, Hand, UserPlus, X } from 'lucide-react';
+import { Check, ChevronDown, Hand, UserPlus, X } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';

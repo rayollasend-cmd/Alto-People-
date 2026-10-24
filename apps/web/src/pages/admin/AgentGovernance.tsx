@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { PLATFORM_OPERATOR_TENANT_ID, WORKER_STATUS_LABELS, capabilityDef, type AgentControlState, type AgentSummary } from '@alto-people/shared';
 import { SettingsSection } from '@/components/templates';

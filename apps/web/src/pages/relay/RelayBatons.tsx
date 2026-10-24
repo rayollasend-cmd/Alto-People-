@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, ChevronDown, Flag } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ChevronDown, Flag } from '@/components/ui/icons';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Card } from '@/components/ui/Card';

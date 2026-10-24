@@ -3,7 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { performWithUndo } from '@/lib/undoToast';
-import { Trash2, Waypoints } from 'lucide-react';
+import { Trash2, Waypoints } from '@/components/ui/icons';
 import type { RecruitingAnalytics as Analytics } from '@alto-people/shared';
 type SourceRow = Analytics['sources'][number];
 type ClientRow = Analytics['clients'][number];

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Store } from 'lucide-react';
+import { ArrowRight, Store } from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { getShiftCoverageGaps } from '@/lib/shiftWindowsApi';

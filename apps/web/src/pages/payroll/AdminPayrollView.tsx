@@ -27,7 +27,7 @@ import {
   Users,
   X,
   PlaneTakeoff,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { getFinancialChangesSummary } from '@/lib/financialChangesApi';
 import type {
   PayrollRunDetail,

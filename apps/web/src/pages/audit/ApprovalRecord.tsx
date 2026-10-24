@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { ClipboardCheck } from 'lucide-react';
+import { ClipboardCheck } from '@/components/ui/icons';
 import {
   APPROVAL_REQUEST_KIND_LABELS,
   ApprovalRequestKindSchema,

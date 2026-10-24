@@ -8,7 +8,7 @@ import {
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { ArrowRightLeft, FileText, Link2 } from 'lucide-react';
+import { ArrowRightLeft, FileText, Link2 } from '@/components/ui/icons';
 import type { Candidate, CandidateBoardResponse, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import { cn } from '@/lib/cn';

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CalendarSync, Settings2, UserPlus } from 'lucide-react';
+import { CalendarSync, Settings2, UserPlus } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CalendarDays, CheckCircle2, Clock, FileWarning, Gauge, KeyRound, MapPin, MessageSquare, Palmtree, PauseCircle, Smartphone, Ticket, UserRound, UserX } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCircle2, Clock, FileWarning, Gauge, KeyRound, MapPin, MessageSquare, Palmtree, PauseCircle, Smartphone, Ticket, UserRound, UserX } from '@/components/ui/icons';
 import type { DirectoryEntry, PersonOverview, TimeEntry, TimeOffEntitlement, TimeOffRequest } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';
 import { personRecordTabs, type PersonTabKey } from '@/lib/personTabs';

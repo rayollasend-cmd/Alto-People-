@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Copy, Link2, Rss } from 'lucide-react';
+import { Copy, Link2, Rss } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { jobFeedUrl, listJobPostings, type JobPostingRecord } from '@/lib/recruiting90Api';
 import type { MarketingOverview } from '@/lib/marketingApi';

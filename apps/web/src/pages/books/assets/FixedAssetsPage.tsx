@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, Lightbulb, Plus, Truck, Warehouse } from 'lucide-react';
+import { CalendarClock, Lightbulb, Plus, Truck, Warehouse } from '@/components/ui/icons';
 import { FIXED_ASSET_CATEGORY_LABELS, type FixedAssetSuggestion, type FixedAssetSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

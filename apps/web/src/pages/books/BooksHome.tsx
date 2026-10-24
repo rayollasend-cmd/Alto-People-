@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CalendarCheck, CheckCircle2, CircleAlert, FileSpreadsheet, Info, NotebookPen, Plus, RefreshCcw } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarCheck, CheckCircle2, CircleAlert, FileSpreadsheet, Info, NotebookPen, Plus, RefreshCcw } from '@/components/ui/icons';
 import type { BooksOverview } from '@alto-people/shared';
 import { useAuth, useTenant } from '@/lib/auth';
 import { getBooksOverview, listJournal } from '@/lib/books/ledgerApi';

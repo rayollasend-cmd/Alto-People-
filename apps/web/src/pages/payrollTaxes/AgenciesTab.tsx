@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Building2, ClipboardList, History, Plus } from 'lucide-react';
+import { Building2, ClipboardList, History, Plus } from '@/components/ui/icons';
 import {
   createTaxAccount,
   getAgency,

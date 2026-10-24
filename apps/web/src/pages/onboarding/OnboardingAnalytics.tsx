@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronUp } from '@/components/ui/icons';
 import type { OnboardingAnalyticsResponse } from '@alto-people/shared';
 import { getOnboardingAnalytics } from '@/lib/analyticsApi';
 import { useAuth } from '@/lib/auth';

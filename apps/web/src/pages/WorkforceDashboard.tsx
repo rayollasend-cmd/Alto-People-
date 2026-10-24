@@ -21,7 +21,7 @@ import {
   TrendingUp,
   UserPlus,
   Users,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';

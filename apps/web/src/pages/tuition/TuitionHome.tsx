@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { nextInQueue } from '@/lib/queueNext';
 import { useQuery } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
-import { GraduationCap, Plus } from 'lucide-react';
+import { GraduationCap, Plus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useUrlParam } from '@/lib/useUrlState';

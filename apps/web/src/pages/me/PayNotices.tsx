@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, Download, FileSignature } from 'lucide-react';
+import { ChevronRight, Download, FileSignature } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { useI18n, type Translate } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';

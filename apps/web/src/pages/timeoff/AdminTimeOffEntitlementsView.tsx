@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarRange, Download, Pencil, Plus, Users } from 'lucide-react';
+import { CalendarRange, Download, Pencil, Plus, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   TimeOffCategory,

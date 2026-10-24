@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { CalendarCheck, CalendarClock, Users } from 'lucide-react';
+import { CalendarCheck, CalendarClock, Users } from '@/components/ui/icons';
 import { fmtDate } from '@/lib/format';
 import { getReadyToWorkStatus } from '@/lib/readyToWorkApi';
 

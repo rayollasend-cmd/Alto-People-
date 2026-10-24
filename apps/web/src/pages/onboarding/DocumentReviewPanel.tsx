@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileCheck2, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { FileCheck2, ShieldAlert, ShieldCheck } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { DocumentRecord } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

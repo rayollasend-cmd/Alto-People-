@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
+import { ChevronLeft, Eye, EyeOff, Lock, ShieldCheck } from '@/components/ui/icons';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { LinkProblem } from '@/components/LinkProblem';
 import { Skeleton } from '@/components/ui/Skeleton';

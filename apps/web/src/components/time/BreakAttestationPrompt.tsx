@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { Coffee } from 'lucide-react';
+import { Coffee } from '@/components/ui/icons';
 import { useI18n } from '@/lib/i18n';
 import { getBreakQuestions } from '@/lib/laborLiveApi';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Field, SegmentedControl, Textarea } from '@/components/ui';

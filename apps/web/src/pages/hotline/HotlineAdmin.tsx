@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Clock, Copy, Download, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Clock, Copy, Download, ShieldQuestion } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {

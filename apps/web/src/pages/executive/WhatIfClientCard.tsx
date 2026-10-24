@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/lib/auth';
 import { getMarketRates } from '@/lib/marketRatesApi';
-import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight } from '@/components/ui/icons';
 import { fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { whatIfBaseline, whatIfLose, whatIfWin, type WhatIfLeagueRow, type WhatIfOutcome, type WhatIfRates } from '@/lib/execWhatIf';

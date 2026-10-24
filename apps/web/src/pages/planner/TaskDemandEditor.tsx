@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from '@/components/ui/icons';
 import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, type SeasonTaskDemandLine, type SeasonTaskDemandWeek, type SeasonWeekMix } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';

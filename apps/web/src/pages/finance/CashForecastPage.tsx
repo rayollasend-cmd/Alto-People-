@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, Banknote, FileText, HeartPulse, Landmark, PiggyBank, Receipt, Scale } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Banknote, FileText, HeartPulse, Landmark, PiggyBank, Receipt, Scale } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { fmtCount, fmtDate, fmtMoney } from '@/lib/format';

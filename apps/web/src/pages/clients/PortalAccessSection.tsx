@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, CircleAlert, ExternalLink, Store, UserPlus } from 'lucide-react';
+import { CheckCircle2, CircleAlert, ExternalLink, Store, UserPlus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

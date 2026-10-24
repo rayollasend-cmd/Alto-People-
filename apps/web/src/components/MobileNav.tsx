@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, Globe, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucide-react';
+import { ChevronDown, Globe, Monitor, Moon, Search, Sun, X, type LucideIcon } from '@/components/ui/icons';
 import {
   applyTerms,
   DASHBOARD_NAV,

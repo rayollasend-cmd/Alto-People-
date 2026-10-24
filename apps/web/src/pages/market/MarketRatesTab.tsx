@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PALETTE, StackedBarChart } from '@/components/ui/charts';
-import { Gauge, MapPinned } from 'lucide-react';
+import { Gauge, MapPinned } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';

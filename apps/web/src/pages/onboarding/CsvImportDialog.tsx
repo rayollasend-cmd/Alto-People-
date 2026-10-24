@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useTenant, useTerm } from '@/lib/auth';
-import { CheckCircle2, Download, FileUp, Upload, X as XIcon } from 'lucide-react';
+import { CheckCircle2, Download, FileUp, Upload, X as XIcon } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   CsvImportCommitResponse,

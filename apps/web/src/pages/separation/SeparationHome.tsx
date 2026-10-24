@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Download, LogOut, MessageSquareQuote, Plus } from 'lucide-react';
+import { Download, LogOut, MessageSquareQuote, Plus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';

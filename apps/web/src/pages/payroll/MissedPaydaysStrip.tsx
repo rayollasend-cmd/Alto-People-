@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Play } from 'lucide-react';
+import { AlertTriangle, Play } from '@/components/ui/icons';
 import { fmtDate } from '@/lib/format';
 import { getPeriodLedger, type LedgerPeriod } from '@/lib/payrollDeskApi';
 import { Button } from '@/components/ui/Button';

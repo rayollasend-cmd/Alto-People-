@@ -20,7 +20,7 @@ import {
   Thermometer,
   Wrench,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
@@ -1057,7 +1057,7 @@ function TempReading({ t: temp, tz }: { t: StoreOpsTemp; tz: string }) {
   if (!temp.outOfRange) {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-success" title={t('portalOps.tempRange', { range })}>
-        <Check className="h-3 w-3 icon-bold" aria-hidden="true" />
+        <Check className="h-3 w-3" aria-hidden="true" />
         {temp.value}°F
       </span>
     );
@@ -1071,7 +1071,7 @@ function TempReading({ t: temp, tz }: { t: StoreOpsTemp; tz: string }) {
         {fixed ? (
           <span className="inline-flex items-center gap-1">
             {t('portalOps.recheckedOk', { value: temp.recheck!.value! })}
-            <Check className="h-3 w-3 icon-bold" aria-hidden="true" />
+            <Check className="h-3 w-3" aria-hidden="true" />
           </span>
         ) : temp.recheck?.value != null ? (
           t('portalOps.recheckOut', { value: temp.recheck.value })

@@ -1,6 +1,6 @@
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ShieldAlert, ShieldCheck } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
 import { getReviewQueue } from '@/lib/payrollReviewApi';

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CloudOff, RefreshCw } from 'lucide-react';
+import { CloudOff, RefreshCw } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { armOfflineQueueReplay, listQueuedWrites, onQueueChange, replayQueuedWrites, type QueuedWrite } from '@/lib/offlineQueue';
 import { Button } from '@/components/ui/Button';

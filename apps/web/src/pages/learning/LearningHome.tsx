@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, BookOpen, GraduationCap, Plus, X } from 'lucide-react';
+import { AlertTriangle, BookOpen, GraduationCap, Plus, X } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
 import {

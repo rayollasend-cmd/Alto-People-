@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Ban, Download, ExternalLink, FileText, Pencil } from 'lucide-react';
+import { Ban, Download, ExternalLink, FileText, Pencil } from '@/components/ui/icons';
 import type { PayrollRunDetail } from '@alto-people/shared';
 import { getPayrollRun } from '@/lib/payrollApi';
 import { getPayrollReviewStatus } from '@/lib/payrollReviewApi';

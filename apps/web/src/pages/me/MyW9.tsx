@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Download, FileSignature } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileSignature } from '@/components/ui/icons';
 import { downloadMyW9, getMyW9, submitMyW9, type MyW9 as MyW9Data, type W9Submit } from '@/lib/certifiedPayrollApi';
 import { ListTemplate } from '@/components/templates';
 import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutocomplete';

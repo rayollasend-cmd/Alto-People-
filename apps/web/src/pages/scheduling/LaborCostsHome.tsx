@@ -18,7 +18,7 @@ import {
   Target,
   Timer,
   Users,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type {
   FloorNowResponse,
   OtOutlookResponse,

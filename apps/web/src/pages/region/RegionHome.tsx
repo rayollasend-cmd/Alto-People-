@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUpDown, Building2, Download, FileText, Inbox, MessageSquare, Search, Store } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, Building2, Download, FileText, Inbox, MessageSquare, Search, Store } from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtRelativeDate, fmtTime, parseYmd, zonedMinutesOfDay } from '@/lib/format';

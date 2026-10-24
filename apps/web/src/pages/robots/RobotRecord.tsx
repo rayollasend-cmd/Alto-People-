@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bot, CheckCircle2, ClipboardCheck, MapPin, OctagonX, Play, ShieldCheck, Wrench } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, ClipboardCheck, MapPin, OctagonX, Play, ShieldCheck, Wrench } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   FLEET_PROVIDERS,

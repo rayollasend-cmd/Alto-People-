@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { isRouteErrorResponse, useNavigate, useRouteError } from 'react-router-dom';
-import { AlertOctagon, RefreshCw, Home } from 'lucide-react';
+import { AlertOctagon, RefreshCw, Home } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 
 /**

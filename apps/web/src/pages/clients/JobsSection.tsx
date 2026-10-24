@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Briefcase, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Briefcase, Pencil, Plus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { Job } from '@alto-people/shared';
 import { createJob, deleteJob, listJobs, updateJob } from '@/lib/jobsApi';

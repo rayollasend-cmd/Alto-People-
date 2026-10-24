@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { CalendarCheck, Heart, Target, Timer, FileText } from 'lucide-react';
+import { CalendarCheck, Heart, Target, Timer, FileText } from '@/components/ui/icons';
 import { getReviewContext } from '@/lib/performanceApi';
 import { fmtDate, parseYmd } from '@/lib/format';
 import { Skeleton } from '@/components/ui/Skeleton';

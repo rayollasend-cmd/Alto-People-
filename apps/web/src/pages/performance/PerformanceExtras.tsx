@@ -6,7 +6,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { ViewToggle } from '@/components/ui/ViewToggle';
 import { GoalCascade } from './GoalCascade';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CalendarPlus, Download, Heart, Network, Plus, Rows3, Target } from 'lucide-react';
+import { AlertTriangle, CalendarPlus, Download, Heart, Network, Plus, Rows3, Target } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import {
   closeReview360,

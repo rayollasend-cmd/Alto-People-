@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Clock, KeyRound, Lock, MapPin, Repeat, ShieldAlert, ShieldCheck, Unlock, UserRound } from 'lucide-react';
+import { Clock, KeyRound, Lock, MapPin, Repeat, ShieldAlert, ShieldCheck, Unlock, UserRound } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { Role } from '@/lib/roles';
 import { useAuth, useRoleLabel, useTenant, useTerm } from '@/lib/auth';

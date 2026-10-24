@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronRight, Loader2, Repeat } from 'lucide-react';
+import { Check, ChevronRight, Loader2, Repeat } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ROLE_DESCRIPTIONS, type Role } from '@alto-people/shared';
 import { cn } from '@/lib/cn';

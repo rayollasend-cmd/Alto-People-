@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { BellRing } from 'lucide-react';
+import { BellRing } from '@/components/ui/icons';
 import {
   listUnconfirmedShifts,
   nudgeUnconfirmedShifts,

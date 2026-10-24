@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { ArrowLeft, Check, Crosshair, Home, Loader2, MapPin, Search, X } from 'lucide-react';
+import { ArrowLeft, Check, Crosshair, Home, Loader2, MapPin, Search, X } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';

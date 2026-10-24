@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ExternalLink, Flag, Send } from 'lucide-react';
+import { ExternalLink, Flag, Send } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';

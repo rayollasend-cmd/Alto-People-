@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Clock, MapPin, Timer, Users } from 'lucide-react';
+import { AlertTriangle, Check, Clock, MapPin, Timer, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ActiveTimeEntryResponse, Shift } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { FlaskConical, Pause, Pencil, Play, RefreshCw, Trash2 } from 'lucide-react';
+import { FlaskConical, Pause, Pencil, Play, RefreshCw, Trash2 } from '@/components/ui/icons';
 import { INTEGRATION_CAPABILITY_LABELS, type IntegrationCapability, type IntegrationSyncRunSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@alto-people/shared';

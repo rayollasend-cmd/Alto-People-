@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { HandCoins, Pause, Play, Send } from 'lucide-react';
+import { HandCoins, Pause, Play, Send } from '@/components/ui/icons';
 import { AGING_BUCKET_KEYS, AGING_BUCKET_LABELS, type ReceivablesAgingRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { usePrompt } from '@/lib/confirm';

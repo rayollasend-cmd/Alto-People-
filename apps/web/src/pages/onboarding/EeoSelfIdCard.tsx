@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, Scale } from 'lucide-react';
+import { CheckCircle2, Scale } from '@/components/ui/icons';
 import {
   EEO_DISABILITY_VALUES,
   EEO_ETHNICITY_VALUES,

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { PunchFixes } from './PunchFixes';
-import { ArrowLeft, ScanLine } from 'lucide-react';
+import { ArrowLeft, ScanLine } from '@/components/ui/icons';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';

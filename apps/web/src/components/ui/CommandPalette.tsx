@@ -21,7 +21,7 @@ import {
   User,
   UserPlus,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { personRecordTabs } from '@/lib/personTabs';
 import { noteSearchLanded } from '@/lib/productEvents';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';

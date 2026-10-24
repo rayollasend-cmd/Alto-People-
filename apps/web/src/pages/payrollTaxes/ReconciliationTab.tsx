@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Scale } from 'lucide-react';
+import { CheckCircle2, Scale } from '@/components/ui/icons';
 import { getReconciliation, type ReconLine } from '@/lib/payrollTaxesApi';
 import { fmtMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';

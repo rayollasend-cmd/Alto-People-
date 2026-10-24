@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Award, BellRing, Briefcase, CalendarDays, Check, Clock } from 'lucide-react';
+import { Award, BellRing, Briefcase, CalendarDays, Check, Clock } from '@/components/ui/icons';
 import { Link } from 'react-router-dom';
 import { patchNotificationPreference } from '@/lib/settingsApi';
 import { ApiError } from '@/lib/api';

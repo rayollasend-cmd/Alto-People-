@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Building2, Plus } from 'lucide-react';
+import { Building2, Plus } from '@/components/ui/icons';
 import {
   addEmployerAccount,
   confirmDeposits,

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Megaphone, Send } from 'lucide-react';
+import { Megaphone, Send } from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { useUrlParam } from '@/lib/useUrlState';

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useInRouterContext, useLocation, useNavigate } from 'react-router-dom';
-import { ChevronRight, Columns3, Download, Inbox, MoreHorizontal, type LucideIcon } from 'lucide-react';
+import { ChevronRight, Columns3, Download, Inbox, MoreHorizontal, type LucideIcon } from '@/components/ui/icons';
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';

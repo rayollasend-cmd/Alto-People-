@@ -22,7 +22,7 @@ import {
   Sparkles,
   TrendingUp,
   WifiOff,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { toast } from 'sonner';
 // Recharts (~290 KB) lives behind a lazy boundary — see ComplianceDonut below.
 const ComplianceDonut = lazy(() =>

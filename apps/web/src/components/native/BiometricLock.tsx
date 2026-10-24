@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Fingerprint, ScanFace } from 'lucide-react';
+import { Fingerprint, ScanFace } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import { authenticateBiometric, checkBiometry, type Biometry } from '@/lib/native/biometric';
 import { hapticError, hapticSuccess } from '@/lib/haptics';

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { Users } from 'lucide-react';
+import { Users } from '@/components/ui/icons';
 import { expect, userEvent, within } from 'storybook/test';
 import { fmtDate } from '@/lib/format';
 import { PEOPLE, type StoryPerson } from '../../../.storybook/fixtures';

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarCheck, CheckCircle2, Circle } from 'lucide-react';
+import { CalendarCheck, CheckCircle2, Circle } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getFirstDay, patchFirstDay, type FirstDay } from '@/lib/onboardingApi';

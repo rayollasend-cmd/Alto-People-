@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { Download } from 'lucide-react';
+import { Download } from '@/components/ui/icons';
 import { expect, screen, userEvent, within } from 'storybook/test';
 import { Button } from './Button';
 import { FilterBar, FilterChip, SearchInput } from './FilterBar';

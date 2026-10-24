@@ -18,7 +18,7 @@ import {
   Store,
   X,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { type TimeOffRequest } from '@alto-people/shared';
 import {

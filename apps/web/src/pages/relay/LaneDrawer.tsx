@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, Check, ExternalLink } from 'lucide-react';
+import { ArrowRight, Check, ExternalLink } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';

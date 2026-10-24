@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Bot, Check, Clock, Scale, Users, X } from 'lucide-react';
+import { Bot, Check, Clock, Scale, Users, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { AGENT_GATED_ACTION_LABELS, type AgentApprovalSummary, type ProposalAffectedKind } from '@alto-people/shared';
 import { AgentGlyph } from '@/components/agents/AgentGlyph';

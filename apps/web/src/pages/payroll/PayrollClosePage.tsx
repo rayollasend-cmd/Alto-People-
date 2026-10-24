@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowRight, Check, Circle, MinusCircle } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Check, Circle, MinusCircle } from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';

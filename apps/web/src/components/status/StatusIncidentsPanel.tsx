@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, Megaphone } from 'lucide-react';
+import { ExternalLink, Megaphone } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   STATUS_COMPONENTS,

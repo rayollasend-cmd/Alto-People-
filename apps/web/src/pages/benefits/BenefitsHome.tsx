@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, HeartPulse, Plus, X } from 'lucide-react';
+import { CheckCircle2, HeartPulse, Plus, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { MAX_LIFE_COVERAGE_CENTS } from '@alto-people/shared';
 import type { BenefitsEnrollment, BenefitsPlan } from '@alto-people/shared';

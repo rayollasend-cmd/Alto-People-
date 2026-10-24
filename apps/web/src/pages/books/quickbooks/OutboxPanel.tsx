@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Inbox, RotateCcw } from 'lucide-react';
+import { Inbox, RotateCcw } from '@/components/ui/icons';
 import type { QboOutboxRow } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
 import { listQboOutbox, QBO_KEY, retryQboFailed, retryQboOutbox } from '@/lib/books/quickbooksApi';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, BarChart3, Download, MessageSquare, Lock } from 'lucide-react';
+import { Plus, BarChart3, Download, MessageSquare, Lock } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {

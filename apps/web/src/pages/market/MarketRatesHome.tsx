@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText } from 'lucide-react';
+import { FileText } from '@/components/ui/icons';
 import { useTerm } from '@/lib/auth';
 import { useClients } from '@/lib/useClients';
 import { useStoreScope } from '@/lib/storeScope';

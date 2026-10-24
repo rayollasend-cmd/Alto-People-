@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Check, CheckCircle2, Circle, CircleSlash, Lock, LockOpen, Plus, Sparkles, Undo2 } from 'lucide-react';
+import { ArrowRight, Check, CheckCircle2, Circle, CircleSlash, Lock, LockOpen, Plus, Sparkles, Undo2 } from '@/components/ui/icons';
 import type { CloseTaskView, ClosePeriodDetail } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { createAccrual, finalizeCloseStatements, getCloseMonth, listAccruals, markCloseReady, postCloseHistory, requestCloseReopen, signOffClose, unmarkCloseReady, updateCloseTask } from '@/lib/books/closeApi';

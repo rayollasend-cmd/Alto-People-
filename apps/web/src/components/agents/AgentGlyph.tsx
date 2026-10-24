@@ -19,7 +19,7 @@ import {
   UserSearch,
   Wallet,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type { AgentFamily } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MessageSquare, Phone } from 'lucide-react';
+import { MessageSquare, Phone } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';

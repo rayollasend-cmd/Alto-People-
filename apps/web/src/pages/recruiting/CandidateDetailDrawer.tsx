@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Building2, CalendarClock, ChevronDown, ChevronUp, FileText, Link2, Mail, MoreHorizontal, Pencil, Phone, Send, Star, Trash2, Undo2 } from 'lucide-react';
+import { Building2, CalendarClock, ChevronDown, ChevronUp, FileText, Link2, Mail, MoreHorizontal, Pencil, Phone, Send, Star, Trash2, Undo2 } from '@/components/ui/icons';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import {

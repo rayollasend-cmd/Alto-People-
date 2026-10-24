@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, FileArchive, FileCheck2, ShieldAlert } from 'lucide-react';
+import { Download, FileArchive, FileCheck2, ShieldAlert } from '@/components/ui/icons';
 import { useClients } from '@/lib/useClients';
 import { fmtSize, fmtTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';

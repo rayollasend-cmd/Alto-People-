@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, CheckCircle2, Download, History, Pencil, Plus, Save, Trash2 } from 'lucide-react';
+import { Archive, CheckCircle2, Download, History, Pencil, Plus, Save, Trash2 } from '@/components/ui/icons';
 import type { BudgetAccountOption, BudgetDetail, BudgetVsActual, BudgetVsActualCell, BudgetVsActualRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

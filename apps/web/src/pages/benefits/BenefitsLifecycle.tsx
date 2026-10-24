@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { CalendarDays, HeartPulse, Plus, ShieldOff } from 'lucide-react';
+import { CalendarDays, HeartPulse, Plus, ShieldOff } from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
 import {
   createCobra,

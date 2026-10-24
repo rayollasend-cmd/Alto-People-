@@ -17,7 +17,7 @@ import {
   Trash2,
   UserPlus,
   Users,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type { Candidate, CandidateFilters, CandidateHireResponse, CandidateSort, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';

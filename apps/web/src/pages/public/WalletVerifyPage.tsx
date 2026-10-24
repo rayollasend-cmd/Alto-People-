@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { Award, BadgeCheck, GraduationCap, IdCard, type LucideIcon } from 'lucide-react';
+import { Award, BadgeCheck, GraduationCap, IdCard, type LucideIcon } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { getPublicWallet, type WalletItem } from '@/lib/walletApi';
 import { fmtDate } from '@/lib/format';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { Plus, Sparkles, Trash2, X } from '@/components/ui/icons';
 import {
   createDefinition,
   deleteDefinition,

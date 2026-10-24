@@ -19,7 +19,7 @@ import {
   ShieldCheck,
   UserCheck,
   Users,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';

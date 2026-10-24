@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, Landmark } from 'lucide-react';
+import { CalendarDays, Landmark } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtHours, fmtMoney } from '@/lib/format';
 import { getPaySummary, type PaySummary } from '@/lib/payrollDeskApi';

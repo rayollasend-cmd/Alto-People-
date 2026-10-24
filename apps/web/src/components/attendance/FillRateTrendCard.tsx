@@ -1,5 +1,5 @@
 import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { CalendarCheck } from 'lucide-react';
+import { CalendarCheck } from '@/components/ui/icons';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { ChartTooltipContent, PALETTE, TICK } from '@/components/ui/charts';
 import { EmptyState } from '@/components/ui/EmptyState';

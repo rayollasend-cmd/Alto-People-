@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Download, FilePlus2, FileText } from 'lucide-react';
+import { AlertTriangle, Download, FilePlus2, FileText } from '@/components/ui/icons';
 import {
   amendTaxReturn,
   downloadReturnCsv,

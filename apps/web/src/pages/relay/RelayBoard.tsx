@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Users } from 'lucide-react';
+import { RefreshCw, Users } from '@/components/ui/icons';
 import { useAuth, useTenant } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';

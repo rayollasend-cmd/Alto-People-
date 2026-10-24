@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from '@/components/ui/icons';
 import { fmtDate, fmtMoney } from '@/lib/format';
 import { getDisbursePreview, type DisbursePreview } from '@/lib/payrollDeskApi';
 import { Skeleton } from '@/components/ui/Skeleton';

@@ -5,7 +5,7 @@ import { useUrlParam } from '@/lib/useUrlState';
 import { AcaFiling } from './AcaFiling';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { HeartPulse, Settings2 } from 'lucide-react';
+import { HeartPulse, Settings2 } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useTenant, useTerm } from '@/lib/auth';
 import { fmtDate, fmtMoney } from '@/lib/format';

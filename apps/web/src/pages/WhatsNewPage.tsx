@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Sparkles, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { RELEASE_NOTE_AUDIENCES, type ReleaseNote, type ReleaseNoteAudience, type ReleaseNoteInput, type ReleaseNoteItem } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

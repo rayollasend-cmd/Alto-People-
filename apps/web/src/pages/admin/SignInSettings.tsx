@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, Globe, KeyRound, Plus, ShieldCheck } from 'lucide-react';
+import { Copy, Globe, KeyRound, Plus, ShieldCheck } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';

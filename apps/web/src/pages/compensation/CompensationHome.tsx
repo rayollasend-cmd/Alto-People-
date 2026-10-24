@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Download, Plus, Scale, Trash2 } from 'lucide-react';
+import { Download, Plus, Scale, Trash2 } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useStoreScope } from '@/lib/storeScope';
 import { useUrlParam } from '@/lib/useUrlState';

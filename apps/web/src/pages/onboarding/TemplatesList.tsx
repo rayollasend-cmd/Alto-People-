@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { Copy, LayoutTemplate, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Copy, LayoutTemplate, MoreHorizontal, Pencil, Plus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   ClientSummary,

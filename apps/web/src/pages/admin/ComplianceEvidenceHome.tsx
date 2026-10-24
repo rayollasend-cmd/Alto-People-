@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { CONTROL_STATUSES, CONTROL_STATUS_LABELS, ROLE_LABELS, controlStatusOf, type ComplianceControlView, type ControlStatus, type EvidenceRow } from '@alto-people/shared';
 import { controlStatusBadge } from '@/components/trust/TrustBlocks';

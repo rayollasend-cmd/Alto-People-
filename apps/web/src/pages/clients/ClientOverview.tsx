@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Briefcase, CheckCircle2, ChevronRight, Eye, History, MapPin, Pencil, Save } from 'lucide-react';
+import { AlertTriangle, Briefcase, CheckCircle2, ChevronRight, Eye, History, MapPin, Pencil, Save } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ClientActivityItem, ClientHealth, ClientNeedsYouItem, ClientOverview as Overview, ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

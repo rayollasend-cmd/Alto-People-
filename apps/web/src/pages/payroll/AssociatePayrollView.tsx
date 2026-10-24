@@ -63,7 +63,7 @@ import {
   HelpCircle,
   Settings,
   Wallet,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 
 /** Deduction codes with a translated label (pay.ded.*); orders and loans keep the server's label. */
 const DEDUCTION_CODES = new Set(['MEDICAL', 'DENTAL', 'VISION', 'HSA', 'HEALTH_FSA', 'DCAP', 'LIFE', 'DISABILITY', 'RET_401K', 'RET_403B', 'RET_457B', 'ROTH_401K', 'ROTH_403B', 'GARNISHMENT_FEE', 'EWA_RECOVERY', 'UNION_DUES', 'AFTER_TAX_OTHER', 'ER_401K_MATCH', 'ER_HEALTH', 'ER_HSA']);

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, ArchiveRestore, ClipboardCheck, Plus, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, ClipboardCheck, Plus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ChecklistItem, ChecklistTemplateInput, RobotChecklistTemplateSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

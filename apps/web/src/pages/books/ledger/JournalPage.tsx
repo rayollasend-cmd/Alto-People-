@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { NotebookPen, Plus } from 'lucide-react';
+import { NotebookPen, Plus } from '@/components/ui/icons';
 import { JOURNAL_SOURCE_LABELS, type BooksJournalRow } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { downloadJournalCsv, listJournal, type JournalFilters } from '@/lib/books/ledgerApi';

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, Share } from 'lucide-react';
+import { Download, Share } from '@/components/ui/icons';
 import {
   isStandaloneDisplay,
   subscribeInstallPrompt,

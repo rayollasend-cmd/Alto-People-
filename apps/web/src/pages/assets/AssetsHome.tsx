@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Download, Laptop, Pencil, Plus, Smartphone, Key, IdCard, Car, Shirt, Box, HardHat, Cpu } from 'lucide-react';
+import { Download, Laptop, Pencil, Plus, Smartphone, Key, IdCard, Car, Shirt, Box, HardHat, Cpu } from '@/components/ui/icons';
 import { listSites } from '@/lib/orgApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';

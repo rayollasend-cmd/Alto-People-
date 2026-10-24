@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CalendarRange, ChevronDown, Download, ExternalLink, MessageSquare } from 'lucide-react';
+import { AlertTriangle, CalendarRange, ChevronDown, Download, ExternalLink, MessageSquare } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { TimesheetHistoryPeriod, TimesheetHistoryResponse, TimesheetHistoryWeek } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

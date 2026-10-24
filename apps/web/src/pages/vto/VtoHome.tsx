@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { nextInQueue } from '@/lib/queueNext';
 import { useQuery } from '@tanstack/react-query';
 import { safeHref } from '@alto-people/shared';
-import { Heart, Plus } from 'lucide-react';
+import { Heart, Plus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';

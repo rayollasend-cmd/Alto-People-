@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Landmark } from 'lucide-react';
+import { Landmark } from '@/components/ui/icons';
 import {
   CLIENT_PAYMENT_METHOD_LABELS,
   CLIENT_PAYMENT_METHODS,

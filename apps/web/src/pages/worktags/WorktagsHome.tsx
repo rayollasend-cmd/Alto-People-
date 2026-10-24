@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useUrlParam } from '@/lib/useUrlState';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, Plus, Tags, X } from 'lucide-react';
+import { BarChart3, Plus, Tags, X } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import {
   assignWorktags,

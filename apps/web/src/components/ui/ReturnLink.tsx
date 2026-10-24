@@ -1,5 +1,5 @@
 import { Link, useInRouterContext, useSearchParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from '@/components/ui/icons';
 import { returnPathLabel, sanitizeReturnPath } from '@/lib/returnPath';
 import { cn } from '@/lib/cn';
 

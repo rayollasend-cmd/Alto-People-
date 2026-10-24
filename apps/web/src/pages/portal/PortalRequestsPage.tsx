@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { MessageSquare, MessageSquarePlus } from 'lucide-react';
+import { MessageSquare, MessageSquarePlus } from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { EmptyState } from '@/components/ui/EmptyState';

@@ -18,7 +18,7 @@
 // belongs at submit-confirm rather than typed transcription.
 
 import { useMemo, useState } from 'react';
-import { Pencil, Plus } from 'lucide-react';
+import { Pencil, Plus } from '@/components/ui/icons';
 import type { PayrollItem, PayrollRunDetail } from '@alto-people/shared';
 import { amendPayrollRun, type AmendCorrection } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';

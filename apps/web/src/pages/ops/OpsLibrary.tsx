@@ -14,7 +14,7 @@ import {
   Thermometer,
   Trash2,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE } from './opsVisuals';
 import { flipReadingSign, isNegativeReading, parseReading } from './reading';
 import { StoreShiftSops } from './StoreShiftSops';

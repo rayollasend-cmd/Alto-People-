@@ -36,7 +36,7 @@ import {
   ShieldAlert,
   UserPlus,
   Users,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type {
   PayrollException,
   PayrollExceptionsInput,

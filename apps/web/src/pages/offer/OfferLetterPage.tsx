@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { CheckCircle2, Download, FileSignature } from 'lucide-react';
+import { CheckCircle2, Download, FileSignature } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { acceptOfferLetter, declineOfferLetter, getOfferLetter, offerLetterPdfHref, type PublicOfferLetter } from '@/lib/recruiting90Api';
 import { ContactLine, LinkProblem } from '@/components/LinkProblem';

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarOff, Plus, Wallet } from 'lucide-react';
+import { CalendarOff, Plus, Wallet } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
   TimeOffBalance,

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, UsersRound } from 'lucide-react';
+import { ArrowRight, UsersRound } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { minuteOfDayInZone } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

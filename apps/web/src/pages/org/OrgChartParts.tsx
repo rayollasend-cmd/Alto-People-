@@ -18,7 +18,7 @@ import {
   UserCog,
   Settings2,
   MoveRight,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type { Role, TermKey } from '@alto-people/shared';
 import type { OrgNode } from '@/lib/orgChartApi';
 import { setStaffReportsTo } from '@/lib/orgChartApi';

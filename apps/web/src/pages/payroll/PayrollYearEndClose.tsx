@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, Circle } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Circle } from '@/components/ui/icons';
 import { getYearEndClose, type YearEndCloseResponse } from '@/lib/payrollApi';
 import { fmtCount } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/Card';

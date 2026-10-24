@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Camera, CheckCircle2 } from 'lucide-react';
+import { Camera, CheckCircle2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { uploadProfilePhoto } from '@/lib/selfApi';
 import { finishProfilePhoto } from '@/lib/onboardingApi';

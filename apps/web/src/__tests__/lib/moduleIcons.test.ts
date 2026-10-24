@@ -15,7 +15,7 @@ import {
   ShieldCheck,
   Users,
   Wallet,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { DOORS, MODULES, type DoorKey, type ModuleKey } from '@/lib/modules';
 import { DASHBOARD_ICON, DOOR_ICONS, MODULE_ICONS } from '@/lib/moduleIcons';
 
@@ -26,7 +26,7 @@ import { DASHBOARD_ICON, DOOR_ICONS, MODULE_ICONS } from '@/lib/moduleIcons';
  * modules share one — plus the meaning table in docs/design-system.md §6.
  */
 
-/** The display name lucide gives each icon component, for a readable failure. */
+/** The display name each icon component carries (its Phosphor glyph), for a readable failure. */
 function nameOf(icon: unknown): string {
   const c = icon as { displayName?: string; name?: string };
   return c.displayName ?? c.name ?? String(icon);
@@ -39,7 +39,7 @@ describe('MODULE_ICONS', () => {
     }
   });
 
-  it('no two modules share a glyph (compared by component reference, so lucide aliases count as the same)', () => {
+  it('no two modules share a glyph (compared by component reference, so names mapped to one Phosphor glyph count as the same)', () => {
     const byIcon = new Map<unknown, ModuleKey[]>();
     for (const [key, icon] of Object.entries(MODULE_ICONS) as [ModuleKey, unknown][]) {
       byIcon.set(icon, [...(byIcon.get(icon) ?? []), key]);

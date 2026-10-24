@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
+import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';

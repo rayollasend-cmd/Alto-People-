@@ -3,7 +3,7 @@ import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { fmtDateTz, fmtHours, fmtMoneyEst, zonedDayKey } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
-import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, X } from '@/components/ui/icons';
 import { ShiftCard, paidShiftMinutes } from './ShiftCard';
 
 /**
@@ -250,11 +250,11 @@ export function ScheduleWeekView({
           {t('shift.confirmed')}
         </span>
         <span className="inline-flex items-center gap-1">
-          <Check className="h-3 w-3 text-success icon-bold" aria-hidden="true" />
+          <Check className="h-3 w-3 text-success" aria-hidden="true" />
           {t('shift.worked')}
         </span>
         <span className="inline-flex items-center gap-1">
-          <X className="h-3 w-3 text-alert icon-bold" aria-hidden="true" />
+          <X className="h-3 w-3 text-alert" aria-hidden="true" />
           {t('shift.cancelled')}
         </span>
       </div>

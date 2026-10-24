@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BellRing } from 'lucide-react';
+import { BellRing } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { useI18n } from '@/lib/i18n';
 import { getPushStatus, subscribeToPush } from '@/lib/push';

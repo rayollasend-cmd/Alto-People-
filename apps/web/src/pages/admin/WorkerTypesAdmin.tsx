@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookUser, Bot, Plus, Users } from 'lucide-react';
+import { BookUser, Bot, Plus, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   WORK_STATUSES,

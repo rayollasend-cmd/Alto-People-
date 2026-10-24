@@ -3,7 +3,7 @@ import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import { fmtDayHeaderTz, fmtShiftTz, zonedDayKey } from '@/lib/format';

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Camera, CheckCircle2, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { Camera, CheckCircle2, FileText, RotateCcw, Trash2, Upload } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import { I9_DOC_CATALOG, i9CatalogEntry, i9SetSatisfied } from '@alto-people/shared';

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus } from 'lucide-react';
+import { Plus } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { createLocalTaxRule, listLocalTaxRules, type LocalTaxRule } from '@/lib/payrollApi';
 import { Badge } from '@/components/ui/Badge';

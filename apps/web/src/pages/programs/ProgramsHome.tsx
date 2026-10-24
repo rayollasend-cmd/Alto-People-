@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BellRing, CalendarRange, Download, FileText, Plane, Plus, Users, X } from 'lucide-react';
+import { BellRing, CalendarRange, Download, FileText, Plane, Plus, Users, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   PROGRAM_ALERT_LABELS,

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Sparkles } from 'lucide-react';
+import { Sparkles } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { askHugo, getHugo, type HugoAnswer } from '@/lib/hugoApi';
 import { Button } from '@/components/ui/Button';

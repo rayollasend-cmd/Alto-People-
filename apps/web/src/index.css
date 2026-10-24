@@ -1038,8 +1038,9 @@ input[type='radio'] {
   }
 
   /* Keep the loading spinner as a single static frame rather than a
-     mid-rotation glyph — Loader2 in the lucide set draws as a 3/4 arc, so
-     freezing it at 0deg reads as "loading icon" instead of "broken icon". */
+     mid-rotation glyph — Loader2 (Phosphor's circle-notch) draws as an
+     open arc, so freezing it at 0deg reads as "loading icon" instead of
+     "broken icon". */
   .animate-spin {
     animation: none !important;
   }
@@ -1106,37 +1107,4 @@ input[type='radio'] {
   --info-bg: rgb(var(--color-navy));
   --info-border: rgb(var(--color-steel) / 0.45);
   --info-text: rgb(var(--color-steel));
-}
-
-@layer base {
-  /* Icons (Lucide) — one stroke weight per size, set here and nowhere else
-     (scripts/icon-lint.mjs fails a strokeWidth prop). Lucide draws a 2-unit
-     line on a 24-unit grid, so at the sizes the app mostly uses it thinned
-     to 1.0–1.3px — faint and soft on the non-Retina Windows screens most
-     office staff have. From 12px to 24px the line is now a fixed screen
-     weight, tuned per size (vector-effect: non-scaling-stroke); larger
-     icons are illustrations (the kiosk's 64px marks) and keep scaling.
-     `icon-bold` is the one emphasis: a status check or cross, +0.5px. */
-  svg.lucide:is(.h-2\.5, .h-3, .h-3\.5, .h-4, .h-5, .h-6) :is(path, line, polyline, polygon, rect, circle, ellipse) {
-    vector-effect: non-scaling-stroke;
-  }
-  svg.lucide {
-    --icon-bold: 0px;
-  }
-  svg.lucide.h-2\.5 { stroke-width: calc(1.25px + var(--icon-bold)); }
-  svg.lucide.h-3 { stroke-width: calc(1.25px + var(--icon-bold)); }
-  svg.lucide.h-3\.5 { stroke-width: calc(1.4px + var(--icon-bold)); }
-  svg.lucide.h-4 { stroke-width: calc(1.5px + var(--icon-bold)); }
-  svg.lucide.h-5 { stroke-width: calc(1.75px + var(--icon-bold)); }
-  svg.lucide.h-6 { stroke-width: calc(2px + var(--icon-bold)); }
-  svg.lucide.icon-bold {
-    --icon-bold: 0.5px;
-  }
-  /* Where you are (the current nav row, the current tab): the icon fills
-     softly in its own colour and its line firms up a quarter pixel. */
-  svg.lucide.icon-active {
-    --icon-bold: 0.25px;
-    fill: currentColor;
-    fill-opacity: 0.2;
-  }
 }

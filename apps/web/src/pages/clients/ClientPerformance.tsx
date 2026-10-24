@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { ClientPerformanceStatement } from '@alto-people/shared';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3 } from '@/components/ui/icons';
 import { useAuth, useTerm } from '@/lib/auth';
 import { getClientPerformance } from '@/lib/clientsApi';
 import { fmtDate, fmtMoney, fmtMoneyCompact } from '@/lib/format';

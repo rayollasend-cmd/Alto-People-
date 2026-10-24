@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Briefcase, CheckCircle2, MapPin, Search } from 'lucide-react';
+import { ArrowLeft, Briefcase, CheckCircle2, MapPin, Search } from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useUrlParam } from '@/lib/useUrlState';
 import { FilterChip } from '@/components/ui/FilterBar';

@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useUrlParam } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
 import { RecruitingHubNav } from './RecruitingHubNav';
-import { Briefcase, ClipboardList, Copy, Download, Gift, Plus, Rss, Send, UserPlus } from 'lucide-react';
+import { Briefcase, ClipboardList, Copy, Download, Gift, Plus, Rss, Send, UserPlus } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import {
   approveOffer,

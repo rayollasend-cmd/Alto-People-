@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { Check, MoreVertical, X } from 'lucide-react';
+import { Check, MoreVertical, X } from '@/components/ui/icons';
 import type { ShiftStatus } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 
@@ -208,10 +208,10 @@ export function StatusMark({
       );
       break;
     case 'COMPLETED':
-      shape = <Check className="h-3 w-3 text-success icon-bold" />;
+      shape = <Check className="h-3 w-3 text-success" />;
       break;
     case 'CANCELLED':
-      shape = <X className="h-3 w-3 text-alert icon-bold" />;
+      shape = <X className="h-3 w-3 text-alert" />;
       break;
   }
 

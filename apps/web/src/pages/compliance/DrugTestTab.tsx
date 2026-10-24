@@ -3,7 +3,7 @@ import { nextInQueue } from '@/lib/queueNext';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, ExternalLink, FileCheck2, Plus, FlaskConical } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, FileCheck2, Plus, FlaskConical } from '@/components/ui/icons';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
 import { sanitizeReturnPath } from './section2Verification';
 import { toast } from 'sonner';

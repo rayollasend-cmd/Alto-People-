@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Trash2 } from 'lucide-react';
+import { AlertTriangle, Trash2 } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
 import { deleteDrafts, getDraftSummary } from '@/lib/schedulingApi';

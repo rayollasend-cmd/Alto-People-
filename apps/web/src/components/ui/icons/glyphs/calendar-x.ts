@@ -1,0 +1,7 @@
+// generated — do not edit; run npm -w apps/web run icons:build
+// Phosphor "calendar-x" (bold), drawn for CalendarX2.
+import { createIcon } from '../createIcon';
+
+export const CalendarX = /* @__PURE__ */ createIcon('CalendarX', {
+  b: 'M160.5,136.5,145,152l15.5,15.5a12,12,0,0,1-17,17L128,169l-15.5,15.5a12,12,0,0,1-17-17L111,152,95.5,136.5a12,12,0,1,1,17-17L128,135l15.5-15.5a12,12,0,1,1,17,17ZM228,48V208a20,20,0,0,1-20,20H48a20,20,0,0,1-20-20V48A20,20,0,0,1,48,28H68V24a12,12,0,0,1,24,0v4h72V24a12,12,0,0,1,24,0v4h20A20,20,0,0,1,228,48ZM52,52V76H204V52H188a12,12,0,0,1-24,0H92a12,12,0,0,1-24,0ZM204,204V100H52V204Z',
+});

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarClock, HeartPulse } from 'lucide-react';
+import { CalendarClock, HeartPulse } from '@/components/ui/icons';
 import { getBenefitsOverview, type BenefitsOverview, type BenefitsOverviewPlan } from '@/lib/benefitsApi';
 import { getAcaSummary } from '@/lib/taxcompApi';
 import { useAuth, useTenant } from '@/lib/auth';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, CreditCard, Cpu, ExternalLink, Users as UsersIcon } from 'lucide-react';
+import { Bot, CreditCard, Cpu, ExternalLink, Users as UsersIcon } from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtMoney, fmtMonth } from '@/lib/format';

@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Inbox, Lock } from 'lucide-react';
+import { Home, Inbox, Lock } from '@/components/ui/icons';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from './Button';
 import { useAccessAskKey } from './QueryError';

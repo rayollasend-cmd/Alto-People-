@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeftRight, Ban, CheckCheck, Download, FileSpreadsheet, FileUp, HandCoins, ListChecks, MoreHorizontal, Pencil, RefreshCw, Scale, Search, Sparkles, Undo2, Wand2 } from 'lucide-react';
+import { ArrowLeftRight, Ban, CheckCheck, Download, FileSpreadsheet, FileUp, HandCoins, ListChecks, MoreHorizontal, Pencil, RefreshCw, Scale, Search, Sparkles, Undo2, Wand2 } from '@/components/ui/icons';
 import type { BankBulkAction, BankCategorizeInput, BankFeedAccountView, BankRuleInput, BankTxnStatus, BankTxnSuggestions, BankTxnView } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

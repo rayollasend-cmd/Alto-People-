@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Timer } from 'lucide-react';
+import { Timer } from '@/components/ui/icons';
 import { paidMinutesForRange, type Shift, type TimeEntry } from '@alto-people/shared';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';

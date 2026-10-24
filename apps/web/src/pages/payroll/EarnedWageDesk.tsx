@@ -5,7 +5,7 @@ import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
 import { fmtCount, fmtDate, fmtDateOnlyRange, fmtMoney } from '@/lib/format';
 import { useUrlParam } from '@/lib/useUrlState';
-import { Settings2 } from 'lucide-react';
+import { Settings2 } from '@/components/ui/icons';
 import { getEarnedWageDesk, updateEarnedWageSettings, type EwaAdvance, type EwaDesk } from '@/lib/earnedWageApi';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { Mail, Pencil } from 'lucide-react';
+import { Mail, Pencil } from '@/components/ui/icons';
 import { expect, userEvent, within } from 'storybook/test';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';

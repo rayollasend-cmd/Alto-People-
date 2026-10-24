@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, History as HistoryIcon, Pencil, X } from 'lucide-react';
+import { Check, History as HistoryIcon, Pencil, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { FieldglassStatus } from '@alto-people/shared';
 import { ApiError, apiFetch } from '@/lib/api';

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { ClientStatus, ClientSummary } from '@alto-people/shared';
 import { createClient } from '@/lib/clientsApi';

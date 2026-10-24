@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts';
-import { CalendarRange, LineChart, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { CalendarRange, LineChart, RefreshCw, SlidersHorizontal, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { FORECAST_SIGNAL_KINDS, FORECAST_SIGNAL_LABELS, type ForecastResponse, type ForecastSignalKind, type ForecastSiteSummary, type ForecastWeek } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MoreHorizontal, Pencil, Plus, Power, Scale, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Pencil, Plus, Power, Scale, Trash2 } from '@/components/ui/icons';
 import { LEDGER_ACCOUNT_TYPES, LEDGER_SUBTYPES, LEDGER_SUBTYPE_LABELS, LEDGER_TYPE_LABELS, type LedgerAccountRow, type LedgerAccountType } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';

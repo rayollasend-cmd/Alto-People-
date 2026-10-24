@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays } from '@/components/ui/icons';
 import { getFloorWeek } from '@/lib/floorApi';
 import { fmtDate, fmtWeekday, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
-import { AlertTriangle, ArrowRight, CheckCircle2, CircleDashed, Info, ServerCrash, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, CircleDashed, Info, ServerCrash, ShieldAlert } from '@/components/ui/icons';
 import {
   getDisbursementWebhookStatus,
   type DisbursementWebhookStatus,

@@ -1,7 +1,7 @@
 import { WEBHOOK_EVENTS } from '@alto-people/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, Download, Key, Plus, Webhook } from 'lucide-react';
+import { Copy, Download, Key, Plus, Webhook } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { errorText } from '@/lib/errorText';
 import {

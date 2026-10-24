@@ -1,4 +1,4 @@
-import { Download, FileText } from 'lucide-react';
+import { Download, FileText } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import {
   DropdownMenu,

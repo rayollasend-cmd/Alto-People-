@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronLeft, ChevronRight, FileText, Printer, UserPlus } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, FileText, Printer, UserPlus } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';

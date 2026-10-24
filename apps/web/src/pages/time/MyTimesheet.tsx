@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Flag, History } from 'lucide-react';
+import { Flag, History } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { TimeEntry } from '@alto-people/shared';
 import { listMyTimeEntries } from '@/lib/timeApi';

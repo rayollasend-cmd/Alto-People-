@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { Tooltip, TooltipContent, TooltipTrigger } from './Tooltip';
 

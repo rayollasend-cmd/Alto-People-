@@ -4,7 +4,7 @@ import { useMinWidth } from '@/lib/useViewport';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, FileWarning, Scale } from 'lucide-react';
+import { ArrowLeft, Download, FileWarning, Scale } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';

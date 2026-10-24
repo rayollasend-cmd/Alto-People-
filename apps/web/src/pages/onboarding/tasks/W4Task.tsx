@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Camera, CheckCircle2, ChevronDown, Upload } from 'lucide-react';
+import { Camera, CheckCircle2, ChevronDown, Upload } from '@/components/ui/icons';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { getW4, submitW4, type W4Status } from '@/lib/onboardingApi';

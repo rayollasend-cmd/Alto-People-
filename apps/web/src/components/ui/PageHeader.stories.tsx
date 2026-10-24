@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { Download, Mail, Printer } from 'lucide-react';
+import { Download, Mail, Printer } from '@/components/ui/icons';
 import { expect, screen, userEvent, waitFor, within } from 'storybook/test';
 import { Badge } from './Badge';
 import { PageHeader, type PageAction } from './PageHeader';

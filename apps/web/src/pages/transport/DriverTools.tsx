@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, Camera, Check, Clock, Copy, LogIn, LogOut, Phone, Share2, ShieldAlert, Siren, X } from 'lucide-react';
+import { AlertTriangle, Bus, Camera, Check, Clock, Copy, LogIn, LogOut, Phone, Share2, ShieldAlert, Siren, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';

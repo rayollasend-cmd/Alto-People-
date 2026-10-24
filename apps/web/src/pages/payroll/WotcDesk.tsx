@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { BadgeDollarSign, Download, FileText, Settings2 } from 'lucide-react';
+import { BadgeDollarSign, Download, FileText, Settings2 } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
 import { fmtDate, fmtMoney } from '@/lib/format';

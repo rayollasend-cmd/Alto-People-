@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, CircleAlert, CircleCheck, Download } from 'lucide-react';
+import { ChevronDown, ChevronRight, CircleAlert, CircleCheck, Download } from '@/components/ui/icons';
 import type { BooksCompareKind, BooksDimensionsFilter, BooksPnlSections, BooksPnlTotals, BooksProfitAndLoss, BooksReportRow } from '@alto-people/shared';
 import { downloadReport, getBalanceSheet, getCashFlow, getProfitAndLoss, getTrialBalance, type ReportKind, type ReportParams } from '@/lib/books/ledgerApi';
 import { fmtDate, fmtDateOnlyRange, fmtMoney, ymdLocal } from '@/lib/format';

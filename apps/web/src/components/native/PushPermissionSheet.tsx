@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BellRing, CalendarClock, Bus, Wallet } from 'lucide-react';
+import { BellRing, CalendarClock, Bus, Wallet } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/Dialog';

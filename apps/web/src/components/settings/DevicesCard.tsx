@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { MonitorSmartphone } from 'lucide-react';
+import { MonitorSmartphone } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { forgetMyDevice, listMyDevices } from '@/lib/accessApi';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays } from '@/components/ui/icons';
 import { getAttendanceCalendar, type AttendanceCalendarMetric, type AttendanceCalendarResponse } from '@/lib/attendanceInsightsApi';
 import { fmtCount, fmtDateOnly, fmtDateOnlyRange } from '@/lib/format';
 import { ChartFrame, type ChartColumn } from '@/components/ui/ChartFrame';

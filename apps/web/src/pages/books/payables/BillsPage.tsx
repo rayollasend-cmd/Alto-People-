@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, Check, Download, Plus, Repeat } from 'lucide-react';
+import { Banknote, Check, Download, Plus, Repeat } from '@/components/ui/icons';
 import type { BooksBill, BooksRecurringBill, BooksRecurringFrequency } from '@alto-people/shared';
 import { fmtDate, ymdLocal } from '@/lib/format';
 import { apAging, approveBills, createRecurringBill, listBills, listRecurringBills, listVendors, PAYABLES_KEY, updateRecurringBill, vendor1099, vendor1099CsvUrl, type BillsTab } from '@/lib/books/payablesApi';

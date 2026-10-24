@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Banknote, Clock } from 'lucide-react';
+import { AlertTriangle, Banknote, Clock } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { HirePayStatus } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';

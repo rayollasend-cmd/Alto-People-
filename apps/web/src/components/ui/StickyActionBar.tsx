@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { useMinWidth } from '@/lib/useViewport';
 import { Button } from './Button';

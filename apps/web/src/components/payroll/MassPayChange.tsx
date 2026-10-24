@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { DollarSign } from 'lucide-react';
+import { DollarSign } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtMoney, ymdLocal } from '@/lib/format';

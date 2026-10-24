@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine } from '@/components/ui/icons';
 import type { QboSyncEventRow } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
 import { listQboEvents, QBO_KEY } from '@/lib/books/quickbooksApi';

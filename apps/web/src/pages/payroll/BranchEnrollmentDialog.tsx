@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CreditCard, Save, Trash2 } from 'lucide-react';
+import { CreditCard, Save, Trash2 } from '@/components/ui/icons';
 import { toast } from '@/components/ui/Toaster';
 import {
   getBranchEnrollment,

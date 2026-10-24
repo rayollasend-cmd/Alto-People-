@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Download, History as HistoryIcon } from 'lucide-react';
+import { Download, History as HistoryIcon } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';

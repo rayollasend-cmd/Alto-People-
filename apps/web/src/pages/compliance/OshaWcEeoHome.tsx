@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download, Plus } from 'lucide-react';
+import { Download, Plus } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { listClientLocations } from '@/lib/clientsApi';
 import { useClients } from '@/lib/useClients';

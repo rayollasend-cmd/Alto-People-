@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CalendarDays, Plus, X } from 'lucide-react';
+import { CalendarDays, Plus, X } from '@/components/ui/icons';
 import { addHolidayOverride, clockText, etDeadline, getPayrollCalendar, removeHolidayOverride, shortDay, type CalendarRow } from '@/lib/bankingApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';

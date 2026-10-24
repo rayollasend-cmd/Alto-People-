@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2 } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { answerNps, getNpsInvite } from '@/lib/npsApi';
 import { cn } from '@/lib/cn';

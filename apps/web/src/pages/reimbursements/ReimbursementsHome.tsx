@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { nextInQueue } from '@/lib/queueNext';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Check, Plus, Receipt, Trash2 } from 'lucide-react';
+import { Check, Plus, Receipt, Trash2 } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtMonthYearTz, parseYmd, ymdLocal } from '@/lib/format';
 import { useUrlParam } from '@/lib/useUrlState';

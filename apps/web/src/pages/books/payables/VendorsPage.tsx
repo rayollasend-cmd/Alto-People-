@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Plus } from '@/components/ui/icons';
 import type { BooksVendor } from '@alto-people/shared';
 import { listVendors, PAYABLES_KEY } from '@/lib/books/payablesApi';
 import { ListTemplate } from '@/components/templates';

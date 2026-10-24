@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, ChevronDown, ChevronRight, LayoutGrid, List, MoreHorizontal, MoveRight, Pencil, Power, Star, UserMinus, UserPlus } from 'lucide-react';
+import { CalendarClock, ChevronDown, ChevronRight, LayoutGrid, List, MoreHorizontal, MoveRight, Pencil, Power, Star, UserMinus, UserPlus } from '@/components/ui/icons';
 import { becauseSentence, type PayFrequencyKind, type PayScheduleDetail, type PayScheduleHistoryResponse, type PayScheduleSummary, type RosterPerson, type ScheduleRule } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useTenant } from '@/lib/auth';

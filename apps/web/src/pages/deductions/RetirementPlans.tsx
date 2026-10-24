@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Download, FileUp, PiggyBank, Plus, RefreshCw, Send, Trash2, Upload, Users } from 'lucide-react';
+import { AlertTriangle, Download, FileUp, PiggyBank, Plus, RefreshCw, Send, Trash2, Upload, Users } from '@/components/ui/icons';
 import {
   addLoan,
   changeElection,

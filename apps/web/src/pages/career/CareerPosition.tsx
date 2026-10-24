@@ -1,4 +1,4 @@
-import { Check, Circle } from 'lucide-react';
+import { Check, Circle } from '@/components/ui/icons';
 import type { CareerPosition, CareerRequirement, SkillLevel } from '@/lib/career126Api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Badge, Card, CardContent, SectionTitle } from '@/components/ui';

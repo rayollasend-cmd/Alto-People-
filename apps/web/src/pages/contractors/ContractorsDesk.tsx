@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, FileSearch, MailWarning, ShieldCheck, Upload, UserRoundCheck } from 'lucide-react';
+import { Download, FileSearch, MailWarning, ShieldCheck, Upload, UserRoundCheck } from '@/components/ui/icons';
 import {
   checkTin,
   createTinBatch,

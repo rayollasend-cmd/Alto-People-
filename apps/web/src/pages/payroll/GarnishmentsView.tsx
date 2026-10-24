@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Pause, Play, Plus, Square } from 'lucide-react';
+import { Pause, Play, Plus, Square } from '@/components/ui/icons';
 import {
   createGarnishment,
   type Garnishment,

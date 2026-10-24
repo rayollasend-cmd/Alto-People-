@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ATTENDANCE_FILL_TARGET_PCT } from '@alto-people/shared';
-import { Briefcase, CalendarCheck, ClipboardList, Clock, ShieldAlert, Timer, Users, type LucideIcon } from 'lucide-react';
+import { Briefcase, CalendarCheck, ClipboardList, Clock, ShieldAlert, Timer, Users, type LucideIcon } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';

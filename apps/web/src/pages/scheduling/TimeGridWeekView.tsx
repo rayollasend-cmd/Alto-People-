@@ -10,7 +10,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { GripVertical } from 'lucide-react';
+import { GripVertical } from '@/components/ui/icons';
 import { wentUnfilled, type AssociateLite, type Shift } from '@alto-people/shared';
 import { dayIsPast, isCopyDrag, shiftTimesOnDay } from './weekGridFit';
 import { cn } from '@/lib/cn';

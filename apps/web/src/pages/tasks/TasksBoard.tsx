@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Bot, Cpu, ListTodo, Plus, User } from 'lucide-react';
+import { AlertTriangle, Bot, Cpu, ListTodo, Plus, User } from '@/components/ui/icons';
 import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type WorkTaskStatus, type WorkTaskView } from '@alto-people/shared';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useOrgSites } from '@/lib/useOrgSites';

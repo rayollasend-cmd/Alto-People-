@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Calendar, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, List, Send, Wand2 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Calendar, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, List, Send, Wand2 } from '@/components/ui/icons';
+import type { LucideIcon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import { fmtMoneyCompact } from '@/lib/format';
 import { cn } from '@/lib/cn';

@@ -43,7 +43,7 @@ import {
   RotateCcw,
   UserX,
   WifiOff,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { useUrlParam } from '@/lib/useUrlState';
 import { listMyRequests } from '@/lib/timeOffApi';
 import {

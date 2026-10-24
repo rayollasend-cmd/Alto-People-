@@ -44,7 +44,7 @@ import {
   Users,
   X,
   type LucideIcon,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { WORK_STATUSES } from '@alto-people/shared';
 import type {

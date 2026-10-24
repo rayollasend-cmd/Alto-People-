@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, BookOpen, CalendarCheck, CalendarPlus, CheckCircle2, ClipboardList, Clock, FileSignature, FileUp, FileWarning, Inbox, MessageSquare, type LucideIcon } from 'lucide-react';
+import { ArrowRight, BookOpen, CalendarCheck, CalendarPlus, CheckCircle2, ClipboardList, Clock, FileSignature, FileUp, FileWarning, Inbox, MessageSquare, type LucideIcon } from '@/components/ui/icons';
 import type { InboxSource } from '@alto-people/shared';
 import { useInbox } from '@/lib/inboxApi';
 import { getMyTraining } from '@/lib/lms94Api';

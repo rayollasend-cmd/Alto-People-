@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Bell, CheckCircle2, ChevronRight, Send, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Bell, CheckCircle2, ChevronRight, Send, ShieldAlert } from '@/components/ui/icons';
 import type { PublishLaborFinding, PublishPreflightResponse } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import {

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { TimeOffCategory } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
