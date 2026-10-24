@@ -91,6 +91,7 @@ import { benefitsRouter } from './routes/benefits.js';
 import { branchWebhookRouter } from './routes/branchWebhook.js';
 import { resendWebhookRouter } from './routes/resendWebhook.js';
 import { whatsappRouter, whatsappWebhookRouter } from './routes/whatsapp.js';
+import { analyticsRelayRouter } from './routes/analyticsRelay.js';
 import { emailUnsubscribeRouter } from './routes/emailUnsubscribe.js';
 import { orgRouter } from './routes/org.js';
 import { externalPaymentsRouter } from './routes/externalPayments.js';
@@ -438,6 +439,8 @@ export function createApp() {
   app.use('/webhooks/providers', tenantMiddleware, providerWebhooksRouter);
   // And Intuit's change notifications for the company QuickBooks (intuit-signature over the raw body).
   app.use('/books/quickbooks/webhook', tenantMiddleware, booksQuickbooksWebhookRouter);
+  // Product analytics (PostHog) relays through here, raw: no session, no client IP (routes/analyticsRelay.ts).
+  app.use('/ux', analyticsRelayRouter);
   // 2mb to accommodate base64-encoded kiosk selfies (1MB raw → ~1.4MB
   // base64 → headroom for the JSON envelope).
   app.use(express.json({ limit: '2mb' }));

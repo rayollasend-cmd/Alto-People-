@@ -1,5 +1,5 @@
 {
-  "_comment": "gzip KB. `entryKb` is everything index.html loads before first paint. Raise a line only on purpose, in the commit that needs it, with the reason in the message. scripts/size-budget.mjs enforces this after every build. 2026-10-23: entry 362→372, main 224→230, es 80→92 — the Fortune 500 waves added ~600 interface strings (English is bundled for first paint; Spanish is its lazy pack) and the shared header/filter/tile components.",
+  "_comment": "gzip KB. `entryKb` is everything index.html loads before first paint. Raise a line only on purpose, in the commit that needs it, with the reason in the message. scripts/size-budget.mjs enforces this after every build. 2026-10-23: entry 362→372, main 224→230, es 80→92 — the Fortune 500 waves added ~600 interface strings (English is bundled for first paint; Spanish is its lazy pack) and the shared header/filter/tile components. PostHog (module.no-external, posthog-recorder) exists only in a build with VITE_POSTHOG_KEY — loaded after the page settles, the recorder for office staff only; CI builds without it.",
   "entryKb": 372,
   "cssKb": 40,
   "defaultChunkKb": 80,
@@ -14,6 +14,8 @@
     "face-api": 175,
     "AdminSchedulingView": 65,
     "maplibre-gl-worker": 150,
-    "es": 92
+    "es": 92,
+    "module.no-external": 115,
+    "posthog-recorder": 72
   }
 }

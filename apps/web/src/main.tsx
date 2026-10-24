@@ -7,6 +7,7 @@ import { guardHistory } from '@/lib/historyGuard';
 import { readOfflineSession } from '@/lib/offlineSession';
 import { restorePersistedQueries } from '@/lib/queryPersist';
 import { installStaleBuildGuard } from '@/lib/chunkLoading';
+import { initAnalytics, setAnalyticsPath } from '@/lib/analytics';
 
 // Initialise error tracking before any render path can throw. No-op
 // when VITE_SENTRY_DSN is unset; safe in dev.
@@ -29,6 +30,7 @@ import { ConfirmProvider } from '@/lib/confirm';
 import { StoreScopeProvider } from '@/lib/storeScope';
 import { Toaster, toast } from '@/components/ui/Toaster';
 import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
+import { AnalyticsIdentity } from '@/components/AnalyticsIdentity';
 
 // TanStack Query — caches API reads so back-nav and revisits within
 // a session are instant. Defaults are tuned for our cold-start-prone
@@ -119,6 +121,12 @@ try {
 // failure surfaces — a route import, a preloaded dependency, a component's
 // own import(). Installed before anything can load a chunk.
 installStaleBuildGuard();
+
+// Product analytics (PostHog): a no-op without VITE_POSTHOG_KEY, and loaded
+// only after the page settles. The router tells it which page is showing so
+// recordings stop on pay, document and case pages (lib/analytics).
+initAnalytics();
+router.subscribe((state) => setAnalyticsPath(state.location.pathname));
 
 // The shell loads a few hundred small chunks; the default resource-timing
 // buffer (250) drops the later ones, and the service-worker warm-up below
@@ -283,6 +291,7 @@ ReactDOM.createRoot(rootEl).render(
                           Without it every navigation blanked to a skeleton
                           even when the next page was 80ms away. */}
                       <LanguageSync />
+                      <AnalyticsIdentity />
                       {/* The native app's chrome, links, push and lock (renders nothing in a browser). */}
                       {isNative() && (
                         <React.Suspense fallback={null}>
