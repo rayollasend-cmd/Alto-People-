@@ -853,7 +853,8 @@ async function pushContractDuties(prisma: PrismaClient, user: QueueUser, out: Ro
       domain: 'compliance',
       severity: 'critical',
       label: `${duties.count} contract duties overdue, the oldest due ${duties.oldestDue ? dayWords(duties.oldestDue, now) : '—'}`,
-      detail: 'Do each one in the client’s portal, then confirm it on the scorecard.',
+      // Worded for every tenant: a hotel has contracts but no "clients" (hotel-journey E2E).
+      detail: 'Do each one as the contract asks, then confirm it on the scorecard.',
       stakes: null,
       ageDays: duties.items[0]?.daysOverdue ?? null,
       linkUrl: '/compliance?tab=scorecard',
@@ -867,7 +868,7 @@ async function pushContractDuties(prisma: PrismaClient, user: QueueUser, out: Ro
       severity: d.daysOverdue > 7 ? 'critical' : 'high',
       // The age chip says how overdue; the title names the duty and its day.
       label: `${d.label} — due ${dayWords(d.dueDate, now)}`,
-      detail: 'Overdue under the client contract. Do it in the client’s portal, then confirm it on the scorecard.',
+      detail: 'Overdue under the contract. Do it as the contract asks, then confirm it on the scorecard.',
       stakes: null,
       ageDays: d.daysOverdue,
       linkUrl: '/compliance?tab=scorecard',
