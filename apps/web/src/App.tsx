@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ComponentType } from 'react';
-import { Navigate, createBrowserRouter } from 'react-router-dom';
+import { Navigate, createBrowserRouter, matchRoutes } from 'react-router-dom';
+import type { AuthUser } from '@alto-people/shared';
 // PERF: the Layout is authenticated-only chrome — Sidebar, Topbar, MobileNav,
 // BottomTabBar, CommandPalette (and cmdk with it), WhatsNew, InstallPrompt,
 // the SSE live-events client. Importing it eagerly put all of that in the
@@ -14,7 +15,7 @@ import { ResetPassword } from '@/pages/ResetPassword';
 import { ConfirmEmailChange } from '@/pages/ConfirmEmailChange';
 import { Install } from '@/pages/Install';
 import { AcceptInvite } from '@/pages/AcceptInvite';
-import { Dashboard } from '@/pages/Dashboard';
+import { Dashboard, preloadDashboard } from '@/pages/Dashboard';
 import { RequireAuth } from '@/lib/auth';
 import { RequireCapability } from '@/lib/RequireCapability';
 import { registerPrefetch, registerDataPrefetch } from '@/lib/prefetch';
@@ -58,7 +59,8 @@ function lazyNamed<T extends ComponentType<any>>(
   );
 }
 
-const Layout = lazyNamed(() => import('@/components/Layout'), 'Layout');
+const loadLayout = () => import('@/components/Layout');
+const Layout = lazyNamed(loadLayout, 'Layout');
 
 // Onboarding cluster
 const OnboardingHome = lazyNamed(() => import('@/pages/onboarding/OnboardingHome'), 'OnboardingHome');
@@ -790,6 +792,9 @@ const LAYOUT_ROUTES = [
   { path: 'fieldglass', element: <RequireCapability cap="process:payroll"><FieldglassSetup /></RequireCapability> },
 ];
 
+/** The signed-in shell's route (RequireAuth → Layout); warmSignedInStart looks for it. */
+const SHELL_ROUTE_ID = 'shell';
+
 export const router = createBrowserRouter([
   { path: '/login', element: <Login />, errorElement: <RouterErrorPage /> },
   // Brief 2-3: an organization's sign-in by its slug, for shared email domains.
@@ -976,6 +981,7 @@ export const router = createBrowserRouter([
     errorElement: <RouterErrorPage />,
   },
   {
+    id: SHELL_ROUTE_ID,
     path: '/',
     element: (
       <RequireAuth>
@@ -1016,3 +1022,23 @@ export const router = createBrowserRouter([
     children: [{ index: true, element: <NotFound /> }],
   },
 ]);
+
+/**
+ * A returning visitor's signed-in first screen starts downloading with the
+ * session check instead of after it.
+ *
+ * Without this the boot was a relay: /auth/me, then (RequireAuth satisfied)
+ * the Layout chunk, then (the Layout rendered) the home's chunk, then its
+ * data — on a phone each leg a few round trips, and the associate's home
+ * waited out all of them. main.tsx calls this before the first render with
+ * the identity this device remembers (lib/offlineSession); both imports are
+ * the very modules the lazy routes resolve later, so nothing loads twice.
+ * The remembered identity only chooses what to fetch — RequireAuth still
+ * waits for /auth/me before anything signed-in renders.
+ */
+export function warmSignedInStart(remembered: AuthUser): void {
+  const matches = matchRoutes(router.routes, window.location);
+  if (!matches || matches[0]?.route.id !== SHELL_ROUTE_ID) return;
+  void loadLayout().catch(() => undefined);
+  if (matches[matches.length - 1]?.route.index) preloadDashboard(remembered);
+}

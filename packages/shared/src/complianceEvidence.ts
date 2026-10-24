@@ -258,7 +258,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
 ];
 
-export const COMPLIANCE_CONTROL_IDS = COMPLIANCE_CONTROLS.map((c) => c.id);
+export const COMPLIANCE_CONTROL_IDS = /* @__PURE__ */ (() => COMPLIANCE_CONTROLS.map((c) => c.id))();
 
 export function complianceControl(id: string): ComplianceControl | undefined {
   return COMPLIANCE_CONTROLS.find((c) => c.id === id);

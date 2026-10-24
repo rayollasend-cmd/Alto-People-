@@ -62,8 +62,12 @@ In `lighthouse/lighthouserc.cjs`, with today's numbers written above them:
 - Performance, best practices, LCP, CLS and TBT are **warnings**, set just past
   today's numbers, so a warning means "worse than on 2026-10-23". Tighten them,
   and turn them into errors, as the pages get faster. Where to start: the
-  associate's home on a phone (LCP 9–10 s, CLS 0.10–0.18) and the admin home's
-  layout shift (0.10–0.13).
+  associate's home on a phone (LCP 6.6 s here; most of it is the preview
+  server's HTTP/1.1 queueing ~70 chunks on six connections — over HTTP/2 the
+  same build measures 3.9 s).
+- Phone perf scores move 4–5 points between runs on FCP alone (whether main.js
+  ran before the boot splash's first paint in the recorded trace); compare
+  medians of 3, never single runs.
 
 ## In CI
 

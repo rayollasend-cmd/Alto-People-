@@ -182,6 +182,23 @@ function clearUserScopedStorage(): void {
   }
 }
 
+/**
+ * The boot's /auth/me, sent by main.tsx before React mounts, ahead of
+ * everything else the first screen fetches. Sent from the provider's
+ * effect it went out after the first render — behind the signed-in shell's
+ * chunks, which a returning visitor now starts at boot (warmSignedInStart),
+ * so on a phone's handful of connections the session check queued behind
+ * them for seconds. The provider's first attempt reads this answer instead
+ * of asking again; retries ask afresh.
+ */
+let bootProbe: Promise<MeResponse> | null = null;
+export function startSessionProbe(): void {
+  bootProbe = apiFetch<MeResponse>('/auth/me');
+  // The provider reads the outcome; this only keeps an early failure from
+  // being reported as unhandled before it does.
+  bootProbe.catch(() => undefined);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<AuthUser | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -237,8 +254,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let splashHeld = false;
       for (;;) {
         try {
+          const early = attempt === 0 ? bootProbe : null;
+          bootProbe = null;
           // eslint-disable-next-line no-restricted-syntax -- the session probe itself: it decides whether the query layer may run and which cache to restore, so it cannot live inside it
-          const me = await apiFetch<MeResponse>('/auth/me', { signal: ac.signal });
+          const me = await (early ?? apiFetch<MeResponse>('/auth/me', { signal: ac.signal }));
           if (cancelled) return;
           setUser(me.user);
           setTenant(me.tenant ?? DEFAULT_TENANT);
@@ -445,6 +464,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { mfaRequired: false, mfaEnrollmentRequired: true };
     }
     setUser(res.user);
+    // Remembered from the sign-in itself, as the MFA and passkey paths do,
+    // not only from the next boot's /auth/me: the very next open can then
+    // start the shell and home downloading at once (warmSignedInStart) and
+    // open offline.
+    saveOfflineSession(res.user);
     setIsOffline(false);
     void loadTenant();
     return { mfaRequired: false, mfaEnrollmentRequired: false };

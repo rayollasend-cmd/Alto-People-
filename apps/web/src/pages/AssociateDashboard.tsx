@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { greetingName as greetingNameOf } from '@/lib/greeting';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { queryOptions, useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
   CalendarPlus,
@@ -43,7 +43,10 @@ import { OnboardingBanner, useOpenOnboarding } from '@/components/OnboardingBann
 import { ReadyToWorkCard } from '@/components/ReadyToWorkCard';
 import { CelebrationRibbon } from '@/components/CelebrationRibbon';
 import { EarningsCard, useMyEarnings } from '@/components/EarningsCard';
-import { RingMeter } from '@/components/ui/charts';
+// The file, not the kit's index: importing through the index runs every
+// chart module, and with them the whole charting library (122 KB gzipped)
+// joined this page's first load for one SVG ring.
+import { RingMeter } from '@/components/ui/charts/RingMeter';
 import { FirstPaycheckCard } from '@/components/FirstPaycheckCard';
 import { RideStrip } from '@/pages/transport/RideStrip';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -68,6 +71,13 @@ async function emptyOnExpectedDenial<T>(p: Promise<T>): Promise<T | null> {
     throw err;
   }
 }
+
+/** The kiosk clock-in number (EmployeeNumberLine), asked for with the home's first queries. */
+const employeeNumberQuery = queryOptions({
+  queryKey: ['me', 'employeeNumber'],
+  queryFn: () => getEmployeeNumber().catch(() => null),
+  staleTime: 5 * 60_000,
+});
 
 export function AssociateDashboard() {
   const { user } = useAuth();
@@ -100,6 +110,9 @@ export function AssociateDashboard() {
     queryKey: ['me', 'marketplace', 'open'],
     queryFn: () => emptyOnExpectedDenial(listOpenShifts()),
   });
+  // The hero's clock-in number line reads this; asked here, with the rest,
+  // rather than a round trip later once the hero has rendered.
+  useQuery(employeeNumberQuery);
 
   // undefined → still loading (skeleton); null/[] → honest empty state.
   const active: ActiveTimeEntryResponse | null | undefined = activeQuery.data;
@@ -358,11 +371,7 @@ function LoadFailedCard({
 function EmployeeNumberLine() {
   const { t } = useI18n();
   const [revealed, setRevealed] = useState(false);
-  const { data } = useQuery({
-    queryKey: ['me', 'employeeNumber'],
-    queryFn: () => getEmployeeNumber().catch(() => null),
-    staleTime: 5 * 60_000,
-  });
+  const { data } = useQuery(employeeNumberQuery);
   if (!data?.employeeNumber) return null;
   return (
     <div className="mt-3 flex items-center justify-between gap-2">

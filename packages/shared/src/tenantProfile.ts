@@ -169,9 +169,9 @@ export type TermKey = (typeof TERM_KEYS)[number];
 export const TermKeySchema = /* @__PURE__ */ (() => z.enum(TERM_KEYS))();
 
 export type Terminology = Record<TermKey, TermText>;
-export const TerminologySchema = z
+export const TerminologySchema = /* @__PURE__ */ (() => z
   .record(TermKeySchema, TermTextSchema)
-  .refine((t) => TERM_KEYS.every((k) => k in t), { message: 'Every term key must be present.' }) as unknown as z.ZodType<Terminology>;
+  .refine((t) => TERM_KEYS.every((k) => k in t), { message: 'Every term key must be present.' }) as unknown as z.ZodType<Terminology>)();
 
 const t = (en: string, es: string, tr: string): TermText => ({ en, es, tr });
 

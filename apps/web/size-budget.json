@@ -1,10 +1,10 @@
 {
-  "_comment": "gzip KB. `entryKb` is everything index.html loads before first paint. Raise a line only on purpose, in the commit that needs it, with the reason in the message. scripts/size-budget.mjs enforces this after every build. 2026-10-23: entry 362→372, main 224→230, es 80→92 — the Fortune 500 waves added ~600 interface strings (English is bundled for first paint; Spanish is its lazy pack) and the shared header/filter/tile components. PostHog (chunks `usage`, `usage-replay` — neutral names content blockers don't match) exists only in a build with VITE_POSTHOG_KEY — loaded after the page settles, the recorder for office staff only; CI builds without it. 2026-10-23: echarts (the flow, calendar and treemap figures; SVG renderer, three chart types) is its own chunk, fetched only by the pages that draw one.",
-  "entryKb": 372,
+  "_comment": "gzip KB. `entryKb` is everything index.html loads before first paint. Raise a line only on purpose, in the commit that needs it, with the reason in the message. scripts/size-budget.mjs enforces this after every build. 2026-10-23: entry 362→372, main 224→230, es 80→92 — the Fortune 500 waves added ~600 interface strings (English is bundled for first paint; Spanish is its lazy pack) and the shared header/filter/tile components. PostHog (chunks `usage`, `usage-replay` — neutral names content blockers don't match) exists only in a build with VITE_POSTHOG_KEY — loaded after the page settles, the recorder for office staff only; CI builds without it. 2026-10-23: echarts (the flow, calendar and treemap figures; SVG renderer, three chart types) is its own chunk, fetched only by the pages that draw one. 2026-10-24: entry 372→345, main 230→200 — locked in after the phone-speed pass took zod and the API schemas out of main and the icons into one chunk (entry 367.6→333.8).",
+  "entryKb": 345,
   "cssKb": 40,
   "defaultChunkKb": 80,
   "chunksKb": {
-    "main": 230,
+    "main": 200,
     "react-vendor": 85,
     "radix": 25,
     "style-utils": 12,

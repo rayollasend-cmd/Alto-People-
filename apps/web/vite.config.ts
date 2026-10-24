@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type Plugin, type Rollup } from 'vite';
 import react from '@vitejs/plugin-react';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
 import path from 'node:path';
@@ -63,6 +63,59 @@ function preloadLatinFonts(): Plugin {
     },
   };
 }
+
+/**
+ * The lucide icons that go into one shared `icons` chunk, by file name
+ * ("calendar-off"), worked out once per build.
+ *
+ * Every icon is its own module, and Rollup gives each set of importers its
+ * own chunk, so an icon used by two lazy pages became a ~600-byte chunk of
+ * its own: 183 of them, about 110 fetched one by one before the associate's
+ * home could render — each a round trip on a phone. Those go into one
+ * chunk instead, fetched with the first signed-in page.
+ *
+ * Left where Rollup puts them: icons the entry chunk's own code uses (an
+ * app module src/main.tsx reaches through static imports — what lands in
+ * main), so the sign-in page never waits on the shared chunk; and icons only
+ * one module imports, which already travel inside that module's chunk.
+ * Names map to files through the package's own export list.
+ */
+function sharedIconFiles(meta: Rollup.ManualChunkMeta): Set<string> {
+  const ids = [...meta.getModuleIds()];
+  const fileByName = new Map<string, string>();
+  const barrel = ids.find((id) => /\/lucide-react\/dist\/esm\/lucide-react\.mjs$/.test(id));
+  const exportList = (barrel ? meta.getModuleInfo(barrel)?.code : null) ?? '';
+  for (const m of exportList.matchAll(/export \{([^}]*)\} from '\.\/icons\/([a-z0-9-]+)\.mjs'/g)) {
+    for (const spec of m[1]!.split(',')) fileByName.set(spec.replace(/^\s*default as\s*/, '').trim(), m[2]!);
+  }
+  const iconsOf = (id: string): Set<string> => {
+    const files = new Set<string>();
+    for (const m of (meta.getModuleInfo(id)?.code ?? '').matchAll(/import\s*\{([^}]*)\}\s*from\s*["']lucide-react["']/g)) {
+      for (const spec of m[1]!.split(',')) {
+        const file = fileByName.get(spec.split(/\s+as\s+/)[0]!.trim());
+        if (file) files.add(file);
+      }
+    }
+    return files;
+  };
+  const importers = new Map<string, number>();
+  for (const id of ids) {
+    if (id.includes('/node_modules/')) continue;
+    for (const file of iconsOf(id)) importers.set(file, (importers.get(file) ?? 0) + 1);
+  }
+  const inEntry = new Set<string>();
+  const seen = new Set<string>();
+  const queue = ids.filter((id) => id.endsWith('/src/main.tsx'));
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    if (seen.has(id) || id.includes('/node_modules/')) continue;
+    seen.add(id);
+    for (const file of iconsOf(id)) inEntry.add(file);
+    queue.push(...(meta.getModuleInfo(id)?.importedIds ?? []));
+  }
+  return new Set([...importers].filter(([file, n]) => n > 1 && !inEntry.has(file)).map(([file]) => file));
+}
+let sharedIcons: Set<string> | null = null;
 
 function emitAssetManifest(): Plugin {
   let version = 0;
@@ -246,8 +299,23 @@ export default defineConfig({
         kiosk: path.resolve(__dirname, 'kiosk.html'),
       },
       output: {
-        manualChunks(id) {
+        manualChunks(id, meta) {
           if (!id.includes('node_modules')) return undefined;
+          // Icons several lazy pages share: one chunk, not one each (sharedIconFiles).
+          const icon = /\/node_modules\/lucide-react\/dist\/esm\/icons\/([a-z0-9-]+)\.mjs$/.exec(id);
+          if (icon) {
+            sharedIcons ??= sharedIconFiles(meta);
+            return sharedIcons.has(icon[1]!) ? 'icons' : undefined;
+          }
+          // lucide's own runtime (createLucideIcon and the base <svg>), which
+          // the entry's icons need too. Unassigned, Rollup moved it into the
+          // `icons` chunk with the icons that import it, and that whole chunk
+          // became part of the first load.
+          // Only the runtime files: the package's index re-exports every icon,
+          // and Rollup would follow it and pull them all in too.
+          if (/\/node_modules\/lucide-react\/dist\/esm\/(createLucideIcon|Icon|defaultAttributes|context|shared\/)/.test(id)) {
+            return 'style-utils';
+          }
           // PERF: tiny styling utils get their own named bucket FIRST.
           // Without this, Rollup's min-chunk-size merging folded clsx
           // (imported by every component via lib/cn.ts) into the recharts

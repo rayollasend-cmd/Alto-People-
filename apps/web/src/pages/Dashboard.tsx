@@ -1,56 +1,35 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from 'react';
+import type { AuthUser } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { HomeSkeleton } from '@/components/templates/HomeSkeleton';
+
+/** A role's home: its chunk's loader, and the lazy component over it. */
+interface RoleHome {
+  load: () => Promise<unknown>;
+  View: LazyExoticComponent<ComponentType>;
+}
+function roleHome<K extends string>(load: () => Promise<Record<K, ComponentType>>, name: K): RoleHome {
+  return { load, View: lazy(() => load().then((m) => ({ default: m[name] }))) };
+}
 
 // PERF: each variant is its own chunk. All four dashboards used to ride
 // statically in the main bundle (~110 KB of TSX plus their api libs) even
 // though any given user renders exactly one.
-const AssociateDashboard = lazy(() =>
-  import('./AssociateDashboard').then((m) => ({ default: m.AssociateDashboard })),
-);
-const AdminDashboard = lazy(() =>
-  import('./AdminDashboard').then((m) => ({ default: m.AdminDashboard })),
-);
-const ManagerDashboard = lazy(() =>
-  import('./ManagerDashboard').then((m) => ({ default: m.ManagerDashboard })),
-);
-const SupervisorDashboard = lazy(() =>
-  import('./SupervisorDashboard').then((m) => ({ default: m.SupervisorDashboard })),
-);
-const ExecutiveDashboard = lazy(() =>
-  import('./ExecutiveDashboard').then((m) => ({ default: m.ExecutiveDashboard })),
-);
-const ClientPortalHome = lazy(() =>
-  import('./portal/ClientPortalHome').then((m) => ({ default: m.ClientPortalHome })),
-);
-const RegionHome = lazy(() => import('./region/RegionHome').then((m) => ({ default: m.RegionHome })));
-const FinanceDashboard = lazy(() =>
-  import('./FinanceDashboard').then((m) => ({ default: m.FinanceDashboard })),
-);
-const RecruiterDashboard = lazy(() =>
-  import('./RecruiterDashboard').then((m) => ({ default: m.RecruiterDashboard })),
-);
-const WorkforceDashboard = lazy(() =>
-  import('./WorkforceDashboard').then((m) => ({ default: m.WorkforceDashboard })),
-);
-const MarketingHome = lazy(() => import('./marketing/MarketingHome').then((m) => ({ default: m.MarketingHome })));
-const DriverHome = lazy(() => import('./transport/DriverHome').then((m) => ({ default: m.DriverHome })));
-const TransportHome = lazy(() => import('./transport/TransportHome').then((m) => ({ default: m.TransportHome })));
-
-function DashboardFallback() {
-  return (
-    <div className="space-y-4" aria-label="Loading">
-      <Skeleton className="h-8 w-1/3" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24 hidden lg:block" />
-        <Skeleton className="h-24 hidden lg:block" />
-      </div>
-      <Skeleton className="h-64" />
-    </div>
-  );
-}
+const HOMES = {
+  associate: roleHome(() => import('./AssociateDashboard'), 'AssociateDashboard'),
+  admin: roleHome(() => import('./AdminDashboard'), 'AdminDashboard'),
+  manager: roleHome(() => import('./ManagerDashboard'), 'ManagerDashboard'),
+  supervisor: roleHome(() => import('./SupervisorDashboard'), 'SupervisorDashboard'),
+  executive: roleHome(() => import('./ExecutiveDashboard'), 'ExecutiveDashboard'),
+  clientPortal: roleHome(() => import('./portal/ClientPortalHome'), 'ClientPortalHome'),
+  region: roleHome(() => import('./region/RegionHome'), 'RegionHome'),
+  finance: roleHome(() => import('./FinanceDashboard'), 'FinanceDashboard'),
+  recruiter: roleHome(() => import('./RecruiterDashboard'), 'RecruiterDashboard'),
+  workforce: roleHome(() => import('./WorkforceDashboard'), 'WorkforceDashboard'),
+  marketing: roleHome(() => import('./marketing/MarketingHome'), 'MarketingHome'),
+  driver: roleHome(() => import('./transport/DriverHome'), 'DriverHome'),
+  transport: roleHome(() => import('./transport/TransportHome'), 'TransportHome'),
+};
 
 /**
  * Role-aware dashboard router.
@@ -64,37 +43,50 @@ function DashboardFallback() {
  *                      what's waiting on them and on others
  *   anyone else      → org-wide AdminDashboard, role-filtered internally
  */
+function homeFor(user: AuthUser | null): RoleHome {
+  return user?.role === 'ASSOCIATE'
+    ? HOMES.associate
+    : user?.role === 'MANAGER'
+      ? HOMES.manager
+      : user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR'
+        ? HOMES.supervisor
+        : user?.role === 'EXECUTIVE_CHAIRMAN'
+          ? HOMES.executive
+          : user?.role === 'CLIENT_PORTAL'
+            ? user.regionId && !user.clientId
+              ? HOMES.region
+              : HOMES.clientPortal
+            : user?.role === 'FINANCE_ACCOUNTANT'
+              ? HOMES.finance
+              : user?.role === 'WORKFORCE_MANAGER'
+                ? HOMES.workforce
+                : user?.role === 'INTERNAL_RECRUITER'
+                  ? HOMES.recruiter
+                : user?.role === 'MARKETING_MANAGER'
+                  ? HOMES.marketing
+                : user?.role === 'DRIVER'
+                  ? HOMES.driver
+                  : user?.role === 'TRANSPORTATION_DIRECTOR'
+                    ? HOMES.transport
+                    : HOMES.admin;
+}
+
+/**
+ * Start this person's home chunk downloading now. main.tsx calls it at boot
+ * for a returning visitor (see warmSignedInStart in App.tsx), so the chunk
+ * arrives alongside /auth/me instead of after it; the lazy view then
+ * resolves from the same module.
+ */
+export function preloadDashboard(user: AuthUser): void {
+  void homeFor(user).load().catch(() => undefined);
+}
+
 export function Dashboard() {
   const { user } = useAuth();
-  const Variant =
-    user?.role === 'ASSOCIATE'
-      ? AssociateDashboard
-      : user?.role === 'MANAGER'
-        ? ManagerDashboard
-        : user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR'
-          ? SupervisorDashboard
-          : user?.role === 'EXECUTIVE_CHAIRMAN'
-            ? ExecutiveDashboard
-            : user?.role === 'CLIENT_PORTAL'
-              ? user.regionId && !user.clientId
-                ? RegionHome
-                : ClientPortalHome
-              : user?.role === 'FINANCE_ACCOUNTANT'
-                ? FinanceDashboard
-                : user?.role === 'WORKFORCE_MANAGER'
-                  ? WorkforceDashboard
-                  : user?.role === 'INTERNAL_RECRUITER'
-                    ? RecruiterDashboard
-                  : user?.role === 'MARKETING_MANAGER'
-                    ? MarketingHome
-                  : user?.role === 'DRIVER'
-                    ? DriverHome
-                    : user?.role === 'TRANSPORTATION_DIRECTOR'
-                      ? TransportHome
-                      : AdminDashboard;
+  const { View } = homeFor(user);
   return (
-    <Suspense fallback={<DashboardFallback />}>
-      <Variant />
+    <Suspense fallback={<HomeSkeleton />}>
+      <View />
     </Suspense>
   );
 }

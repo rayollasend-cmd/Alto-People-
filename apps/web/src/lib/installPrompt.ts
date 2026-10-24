@@ -40,6 +40,11 @@ export function isStandaloneDisplay(): boolean {
   return Boolean((window.navigator as { standalone?: boolean }).standalone);
 }
 
+/** Whether a captured prompt is waiting right now (read on first render, before any subscription). */
+export function installPromptAvailable(): boolean {
+  return deferredEvent !== null;
+}
+
 export function subscribeInstallPrompt(cb: (available: boolean) => void): () => void {
   cb(deferredEvent !== null);
   subscribers.add(cb);

@@ -49,23 +49,30 @@ const ASSOCIATE_URL = '\\?lhci=associate$';
  * "worse than on 2026-10-23" — tighten them (and make them errors) as the
  * pages get faster.
  *
- * Today's numbers — 2026-10-23, local (Apple silicon), Lighthouse 12.6.1,
- * median of 3 runs, dev seed data. Phone = Lighthouse's mobile emulation
- * (Moto G Power, simulated slow 4G, 4x CPU); desktop = the desktop preset.
+ * Today's numbers — 2026-10-23 (evening), local (Apple silicon), Lighthouse
+ * 12.6.1, median of 3 runs, dev seed data. Phone = Lighthouse's mobile
+ * emulation (Moto G Power, simulated slow 4G, 4x CPU); desktop = the
+ * desktop preset.
  *
- *   page                 form     perf  a11y  bp    LCP     CLS    TBT
- *   /login               phone    88    100   100   3.8 s   0.000  0 ms
- *   /careers             phone    85    100   100   4.1 s   0.000  0 ms
- *   /status              phone    84    100   100   4.1 s   0.079  14–21 ms
- *   /trust-center        phone    84    100   100   4.1 s   0.079  0 ms
- *   / (admin home)       desktop  86    100   100   2.1 s   0.104  0 ms
- *   /clients             desktop  90    100   100   2.1 s   0.000  0 ms
- *   /scheduling          desktop  88    100   100   2.2 s   0.008  0 ms
- *   /payroll             desktop  88    100   100   2.3 s   0.028  0 ms   (LCP 2.2–3.0 s across runs)
- *   associate home       phone    67    100   100   9.3 s   0.145  0 ms
+ *   page                 form     perf   a11y  bp    LCP     CLS    TBT
+ *   /login               phone    86     100   100   3.5 s   0.000  0 ms
+ *   /careers             phone    81     100   100   4.2 s   0.000  0 ms
+ *   /status              phone    79     100   100   4.3 s   0.079  11 ms
+ *   /trust-center        phone    79     100   100   4.3 s   0.079  0 ms
+ *   / (admin home)       desktop  95     100   100   1.4 s   0.002  0 ms
+ *   /clients             desktop  95     100   100   1.5 s   0.000  0 ms
+ *   /scheduling          desktop  95     100   100   1.4 s   0.008  0 ms
+ *   /payroll             desktop  93     100   100   1.7 s   0.002  0 ms
+ *   associate home       phone    72–76  100   100   6.6 s   0.001  14 ms
  *
- * The outliers to work on: the associate's home on a phone (LCP 9–10 s,
- * CLS 0.10–0.18) and the admin home's layout shift (0.10–0.13).
+ * The phone pages' perf moves 4–5 points run to run on FCP alone: the
+ * preview server answers in a few ms, so in the trace Lighthouse records
+ * main.js sometimes runs before the boot splash's first paint and sometimes
+ * after, and only in the first case does the simulated FCP (2.9 s instead
+ * of 1.8 s) wait for main.js to download.
+ * The associate's home LCP is mostly the preview server's HTTP/1.1: about
+ * 70 chunks and 22 API calls queue on six connections. Served over HTTP/2,
+ * as production is, the same build measures LCP 3.9 s, perf 84.
  * CI runners are slower than this machine; expect lower perf there.
  */
 const always = {
@@ -79,8 +86,8 @@ const assertMatrix = [
     assertions: {
       ...always,
       'categories:performance': ['warn', { minScore: 0.8 }],
-      'largest-contentful-paint': ['warn', { maxNumericValue: 3500 }],
-      'cumulative-layout-shift': ['warn', { maxNumericValue: 0.15 }],
+      'largest-contentful-paint': ['warn', { maxNumericValue: 2500 }],
+      'cumulative-layout-shift': ['warn', { maxNumericValue: 0.05 }],
     },
   },
   {
@@ -96,9 +103,9 @@ const assertMatrix = [
     matchingUrlPattern: ASSOCIATE_URL,
     assertions: {
       ...always,
-      'categories:performance': ['warn', { minScore: 0.6 }],
-      'largest-contentful-paint': ['warn', { maxNumericValue: 11000 }],
-      'cumulative-layout-shift': ['warn', { maxNumericValue: 0.2 }],
+      'categories:performance': ['warn', { minScore: 0.65 }],
+      'largest-contentful-paint': ['warn', { maxNumericValue: 7500 }],
+      'cumulative-layout-shift': ['warn', { maxNumericValue: 0.05 }],
     },
   },
 ];

@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useI18n } from '@/lib/i18n';
+import { useMinWidth } from '@/lib/useViewport';
 import { Download, Share, X } from 'lucide-react';
 import { Button } from '@/components/ui';
 import {
+  installPromptAvailable,
   isStandaloneDisplay,
   subscribeInstallPrompt,
   triggerInstall,
@@ -35,7 +38,16 @@ function isIOS(): boolean {
 
 export function InstallPrompt() {
   const { t } = useI18n();
-  const [promptAvailable, setPromptAvailable] = useState(false);
+  const { pathname } = useLocation();
+  const [promptAvailable, setPromptAvailable] = useState(installPromptAvailable);
+  // Chrome offers the install a few seconds after load, by when the page is
+  // on screen. Below lg the banner sits above the content, so showing it
+  // then pushed the whole page down under the reader (a layout shift on
+  // every first visit); an offer that arrives late waits for the next page
+  // there. The desktop corner card floats, so it shows at once.
+  const floats = useMinWidth(1024);
+  const [lateOn, setLateOn] = useState<string | null>(null);
+  const availableRef = useRef(promptAvailable);
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem(DISMISS_KEY) === '1';
@@ -44,11 +56,20 @@ export function InstallPrompt() {
     }
   });
 
-  useEffect(() => subscribeInstallPrompt(setPromptAvailable), []);
+  useEffect(
+    () =>
+      subscribeInstallPrompt((available) => {
+        if (available && !availableRef.current) setLateOn(window.location.pathname);
+        availableRef.current = available;
+        setPromptAvailable(available);
+      }),
+    [],
+  );
 
   if (dismissed || isStandaloneDisplay()) return null;
   const ios = isIOS();
   if (!promptAvailable && !ios) return null;
+  if (promptAvailable && !ios && !floats && lateOn === pathname) return null;
 
   const onInstall = async () => {
     // triggerInstall burns the shared event and never throws — safe even

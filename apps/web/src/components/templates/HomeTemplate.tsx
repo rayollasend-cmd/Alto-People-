@@ -3,6 +3,7 @@ import { cn } from '@/lib/cn';
 import { useNeedsYouCount } from '@/lib/meDecisions';
 import { PageHeader, isPageActions, type PageAction } from '@/components/ui/PageHeader';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import { FirstLoadGate } from './FirstLoadGate';
 
 /**
  * Home — a role's first screen (design system §4.1).
@@ -73,51 +74,54 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
   const count = decisions?.queue ? queued : decisions?.count;
   const structured = isPageActions(actions) ? actions : undefined;
   return (
-    <div className={cn('space-y-[var(--d-stack-lg)]', className)} data-template="home">
-      {banners}
-      <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={[]} actions={structured} primaryAction={structured ? undefined : (actions as React.ReactNode)}>
-        {meta}
-      </PageHeader>
-      <section aria-label="Today">{hero}</section>
-      {decisions && (
-        <section aria-labelledby="home-decisions">
-          <SectionTitle
-            id="home-decisions"
-            title={
-              <>
-                {decisions.title}
-                {count !== undefined && count > 0 && (
-                  <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on" data-testid="needs-you-count">
-                    {count}
-                  </span>
-                )}
-              </>
-            }
-            trailing={decisions.trailing}
-          />
-          {decisions.content}
-        </section>
-      )}
-      {(changes || children) && (
-        <div className="min-w-0 space-y-[var(--d-stack-lg)]">
-          {changes && (
-            <section aria-labelledby="home-changes">
-              <SectionTitle id="home-changes" title={changes.title ?? 'What changed'} />
-              {changes.content}
-            </section>
-          )}
-          {children}
-        </div>
-      )}
-      {/* Hugo renders nothing when nothing is switched on for this person,
-          so an empty seat never takes room. After the day's own content —
-          a phone reads the next shift before the assistant. */}
-      {assistant && (
-        <section aria-label="Assistant" className="empty:hidden">
-          {assistant}
-        </section>
-      )}
-      {waysIn && <section aria-label="Shortcuts">{waysIn}</section>}
-    </div>
+    // A home appears whole, once its cards' first data has landed (FirstLoadGate).
+    <FirstLoadGate page="home">
+      <div className={cn('space-y-[var(--d-stack-lg)]', className)} data-template="home">
+        {banners}
+        <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={[]} actions={structured} primaryAction={structured ? undefined : (actions as React.ReactNode)}>
+          {meta}
+        </PageHeader>
+        <section aria-label="Today">{hero}</section>
+        {decisions && (
+          <section aria-labelledby="home-decisions">
+            <SectionTitle
+              id="home-decisions"
+              title={
+                <>
+                  {decisions.title}
+                  {count !== undefined && count > 0 && (
+                    <span className="ml-2 inline-flex min-w-6 items-center justify-center rounded-full bg-accent-fill px-1.5 text-xs font-semibold tabular-nums text-accent-on" data-testid="needs-you-count">
+                      {count}
+                    </span>
+                  )}
+                </>
+              }
+              trailing={decisions.trailing}
+            />
+            {decisions.content}
+          </section>
+        )}
+        {(changes || children) && (
+          <div className="min-w-0 space-y-[var(--d-stack-lg)]">
+            {changes && (
+              <section aria-labelledby="home-changes">
+                <SectionTitle id="home-changes" title={changes.title ?? 'What changed'} />
+                {changes.content}
+              </section>
+            )}
+            {children}
+          </div>
+        )}
+        {/* Hugo renders nothing when nothing is switched on for this person,
+            so an empty seat never takes room. After the day's own content —
+            a phone reads the next shift before the assistant. */}
+        {assistant && (
+          <section aria-label="Assistant" className="empty:hidden">
+            {assistant}
+          </section>
+        )}
+        {waysIn && <section aria-label="Shortcuts">{waysIn}</section>}
+      </div>
+    </FirstLoadGate>
   );
 }

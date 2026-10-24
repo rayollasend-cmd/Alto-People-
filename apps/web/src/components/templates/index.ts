@@ -14,3 +14,5 @@ export { ListTemplate, type ListTemplateProps } from './ListTemplate';
 export { RecordTemplate, type RecordTemplateProps, type RecordTab } from './RecordTemplate';
 export { SettingsTemplate, type SettingsTemplateProps, type SettingsRailItem, SettingsSection, type SettingsSectionProps } from './SettingsTemplate';
 export { DeskTemplate, type DeskTemplateProps, useDeskItem } from './DeskTemplate';
+// A page that appears whole once its first data is in (HomeTemplate uses it; so can any page).
+export { FirstLoadGate } from './FirstLoadGate';

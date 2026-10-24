@@ -4,6 +4,7 @@ import { RouterProvider } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { initSentry } from '@/lib/sentry';
 import { guardHistory } from '@/lib/historyGuard';
+import type { AuthUser } from '@alto-people/shared';
 import { readOfflineSession } from '@/lib/offlineSession';
 import { restorePersistedQueries } from '@/lib/queryPersist';
 import { installStaleBuildGuard } from '@/lib/chunkLoading';
@@ -19,8 +20,8 @@ initSentry();
 guardHistory();
 
 import { isNative } from '@/lib/native/platform';
-import { router } from './App';
-import { AuthProvider } from '@/lib/auth';
+import { router, warmSignedInStart } from './App';
+import { AuthProvider, startSessionProbe } from '@/lib/auth';
 import { I18nProvider, preloadSavedLanguage } from '@/lib/i18n';
 import { LanguageSync } from '@/lib/LanguageSync';
 import { ThemeProvider } from '@/lib/theme';
@@ -255,8 +256,7 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
  * hostage to a wedged IndexedDB. index.html is already showing the branded
  * splash, so on a normal boot this read is invisible.
  */
-async function restoreCacheBeforeRender(): Promise<void> {
-  const remembered = readOfflineSession();
+async function restoreCacheBeforeRender(remembered: AuthUser | null): Promise<void> {
   if (!remembered) return;
   await Promise.race([
     restorePersistedQueries(remembered.id),
@@ -267,7 +267,15 @@ async function restoreCacheBeforeRender(): Promise<void> {
 // The native app's bridge — loaded only inside the app, never on the web.
 const NativeBridge = React.lazy(() => import('@/components/native/NativeBridge').then((m) => ({ default: m.NativeBridge })));
 
-void Promise.all([restoreCacheBeforeRender(), preloadSavedLanguage()]).finally(() => {
+// The session check goes out first, then — for whoever this device
+// remembers (no network needed) — the signed-in shell and home start
+// downloading alongside it (App.tsx). The remembered identity also picks
+// the cache to restore.
+startSessionProbe();
+const remembered = readOfflineSession();
+if (remembered) warmSignedInStart(remembered);
+
+void Promise.all([restoreCacheBeforeRender(remembered), preloadSavedLanguage()]).finally(() => {
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <GlobalErrorBoundary>

@@ -98,7 +98,7 @@ import { RunTaxBreakdown } from '@/components/payroll/RunTaxBreakdown';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { ListTemplate } from '@/components/templates';
+import { FirstLoadGate, ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
@@ -778,6 +778,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     // The pay-cycle hero is the summary; the tabs are the page's lists.
+    // Shown whole once its first data is in (FirstLoadGate): "Needs you"
+    // sits above the hero and used to land after it, pushing the page down.
+    <FirstLoadGate page="payroll">
     <ListTemplate
         title={t('payrollHome.title')}
         subtitle={canProcess ? t('payrollHome.subProcess') : t('payrollHome.subReadOnly')}
@@ -1681,6 +1684,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         }}
       />
     </ListTemplate>
+    </FirstLoadGate>
   );
 }
 
