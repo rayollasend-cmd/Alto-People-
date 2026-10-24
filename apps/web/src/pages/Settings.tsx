@@ -74,6 +74,9 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { cn } from '@/lib/cn';
 import { DataGrid } from '@/components/ui/DataGrid';
+import '@/lib/i18n/en/settings';
+import '@/lib/i18n/en/settingsPage';
+import '@/lib/i18n/en/tabs';
 
 /**
  * Phase 39 — self-service account settings. Cards: profile (display

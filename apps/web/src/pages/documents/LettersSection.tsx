@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/Input';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/docs';
 
 /**
  * The person's letters (HR pack 2026-10): ask for proof of employment or

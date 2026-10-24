@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
 import { associatePhotoUrl } from '@/lib/photoUrl';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * The store supervisor's heads-up: who's coming in on an Alto van, and

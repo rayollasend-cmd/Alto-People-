@@ -62,6 +62,9 @@ import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
 import { useClockParts } from '@/components/ClockStrip';
 import { HomeMeta } from '@/components/home/HomeMeta';
 import { useNeedsYouCount } from '@/lib/meDecisions';
+import '@/lib/i18n/en/adminHome';
+import '@/lib/i18n/en/home';
+import '@/lib/i18n/en/time';
 
 /**
  * Role-tailored subtitle on the greeting strip. The same dashboard scaffold

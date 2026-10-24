@@ -10,6 +10,7 @@ import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { FieldglassPacketPanel, MarkAddedDialog } from './FieldglassPacket';
+import '@/lib/i18n/en/fin';
 
 /**
  * The Fieldglass setup queue — one row per worker to ADD, TRANSFER or

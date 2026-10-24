@@ -20,6 +20,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
 import { ArrowUpRight, CheckCheck, Inbox, Megaphone } from '@/components/ui/icons';
 import { toast } from 'sonner';
+import '@/lib/i18n/en/inbox';
 
 /**
  * One row in the merged inbox: either a direct IN_APP notification or a

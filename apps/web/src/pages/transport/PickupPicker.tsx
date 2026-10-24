@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/Dialog';
 import { useMinWidth, useVisibleViewport } from '@/lib/useViewport';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
+import '@/lib/i18n/en/ride';
 
 /**
  * WHERE THE VAN SHOULD MEET THEM.

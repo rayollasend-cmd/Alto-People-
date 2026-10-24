@@ -7,6 +7,7 @@ import { AssociateInboxView, useInboxEntries } from './AssociateInboxView';
 import { AdminCommsView } from './AdminCommsView';
 import { WhatsAppAdmin } from './WhatsAppAdmin';
 import { Badge, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import '@/lib/i18n/en/inbox';
 
 const TABS = ['inbox', 'sends', 'whatsapp'] as const;
 type Tab = (typeof TABS)[number];

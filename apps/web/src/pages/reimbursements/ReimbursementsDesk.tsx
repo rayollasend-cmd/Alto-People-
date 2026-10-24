@@ -3,6 +3,7 @@ import { useI18n } from '@/lib/i18n';
 import type { ReimbursementStatus, ReimbursementSummaryCounts } from '@/lib/reimbursements97Api';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
+import '@/lib/i18n/en/reimbDesk';
 
 /**
  * The desk side of /reimbursements — the people who approve and settle

@@ -2,6 +2,9 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { LANGS, loadLanguagePack } from '@/lib/i18n';
+// Every English area pack: a test renders components outside the pages that
+// would import their packs (src/lib/i18n/english.ts).
+import '@/lib/i18n/en/all';
 
 // Every language but English is a lazy pack in the app; load them all up front
 // so t() answers synchronously in every test, as it did when they were inline.

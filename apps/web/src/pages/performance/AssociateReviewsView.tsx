@@ -14,6 +14,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
 import { MyNextOneOnOne } from './MyNextOneOnOne';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/reviews';
 
 function ratingStars(n: number): string {
   return '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));

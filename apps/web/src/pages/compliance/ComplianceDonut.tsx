@@ -1,5 +1,4 @@
-import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
-import { PALETTE } from '@/components/ui/charts/palette';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { cn } from '@/lib/cn';
 
 // Chart-only donut (no legend) sized for the Tile 1 hero column. The shared
@@ -9,7 +8,11 @@ import { cn } from '@/lib/cn';
 // this only works because the parent has explicit width/height in px.
 //
 // Lives in its own module so recharts doesn't sit in the ComplianceScorecard
-// chunk; the parent lazy-imports it.
+// chunk; the parent lazy-imports it. The drawing itself (recharts) loads
+// with the donut, not with this module (lazyPlot): the SIZE square holds
+// the space and the centre label shows while it lands.
+const ComplianceDonutPlot = lazyPlot(() => import('./ComplianceDonut.plot').then((m) => ({ default: m.ComplianceDonutPlot })));
+
 export function ComplianceDonut({ fully, total }: { fully: number; total: number }) {
   const pct = total === 0 ? 100 : Math.round((fully / total) * 100);
   const gaps = Math.max(0, total - fully);
@@ -19,35 +22,7 @@ export function ComplianceDonut({ fully, total }: { fully: number; total: number
   return (
     <div className="flex flex-col items-center text-center">
       <div className="relative shrink-0" style={{ width: SIZE, height: SIZE }}>
-        {/* Fixed px (not 100%): the parent is exactly SIZE square, so there's
-            nothing to measure — and measuring "100%" a tick early during mount
-            is what produces recharts' width(-1)/height(-1) warning. */}
-        <ResponsiveContainer width={SIZE} height={SIZE}>
-          <PieChart accessibilityLayer={false}>
-            <Pie
-              data={[
-                { name: 'Fully compliant', value: fully },
-                { name: 'Has gaps', value: gaps },
-              ]}
-              dataKey="value"
-              cx="50%"
-              cy="50%"
-              innerRadius={Math.round(SIZE * 0.34)}
-              outerRadius={Math.round(SIZE * 0.48)}
-              paddingAngle={gaps > 0 && fully > 0 ? 3 : 0}
-              startAngle={90}
-              endAngle={-270}
-              stroke="none"
-              isAnimationActive
-              animationDuration={500}
-            >
-              {/* The kit's state colors — CSS variables, so the light/dark
-                  flip recolors the donut with no re-render. */}
-              <Cell fill={PALETTE.good} />
-              <Cell fill={PALETTE.bad} />
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
+        <ComplianceDonutPlot fully={fully} gaps={gaps} size={SIZE} />
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
           <div className="font-display text-3xl tabular-nums text-white leading-none">
             {pct}%

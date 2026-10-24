@@ -11,6 +11,7 @@ import { fmtDate } from '@/lib/format';
 import { acknowledgeMyPayNotice, getMyPayNotice, listMyPayNotices, type PayNotice } from '@/lib/payComplianceApi';
 import { Badge, Button, Card, CardContent, EmptyState, ErrorBanner, Field, Input, SectionTitle, SkeletonRows } from '@/components/ui';
 import { ListTemplate } from '@/components/templates';
+import '@/lib/i18n/en/payNotice';
 
 /**
  * The worker's state pay notices (NY Wage Theft Prevention Act, CA 2810.5,

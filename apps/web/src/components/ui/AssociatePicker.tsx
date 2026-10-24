@@ -9,6 +9,7 @@ import { cn } from '@/lib/cn';
 import { associatePhotoUrl, personPhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from './Avatar';
 import { Input } from './Input';
+import '@/lib/i18n/en/picker';
 
 export interface PickedAssociate {
   id: string;

@@ -10,6 +10,8 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
 import { trackChunk } from '@/lib/chunkLoading';
+import '@/lib/i18n/en/docscan';
+import '@/lib/i18n/en/photocrop';
 
 /**
  * Square crop step for profile photos — the fix for "I uploaded a picture

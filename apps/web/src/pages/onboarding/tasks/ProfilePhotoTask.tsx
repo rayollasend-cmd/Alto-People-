@@ -12,6 +12,7 @@ import { DocumentCapture } from '@/components/DocumentCapture';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import '@/lib/i18n/en/ob';
 
 /**
  * PROFILE_PHOTO onboarding task — the Uber-style live headshot. Camera

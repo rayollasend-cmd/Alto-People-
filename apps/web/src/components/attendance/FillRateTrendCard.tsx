@@ -1,13 +1,17 @@
-import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CalendarCheck } from '@/components/ui/icons';
 import { ChartFrame } from '@/components/ui/ChartFrame';
-import { ChartTooltipContent, PALETTE, TICK } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useI18n } from '@/lib/i18n';
 import { useAttendanceTrends } from './AttendanceTrendTiles';
 import { weekLabel, weekOf } from './weekLabel';
+import '@/lib/i18n/en/floorUi';
+import '@/lib/i18n/en/portal';
+
+/** The drawing (recharts) loads with the first chart, not the page (lazyPlot). */
+const FillRateTrendPlot = lazyPlot(() => import('./FillRateTrend.plot').then((m) => ({ default: m.FillRateTrendPlot })));
 
 /**
  * Fill rate, week by week for eight workweeks, against the 95% line the
@@ -60,70 +64,18 @@ export function FillRateTrendCard({ siteId, className }: { siteId?: string; clas
         height={220}
         empty={<EmptyState size="sm" icon={CalendarCheck} title={t('floorUi.nothingScheduledYet')} description={t('floorUi.fillLineStarts')} />}
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={all.map((r) => ({ ...r, noShifts: r.fill === null ? floor : null }))} margin={{ top: 12, right: 12, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-            <XAxis dataKey="week" tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} minTickGap={12} />
-            {/* The target is always on the scale, however the weeks went. */}
-            <YAxis domain={[floor, 100]} tick={TICK} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => `${v}%`} />
-            <Tooltip
-              cursor={{ stroke: PALETTE.ref, strokeWidth: 1 }}
-              content={
-                <ChartTooltipContent
-                  series={{ fill: { name: t('portal.chartFillPct'), color: PALETTE.primary } }}
-                  format={(v) => `${v}%`}
-                  heading={(label) => {
-                    const row = all.find((r) => r.week === label);
-                    return row ? `${weekOf(row.weekStart)}${row.inProgress ? ` ${t('floorUi.soFar')}` : ''}` : label;
-                  }}
-                />
-              }
-            />
-            <ReferenceLine y={fillTargetPct} ifOverflow="extendDomain" stroke={PALETTE.ref} strokeDasharray="4 3" label={{ value: t('floorUi.pctTarget', { pct: fillTargetPct }), position: 'insideBottomRight', fill: TICK.fill, fontSize: 10 }} />
-            {/* A line, not a filled area (two points with a fill read as a bar).
-                Every week with data carries a dot; the week in progress is a
-                hollow dot at full contrast, so its "so far" value is findable;
-                a week with nothing scheduled says so at the foot of the axis. */}
-            <Line
-              type="linear"
-              dataKey="fill"
-              name={t('portal.chartFillPct')}
-              connectNulls={false}
-              stroke={PALETTE.primary}
-              strokeWidth={2}
-              isAnimationActive={false}
-              activeDot={{ r: 5, stroke: PALETTE.surface, strokeWidth: 2 }}
-              dot={(props: { cx?: number; cy?: number; index?: number; payload?: { partial?: boolean; fill: number | null } }) => {
-                const { cx, cy, index, payload } = props;
-                const key = `dot-${index ?? 0}`;
-                // No shifts that week: no dot (the "no shifts" mark below says so).
-                if (cx === undefined || cy === undefined || payload?.fill === null || payload?.fill === undefined) return <g key={key} />;
-                return payload.partial ? (
-                  <circle key={key} data-testid="fill-dot-partial" cx={cx} cy={cy} r={4.5} fill={PALETTE.surface} stroke={PALETTE.primary} strokeWidth={2} />
-                ) : (
-                  <circle key={key} data-testid="fill-dot" cx={cx} cy={cy} r={3.5} fill={PALETTE.primary} />
-                );
-              }}
-            />
-            <Line
-              type="linear"
-              dataKey="noShifts"
-              stroke="none"
-              isAnimationActive={false}
-              legendType="none"
-              activeDot={false}
-              dot={(props: { cx?: number; cy?: number; index?: number; payload?: { noShifts?: number | null } }) => {
-                const { cx, cy, index, payload } = props;
-                if (cx === undefined || cy === undefined || payload?.noShifts == null) return <g key={`ns-${index ?? 0}`} />;
-                return (
-                  <text key={`ns-${index ?? 0}`} data-testid="fill-no-shifts" x={cx} y={cy - 6} textAnchor="middle" fontSize={10} fill={TICK.fill}>
-                    {t('floorUi.noShiftsShort')}
-                  </text>
-                );
-              }}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
+        <FillRateTrendPlot
+          data={all.map((r) => ({ ...r, noShifts: r.fill === null ? floor : null }))}
+          floor={floor}
+          fillTargetPct={fillTargetPct}
+          fillName={t('portal.chartFillPct')}
+          heading={(label) => {
+            const row = all.find((r) => r.week === label);
+            return row ? `${weekOf(row.weekStart)}${row.inProgress ? ` ${t('floorUi.soFar')}` : ''}` : label;
+          }}
+          targetLabel={t('floorUi.pctTarget', { pct: fillTargetPct })}
+          noShiftsText={t('floorUi.noShiftsShort')}
+        />
       </ChartFrame>
     </div>
   );

@@ -18,6 +18,7 @@ import {
   Field,
 } from '@/components/ui';
 import { Textarea } from '@/components/ui/Input';
+import '@/lib/i18n/en/callout';
 
 /**
  * "Can't make it?" — a worker calls out of their own shift. One reason,

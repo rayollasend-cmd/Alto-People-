@@ -29,6 +29,7 @@ import {
 } from '@/components/ui';
 import { STATUS_META } from './leaveWords';
 import { enumWords, known } from '@/lib/known';
+import '@/lib/i18n/en/myLeave';
 
 /** STATUS_META for a value from the server — one this screen doesn't know yet reads as words (lib/known). */
 const statusMetaOf = (k: string) => known(STATUS_META, k, () => ({ label: enumWords(k), variant: 'outline' as const }));

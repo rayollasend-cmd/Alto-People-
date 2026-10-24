@@ -33,6 +33,7 @@ import {
   useTableSort,
   type TableSortState,
 } from './Table';
+import '@/lib/i18n/en/grid';
 
 /**
  * DataGrid — the one way a list of records is shown.

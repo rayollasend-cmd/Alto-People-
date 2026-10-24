@@ -79,6 +79,8 @@ import { listMyProposals, MY_PROPOSALS_KEY } from '@/lib/agentProposalsApi';
 import { listApprovalRequests, MY_REQUESTS_KEY } from '@/lib/approvalRequestsApi';
 import { ApprovalRequestList } from '@/components/approvals/ApprovalRequestCard';
 import { DelegationDialog } from '@/components/approvals/DelegationDialog';
+import '@/lib/i18n/en/appr';
+import '@/lib/i18n/en/tabs';
 
 /**
  * One inbox for everything waiting on a manager's decision. Before this

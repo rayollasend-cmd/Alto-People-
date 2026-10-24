@@ -26,6 +26,8 @@ import { useMediaQuery } from '@/lib/useViewport';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
 import { matchClients } from '@/components/StoreScopeCombobox';
 import { cn } from '@/lib/cn';
+import '@/lib/i18n/en/tabs';
+import '@/lib/i18n/en/theme';
 
 
 interface MobileNavProps {

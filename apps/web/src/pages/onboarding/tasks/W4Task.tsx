@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
 import { StateCertificateCard } from '@/components/payroll/StateCertificateCard';
+import '@/lib/i18n/en/ob';
 
 const SSN_PATTERN = /^\d{3}-?\d{2}-?\d{4}$/;
 

@@ -16,6 +16,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import '@/lib/i18n/en/badge';
+import '@/lib/i18n/en/dash';
 
 /**
  * The worker's badge — the same design the Apple and Google Wallet passes

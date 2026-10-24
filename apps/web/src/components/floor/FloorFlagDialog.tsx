@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/Input';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { cn } from '@/lib/cn';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * Two taps from the floor: the watch-only lead saw a no-show or a hazard

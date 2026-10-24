@@ -37,6 +37,10 @@ import { clockInInWindows, crewOnFloor, inWindows, summarize, useShiftFocus, win
 import { ListTemplate } from '@/components/templates';
 import { CrewTextDialog } from '@/components/floor/CrewTextDialog';
 import { scopeParams, shiftDays } from './scope';
+import '@/lib/i18n/en/floor';
+import '@/lib/i18n/en/focus';
+import '@/lib/i18n/en/portal';
+import '@/lib/i18n/en/region';
 
 /**
  * A day — who was on the floor, wave by wave, as FACES.

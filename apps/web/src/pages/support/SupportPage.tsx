@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
+import '@/lib/i18n/en/support';
 
 /**
  * Brief 2-6 step 5 — "Contact Alto People support": the form, my requests

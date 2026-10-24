@@ -2,8 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowDownRight, ArrowUpRight, MessageSquareQuote, Send } from '@/components/ui/icons';
 import { toast } from 'sonner';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { getNpsResults, remindNpsWave, sendNpsWave, type NpsResults } from '@/lib/npsApi';
@@ -27,9 +26,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * manage:clients sends the wave or a reminder from here.
  */
 
-const LINE = PALETTE.primary;
-/** Axis ticks: the kit's muted text token. */
-const MUTED = TICK.fill;
+/** The trend's drawing (recharts) loads with the chart, not the page (lazyPlot). */
+const NpsTrendPlot = lazyPlot(() => import('./ClientNpsTrend.plot').then((m) => ({ default: m.NpsTrendPlot })));
 
 function tone(nps: number | null): string {
   if (nps === null) return 'text-ink-muted';
@@ -150,15 +148,7 @@ export function ClientNpsPage() {
                   <p className="mt-2 text-sm text-ink-muted">The trend draws once two quarters have been asked.</p>
                 ) : (
                   <div className="mt-2 h-40">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                        <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-                        <XAxis dataKey="quarter" tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} />
-                        <YAxis domain={[-100, 100]} tick={{ fill: MUTED, fontSize: 11 }} axisLine={false} tickLine={false} width="auto" />
-                        <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} />
-                        <Area type="monotone" dataKey="nps" name="NPS" stroke={LINE} strokeWidth={2} fill={LINE} fillOpacity={0.15} />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                    <NpsTrendPlot trend={trend} />
                   </div>
                 )}
               </CardContent>

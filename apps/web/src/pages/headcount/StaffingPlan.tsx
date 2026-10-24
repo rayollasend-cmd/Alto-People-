@@ -1,8 +1,7 @@
 import { Fragment, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { STOCK_LEGEND } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { Briefcase, CalendarRange } from '@/components/ui/icons';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { postingForGapHref } from '@/pages/recruiting/postingSeed';
@@ -12,7 +11,7 @@ import { urlNumber, useUrlState } from '@/lib/useUrlState';
 import { getHeadcountOverview } from '@/lib/headcount110Api';
 import { fmtDayShort, fmtMoney, fmtMoneyCompact, fmtMoneyWhole } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { CHART, ChartFrame } from '@/components/ui/ChartFrame';
+import { ChartFrame } from '@/components/ui/ChartFrame';
 import { QueryError } from '@/components/ui/QueryError';
 import { Button, Card, CardContent, EmptyState, MetricCard, MetricStrip, SegmentedControl, Select, SkeletonRows } from '@/components/ui';
 
@@ -23,6 +22,9 @@ import { Button, Card, CardContent, EmptyState, MetricCard, MetricStrip, Segment
  * the budget is the week's hours at today's bill rates. Gaps are red, with
  * the way to close them one click away (Season planner, open shifts).
  */
+
+/** The chart's drawing (recharts) loads with the chart, not the page (lazyPlot). */
+const StaffingPlanPlot = lazyPlot(() => import('./StaffingPlan.plot').then((m) => ({ default: m.StaffingPlanPlot })));
 
 type Source = StaffingWeek['source'];
 
@@ -150,18 +152,7 @@ export function StaffingPlanView() {
             csvName="staffing-plan"
             height={280}
           >
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke={CHART.grid} vertical={false} />
-                <XAxis dataKey="week" tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} />
-                <YAxis allowDecimals={false} tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} width="auto" />
-                <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
-                <Legend {...STOCK_LEGEND} />
-                <Bar dataKey="inPlace" name="Covered by placed staff" stackId="heads" fill={CHART.series[1]} />
-                <Bar dataKey="short" name="Short" stackId="heads" fill={CHART.bad} radius={[3, 3, 0, 0]} />
-                <Line dataKey="scheduled" name="Scheduled" stroke={CHART.series[0]} strokeWidth={2} dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
+            <StaffingPlanPlot chartRows={chartRows} />
           </ChartFrame>
 
           <Card>

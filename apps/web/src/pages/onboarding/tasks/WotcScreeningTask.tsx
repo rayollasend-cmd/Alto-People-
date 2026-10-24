@@ -13,6 +13,7 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { cn } from '@/lib/cn';
 import { Field, TaskShell, useNextTask } from './ProfileInfoTask';
+import '@/lib/i18n/en/ob';
 
 /**
  * WOTC pre-screening — the Form 8850 / ETA 9061 applicant questions in

@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate } from '@/lib/format';
 import { listReadyToSchedule } from '@/lib/readyToWorkApi';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * A shift supervisor's queue of hires handed to their store with no first

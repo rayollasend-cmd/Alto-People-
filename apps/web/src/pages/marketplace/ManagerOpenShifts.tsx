@@ -14,6 +14,7 @@ import { fmtRelativeDayTz, fmtShiftRangeTz, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Badge, Button, Card, CardContent, EmptyState, ErrorBanner, SkeletonRows } from '@/components/ui';
+import '@/lib/i18n/en/mk';
 
 /**
  * The manager's "Open shifts" tab (role walk, ops 11). Managers have no

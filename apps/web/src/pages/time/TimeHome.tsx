@@ -14,6 +14,9 @@ import { AdminTimeView } from './AdminTimeView';
 import { MyTimesheet } from './MyTimesheet';
 import { ListTemplate } from '@/components/templates';
 import { MyWeekHours } from './MyWeekHours';
+import '@/lib/i18n/en/time';
+import '@/lib/i18n/en/timeHome';
+import '@/lib/i18n/en/timefix';
 
 export function TimeHome() {
   const { user, can } = useAuth();

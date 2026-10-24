@@ -49,6 +49,7 @@ import { toast } from 'sonner';
 import { removeFromLists, useOptimisticMutation } from '@/lib/optimistic';
 import { ListTemplate } from '@/components/templates';
 import { usePrompt } from '@/lib/confirm';
+import '@/lib/i18n/en/timeoff';
 
 // Query keys are tuples so invalidateQueries({ queryKey: ['team'] }) can
 // flush the whole namespace after a mutation. The dashboard and the

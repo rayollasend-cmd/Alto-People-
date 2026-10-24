@@ -12,6 +12,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/emergency';
+import '@/lib/i18n/en/settings';
 
 /**
  * WhatsApp updates, on or off (Brief 1C-4). Consent is the associate's own

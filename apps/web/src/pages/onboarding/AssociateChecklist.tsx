@@ -35,6 +35,7 @@ import { usePublishPageTitle } from '@/lib/pageTitle';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { enterStagger } from '@/lib/motion';
 import { cn } from '@/lib/cn';
+import '@/lib/i18n/en/ob';
 
 /**
  * Completion choreography — the page REMOUNTS when the associate returns

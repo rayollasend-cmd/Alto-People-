@@ -1,9 +1,24 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, userEvent, within } from 'storybook/test';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { ChartFrame, type ChartColumn } from './ChartFrame';
 import { Heatmap, StackedBarChart, TrendLineChart, Waterfall } from './charts';
 
 const money = (v: number) => `$${v.toLocaleString('en-US')}`;
+
+/**
+ * A kit chart's drawing loads lazily (lazyPlot) and lands after the story
+ * renders; wait for it, so the play function and the a11y check that
+ * follows see the chart, not its placeholder.
+ */
+async function drawingLanded(canvasElement: HTMLElement) {
+  await waitFor(
+    () => {
+      expect(canvasElement.querySelector('[aria-busy="true"]')).toBeNull();
+      expect(canvasElement.querySelector('.recharts-surface')).not.toBeNull();
+    },
+    { timeout: 5000 },
+  );
+}
 
 const WEEKS = [
   { week: '2026-08-31', hours: 6120, overtime: 210, target: 6400 },
@@ -70,6 +85,7 @@ export const TrendLine: Story = {
       />
     </ChartFrame>
   ),
+  play: async ({ canvasElement }) => drawingLanded(canvasElement),
 };
 
 /** The Table switch shows the same numbers as a table. */
@@ -107,6 +123,7 @@ export const StackedBars: Story = {
       />
     </ChartFrame>
   ),
+  play: async ({ canvasElement }) => drawingLanded(canvasElement),
 };
 
 export const WaterfallBridge: Story = {
@@ -138,6 +155,7 @@ export const WaterfallBridge: Story = {
       />
     </ChartFrame>
   ),
+  play: async ({ canvasElement }) => drawingLanded(canvasElement),
 };
 
 const DAYS = [
@@ -180,10 +198,18 @@ export const NoData: Story = {
 export const AllZeros: Story = {
   ...TrendLine,
   args: { rows: WEEKS.map((w) => ({ ...w, hours: 0, overtime: 0 })) },
+  // All zeros collapse to the empty state: no drawing to wait for.
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText('Nothing to chart yet')).toBeInTheDocument();
+  },
 };
 
 /** A caller's own empty message. */
 export const CustomEmpty: Story = {
   ...StackedBars,
   args: { ...StackedBars.args, rows: [], empty: <p className="text-sm text-ink-muted">Publish a schedule to see shifts by site.</p> },
+  // No rows, no drawing to wait for.
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText('Publish a schedule to see shifts by site.')).toBeInTheDocument();
+  },
 };

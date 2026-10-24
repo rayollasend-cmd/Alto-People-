@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/Dialog';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { shiftDays } from './scope';
+import '@/lib/i18n/en/portal';
 
 /**
  * The service report picker — "which day do you want on paper?"

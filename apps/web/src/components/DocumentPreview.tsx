@@ -15,6 +15,7 @@ import {
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
+import '@/lib/i18n/en/docs';
 
 const STATUS_VARIANT: Record<
   DocumentRecord['status'],

@@ -8,6 +8,7 @@ import { fmtDate } from '@/lib/format';
 import { getMyPayByCheck, requestPayByCheck } from '@/lib/paperChecksApi';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
+import '@/lib/i18n/en/payCheck';
 
 /**
  * "I'd like a paper check for this payday." Shows only while a paycheck is

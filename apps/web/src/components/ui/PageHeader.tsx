@@ -18,6 +18,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './DropdownMenu';
+import '@/lib/i18n/en/header';
 
 /**
  * The page header every page uses (design system §4; the F500 fix-up of

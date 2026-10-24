@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import '@/lib/i18n/en/ob';
 
 /**
  * E-sign task — the associate reads each HR-drafted agreement (the auto-issued

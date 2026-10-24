@@ -12,6 +12,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/me';
 
 /**
  * My skills, on my own profile (HR walk, wave 2): add what I can do from

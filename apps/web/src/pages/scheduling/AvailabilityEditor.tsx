@@ -19,6 +19,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/avail';
 
 /** Sun…Sat in the reader's language: Jan 4, 2026 was a Sunday (local midnight, so no zone shifts it). */
 const dayName = (dayOfWeek: number) => fmtWeekdayTz(new Date(2026, 0, 4 + dayOfWeek));

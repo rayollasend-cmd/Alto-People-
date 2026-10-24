@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import type { GeoPoint, MyLiveRide, Ride } from '@/lib/transportApi';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
+import '@/lib/i18n/en/ride';
 
 /**
  * The rider's trip on the map — the ride-hailing screen, at every stage:

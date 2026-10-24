@@ -11,6 +11,7 @@ import { AuthContext } from '@/lib/auth';
 import { inboxLink, useInbox } from '@/lib/inboxApi';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { useListKeyboard } from '@/lib/shortcuts';
+import '@/lib/i18n/en/decisions';
 
 /**
  * Inbox — every decision waiting on the signed-in person, in one place.

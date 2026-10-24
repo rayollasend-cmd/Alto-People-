@@ -75,6 +75,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import '@/lib/i18n/en/ride';
+import '@/lib/i18n/en/shift';
 
 /**
  * The associate's Ride tab — the Alto vans.

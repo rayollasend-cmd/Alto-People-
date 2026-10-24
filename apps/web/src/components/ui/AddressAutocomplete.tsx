@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { suggestAddresses, type SuggestedAddress } from '@/lib/geoApi';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { Input, type InputProps } from './Input';
+import '@/lib/i18n/en/addr';
 
 /**
  * The street-line box of an address form, with suggestions as you type.

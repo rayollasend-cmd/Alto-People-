@@ -4,6 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { filterPillClass } from '@/components/ui/filterPill';
+import '@/lib/i18n/en/filters';
 
 /**
  * A list's filters, as the screen allows (role walk HR 15, floor 8): inline

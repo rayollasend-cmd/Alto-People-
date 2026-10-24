@@ -53,6 +53,8 @@ import { FormHint, Label } from '@/components/ui/Label';
 import { downloadDocumentUrl, uploadMyDocument } from '@/lib/documentsApi';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
+import '@/lib/i18n/en/reimbPage';
+import '@/lib/i18n/en/rmb';
 
 /**
  * Snap-or-pick a receipt straight into the associate's own document vault

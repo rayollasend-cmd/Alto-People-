@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { fmtDateTime } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/ai';
 
 /**
  * "ok" once the 12-char floor is met; "strong" when it also mixes upper +

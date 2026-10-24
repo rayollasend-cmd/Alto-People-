@@ -29,6 +29,8 @@ import {
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { toast } from '@/components/ui/Toaster';
+import '@/lib/i18n/en/floorUi';
+import '@/lib/i18n/en/portal';
 
 /**
  * The floor team, from each side.

@@ -48,7 +48,7 @@ export const ApplicationStatusSchema = /* @__PURE__ */ (() => z.enum([
 ]))();
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
 /** Every status value — for seeding total Record<ApplicationStatus, T> maps. */
-export const APPLICATION_STATUSES = ApplicationStatusSchema.options;
+export const APPLICATION_STATUSES = /* @__PURE__ */ (() => ApplicationStatusSchema.options)();
 
 export const TaskKindSchema = /* @__PURE__ */ (() => z.enum([
   'PROFILE_INFO',
@@ -4937,19 +4937,7 @@ export const SCORECARD_RATINGS = [
   { value: 1, label: 'Weak' },
 ] as const;
 
-export const InterviewScorecardSchema = /* @__PURE__ */ (() => z.object({
-  answers: z
-    .array(
-      z.object({
-        prompt: z.string().min(1).max(1000),
-        rating: z.number().int().min(1).max(4).nullable(),
-        notes: z.string().max(4000),
-      }),
-    )
-    .max(50),
-  summary: z.string().max(8000),
-}))();
-export type InterviewScorecard = z.infer<typeof InterviewScorecardSchema>;
+// InterviewScorecardSchema lives in ./interviewScorecard.ts — see there.
 
 export const CandidateNoteInputSchema = /* @__PURE__ */ (() => z.object({
   body: z.string().trim().min(1).max(4000),
@@ -5131,10 +5119,10 @@ export type RecruitingAnalytics = z.infer<typeof RecruitingAnalyticsSchema>;
  * Lists are the first few; `total` counts all of them.
  * ------------------------------------------------------------------------- */
 
-const HomeCandidateRef = {
+const HomeCandidateRef = /* @__PURE__ */ (() => ({
   candidateId: z.string().uuid(),
   candidateName: z.string(),
-};
+}))();
 
 export const RecruiterHomeSchema = /* @__PURE__ */ (() => z.object({
   interviewsToday: z.array(
@@ -5733,10 +5721,10 @@ export {
   type NotificationAudience,
 } from './notificationCategories.js';
 
-const NOTIFICATION_CATEGORY_KEYS = NOTIFICATION_CATEGORIES.map((c) => c.key) as [
+const NOTIFICATION_CATEGORY_KEYS = /* @__PURE__ */ (() => NOTIFICATION_CATEGORIES.map((c) => c.key) as [
   NotificationCategory,
   ...NotificationCategory[],
-];
+])();
 
 export const PatchNotificationPreferenceInputSchema = /* @__PURE__ */ (() => z
   .object({
@@ -6396,7 +6384,8 @@ export type PositionStatusInput = z.infer<typeof PositionStatusInputSchema>;
  *  people or access. One record; the decider is never the requester.
  * -------------------------------------------------------------------------- */
 
-export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum([
+/** Every kind, as a plain list — for pickers that should not need zod. */
+export const APPROVAL_REQUEST_KINDS = [
   'PAY_RATE_CHANGE',
   'BILL_RATE_CHANGE',
   'SEPARATION_COMPLETE',
@@ -6416,7 +6405,8 @@ export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum([
   'VENDOR_BANK',
   'PERIOD_REOPEN',
   'PAY_RATE_BATCH',
-]))();
+] as const;
+export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum(APPROVAL_REQUEST_KINDS))();
 export type ApprovalRequestKind = z.infer<typeof ApprovalRequestKindSchema>;
 
 export const APPROVAL_REQUEST_KIND_LABELS: Record<ApprovalRequestKind, string> = {
@@ -7667,7 +7657,7 @@ export const SITE_TYPES = ['STORE', 'PROPERTY', 'OFFICE', 'WAREHOUSE', 'OTHER'] 
 export const SiteTypeSchema = /* @__PURE__ */ (() => z.enum(SITE_TYPES))();
 export type SiteType = z.infer<typeof SiteTypeSchema>;
 
-const LocationBaseFields = {
+const LocationBaseFields = /* @__PURE__ */ (() => ({
   type: SiteTypeSchema.optional(),
   name: z.string().trim().min(1).max(255),
   addressLine1: z.string().max(255).nullable().optional(),
@@ -7687,7 +7677,7 @@ const LocationBaseFields = {
   // to America/New_York, so omitted-field creates and existing rows are
   // unchanged. Validated against the supported list (Central, Pacific, etc.).
   timezone: z.enum(SUPPORTED_TIMEZONES).optional(),
-};
+}))();
 
 export const LocationCreateInputSchema = /* @__PURE__ */ (() => z.object(LocationBaseFields))();
 export type LocationCreateInput = z.infer<typeof LocationCreateInputSchema>;
@@ -8917,7 +8907,7 @@ export const WORKER_CAPABILITIES = [
   { code: 'deploy', label: 'Deploy the platform', types: ['AGENT'] },
 ] as const;
 export type WorkerCapabilityCode = (typeof WORKER_CAPABILITIES)[number]['code'];
-const capabilityCodes = WORKER_CAPABILITIES.map((c) => c.code) as [WorkerCapabilityCode, ...WorkerCapabilityCode[]];
+const capabilityCodes = /* @__PURE__ */ (() => WORKER_CAPABILITIES.map((c) => c.code) as [WorkerCapabilityCode, ...WorkerCapabilityCode[]])();
 
 export const WorkerInputSchema = /* @__PURE__ */ (() => z.object({
   type: z.enum(['AGENT', 'ROBOT']),
@@ -9035,7 +9025,7 @@ export const AGENT_SCOPES = [
   { code: 'view:payroll', label: 'Read payroll readiness' },
 ] as const;
 export type AgentScope = (typeof AGENT_SCOPES)[number]['code'];
-const agentScopeCodes = AGENT_SCOPES.map((s) => s.code) as [AgentScope, ...AgentScope[]];
+const agentScopeCodes = /* @__PURE__ */ (() => AGENT_SCOPES.map((s) => s.code) as [AgentScope, ...AgentScope[]])();
 export const AgentScopeSchema = /* @__PURE__ */ (() => z.enum(agentScopeCodes))();
 
 /**
@@ -9063,7 +9053,7 @@ export const AGENT_FAMILIES = [
   { group: 'Agents for Everyone', code: 'manager-self-service', label: 'Manager Self-Service' },
 ] as const;
 export type AgentFamily = (typeof AGENT_FAMILIES)[number]['code'];
-const agentFamilyCodes = AGENT_FAMILIES.map((f) => f.code) as [AgentFamily, ...AgentFamily[]];
+const agentFamilyCodes = /* @__PURE__ */ (() => AGENT_FAMILIES.map((f) => f.code) as [AgentFamily, ...AgentFamily[]])();
 export const AgentFamilySchema = /* @__PURE__ */ (() => z.enum(agentFamilyCodes))();
 
 /** High-risk actions an agent may only request; a person approves or rejects from the queue. */
@@ -9092,14 +9082,14 @@ export const AGENT_APPROVAL_STATUS_LABELS: Record<AgentApprovalStatus, string> =
   EXPIRED: 'Expired',
 };
 
-const AgentLimitsShape = {
+const AgentLimitsShape = /* @__PURE__ */ (() => ({
   /** Calendar-month spend cap; null = no cap. */
   spendCapCents: z.number().int().min(0).max(100_000_000).nullable(),
   rateLimitPerMinute: z.number().int().min(1).max(10_000),
   /** Hours of operation, org-local; both null = any hour. End 24 = midnight. */
   allowedHoursStart: z.number().int().min(0).max(23).nullable(),
   allowedHoursEnd: z.number().int().min(1).max(24).nullable(),
-};
+}))();
 
 export const AgentInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(2).max(160),

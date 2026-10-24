@@ -60,6 +60,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
 import { ListTemplate } from '@/components/templates';
 import { Label } from '@/components/ui/Label';
+import '@/lib/i18n/en/kb';
 
 /** "How to request PTO?" → "how-to-request-pto". */
 function slugify(s: string): string {

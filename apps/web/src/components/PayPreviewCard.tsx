@@ -16,6 +16,8 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
+import '@/lib/i18n/en/pay';
+import '@/lib/i18n/en/payx';
 
 /**
  * "Check your pay before payday" — two days before each pay date, the

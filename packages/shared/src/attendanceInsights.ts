@@ -36,23 +36,23 @@ export const LATE_GRACE_MINUTES = 7;
 /** Minutes after start, with no punch and no word, before cover should be found. */
 export const NO_SHOW_RISK_MINUTES = 30;
 
-const YmdSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const YmdSchema = /* @__PURE__ */ (() => z.string().regex(/^\d{4}-\d{2}-\d{2}$/))();
 /** A real calendar day — 2026-13-45 and 2026-02-31 are refused, not rolled over. */
-const RealYmdSchema = YmdSchema.refine((s) => {
+const RealYmdSchema = /* @__PURE__ */ (() => YmdSchema.refine((s) => {
   const [y, m, d] = s.split('-').map(Number);
   const dt = new Date(Date.UTC(y!, m! - 1, d!));
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m! - 1 && dt.getUTCDate() === d;
-}, 'Not a real date');
+}, 'Not a real date'))();
 
 /* ---- Trends ------------------------------------------------------------- */
 
-export const AttendanceTrendsQuerySchema = z.object({
+export const AttendanceTrendsQuerySchema = /* @__PURE__ */ (() => z.object({
   weeks: z.coerce.number().int().min(2).max(26).default(8),
   siteId: z.string().uuid().optional(),
-});
+}))();
 export type AttendanceTrendsQuery = z.infer<typeof AttendanceTrendsQuerySchema>;
 
-export const AttendanceWeekSchema = z.object({
+export const AttendanceWeekSchema = /* @__PURE__ */ (() => z.object({
   /** The workweek's first day (Saturday), YYYY-MM-DD. */
   weekStart: YmdSchema,
   /** True for the week still running — its figures are to date. */
@@ -67,16 +67,16 @@ export const AttendanceWeekSchema = z.object({
   callOuts: z.number().int().nonnegative(),
   lates: z.number().int().nonnegative(),
   overtimeHours: z.number().nonnegative(),
-});
+}))();
 export type AttendanceWeek = z.infer<typeof AttendanceWeekSchema>;
 
-export const AttendanceTrendsResponseSchema = z.object({
+export const AttendanceTrendsResponseSchema = /* @__PURE__ */ (() => z.object({
   generatedAt: z.string(),
   siteId: z.string().uuid().nullable(),
   fillTargetPct: z.number(),
   /** Oldest first; the last week is the one in progress. */
   weeks: z.array(AttendanceWeekSchema),
-});
+}))();
 export type AttendanceTrendsResponse = z.infer<typeof AttendanceTrendsResponseSchema>;
 
 /* ---- Heatmap ------------------------------------------------------------ */
@@ -84,25 +84,25 @@ export type AttendanceTrendsResponse = z.infer<typeof AttendanceTrendsResponseSc
 export const ATTENDANCE_HEATMAP_METRICS = ['late', 'overtime', 'callouts'] as const;
 export type AttendanceHeatmapMetric = (typeof ATTENDANCE_HEATMAP_METRICS)[number];
 
-export const AttendanceHeatmapQuerySchema = z.object({
+export const AttendanceHeatmapQuerySchema = /* @__PURE__ */ (() => z.object({
   metric: z.enum(ATTENDANCE_HEATMAP_METRICS).default('late'),
   from: RealYmdSchema.optional(),
   to: RealYmdSchema.optional(),
   siteId: z.string().uuid().optional(),
-});
+}))();
 export type AttendanceHeatmapQuery = z.infer<typeof AttendanceHeatmapQuerySchema>;
 
-export const AttendanceHeatmapRowSchema = z.object({
+export const AttendanceHeatmapRowSchema = /* @__PURE__ */ (() => z.object({
   /** A site id, an hour ("06"), or "none" for events with no site. */
   key: z.string(),
   label: z.string(),
   /** One value per day in `days` order. */
   values: z.array(z.number()),
   total: z.number(),
-});
+}))();
 export type AttendanceHeatmapRow = z.infer<typeof AttendanceHeatmapRowSchema>;
 
-export const AttendanceHeatmapResponseSchema = z.object({
+export const AttendanceHeatmapResponseSchema = /* @__PURE__ */ (() => z.object({
   metric: z.enum(ATTENDANCE_HEATMAP_METRICS),
   /** Inclusive range, YYYY-MM-DD. */
   from: YmdSchema,
@@ -117,7 +117,7 @@ export const AttendanceHeatmapResponseSchema = z.object({
   rows: z.array(AttendanceHeatmapRowSchema),
   max: z.number(),
   total: z.number(),
-});
+}))();
 export type AttendanceHeatmapResponse = z.infer<typeof AttendanceHeatmapResponseSchema>;
 
 /* ---- The year in attendance (one cell per day) -------------------------- */
@@ -127,22 +127,22 @@ export type AttendanceCalendarMetric = (typeof ATTENDANCE_CALENDAR_METRICS)[numb
 /** The most days one calendar covers: a year, and the days that square off its first week. */
 export const ATTENDANCE_CALENDAR_MAX_DAYS = 371;
 
-export const AttendanceCalendarQuerySchema = z.object({
+export const AttendanceCalendarQuerySchema = /* @__PURE__ */ (() => z.object({
   metric: z.enum(ATTENDANCE_CALENDAR_METRICS).default('callouts'),
   /** How many days back from today (today included). */
   days: z.coerce.number().int().min(1).max(ATTENDANCE_CALENDAR_MAX_DAYS).default(365),
   siteId: z.string().uuid().optional(),
-});
+}))();
 export type AttendanceCalendarQuery = z.infer<typeof AttendanceCalendarQuerySchema>;
 
-export const AttendanceCalendarDaySchema = z.object({
+export const AttendanceCalendarDaySchema = /* @__PURE__ */ (() => z.object({
   /** The day on its store's calendar, YYYY-MM-DD. */
   date: YmdSchema,
   value: z.number().int().nonnegative(),
-});
+}))();
 export type AttendanceCalendarDay = z.infer<typeof AttendanceCalendarDaySchema>;
 
-export const AttendanceCalendarResponseSchema = z.object({
+export const AttendanceCalendarResponseSchema = /* @__PURE__ */ (() => z.object({
   metric: z.enum(ATTENDANCE_CALENDAR_METRICS),
   /** Inclusive range, YYYY-MM-DD: `to` is today on the company's calendar. */
   from: YmdSchema,
@@ -157,19 +157,19 @@ export const AttendanceCalendarResponseSchema = z.object({
   busiest: AttendanceCalendarDaySchema.nullable(),
   /** The range's count by day of the week, index 0 = Sunday … 6 = Saturday. */
   weekdayTotals: z.array(z.number().int().nonnegative()).length(7),
-});
+}))();
 export type AttendanceCalendarResponse = z.infer<typeof AttendanceCalendarResponseSchema>;
 
 /* ---- Not in yet --------------------------------------------------------- */
 
-export const LateNowQuerySchema = z.object({
+export const LateNowQuerySchema = /* @__PURE__ */ (() => z.object({
   siteId: z.string().uuid().optional(),
-});
+}))();
 
 export const LATE_NOW_STATUSES = ['due', 'late', 'no-show-risk', 'called-out', 'on-leave'] as const;
 export type LateNowStatus = (typeof LATE_NOW_STATUSES)[number];
 
-export const LateNowPersonSchema = z.object({
+export const LateNowPersonSchema = /* @__PURE__ */ (() => z.object({
   shiftId: z.string().uuid(),
   associateId: z.string().uuid(),
   name: z.string(),
@@ -200,10 +200,10 @@ export const LateNowPersonSchema = z.object({
   hasPhone: z.boolean(),
   /** Only for callers who may reach the crew (never a store account or a watch-only lead). */
   phone: z.string().nullable(),
-});
+}))();
 export type LateNowPerson = z.infer<typeof LateNowPersonSchema>;
 
-export const LateNowResponseSchema = z.object({
+export const LateNowResponseSchema = /* @__PURE__ */ (() => z.object({
   generatedAt: z.string(),
   graceMinutes: z.number(),
   noShowRiskMinutes: z.number(),
@@ -215,12 +215,12 @@ export const LateNowResponseSchema = z.object({
   canText: z.boolean(),
   /** Most late first. */
   people: z.array(LateNowPersonSchema),
-});
+}))();
 export type LateNowResponse = z.infer<typeof LateNowResponseSchema>;
 
 /* ---- Hours per person this week (the line manager's team) --------------- */
 
-export const TeamHoursPersonSchema = z.object({
+export const TeamHoursPersonSchema = /* @__PURE__ */ (() => z.object({
   associateId: z.string().uuid(),
   name: z.string(),
   /** Net hours punched this workweek so far (an open punch counts to now). */
@@ -235,15 +235,15 @@ export const TeamHoursPersonSchema = z.object({
   /** worked + scheduled — where the week is heading. */
   projectedHours: z.number().nonnegative(),
   onClock: z.boolean(),
-});
+}))();
 export type TeamHoursPerson = z.infer<typeof TeamHoursPersonSchema>;
 
-export const TeamHoursResponseSchema = z.object({
+export const TeamHoursResponseSchema = /* @__PURE__ */ (() => z.object({
   weekStart: YmdSchema,
   /** Exclusive end, YYYY-MM-DD (the next Saturday). */
   weekEnd: YmdSchema,
   thresholdHours: z.number(),
   /** Most projected hours first. */
   people: z.array(TeamHoursPersonSchema),
-});
+}))();
 export type TeamHoursResponse = z.infer<typeof TeamHoursResponseSchema>;

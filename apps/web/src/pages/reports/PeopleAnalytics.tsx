@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { STOCK_LEGEND, seriesColor } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { Download, Users } from '@/components/ui/icons';
 import { useTenant, useTerm } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';
@@ -10,7 +9,7 @@ import { urlEnum, urlNumber, useUrlState, type UrlCodec } from '@/lib/useUrlStat
 import { getPeopleAnalytics, type PeopleAnalytics as PeopleAnalyticsData, type TurnoverGroup } from '@/lib/peopleAnalyticsApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { CHART, ChartFrame } from '@/components/ui/ChartFrame';
+import { ChartFrame } from '@/components/ui/ChartFrame';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -21,6 +20,15 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SkeletonRows } from '@/components/ui';
 import { ListTemplate } from '@/components/templates';
 import { cn } from '@/lib/cn';
+
+/** The drawings (recharts) load with the first chart, not the page (lazyPlot). */
+const plots = () => import('./PeopleAnalytics.plot');
+const HeadcountTrendPlot = lazyPlot(() => plots().then((m) => ({ default: m.HeadcountTrendPlot })));
+const SurvivalPlot = lazyPlot(() => plots().then((m) => ({ default: m.SurvivalPlot })));
+const TenureTurnoverPlot = lazyPlot(() => plots().then((m) => ({ default: m.TenureTurnoverPlot })));
+const TimeToFillPlot = lazyPlot(() => plots().then((m) => ({ default: m.TimeToFillPlot })));
+const AbsencePlot = lazyPlot(() => plots().then((m) => ({ default: m.AbsencePlot })));
+const SlowestPositionsPlot = lazyPlot(() => plots().then((m) => ({ default: m.SlowestPositionsPlot })));
 
 /**
  * People analytics: the questions a staffing company asks of its people,
@@ -53,7 +61,6 @@ function useSiteLabel() {
       ? `Inactive ${term('label.stores').toLowerCase()}${r.siteCount ? ` (${r.siteCount})` : ''}`
       : (r.label ?? r.storeName ?? '—');
 }
-const axis = { fill: CHART.axis, fontSize: 11 };
 
 function TurnoverTable({ id, caption, rows, header }: { id: string; caption: string; rows: TurnoverGroup[]; header: string }) {
   const siteLabel = useSiteLabel();
@@ -253,32 +260,7 @@ export function PeopleAnalytics() {
             rows={trendBy === 'company' ? trend : storeTrend}
             csvName={trendBy === 'company' ? 'headcount-trend' : 'headcount-by-store'}
           >
-            <ResponsiveContainer width="100%" height="100%">
-              {trendBy === 'company' ? (
-                <ComposedChart data={trend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke={CHART.grid} vertical={false} />
-                  <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis allowDecimals={false} tick={axis} tickLine={false} axisLine={false} width="auto" />
-                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
-                  <Legend {...STOCK_LEGEND} />
-                  <Bar dataKey="hires" name="Hires" fill={CHART.good} radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="left" name="Left" fill={CHART.bad} radius={[3, 3, 0, 0]} />
-                  <Line dataKey="headcount" name="On the books" stroke={CHART.series[0]} strokeWidth={2} dot={false} />
-                </ComposedChart>
-              ) : (
-                <LineChart data={storeTrend} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke={CHART.grid} vertical={false} />
-                  <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis allowDecimals={false} tick={axis} tickLine={false} axisLine={false} width="auto" />
-                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
-                  <Legend {...STOCK_LEGEND} />
-                  {/* Five hues, never a sixth: the rest draw thin in "Other" gray, off the legend (the table names them). */}
-                  {(d.headcountByStore ?? []).map((s, i) => (
-                    <Line key={s.storeId} dataKey={s.storeName} stroke={i < 5 ? seriesColor(i) : CHART.other} strokeWidth={i < 5 ? 2 : 1} dot={false} legendType={i < 5 ? undefined : 'none'} />
-                  ))}
-                </LineChart>
-              )}
-            </ResponsiveContainer>
+            <HeadcountTrendPlot trendBy={trendBy} trend={trend} storeTrend={storeTrend} stores={d.headcountByStore ?? []} />
           </ChartFrame>
 
           <EarlyTurnoverGrid d={d} />
@@ -294,22 +276,7 @@ export function PeopleAnalytics() {
               csvName="first-90-days"
               empty={<p className="text-sm text-ink-muted">Nobody was hired in this window.</p>}
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={survivalRows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke={CHART.grid} vertical={false} />
-                  <XAxis dataKey="day" tick={axis} tickLine={false} axisLine={false} interval={2} />
-                  <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} width="auto" />
-                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
-                  <Legend {...STOCK_LEGEND} />
-                  {/* The five most recent hiring months in color; older ones thin and gray. */}
-                  {(d.survival ?? []).map((c, i, all) => {
-                    const rank = all.length - 1 - i;
-                    return (
-                      <Line key={c.month} dataKey={monthLabel(c.month)} stroke={rank < 5 ? seriesColor(rank) : CHART.other} strokeWidth={rank < 5 ? 2 : 1} dot={false} connectNulls={false} legendType={rank < 5 ? undefined : 'none'} />
-                    );
-                  })}
-                </LineChart>
-              </ResponsiveContainer>
+              <SurvivalPlot rows={survivalRows} cohorts={(d.survival ?? []).map((c) => ({ month: c.month, dataKey: monthLabel(c.month) }))} />
             </ChartFrame>
 
             <ChartFrame
@@ -330,15 +297,7 @@ export function PeopleAnalytics() {
                 </p>
               }
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={d.turnover.byTenure} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke={CHART.grid} vertical={false} />
-                  <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} width="auto" />
-                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
-                  <Bar dataKey="annualizedTurnoverPct" name="Annualized turnover" fill={CHART.series[0]} radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <TenureTurnoverPlot data={d.turnover.byTenure} />
             </ChartFrame>
           </div>
 
@@ -358,15 +317,7 @@ export function PeopleAnalytics() {
               csvName="time-to-fill"
               empty={<p className="text-sm text-ink-muted">No seats were filled in this window.</p>}
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart layout="vertical" data={hasClients && fillByClient.length ? fillByClient : d.timeToFill.byDepartment.map((r) => ({ label: r.department, medianDays: r.medianDays }))} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
-                  <CartesianGrid stroke={CHART.grid} horizontal={false} />
-                  <XAxis type="number" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis type="category" dataKey="label" width={120} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
-                  <Bar dataKey="medianDays" name="Median days" fill={CHART.series[1]} radius={[0, 3, 3, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <TimeToFillPlot data={hasClients && fillByClient.length ? fillByClient : d.timeToFill.byDepartment.map((r) => ({ label: r.department, medianDays: r.medianDays }))} />
             </ChartFrame>
 
             <ChartFrame
@@ -383,15 +334,7 @@ export function PeopleAnalytics() {
               csvName="absence-trend"
               empty={<p className="text-sm text-ink-muted">No shifts or days off in this window.</p>}
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={absence} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke={CHART.grid} vertical={false} />
-                  <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} width="auto" />
-                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
-                  <Line dataKey="rate" name="Absence rate" stroke={CHART.warn} strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
+              <AbsencePlot data={absence} />
             </ChartFrame>
           </div>
 
@@ -408,15 +351,7 @@ export function PeopleAnalytics() {
               csvName="time-to-fill-by-position"
               height={Math.max(160, fillByPosition.length * 28)}
             >
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart layout="vertical" data={fillByPosition} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
-                  <CartesianGrid stroke={CHART.grid} horizontal={false} />
-                  <XAxis type="number" tick={axis} tickLine={false} axisLine={false} />
-                  <YAxis type="category" dataKey="label" width={160} tick={axis} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} />
-                  <Bar dataKey="medianDays" name="Median days" fill={CHART.series[2]} radius={[0, 3, 3, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <SlowestPositionsPlot data={fillByPosition} />
             </ChartFrame>
           )}
 

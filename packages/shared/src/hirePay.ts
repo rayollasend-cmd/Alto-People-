@@ -23,14 +23,14 @@ import { z } from 'zod';
 
 export const NEW_HIRE_WINDOW_DAYS = 30;
 
-const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const Id = z.string().uuid();
-const PayTypeSchema = z.enum(['HOURLY', 'SALARY']);
+const Ymd = /* @__PURE__ */ (() => z.string().regex(/^\d{4}-\d{2}-\d{2}$/))();
+const Id = /* @__PURE__ */ (() => z.string().uuid())();
+const PayTypeSchema = /* @__PURE__ */ (() => z.enum(['HOURLY', 'SALARY']))();
 /** Decimal as a string with two places, so the wire stays exact. */
-const Money = z.string().regex(/^\d+\.\d{2}$/);
+const Money = /* @__PURE__ */ (() => z.string().regex(/^\d+\.\d{2}$/))();
 
 /** Where a person stands against the window. */
-export const HirePayWhySchema = z.enum([
+export const HirePayWhySchema = /* @__PURE__ */ (() => z.enum([
   'NEW_HIRE',
   /** Not onboarding, and hired more than the window ago (or never). */
   'NOT_NEW_HIRE',
@@ -40,19 +40,19 @@ export const HirePayWhySchema = z.enum([
   'PAY_CHANGED',
   /** Separated or paused. */
   'SEPARATED',
-]);
+]))();
 export type HirePayWhy = z.infer<typeof HirePayWhySchema>;
 
-export const HirePayCeilingSchema = z.object({
+export const HirePayCeilingSchema = /* @__PURE__ */ (() => z.object({
   payType: PayTypeSchema,
   amount: Money,
   source: z.enum(['BAND', 'RATE_CARD']),
   /** "the rate card's pay for Housekeeper at Coastal Resort" */
   label: z.string(),
-});
+}))();
 export type HirePayCeiling = z.infer<typeof HirePayCeilingSchema>;
 
-export const HirePayStatusSchema = z.object({
+export const HirePayStatusSchema = /* @__PURE__ */ (() => z.object({
   associateId: Id,
   newHire: z.boolean(),
   why: HirePayWhySchema,
@@ -81,7 +81,7 @@ export const HirePayStatusSchema = z.object({
   pending: z
     .object({ id: Id, title: z.string(), payType: PayTypeSchema, amount: Money, effectiveFrom: Ymd, requestedAt: z.string().datetime() })
     .nullable(),
-});
+}))();
 export type HirePayStatus = z.infer<typeof HirePayStatusSchema>;
 
 /** POST /comp/associates/:id/records answers one of these. */

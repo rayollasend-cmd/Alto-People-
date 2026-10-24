@@ -57,6 +57,7 @@ import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { useMediaQuery } from '@/lib/useViewport';
+import '@/lib/i18n/en/bell';
 
 const POLL_MS = 30_000;
 

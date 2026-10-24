@@ -11,6 +11,7 @@ import type { MyShiftWindow } from '@/lib/shiftWindowsApi';
 import { windowOf } from '@/pages/portal/shiftFocus';
 import type { WaveRow } from '@/pages/portal/waves';
 import { Button } from '@/components/ui/Button';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * The gap the hero shows, said where decisions live: a shift window today

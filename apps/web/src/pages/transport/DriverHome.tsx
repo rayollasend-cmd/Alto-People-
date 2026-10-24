@@ -71,6 +71,8 @@ import {
 } from '@/components/ui/Dialog';
 import { fmtClock, fmtIn } from './rideShifts';
 import { DriverTodayCard, IncidentDialog, OkPrompt, PreTripDialog, SafetyDialog, navigateTo, useNavApp } from './DriverTools';
+import '@/lib/i18n/en/drive';
+import '@/lib/i18n/en/ride';
 
 /**
  * Driver mode — the phone on the dash, built around the STOP, not a list:

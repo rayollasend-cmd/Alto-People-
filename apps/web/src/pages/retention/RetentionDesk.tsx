@@ -17,9 +17,8 @@ import {
   type RetentionSummary,
 } from '@/lib/retentionApi';
 import { ListTemplate } from '@/components/templates';
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartFrame } from '@/components/ui/ChartFrame';
-import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { Avatar } from '@/components/ui/Avatar';
 import { QueryError } from '@/components/ui/QueryError';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -42,6 +41,10 @@ import {
   SkeletonRows,
 } from '@/components/ui';
 import { useUrlParam } from '@/lib/useUrlState';
+
+/** The drawings (recharts) load with the first chart, not the page (lazyPlot). */
+const RiskByPlacePlot = lazyPlot(() => import('./RetentionDesk.plot').then((m) => ({ default: m.RiskByPlacePlot })));
+const StayRatePlot = lazyPlot(() => import('./RetentionDesk.plot').then((m) => ({ default: m.StayRatePlot })));
 
 /**
  * Retention: who might leave soon, why, and what to do about it this week.
@@ -339,17 +342,7 @@ function RiskByPlace({ stores }: { stores: RetentionSummary['stores'] }) {
       ]}
       rows={rows}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={shown} layout="vertical" margin={{ top: 0, right: 12, bottom: 0, left: 0 }}>
-          <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
-          <XAxis type="number" allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
-          <YAxis type="category" dataKey="name" width={140} tick={TICK} tickLine={false} axisLine={false} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar dataKey="high" name="High risk" stackId="risk" fill={PALETTE.bad} maxBarSize={18} />
-          <Bar dataKey="medium" name="Some risk" stackId="risk" fill={PALETTE.warn} radius={[0, 3, 3, 0]} maxBarSize={18} />
-        </BarChart>
-      </ResponsiveContainer>
+      <RiskByPlacePlot shown={shown} />
     </ChartFrame>
   );
 }
@@ -374,15 +367,7 @@ function StayRateChart({ plays }: { plays: RetentionSummary['plays'] }) {
       ]}
       rows={rows}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 12, bottom: 0, left: 0 }}>
-          <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
-          <XAxis type="number" domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={TICK} tickLine={false} axisLine={false} />
-          <YAxis type="category" dataKey="play" width={160} tick={TICK} tickLine={false} axisLine={false} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} formatter={(v) => `${v}%`} />
-          <Bar dataKey="stayRate" name="Stayed" fill={PALETTE.good} radius={[0, 3, 3, 0]} maxBarSize={18} />
-        </BarChart>
-      </ResponsiveContainer>
+      <StayRatePlot rows={rows} />
     </ChartFrame>
   );
 }

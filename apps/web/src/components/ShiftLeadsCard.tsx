@@ -9,6 +9,7 @@ import { getShiftCoverageGaps, type ShiftCoverageGaps } from '@/lib/shiftWindows
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SupervisorShiftDialog, type ShiftDialogUser } from '@/pages/admin/SupervisorShiftDialog';
+import '@/lib/i18n/en/shiftLeads';
 
 /**
  * Shift leads — every store shift nobody leads, every supervisor with no

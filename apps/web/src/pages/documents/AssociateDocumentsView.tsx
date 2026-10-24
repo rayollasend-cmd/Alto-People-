@@ -50,6 +50,7 @@ import { usePersistentState } from '@/lib/usePersistentState';
 import { ListTemplate } from '@/components/templates';
 import { useTenant } from '@/lib/auth';
 import { LettersSection } from './LettersSection';
+import '@/lib/i18n/en/docs';
 
 const KIND_VALUES: DocumentKind[] = [
   'ID',

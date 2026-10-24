@@ -40,6 +40,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
+import '@/lib/i18n/en/drive';
 
 /**
  * The driver as a worker, and the road's safety net — the pieces DriverHome

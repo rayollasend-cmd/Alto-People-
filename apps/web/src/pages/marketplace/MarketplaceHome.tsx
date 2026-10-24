@@ -61,6 +61,9 @@ import { enterStagger } from '@/lib/motion';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
 import { ManagerOpenShifts } from './ManagerOpenShifts';
+import '@/lib/i18n/en/mk';
+import '@/lib/i18n/en/sched';
+import '@/lib/i18n/en/shift';
 
 type Tab = 'open' | 'mgr' | 'claims' | 'catalog';
 

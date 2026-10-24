@@ -8,6 +8,7 @@ import { useI18n } from '@/lib/i18n';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * The week at the store, for the watch-only floor supervisor — who has

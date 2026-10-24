@@ -1,16 +1,16 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { ClientPerformanceStatement } from '@alto-people/shared';
 import { BarChart3 } from '@/components/ui/icons';
 import { useAuth, useTerm } from '@/lib/auth';
 import { getClientPerformance } from '@/lib/clientsApi';
-import { fmtDate, fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { fmtDate, fmtMoney } from '@/lib/format';
 import { storeTrends } from '@/lib/schedulingApi';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ChartFrame } from '@/components/ui/ChartFrame';
-import { LegendKey, PALETTE, StackedBarChart, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, TrendLineChart } from '@/components/ui/charts';
+import { LegendKey, PALETTE, StackedBarChart, TrendLineChart } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { Sparkline } from '@/components/ui/charts/Sparkline';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
@@ -23,6 +23,9 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * (process:payroll or view:executive, decided by the API), NPS (executive,
  * marketing), labor margin (scheduling, executive, payroll).
  */
+
+/** The statements chart's drawing (recharts) loads with the chart, not the page (lazyPlot). */
+const StatementsPlot = lazyPlot(() => import('./ClientStatements.plot').then((m) => ({ default: m.StatementsPlot })));
 
 export interface StoreTrend {
   clientId: string;
@@ -85,6 +88,16 @@ const STATE_LABEL: Record<ClientPerformanceStatement['state'], string> = { paid:
 type BarState = 'paid' | 'waiting' | 'late' | 'draft';
 const barState = (s: Pick<ClientPerformanceStatement, 'state' | 'daysPastDue'>): BarState => (s.state === 'waiting' && (s.daysPastDue ?? 0) > 0 ? 'late' : s.state);
 const BAR_COLOR: Record<BarState, string> = { paid: PALETTE.good, waiting: PALETTE.warn, late: PALETTE.bad, draft: PALETTE.other };
+const statementColor = (s: StatementRow) => BAR_COLOR[barState(s)];
+
+/** A statement as the chart and its table read it. */
+const statementRow = (s: ClientPerformanceStatement) => ({
+  ...s,
+  label: shortDay(s.periodEnd),
+  name: s.number !== null ? `#${s.number}` : 'Draft',
+  status: s.state === 'waiting' && s.daysPastDue ? `Waiting · ${s.daysPastDue} day${s.daysPastDue === 1 ? '' : 's'} late` : STATE_LABEL[s.state],
+});
+export type StatementRow = ReturnType<typeof statementRow>;
 
 /** Whether the person can see the Performance tab: anyone who can open the client (the money and NPS parts check their own access). */
 export function useCanSeeClientPerformance(): boolean {
@@ -124,16 +137,7 @@ export function ClientPerformance({ clientId }: { clientId: string }) {
       })),
     [perf.data],
   );
-  const statements = useMemo(
-    () =>
-      (perf.data?.statements ?? []).map((s) => ({
-        ...s,
-        label: shortDay(s.periodEnd),
-        name: s.number !== null ? `#${s.number}` : 'Draft',
-        status: s.state === 'waiting' && s.daysPastDue ? `Waiting · ${s.daysPastDue} day${s.daysPastDue === 1 ? '' : 's'} late` : STATE_LABEL[s.state],
-      })),
-    [perf.data],
-  );
+  const statements = useMemo(() => (perf.data?.statements ?? []).map(statementRow), [perf.data]);
   const stores = useMemo(() => labor.data?.stores ?? [], [labor.data]);
   const marginWeeks = useMemo(() => rollUpWeeks(stores).map((w) => ({ week: shortDay(w.start), start: w.start, margin: w.marginPerHour })), [stores]);
   const standardShare = standardShareOf(stores);
@@ -236,28 +240,7 @@ export function ClientPerformance({ clientId }: { clientId: string }) {
         >
           <div className="flex h-full w-full flex-col">
             <div className="min-h-0 flex-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={statements} margin={{ top: 12, right: 12, bottom: 0, left: 0 }} barCategoryGap="24%">
-                  <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-                  <XAxis dataKey="label" tick={TICK} tickLine={false} axisLine={false} minTickGap={8} />
-                  <YAxis tick={TICK} tickLine={false} axisLine={false} width={56} tickFormatter={(v: number) => fmtMoneyCompact(v)} />
-                  <Tooltip
-                    contentStyle={TOOLTIP_STYLE}
-                    labelStyle={TOOLTIP_LABEL_STYLE}
-                    cursor={{ fill: PALETTE.cursor }}
-                    labelFormatter={(_l, payload) => {
-                      const row = payload?.[0]?.payload as (typeof statements)[number] | undefined;
-                      return row ? `${row.name} · period ending ${longDay(row.periodEnd)}` : '';
-                    }}
-                    formatter={(v, _n, item) => [fmtMoney(Number(v)), (item?.payload as (typeof statements)[number] | undefined)?.status ?? 'Billed']}
-                  />
-                  <Bar dataKey="amount" name="Billed" radius={[3, 3, 0, 0]} maxBarSize={32} isAnimationActive={false}>
-                    {statements.map((s) => (
-                      <Cell key={s.id} fill={BAR_COLOR[barState(s)]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <StatementsPlot statements={statements} colorOf={statementColor} longDay={longDay} />
             </div>
             <div className="mt-1">
               <LegendKey

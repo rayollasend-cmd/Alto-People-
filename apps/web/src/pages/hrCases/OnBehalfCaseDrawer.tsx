@@ -23,6 +23,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import '@/lib/i18n/en/hrc';
 
 export const CASE_CHANNELS: CaseChannel[] = ['PHONE', 'WALK_IN', 'EMAIL'];
 

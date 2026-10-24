@@ -2,6 +2,7 @@ import { WORK_STATUSES, WORK_STATUS_LABELS, type DirectoryStatus, type WorkStatu
 import { Badge, type BadgeProps } from '@/components/ui/Badge';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import type { BadgeVariant } from '@/lib/status';
+import '@/lib/i18n/en/people';
 
 /**
  * Where a person stands, in the one vocabulary every page uses (Fortune 500

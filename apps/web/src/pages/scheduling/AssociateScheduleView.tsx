@@ -64,6 +64,9 @@ import { getActiveTimeEntry } from '@/lib/timeApi';
 import { MyShiftHero } from '@/pages/associate/MyShiftHero';
 import { ListTemplate } from '@/components/templates';
 import { workweekStart } from '@/lib/workweek';
+import '@/lib/i18n/en/avail';
+import '@/lib/i18n/en/sched';
+import '@/lib/i18n/en/shift';
 
 type ScheduleViewMode = 'list' | 'week' | 'month';
 const SHEETS = ['', 'availability', 'calendar'] as const;

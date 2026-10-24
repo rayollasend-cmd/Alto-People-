@@ -1,8 +1,6 @@
-import {
-  browserSupportsWebAuthn,
-  startAuthentication,
-  startRegistration,
-} from '@simplewebauthn/browser';
+// The ceremony library loads when a passkey is used, not with the sign-in
+// page every visitor opens.
+import type { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 import type { AuthUser } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -27,7 +25,8 @@ export interface PasskeySummary {
 }
 
 export function passkeysSupported(): boolean {
-  return browserSupportsWebAuthn();
+  // What @simplewebauthn's browserSupportsWebAuthn() checks.
+  return typeof window !== 'undefined' && typeof window.PublicKeyCredential === 'function';
 }
 
 export async function listPasskeys(): Promise<PasskeySummary[]> {
@@ -47,7 +46,8 @@ export async function registerPasskey(deviceName?: string): Promise<PasskeySumma
     challengeId: string;
     options: Parameters<typeof startRegistration>[0]['optionsJSON'];
   }>('/auth/webauthn/register/options', { method: 'POST', body: {} });
-  const response = await startRegistration({ optionsJSON: options });
+  const { startRegistration: register } = await import('@simplewebauthn/browser');
+  const response = await register({ optionsJSON: options });
   return apiFetch<PasskeySummary>('/auth/webauthn/register/verify', {
     method: 'POST',
     body: { challengeId, response, ...(deviceName ? { deviceName } : {}) },
@@ -60,7 +60,8 @@ export async function signInWithPasskey(email: string): Promise<AuthUser> {
     challengeId: string;
     options: Parameters<typeof startAuthentication>[0]['optionsJSON'];
   }>('/auth/webauthn/login/options', { method: 'POST', body: { email } });
-  const response = await startAuthentication({ optionsJSON: options });
+  const { startAuthentication: authenticate } = await import('@simplewebauthn/browser');
+  const response = await authenticate({ optionsJSON: options });
   const res = await apiFetch<{ user: AuthUser }>('/auth/webauthn/login/verify', {
     method: 'POST',
     body: { challengeId, response },

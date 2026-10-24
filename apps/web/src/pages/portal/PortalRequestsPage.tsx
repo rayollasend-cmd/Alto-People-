@@ -6,6 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
 import { PortalRequests, type ReqKind, type RequestPrefill } from './PortalRequests';
+import '@/lib/i18n/en/portal';
 
 /**
  * Requests as a destination of its own — the fourth tab on a phone and a

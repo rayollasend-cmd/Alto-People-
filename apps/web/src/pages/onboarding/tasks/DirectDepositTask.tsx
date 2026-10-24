@@ -15,6 +15,7 @@ import { fmtDateTime } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
+import '@/lib/i18n/en/ob';
 
 // ABA mod-10 checksum — same one the API enforces. Keeping client-side too
 // gives instant validation feedback before they hit submit.

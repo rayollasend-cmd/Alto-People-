@@ -26,6 +26,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { useUrlParam } from '@/lib/useUrlState';
+import '@/lib/i18n/en/portal';
 
 /**
  * The client's side of the loop: make a structured request (staffing /

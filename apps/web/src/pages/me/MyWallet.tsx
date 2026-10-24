@@ -19,6 +19,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { ListTemplate } from '@/components/templates';
 import { WorkerBadgeCard } from './WorkerBadgeCard';
+import '@/lib/i18n/en/badge';
+import '@/lib/i18n/en/wallet';
 
 /**
  * The credential wallet — what this person has earned, carried with them:

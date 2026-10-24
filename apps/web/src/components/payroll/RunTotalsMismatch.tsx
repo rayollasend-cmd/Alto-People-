@@ -2,6 +2,7 @@ import { AlertTriangle } from '@/components/ui/icons';
 import { fmtMoney } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
+import '@/lib/i18n/en/runTotals';
 
 /**
  * A run whose stored totals and paychecks disagree (F500 SH-4).

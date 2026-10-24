@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ClipboardCheck } from '@/components/ui/icons';
 import {
   APPROVAL_REQUEST_KIND_LABELS,
-  ApprovalRequestKindSchema,
+  APPROVAL_REQUEST_KINDS,
   type ApprovalRequestKind,
   type ApprovalRequestStatus,
   type ApprovalRequestSummary,
@@ -40,7 +40,6 @@ const STATUS_TONE: Record<ApprovalRequestStatus, 'pending' | 'success' | 'destru
   REJECTED: 'destructive',
   CANCELLED: 'default',
 };
-const KINDS = ApprovalRequestKindSchema.options;
 const STATUSES: ApprovalRequestStatus[] = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'];
 const FILTER_KEYS = ['kind', 'status', 'requester', 'approver', 'from', 'to'] as const;
 
@@ -52,7 +51,7 @@ interface Person {
 export function ApprovalRecord() {
   const [sp, setSp] = useSearchParams();
   const filters: RecordFilters = {
-    kind: (KINDS as readonly string[]).includes(sp.get('kind') ?? '') ? (sp.get('kind') as ApprovalRequestKind) : undefined,
+    kind: (APPROVAL_REQUEST_KINDS as readonly string[]).includes(sp.get('kind') ?? '') ? (sp.get('kind') as ApprovalRequestKind) : undefined,
     status: (STATUSES as string[]).includes(sp.get('status') ?? '') ? (sp.get('status') as ApprovalRequestStatus) : undefined,
     requesterUserId: sp.get('requester') ?? undefined,
     approverUserId: sp.get('approver') ?? undefined,
@@ -125,7 +124,7 @@ export function ApprovalRecord() {
             <div className="w-40">
               <Select size="sm" value={filters.kind ?? ''} onChange={(e) => set('kind', e.target.value)} aria-label="Filter by kind">
                 <option value="">All kinds</option>
-                {KINDS.map((k) => (
+                {APPROVAL_REQUEST_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {APPROVAL_REQUEST_KIND_LABELS[k]}
                   </option>

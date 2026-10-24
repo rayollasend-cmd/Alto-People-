@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts';
 import { CalendarRange, LineChart, RefreshCw, SlidersHorizontal, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { FORECAST_SIGNAL_KINDS, FORECAST_SIGNAL_LABELS, type ForecastResponse, type ForecastSignalKind, type ForecastSiteSummary, type ForecastWeek } from '@alto-people/shared';
@@ -23,7 +22,8 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
-import { DetailsTable, PALETTE, ChartTooltipContent as PortalTooltip, TICK as KIT_TICK } from '@/components/ui/charts';
+import { DetailsTable, PALETTE } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 
 /**
  * Brief 3-4 — the labor-demand forecast.
@@ -37,10 +37,9 @@ import { DetailsTable, PALETTE, ChartTooltipContent as PortalTooltip, TICK as KI
 const SIGNAL_KINDS: ReadonlyArray<{ value: ForecastSignalKind; label: string }> = FORECAST_SIGNAL_KINDS.map((value) => ({ value, label: FORECAST_SIGNAL_LABELS[value] }));
 const kindLabel = (k: ForecastSignalKind) => FORECAST_SIGNAL_LABELS[k] ?? k;
 
-// The kit's grid, ticks and reference color — one look across every chart.
-const GRID = PALETTE.grid;
-const TICK = { ...KIT_TICK, fontSize: 10 } as const;
-const REF = PALETTE.ref;
+/** The chart's drawing (recharts) loads with the chart, not the page (lazyPlot). */
+const ForecastPlot = lazyPlot(() => import('./ForecastChart.plot').then((m) => ({ default: m.ForecastPlot })));
+
 /** The forecast's uncertainty band: the primary hue, faint. */
 const BAND = 'rgb(var(--color-chart-1) / 0.18)';
 
@@ -199,20 +198,7 @@ function ForecastChart({ weeks, site, band }: { weeks: ForecastWeek[]; site: For
       </CardHeader>
       <CardContent>
         <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
-              <XAxis dataKey="label" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={28} />
-              <YAxis tick={TICK} axisLine={false} tickLine={false} width="auto" tickFormatter={(v: number) => `${Math.round(v)}h`} />
-              <ChartTooltip cursor={{ stroke: REF, strokeWidth: 1 }} content={<PortalTooltip series={series} format={(v) => `${Math.round(v).toLocaleString()} h`} />} />
-              <Area type="monotone" dataKey="band" stroke="none" fill={BAND} isAnimationActive={false} connectNulls={false} legendType="none" />
-              <Line type="monotone" dataKey="actual" stroke={PALETTE.secondary} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} />
-              <Line type="monotone" dataKey="p50" stroke={PALETTE.primary} strokeWidth={2} strokeDasharray="5 3" dot={false} isAnimationActive={false} connectNulls={false} />
-              {anchor && (
-                <ReferenceLine x={weekLabel(anchor)} stroke={REF} strokeDasharray="4 3" label={{ value: 'Now', position: 'insideTopLeft', fill: KIT_TICK.fill, fontSize: 10 }} />
-              )}
-            </ComposedChart>
-          </ResponsiveContainer>
+          <ForecastPlot data={data} series={series} bandColor={BAND} nowLabel={anchor ? weekLabel(anchor) : undefined} />
         </div>
         <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-silver/80">
           <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: PALETTE.secondary }} />Verified hours</li>

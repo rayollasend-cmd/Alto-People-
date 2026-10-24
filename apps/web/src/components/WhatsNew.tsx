@@ -7,6 +7,7 @@ import { useI18n } from '@/lib/i18n';
 import { getLatestReleaseNote } from '@/lib/releaseNotesApi';
 import { seenKey, tourFor } from '@/lib/tours';
 import { Button } from '@/components/ui/Button';
+import '@/lib/i18n/en/whatsnew';
 
 /**
  * "What's new" card — the newest release note, shown once per note

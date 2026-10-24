@@ -22,6 +22,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { formatHM } from './punchFormat';
+import '@/lib/i18n/en/pts';
 
 /** The /time-attendance entry editor, loaded only when "Fix time" opens it. */
 const TimeEntryFormDrawer = lazy(() => import('./AdminTimeView').then((m) => ({ default: m.TimeEntryFormDrawer })));

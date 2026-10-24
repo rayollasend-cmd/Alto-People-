@@ -5,6 +5,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
+import '@/lib/i18n/en/lane';
 
 /**
  * "Road to your first paycheck" — the new hire's own view of their lane.

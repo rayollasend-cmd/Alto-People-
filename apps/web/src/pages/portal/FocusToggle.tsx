@@ -1,6 +1,7 @@
 import { useI18n } from '@/lib/i18n';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { focusName, type Focus } from './shiftFocus';
+import '@/lib/i18n/en/focus';
 
 /** My shift ⇄ Whole store. Renders nothing for anyone without a shift. */
 export function FocusToggle({

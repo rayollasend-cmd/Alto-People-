@@ -1,9 +1,12 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { PieChart as PieIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
-import { PALETTE, TOOLTIP_ITEM_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, seriesColor } from './charts/palette';
+import { lazyPlot } from './charts/lazyPlot';
+import { PALETTE, seriesColor } from './charts/palette';
 import { EmptyState } from './EmptyState';
+
+/** The drawing (recharts) loads with the first chart, not the page (lazyPlot). */
+const DonutPlot = lazyPlot(() => import('./DonutChart.plot').then((m) => ({ default: m.DonutPlot })));
 
 export interface DonutDatum {
   name: string;
@@ -75,52 +78,7 @@ export function DonutChart({
   return (
     <div className={cn('flex flex-col md:flex-row items-center gap-6', className)}>
       <div className="relative shrink-0" style={{ width: size, height: size }}>
-        {/* Fixed px (not 100%): the parent is exactly `size` square, so the
-            100% measurement is unnecessary and is what triggers recharts'
-            width(-1)/height(-1) warning when measured early during mount. */}
-        <ResponsiveContainer width={size} height={size}>
-          <PieChart accessibilityLayer={false}>
-            <Pie
-              data={withColors}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              innerRadius={inner}
-              outerRadius={outer}
-              paddingAngle={gap}
-              stroke="none"
-              isAnimationActive
-              animationDuration={650}
-              animationEasing="ease-out"
-              onMouseEnter={(_, i) => setActiveIdx(i)}
-              onMouseLeave={() => setActiveIdx(null)}
-            >
-              {withColors.map((d, i) => (
-                <Cell
-                  key={d.name}
-                  fill={d.color}
-                  opacity={activeIdx === null || activeIdx === i ? 1 : 0.35}
-                  style={{ transition: 'opacity 150ms ease-out' }}
-                />
-              ))}
-            </Pie>
-            <Tooltip
-              cursor={false}
-              wrapperStyle={{ outline: 'none' }}
-              contentStyle={TOOLTIP_STYLE}
-              labelStyle={TOOLTIP_LABEL_STYLE}
-              itemStyle={TOOLTIP_ITEM_STYLE}
-              formatter={(value, name) => {
-                const n = typeof value === 'number' ? value : Number(value) || 0;
-                return [
-                  `${fmt(n)} (${Math.round((n / total) * 100)}%)`,
-                  String(name ?? ''),
-                ];
-              }}
-            />
-          </PieChart>
-        </ResponsiveContainer>
+        <DonutPlot data={withColors} size={size} inner={inner} outer={outer} gap={gap} total={total} fmt={fmt} activeIdx={activeIdx} onActive={setActiveIdx} />
         {/* Center label sits in the donut hole. Pointer-events none so it
             doesn't block tooltip hover on the slices. */}
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">

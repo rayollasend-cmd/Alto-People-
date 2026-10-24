@@ -71,6 +71,7 @@ import {
 } from './opsVisuals';
 import { flipReadingSign, isNegativeReading, parseReading } from './reading';
 import { OpsShiftRecordDialog } from './OpsShiftRecord';
+import '@/lib/i18n/en/opsRun';
 
 /**
  * The shift supervisor's floor tool — the flagship surface where the

@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { ContinueLabel, TaskFooter, TaskShell, inputCls, Field, taskButtonCls, useNextTask } from './ProfileInfoTask';
 import { Button } from '@/components/ui/Button';
+import '@/lib/i18n/en/ob';
 
 export function BackgroundCheckTask() {
   const { applicationId } = useParams<{ applicationId: string }>();

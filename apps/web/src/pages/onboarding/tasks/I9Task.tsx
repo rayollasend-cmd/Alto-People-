@@ -31,6 +31,7 @@ import { Select } from '@/components/ui/Select';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/ob';
 
 type I9DocumentKind = 'ID' | 'SSN_CARD' | 'I9_SUPPORTING' | 'J1_VISA' | 'J1_DS2019';
 type I9DocumentSide = 'FRONT' | 'BACK';

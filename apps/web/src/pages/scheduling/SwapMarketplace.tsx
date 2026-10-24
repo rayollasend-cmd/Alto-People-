@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import '@/lib/i18n/en/swap';
 
 type Tab = 'incoming' | 'outgoing';
 

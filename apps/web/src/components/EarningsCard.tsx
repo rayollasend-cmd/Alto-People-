@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+import '@/lib/i18n/en/earn';
 
 /**
  * "My earnings this week" — a SCOREBOARD, not a dashboard. Three zones:

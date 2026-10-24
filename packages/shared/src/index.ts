@@ -7,6 +7,7 @@ export * from './schedule.js';
 export * from './shiftWindow.js';
 export * from './uploads.js';
 export * from './contracts.js';
+export * from './interviewScorecard.js';
 export * from './tenantProfile.js';
 export * from './complianceEvidence.js';
 export * from './trust.js';

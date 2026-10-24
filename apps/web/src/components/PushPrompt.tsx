@@ -6,6 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import '@/lib/i18n/en/push';
 
 const DISMISSED_KEY = 'alto:portal-push-prompt-dismissed';
 

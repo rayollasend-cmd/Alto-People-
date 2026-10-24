@@ -5,6 +5,9 @@ import { fmtDateTz, fmtHours, fmtMoneyEst, zonedDayKey } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { Check, ChevronLeft, ChevronRight, X } from '@/components/ui/icons';
 import { ShiftCard, paidShiftMinutes } from './ShiftCard';
+import '@/lib/i18n/en/cal';
+import '@/lib/i18n/en/sched';
+import '@/lib/i18n/en/shift';
 
 /**
  * Day-dot colour for the month grid, ordered by what the associate still

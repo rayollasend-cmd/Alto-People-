@@ -167,6 +167,7 @@ import { ListTemplate } from '@/components/templates';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { StatusBadge } from '@/lib/status';
+import '@/lib/i18n/en/people';
 
 const PAY_TYPE_SUFFIX: Record<string, string> = {
   HOURLY: '/hr',

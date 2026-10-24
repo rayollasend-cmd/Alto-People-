@@ -15,6 +15,7 @@ import { LazyLiveMap } from '@/components/transport/LazyLiveMap';
 import { bookShifts, coverageFor } from './rideShifts';
 import { tripGeometry, tripStage } from './TripMap';
 import { useRiderAlerts } from './useRiderAlerts';
+import '@/lib/i18n/en/ride';
 
 /**
  * The van, on Home — where the associate already looks. One line under the

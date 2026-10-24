@@ -9,6 +9,9 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtDateOnly, fmtWeekday } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import '@/lib/i18n/en/dash';
+import '@/lib/i18n/en/needs';
+import '@/lib/i18n/en/train';
 
 /**
  * The associate's "Needs you" — the things to do, not the unread count.

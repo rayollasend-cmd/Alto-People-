@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/Select';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { cn } from '@/lib/cn';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * File an incident from the floor — the supervisor's phone, the moment it

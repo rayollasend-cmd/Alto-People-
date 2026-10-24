@@ -17,6 +17,7 @@ import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { fmtDate } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/w9';
 
 /**
  * A contractor's own W-9: who they are for tax purposes, their SSN or EIN

@@ -309,7 +309,7 @@ const FULL_ADMIN: Capability[] = [
   'set:hire-pay',
 ];
 
-export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
+export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = /* @__PURE__ */ (() => ({
   EXECUTIVE_CHAIRMAN: new Set<Capability>([
     ...ALL_VIEWS,
     // The owner reads the company's books; Finance keeps them.
@@ -622,7 +622,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:communications',
     'drive:transport',
   ]),
-};
+}))();
 
 export function hasCapability(role: Role, capability: Capability): boolean {
   return ROLE_CAPABILITIES[role].has(capability);
@@ -647,11 +647,11 @@ export function rolesWithCapability(capability: Capability): Role[] {
  * — that bug emptied the WFM's live board and pinned every filter to
  * one store (reported 2026-09-06).
  */
-const CLIENT_BOUNDED_ROLES: ReadonlySet<Role> = new Set<Role>([
+const CLIENT_BOUNDED_ROLES: ReadonlySet<Role> = /* @__PURE__ */ (() => new Set<Role>([
   'SHIFT_SUPERVISOR',
   'FLOOR_SUPERVISOR',
   'CLIENT_PORTAL',
-]);
+]))();
 
 export function isClientBoundedRole(role: Role): boolean {
   return CLIENT_BOUNDED_ROLES.has(role);
@@ -682,9 +682,9 @@ export const ASN_CAPABILITIES: readonly Capability[] = [
   'asn:read:kpis',
 ] as const;
 
-export const HUMAN_ROLES: Role[] = (Object.keys(ROLES) as Role[]).filter(
+export const HUMAN_ROLES: Role[] = /* @__PURE__ */ (() => (Object.keys(ROLES) as Role[]).filter(
   (r) => r !== 'LIVE_ASN'
-);
+))();
 
 /* ===== Org-enforced MFA policy ========================================== */
 

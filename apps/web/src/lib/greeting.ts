@@ -1,4 +1,6 @@
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/home';
+import '@/lib/i18n/en/people';
 
 /**
  * The name a home greets someone by (design system §6, voice): their first

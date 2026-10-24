@@ -3,6 +3,7 @@ import type { MessageKey } from './i18n';
 import { getPushStatus, subscribeToPush } from './push';
 import { isNative } from './native/platform';
 import { enablePush, pushPermission, type PushPermission } from './native/push';
+import '@/lib/i18n/en/settingsPage';
 
 /**
  * Push on THIS device, whichever kind it is: inside the phone app it is the

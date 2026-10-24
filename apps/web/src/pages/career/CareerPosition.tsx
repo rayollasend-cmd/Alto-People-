@@ -3,6 +3,7 @@ import type { CareerPosition, CareerRequirement, SkillLevel } from '@/lib/career
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Badge, Card, CardContent, SectionTitle } from '@/components/ui';
 import { cn } from '@/lib/cn';
+import '@/lib/i18n/en/career';
 
 /**
  * A ladder drawn as a ladder: every rung from the top down, "You are here"

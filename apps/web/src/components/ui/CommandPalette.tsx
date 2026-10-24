@@ -652,25 +652,4 @@ export function CommandPalette({
   );
 }
 
-/**
- * Provider hook — listens for Cmd/Ctrl+K globally and toggles the palette.
- * Call once in Layout. Returns the open-state so the Topbar can render a
- * "⌘K" button that opens it on click.
- */
-export function useCommandPalette() {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      // Cmd-K on macOS, Ctrl-K elsewhere.
-      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        setOpen((prev) => !prev);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-
-  return { open, setOpen };
-}
+export { useCommandPalette } from './commandPaletteHook';

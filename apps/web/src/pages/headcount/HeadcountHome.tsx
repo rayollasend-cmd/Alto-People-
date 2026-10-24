@@ -23,9 +23,8 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Input } from '@/components/ui/Input';
 import { ListTemplate } from '@/components/templates';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
-import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartFrame } from '@/components/ui/ChartFrame';
-import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { getPeopleAnalytics } from '@/lib/peopleAnalyticsApi';
 import { parseYmd } from '@/lib/format';
 
@@ -512,6 +511,9 @@ function CompactList({ title, rows }: { title: string; rows: { key: string; labe
 
 /* ------------------------------------------------------ the year, month by month */
 
+/** The trend's drawing (recharts) loads with the chart, not the page (lazyPlot). */
+const HeadcountTrendPlot = lazyPlot(() => import('./HeadcountTrend.plot').then((m) => ({ default: m.HeadcountTrendPlot })));
+
 const monthName = (ym: string) => fmtDate(parseYmd(`${ym}-01`)).replace(/ \d{1,2},/, ',').replace(/,\s*/, ' ');
 
 /**
@@ -542,19 +544,7 @@ function HeadcountTrend() {
       ]}
       rows={rows}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} stackOffset="sign">
-          <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-          <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
-          <YAxis yAxisId="flow" tick={TICK} tickLine={false} axisLine={false} width={48} allowDecimals={false} tickFormatter={(v: number) => String(Math.abs(v))} label={{ value: 'Hires · separations', angle: -90, position: 'insideLeft', style: { ...TICK, textAnchor: 'middle' } }} />
-          <YAxis yAxisId="count" orientation="right" tick={TICK} tickLine={false} axisLine={false} width={56} allowDecimals={false} label={{ value: 'Employed', angle: 90, position: 'insideRight', style: { ...TICK, textAnchor: 'middle' } }} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} formatter={(v) => Math.abs(Number(v)).toLocaleString('en-US')} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar yAxisId="flow" dataKey="hires" name="Hires" stackId="flow" fill={PALETTE.good} radius={[3, 3, 0, 0]} maxBarSize={24} />
-          <Bar yAxisId="flow" dataKey="separations" name="Separations" stackId="flow" fill={PALETTE.bad} radius={[0, 0, 3, 3]} maxBarSize={24} />
-          <Line yAxisId="count" dataKey="headcount" name="Employed" stroke={PALETTE.series[0]} strokeWidth={2} dot={false} type="stepAfter" />
-        </ComposedChart>
-      </ResponsiveContainer>
+      <HeadcountTrendPlot rows={rows} />
     </ChartFrame>
   );
 }

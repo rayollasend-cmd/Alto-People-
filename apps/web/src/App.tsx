@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ComponentType } from 'react';
+import { isValidElement, lazy, Suspense, type ComponentType, type ReactNode } from 'react';
 import { Navigate, createBrowserRouter, matchRoutes } from 'react-router-dom';
 import type { AuthUser } from '@alto-people/shared';
 // PERF: the Layout is authenticated-only chrome — Sidebar, Topbar, MobileNav,
@@ -10,17 +10,13 @@ import type { AuthUser } from '@alto-people/shared';
 // there is a natural loading window to stream it in.
 import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
-import { ForgotPassword } from '@/pages/ForgotPassword';
-import { ResetPassword } from '@/pages/ResetPassword';
-import { ConfirmEmailChange } from '@/pages/ConfirmEmailChange';
-import { Install } from '@/pages/Install';
-import { AcceptInvite } from '@/pages/AcceptInvite';
 import { Dashboard, preloadDashboard } from '@/pages/Dashboard';
 import { RequireAuth } from '@/lib/auth';
 import { RequireCapability } from '@/lib/RequireCapability';
 import { registerPrefetch, registerDataPrefetch } from '@/lib/prefetch';
 import { queryClient } from '@/lib/queryClient';
 import { trackChunk } from '@/lib/chunkLoading';
+import { importSidebar, SIDEBAR_QUERY } from '@/components/ShellSidebar';
 import { directoryQuery } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import { PROSPECTS_KEY, listProspects } from '@/lib/prospectsApi';
@@ -54,10 +50,33 @@ function lazyNamed<T extends ComponentType<any>>(
   // progress bar has something real to read. React Router can't tell us —
   // no route here declares a loader, so its navigation state never leaves
   // 'idle' and anything driving off it never fires.
-  return lazy(() =>
-    trackChunk(loader).then((mod) => ({ default: mod[exportName] as T }))
-  );
+  // One promise per page: preload() (warmSignedInStart) and the render share it.
+  let chunk: Promise<{ default: T }> | null = null;
+  const load = () => (chunk ??= trackChunk(loader).then((mod) => ({ default: mod[exportName] as T })));
+  return Object.assign(lazy(load), {
+    preload: () => {
+      void load().catch(() => undefined);
+    },
+  });
 }
+
+/** Start every lazy page an element tree renders (a route's element, through its gates). */
+function preloadElement(node: ReactNode, depth = 0): void {
+  if (depth > 6 || !isValidElement(node)) return;
+  const type = node.type as { preload?: () => void };
+  type.preload?.();
+  const children = (node.props as { children?: ReactNode }).children;
+  for (const child of Array.isArray(children) ? children : [children]) preloadElement(child, depth + 1);
+}
+
+// Pages a signed-in person never opens (password reset, invites, the install
+// landing) used to ride in the main bundle every page downloads; Login stays
+// eager — it is the page a signed-out visitor paints first.
+const ForgotPassword = lazyNamed(() => import('@/pages/ForgotPassword'), 'ForgotPassword');
+const ResetPassword = lazyNamed(() => import('@/pages/ResetPassword'), 'ResetPassword');
+const ConfirmEmailChange = lazyNamed(() => import('@/pages/ConfirmEmailChange'), 'ConfirmEmailChange');
+const Install = lazyNamed(() => import('@/pages/Install'), 'Install');
+const AcceptInvite = lazyNamed(() => import('@/pages/AcceptInvite'), 'AcceptInvite');
 
 const loadLayout = () => import('@/components/Layout');
 const Layout = lazyNamed(loadLayout, 'Layout');
@@ -802,19 +821,47 @@ export const router = createBrowserRouter([
   // Self-serve password reset — public, two-step flow. /forgot-password
   // takes an email and emails a magic link; /reset-password/:token
   // accepts the new password.
-  { path: '/forgot-password', element: <ForgotPassword />, errorElement: <RouterErrorPage /> },
-  { path: '/reset-password/:token', element: <ResetPassword />, errorElement: <RouterErrorPage /> },
+  {
+    path: '/forgot-password',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <ForgotPassword />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
+  {
+    path: '/reset-password/:token',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <ResetPassword />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
   // Two-step email change — public, the token in the URL is the
   // authorization. Confirm endpoint swaps the email server-side and
   // bumps tokenVersion (every existing session is now stale).
   {
     path: '/confirm-email-change/:token',
-    element: <ConfirmEmailChange />,
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <ConfirmEmailChange />
+      </Suspense>
+    ),
     errorElement: <RouterErrorPage />,
   },
   // Public landing for "add this app to your home screen" — no auth, so we
   // can drop the link in invite emails before the associate has a password.
-  { path: '/install', element: <Install />, errorElement: <RouterErrorPage /> },
+  {
+    path: '/install',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <Install />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
   // The native app's system-browser sign-in (SSO, passkeys) lands here and
   // hands back to the app with a one-time code (pages/NativeHandoff).
   {
@@ -860,7 +907,11 @@ export const router = createBrowserRouter([
   },
   {
     path: '/accept-invite/:token',
-    element: <AcceptInvite />,
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <AcceptInvite />
+      </Suspense>
+    ),
     errorElement: <RouterErrorPage />,
   },
   // Phase 99 — public kiosk page. No auth, no Layout — full-screen.
@@ -1040,5 +1091,11 @@ export function warmSignedInStart(remembered: AuthUser): void {
   const matches = matchRoutes(router.routes, window.location);
   if (!matches || matches[0]?.route.id !== SHELL_ROUTE_ID) return;
   void loadLayout().catch(() => undefined);
-  if (matches[matches.length - 1]?.route.index) preloadDashboard(remembered);
+  // The sidebar is its own chunk, fetched only where it shows (ShellSidebar).
+  if (window.matchMedia?.(SIDEBAR_QUERY).matches) void importSidebar().catch(() => undefined);
+  const leaf = matches[matches.length - 1]?.route;
+  if (leaf?.index) preloadDashboard(remembered);
+  // Any other page opened straight (a reload, a link in a notification)
+  // starts its own chunk now too, instead of after the shell has rendered.
+  else preloadElement(leaf?.element);
 }

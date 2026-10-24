@@ -51,6 +51,8 @@ import { AssociatePicker, type PickedAssociate } from '@/components/ui/Associate
 import { ListTemplate } from '@/components/templates';
 import { FormHint, Label } from '@/components/ui/Label';
 import { MyPolicies } from './MyPolicies';
+import '@/lib/i18n/en/agr';
+import '@/lib/i18n/en/agreementsPage';
 
 // Domain-only codes the shared vocabulary doesn't carry: PENDING_SIGNATURE
 // awaits the associate's signature (amber), SIGNED is terminal-good, and a

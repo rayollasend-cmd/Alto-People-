@@ -70,6 +70,7 @@ import { ListTemplate } from '@/components/templates';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { SlaChip, SlaTargetsDialog } from './SlaTargetsDialog';
 import { OnBehalfCaseDrawer } from './OnBehalfCaseDrawer';
+import '@/lib/i18n/en/hrc';
 
 // Deliberate departures from the shared vocabulary: an OPEN case is unclaimed
 // work awaiting triage (amber, not the vocabulary's actionable gold — gold is

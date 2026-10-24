@@ -8,6 +8,7 @@ import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { AvailabilityEditor } from '@/pages/scheduling/AvailabilityEditor';
 import { TaskShell, useNextTask } from './ProfileInfoTask';
+import '@/lib/i18n/en/ob';
 
 /**
  * The onboarding task that asks when a new hire can work (role walk

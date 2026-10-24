@@ -41,6 +41,8 @@ import { enterStagger } from '@/lib/motion';
 import { useI18n, type Translate } from '@/lib/i18n';
 import { accentTint, colorForPosition } from '@/lib/positionColor';
 import { statusLabelClass, statusTileClass } from './shiftTile';
+import '@/lib/i18n/en/sched';
+import '@/lib/i18n/en/shift';
 
 /** " CDT" when the shift's store sits in a zone the viewer isn't in — the
  *  same rule as fmtShiftTz, so a remote reader never misreads the time. */

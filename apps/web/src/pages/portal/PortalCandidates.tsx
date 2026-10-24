@@ -28,6 +28,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { scopeParams } from './scope';
+import '@/lib/i18n/en/portal';
 
 /**
  * The people Alto puts forward, for the client to approve or pass on.

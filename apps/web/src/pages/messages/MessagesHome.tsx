@@ -53,6 +53,7 @@ import {
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { usePageHero } from '@/lib/pageTitle';
 import type { MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/msg';
 
 /** Whose copy: the store's people, the driver, the associate, or the desks (F500 G5). */
 type Voice = 'store' | 'driver' | 'associate' | 'staff';

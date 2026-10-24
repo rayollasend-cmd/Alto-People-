@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CalendarClock, ShieldCheck } from '@/components/ui/icons';
 import { getExpirationRisk, type ExpirationRisk, type RiskItem } from '@/lib/expirations113Api';
 import { useTenant, useTerm } from '@/lib/auth';
@@ -8,7 +7,8 @@ import { fmtDate, fmtDateTz, fmtDayShort, fmtShiftTz, fmtWeekdayTz } from '@/lib
 import { useMediaQuery } from '@/lib/useViewport';
 import { cn } from '@/lib/cn';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { CHART, ChartFrame } from '@/components/ui/ChartFrame';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { QueryError } from '@/components/ui/QueryError';
 import { Badge, Button, Card, CardContent, EmptyState, ErrorBanner, SearchInput, Select, SkeletonRows } from '@/components/ui';
 
@@ -24,6 +24,9 @@ import { Badge, Button, Card, CardContent, EmptyState, ErrorBanner, SearchInput,
  * One query feeds both; the filters (client, store, credential, person)
  * narrow it in the browser so their choices never shrink as you pick.
  */
+
+/** The weekly chart's drawing (recharts) loads with the chart, not the page (lazyPlot). */
+const LapsingPlot = lazyPlot(() => import('./ExpirationsLapsing.plot').then((m) => ({ default: m.LapsingPlot })));
 
 export interface RiskFilters {
   clientId: string;
@@ -261,15 +264,7 @@ export function ExpirationTimeline({ filters, setFilters, onRenew }: { filters: 
         csvName="expirations-by-week"
         height={180}
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={perWeek} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke={CHART.grid} vertical={false} />
-            <XAxis dataKey="week" tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-            <YAxis allowDecimals={false} tick={{ fill: CHART.axis, fontSize: 11 }} tickLine={false} axisLine={false} width="auto" />
-            <Tooltip contentStyle={CHART.tooltip} cursor={{ fill: CHART.grid }} />
-            <Bar dataKey="lapsing" name="Lapsing" fill={CHART.warn} radius={[3, 3, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+        <LapsingPlot perWeek={perWeek} />
       </ChartFrame>
       )}
 

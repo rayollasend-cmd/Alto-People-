@@ -54,11 +54,11 @@ export function prospectWeightedValue(stage: string, annualValue: number | null)
   return Math.round(annualValue * PROSPECT_STAGE_WEIGHTS[stage] * 100) / 100;
 }
 
-const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD.');
+const dateOnly = /* @__PURE__ */ (() => z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD.'))();
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional();
 
 /** Create or edit a prospect. A move to LOST needs a reason (checked by the API). */
-export const ProspectInputSchema = z.object({
+export const ProspectInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(2).max(120),
   stage: z.enum(PROSPECT_STAGES).optional(),
   ownerUserId: z.string().uuid().nullable().optional(),
@@ -70,10 +70,10 @@ export const ProspectInputSchema = z.object({
   notes: optionalText(2_000),
   lostReason: optionalText(500),
   wonClientId: z.string().uuid().nullable().optional(),
-});
+}))();
 export type ProspectInput = z.infer<typeof ProspectInputSchema>;
 
-export const ProspectUpdateSchema = ProspectInputSchema.partial();
+export const ProspectUpdateSchema = /* @__PURE__ */ (() => ProspectInputSchema.partial())();
 export type ProspectUpdate = z.infer<typeof ProspectUpdateSchema>;
 
 export interface ProspectRow {

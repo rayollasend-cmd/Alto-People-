@@ -51,6 +51,7 @@ import {
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { QueryError } from '@/components/ui/QueryError';
+import '@/lib/i18n/en/career';
 
 const LEVEL_VARIANT: Record<SkillLevel, 'pending' | 'accent' | 'success' | 'destructive'> = {
   BEGINNER: 'pending',

@@ -68,6 +68,8 @@ import {
   StatTile,
   WeekFillChart,
 } from './portalCharts';
+import '@/lib/i18n/en/home';
+import '@/lib/i18n/en/portal';
 
 /**
  * The client portal home — the store manager's site.

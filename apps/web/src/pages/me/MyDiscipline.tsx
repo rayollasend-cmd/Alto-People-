@@ -25,6 +25,7 @@ import {
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/record';
 
 /**
  * The associate's own disciplinary record — the page the "please

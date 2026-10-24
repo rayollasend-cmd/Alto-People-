@@ -11,7 +11,6 @@ export * from './Breadcrumb';
 export * from './Button';
 export * from './Card';
 export * from './Celebrate';
-export * from './CommandPalette';
 export * from './ConfirmDialog';
 export * from './Dialog';
 export * from './DonutChart';

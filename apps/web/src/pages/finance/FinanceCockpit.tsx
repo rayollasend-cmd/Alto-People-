@@ -14,6 +14,7 @@ import type { BillingWeek, CashWeek, FinanceOverview, MarginTrend, PayCycle } fr
 import { useTenant } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
 import type { InboxSource } from '@alto-people/shared';
+import '@/lib/i18n/en/fin';
 
 /**
  * The finance cockpit's working parts — each answers one question the

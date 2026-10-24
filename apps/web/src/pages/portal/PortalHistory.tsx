@@ -21,6 +21,7 @@ import { fmtDateTick } from '@/components/ui/charts/axes';
 import { scopeParams, shiftDays } from './scope';
 import { ListTemplate } from '@/components/templates';
 import { ServiceReportDialog } from './ServiceReportDialog';
+import '@/lib/i18n/en/portal';
 
 /**
  * History — how well Alto delivered over a period. One preset row above

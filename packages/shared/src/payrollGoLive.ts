@@ -11,27 +11,27 @@ import { z } from 'zod';
  * INFO is a choice the company made that's worth knowing (no QuickBooks).
  */
 
-export const GoLiveStatusSchema = z.enum(['DONE', 'MISSING', 'WARNING', 'INFO']);
+export const GoLiveStatusSchema = /* @__PURE__ */ (() => z.enum(['DONE', 'MISSING', 'WARNING', 'INFO']))();
 export type GoLiveStatus = z.infer<typeof GoLiveStatusSchema>;
 
-export const GoLiveCheckSchema = z.object({
+export const GoLiveCheckSchema = /* @__PURE__ */ (() => z.object({
   key: z.string(),
   title: z.string(),
   status: GoLiveStatusSchema,
   /** One or two plain sentences: what's there, or what's missing and why it matters. */
   detail: z.string(),
   fix: z.object({ label: z.string(), to: z.string() }).nullable(),
-});
+}))();
 export type GoLiveCheck = z.infer<typeof GoLiveCheckSchema>;
 
-export const GoLiveSectionSchema = z.object({
+export const GoLiveSectionSchema = /* @__PURE__ */ (() => z.object({
   key: z.enum(['company', 'federal', 'states', 'filing', 'paying', 'people', 'controls', 'books']),
   title: z.string(),
   checks: z.array(GoLiveCheckSchema),
-});
+}))();
 export type GoLiveSection = z.infer<typeof GoLiveSectionSchema>;
 
-export const PayrollGoLiveSchema = z.object({
+export const PayrollGoLiveSchema = /* @__PURE__ */ (() => z.object({
   /** No MISSING anywhere. */
   ready: z.boolean(),
   missing: z.number().int(),
@@ -42,5 +42,5 @@ export const PayrollGoLiveSchema = z.object({
   states: z.array(z.string()),
   sections: z.array(GoLiveSectionSchema),
   generatedAt: z.string(),
-});
+}))();
 export type PayrollGoLive = z.infer<typeof PayrollGoLiveSchema>;

@@ -449,6 +449,7 @@ export const inputCls =
 // into the child element so no call site changes. Re-exported because the
 // sibling task files import it from this module.
 import { Field } from '@/components/ui/Field';
+import '@/lib/i18n/en/ob';
 export { Field };
 
 /** An upload limit the way people say it: "10 MB", not "10.00 MB". */

@@ -1,20 +1,18 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigationType } from 'react-router-dom';
 import { noteRouteChange } from '@/lib/webVitals';
 import { startProductSession } from '@/lib/productEvents';
 import { TooltipProvider } from '@/components/ui/Tooltip';
-import { CommandPalette, useCommandPalette } from '@/components/ui/CommandPalette';
+import { useCommandPalette } from '@/components/ui/commandPaletteHook';
 import {
   KeyboardShortcutsDialog,
   useKeyboardShortcutsHook,
 } from './KeyboardShortcutsDialog';
-import { Sidebar } from './Sidebar';
+import { ShellSidebar } from './ShellSidebar';
 import { StoreScopeStrip, Topbar } from './Topbar';
-import { MobileNav } from './MobileNav';
 import { BottomTabBar, tabBarHiddenFrom } from './BottomTabBar';
 import { InstallPrompt } from './InstallPrompt';
 import { WhatsNew } from './WhatsNew';
-import { HelpSheet } from './HelpSheet';
 import { Coachmarks } from './Coachmarks';
 import { NavigationProgress } from './NavigationProgress';
 import { RouteAnnouncer } from './RouteAnnouncer';
@@ -26,12 +24,44 @@ import { useAuth } from '@/lib/auth';
 import { startLiveEvents, stopLiveEvents } from '@/lib/liveEvents';
 import { useChunkLoading } from '@/lib/chunkLoading';
 import { cn } from '@/lib/cn';
-import { AssistantProvider } from '@/lib/assistantContext';
-import { AssistantPane } from '@/components/assistant/AssistantPane';
+import { AssistantProvider, useAssistant } from '@/lib/assistantContext';
 import { OfflineQueueBanner } from '@/components/OfflineQueueBanner';
 import { InboxReturnBar } from '@/components/InboxReturnBar';
 import { GlobalShortcuts } from '@/lib/shortcuts';
 import { useHashScroll } from '@/lib/useHashScroll';
+
+// The palette and everything it searches load when it first opens (or once
+// the page is idle) — not with every page; ⌘K is heard by the small hook.
+// What the shell shows only once it's opened — the palette, the phone's
+// menu, help, the assistant — loads on that first open, not with the shell:
+// a first load fetches what it paints. Each is fetched once the page is idle,
+// so the first open rarely waits on the network.
+const importPalette = () => import('@/components/ui/CommandPalette');
+const CommandPalette = lazy(() => importPalette().then((m) => ({ default: m.CommandPalette })));
+const importMobileNav = () => import('./MobileNav');
+const MobileNav = lazy(() => importMobileNav().then((m) => ({ default: m.MobileNav })));
+const importHelpSheet = () => import('./HelpSheet');
+const HelpSheet = lazy(() => importHelpSheet().then((m) => ({ default: m.HelpSheet })));
+const importAssistantPane = () => import('@/components/assistant/AssistantPane');
+const AssistantPane = lazy(() => importAssistantPane().then((m) => ({ default: m.AssistantPane })));
+
+/** True from the first time `open` is, on — an overlay stays mounted after that, keeping its state. */
+function useOpenedOnce(open: boolean): boolean {
+  const [opened, setOpened] = useState(open);
+  if (open && !opened) setOpened(true);
+  return opened || open;
+}
+
+/** The assistant's column, mounted from its first open (it sits inside the provider it reads). */
+function ShellAssistantPane() {
+  const { open } = useAssistant();
+  if (!useOpenedOnce(open)) return null;
+  return (
+    <Suspense fallback={null}>
+      <AssistantPane />
+    </Suspense>
+  );
+}
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
 // in. A 40vh-centered spinner used to feel like "something is wrong" on
@@ -113,8 +143,19 @@ export function scrollTargetFor(args: {
 export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
+  const paletteMounted = useOpenedOnce(paletteOpen);
   const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcutsHook();
   const [helpOpen, setHelpOpen] = useState(false);
+  const helpMounted = useOpenedOnce(helpOpen);
+  const mobileNavMounted = useOpenedOnce(mobileOpen);
+  useEffect(() => {
+    const idle = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    const warm = () => {
+      for (const chunk of [importMobileNav, importPalette, importHelpSheet, importAssistantPane]) void chunk().catch(() => undefined);
+    };
+    if (idle) idle(warm, { timeout: 8000 });
+    else window.setTimeout(warm, 4000);
+  }, []);
   const location = useLocation();
   useHashScroll();
   // A soft navigation closes the books on the previous route's web vitals.
@@ -246,12 +287,16 @@ export function Layout() {
         className="relative h-screen flex bg-midnight text-white overflow-hidden"
         style={{ height: '100dvh' }}
       >
-        <Sidebar />
-        <MobileNav
-          open={mobileOpen}
-          onClose={() => setMobileOpen(false)}
-          onOpenCommandPalette={() => setPaletteOpen(true)}
-        />
+        <ShellSidebar />
+        {mobileNavMounted && (
+          <Suspense fallback={null}>
+            <MobileNav
+              open={mobileOpen}
+              onClose={() => setMobileOpen(false)}
+              onOpenCommandPalette={() => setPaletteOpen(true)}
+            />
+          </Suspense>
+        )}
         {/* Whichever element actually touches the bottom of the screen is
             the one that must consume env(safe-area-inset-bottom), and on a
             phone that is the tab bar, not <main>. Both were padding for it:
@@ -343,26 +388,34 @@ export function Layout() {
           <BottomTabBar onOpenMenu={() => setMobileOpen(true)} />
         </div>
         {/* The assistant's column, right of the page, when open (lib/assistantContext). */}
-        <AssistantPane />
+        <ShellAssistantPane />
         {/* Access pack: g-then-key chords (home, inbox, schedule, people…). */}
         <GlobalShortcuts />
-        <CommandPalette
-          open={paletteOpen}
-          onOpenChange={setPaletteOpen}
-          onShowKeyboardShortcuts={() => setShortcutsOpen(true)}
-        />
+        {paletteMounted && (
+          <Suspense fallback={null}>
+            <CommandPalette
+              open={paletteOpen}
+              onOpenChange={setPaletteOpen}
+              onShowKeyboardShortcuts={() => setShortcutsOpen(true)}
+            />
+          </Suspense>
+        )}
         <KeyboardShortcutsDialog
           open={shortcutsOpen}
           onOpenChange={setShortcutsOpen}
         />
-        <HelpSheet
-          open={helpOpen}
-          onOpenChange={setHelpOpen}
-          onShowKeyboardShortcuts={() => {
-            setHelpOpen(false);
-            setShortcutsOpen(true);
-          }}
-        />
+        {helpMounted && (
+          <Suspense fallback={null}>
+            <HelpSheet
+              open={helpOpen}
+              onOpenChange={setHelpOpen}
+              onShowKeyboardShortcuts={() => {
+                setHelpOpen(false);
+                setShortcutsOpen(true);
+              }}
+            />
+          </Suspense>
+        )}
         <Coachmarks />
         <WhatsNew />
       </div>

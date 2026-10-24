@@ -48,6 +48,7 @@ import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
 import { EVENT_ICON, actorOf, eventText } from '@/pages/recruiting/candidateEventText';
 import { SOURCE_LABEL, STAGE_LABEL } from '@/pages/recruiting/recruitingLabels';
+import '@/lib/i18n/en/recruiterHome';
 
 /**
  * The recruiter's home.

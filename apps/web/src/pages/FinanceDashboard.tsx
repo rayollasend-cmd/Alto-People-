@@ -39,6 +39,7 @@ import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { NextFundingCard } from '@/pages/payrollBanking/FundingCard';
+import '@/lib/i18n/en/fin';
 
 /**
  * The Finance cockpit, v2 — an operations console in the admin-dashboard

@@ -49,6 +49,7 @@ import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
+import '@/lib/i18n/en/timeoff';
 
 type Category = TimeOffCategory;
 

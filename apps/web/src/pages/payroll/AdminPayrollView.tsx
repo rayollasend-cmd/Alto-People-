@@ -113,6 +113,7 @@ import { pickOne } from '@/lib/validationCopy';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { RunTotalsMismatch } from '@/components/payroll/RunTotalsMismatch';
 import { RunStatusBadge, paycheckStatusLabel, paycheckStatusTone, runStatusLabel } from '@/lib/payrollRunStatus';
+import '@/lib/i18n/en/payrollHome';
 
 /** "May 13, 2026 → May 26, 2026" — the run period, parsed as local days. */
 const fmtPeriod = (startYmd: string, endYmd: string) =>

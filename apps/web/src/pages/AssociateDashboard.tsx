@@ -53,6 +53,13 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import { MyShiftHero, MyNext14Strip, pickNextShift } from '@/pages/associate/MyShiftHero';
 import { AssociateNeedsYou, TrainingNudge, useAssociateNeedsYou } from '@/components/home/AssociateNeedsYou';
+import '@/lib/i18n/en/dash';
+import '@/lib/i18n/en/earned';
+import '@/lib/i18n/en/home';
+import '@/lib/i18n/en/tabs';
+import '@/lib/i18n/en/tile';
+import '@/lib/i18n/en/time';
+import '@/lib/i18n/en/timeoff';
 
 /**
  * 403/404 are fully expected for accounts without the linked records

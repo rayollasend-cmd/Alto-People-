@@ -5,6 +5,7 @@ import { fmtDateOnly, fmtDateOnlyRange, fmtHours, fmtMoney, fmtStatementNo } fro
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
+import '@/lib/i18n/en/portal';
 
 /**
  * One statement as the portal shows it — the store home and History draw

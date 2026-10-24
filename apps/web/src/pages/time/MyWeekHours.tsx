@@ -12,6 +12,9 @@ import { workweekBounds } from '@/lib/workweek';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useMyEarnings } from '@/components/EarningsCard';
+import '@/lib/i18n/en/sched';
+import '@/lib/i18n/en/timefix';
+import '@/lib/i18n/en/week';
 
 /**
  * The week at a glance, on the Time page: hours worked (every punch this

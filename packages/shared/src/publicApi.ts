@@ -25,7 +25,7 @@ export const API_SCOPES = [
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 // Pure: the web's main chunk ships this barrel and must drop what no first-paint page uses.
-export const ApiScopeSchema = /* @__PURE__ */ z.enum(API_SCOPES);
+export const ApiScopeSchema = /* @__PURE__ */ (() => z.enum(API_SCOPES))();
 
 export const API_SCOPE_LABELS: Record<ApiScope, string> = {
   'workers:read': 'Read workers',

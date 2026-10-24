@@ -33,6 +33,7 @@ import {
   type NavDoorView,
 } from '@/lib/modules';
 import { DASHBOARD_ICON, DOOR_ICONS, MODULE_ICONS } from '@/lib/moduleIcons';
+import { readRailCollapsed, sidebarFrameClass, writeRailCollapsed } from './ShellSidebar';
 import { useAuth, useTenant, useTerm, useRoleLabel } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
@@ -55,6 +56,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { openKeyboardShortcuts } from './KeyboardShortcutsDialog';
 import { RoleSwitcher } from './RoleSwitcher';
+import '@/lib/i18n/en/top';
 
 /**
  * The sidebar: a dozen rows, not a hundred.
@@ -75,7 +77,6 @@ const SECTIONS_KEY = 'alto.sidebar.collapsedGroups';
 /** In the collapsed-sections set: the folded doors' group is open (it starts closed). */
 const FOLD_OPEN = '__fold:open';
 const OPEN_DOORS_KEY = 'alto.sidebar.openDoors';
-const RAIL_COLLAPSED_KEY = 'alto.sidebar.collapsed';
 
 function readStringSet(key: string): Set<string> | null {
   if (typeof window === 'undefined') return null;
@@ -98,33 +99,6 @@ function writeStringSet(key: string, value: Set<string>): void {
   }
 }
 
-function readRailCollapsed(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    const stored = window.localStorage.getItem(RAIL_COLLAPSED_KEY);
-    // Explicit user choice always wins (the toggle writes '1'/'0').
-    if (stored === '1') return true;
-    if (stored === '0') return false;
-  } catch {
-    /* fall through to the viewport default */
-  }
-  // No stored preference: on md–lg (iPad portrait) the expanded rail eats
-  // 256px of a 768px screen — a third of the width — so default to the
-  // icon rail there and to expanded on true desktops.
-  try {
-    return !window.matchMedia('(min-width: 1024px)').matches;
-  } catch {
-    return false;
-  }
-}
-
-function writeRailCollapsed(value: boolean): void {
-  try {
-    window.localStorage.setItem(RAIL_COLLAPSED_KEY, value ? '1' : '0');
-  } catch {
-    /* persistence is best-effort */
-  }
-}
 
 export function Sidebar() {
   const { can, user } = useAuth();
@@ -255,14 +229,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className={cn(
-        'hidden md:flex shrink-0 flex-col bg-navy border-r border-navy-secondary transition-[width] duration-200 ease-out',
-        // pt-safe so the brand row aligns with the Topbar (which carries the
-        // same env(safe-area-inset-top) padding) on iPad portrait under a notch.
-        // pl-safe handles landscape with the notch on the left.
-        'pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]',
-        railCollapsed ? 'w-14' : 'w-64',
-      )}
+      className={cn(sidebarFrameClass(railCollapsed), 'transition-[width] duration-200 ease-out')}
     >
       <SidebarBrand railCollapsed={railCollapsed} onToggleRail={toggleRail} />
 

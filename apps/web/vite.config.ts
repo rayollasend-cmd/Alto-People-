@@ -214,6 +214,9 @@ function dropSourcemaps(): Plugin {
   };
 }
 
+/** A UI primitive module (components/ui/X.tsx), for treeshake.moduleSideEffects below. */
+const UI_PRIMITIVE = /\/src\/components\/ui\/[^/]+\.tsx?$/;
+
 export default defineConfig({
   plugins: [
     react(),
@@ -289,6 +292,17 @@ export default defineConfig({
     // @dnd-kit/core for the template editor) intentionally fall through
     // into their own caller's chunk via the route's lazy() boundary.
     rollupOptions: {
+      treeshake: {
+        // The UI primitives (components/ui/*.tsx) only declare components —
+        // but `forwardRef(…)` and `X.displayName = …` at the top level read
+        // as side effects to Rollup, so every page that imported one thing
+        // from the '@/components/ui' barrel ran (and downloaded) all of them:
+        // the command palette and cmdk, the donut, drawers, tables, tabs on
+        // the associate's home. Marking them effect-free keeps only what a
+        // page uses. Nothing in that folder does work at import time; keep
+        // it that way (a listener belongs in an effect).
+        moduleSideEffects: (id, external) => external || !UI_PRIMITIVE.test(id),
+      },
       // Two HTML entries: the main SPA (index.html) and a dedicated kiosk
       // shell (kiosk.html) that statically links the kiosk manifest so the
       // kiosk installs as its own home-screen app. Both load the same

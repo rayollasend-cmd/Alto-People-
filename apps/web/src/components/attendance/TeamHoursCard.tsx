@@ -1,13 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Clock } from '@/components/ui/icons';
 import { getTeamHours } from '@/lib/attendanceInsightsApi';
 import { fmtDate } from '@/lib/format';
 import { ChartFrame } from '@/components/ui/ChartFrame';
-import { ChartTooltipContent, LegendKey, PALETTE, TICK } from '@/components/ui/charts';
+import { LegendKey, PALETTE } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
+
+/** The drawing (recharts) loads with the first chart, not the page (lazyPlot). */
+const TeamHoursPlot = lazyPlot(() => import('./TeamHours.plot').then((m) => ({ default: m.TeamHoursPlot })));
 
 const SERIES = {
   worked: { name: 'Worked', color: PALETTE.primary },
@@ -70,18 +73,14 @@ export function TeamHoursCard({ className }: { className?: string }) {
       >
         <div className="flex h-full w-full flex-col">
           <div className={natural > 480 ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-0 flex-1'}>
-            <ResponsiveContainer width="100%" height={natural > 480 ? natural - 24 : '100%'}>
-              <BarChart data={rows} layout="vertical" margin={{ top: 12, right: 16, bottom: 0, left: 0 }} barCategoryGap="28%">
-                <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
-                {/* Forty is always on the scale, however short the week. */}
-                <XAxis type="number" domain={[0, (max: number) => Math.max(Math.ceil(max), d.thresholdHours + 4)]} tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} tickFormatter={fmtH} />
-                <YAxis type="category" dataKey="name" tick={TICK} tickLine={false} axisLine={false} width={120} />
-                <Tooltip cursor={{ fill: PALETTE.cursor }} content={<ChartTooltipContent series={SERIES} format={(v) => fmtH(v)} />} />
-                <ReferenceLine x={d.thresholdHours} ifOverflow="extendDomain" stroke={PALETTE.bad} strokeDasharray="4 3" label={{ value: `${d.thresholdHours}h`, position: 'insideTopRight', fill: TICK.fill, fontSize: 10 }} />
-                <Bar dataKey="worked" name="Worked" stackId="h" fill={SERIES.worked.color} isAnimationActive={false} />
-                <Bar dataKey="scheduled" name="Still scheduled" stackId="h" fill={SERIES.scheduled.color} radius={[0, 4, 4, 0]} isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
+            {/* A big team's plot is taller than the frame and scrolls; the box holds that height before the drawing lands. */}
+            {natural > 480 ? (
+              <div style={{ height: natural - 24 }}>
+                <TeamHoursPlot rows={rows} thresholdHours={d.thresholdHours} fmtH={fmtH} series={SERIES} />
+              </div>
+            ) : (
+              <TeamHoursPlot rows={rows} thresholdHours={d.thresholdHours} fmtH={fmtH} series={SERIES} />
+            )}
           </div>
           <LegendKey items={[{ name: 'Worked', color: SERIES.worked.color }, { name: 'Still scheduled', color: SERIES.scheduled.color }, { name: `${d.thresholdHours} hours`, color: PALETTE.bad, line: true }]} />
         </div>

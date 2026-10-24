@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, CheckCircle2, X } from '@/components/ui/icons';
 import { INBOX_QUERY_KEY, getInbox, inboxLink } from '@/lib/inboxApi';
 import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/decisions';
 
 /**
  * The way back from a queue opened in the Inbox. A link from the Inbox

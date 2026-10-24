@@ -46,6 +46,9 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { cn } from '@/lib/cn';
 import { workweekStart } from '@/lib/workweek';
+import '@/lib/i18n/en/pay';
+import '@/lib/i18n/en/sched';
+import '@/lib/i18n/en/time';
 
 /**
  * Read-only punch history for hourly associates — the answer to "how

@@ -1,0 +1,40 @@
+// English for the pages that use 'notIn.*' keys — imported by them (scripts/i18n-check.mjs checks it).
+import { registerEnglish } from '../english';
+
+export const enNotIn = {
+  'notIn.calledOut': 'Called out',
+  'notIn.calledOutUnconfirmed': 'Said they can’t make it · not confirmed',
+  'notIn.reminderNo': 'Said no to the reminder',
+  'notIn.onLeave': 'On approved time off',
+  'notIn.startingNow': 'Starting now',
+  'notIn.spanHm': '{h}h {m}m',
+  'notIn.spanM': '{m} min',
+  'notIn.startedAgo': 'Started {span} ago',
+  'notIn.late': '{span} late',
+  'notIn.flagNote': '{name} isn’t in — {status} for the {time} shift.',
+  'notIn.flagged': 'Flagged to the shift supervisor: {name}.',
+  'notIn.flagFailed': 'Could not raise the flag.',
+  'notIn.what': 'who isn’t in yet',
+  'notIn.title': 'Who isn’t in yet',
+  'notIn.desc': 'Shift started, no punch. Late after {grace} minutes; find cover after {risk}.',
+  'notIn.textLate': 'Text the {n} late',
+  'notIn.allInTitle': 'Everyone’s in',
+  'notIn.allInDesc': 'Everyone whose shift has started has punched in.',
+  'notIn.notDueTitle': '{label} starts {time} — nobody due yet',
+  'notIn.notDueDesc': 'Anyone late shows here once a shift has started.',
+  'notIn.noneScheduledWindow': 'Nobody is scheduled on {label} — nobody to wait for',
+  'notIn.noneScheduledToday': 'Nobody is scheduled today — nobody to wait for',
+  'notIn.noneScheduledDesc': 'The gap against the contract is under Needs you.',
+  'notIn.listAria': 'Not in yet',
+  'notIn.callAria': 'Call {name}',
+  'notIn.call': 'Call',
+  'notIn.textAria': 'Text {name}',
+  'notIn.text': 'Text',
+  'notIn.noShowCover': 'No-show → find cover',
+  'notIn.findCover': 'Find cover',
+  'notIn.flagToSup': 'Flag to supervisor',
+  'notIn.needCover': '{n} shifts need cover — each opens from its row.',
+  'notIn.crewLabel': 'Late, not in yet',
+} as const;
+
+registerEnglish(enNotIn);

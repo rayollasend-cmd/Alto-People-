@@ -1,0 +1,43 @@
+// English for the pages that use 'reimbPage.*' keys — imported by them (scripts/i18n-check.mjs checks it).
+import { registerEnglish } from '../english';
+
+export const enReimbPage = {
+  'reimbPage.approvedOne': 'Approved {count} report.',
+  'reimbPage.approvedMany': 'Approved {count} reports.',
+  'reimbPage.approvalFailedOne': '{count} approval failed.',
+  'reimbPage.approvalFailedMany': '{count} approvals failed.',
+  'reimbPage.subtitleAdmin': 'Submit, approve, and pay {worker} expense reports.',
+  'reimbPage.crumbSection': 'Pay & finance',
+  'reimbPage.approving': 'Approving…',
+  'reimbPage.approveSelected': 'Approve selected ({count})',
+  'reimbPage.exportCsv': 'Export CSV',
+  'reimbPage.searchAria': 'Search reimbursements',
+  'reimbPage.approveTitle': 'Manager approval',
+  'reimbPage.noteOptional': 'Note (optional)',
+  'reimbPage.approve': 'Approve',
+  'reimbPage.approvedToast': 'Manager approved — sent to HR/Finance to settle.',
+  'reimbPage.rejectTitle': 'Reject reimbursement',
+  'reimbPage.rejectReasonLabel': 'Rejection reason',
+  'reimbPage.reject': 'Reject',
+  'reimbPage.rejectedToast': 'Rejected.',
+  'reimbPage.removeLineAria': 'Remove line {description}',
+  'reimbPage.approveAsManager': 'Approve as manager',
+  'reimbPage.settleQueue': 'Settle (queue for payroll)',
+  'reimbPage.waiverRequired': 'Waiver note required.',
+  'reimbPage.settledToast': 'Settled — queued for next payroll.',
+  'reimbPage.settleTitle': 'Settle reimbursement',
+  'reimbPage.settleBody': 'This will queue {amount} to be added to {name}\'s next regular payroll, after taxes.',
+  'reimbPage.missingReceipts': '{count} receipt line(s) are missing a receipt.',
+  'reimbPage.waiverExplain': 'You can override the receipt-required guard by providing a waiver note below. The note is permanently stored on the audit log.',
+  'reimbPage.settleNoteLabel': 'Settlement note (optional)',
+  'reimbPage.settleNotePlaceholder': 'Internal note shown to the {worker}.',
+  'reimbPage.waiverLabel': 'Waiver justification (required)',
+  'reimbPage.waiverPlaceholder': 'Why is this being settled without all receipts?',
+  'reimbPage.settling': 'Settling…',
+  'reimbPage.settleWithWaiver': 'Settle (with waiver)',
+  'reimbPage.settle': 'Settle',
+  'reimbPage.mileageMath': '{miles} mi × {rate}/mi = {total}',
+  'reimbPage.categoryPlaceholder': 'Travel',
+} as const;
+
+registerEnglish(enReimbPage);

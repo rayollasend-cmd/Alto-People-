@@ -11,6 +11,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Card, CardContent } from '@/components/ui/Card';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * "Cover this shift" — one tap that runs the three moves a supervisor used

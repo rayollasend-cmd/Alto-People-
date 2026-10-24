@@ -26,6 +26,7 @@ import {
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
+import '@/lib/i18n/en/ob';
 
 /**
  * Policies as a list, each read in a sheet.

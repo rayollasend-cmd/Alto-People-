@@ -32,6 +32,7 @@ import { prefetchRoute } from '@/lib/prefetch';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
+import '@/lib/i18n/en/tabs';
 
 /**
  * Phone navigation: a persistent bottom tab bar — the native-app idiom —

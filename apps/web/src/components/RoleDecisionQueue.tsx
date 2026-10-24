@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Textarea } from '@/components/ui/Input';
+import '@/lib/i18n/en/rdq';
 
 /**
  * The Decision Console — mission-control presentation of the queue:

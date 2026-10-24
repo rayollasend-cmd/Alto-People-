@@ -176,7 +176,7 @@ export const TerminologySchema = /* @__PURE__ */ (() => z
 const t = (en: string, es: string, tr: string): TermText => ({ en, es, tr });
 
 /** The words Alto HR uses today: the WORKFORCE_PROVIDER vocabulary. */
-const WORKFORCE_TERMS: Terminology = {
+const WORKFORCE_TERMS: Terminology = /* @__PURE__ */ (() => ({
   worker: t('Associate', 'Asociado', 'Çalışan'),
   workers: t('Associates', 'Asociados', 'Çalışanlar'),
   site: t('Store', 'Tienda', 'Mağaza'),
@@ -211,10 +211,10 @@ const WORKFORCE_TERMS: Terminology = {
   'label.supervisors': t('Supervisors', 'Supervisores', 'Süpervizörler'),
   'label.store': t('Store', 'Tienda', 'Mağaza'),
   'label.stores': t('Stores', 'Tiendas', 'Mağazalar'),
-};
+}))();
 
 /** A direct employer such as a hotel: team member / property / property manager. */
-const DIRECT_EMPLOYER_TERMS: Terminology = {
+const DIRECT_EMPLOYER_TERMS: Terminology = /* @__PURE__ */ (() => ({
   ...WORKFORCE_TERMS,
   worker: t('Team member', 'Miembro del equipo', 'Ekip üyesi'),
   workers: t('Team members', 'Miembros del equipo', 'Ekip üyeleri'),
@@ -231,7 +231,7 @@ const DIRECT_EMPLOYER_TERMS: Terminology = {
   'label.supervisors': t('Property managers', 'Gerentes de la propiedad', 'Tesis müdürleri'),
   'label.store': t('Property', 'Propiedad', 'Tesis'),
   'label.stores': t('Properties', 'Propiedades', 'Tesisler'),
-};
+}))();
 
 export function defaultTerminologyFor(model: BusinessModel): Terminology {
   return model === 'DIRECT_EMPLOYER' ? { ...DIRECT_EMPLOYER_TERMS } : { ...WORKFORCE_TERMS };

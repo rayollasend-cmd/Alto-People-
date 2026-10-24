@@ -8,6 +8,7 @@ import { useI18n } from '@/lib/i18n';
 import { listMyPolicies, signMyPolicy, type MyPolicy } from '@/lib/policyCampaignsApi';
 import { Badge, Button, Card, CardContent, Drawer, DrawerBody, DrawerFooter, DrawerHeader, DrawerTitle, EmptyState, ErrorBanner, Input, SkeletonRows } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import '@/lib/i18n/en/agr';
 
 /**
  * The person's policies (HR pack 2026-10): what a policy campaign asked

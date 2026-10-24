@@ -17,6 +17,8 @@
     "test-storybook": "vitest run --config vitest.storybook.config.ts && VITE_SB_THEME=dark vitest run --config vitest.storybook.config.ts",
     "chromatic": "chromatic --build-script-name build-storybook --exit-zero-on-changes",
     "lhci": "node lighthouse/run.mjs",
+    "lighthouse:serve": "node lighthouse/h2serve.mjs",
+    "lighthouse:sweep": "node lighthouse/sweep.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

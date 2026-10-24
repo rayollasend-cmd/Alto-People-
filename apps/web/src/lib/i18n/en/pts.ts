@@ -1,0 +1,44 @@
+// English for the pages that use 'pts.*' keys — imported by them (scripts/i18n-check.mjs checks it).
+import { registerEnglish } from '../english';
+
+export const enPts = {
+  // Approvals hub (role walk HR 16, floor 7, floor 10).
+  'pts.aria': 'Timesheets to approve',
+  'pts.title': 'Timesheets',
+  'pts.pending': '{count} pending',
+  'pts.openQueue': 'Open the queue',
+  'pts.cleanLine': '{count} clean entries — no flags',
+  'pts.cleanLine_one': '{count} clean entry — no flags',
+  'pts.cleanAria': 'Clean entries',
+  'pts.show': 'show',
+  'pts.hide': 'hide',
+  'pts.approveClean': 'Approve {count} clean entries',
+  'pts.approveClean_one': 'Approve {count} clean entry',
+  'pts.approvedN': '{count} entries approved.',
+  'pts.approvedN_one': '{count} entry approved.',
+  'pts.seeThem': 'See them',
+  'pts.someFailed': '{ok} approved · {failed} could not be — open the queue to see why.',
+  'pts.couldNotApprove': 'Could not approve.',
+  'pts.couldNotReject': 'Could not reject.',
+  'pts.approvedOne': '{name} approved.',
+  'pts.rejectedOne': '{name} rejected.',
+  'pts.entry': 'Entry',
+  'pts.yoursLine': '{count} of these are yours — someone else approves them.',
+  'pts.yoursLine_one': '{count} of these is yours — someone else approves it.',
+  'pts.yours': 'Yours — someone else approves it',
+  'pts.yoursTitle': 'Someone else approves your own time.',
+  'pts.flaggedHead': 'Flagged · {count} — each needs a look',
+  'pts.reasonPh': 'Why — the worker reads this',
+  'pts.reasonAria': 'Rejection reason',
+  'pts.reject': 'Reject',
+  'pts.approve': 'Approve',
+  'pts.fixTime': 'Fix time',
+  'pts.moreFlagged': '{count} more flagged in the queue.',
+  'pts.today': 'today',
+  'pts.daysAgo': '{count} days ago',
+  'pts.daysAgo_one': '{count} day ago',
+  'pts.period': 'pay period {range}',
+  'pts.periodPaid': 'pay period {range}, paid',
+} as const;
+
+registerEnglish(enPts);

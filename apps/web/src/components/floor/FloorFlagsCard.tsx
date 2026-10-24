@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Card, CardContent } from '@/components/ui/Card';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * The shift supervisor's side of a flag: what a floor lead raised, open

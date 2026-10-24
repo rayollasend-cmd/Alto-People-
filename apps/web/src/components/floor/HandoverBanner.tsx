@@ -4,6 +4,7 @@ import { ArrowRightLeft } from '@/components/ui/icons';
 import { getHandover } from '@/lib/floorApi';
 import { cn } from '@/lib/cn';
 import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/floorUi';
 
 /**
  * The last shift's written handover, as the banner the next lead sees

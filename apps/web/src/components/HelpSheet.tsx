@@ -8,6 +8,7 @@ import { searchKb } from '@/lib/kb124Api';
 import { seenKey, tourFor } from '@/lib/tours';
 import { Button } from '@/components/ui/Button';
 import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
+import '@/lib/i18n/en/help';
 
 /**
  * The "?" in the top bar: what this page is for, what you can do here,

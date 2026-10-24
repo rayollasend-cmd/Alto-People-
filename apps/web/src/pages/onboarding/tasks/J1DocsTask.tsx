@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/ob';
 
 type Translate = ReturnType<typeof useI18n>['t'];
 

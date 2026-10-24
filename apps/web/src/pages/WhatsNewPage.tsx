@@ -19,6 +19,8 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/whatsNewPage';
+import '@/lib/i18n/en/whatsnew';
 
 /**
  * Every release note, newest first — the history behind the home-screen

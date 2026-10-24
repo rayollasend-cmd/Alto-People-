@@ -14,6 +14,8 @@ import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
+import '@/lib/i18n/en/drive';
+import '@/lib/i18n/en/ride';
 
 /**
  * THE SHIFT'S STOPS — the driver's map for one store shift.

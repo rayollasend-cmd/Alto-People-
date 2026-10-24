@@ -33,6 +33,8 @@ import { MoneyBand } from '@/pages/executive/MoneyBand';
 import { ClientNpsCard } from '@/pages/executive/ClientNpsCard';
 import { WhatIfClientCard } from '@/pages/executive/WhatIfClientCard';
 import { rateWhatIfAnnualMargin } from '@/lib/execWhatIf';
+import '@/lib/i18n/en/execHome';
+import '@/lib/i18n/en/home';
 
 /**
  * The Executive/Chairman command center — the numbers, their direction,

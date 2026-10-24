@@ -83,6 +83,23 @@ for (const [file, row] of Object.entries(counts)) {
     if (n > (was[k] ?? 0)) failures.push(`${file}: ${k} ${was[k] ?? 0} -> ${n}`);
   }
 }
+// recharts (120 KB gz) is imported only by `*.plot.tsx` files, which
+// lazyPlot() fetches when a chart first renders — a static import anywhere
+// else puts it back on a page's critical path (components/ui/charts/lazyPlot.tsx).
+const rechartsOutsidePlots = [];
+const scan = (dir) => {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) {
+      if (name !== '__tests__') scan(full);
+    } else if (/\.tsx?$/.test(name) && !/\.(plot|test|stories)\.tsx?$/.test(name) && /from ['"]recharts['"]/.test(readFileSync(full, 'utf8'))) {
+      rechartsOutsidePlots.push(relative(ROOT, full).replace(/\\/g, '/'));
+    }
+  }
+};
+scan(SRC);
+for (const f of rechartsOutsidePlots) failures.push(`${f}: imports recharts outside a *.plot.tsx — move the drawing into a plot file loaded with lazyPlot()`);
+
 const paid = Object.entries(baseline.totals ?? {}).map(([k, was]) => [k, was - (totals[k] ?? 0)]).filter(([, d]) => d > 0);
 console.log('design-lint totals:', Object.entries(totals).map(([k, n]) => `${k}=${n} (baseline ${baseline.totals?.[k] ?? 0})`).join(', '));
 if (paid.length) console.log('design-lint: debt paid since the baseline:', paid.map(([k, d]) => `${k} -${d}`).join(', '), '— run --write to lock it in');

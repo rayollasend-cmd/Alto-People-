@@ -20,6 +20,13 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { useMyEarnings, useTickSeconds } from '@/components/EarningsCard';
+import '@/lib/i18n/en/callout';
+import '@/lib/i18n/en/dash';
+import '@/lib/i18n/en/hero';
+import '@/lib/i18n/en/next14';
+import '@/lib/i18n/en/sched';
+import '@/lib/i18n/en/shift';
+import '@/lib/i18n/en/week';
 
 /**
  * The associate's shift, the way the supervisor's floor reads: ONE hero that

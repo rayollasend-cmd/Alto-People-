@@ -3,6 +3,7 @@ import { Check, ChevronDown, Search } from '@/components/ui/icons';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { shortStoreName, type StoreScopeClient } from '@/lib/storeScope';
+import '@/lib/i18n/en/top';
 
 /**
  * The store scope as a searchable list — the top bar's picker once there

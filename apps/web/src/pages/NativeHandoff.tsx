@@ -4,6 +4,7 @@ import { ArrowUpRight, Loader2 } from '@/components/ui/icons';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
+import '@/lib/i18n/en/handoff';
 
 /**
  * Where the system browser lands after a sign-in the app's web view can't

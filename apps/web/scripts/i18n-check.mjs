@@ -23,7 +23,7 @@
  * with a capital letter and are not produced by t(); the allowlist holds
  * brand names, codes and form numbers that are the same in every language.
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,6 +36,7 @@ function readDictionary(source, name) {
   let i = source.indexOf('\nconst ' + name + ' = {');
   if (i < 0) i = source.indexOf('\nconst ' + name + ':');
   if (i < 0) i = source.indexOf('\nexport const ' + name + ':');
+  if (i < 0) i = source.indexOf('\nexport const ' + name + ' = {');
   if (i < 0) throw new Error(`i18n-check: no dictionary "${name}"`);
   const ends = ['\n} as const;', '\n};'].map((m) => source.indexOf(m, i)).filter((x) => x > 0);
   const body = source.slice(i, Math.min(...ends));
@@ -44,9 +45,14 @@ function readDictionary(source, name) {
   return keys;
 }
 
-const i18nSource = readFileSync(join(root, 'src/lib/i18n.tsx'), 'utf8');
+// English: the core pack plus one area pack per key prefix (src/lib/i18n/en).
+const EN_DIR = join(root, 'src/lib/i18n/en');
+const packName = (file) => 'en' + file[0].toUpperCase() + file.slice(1, -3);
+const areaPacks = readdirSync(EN_DIR).filter((f) => f.endsWith('.ts') && !['core.ts', 'keys.ts', 'all.ts'].includes(f));
+const enCore = readDictionary(readFileSync(join(EN_DIR, 'core.ts'), 'utf8'), 'enCore');
+const enByPack = new Map(areaPacks.map((f) => [f.slice(0, -3), readDictionary(readFileSync(join(EN_DIR, f), 'utf8'), packName(f))]));
 const dictionaries = {
-  en: readDictionary(i18nSource, 'en'),
+  en: new Set([enCore, ...enByPack.values()].flatMap((s) => [...s])),
   es: readDictionary(readFileSync(join(root, 'src/lib/i18n/es.ts'), 'utf8'), 'es'),
   tr: new Set([...readDictionary(readFileSync(join(root, 'src/lib/i18n/trStaff.ts'), 'utf8'), 'tr'), ...readDictionary(readFileSync(join(root, 'src/lib/i18n/tr.ts'), 'utf8'), 'tr')]),
   ht: readDictionary(readFileSync(join(root, 'src/lib/i18n/ht.ts'), 'utf8'), 'ht'),
@@ -142,6 +148,44 @@ for (const file of floorFiles) {
     problems.push(`${file}: ${found.length} hard-coded string(s), floor baseline ${allowed}:\n    ${found.join('\n    ')}`);
   } else if (found.length < allowed) {
     floorPaid += allowed - found.length;
+  }
+}
+
+// The English packs. A key lives in exactly one pack, named for its prefix,
+// and any module that mentions an area's key imports that area's pack — the
+// pack loads with the page, not the main bundle (src/lib/i18n/english.ts).
+{
+  const seen = new Map();
+  for (const [pack, keys] of [['core', enCore], ...enByPack]) {
+    for (const k of keys) {
+      if (seen.has(k)) problems.push(`'${k}' is in both en/${seen.get(k)}.ts and en/${pack}.ts`);
+      seen.set(k, pack);
+      if (pack !== 'core' && k.split('.')[0] !== pack) problems.push(`'${k}' belongs in en/${k.split('.')[0]}.ts, not en/${pack}.ts`);
+    }
+  }
+  const areas = new Set(enByPack.keys());
+  const mention = /['"`]([a-zA-Z][a-zA-Z0-9]*)\.[a-zA-Z0-9_]/g;
+  const walk = (dir, out = []) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) {
+        if (name !== '__tests__') walk(full, out);
+      } else if (/\.tsx?$/.test(name) && !/\.(test|stories)\.tsx?$|\.d\.ts$/.test(name)) out.push(full);
+    }
+    return out;
+  };
+  for (const file of walk(join(root, 'src'))) {
+    const rel = file.slice(root.length + 1);
+    if (rel.startsWith('src/lib/i18n')) continue;
+    const text = readFileSync(file, 'utf8');
+    if (/['"]@\/lib\/i18n\/en\/all['"]/.test(text)) problems.push(`${rel} imports en/all — that is for tests and Storybook only`);
+    // A whole key that lives in core needs no pack (the shell's labels for other areas).
+    const fullKey = /['"]([a-zA-Z][a-zA-Z0-9]*\.[a-zA-Z0-9_.]+)['"]/g;
+    const coreOnly = new Set([...text.matchAll(fullKey)].filter((m) => enCore.has(m[1])).map((m) => m.index));
+    const needed = new Set([...text.matchAll(mention)].filter((m) => !coreOnly.has(m.index)).map((m) => m[1]).filter((p) => areas.has(p)));
+    for (const p of needed) {
+      if (!text.includes(`'@/lib/i18n/en/${p}'`)) problems.push(`${rel} uses '${p}.*' keys but doesn't import '@/lib/i18n/en/${p}'`);
+    }
   }
 }
 

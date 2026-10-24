@@ -19,6 +19,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/notIn';
 
 /**
  * Not in yet: everyone whose shift has started with no punch, most late

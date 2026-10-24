@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
 import { Select } from '@/components/ui/Select';
+import '@/lib/i18n/en/ob';
 
 /**
  * Voluntary EEO self-identification (2026-10-21 system audit, Tier 1 #14),

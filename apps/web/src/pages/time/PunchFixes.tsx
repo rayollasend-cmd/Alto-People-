@@ -38,6 +38,8 @@ import {
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
+import '@/lib/i18n/en/offers';
+import '@/lib/i18n/en/timefix';
 
 /**
  * The worker's own: a shift they forgot to clock out of (the kiosk noticed),

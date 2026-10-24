@@ -4,6 +4,8 @@ import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
 import '@fontsource-variable/cormorant-garamond';
 import '../src/index.css';
+// Every English area pack — a story renders a component outside its page.
+import '../src/lib/i18n/en/all';
 import { withAppProviders } from './decorators';
 import { setApiMocks, type ApiMock } from './mockApi';
 

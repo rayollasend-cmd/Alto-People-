@@ -3,6 +3,8 @@ import { Coffee } from '@/components/ui/icons';
 import { useI18n } from '@/lib/i18n';
 import { getBreakQuestions } from '@/lib/laborLiveApi';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Field, SegmentedControl, Textarea } from '@/components/ui';
+import '@/lib/i18n/en/breakq';
+import '@/lib/i18n/en/timefix';
 
 /**
  * "Did you get your meal break?" — asked at clock-out where the state

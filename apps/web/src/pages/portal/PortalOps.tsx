@@ -52,6 +52,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE, HANDOVER_KIND_ICON } from '../ops/opsVisuals';
 import { ListTemplate } from '@/components/templates';
 import { scopeParams, shiftDays } from './scope';
+import '@/lib/i18n/en/portal';
+import '@/lib/i18n/en/portalOps';
 
 /**
  * Store operations — the store manager's (and their team leads') read of

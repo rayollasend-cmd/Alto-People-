@@ -7,6 +7,7 @@ import { fmtDate } from '@/lib/format';
 import { userPhotoUrl } from '@/lib/photoUrl';
 import { useI18n } from '@/lib/i18n';
 import { getMyReadyToWork, storeAddress } from '@/lib/readyToWorkApi';
+import '@/lib/i18n/en/rtw';
 
 /**
  * The associate's first-day kit, on their home page from the moment HR

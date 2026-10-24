@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Textarea } from '@/components/ui/Input';
+import '@/lib/i18n/en/oneOnOne';
 
 /**
  * The associate's side of their next 1:1: when, with whom, the agenda they

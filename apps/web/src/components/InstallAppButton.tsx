@@ -7,6 +7,7 @@ import {
   subscribeInstallPrompt,
   triggerInstall,
 } from '@/lib/installPrompt';
+import '@/lib/i18n/en/install';
 
 // Surfaces Chrome's deferred install prompt as a button in the topbar.
 //

@@ -11,6 +11,8 @@ import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { useI18n, type Translate } from '@/lib/i18n';
+import '@/lib/i18n/en/floorUi';
+import '@/lib/i18n/en/portal';
 
 /**
  * "My plan" — the personal week, finished to the standard of the rest of

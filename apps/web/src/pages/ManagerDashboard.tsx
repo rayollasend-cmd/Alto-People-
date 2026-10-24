@@ -61,6 +61,8 @@ import { MyPlanCard } from '@/components/MyPlanCard';
 import { TeamHoursCard } from '@/components/attendance/TeamHoursCard';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
+import '@/lib/i18n/en/home';
+import '@/lib/i18n/en/managerHome';
 
 /**
  * Manager dashboard. All data is direct-report-scoped on the server

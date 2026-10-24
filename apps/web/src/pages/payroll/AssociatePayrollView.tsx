@@ -8,8 +8,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { PALETTE, Sparkline } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { toast } from 'sonner';
 import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
 import {
@@ -64,6 +64,11 @@ import {
   Settings,
   Wallet,
 } from '@/components/ui/icons';
+import '@/lib/i18n/en/pay';
+import '@/lib/i18n/en/w4est';
+
+/** The split bar's drawing (recharts) loads with the first check, not the page (lazyPlot). */
+const MoneySplitPlot = lazyPlot(() => import('./AssociatePayrollView.plot').then((m) => ({ default: m.MoneySplitPlot })));
 
 /** Deduction codes with a translated label (pay.ded.*); orders and loans keep the server's label. */
 const DEDUCTION_CODES = new Set(['MEDICAL', 'DENTAL', 'VISION', 'HSA', 'HEALTH_FSA', 'DCAP', 'LIFE', 'DISABILITY', 'RET_401K', 'RET_403B', 'RET_457B', 'ROTH_401K', 'ROTH_403B', 'GARNISHMENT_FEE', 'EWA_RECOVERY', 'UNION_DUES', 'AFTER_TAX_OTHER', 'ER_401K_MATCH', 'ER_HEALTH', 'ER_HSA']);
@@ -325,24 +330,7 @@ function MoneySplit({ item }: { item: PayrollItem }) {
       <h4 className="mb-2 text-2xs uppercase tracking-widest text-silver/70">{t('pay.split.title')}</h4>
       {/* Hidden from assistive tech, so no keyboard layer (its svg tab stop would sit inside aria-hidden). */}
       <div className="h-3 w-full" aria-hidden="true">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart accessibilityLayer={false} data={[row]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} barCategoryGap={0}>
-            <XAxis type="number" hide domain={[0, total]} />
-            <YAxis type="category" hide />
-            {parts.map((p, i) => (
-              <Bar
-                key={p.key}
-                dataKey={p.key}
-                stackId="split"
-                fill={p.color}
-                stroke={PALETTE.surface}
-                strokeWidth={1}
-                radius={parts.length === 1 ? [6, 6, 6, 6] : i === 0 ? [6, 0, 0, 6] : i === parts.length - 1 ? [0, 6, 6, 0] : [0, 0, 0, 0]}
-                isAnimationActive={false}
-              />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+        <MoneySplitPlot row={row} parts={parts} total={total} />
       </div>
       <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
         {parts.map((p) => (

@@ -9,6 +9,7 @@ import { fmtTime } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
+import '@/lib/i18n/en/emergency';
 
 /**
  * THE ONE TAP.

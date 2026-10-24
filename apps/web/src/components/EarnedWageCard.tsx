@@ -10,6 +10,7 @@ import { getMyEarnedWage, requestEarnedWage, type EwaAvailability } from '@/lib/
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/cn';
+import '@/lib/i18n/en/ewa';
 
 /**
  * Pay before payday — on the associate's pay hero. One number (what is

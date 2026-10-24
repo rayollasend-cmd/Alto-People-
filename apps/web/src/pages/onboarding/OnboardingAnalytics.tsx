@@ -13,9 +13,11 @@ import { OnboardingSections } from './OnboardingSections';
 import { ListTemplate } from '@/components/templates';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartFrame } from '@/components/ui/ChartFrame';
-import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
+
+/** The drawing (recharts) loads with the chart, not the page (lazyPlot). */
+const OnboardingMonthlyPlot = lazyPlot(() => import('./OnboardingAnalytics.plot').then((m) => ({ default: m.OnboardingMonthlyPlot })));
 
 const TRACK_LABEL: Record<string, string> = {
   STANDARD: 'Standard',
@@ -366,17 +368,7 @@ function MonthlyChart({
       rows={invited + completed > 0 ? rows : []}
       empty={<p className="text-sm text-silver">Nobody was invited in the last {points.length} months.</p>}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-          <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
-          <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} width="auto" />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar dataKey="invited" name="Invited" fill={PALETTE.other} radius={[3, 3, 0, 0]} maxBarSize={22} />
-          <Bar dataKey="completed" name="Completed" fill={PALETTE.series[0]} radius={[3, 3, 0, 0]} maxBarSize={22} />
-        </BarChart>
-      </ResponsiveContainer>
+      <OnboardingMonthlyPlot rows={rows} />
     </ChartFrame>
   );
 }

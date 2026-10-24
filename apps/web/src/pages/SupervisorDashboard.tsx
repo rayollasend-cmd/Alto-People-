@@ -68,6 +68,13 @@ import { fmtClockMinute, fmtShiftWindow, isOpenShift, minuteOfDayInZone } from '
 import { CoverageGapNotice, coverageGaps } from '@/components/floor/CoverageGapNotice';
 import { getCoverageAhead } from '@/lib/floorApi';
 import { MetricCard } from '@/components/ui/MetricCard';
+import '@/lib/i18n/en/floor';
+import '@/lib/i18n/en/focus';
+import '@/lib/i18n/en/home';
+import '@/lib/i18n/en/notIn';
+import '@/lib/i18n/en/portal';
+import '@/lib/i18n/en/sup';
+import '@/lib/i18n/en/tabs';
 
 /**
  * My floor — the SHIFT_SUPERVISOR's home, in the store manager's grammar.

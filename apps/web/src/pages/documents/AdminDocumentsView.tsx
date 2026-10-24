@@ -90,6 +90,7 @@ import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { ListTemplate } from '@/components/templates';
 import { useSelection } from '@/lib/useSelection';
+import '@/lib/i18n/en/docs';
 
 // Filter value space: the real DocumentStatuses plus two synthetic buckets.
 // 'ACTION_NEEDED' rolls up the states that require HR to do something —

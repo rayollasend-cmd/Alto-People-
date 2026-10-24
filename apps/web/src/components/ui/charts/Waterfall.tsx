@@ -1,8 +1,10 @@
-import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { LegendKey } from './ChartTooltip';
-import { AXIS, Y_AXIS_WIDTH, yAxisLabel } from './axes';
 import { useChartHeight } from './frame';
-import { PALETTE, TICK, TOOLTIP_ITEM_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './palette';
+import { lazyPlot } from './lazyPlot';
+import { PALETTE } from './palette';
+
+/** The drawing (recharts) loads with the first chart, not the page (lazyPlot). */
+const WaterfallPlot = lazyPlot(() => import('./Waterfall.plot').then((m) => ({ default: m.WaterfallPlot })));
 
 /**
  * Start → steps → end: how a figure becomes another (gross pay → taxes →
@@ -34,7 +36,7 @@ export interface WaterfallProps {
   height?: number;
 }
 
-interface Row {
+export interface Row {
   label: string;
   range: [number, number];
   amount: number;
@@ -75,29 +77,7 @@ export function Waterfall({ start, steps, end, format = (v) => v.toLocaleString(
   return (
     <div className="flex w-full flex-col" style={{ height: h }}>
       <div className="min-h-0 flex-1">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart accessibilityLayer={false} data={rows} margin={{ top: 20, right: 12, bottom: 0, left: yLabel ? 8 : 0 }} barCategoryGap="22%">
-            <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-            <XAxis dataKey="label" {...AXIS} interval={0} tick={{ ...TICK, fontSize: 10 }} />
-            <YAxis tick={TICK} tickLine={false} axisLine={false} width={Y_AXIS_WIDTH} tickFormatter={(v: number) => format(v)} label={yAxisLabel(yLabel)} />
-            <Tooltip
-              cursor={{ fill: PALETTE.cursor }}
-              contentStyle={TOOLTIP_STYLE}
-              labelStyle={TOOLTIP_LABEL_STYLE}
-              itemStyle={TOOLTIP_ITEM_STYLE}
-              formatter={(_v, _n, item) => {
-                const r = (item as { payload?: Row }).payload;
-                return [r ? signed(r) : '', r ? kindWord(r) : ''];
-              }}
-            />
-            <Bar dataKey="range" isAnimationActive={false} radius={[4, 4, 4, 4]} maxBarSize={44}>
-              {rows.map((r, i) => (
-                <Cell key={i} fill={COLOR[r.kind]} />
-              ))}
-              <LabelList dataKey="text" position="top" style={{ fill: TICK.fill, fontSize: 10 }} />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        <WaterfallPlot rows={rows} colors={COLOR} format={format} yLabel={yLabel} signed={signed} kindWord={kindWord} />
       </div>
       <div className="mt-1">
         <LegendKey

@@ -25,6 +25,9 @@ import { ServiceReportDialog } from '@/pages/portal/ServiceReportDialog';
 import { downloadCsv } from '@/lib/csv';
 import { ymdLocal } from '@/lib/format';
 import { useUrlParam } from '@/lib/useUrlState';
+import '@/lib/i18n/en/msg';
+import '@/lib/i18n/en/portal';
+import '@/lib/i18n/en/region';
 
 /**
  * The region command center — the market manager's page. Reads the way a

@@ -30,6 +30,7 @@ import {
 } from '@/components/DocumentCropDialog';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/ob';
 
 // The picker offers the FEDERAL document list, not generic buckets — "which
 // document is this?" is knowledge only the associate has at upload time,

@@ -31,7 +31,7 @@ export const UPLOAD_ALLOWED_MIMES = [
 ] as const;
 
 /** Ready-made value for an <input type="file"> accept attribute. */
-export const UPLOAD_ACCEPT_ATTR = UPLOAD_ALLOWED_MIMES.join(',');
+export const UPLOAD_ACCEPT_ATTR = /* @__PURE__ */ (() => UPLOAD_ALLOWED_MIMES.join(','))();
 
 /** Kiosk PIN shape — duplicated as a literal regex across four files. */
 export const KIOSK_PIN_LENGTH = 4;

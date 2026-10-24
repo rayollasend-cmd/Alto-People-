@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtDateOnly } from '@/lib/format';
 import { HomeMeta } from '@/components/home/HomeMeta';
+import '@/lib/i18n/en/clock';
 
 /**
  * The company clock — one rhythm rendered on the HR, Finance, and

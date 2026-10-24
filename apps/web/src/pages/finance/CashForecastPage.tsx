@@ -19,6 +19,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { CashFlowChart, cashRows } from './financeCharts';
 import type { CashForecast, CashLine, CashWeek } from './financeTypes';
+import '@/lib/i18n/en/fin';
 
 /**
  * The cash forecast, every line: where the cash stands today (the Books

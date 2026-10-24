@@ -188,6 +188,7 @@ import { StatTile } from '@/pages/portal/portalCharts';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { associatePhotoUrl } from '@/lib/photoUrl';
+import '@/lib/i18n/en/schedHome';
 
 // Stable empties so derived lists keep their identity across renders
 // (they sit in memo/callback/effect deps throughout this file).

@@ -59,10 +59,10 @@ import { useStoreScope } from '@/lib/storeScope';
 import { statusTone } from '@/lib/status';
 import { useTerm } from '@/lib/auth';
 import { pickOne } from '@/lib/validationCopy';
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { getEeoApplicantReport } from '@/lib/complianceApi';
-import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/ui/charts/palette';
+import { PALETTE } from '@/components/ui/charts/palette';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 
 type Tab = 'osha' | 'wc' | 'eeo';
 const TABS: readonly Tab[] = ['osha', 'wc', 'eeo'];
@@ -347,6 +347,10 @@ function OshaTab({ clientId, clients }: { clientId: string; clients: Array<{ id:
   );
 }
 
+/** The OSHA charts' drawings (recharts) load with the charts, not the page (lazyPlot). */
+const OshaByMonthPlot = lazyPlot(() => import('./OshaCharts.plot').then((m) => ({ default: m.OshaByMonthPlot })));
+const OshaByPartPlot = lazyPlot(() => import('./OshaCharts.plot').then((m) => ({ default: m.OshaByPartPlot })));
+
 const SEVERITY_ORDER: OshaSeverity[] = ['FIRST_AID', 'MEDICAL_TREATMENT', 'RESTRICTED_DUTY', 'DAYS_AWAY', 'FATAL'];
 const SEVERITY_FILL: Record<OshaSeverity, string> = {
   FIRST_AID: PALETTE.other,
@@ -398,18 +402,7 @@ function OshaCharts({ rows }: { rows: OshaIncident[] }) {
           columns={[{ key: 'month', label: 'Month' }, ...used.map((sev) => ({ key: sev, label: SEVERITY_LABELS[sev], numeric: true }))]}
           rows={byMonth}
         >
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={byMonth} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke={PALETTE.grid} vertical={false} />
-              <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={false} />
-              <YAxis allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} width="auto" />
-              <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              {used.map((sev) => (
-                <Bar key={sev} dataKey={sev} name={SEVERITY_LABELS[sev]} stackId="sev" fill={SEVERITY_FILL[sev]} maxBarSize={26} />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
+          <OshaByMonthPlot byMonth={byMonth} bars={used.map((sev) => ({ key: sev, name: SEVERITY_LABELS[sev], fill: SEVERITY_FILL[sev] }))} />
         </ChartFrame>
       </div>
       <div className="min-w-0 xl:col-span-2">
@@ -425,15 +418,7 @@ function OshaCharts({ rows }: { rows: OshaIncident[] }) {
           ]}
           rows={partRows}
         >
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={topParts} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke={PALETTE.grid} horizontal={false} />
-              <XAxis type="number" allowDecimals={false} tick={TICK} tickLine={false} axisLine={false} />
-              <YAxis type="category" dataKey="part" width={100} tick={TICK} tickLine={false} axisLine={false} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />
-              <Bar dataKey="count" name="Incidents" fill={PALETTE.series[0]} radius={[0, 3, 3, 0]} maxBarSize={18} />
-            </BarChart>
-          </ResponsiveContainer>
+          <OshaByPartPlot topParts={topParts} />
         </ChartFrame>
       </div>
     </div>

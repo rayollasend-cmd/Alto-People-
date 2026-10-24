@@ -354,8 +354,8 @@ export const AGENT_CAPABILITIES = [
 ] as const satisfies readonly AgentCapabilityDef[];
 
 export type AgentCapabilityKey = (typeof AGENT_CAPABILITIES)[number]['key'];
-const capabilityKeys = /* @__PURE__ */ AGENT_CAPABILITIES.map((c) => c.key) as [AgentCapabilityKey, ...AgentCapabilityKey[]];
-export const AgentCapabilityKeySchema = /* @__PURE__ */ z.enum(capabilityKeys);
+const capabilityKeys = /* @__PURE__ */ (() => AGENT_CAPABILITIES.map((c) => c.key) as [AgentCapabilityKey, ...AgentCapabilityKey[]])();
+export const AgentCapabilityKeySchema = /* @__PURE__ */ (() => z.enum(capabilityKeys))();
 
 export function capabilityDef(key: string): AgentCapabilityDef | null {
   return (AGENT_CAPABILITIES as readonly AgentCapabilityDef[]).find((c) => c.key === key) ?? null;
@@ -378,7 +378,7 @@ export function capabilitiesFor(modules: TenantModules | null | undefined): Agen
 
 /* ---- Views ---------------------------------------------------------------- */
 
-export const AgentProposalStatusSchema = /* @__PURE__ */ z.enum(['PROPOSED', 'APPROVED', 'REJECTED', 'EXPIRED', 'EXECUTED', 'FAILED', 'SUPERSEDED']);
+export const AgentProposalStatusSchema = /* @__PURE__ */ (() => z.enum(['PROPOSED', 'APPROVED', 'REJECTED', 'EXPIRED', 'EXECUTED', 'FAILED', 'SUPERSEDED']))();
 export type AgentProposalStatus = z.infer<typeof AgentProposalStatusSchema>;
 
 export interface AgentCapabilitySummary {
@@ -436,7 +436,7 @@ export interface AgentTenantControlState {
   reason: string | null;
 }
 
-export const AgentProposalInputSchema = /* @__PURE__ */ z.object({
+export const AgentProposalInputSchema = /* @__PURE__ */ (() => z.object({
   capability: AgentCapabilityKeySchema,
   subjectType: z.string().trim().min(2).max(40),
   subjectId: z.string().uuid().nullable().optional(),
@@ -445,5 +445,5 @@ export const AgentProposalInputSchema = /* @__PURE__ */ z.object({
   payload: z.record(z.string(), z.unknown()).default({}),
   /** The case for it, for the person deciding. A creator with nothing more leaves it out and a generic block stands in. */
   evidence: ProposalEvidenceSchema.optional(),
-});
+}))();
 export type AgentProposalInput = z.infer<typeof AgentProposalInputSchema>;

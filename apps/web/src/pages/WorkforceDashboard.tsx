@@ -40,6 +40,10 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { AttendanceTrendTiles, useAttendanceTrends } from '@/components/attendance/AttendanceTrendTiles';
 import { AttendanceHeatmapCard } from '@/components/attendance/AttendanceHeatmapCard';
 import { AttendanceCalendarCard } from '@/components/attendance/AttendanceCalendarCard';
+import '@/lib/i18n/en/home';
+import '@/lib/i18n/en/me';
+import '@/lib/i18n/en/portal';
+import '@/lib/i18n/en/wf';
 
 /**
  * The Workforce Manager's COMMAND CENTER — the engine room of the

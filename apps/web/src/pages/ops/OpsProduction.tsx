@@ -1,16 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Minus, TrendingDown, TrendingUp } from '@/components/ui/icons';
-import {
-  Bar,
-  BarChart,
-  Cell,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip as ChartTooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
+import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { cn } from '@/lib/cn';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -20,6 +10,9 @@ import { fmtShortDayKey } from './opsTime';
 type Scorecard = Awaited<ReturnType<typeof getOpsScorecard>>;
 const NO_TRENDS: NonNullable<Scorecard['metricTrends']> = [];
 type Trend = Scorecard['metricTrends'][number];
+
+/** The drawing (recharts) loads with the first panel, not the page (lazyPlot). */
+const OpsProductionPlot = lazyPlot(() => import('./OpsProduction.plot').then((m) => ({ default: m.OpsProductionPlot })));
 
 /**
  * Production trends — what the floor actually produced, week over week.
@@ -42,9 +35,6 @@ const LOWER_IS_BETTER = new Set([
   'freight_left',
   'price_changes',
 ]);
-
-const SERIES = PALETTE.primary;
-const MUTED = 'rgb(var(--color-chart-1) / 0.35)';
 
 /** The org week runs Saturday to Friday; the key is that Saturday. */
 const weekLabel = fmtShortDayKey;
@@ -114,48 +104,7 @@ function MetricPanel({ t }: { t: Trend }) {
         <Delta read={read} />
       </div>
       <div className="mt-1.5 h-24">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 6, right: 4, bottom: 0, left: 0 }}>
-            <XAxis
-              dataKey="label"
-              tick={{ fill: TICK.fill, fontSize: 9 }}
-              axisLine={false}
-              tickLine={false}
-              interval="preserveStartEnd"
-            />
-            <YAxis
-              tick={{ fill: TICK.fill, fontSize: 9 }}
-              axisLine={false}
-              tickLine={false}
-              width="auto"
-              allowDecimals={false}
-            />
-            {/* The window's mean, so an unusual week looks unusual. */}
-            <ReferenceLine
-              y={read.mean}
-              stroke="rgb(var(--color-silver) / 0.5)"
-              strokeDasharray="3 3"
-            />
-            <ChartTooltip
-              cursor={{ fill: PALETTE.cursor }}
-              contentStyle={TOOLTIP_STYLE}
-              labelStyle={TOOLTIP_LABEL_STYLE}
-              itemStyle={TOOLTIP_ITEM_STYLE}
-              labelFormatter={(v) => `Week of ${String(v)}`}
-              formatter={(value) => [
-                `${Number(value).toLocaleString('en-US')} ${t.unit ?? ''}`,
-                metricLabel(t.metricKey),
-              ]}
-            />
-            <Bar dataKey="total" radius={[4, 4, 0, 0]} maxBarSize={26}>
-              {data.map((d) => (
-                // The current week carries the full step; the weeks behind
-                // it recede, so the eye lands on the number that is live.
-                <Cell key={d.weekKey} fill={d.weekKey === lastKey ? SERIES : MUTED} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        <OpsProductionPlot data={data} mean={read.mean} lastKey={lastKey} unit={t.unit} name={metricLabel(t.metricKey)} />
       </div>
     </div>
   );

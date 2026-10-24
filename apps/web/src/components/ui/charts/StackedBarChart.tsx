@@ -1,8 +1,11 @@
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ChartTooltipContent, LegendKey } from './ChartTooltip';
-import { AXIS, Y_AXIS_WIDTH, dateHeading, dateTicks, xAxisLabel, yAxisLabel, type DateGrain } from './axes';
+import { LegendKey } from './ChartTooltip';
+import { dateHeading, dateTicks, type DateGrain } from './axes';
 import { useChartHeight } from './frame';
-import { PALETTE, seriesColor, TICK } from './palette';
+import { lazyPlot } from './lazyPlot';
+import { seriesColor } from './palette';
+
+/** The drawing (recharts) loads with the first chart, not the page (lazyPlot). */
+const StackedBarPlot = lazyPlot(() => import('./StackedBar.plot').then((m) => ({ default: m.StackedBarPlot })));
 
 /**
  * Parts of a whole per period (stacked) or side by side (grouped). A 2px
@@ -58,65 +61,12 @@ export function StackedBarChart({
   const h = useChartHeight(height, horizontal ? Math.max(140, data.length * 30 + 32) : 220);
   const colored = series.map((s, i) => ({ ...s, color: s.color ?? seriesColor(i) }));
   const lookup = Object.fromEntries(colored.map((s) => [s.key, { name: s.name, color: s.color }]));
-  const lastKey = colored[colored.length - 1]?.key;
-  const radius = (key: string): [number, number, number, number] =>
-    stacked && key !== lastKey ? [0, 0, 0, 0] : horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0];
-  const valueAxis = { tick: TICK, tickLine: false, axisLine: false, tickFormatter: (v: number) => format(v) } as const;
   const xTick = xDates ? dateTicks(xDates, data.map((r) => r[x])) : undefined;
   const head = heading ?? (xDates ? (v: string) => dateHeading(v, xDates) : undefined);
   return (
     <div className="flex w-full flex-col" style={{ height: h }}>
       <div className="min-h-0 flex-1">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart accessibilityLayer={false}
-            data={data}
-            layout={horizontal ? 'vertical' : 'horizontal'}
-            margin={{ top: 12, right: 12, bottom: xLabel ? 14 : 0, left: yLabel ? 8 : 0 }}
-            barCategoryGap="28%"
-            barGap={2}
-          >
-            <CartesianGrid stroke={PALETTE.grid} vertical={horizontal} horizontal={!horizontal} />
-            {horizontal ? (
-              <>
-                <XAxis type="number" {...valueAxis} label={xAxisLabel(xLabel)} />
-                <YAxis type="category" dataKey={x} {...AXIS} axisLine={false} width={120} tickFormatter={xTick} />
-              </>
-            ) : (
-              <>
-                <XAxis dataKey={x} {...AXIS} label={xAxisLabel(xLabel)} tickFormatter={xTick} />
-                <YAxis {...valueAxis} width={Y_AXIS_WIDTH} label={yAxisLabel(yLabel)} />
-              </>
-            )}
-            <Tooltip cursor={{ fill: PALETTE.cursor }} content={<ChartTooltipContent series={lookup} heading={head} format={(v) => format(v)} />} />
-            {target && (
-              <ReferenceLine
-                {...(horizontal ? { x: target.value } : { y: target.value })}
-                ifOverflow="extendDomain"
-                stroke={PALETTE.ref}
-                strokeDasharray="4 3"
-                label={{ value: target.label, position: 'insideTopRight', fill: TICK.fill, fontSize: 10 }}
-              />
-            )}
-            {colored.map((s) => (
-              <Bar
-                key={s.key}
-                dataKey={s.key}
-                name={s.name}
-                stackId={stacked ? 'a' : undefined}
-                fill={s.color}
-                stroke={stacked ? PALETTE.surface : undefined}
-                strokeWidth={stacked ? 1 : 0}
-                radius={radius(s.key)}
-                maxBarSize={horizontal ? 18 : 32}
-                isAnimationActive={false}
-                cursor={onBarClick ? 'pointer' : undefined}
-                onClick={onBarClick ? (d: { payload?: Record<string, unknown> }) => d.payload && onBarClick(d.payload) : undefined}
-              >
-                {highlight !== undefined && data.map((row, i) => <Cell key={i} fillOpacity={String(row[x]) === highlight ? 1 : 0.55} />)}
-              </Bar>
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+        <StackedBarPlot data={data} x={x} colored={colored} lookup={lookup} stacked={stacked} horizontal={horizontal} format={format} yLabel={yLabel} xLabel={xLabel} target={target} highlight={highlight} onBarClick={onBarClick} xTick={xTick} head={head} />
       </div>
       {colored.length > 1 && (
         <div className="mt-1">

@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { useAssistant } from '@/lib/assistantContext';
 import { useAuth } from '@/lib/auth';
+import '@/lib/i18n/en/hugoSeat';
 
 /**
  * Hugo's seat on a home (design system §4.1): the same place on every

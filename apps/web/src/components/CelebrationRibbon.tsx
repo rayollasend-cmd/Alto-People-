@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Cake, PartyPopper } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/dash';
 
 /**
  * "Happy birthday, Maria!" on the one screen an associate opens every

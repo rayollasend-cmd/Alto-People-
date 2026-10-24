@@ -18,6 +18,7 @@ import { CoverageHeatmap, DetailsTable, type HeatDay } from './portalCharts';
 import { coverageByHour } from './coverage';
 import { ListTemplate } from '@/components/templates';
 import { ServiceReportDialog } from './ServiceReportDialog';
+import '@/lib/i18n/en/portal';
 
 /**
  * The store's week — charts first. A coverage heatmap (day × hour) shows

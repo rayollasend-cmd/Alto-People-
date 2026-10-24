@@ -24,6 +24,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import '@/lib/i18n/en/w4est';
 
 /**
  * The W-4 estimator: "am I withholding the right amount?" Starts from the

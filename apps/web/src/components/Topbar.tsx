@@ -28,6 +28,7 @@ import { InstallAppButton } from './InstallAppButton';
 import { RoleSwitchItem, RoleSwitchSheet } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
 import { isSectionRoot } from './Layout';
+import '@/lib/i18n/en/top';
 
 interface TopbarProps {
   onOpenCommandPalette: () => void;

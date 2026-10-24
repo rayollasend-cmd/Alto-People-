@@ -10,6 +10,7 @@ import {
   subscribeInstallPrompt,
   triggerInstall,
 } from '@/lib/installPrompt';
+import '@/lib/i18n/en/install';
 
 /**
  * Phase 98 — branded install banner.

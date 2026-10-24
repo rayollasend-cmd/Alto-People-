@@ -6,6 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { fmtMoney } from '@/lib/format';
 import { getMyDailyPay, setMyDailyPay } from '@/lib/payExpApi';
 import { Button } from '@/components/ui/Button';
+import '@/lib/i18n/en/payx';
 
 /**
  * Daily pay, on the worker's pay page: whether they're paid each day, and

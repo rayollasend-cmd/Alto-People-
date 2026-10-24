@@ -39,14 +39,14 @@ import { z } from 'zod';
  *          schedules this person could be put on, for a picker that cannot read /payroll/pay-schedules)
  */
 
-const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const Id = z.string().uuid();
+const Ymd = /* @__PURE__ */ (() => z.string().regex(/^\d{4}-\d{2}-\d{2}$/))();
+const Id = /* @__PURE__ */ (() => z.string().uuid())();
 
-export const PayFrequencySchema = z.enum(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY', 'DAILY']);
+export const PayFrequencySchema = /* @__PURE__ */ (() => z.enum(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY', 'DAILY']))();
 export type PayFrequencyKind = z.infer<typeof PayFrequencySchema>;
 
 /** How specific a rule is: an individual beats a site/department, which beats a client, which beats pay type, which beats the company default. */
-export const ScheduleRuleKindSchema = z.enum(['INDIVIDUAL', 'SITE', 'DEPARTMENT', 'CLIENT', 'PAY_TYPE', 'EXCLUDE']);
+export const ScheduleRuleKindSchema = /* @__PURE__ */ (() => z.enum(['INDIVIDUAL', 'SITE', 'DEPARTMENT', 'CLIENT', 'PAY_TYPE', 'EXCLUDE']))();
 export type ScheduleRuleKind = z.infer<typeof ScheduleRuleKindSchema>;
 
 export const RULE_SPECIFICITY: Record<Exclude<ScheduleRuleKind, 'EXCLUDE'>, number> = {
@@ -96,7 +96,7 @@ export function becauseSentence(because: string, name?: string | null): string {
   return t ? t[0]!.toUpperCase() + t.slice(1) : t;
 }
 
-export const ScheduleRuleSchema = z.object({
+export const ScheduleRuleSchema = /* @__PURE__ */ (() => z.object({
   id: Id,
   kind: ScheduleRuleKindSchema,
   /** CLIENT / SITE / DEPARTMENT scope (SITE and DEPARTMENT carry their client when known). */
@@ -118,11 +118,11 @@ export const ScheduleRuleSchema = z.object({
   matches: z.number().int().nonnegative(),
   createdAt: z.string(),
   createdByName: z.string().nullable(),
-});
+}))();
 export type ScheduleRule = z.infer<typeof ScheduleRuleSchema>;
 
 /** One pay period on a calendar: dates, the payday, and a moved payday's reason. */
-export const SchedulePeriodSchema = z.object({
+export const SchedulePeriodSchema = /* @__PURE__ */ (() => z.object({
   periodStart: Ymd,
   periodEnd: Ymd,
   payDate: Ymd,
@@ -136,13 +136,13 @@ export const SchedulePeriodSchema = z.object({
   versionChange: z.boolean().optional(),
   /** A short period joining two patterns whose periods don't line up (no day paid twice or not at all). */
   bridge: z.boolean().optional(),
-});
+}))();
 export type SchedulePeriod = z.infer<typeof SchedulePeriodSchema>;
 
-export const PayCalendarResponseSchema = z.object({ periods: z.array(SchedulePeriodSchema) });
+export const PayCalendarResponseSchema = /* @__PURE__ */ (() => z.object({ periods: z.array(SchedulePeriodSchema) }))();
 export type PayCalendarResponse = z.infer<typeof PayCalendarResponseSchema>;
 
-export const PayScheduleSummarySchema = z.object({
+export const PayScheduleSummarySchema = /* @__PURE__ */ (() => z.object({
   id: Id,
   name: z.string(),
   /** Plain sentence: "Every other week, Saturday to Friday, paid the next Friday". */
@@ -166,23 +166,23 @@ export const PayScheduleSummarySchema = z.object({
   pendingJoins: z.number().int().nonnegative(),
   pendingLeaves: z.number().int().nonnegative(),
   notes: z.string().nullable(),
-});
+}))();
 export type PayScheduleSummary = z.infer<typeof PayScheduleSummarySchema>;
 
-export const PayScheduleListResponseSchema = z.object({
+export const PayScheduleListResponseSchema = /* @__PURE__ */ (() => z.object({
   schedules: z.array(PayScheduleSummarySchema),
   /** People no schedule covers (and no company default): they cannot be paid by a run. */
   unassigned: z.number().int().nonnegative(),
-});
+}))();
 export type PayScheduleListResponse = z.infer<typeof PayScheduleListResponseSchema>;
 
-export const PayScheduleDetailSchema = PayScheduleSummarySchema.extend({
+export const PayScheduleDetailSchema = /* @__PURE__ */ (() => PayScheduleSummarySchema.extend({
   rules: z.array(ScheduleRuleSchema),
   versions: z.array(z.object({ effectiveFrom: Ymd, pattern: z.string(), frequency: PayFrequencySchema, anchorDate: Ymd, payDateOffsetDays: z.number().int(), createdByName: z.string().nullable() })),
-});
+}))();
 export type PayScheduleDetail = z.infer<typeof PayScheduleDetailSchema>;
 
-export const PayScheduleCreateInputSchema = z.object({
+export const PayScheduleCreateInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(1).max(120),
   frequency: PayFrequencySchema,
   /** First day of a pay period (weekly/biweekly), tiebreaker otherwise. */
@@ -192,10 +192,10 @@ export const PayScheduleCreateInputSchema = z.object({
   isDefault: z.boolean().optional(),
   /** Who is on it from day one (the setup wizard's last step); optional. */
   membership: z.lazy(() => MembershipChangeInputSchema).optional(),
-});
+}))();
 export type PayScheduleCreateInput = z.infer<typeof PayScheduleCreateInputSchema>;
 
-export const PayScheduleUpdateInputSchema = z.object({
+export const PayScheduleUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   name: z.string().trim().min(1).max(120).optional(),
   notes: z.string().max(1000).nullable().optional(),
   isActive: z.boolean().optional(),
@@ -205,11 +205,11 @@ export const PayScheduleUpdateInputSchema = z.object({
   anchorDate: Ymd.optional(),
   payDateOffsetDays: z.number().int().min(0).max(31).optional(),
   effectiveFrom: Ymd.optional(),
-});
+}))();
 export type PayScheduleUpdateInput = z.infer<typeof PayScheduleUpdateInputSchema>;
 
 /** Add rules / individuals / exclusions to a schedule from a date. */
-export const MembershipChangeInputSchema = z.object({
+export const MembershipChangeInputSchema = /* @__PURE__ */ (() => z.object({
   add: z
     .array(
       z.object({
@@ -228,10 +228,10 @@ export const MembershipChangeInputSchema = z.object({
   /** Defaults to the schedule's next period start. */
   effectiveFrom: Ymd.optional(),
   note: z.string().max(500).optional(),
-});
+}))();
 export type MembershipChangeInput = z.infer<typeof MembershipChangeInputSchema>;
 
-export const MovePersonSchema = z.object({
+export const MovePersonSchema = /* @__PURE__ */ (() => z.object({
   associateId: Id,
   name: z.string(),
   photoUrl: z.string().nullable(),
@@ -247,10 +247,10 @@ export const MovePersonSchema = z.object({
   transition: z.object({ lastOldPayDate: Ymd.nullable(), firstNewPayDate: Ymd.nullable(), note: z.string().nullable() }),
   /** A rule elsewhere claims this person just as specifically: a person must decide. */
   conflict: z.string().nullable(),
-});
+}))();
 export type MovePerson = z.infer<typeof MovePersonSchema>;
 
-export const MembershipImpactSchema = z.object({
+export const MembershipImpactSchema = /* @__PURE__ */ (() => z.object({
   effectiveFrom: Ymd,
   joins: z.number().int().nonnegative(),
   leaves: z.number().int().nonnegative(),
@@ -263,24 +263,24 @@ export const MembershipImpactSchema = z.object({
   people: z.array(MovePersonSchema),
   /** True when people were truncated in `people` (the counts are exact). */
   truncated: z.boolean(),
-});
+}))();
 export type MembershipImpact = z.infer<typeof MembershipImpactSchema>;
 
-export const MoveInputSchema = z.object({
+export const MoveInputSchema = /* @__PURE__ */ (() => z.object({
   toScheduleId: Id,
   /** People, or whole client groups, being dragged. */
   associateIds: z.array(Id).max(2000).default([]),
   clientIds: z.array(Id).max(50).default([]),
   fromScheduleId: Id.nullable().optional(),
   effectiveFrom: Ymd.optional(),
-});
+}))();
 export type MoveInput = z.infer<typeof MoveInputSchema>;
 
 /** Whether this person will be paid correctly on the next payday. */
-export const ReadinessLevelSchema = z.enum(['READY', 'ATTENTION', 'BLOCKED']);
+export const ReadinessLevelSchema = /* @__PURE__ */ (() => z.enum(['READY', 'ATTENTION', 'BLOCKED']))();
 export type ReadinessLevel = z.infer<typeof ReadinessLevelSchema>;
 
-export const ReadinessIssueSchema = z.object({
+export const ReadinessIssueSchema = /* @__PURE__ */ (() => z.object({
   code: z.enum([
     'NO_W4',
     'NO_PAYOUT',
@@ -300,10 +300,10 @@ export const ReadinessIssueSchema = z.object({
   /** Where to fix it (a path in the app), and the one-tap action label. */
   fixPath: z.string().nullable(),
   fixLabel: z.string().nullable(),
-});
+}))();
 export type ReadinessIssue = z.infer<typeof ReadinessIssueSchema>;
 
-export const RosterPersonSchema = z.object({
+export const RosterPersonSchema = /* @__PURE__ */ (() => z.object({
   associateId: Id,
   name: z.string(),
   photoUrl: z.string().nullable(),
@@ -324,10 +324,10 @@ export const RosterPersonSchema = z.object({
   /** A move already scheduled for this person. */
   pendingMove: z.object({ toScheduleName: z.string().nullable(), effectiveFrom: Ymd }).nullable(),
   isNewHire: z.boolean(),
-});
+}))();
 export type RosterPerson = z.infer<typeof RosterPersonSchema>;
 
-export const PayScheduleRosterResponseSchema = z.object({
+export const PayScheduleRosterResponseSchema = /* @__PURE__ */ (() => z.object({
   groups: z.array(
     z.object({
       clientId: Id.nullable(),
@@ -337,10 +337,10 @@ export const PayScheduleRosterResponseSchema = z.object({
     }),
   ),
   totals: z.object({ total: z.number().int(), ready: z.number().int(), attention: z.number().int(), blocked: z.number().int() }),
-});
+}))();
 export type PayScheduleRosterResponse = z.infer<typeof PayScheduleRosterResponseSchema>;
 
-export const PayScheduleHistoryResponseSchema = z.object({
+export const PayScheduleHistoryResponseSchema = /* @__PURE__ */ (() => z.object({
   events: z.array(
     z.object({
       at: z.string(),
@@ -350,10 +350,10 @@ export const PayScheduleHistoryResponseSchema = z.object({
       kind: z.enum(['CREATED', 'RULE_ADDED', 'RULE_ENDED', 'PATTERN_CHANGED', 'PERSON_JOINED', 'PERSON_LEFT', 'SETTINGS']),
     }),
   ),
-});
+}))();
 export type PayScheduleHistoryResponse = z.infer<typeof PayScheduleHistoryResponseSchema>;
 
-export const ScheduleCandidateSchema = z.object({
+export const ScheduleCandidateSchema = /* @__PURE__ */ (() => z.object({
   associateId: Id,
   name: z.string(),
   photoUrl: z.string().nullable(),
@@ -367,10 +367,10 @@ export const ScheduleCandidateSchema = z.object({
   status: z.enum(['ACTIVE', 'NEW_HIRE', 'INACTIVE']),
   currentScheduleId: Id.nullable(),
   currentScheduleName: z.string().nullable(),
-});
+}))();
 export type ScheduleCandidate = z.infer<typeof ScheduleCandidateSchema>;
 
-export const ScheduleCandidatesResponseSchema = z.object({
+export const ScheduleCandidatesResponseSchema = /* @__PURE__ */ (() => z.object({
   people: z.array(ScheduleCandidateSchema),
   /** Exact count of everyone matching the filters (for "Select all 312 matching"). */
   total: z.number().int(),
@@ -381,16 +381,16 @@ export const ScheduleCandidatesResponseSchema = z.object({
     sites: z.array(z.object({ id: Id, name: z.string(), clientId: Id.nullable(), count: z.number().int() })),
     departments: z.array(z.object({ id: Id, name: z.string(), count: z.number().int() })),
   }),
-});
+}))();
 export type ScheduleCandidatesResponse = z.infer<typeof ScheduleCandidatesResponseSchema>;
 
-export const UnassignedResponseSchema = z.object({
+export const UnassignedResponseSchema = /* @__PURE__ */ (() => z.object({
   people: z.array(ScheduleCandidateSchema),
   total: z.number().int(),
-});
+}))();
 export type UnassignedResponse = z.infer<typeof UnassignedResponseSchema>;
 
-export const AssociatePayScheduleSchema = z.object({
+export const AssociatePayScheduleSchema = /* @__PURE__ */ (() => z.object({
   current: z.object({ scheduleId: Id, name: z.string(), pattern: z.string(), since: Ymd, because: z.string() }).nullable(),
   pending: z.object({ scheduleId: Id.nullable(), name: z.string().nullable(), effectiveFrom: Ymd, because: z.string() }).nullable(),
   /** What the rules would choose with no individual override (for onboarding's "default"). */
@@ -398,11 +398,11 @@ export const AssociatePayScheduleSchema = z.object({
   nextPayDate: Ymd.nullable(),
   /** A new hire (onboarding, or hired in the last 30 days and never paid on a run): the onboarding desk may choose their schedule on the record too. */
   newHire: z.boolean().optional(),
-});
+}))();
 export type AssociatePaySchedule = z.infer<typeof AssociatePayScheduleSchema>;
 
 /** One schedule a person could be put on — what a picker needs and nothing about who else is on it. */
-export const PayScheduleChoiceSchema = z.object({
+export const PayScheduleChoiceSchema = /* @__PURE__ */ (() => z.object({
   id: Id,
   name: z.string(),
   pattern: z.string(),
@@ -412,8 +412,8 @@ export const PayScheduleChoiceSchema = z.object({
   nextPeriod: z.object({ periodStart: Ymd, periodEnd: Ymd, payDate: Ymd }),
   /** The first period that starts today or later — the default date for a move. */
   firstStart: Ymd,
-});
+}))();
 export type PayScheduleChoice = z.infer<typeof PayScheduleChoiceSchema>;
 
-export const PayScheduleChoicesResponseSchema = z.object({ schedules: z.array(PayScheduleChoiceSchema) });
+export const PayScheduleChoicesResponseSchema = /* @__PURE__ */ (() => z.object({ schedules: z.array(PayScheduleChoiceSchema) }))();
 export type PayScheduleChoicesResponse = z.infer<typeof PayScheduleChoicesResponseSchema>;

@@ -7,6 +7,7 @@ import type { ApplicationSummary, TaskKind } from '@alto-people/shared';
 import { listApplications } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { ProgressBar } from '@/components/ProgressBar';
+import '@/lib/i18n/en/onbBanner';
 
 /**
  * Phase 32 — persistent onboarding nudge for associates whose checklist

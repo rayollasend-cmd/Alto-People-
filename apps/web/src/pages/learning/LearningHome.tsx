@@ -59,6 +59,8 @@ import { ListTemplate } from '@/components/templates';
 import { useUrlParam } from '@/lib/useUrlState';
 import { LEARNING_RELATED, LearningSummary } from './LearningSummary';
 import { toast } from 'sonner';
+import '@/lib/i18n/en/learning';
+import '@/lib/i18n/en/lrn';
 
 const TABS = ['courses', 'enrollments', 'expiring'] as const;
 type Tab = (typeof TABS)[number];

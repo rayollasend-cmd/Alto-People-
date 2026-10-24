@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { trackChunk } from '@/lib/chunkLoading';
 import { cn } from '@/lib/cn';
 import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/cap';
 
 /**
  * Document camera capture. Opens the user's webcam / phone camera via

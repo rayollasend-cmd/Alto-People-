@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp } from '@/components/ui/icons';
 import type { AuditLogEntry } from '@alto-people/shared';
 import { fmtDateTime } from '@/lib/format';
 import { EmptyState } from '@/components/ui/EmptyState';
+import '@/lib/i18n/en/people';
 
 interface AuditTimelineProps {
   entries: AuditLogEntry[];

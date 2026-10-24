@@ -1,0 +1,67 @@
+// English for the pages that use 'dash.*' keys — imported by them (scripts/i18n-check.mjs checks it).
+import { registerEnglish } from '../english';
+
+export const enDash = {
+  'dash.checkFailed': 'We couldn’t check everything just now — this list may be incomplete.',
+  // Associate dashboard
+  'dash.greeting': 'Hey {name}',
+  'dash.subtitle': "Here's what's on for today.",
+  'dash.myNumber': 'My clock-in number',
+  'dash.showNumber': 'Show my clock-in number',
+  'dash.hideNumber': 'Hide my clock-in number',
+  'dash.happyBirthday': 'Happy birthday, {name}!',
+  // Homes without a first name on the account greet without one.
+  'dash.greetingNoName': 'Hey there',
+  'dash.happyAnniversary': '{years} years at Alto today, {name} — thank you!',
+  'dash.celebrationSub': 'From all of us at Alto People — have a great one.',
+  'dash.clock': 'Clock',
+  'dash.onClock': 'On the clock',
+  'dash.offClock': 'Off the clock',
+  'dash.startedIn': 'Started {time} · {elapsed} in',
+  'dash.kioskHint': 'Punch in with your clock-in number at the worksite kiosk tablet.',
+  'dash.nextShift': 'Next shift',
+  'dash.nothingScheduled': 'Nothing scheduled',
+  'dash.managerWillPublish':
+    'Your manager will publish shifts ahead of the week. Check back soon.',
+  'dash.viewSchedule': 'View schedule',
+  'dash.seeFullSchedule': 'See full schedule',
+  'dash.lastPaystub': 'Last paystub',
+  'dash.noPaystubs': 'No paystubs yet',
+  'dash.firstPaystub':
+    'Your first one will show up here once your manager runs payroll.',
+  'dash.netWorked': 'Net · {hours} worked',
+  'dash.paidOn': 'paid {date}',
+  'dash.viewPayHistory': 'View pay history',
+  'dash.timeOff': 'Time off',
+  'dash.noBalance': 'No balance yet',
+  'dash.sickAccrues': 'Sick-leave hours accrue automatically as you work.',
+  'dash.openTimeOff': 'Open time off',
+  'dash.requestOrView': 'Request or view balance',
+  'dash.quickLinks': 'Quick links',
+  'dash.myNumbers': 'My numbers',
+  'dash.myTimesheet': 'My timesheet',
+  'dash.scheduleSwaps': 'Schedule & swaps',
+  'dash.documents': 'Documents',
+  'dash.requestTimeOff': 'Request time off',
+  'dash.loadFailed': "Couldn't load this",
+  'dash.checkConnection': 'Check your connection and try again.',
+  'dash.pushTitle': 'Get shift alerts on your lock screen',
+  'dash.pushBody': 'New shifts, swaps, and reminders — even when the app is closed.',
+  'dash.pushOn': 'Turn on',
+  'dash.pushLater': 'Not now',
+  'dash.actionNeeded': 'Action needed',
+  'dash.allCaughtUp': "You're all caught up",
+  'dash.actionAgreements': '{count} agreement waiting for your signature',
+  'dash.actionAgreementsPlural': '{count} agreements waiting for your signature',
+  'dash.actionDocs': '{count} document needs your attention',
+  'dash.actionDocsPlural': '{count} documents need your attention',
+  'dash.actionShifts': '{count} upcoming shift to confirm',
+  'dash.actionShiftsPlural': '{count} upcoming shifts to confirm',
+  'dash.actionInbox': '{count} unread message in your inbox',
+  'dash.actionInboxPlural': '{count} unread messages in your inbox',
+  'dash.pushOnToast':
+    "Notifications on — you'll hear about shifts even with the app closed.",
+  'dash.pushFailed': 'Could not enable notifications.',
+} as const;
+
+registerEnglish(enDash);

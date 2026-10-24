@@ -12,6 +12,7 @@ import {
 import { useI18n } from '@/lib/i18n';
 import { trackChunk } from '@/lib/chunkLoading';
 import type { Quad } from '@/lib/docScan';
+import '@/lib/i18n/en/docscan';
 
 /**
  * Document standardization step — every image heading into the document

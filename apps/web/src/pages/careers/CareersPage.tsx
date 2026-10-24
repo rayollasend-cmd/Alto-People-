@@ -197,6 +197,14 @@ export function CareersListPage() {
       </p>
       <BrandBlock brand={brand} />
 
+      {/* While the jobs load, the search box and count line hold their place:
+          they arrived with the jobs and pushed the list down (CLS 0.14 on a phone). */}
+      {postings === null && !error && (
+        <div className="mt-8 space-y-3" aria-hidden="true">
+          <Skeleton className="h-10 w-full rounded-md coarse:h-11" />
+          <Skeleton className="h-5 w-24" />
+        </div>
+      )}
       {postings && postings.length > 0 && (
         <div className="mt-8 space-y-3" data-testid="careers-filters">
           <label className="relative block">

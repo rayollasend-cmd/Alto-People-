@@ -71,6 +71,8 @@ import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { toast } from 'sonner';
+import '@/lib/i18n/en/dash';
+import '@/lib/i18n/en/me';
 
 const TAB_VALUES = [
   'profile',

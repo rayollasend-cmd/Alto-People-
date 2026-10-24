@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { seenKey, stepCopy, tourFor, type Tour } from '@/lib/tours';
 import { Button } from '@/components/ui/Button';
+import '@/lib/i18n/en/tour';
 
 /**
  * Coach marks without a library: a ring around the anchored element and

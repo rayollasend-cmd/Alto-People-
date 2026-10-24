@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { Textarea } from '@/components/ui/Input';
+import '@/lib/i18n/en/crewText';
 
 /**
  * One text to everyone on a shift — the supervisor's own crew, from the

@@ -54,6 +54,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import '@/lib/i18n/en/people';
 
 /**
  * The workforce roster (Brief 1D-1; UX upgrade step 5) — people, agents and
