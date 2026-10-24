@@ -5,9 +5,8 @@
     "rootDir": "src",
     "lib": ["ES2022"],
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
-      "@api/*": ["src/*"]
+      "@api/*": ["./src/*"]
     }
   },
   "include": ["src"],

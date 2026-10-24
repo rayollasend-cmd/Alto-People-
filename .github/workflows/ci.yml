@@ -67,9 +67,11 @@ jobs:
       # recommended + ESLint recommended). Held at zero findings.
       - run: npm -w apps/api run lint
       - run: npm -w packages/shared run lint
-      # The API test suite typechecks too (vitest alone would not notice a
-      # fixture drifting from the types it fakes).
-      - run: npm -w apps/api run typecheck:test
+      # Type-check every package with TypeScript 7 (the native compiler,
+      # node_modules/typescript-native): shared, the API, the API's tests
+      # (vitest alone would not notice a fixture drifting from the types it
+      # fakes) and web. About 10 s; TypeScript 5 took ~95 s for the same.
+      - run: npm run typecheck
       - run: npm -w apps/web run test
       # The shared package has its own unit suite (workweek math, roles,
       # formatting) that nothing else exercised in CI.

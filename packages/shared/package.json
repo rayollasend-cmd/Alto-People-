@@ -19,8 +19,9 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "build": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "dev": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "node ../../node_modules/typescript-native/bin/tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rimraf dist",

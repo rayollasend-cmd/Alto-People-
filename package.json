@@ -17,6 +17,7 @@
     "build:web": "npm -w apps/web run build",
     "build:api": "npm -w apps/api run build",
     "build:shared": "npm -w @alto-people/shared run build",
+    "typecheck": "npm -w @alto-people/shared run typecheck && npm -w apps/api run typecheck && npm -w apps/api run typecheck:test && npm -w apps/web run typecheck",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
@@ -31,7 +32,8 @@
   },
   "devDependencies": {
     "concurrently": "^10.0.5",
-    "rimraf": "^5.0.10"
+    "rimraf": "^5.0.10",
+    "typescript-native": "npm:typescript@7.0.2"
   },
   "overrides": {
     "node-fetch": "^2.7.0",

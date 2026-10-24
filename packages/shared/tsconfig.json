@@ -7,6 +7,10 @@
     "declarationMap": true,
     "sourceMap": true,
     "lib": ["ES2022"],
+    // URL and URLSearchParams come from Node's globals. TypeScript 5 picked
+    // up every @types package on its own; TypeScript 7 includes none unless
+    // they are named here.
+    "types": ["node"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext"
   },
