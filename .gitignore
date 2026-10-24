@@ -50,7 +50,10 @@ apps/api/scripts/output/
 apps/web/public/face-models/
 
 # Local Claude Code agent state
-.claude/
+.claude/*
+# Project skills are shared with every Claude Code session on this repo;
+# local settings and locks stay out.
+!.claude/skills/
 
 # Playwright artifacts
 apps/web/e2e-results/
