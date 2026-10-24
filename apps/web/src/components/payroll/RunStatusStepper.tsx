@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Circle } from 'lucide-react';
+import { Check, Circle } from 'lucide-react';
 import type { PayrollRunStatus, PayrollRunSummary } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { runStatusLabel } from '@/lib/payrollRunStatus';
@@ -74,7 +74,7 @@ export function RunStatusStepper({ status, lifecycle, signedOff, showNext = true
                   )}
                   title={skipped ? 'Paid out with no sign-off on record' : undefined}
                 >
-                  {skipped ? '!' : reached && i < reachedIdx ? '✓' : i + 1}
+                  {skipped ? '!' : reached && i < reachedIdx ? <Check className="h-3.5 w-3.5 icon-bold" aria-hidden="true" /> : i + 1}
                   {skipped && <span className="sr-only"> Paid out with no sign-off on record</span>}
                 </span>
                 <span

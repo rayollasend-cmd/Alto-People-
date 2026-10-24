@@ -143,11 +143,11 @@ function TileMark({
   } else {
     switch (shift.status) {
       case 'COMPLETED':
-        shape = <Check className="h-3.5 w-3.5 text-success" strokeWidth={3} />;
+        shape = <Check className="h-3.5 w-3.5 text-success icon-bold" />;
         label = t('shift.worked');
         break;
       case 'CANCELLED':
-        shape = <X className="h-3.5 w-3.5 text-alert" strokeWidth={3} />;
+        shape = <X className="h-3.5 w-3.5 text-alert icon-bold" />;
         label = t('shift.cancelled');
         break;
       case 'OPEN':

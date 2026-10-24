@@ -26,7 +26,7 @@ describe('i18n', () => {
       </I18nProvider>
     );
     expect(screen.getByTestId('lang').textContent).toBe('en');
-    expect(screen.getByTestId('greeting').textContent).toBe('Hey Maria 👋');
+    expect(screen.getByTestId('greeting').textContent).toBe('Hey Maria');
     expect(screen.getByTestId('tab').textContent).toBe('Schedule');
   });
 
@@ -37,7 +37,7 @@ describe('i18n', () => {
       </I18nProvider>
     );
     fireEvent.click(screen.getByText('es'));
-    expect(screen.getByTestId('greeting').textContent).toBe('Hola Maria 👋');
+    expect(screen.getByTestId('greeting').textContent).toBe('Hola Maria');
     expect(screen.getByTestId('tab').textContent).toBe('Horario');
     expect(localStorage.getItem('alto.lang')).toBe('es');
   });
@@ -54,6 +54,6 @@ describe('i18n', () => {
 
   it('works without a provider (English fallback)', () => {
     render(<Probe />);
-    expect(screen.getByTestId('greeting').textContent).toBe('Hey Maria 👋');
+    expect(screen.getByTestId('greeting').textContent).toBe('Hey Maria');
   });
 });

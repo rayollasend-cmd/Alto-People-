@@ -1091,7 +1091,7 @@ function ShiftRunner({
                           : 'text-silver hover:bg-navy-secondary/60 hover:text-white',
                   )}
                 >
-                  {complete && <Check className="h-3 w-3" strokeWidth={3} />}
+                  {complete && <Check className="h-3 w-3 icon-bold" />}
                   {late && <AlarmClock className="h-3 w-3" aria-hidden="true" />}
                   {section}
                   <span className="tabular-nums text-2xs opacity-70">
@@ -1160,7 +1160,7 @@ function ShiftRunner({
                       : 'bg-gold/15 text-gold',
                   )}
                 >
-                  {secPct === 100 ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : secIdx + 1}
+                  {secPct === 100 ? <Check className="h-3.5 w-3.5 icon-bold" /> : secIdx + 1}
                 </span>
                 <CardTitle className="text-base">
                   {section}
@@ -1437,9 +1437,9 @@ function TaskRow({
           )}
         >
           {isDone ? (
-            <Check className="h-4 w-4" strokeWidth={3} />
+            <Check className="h-4 w-4 icon-bold" />
           ) : isBlocked ? (
-            <X className="h-4 w-4" strokeWidth={3} />
+            <X className="h-4 w-4 icon-bold" />
           ) : (
             <span className="h-2 w-2 rounded-full bg-current" />
           )}
@@ -2245,7 +2245,7 @@ function CloseDialog({
                       )}
                     >
                       {on ? (
-                        <Check className="h-3 w-3 shrink-0 text-gold" strokeWidth={3} />
+                        <Check className="h-3 w-3 shrink-0 text-gold icon-bold" />
                       ) : (
                         <Flag className="h-3 w-3 shrink-0" />
                       )}

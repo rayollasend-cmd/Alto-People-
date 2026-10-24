@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { ArrowUp, Sparkles, X } from 'lucide-react';
+import { ArrowUp, Check, Sparkles, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAssistant } from '@/lib/assistantContext';
@@ -299,7 +299,7 @@ function ActionCard({
       {card.detail && <div className="mt-0.5 text-xs text-ink-muted">{card.detail}</div>}
       {result ? (
         <div className={cn('mt-2 text-sm', result.status === 'failed' ? 'text-alert' : 'text-ink-muted')} role="status">
-          {result.status === 'done' ? '✓ ' : ''}
+          {result.status === 'done' && <Check className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-success" aria-hidden="true" />}
           {result.message}
           {result.linkUrl && (
             <Button asChild size="sm" variant="link" className="ml-1 h-auto px-0">

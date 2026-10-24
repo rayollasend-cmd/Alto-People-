@@ -24,7 +24,7 @@ export function RouterErrorPage() {
     <div className="min-h-screen flex items-center justify-center bg-midnight text-white p-6">
       <div className="max-w-lg w-full bg-navy border border-navy-secondary rounded-lg p-8 text-center">
         <div className="mx-auto mb-5 h-14 w-14 rounded-full bg-alert/15 border border-alert/30 grid place-items-center">
-          <AlertOctagon className="h-7 w-7 text-alert" aria-hidden="true" />
+          <AlertOctagon className="h-8 w-8 text-alert" aria-hidden="true" />
         </div>
         <h1 className="text-2xl text-white mb-2">{headline}</h1>
         <p className="text-sm text-silver mb-1">

@@ -316,7 +316,7 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
             )}
           >
             <span className="relative">
-              <Icon className="h-5 w-5" aria-hidden="true" strokeWidth={active ? 2.4 : 2} />
+              <Icon className={cn('h-5 w-5', active && 'icon-active')} aria-hidden="true" />
               {tab.badge === 'messages' && <UnreadMessagesBadge />}
               {tab.badge === 'approvals' && <ApprovalsBadge />}
               {tab.badge === 'inbox' && <InboxBadge />}

@@ -1,26 +1,6 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  AlarmClock,
-  AlertTriangle,
-  ScrollText,
-  ArrowRight,
-  Banknote,
-  CalendarRange,
-  Check,
-  CheckCircle2,
-  Circle,
-  ClipboardCheck,
-  ClockAlert,
-  FileWarning,
-  Inbox,
-  Receipt,
-  Scale,
-  ShieldCheck,
-  TrendingUp,
-  UserCheck,
-  Wallet,
-} from 'lucide-react';
+import { AlarmClock, AlertTriangle, ScrollText, ArrowRight, Banknote, CalendarRange, Check, CheckCircle2, ClipboardCheck, ClockAlert, FileWarning, Inbox, Receipt, Scale, ShieldCheck, TrendingUp, UserCheck, Wallet } from 'lucide-react';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDateOnly, fmtDateTz, fmtHours, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -96,7 +76,7 @@ function Step({ state, label, value, sub, children, className }: { state: StepSt
           )}
           aria-hidden="true"
         >
-          {state === 'done' ? <Check className="h-3.5 w-3.5" /> : state === 'warn' ? <AlertTriangle className="h-3 w-3" /> : <Circle className="h-2 w-2 fill-current" />}
+          {state === 'done' ? <Check className="h-3.5 w-3.5" /> : state === 'warn' ? <AlertTriangle className="h-3 w-3" /> : <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />}
         </span>
         <span className="text-2xs font-semibold uppercase tracking-wider text-silver/70">{label}</span>
       </div>

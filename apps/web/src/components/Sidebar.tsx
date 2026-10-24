@@ -529,7 +529,7 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
             active ? 'bg-navy-secondary text-ink before:opacity-100' : 'text-silver hover:text-ink hover:bg-navy-secondary/50',
           )}
         >
-          <Icon className="h-4 w-4" aria-hidden="true" />
+          <Icon className={cn('h-4 w-4', active && 'icon-active')} aria-hidden="true" />
           {waiting > 0 && <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-gold" aria-label={`${waiting} pending`} />}
         </button>
       </DropdownMenuTrigger>
@@ -582,7 +582,7 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
                 : 'text-silver hover:text-ink hover:bg-navy-secondary/50',
           )}
         >
-          <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <Icon className={cn('h-4 w-4 shrink-0', active && 'icon-active')} aria-hidden="true" />
           <span className="min-w-0 line-clamp-2 break-words" title={door.label}>{door.label}</span>
           {!open && waiting > 0 && (
             <span
@@ -741,7 +741,7 @@ function SidebarLink({ to, label, icon: Icon, active, railCollapsed, indent, bad
           : 'text-silver hover:text-ink hover:bg-navy-secondary/50',
       )}
     >
-      {!indent && <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />}
+      {!indent && <Icon className={cn('h-4 w-4 shrink-0', active && 'icon-active')} aria-hidden="true" />}
       {/* Two lines before an ellipsis, and the whole name on hover: at 1440
           "Departments & job profi…" and "Unemployment cla…" were cut. */}
       {!railCollapsed && <span className="min-w-0 line-clamp-2 break-words leading-snug" title={label}>{label}</span>}

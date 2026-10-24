@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, XCircle } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -180,6 +180,11 @@ export function DirectDepositTask() {
                       isValidAba(routingNumber) ? 'text-success' : 'text-alert'
                     )}
                   >
+                    {isValidAba(routingNumber) ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                    )}
                     {isValidAba(routingNumber)
                       ? t('ob.dd.routingValid')
                       : t('ob.dd.routingChecksumFailed')}

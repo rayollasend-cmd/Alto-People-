@@ -112,7 +112,7 @@ function StepIcon({ state }: { state: StepState }) {
   if (state === 'warn') return <span className={cn(base, 'border-warning/60 bg-warning/15 text-warning')}><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /></span>;
   if (state === 'current') return <span className={cn(base, 'border-accent bg-accent-fill/15 text-accent')}><Circle className="h-2.5 w-2.5 fill-current" aria-hidden="true" /></span>;
   if (state === 'skip') return <span className={cn(base, 'border-line text-ink-muted')}><MinusCircle className="h-3.5 w-3.5" aria-hidden="true" /></span>;
-  return <span className={cn(base, 'border-line text-ink-muted')}><Circle className="h-2 w-2" aria-hidden="true" /></span>;
+  return <span className={cn(base, 'border-line text-ink-muted')}><span className="h-2 w-2 rounded-full border border-current" aria-hidden="true" /></span>;
 }
 
 

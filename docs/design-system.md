@@ -113,11 +113,17 @@ The UI kit is `src/components/ui`. Every component renders all of its states; pa
 
 **Icons.** Lucide, one weight, 16 px in rows and 20 px in headers. The meaning table: Analytics = `BarChart3`, Clients = `Building2`, Compliance = `ShieldCheck`, Payroll = `Wallet`, Scheduling = `CalendarDays`, Time = `Clock`, People = `Users`, Agents = `Bot`, Robots = `Cpu`, Workforce roster = `BookUser`, Audit = `ScrollText`, Settings = `Settings`, Trust = `ShieldCheck`. One glyph per concept wherever it appears (the rail, the roster, Tasks' holder marks, the Control Room, empty states); an agent's own family mark is `AgentGlyph`. An icon never says something its label does not.
 
+**Icon sizes and weight** (2026-10-23). The scale: `h-3` 12 px inline with `text-xs`, `h-3.5` 14 px in dense rows and small buttons, `h-4` 16 px the default, `h-5` 20 px in headers and the tab bar, `h-6` 24 px; `h-2.5` 10 px only as a mark inside a badge; `h-8` and up are illustrations (empty states, the kiosk). Width always equals height. The stroke is set once per size in `index.css` — 1.25 / 1.4 / 1.5 / 1.75 / 2 px on screen, whatever the size, so a 12 px icon is as crisp as a 24 px one — and never per icon: `icon-bold` (+0.5 px) is for a status check or cross, `icon-active` (a soft fill in the icon's own colour) marks the current nav row or tab. A status dot is a round `span`, not a 6 px `Circle`. No emoji or typed ✓ ✗ in the interface: they render differently on every device — use the Lucide icon. Arrows in link text (→) are typography and stay.
+
+**Every icon-only control has a name.** A button or link whose only content is an icon carries `aria-label` (or `title`, `aria-labelledby`, or an `sr-only` child); a `Button size="icon…"` always does. A control kept out of the accessibility tree on purpose (a tree row's own toggle) says so with `aria-hidden`.
+
 **Voice.** Short sentences, specifics (numbers, names, dates), the tenant's words through `useTerm`, three languages through `t()`. Buttons say what happens ("Approve 3 timesheets"). Empty states say what would fill them and offer the first step. Errors say what to do next. No exclamation marks in system copy; celebration is for the person's own milestones.
 
 ## 7. The design lint
 
 `apps/web/scripts/design-lint.mjs` counts, per page file, the patterns this system retires (`text-white`, inline hex, hand-rolled pills, bare empty text, raw headings, "Loading…") and compares them with `apps/web/design-baseline.json`. A file whose count rises fails CI (`npm -w apps/web run lint:design`); debt paid down shrinks the baseline (`--write`). The baseline on 2026-10-15 is the starting line of the sweep.
+
+`apps/web/scripts/icon-lint.mjs` (part of `lint:design`) parses every TSX file and fails on an icon-only control with no name, a `strokeWidth` on an icon up to 24 px, or an icon off the size scale — with no baseline: all three were zero on 2026-10-23.
 
 ## 8. The proof
 

@@ -1057,7 +1057,7 @@ function TempReading({ t: temp, tz }: { t: StoreOpsTemp; tz: string }) {
   if (!temp.outOfRange) {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-success" title={t('portalOps.tempRange', { range })}>
-        <Check className="h-3 w-3" strokeWidth={3} aria-hidden="true" />
+        <Check className="h-3 w-3 icon-bold" aria-hidden="true" />
         {temp.value}°F
       </span>
     );
@@ -1068,11 +1068,16 @@ function TempReading({ t: temp, tz }: { t: StoreOpsTemp; tz: string }) {
       <span className="font-semibold text-alert">{temp.value}°F</span>
       <span className="text-silver"> {t('portalOps.tempRangeParen', { range })}</span>
       <span className={cn('block', fixed ? 'text-success' : 'text-alert')}>
-        {fixed
-          ? t('portalOps.recheckedOk', { value: temp.recheck!.value! })
-          : temp.recheck?.value != null
-            ? t('portalOps.recheckOut', { value: temp.recheck.value })
-            : t('portalOps.notRechecked')}
+        {fixed ? (
+          <span className="inline-flex items-center gap-1">
+            {t('portalOps.recheckedOk', { value: temp.recheck!.value! })}
+            <Check className="h-3 w-3 icon-bold" aria-hidden="true" />
+          </span>
+        ) : temp.recheck?.value != null ? (
+          t('portalOps.recheckOut', { value: temp.recheck.value })
+        ) : (
+          t('portalOps.notRechecked')
+        )}
       </span>
     </span>
   );

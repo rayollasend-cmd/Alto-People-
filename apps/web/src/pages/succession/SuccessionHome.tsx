@@ -629,13 +629,15 @@ function CandidateRow({
       )}
       {canManage && (
         <button
+          type="button"
+          aria-label={`Remove ${candidate.associateName} as a successor`}
           onClick={async () => {
             if (!(await confirm({ title: 'Remove this successor?', destructive: true }))) return;
             onRemove();
           }}
           className="text-silver hover:text-alert"
         >
-          <Trash2 className="h-3 w-3" />
+          <Trash2 className="h-3 w-3" aria-hidden="true" />
         </button>
       )}
     </div>

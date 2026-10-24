@@ -29,7 +29,7 @@ export function NoAccess() {
     <div className="min-h-[60dvh] flex items-center justify-center p-6" data-testid="no-access">
       <div className="max-w-md w-full text-center space-y-5">
         <div className="mx-auto h-14 w-14 rounded-full bg-surface-raised border border-line grid place-items-center">
-          <Lock className="h-7 w-7 text-ink-muted" aria-hidden="true" />
+          <Lock className="h-8 w-8 text-ink-muted" aria-hidden="true" />
         </div>
         <div className="space-y-1">
           <h1 className="text-2xl text-ink">{t('access.title')}</h1>

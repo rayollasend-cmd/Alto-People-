@@ -150,7 +150,7 @@ describe('floor walk 5 — a tap with no signal is kept', () => {
     Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
     const maria = within(card).getAllByRole('listitem').find((li) => li.textContent?.includes('Maria Lopez'))!;
     await userEvent.click(within(maria).getByRole('button', { name: 'On board' }));
-    expect(await within(card).findByText('On board ✓ (sending)')).toBeInTheDocument();
+    expect(await within(card).findByText('On board (sending)')).toBeInTheDocument();
     expect(screen.getByText('1 tap waiting to send')).toBeInTheDocument();
     expect(postsTo('/transport/driver/rides/r1/board')).toHaveLength(0);
     expect(listQueuedWrites()).toEqual([expect.objectContaining({ path: '/transport/driver/rides/r1/board', body: expect.objectContaining({ replay: true }) })]);

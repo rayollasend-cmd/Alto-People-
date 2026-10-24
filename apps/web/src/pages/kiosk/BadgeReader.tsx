@@ -178,7 +178,7 @@ export function BadgeReader({ t, onBadge, disabled }: { t: BadgeReaderStrings; o
           <span className="relative grid h-20 w-20 place-items-center">
             <span className="absolute inset-0 animate-ping rounded-full bg-accent/20" aria-hidden="true" />
             <span className="relative grid h-20 w-20 place-items-center rounded-full bg-accent/15">
-              <Nfc className="h-9 w-9 text-accent" aria-hidden="true" />
+              <Nfc className="h-10 w-10 text-accent" aria-hidden="true" />
             </span>
           </span>
           <div className="text-center text-lg text-ink">{t.badgeHold}</div>

@@ -1,20 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useQuery } from '@tanstack/react-query';
-import {
-  ArrowRight,
-  BookOpen,
-  CalendarCheck,
-  CalendarPlus,
-  ClipboardList,
-  Clock,
-  FileSignature,
-  FileUp,
-  FileWarning,
-  Inbox,
-  MessageSquare,
-  type LucideIcon,
-} from 'lucide-react';
+import { ArrowRight, BookOpen, CalendarCheck, CalendarPlus, CheckCircle2, ClipboardList, Clock, FileSignature, FileUp, FileWarning, Inbox, MessageSquare, type LucideIcon } from 'lucide-react';
 import type { InboxSource } from '@alto-people/shared';
 import { useInbox } from '@/lib/inboxApi';
 import { getMyTraining } from '@/lib/lms94Api';
@@ -106,7 +93,10 @@ export function AssociateNeedsYou({ hide }: { hide?: readonly string[] } = {}) {
   if (rows.length === 0) {
     return (
       <div className="space-y-1">
-        <p className="text-xs text-silver/70">{t('dash.allCaughtUp')}</p>
+        <p className="inline-flex items-center gap-1 text-xs text-silver/70">
+          <CheckCircle2 className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+          {t('dash.allCaughtUp')}
+        </p>
         {unread && <UnreadLine source={unread} />}
       </div>
     );

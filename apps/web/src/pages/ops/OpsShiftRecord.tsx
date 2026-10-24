@@ -369,9 +369,9 @@ function RecordTaskLine({ task, isFollowUp = false }: { task: OpsTaskRow; isFoll
           )}
         >
           {isDone ? (
-            <Check className="h-3 w-3" strokeWidth={3} />
+            <Check className="h-3 w-3 icon-bold" />
           ) : task.status === 'BLOCKED' ? (
-            <X className="h-3 w-3" strokeWidth={3} />
+            <X className="h-3 w-3 icon-bold" />
           ) : (
             <span className="h-1.5 w-1.5 rounded-full bg-current" />
           )}

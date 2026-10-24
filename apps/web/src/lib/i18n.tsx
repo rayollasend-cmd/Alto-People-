@@ -330,12 +330,12 @@ const en = {
   'opsRun.preview.more': '+{n} more',
 
   // Associate dashboard
-  'dash.greeting': 'Hey {name} 👋',
+  'dash.greeting': 'Hey {name}',
   'dash.subtitle': "Here's what's on for today.",
   'dash.myNumber': 'My clock-in number',
   'dash.showNumber': 'Show my clock-in number',
   'dash.hideNumber': 'Hide my clock-in number',
-  'dash.happyBirthday': 'Happy birthday, {name}! 🎂',
+  'dash.happyBirthday': 'Happy birthday, {name}!',
   // My profile (/me)
   'me.title': 'My profile',
   'me.securityLink': 'Password & security',
@@ -1124,7 +1124,7 @@ const en = {
   'schedHome.noMatchManage': 'Try a different filter, or create a new shift to start staffing.',
   'schedHome.noMatchRead': 'Try a different filter to see other shifts.',
   // Homes without a first name on the account greet without one.
-  'dash.greetingNoName': 'Hey 👋',
+  'dash.greetingNoName': 'Hey there',
   // Time: the person's own view, and the tablet-only note for floor leads.
   'time.myTime': 'My time',
   'time.tabletOnlyBody':
@@ -1494,7 +1494,7 @@ const en = {
   'portalOps.tempNotTaken': 'Not taken',
   'portalOps.tempRange': 'Range {range}',
   'portalOps.tempRangeParen': '(range {range})',
-  'portalOps.recheckedOk': 'Re-checked {value}°F ✓',
+  'portalOps.recheckedOk': 'Re-checked {value}°F',
   'portalOps.recheckOut': 'Re-check {value}°F — still out',
   'portalOps.notRechecked': 'Not re-checked',
   'portalOps.foodSafety': 'Food safety',
@@ -2019,7 +2019,7 @@ const en = {
     'Set your profile photo with a proper position-and-zoom step — Settings → Profile photo.',
   'whatsnew.confirmTap': 'Confirm a shift with one tap, right from the schedule list.',
   'whatsnew.clockNumber': 'Your clock-in number now lives on your Home screen — tap to reveal.',
-  'dash.happyAnniversary': '{years} years at Alto today, {name} — thank you! 🎉',
+  'dash.happyAnniversary': '{years} years at Alto today, {name} — thank you!',
   'dash.celebrationSub': 'From all of us at Alto People — have a great one.',
   // Earnings motivation card
   'earn.title': 'My earnings this week',
@@ -2170,8 +2170,8 @@ const en = {
   'ob.dd.branchCard': 'Pay card',
   'ob.dd.routingLabel': 'Routing number',
   'ob.dd.routingHint': '9 digits, printed on your check or in your bank app. We check the number for typos.',
-  'ob.dd.routingValid': '✓ Valid routing number format',
-  'ob.dd.routingChecksumFailed': "✗ That number doesn't look right — please re-check",
+  'ob.dd.routingValid': 'Valid routing number format',
+  'ob.dd.routingChecksumFailed': "That number doesn't look right — please re-check",
   'ob.dd.accountNumber': 'Account number',
   'ob.dd.accountType': 'Account type',
   'ob.dd.checking': 'Checking',
@@ -2535,7 +2535,7 @@ const en = {
   'rmb.chooseReceiptFile': 'Choose file',
   'rmb.uploadingReceipt': 'Uploading…',
   'rmb.receiptAttached': 'Receipt attached.',
-  'rmb.receiptOnFile': 'Receipt on file ✓',
+  'rmb.receiptOnFile': 'Receipt on file',
   // Onboarding — I-9 / profile photo / stub tasks
   'ob.i9.title': 'I-9 verification',
   'ob.i9.loadFailed': 'Failed to load I-9 status.',
@@ -3146,7 +3146,7 @@ const en = {
   'dash.pushOn': 'Turn on',
   'dash.pushLater': 'Not now',
   'dash.actionNeeded': 'Action needed',
-  'dash.allCaughtUp': "You're all caught up ✓",
+  'dash.allCaughtUp': "You're all caught up",
   'dash.actionAgreements': '{count} agreement waiting for your signature',
   'dash.actionAgreementsPlural': '{count} agreements waiting for your signature',
   'dash.actionDocs': '{count} document needs your attention',
@@ -4433,7 +4433,7 @@ const en = {
   'drive.sendNow': 'Send now',
   'drive.savedOffline': 'Saved — it sends when the signal is back',
   'drive.farFromStop': 'You\'re {meters} m from the stop. The tap is kept, with where you were.',
-  'drive.onBoardSending': 'On board ✓ (sending)',
+  'drive.onBoardSending': 'On board (sending)',
   'drive.noShowSending': 'No-show (sending)',
   'drive.undoSending': 'Undoing (sending)',
   'drive.noShowAfterSend': 'No-show opens once Arrived has sent',
@@ -4596,7 +4596,7 @@ const en = {
   'drive.preTripSubmit': 'Done — start the run',
   'drive.preTripPassed': 'Pre-trip passed',
   'drive.preTripFailed': 'Pre-trip failed: {items}. Transportation was told.',
-  'drive.preTripDone': 'Pre-trip ✓',
+  'drive.preTripDone': 'Pre-trip',
   'drive.safety': 'Safety',
   'drive.safetyBody': 'Help is one tap away. Transportation sees where the van is the moment you alert them.',
   'drive.call911': 'Call 911',

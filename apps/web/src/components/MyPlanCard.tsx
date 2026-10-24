@@ -95,10 +95,9 @@ function CheckCircle({
     >
       <Check
         className={cn(
-          'h-3 w-3 transition-all duration-200',
+          'h-3 w-3 icon-bold transition-all duration-200',
           done ? 'scale-100 opacity-100' : 'scale-50 opacity-0',
         )}
-        strokeWidth={3}
         aria-hidden="true"
       />
     </button>
@@ -274,7 +273,7 @@ export function MyPlanCard() {
                     className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-success text-navy"
                     aria-hidden="true"
                   >
-                    <Check className="h-2.5 w-2.5" strokeWidth={3.5} />
+                    <Check className="h-2.5 w-2.5 icon-bold" />
                   </span>
                 )}
               </button>

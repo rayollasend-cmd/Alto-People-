@@ -1387,7 +1387,7 @@ export function ApplicationsList() {
                             aria-label={a.lastInviteDelivery?.status === 'FAILED' ? 'Email bounced' : 'Stuck'}
                             title={a.lastInviteDelivery?.status === 'FAILED' ? (a.lastInviteDelivery.failureReason ?? 'Email bounced') : 'Stuck'}
                           >
-                            {a.lastInviteDelivery?.status === 'FAILED' ? <MailWarning className="h-2 w-2 text-white" aria-hidden="true" /> : <AlertTriangle className="h-2 w-2 text-white" aria-hidden="true" />}
+                            {a.lastInviteDelivery?.status === 'FAILED' ? <MailWarning className="h-2.5 w-2.5 text-white" aria-hidden="true" /> : <AlertTriangle className="h-2.5 w-2.5 text-white" aria-hidden="true" />}
                           </span>
                         )}
                       </div>

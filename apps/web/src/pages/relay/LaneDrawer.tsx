@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, Check, Circle, ExternalLink } from 'lucide-react';
+import { ArrowRight, Check, ExternalLink } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -117,7 +117,7 @@ export function LaneDrawer({
                             )}
                             aria-hidden="true"
                           >
-                            {s.done ? <Check className="h-3 w-3" /> : <Circle className="h-1.5 w-1.5 fill-current" />}
+                            {s.done ? <Check className="h-3 w-3" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />}
                           </span>
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={cn('text-sm', s.done ? 'text-silver' : now ? 'font-semibold text-white' : 'text-silver/60')}>

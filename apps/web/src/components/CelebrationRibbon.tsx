@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { PartyPopper } from 'lucide-react';
+import { Cake, PartyPopper } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
@@ -38,7 +38,7 @@ export function CelebrationRibbon() {
       className="mb-4 flex items-center gap-3 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3"
     >
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gold/20 text-gold">
-        <PartyPopper className="h-5 w-5" aria-hidden="true" />
+        {data.birthday ? <Cake className="h-5 w-5" aria-hidden="true" /> : <PartyPopper className="h-5 w-5" aria-hidden="true" />}
       </span>
       <div className="min-w-0">
         <div className="text-sm font-medium text-white">{message}</div>

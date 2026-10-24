@@ -107,7 +107,7 @@ export function PayScheduleDetailPage() {
         breadcrumbs={[...crumbs, { label: s.name }]}
         identity={
           <span className="grid h-14 w-14 place-items-center rounded-2xl bg-accent-fill/15 text-accent">
-            <CalendarClock className="h-7 w-7" aria-hidden="true" />
+            <CalendarClock className="h-8 w-8" aria-hidden="true" />
           </span>
         }
         title={s.name}

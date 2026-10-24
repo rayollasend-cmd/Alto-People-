@@ -1,31 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import {
-  AlertTriangle,
-  Bus,
-  CalendarDays,
-  Camera,
-  Check,
-  CheckCheck,
-  Clock,
-  CloudOff,
-  Fuel,
-  Home,
-  LocateFixed,
-  LocateOff,
-  MapPin,
-  MessageSquare,
-  Navigation,
-  Phone,
-  RotateCcw,
-  Route,
-  ShieldAlert,
-  Store,
-  UserX,
-  Volume2,
-  VolumeX,
-} from 'lucide-react';
+import { AlertTriangle, Bus, CalendarDays, Camera, Check, CheckCheck, Clock, CloudOff, Fuel, Home, LocateFixed, LocateOff, MapPin, MessageSquare, Navigation, Phone, RotateCcw, Route, ShieldAlert, Store, UserX, Volume2, VolumeX } from 'lucide-react';
 import { toast } from 'sonner';
 import { ShiftMapDrawer, type TripKey } from './ShiftMap';
 import { ApiError } from '@/lib/api';
@@ -1395,6 +1371,7 @@ function RiderAtStop({
         {pending === 'board' ? <Check className="h-4 w-4 shrink-0 text-success" aria-hidden="true" /> : <UserX className="h-4 w-4 shrink-0 text-alert" aria-hidden="true" />}
         <span className="min-w-0 flex-1 truncate text-ink">{ride.rider.name}</span>
         <Badge size="sm" variant={pending === 'board' ? 'success' : 'destructive'}>
+          {pending === 'board' && <Check className="h-3 w-3" aria-hidden="true" />}
           {pending === 'board' ? t('drive.onBoardSending') : t('drive.noShowSending')}
         </Badge>
       </li>
@@ -1656,6 +1633,7 @@ function UpNext({ run, hero, onReport }: { run: RideRun; hero: boolean; onReport
           </Button>
           {run.preTrip?.passed && (
             <Badge size="sm" variant="success">
+              <Check className="h-3 w-3" aria-hidden="true" />
               {t('drive.preTripDone')}
             </Badge>
           )}

@@ -85,7 +85,7 @@ export function HotlinePage() {
           <Logo size="lg" alt="Company logo" />
         </div>
         <div className="flex items-center gap-3 mb-2">
-          <ShieldQuestion className="h-7 w-7 text-gold" />
+          <ShieldQuestion className="h-8 w-8 text-gold" />
           <h1 className="text-2xl md:text-3xl text-white">
             Confidential Reporting
           </h1>

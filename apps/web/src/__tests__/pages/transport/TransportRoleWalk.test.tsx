@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, onTestFinished } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -185,6 +185,13 @@ beforeEach(() => {
 
 describe('walk 1 and 2 — dispatch defaults to a free van and driver', () => {
   it('opens on Van 2 and a driver who is free and licensed; the busy ones say which run, the unlicensed one says why', async () => {
+    // Morning on a weekday: the planned run leaves "19.4 hours from now", which
+    // after ~4:30 AM UTC lands on the next service day and stops making Van 1 busy.
+    const real = new Date();
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(Date.UTC(real.getUTCFullYear(), real.getUTCMonth(), real.getUTCDate(), 13)) });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
     renderAs('TRANSPORTATION_DIRECTOR');
     await userEvent.click(await screen.findByRole('button', { name: /^Dispatch Front Beach 218/ }));

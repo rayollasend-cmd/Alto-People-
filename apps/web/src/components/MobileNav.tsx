@@ -516,7 +516,7 @@ function MobileLink({ to, label, icon: Icon, active, badge }: MobileLinkProps) {
           : 'text-silver hover:text-white hover:bg-navy-secondary/50'
       )}
     >
-      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <Icon className={cn('h-4 w-4 shrink-0', active && 'icon-active')} aria-hidden="true" />
       <span className="truncate">{label}</span>
       {!!badge && (
         <span

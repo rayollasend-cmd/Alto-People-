@@ -19,7 +19,7 @@ export function NotFound() {
     <div className="min-h-[60dvh] flex items-center justify-center p-6">
       <div className="max-w-md w-full text-center space-y-5">
         <div className="mx-auto h-14 w-14 rounded-full bg-navy-secondary border border-navy-secondary grid place-items-center">
-          <Compass className="h-7 w-7 text-silver" aria-hidden="true" />
+          <Compass className="h-8 w-8 text-silver" aria-hidden="true" />
         </div>
         <div className="space-y-1">
           <h1 ref={hero} className="text-2xl text-white">

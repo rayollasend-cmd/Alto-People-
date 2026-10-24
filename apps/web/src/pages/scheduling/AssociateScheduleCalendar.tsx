@@ -250,11 +250,11 @@ export function ScheduleWeekView({
           {t('shift.confirmed')}
         </span>
         <span className="inline-flex items-center gap-1">
-          <Check className="h-3 w-3 text-success" strokeWidth={3} aria-hidden="true" />
+          <Check className="h-3 w-3 text-success icon-bold" aria-hidden="true" />
           {t('shift.worked')}
         </span>
         <span className="inline-flex items-center gap-1">
-          <X className="h-3 w-3 text-alert" strokeWidth={3} aria-hidden="true" />
+          <X className="h-3 w-3 text-alert icon-bold" aria-hidden="true" />
           {t('shift.cancelled')}
         </span>
       </div>
