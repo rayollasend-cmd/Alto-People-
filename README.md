@@ -118,12 +118,28 @@ curl -sS -b "$JAR" -X POST http://localhost:3001/onboarding/applications \
 | Finance / Accountant  | Read-only access to financial modules                 |
 | Internal Recruiter    | Full access to recruiting pipeline                    |
 
+## Builds and checks (Turborepo)
+
+The root scripts run through [Turborepo](docs/turborepo.md), which knows that
+web and api need shared built first and keeps a local cache in `.turbo/cache`:
+a package whose files did not change is restored, not rebuilt.
+
+```sh
+npm run build       # shared, then web and api, one at a time (what Railway runs)
+npm run typecheck   # tsc for every package (web includes the Storybook config)
+npm run lint        # eslint everywhere + the web's design-lint and i18n gates
+```
+
+The web app also has [Storybook](apps/web/.storybook/README.md)
+(`npm -w apps/web run storybook`) and [Lighthouse CI](apps/web/lighthouse/README.md)
+(`npm -w apps/web run lhci`).
+
 ## Tests
 
 Vitest is wired up in all three workspaces.
 
 ```sh
-npm test            # all suites: shared → api → web
+npm test            # all suites, one at a time (through turbo; shared is built first)
 npm run test:shared # shared: roles + Zod contracts (pure unit)
 npm run test:api    # api: lib unit tests + route integration tests
 npm run test:web    # web: Login + four onboarding task forms (jsdom + RTL)

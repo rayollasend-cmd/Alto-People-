@@ -46,34 +46,52 @@ jobs:
         env:
           EVIDENCE_INGEST_URL: ${{ github.event_name == 'push' && secrets.EVIDENCE_INGEST_URL || '' }}
           EVIDENCE_INGEST_TOKEN: ${{ secrets.EVIDENCE_INGEST_TOKEN }}
-      # Builds shared → web → api (the api build runs prisma generate).
+      # Turborepo (docs/turborepo.md): the build, lint, typecheck and unit
+      # test steps below run through turbo, and its task cache from earlier
+      # runs comes back from GitHub's cache — a package whose inputs did not
+      # change is restored (outputs and logs), not built or checked again.
+      # Saved under this commit; restored from the newest earlier save. No
+      # remote cache (that needs a Vercel account; the doc says how).
+      - name: Restore the Turborepo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+      # Builds shared, then web and api one at a time (the api build runs
+      # prisma generate) — the command Railway runs.
       - run: npm run build
+        env:
+          TURBO_TELEMETRY_DISABLED: '1'
       # The bundle-size budget (apps/web/size-budget.json): a chunk that
       # grows past its line fails here, in the commit that grew it.
       - run: npm -w apps/web run size:check
-      # Design-system guardrails: rules are warn-level on the existing
-      # debt (the warning count is the burndown metric) but any ERROR —
-      # including parse failures — fails the job.
-      - run: npm -w apps/web run lint
-      # Design lint (design system step 1): the per-file counts of retired
-      # patterns (text-white, inline hex, hand-rolled pills, bare empty and
-      # loading text, raw headings) may only fall; a rise fails the commit.
-      - run: npm -w apps/web run lint:design
-      # Translation gate (brief 3-6): every associate-app key exists in all
-      # six app languages, and the count of hard-coded user-visible strings
-      # in associate-facing files may only fall (scripts/i18n-baseline.json).
-      - run: npm -w apps/web run lint:i18n
-      # Correctness lint for the API and the shared package (typescript-eslint
-      # recommended + ESLint recommended). Held at zero findings.
-      - run: npm -w apps/api run lint
-      - run: npm -w packages/shared run lint
-      # The API test suite typechecks too (vitest alone would not notice a
-      # fixture drifting from the types it fakes).
-      - run: npm -w apps/api run typecheck:test
-      - run: npm -w apps/web run test
-      # The shared package has its own unit suite (workweek math, roles,
-      # formatting) that nothing else exercised in CI.
-      - run: npm -w packages/shared run test
+      # One turbo run for the static checks, each package's own scripts:
+      #  - lint: ESLint for web, api and shared. Web: design-system
+      #    guardrails are warn-level on the existing debt (the warning count
+      #    is the burndown metric) but any ERROR — parse failures included —
+      #    fails the job. API and shared: typescript-eslint recommended +
+      #    ESLint recommended, held at zero findings.
+      #  - lint:design (web, design system step 1): the per-file counts of
+      #    retired patterns (text-white, inline hex, hand-rolled pills, bare
+      #    empty and loading text, raw headings) may only fall.
+      #  - lint:i18n (web, brief 3-6): every associate-app key exists in all
+      #    six app languages, and the hard-coded string count may only fall.
+      #  - typecheck: web (tsc -b and the Storybook config), api (the source
+      #    and the test suite — vitest alone would not notice a fixture
+      #    drifting from the types it fakes), shared.
+      # Two at a time: the api and web typechecks are the memory-heavy ones.
+      - name: Lint and typecheck (turbo)
+        run: npx turbo run lint lint:design lint:i18n typecheck --concurrency=2
+        env:
+          TURBO_TELEMETRY_DISABLED: '1'
+      # The web unit suite, and the shared package's own (workweek math,
+      # roles, formatting). The API suite needs Postgres: the api-tests job.
+      - name: Unit tests, web and shared (turbo)
+        run: npx turbo run test --filter=@alto-people/web --filter=@alto-people/shared
+        env:
+          TURBO_TELEMETRY_DISABLED: '1'
 
   # Storybook (apps/web/.storybook/README.md): the UI kit, the page templates
   # and the shell pieces, every story rendered in Chromium at its viewport

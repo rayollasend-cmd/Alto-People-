@@ -13,25 +13,28 @@
     "dev": "concurrently -n shared,web,api -c yellow,blue,green \"npm -w @alto-people/shared run dev\" \"npm -w apps/web run dev\" \"npm -w apps/api run dev\"",
     "dev:web": "npm -w apps/web run dev",
     "dev:api": "npm -w apps/api run dev",
-    "build": "npm -w @alto-people/shared run build && npm -w apps/web run build && npm -w apps/api run build",
-    "build:web": "npm -w apps/web run build",
-    "build:api": "npm -w apps/api run build",
-    "build:shared": "npm -w @alto-people/shared run build",
+    "build": "turbo run build --concurrency=1",
+    "build:web": "turbo run build --filter=@alto-people/web",
+    "build:api": "turbo run build --filter=@alto-people/api",
+    "build:shared": "turbo run build --filter=@alto-people/shared",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint lint:design lint:i18n",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
     "db:migrate": "npm -w apps/api run db:migrate",
     "db:seed": "npm -w apps/api run db:seed",
     "db:studio": "npm -w apps/api run db:studio",
-    "test": "npm -w @alto-people/shared run test && npm -w apps/api run test && npm -w apps/web run test",
-    "test:shared": "npm -w @alto-people/shared run test",
-    "test:api": "npm -w apps/api run test",
-    "test:web": "npm -w apps/web run test",
-    "clean": "rimraf \"apps/*/dist\" \"packages/*/dist\" \"apps/*/node_modules\" \"packages/*/node_modules\" node_modules"
+    "test": "turbo run test --concurrency=1",
+    "test:shared": "turbo run test --filter=@alto-people/shared",
+    "test:api": "turbo run test --filter=@alto-people/api",
+    "test:web": "turbo run test --filter=@alto-people/web",
+    "clean": "rimraf \"apps/*/dist\" \"packages/*/dist\" \"apps/*/node_modules\" \"packages/*/node_modules\" node_modules .turbo \"apps/*/.turbo\" \"packages/*/.turbo\""
   },
   "devDependencies": {
     "concurrently": "^10.0.5",
-    "rimraf": "^5.0.10"
+    "rimraf": "^5.0.10",
+    "turbo": "^2.11.8"
   },
   "overrides": {
     "node-fetch": "^2.7.0",
@@ -39,5 +42,12 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "^11.0.0",
+      "onFail": "warn"
+    }
   }
 }
