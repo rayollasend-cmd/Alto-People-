@@ -46,7 +46,7 @@ jobs:
     # still cheaper than shipping a scanner that cannot run.
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Emscripten
         run: |

@@ -52,7 +52,7 @@ jobs:
       MFA_SECRET_ENCRYPTION_KEY: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
       KIOSK_PIN_SECRET: a2lvc2stcGluLXNlY3JldC1mb3ItdGhlLWxvYWQtdGVzdC1vbmx5LW5ldmVyLXByb2Q=
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
