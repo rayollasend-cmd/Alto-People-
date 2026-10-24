@@ -11,6 +11,7 @@ import { marginTrend } from '../../lib/financeCockpit.js';
 import { runShiftReminderSweep } from '../../lib/shiftReminder.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * Audit 2026-10-21 #11 — the cost and scheduling screens split hours with
@@ -79,6 +80,9 @@ describe('live California daily overtime on the cost screens', () => {
   });
 
   it('the OT radar names a 10-hour day under 40 hours, priced at the engine’s 1.5×', async () => {
+    // "30 minutes from now" is next week's shift from 11:30 PM on a Friday,
+    // which the radar (this week only) rightly ignores.
+    pinMidweekNoon();
     const { client, site } = await liveCaliforniaSite();
     const ana = await createAssociate({ firstName: 'Ana', lastName: 'Ruiz' });
     // 11 hours on the clock, 10 paid (the schedule's unpaid hour): 2 hours past California's 8.

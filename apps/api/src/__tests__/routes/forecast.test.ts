@@ -4,6 +4,7 @@ import { createAssociate, createClient, createUser, prisma, truncateAll } from '
 import { startOfWeekUTC } from '../../lib/timeAnomalies.js';
 import { computeForecastRun, scoreForecastAccuracy } from '../../lib/forecast/run.js';
 import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * Brief 3-4 — the forecast against the API: verified hours become a run,
@@ -50,6 +51,7 @@ async function world() {
 
 describe('the demand forecast', () => {
   it('computes a run from verified hours and reads it back per site with its drivers and band', async () => {
+    pinMidweekNoon();
     const w = await world();
     const admin = await loginAs(agent(), w.wfm.email);
 

@@ -8,6 +8,7 @@ import { seasonWeeks } from '../../lib/seasonPlanner.js';
 import { ensureBuiltInAgents } from '../../lib/agents.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * The field roles (2026-10), the rest of the pack:
@@ -184,6 +185,7 @@ describe('money on a job', () => {
 
 describe('the face wall', () => {
   it('carries a phone and a messenger login for the shift supervisor only', async () => {
+    pinMidweekNoon();
     const client = await createClient('Walmart 218');
     const { associate, user: assocUser } = await placedAssociate(client.id);
     await prisma.associate.update({ where: { id: associate.id }, data: { phone: '+1 555 010 0100' } });
@@ -234,6 +236,7 @@ describe('the Workforce Manager', () => {
   });
 
   it('sees labor dollars and pending agent proposals on each store tile; the store supervisor gets no money', async () => {
+    pinMidweekNoon();
     const client = await createClient('Walmart 218');
     const now = Date.now();
     const open = await prisma.shift.create({ data: { clientId: client.id, position: 'Stocker', startsAt: new Date(now + 3_600_000), endsAt: new Date(now + 5 * 3_600_000), status: 'OPEN', publishedAt: new Date(), payRate: 20 } });

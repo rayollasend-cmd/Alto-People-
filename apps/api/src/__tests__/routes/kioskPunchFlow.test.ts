@@ -8,6 +8,7 @@ import { runSopExpirySweep } from '../../lib/storeShiftSop.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { agent, loginAs } from '../../../test/http.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * The kiosk punch, as the worker meets it:
@@ -73,6 +74,7 @@ describe('the punch, said back', () => {
   });
 
   it('a clock-in says the shift, how late, the meal break and the week; a break shows its own time', async () => {
+    pinMidweekNoon();
     const w = await worker();
     const startsAt = new Date(Date.now() - 12 * 60_000);
     await prisma.shift.create({

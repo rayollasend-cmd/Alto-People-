@@ -12,6 +12,7 @@ import { flushPendingNotifications } from '../../lib/notify.js';
 import { setTenantProfile, invalidateTenantProfile } from '../../lib/tenantProfile.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { startOfWeekUTC } from '../../lib/timeAnomalies.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * BEYOND — the pay ↔ bill link: retro pay rebilled by contract, premiums
@@ -342,6 +343,7 @@ describe('margin per paycheck and the reconciliation', () => {
 
 describe('running payroll cost per store', () => {
   it('this week so far at each store, loaded with the burden, inside the caller’s reach', async () => {
+    pinMidweekNoon();
     const client = await createClient('Coastal');
     const s1 = await prisma.site.create({ data: { clientId: client.id, name: 'Coastal 1' } });
     const s2 = await prisma.site.create({ data: { clientId: client.id, name: 'Coastal 2' } });
@@ -390,6 +392,7 @@ describe('continuous net pay', () => {
   });
 
   it('on the associate’s pay hero and in the clock-out push', async () => {
+    pinMidweekNoon();
     const ana = await createAssociate();
     await prisma.w4Submission.create({ data: { associateId: ana.id, filingStatus: 'SINGLE' } });
     const { user } = await createUser({ role: 'ASSOCIATE', associateId: ana.id });

@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { agent, loginAs } from '../../../test/http.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * F500 G5, the ops manager's and the line manager's homes:
@@ -116,6 +117,7 @@ describe('GET /workforce/overview — the per-store board and the week behind th
   });
 
   it("keeps a store later today on the board, and a store-bound supervisor's week to their store", async () => {
+    pinMidweekNoon();
     const now = Date.now();
     const mine = await createClient('Mine');
     const theirs = await createClient('Theirs');

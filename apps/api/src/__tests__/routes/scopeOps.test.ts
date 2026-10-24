@@ -3,6 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createUser, prisma, truncateAll } from '../../../test/db.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 
 /**
  * Reach on the operations, compliance and executive surfaces. One tenant,
@@ -93,6 +94,7 @@ describe('scheduling', () => {
   });
 
   it('floor, targets, OT outlook and store trends never show a store out of reach', async () => {
+    pinMidweekNoon();
     const floor = await w.scoped.get('/scheduling/floor-now');
     expect(floor.status).toBe(200);
     expect(floor.body.rows.map((r: { locationId: string }) => r.locationId)).not.toContain(w.s);
