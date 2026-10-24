@@ -267,6 +267,11 @@ export default defineConfig({
           if (id.includes('/recharts/') || id.includes('/d3-')) {
             return 'recharts';
           }
+          // Product analytics (lib/analytics), under names content blockers
+          // don't match: "posthog-recorder" and "dead-clicks-autocapture" are
+          // on their lists. The recorder stays its own chunk (office staff only).
+          if (id.includes('/node_modules/posthog-js/dist/posthog-recorder')) return 'usage-replay';
+          if (id.includes('/node_modules/posthog-js/') || id.includes('/node_modules/@posthog/')) return 'usage';
           // ECharts (the flow, calendar and treemap figures) and its
           // renderer: only the pages that draw one ever fetch it.
           if (id.includes('/node_modules/echarts/') || id.includes('/node_modules/zrender/')) {

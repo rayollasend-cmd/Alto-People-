@@ -726,7 +726,16 @@ function W2GenerateDrawer({
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof generateW2s>> | null>(null);
 
+  // A W-2 year is a finished year: 2000 up to this one (a typo like 20255
+  // used to reach the API and come back as a bare validation error).
+  const thisYear = new Date().getFullYear();
+  const yearValid = /^\d{4}$/.test(taxYear.trim()) && Number(taxYear) >= 2000 && Number(taxYear) <= thisYear;
+
   const onGenerate = async () => {
+    if (!yearValid) {
+      toast.error(`Enter a tax year from 2000 to ${thisYear}.`);
+      return;
+    }
     setRunning(true);
     try {
       const r = await generateW2s({
@@ -760,8 +769,11 @@ function W2GenerateDrawer({
           <Input
             type="number"
             className="mt-1"
+            min={2000}
+            max={thisYear}
             value={taxYear}
             onChange={(e) => setTaxYear(e.target.value)}
+            aria-invalid={!yearValid || undefined}
           />
         </div>
         <div>

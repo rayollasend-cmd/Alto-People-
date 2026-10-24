@@ -628,6 +628,13 @@ function PersonalDrawer({ profile, onClose, onSaved }: { profile: SelfProfile; o
       toast.error(t('me.personal.nameRequired'));
       return;
     }
+    // The API takes 12345 or 12345-6789; a ZIP+4 typed (or filled in by the
+    // address lookup) without its dash is fixed here rather than refused there.
+    const zipValue = zip.trim() ? normalizeZip(zip) : null;
+    if (zip.trim() && !zipValue) {
+      toast.error(t('me.zipInvalid'));
+      return;
+    }
     setSaving(true);
     try {
       if (nameChanged) {
@@ -640,7 +647,7 @@ function PersonalDrawer({ profile, onClose, onSaved }: { profile: SelfProfile; o
         addressLine2: addressLine2.trim() || null,
         city: city.trim() || null,
         state: stateCode || null,
-        zip: zip.trim() || null,
+        zip: zipValue,
       });
       // The organization may ask HR to confirm an address change first (202).
       toast.success(isPending(r) ? t('me.pendingApproval') : t('me.profileUpdated'));
@@ -1940,4 +1947,12 @@ function TaxDocsPanel({
       </CardContent>
     </Card>
   );
+}
+
+/** "32541", "32541-1234", or nine digits in a row (ZIP+4 without its dash) — null when it can't be a US ZIP. */
+export function normalizeZip(raw: string): string | null {
+  const d = raw.replace(/[\s-]/g, '');
+  if (/^\d{5}$/.test(d)) return d;
+  if (/^\d{9}$/.test(d)) return `${d.slice(0, 5)}-${d.slice(5)}`;
+  return null;
 }

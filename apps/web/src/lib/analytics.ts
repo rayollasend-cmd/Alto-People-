@@ -24,6 +24,7 @@
 import type { CaptureResult, PostHog, PostHogConfig } from 'posthog-js';
 import type { Role } from '@alto-people/shared';
 import { isNative, nativePlatform } from '@/lib/native/platform';
+import { loadOptionalChunk } from '@/lib/chunkLoading';
 
 const KEY = import.meta.env.VITE_POSTHOG_KEY as string | undefined;
 /** The API's relay to PostHog's US cloud (apps/api/src/routes/analyticsRelay.ts). */
@@ -230,7 +231,10 @@ export function initAnalytics(): void {
   if (isUntrackedPath(window.location.pathname)) return;
   const start = () => {
     const idle = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
-    const load = () => void loadAnalytics(KEY);
+    // Best-effort: a blocked or failed load leaves the app exactly as it was.
+    const load = () => {
+      loadAnalytics(KEY).catch(() => {});
+    };
     if (idle) idle(load, { timeout: 5000 });
     else window.setTimeout(load, 2000);
   };
@@ -239,12 +243,14 @@ export function initAnalytics(): void {
 }
 
 async function loadAnalytics(key: string): Promise<void> {
-  const [{ default: posthog }] = await Promise.all([
-    import('posthog-js/no-external'),
-    // The two extensions PostHog would otherwise fetch from its CDN.
-    import('posthog-js/dist/web-vitals'),
-    import('posthog-js/dist/dead-clicks-autocapture'),
-  ]);
+  const [{ default: posthog }] = await loadOptionalChunk(() =>
+    Promise.all([
+      import('posthog-js/no-external'),
+      // The two extensions PostHog would otherwise fetch from its CDN.
+      import('posthog-js/dist/web-vitals'),
+      import('posthog-js/dist/dead-clicks-autocapture'),
+    ]),
+  );
   posthog.init(key, POSTHOG_CONFIG);
   attachAnalyticsClient(posthog);
 }
@@ -307,12 +313,18 @@ function applyRecording(): void {
     return;
   }
   // The recorder (rrweb) is only ever downloaded for office staff.
-  recorder ??= import('posthog-js/dist/posthog-recorder');
-  void recorder.then(() => {
-    // The page or the person may have changed while the chunk loaded.
-    if (client === c && wantsRecording() && !recordingOn) {
-      c.startSessionRecording();
-      recordingOn = true;
-    }
-  });
+  recorder ??= loadOptionalChunk(() => import('posthog-js/dist/posthog-recorder'));
+  recorder.then(
+    () => {
+      // The page or the person may have changed while the chunk loaded.
+      if (client === c && wantsRecording() && !recordingOn) {
+        c.startSessionRecording();
+        recordingOn = true;
+      }
+    },
+    () => {
+      // Blocked or offline: no recording, and the next page tries again.
+      recorder = null;
+    },
+  );
 }

@@ -827,15 +827,21 @@ opsRouter.get('/open-options', RUN, async (req, res, next) => {
      * clock, which is how an afternoon supervisor ends up holding the
      * morning standard.
      */
+    // An office account with no person record has no punch to read — and
+    // asking with '' for its id was a malformed UUID that failed the whole
+    // page (Sentry ALTO-PEOPLE-API-X).
+    const associateId = req.user!.associateId;
     const punchLocation =
       req.user!.locationId ??
-      (
-        await prisma.timeEntry.findFirst({
-          where: { associateId: req.user!.associateId ?? '', status: 'ACTIVE' },
-          select: { locationId: true },
-          orderBy: { clockInAt: 'desc' },
-        })
-      )?.locationId ??
+      (associateId
+        ? (
+            await prisma.timeEntry.findFirst({
+              where: { associateId, status: 'ACTIVE' },
+              select: { locationId: true },
+              orderBy: { clockInAt: 'desc' },
+            })
+          )?.locationId
+        : null) ??
       null;
     const ss = punchLocation
       ? await storeShiftAt(prisma, { userId: req.user!.id, locationId: punchLocation, at: now })

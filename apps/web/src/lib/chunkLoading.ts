@@ -85,6 +85,8 @@ function reloadOnceForNewBuild(): boolean {
 export function installStaleBuildGuard(): void {
   if (typeof window === 'undefined') return;
   window.addEventListener('vite:preloadError', (event) => {
+    // An optional chunk's failure belongs to its caller (loadOptionalChunk).
+    if (optionalLoads > 0) return;
     const payload = (event as Event & { payload?: unknown }).payload;
     const message = payload instanceof Error ? payload.message : String(payload ?? '');
     if ((STALE_BUILD.test(message) || /preload/i.test(message)) && reloadOnceForNewBuild()) {
@@ -92,10 +94,34 @@ export function installStaleBuildGuard(): void {
     }
   });
   window.addEventListener('unhandledrejection', (event) => {
+    if (optionalLoads > 0) return;
     const reason = event.reason;
     const message = reason instanceof Error ? reason.message : String(reason ?? '');
     if (STALE_BUILD.test(message) && reloadOnceForNewBuild()) event.preventDefault();
   });
+}
+
+let optionalLoads = 0;
+
+/**
+ * Load a chunk the app can live without — product analytics. Its failure
+ * (a content blocker matching the file, a dropped connection) rejects to
+ * the caller and never reloads the tab. Safari's "Importing a module
+ * script failed" names no file, so the guard can't tell an optional chunk
+ * from a stale one by the message; it stands aside while one is loading
+ * instead. (Without this, a blocked analytics chunk reloaded the sign-in
+ * page a few seconds after it opened — and Vite, told the error was
+ * handled, resolved the import to undefined.)
+ */
+export async function loadOptionalChunk<T>(load: () => Promise<T>): Promise<T> {
+  optionalLoads += 1;
+  try {
+    const mod = await load();
+    if (mod == null) throw new Error('optional chunk unavailable');
+    return mod;
+  } finally {
+    optionalLoads -= 1;
+  }
 }
 
 /** Wrap a dynamic import so the chrome can see it. */

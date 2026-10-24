@@ -1,5 +1,5 @@
 import type { NewHireReport, Prisma, PrismaClient } from '@prisma/client';
-import { decryptString } from './crypto.js';
+import { tryDecryptString } from './crypto.js';
 import { employerFor } from './employment.js';
 import { workStateOf } from './payNotices.js';
 import { tenantIdForWrite } from './tenant.js';
@@ -153,8 +153,15 @@ export async function buildNewHireRecords(
     // hire it employs, so the page says it once per employer, not on every row (F500 G3).
     const person: NewHirePersonGap[] = [];
     const employerGaps: NewHireEmployerGap[] = [];
+    // One unreadable SSN (rows encrypted before the 2026-06-11 key rotation)
+    // blocks that one hire with a way forward — it used to throw and take the
+    // whole report down with it.
+    const ssn = a.w4Submission?.ssnEncrypted ? tryDecryptString(a.w4Submission.ssnEncrypted) : null;
     if (!a.w4Submission?.ssnEncrypted) {
       reasons.push('No SSN on file');
+      person.push('ssn');
+    } else if (ssn === null) {
+      reasons.push("The SSN on file can't be read — collect the W-4 again");
       person.push('ssn');
     }
     if (!a.addressLine1 || !a.city || !a.state || !a.zip) {
@@ -181,7 +188,7 @@ export async function buildNewHireRecords(
       employerCity: employer.city ?? '',
       employerState: employer.state ?? '',
       employerZip: employer.zip ?? '',
-      ssn: decryptString(a.w4Submission!.ssnEncrypted!).replace(/\D/g, ''),
+      ssn: (ssn ?? '').replace(/\D/g, ''),
       firstName: a.firstName.trim(),
       lastName: a.lastName.trim(),
       address: a.addressLine1 ?? '',

@@ -731,6 +731,7 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'me.save': 'Salvar',
   'me.saveChanges': 'Salvar alterações',
   'me.saveFailed': 'Falha ao salvar.',
+  'me.zipInvalid': 'Digite um código postal (ZIP) de 5 dígitos, por exemplo 32541.',
   'me.saving': 'Salvando…',
   'me.sectionFailed': 'Falha ao carregar esta seção.',
   'me.settingsLink': 'Foto, senha e segurança',

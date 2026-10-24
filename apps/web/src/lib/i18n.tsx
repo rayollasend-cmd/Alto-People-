@@ -375,6 +375,7 @@ const en = {
   'me.cancel': 'Cancel',
   'me.saveChanges': 'Save changes',
   'me.saveFailed': 'Save failed.',
+  'me.zipInvalid': 'Enter a 5-digit ZIP code, like 32541.',
   'me.removeFailed': 'Failed to remove.',
   'me.deleteAria': 'Delete',
   'me.profileUpdated': 'Profile updated.',

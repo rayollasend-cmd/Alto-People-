@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { trackChunk } from '@/lib/chunkLoading';
+import { installStaleBuildGuard, loadOptionalChunk, trackChunk } from '@/lib/chunkLoading';
 
 /**
  * A deploy replaces every hashed bundle. A tab open across one asks for
@@ -68,5 +68,32 @@ describe('a page chunk that never arrives', () => {
   it('passes a loaded chunk straight through', async () => {
     await expect(trackChunk(() => Promise.resolve('page'))).resolves.toBe('page');
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+describe('an optional chunk (analytics) that never arrives', () => {
+  /** What Vite's preload wrapper does on a failed import: ask the page, then rethrow unless it was "handled". */
+  const vitePreload = (err: Error) => () => {
+    const e = new Event('vite:preloadError', { cancelable: true });
+    (e as Event & { payload?: unknown }).payload = err;
+    window.dispatchEvent(e);
+    if (!e.defaultPrevented) return Promise.reject(err);
+    return Promise.resolve(undefined);
+  };
+
+  installStaleBuildGuard();
+
+  it("rejects to its caller and never reloads the tab — Safari's message names no file", async () => {
+    await expect(loadOptionalChunk(vitePreload(new TypeError('Importing a module script failed.')))).rejects.toThrow('Importing a module script failed.');
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('still reloads for an ordinary chunk once no optional load is in flight', () => {
+    void vitePreload(new TypeError('Importing a module script failed.'))().catch(() => {});
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('turns an import that came back empty into an error, not a crash later', async () => {
+    await expect(loadOptionalChunk(() => Promise.resolve(undefined))).rejects.toThrow('optional chunk unavailable');
   });
 });

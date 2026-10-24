@@ -279,6 +279,23 @@ describe('new-hire reporting per state', () => {
     expect((await prisma.associate.findUniqueOrThrow({ where: { id: a.id } })).newHireReportedAt).not.toBeNull();
   });
 
+  it('an SSN the keyring cannot read blocks that one hire — with a way forward — and the report still loads (Sentry ALTO-PEOPLE-API-12)', async () => {
+    const { a } = await personAt('ME');
+    await prisma.associate.update({ where: { id: a.id }, data: { hireDate: new Date(Date.now() - 3 * 86_400_000), addressLine1: '2 Elm', city: 'Portland', zip: '04101' } });
+    // Bytes no key decrypts: a row from before the 2026-06-11 key rotation.
+    await prisma.w4Submission.create({ data: { associateId: a.id, filingStatus: 'SINGLE', multipleJobs: false, dependentsAmount: 0, otherIncome: 0, deductions: 0, extraWithholding: 0, ssnEncrypted: new Uint8Array([2, 9, ...Array.from({ length: 40 }, (_, i) => i)]) } });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const h = await loginAs(hr.email);
+
+    const list = await h.get('/pay-compliance/new-hire-reports');
+    expect(list.status).toBe(200);
+    expect(list.body.reports[0].blockedBy).toEqual(expect.arrayContaining(["The SSN on file can't be read — collect the W-4 again"]));
+    expect(list.body.reports[0].missing.person).toEqual(['ssn']);
+    // The state file leaves the blocked hire out rather than failing.
+    const csv = await h.get('/pay-compliance/new-hire-reports/file.csv?state=ME');
+    expect(csv.status).not.toBe(500);
+  });
+
   it('a multistate employer reports everyone to one state; only payroll PII exporters download SSNs', async () => {
     const { a } = await personAt('NY');
     await prisma.associate.update({ where: { id: a.id }, data: { hireDate: new Date() } });

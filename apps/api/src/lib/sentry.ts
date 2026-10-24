@@ -35,6 +35,15 @@ export function initSentry(): void {
     dsn: env.SENTRY_DSN,
     environment: env.NODE_ENV,
     tracesSampleRate: env.SENTRY_TRACES_SAMPLE_RATE,
+    integrations: [
+      // One place decides what is a server fault: middleware/error.ts. It
+      // answers a ZodError and a malformed id (Prisma P2023) with 400, an
+      // upload the phone abandoned with nothing, and reports everything
+      // else itself. Sentry 11's Express integration otherwise captures
+      // every error that carries no HTTP status — all of those — before
+      // that handler runs (ALTO-PEOPLE-API-8, -S, -14, -Y, -X, -T).
+      Sentry.expressIntegration({ shouldHandleError: false }),
+    ],
     // Don't capture noisy AbortError / ECONNRESET that happen when a
     // browser cancels an in-flight request. They're not errors, they're
     // user behaviour.
@@ -48,7 +57,9 @@ export function initSentry(): void {
       // message is all this error carries; the codes above never appear
       // in it. The error middleware also swallows it upstream, so this is
       // the backstop for anything captured elsewhere.
-      'request aborted',
+      // Case-insensitive: multer says "Request aborted" (capital R), which
+      // the plain string never matched.
+      /request aborted/i,
       // 4xx HttpErrors are expected (validation, auth) — we throw them
       // intentionally, no point reporting.
       'HttpError',

@@ -310,6 +310,7 @@ export const es: Record<MessageKey, string> = {
   'me.cancel': 'Cancelar',
   'me.saveChanges': 'Guardar cambios',
   'me.saveFailed': 'No se pudo guardar.',
+  'me.zipInvalid': 'Escriba un código postal de 5 dígitos, por ejemplo 32541.',
   'me.removeFailed': 'No se pudo eliminar.',
   'me.deleteAria': 'Eliminar',
   'me.profileUpdated': 'Perfil actualizado.',

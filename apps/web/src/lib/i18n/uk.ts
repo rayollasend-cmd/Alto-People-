@@ -731,6 +731,7 @@ export const uk: Partial<Record<MessageKey, string>> = {
   'me.save': 'Зберегти',
   'me.saveChanges': 'Зберегти зміни',
   'me.saveFailed': 'Не вдалося зберегти.',
+  'me.zipInvalid': 'Введіть 5-значний поштовий індекс, наприклад 32541.',
   'me.saving': 'Збереження…',
   'me.sectionFailed': 'Не вдалося завантажити цей розділ.',
   'me.settingsLink': 'Фото, пароль і безпека',

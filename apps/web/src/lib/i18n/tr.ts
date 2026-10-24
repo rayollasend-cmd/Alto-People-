@@ -730,6 +730,7 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'me.save': 'Kaydet',
   'me.saveChanges': 'Değişiklikleri kaydet',
   'me.saveFailed': 'Kaydedilemedi.',
+  'me.zipInvalid': '5 haneli bir posta kodu girin, örneğin 32541.',
   'me.saving': 'Kaydediliyor…',
   'me.sectionFailed': 'Bu bölüm yüklenemedi.',
   'me.settingsLink': 'Fotoğraf, şifre ve güvenlik',

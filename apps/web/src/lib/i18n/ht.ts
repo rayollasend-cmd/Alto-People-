@@ -731,6 +731,7 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'me.save': 'Sove',
   'me.saveChanges': 'Sove chanjman yo',
   'me.saveFailed': 'Sovgad la pa mache.',
+  'me.zipInvalid': 'Mete yon kòd postal 5 chif, tankou 32541.',
   'me.saving': 'Ap sove…',
   'me.sectionFailed': 'Nou pa t ka chaje seksyon sa a.',
   'me.settingsLink': 'Foto, modpas ak sekirite',
