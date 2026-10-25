@@ -46,7 +46,7 @@ export const enAppr = {
   'appr.pickTitle': 'Pick a queue',
   'appr.pickBody': 'Open a queue to work it here.',
   'appr.allQueues': 'All queues',
-  'appr.nothingIn': 'Nothing pending in {queue}',
+  'appr.nothingIn': '{queue}: nothing pending',
   'appr.nothingInBody': 'New requests land here as they arrive.',
   'appr.allRequests': 'Approval history',
   'appr.walkInsTitle': 'Walk-ins at the kiosk',

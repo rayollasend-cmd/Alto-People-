@@ -4843,7 +4843,7 @@ export const es: Record<MessageKey, string> = {
   'appr.pickTitle': 'Elige una cola',
   'appr.pickBody': 'Abre una cola para trabajarla aquí.',
   'appr.allQueues': 'Todas las colas',
-  'appr.nothingIn': 'Nada pendiente en {queue}',
+  'appr.nothingIn': '{queue}: nada pendiente',
   'appr.nothingInBody': 'Las nuevas solicitudes llegan aquí.',
   'appr.allRequests': 'Historial de aprobaciones',
   'appr.walkInsTitle': 'Sin turno en el quiosco',

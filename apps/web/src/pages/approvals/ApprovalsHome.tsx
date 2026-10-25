@@ -564,7 +564,7 @@ export function ApprovalsHome() {
         </Button>
       )}
       {openCount === 0 ? (
-        <EmptyState icon={CalendarCheck} title={t('appr.nothingIn', { queue: openLabel.toLowerCase() })} description={t('appr.nothingInBody')} />
+        <EmptyState icon={CalendarCheck} title={t('appr.nothingIn', { queue: openLabel })} description={t('appr.nothingInBody')} />
       ) : (
         panelFor(openQueue)
       )}
