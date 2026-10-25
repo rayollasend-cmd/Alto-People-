@@ -59,10 +59,15 @@ const longDay = (ymd: string, lang: WaLang) => {
   return new Intl.DateTimeFormat(locale, { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date(`${ymd}T12:00:00Z`));
 };
 
-export async function answerPayday(associateId: string, lang: WaLang, now: Date): Promise<string> {
+/**
+ * The next payday, or — when the person is on no pay schedule — only that
+ * fact (`scheduled: false`). Nothing is sent to anyone here: each channel
+ * decides what happens next (WhatsApp passes it on; the app offers to).
+ */
+export async function answerPayday(associateId: string, lang: WaLang, now: Date): Promise<{ text: string; scheduled: boolean }> {
   const p = await nextPaydayFor(associateId, now);
-  if (!p) return WA_REPLY.noPayday(lang);
-  return WA_REPLY.payday(lang, longDay(p.payDate, lang), `${longDay(p.periodStart, lang)} – ${longDay(p.periodEnd, lang)}`);
+  if (!p) return { text: WA_REPLY.noPayday(lang), scheduled: false };
+  return { text: WA_REPLY.payday(lang, longDay(p.payDate, lang), `${longDay(p.periodStart, lang)} – ${longDay(p.periodEnd, lang)}`), scheduled: true };
 }
 
 export async function answerRide(db: Db, associateId: string, lang: WaLang, now: Date): Promise<string> {
@@ -237,15 +242,24 @@ export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma,
       const { answerRenewals } = await import('./complianceAgent.js');
       return { intent, reply: await say((await answerRenewals(db, tenantIdForWrite(), associateId, lang, now)).reply), associateId };
     }
-    case 'PAYDAY':
-      return { intent, reply: await say(await answerPayday(associateId, lang, now)), associateId };
+    case 'PAYDAY': {
+      const pay = await answerPayday(associateId, lang, now);
+      if (pay.scheduled) return { intent, reply: await say(pay.text), associateId };
+      // No schedule to read: a person has to set one up, so the question goes
+      // to one — as any question Hugo can't answer does on WhatsApp. The reply
+      // says it was passed on only when it was.
+      const h = await handoff(db, associateId, user?.id ?? null, msg.text, now);
+      const next = h.conversationId ? WA_REPLY.handoff(lang, h.who) : WA_REPLY.handoffUnsent(lang);
+      return { intent, reply: await say(`${pay.text} ${next}`, 'HANDOFF', h.conversationId), associateId };
+    }
     case 'RIDE':
       return { intent, reply: await say(await answerRide(db, associateId, lang, now)), associateId };
     case 'SCHEDULE':
       return { intent, reply: await say(await answerSchedule(db, associateId, lang, now)), associateId };
     default: {
       const h = await handoff(db, associateId, user?.id ?? null, msg.text, now);
-      return { intent: 'HANDOFF', reply: await say(WA_REPLY.handoff(lang, h.who), 'HANDOFF', h.conversationId), associateId };
+      const reply = h.conversationId ? WA_REPLY.handoff(lang, h.who) : WA_REPLY.handoffUnsent(lang);
+      return { intent: 'HANDOFF', reply: await say(reply, 'HANDOFF', h.conversationId), associateId };
     }
   }
 }

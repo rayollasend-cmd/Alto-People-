@@ -92,6 +92,8 @@ async function reachSiteIds(user: Asker, tenantId: string): Promise<string[] | n
 interface Answer {
   reply: string;
   linkUrl: string | null;
+  /** An offer to pass the question to a person, which they confirm (POST /hugo/handoff). */
+  handoff?: { summary: string; who: string | null };
 }
 
 async function contextFor(user: Asker): Promise<{ tenantId: string; audience: HugoAudience; ctx: HugoContext; lang: WaLang; name: string; profile: Awaited<ReturnType<typeof loadTenantProfile>> }> {
@@ -199,7 +201,13 @@ function answerFor(intent: HugoIntentKey, user: Asker, tenantId: string, lang: W
     case 'RENEW':
       return () => answerRenewals(prisma, tenantId, user.associateId!, lang, now);
     case 'PAYDAY':
-      return async () => ({ reply: await answerPayday(user.associateId!, lang, now), linkUrl: '/payroll' });
+      return async () => {
+        const pay = await answerPayday(user.associateId!, lang, now);
+        if (pay.scheduled) return { reply: pay.text, linkUrl: '/payroll' };
+        // Nobody can answer this but a person: offer one; nothing is sent until they confirm.
+        const esc = await escalationFor(user);
+        return { reply: `${pay.text} ${passQuestion(lang, esc?.who ?? null)}`, linkUrl: null, handoff: { summary: NO_SCHEDULE_SUMMARY[lang], who: esc?.who ?? null } };
+      };
     case 'RIDE':
       return async () => ({ reply: await answerRide(prisma, user.associateId!, lang, now), linkUrl: '/rides' });
     case 'SCHEDULE':
@@ -248,11 +256,23 @@ function toolsFor(open: HugoIntent[], mk: (k: HugoIntentKey) => Runner | null): 
 
 /** The offer, in the person's language: nothing is sent until they confirm. */
 function handoffOffer(lang: WaLang, who: string | null): string {
-  const to = who ?? null;
-  if (lang === 'es') return to ? `Eso no lo puedo resolver aquí. ¿Quieres que se lo pase a ${to}?` : 'Eso no lo puedo resolver aquí. ¿Quieres que se lo pase a tu supervisor?';
-  if (lang === 'tr') return to ? `Bunu burada çözemiyorum. ${to} adlı kişiye iletmemi ister misin?` : 'Bunu burada çözemiyorum. Yöneticine iletmemi ister misin?';
-  return to ? `I can't sort that out here. Want me to pass it to ${to}?` : "I can't sort that out here. Want me to pass it to your supervisor?";
+  const lead = lang === 'es' ? 'Eso no lo puedo resolver aquí.' : lang === 'tr' ? 'Bunu burada çözemiyorum.' : "I can't sort that out here.";
+  return `${lead} ${passQuestion(lang, who)}`;
 }
+
+/** "Want me to pass it to …?" — the question half of an offer. */
+function passQuestion(lang: WaLang, who: string | null): string {
+  if (lang === 'es') return who ? `¿Quieres que se lo pase a ${who}?` : '¿Quieres que se lo pase a tu supervisor?';
+  if (lang === 'tr') return who ? `${who} adlı kişiye iletmemi ister misin?` : 'Yöneticine iletmemi ister misin?';
+  return who ? `Want me to pass it to ${who}?` : 'Want me to pass it to your supervisor?';
+}
+
+/** What reaches the supervisor when someone on no pay schedule confirms the offer. */
+const NO_SCHEDULE_SUMMARY: Record<WaLang, string> = {
+  en: 'There is no pay schedule on my record. When is my next payday?',
+  es: 'No hay un calendario de pago en mi registro. ¿Cuándo es mi próximo día de pago?',
+  tr: 'Kaydımda ödeme takvimi yok. Bir sonraki maaş günüm ne zaman?',
+};
 
 /** Who an associate's question would go to — their supervisor at their client, by name when there is one. */
 async function escalationFor(user: Asker): Promise<{ who: string | null } | null> {
@@ -392,8 +412,8 @@ async function rulesAnswer(
     };
   }
   const run = mk(intent as HugoIntentKey);
-  const out = run ? await run() : { reply: WA_REPLY.appIntro(lang, name, canList(tools, lang).map((c) => c.label.toLowerCase())), linkUrl: null };
-  return { intent, out, offer: null };
+  const out: Answer = run ? await run() : { reply: WA_REPLY.appIntro(lang, name, canList(tools, lang).map((c) => c.label.toLowerCase())), linkUrl: null };
+  return { intent, out, offer: user.associateId ? (out.handoff ?? null) : null };
 }
 
 /** The confirmed hand-off: the associate's question, as a thread with their supervisor. */
@@ -404,5 +424,5 @@ hugoRouter.post('/handoff', requireAuth, async (req, res) => {
   if (!user.associateId) throw new HttpError(403, 'no_handoff', 'Only a worker\'s question can be passed to their supervisor.');
   const hand = await handoff(prisma, user.associateId, user.id, text, new Date(), name);
   await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.handoff', entityType: 'User', entityId: user.id, metadata: { channel: 'app', sent: Boolean(hand.conversationId) } });
-  res.json({ reply: WA_REPLY.handoff(lang, hand.who), linkUrl: hand.conversationId ? `/messages/${hand.conversationId}` : hand.conversationId === null ? null : '/messages', sent: Boolean(hand.conversationId) });
+  res.json({ reply: hand.conversationId ? WA_REPLY.handoff(lang, hand.who) : WA_REPLY.handoffUnsent(lang), linkUrl: hand.conversationId ? `/messages/${hand.conversationId}` : hand.conversationId === null ? null : '/messages', sent: Boolean(hand.conversationId) });
 });

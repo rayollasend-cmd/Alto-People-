@@ -278,9 +278,9 @@ export const WA_REPLY = {
   noPayday: (lang: WaLang) =>
     say(
       {
-        en: `There is no pay schedule on your record yet. I have passed this to your ${manager('en')}.`,
-        es: `Aún no hay un calendario de pago en tu registro. Se lo pasé a tu ${manager('es')}.`,
-        tr: `Kaydında henüz bir ödeme takvimi yok. Bunu ${manager('tr')} adlı kişiye ilettim.`,
+        en: `There is no pay schedule on your record yet.`,
+        es: `Aún no hay un calendario de pago en tu registro.`,
+        tr: `Kaydında henüz bir ödeme takvimi yok.`,
       },
       lang,
     ),
@@ -317,6 +317,16 @@ export const WA_REPLY = {
         en: `Nothing is on your schedule yet. Open shifts you can pick up are in the ${app()} app.`,
         es: `Todavía no hay nada en tu horario. Los turnos abiertos que puedes tomar están en la app de ${app()}.`,
         tr: `Programında henüz bir şey yok. Alabileceğin açık vardiyalar ${app()} uygulamasında.`,
+      },
+      lang,
+    ),
+  /** A hand-off that reached nobody (no placement, no supervisor at the store): say so, never "I have passed this". */
+  handoffUnsent: (lang: WaLang) =>
+    say(
+      {
+        en: `I couldn't reach your ${manager('en')} from here. Please ask them in person.`,
+        es: `No pude contactar a tu ${manager('es')} desde aquí. Pregúntale en persona, por favor.`,
+        tr: `Buradan ${manager('tr')} ile iletişim kuramadım. Lütfen yüz yüze sor.`,
       },
       lang,
     ),

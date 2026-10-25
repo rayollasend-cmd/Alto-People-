@@ -251,6 +251,18 @@ describe('the assistant', () => {
     expect(boRow?.body).not.toContain('Server');
     expect(boRow?.language).toBe('en');
 
+    // Bo is on no pay schedule: only a person can fix that, so on WhatsApp
+    // the question goes to his supervisor — and the reply says it was passed
+    // on because it was (it used to say so while sending nothing).
+    await webhook(inbound('18505550202', 'when is payday?'));
+    await new Promise((r) => setTimeout(r, 400));
+    const boPay = await prisma.whatsAppMessage.findFirst({ where: { associateId: w.bo.id, kind: 'HANDOFF' }, orderBy: { createdAt: 'desc' } });
+    expect(boPay?.body).toContain('There is no pay schedule on your record yet.');
+    expect(boPay?.body).toContain('I have passed this to');
+    expect(boPay?.conversationId).not.toBeNull();
+    const boThread = await prisma.message.findFirst({ where: { conversationId: boPay!.conversationId! } });
+    expect(boThread?.body).toBe('[WhatsApp] when is payday?');
+
     // An unknown number gets no data and no reply — and, with no tenant to
     // file it under (Brief 2-1 §9.4), no record either.
     const sentBefore = sent.length;

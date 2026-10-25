@@ -73,6 +73,39 @@ describe('the assistant without a model', () => {
     expect(await prisma.conversation.count()).toBe(1);
   });
 
+  it('someone on no pay schedule is told so and offered a person — not told it was "passed on"', async () => {
+    const client = await createClient('Walmart 1234');
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Lopez' });
+    await prisma.application.create({ data: { associateId: ana.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date() } });
+    await prisma.associateAssignment.create({ data: { associateId: ana.id, locationId: site.id, startedAt: new Date() } });
+    const dana = await createAssociate({ firstName: 'Dana', lastName: 'Reyes' });
+    await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id, associateId: dana.id });
+    const { user } = await createUser({ role: 'ASSOCIATE', associateId: ana.id });
+    const agent = await loginAs(user.email);
+
+    const asked = await agent.post('/hugo/ask').send({ text: 'when is my next payday?' });
+    expect(asked.status).toBe(200);
+    expect(asked.body.intent).toBe('PAYDAY');
+    expect(asked.body.reply).toBe('There is no pay schedule on your record yet. Want me to pass it to Dana Reyes?');
+    expect(asked.body.reply).not.toMatch(/passed/i);
+    expect(asked.body.handoff).toEqual({ summary: 'There is no pay schedule on my record. When is my next payday?', who: 'Dana Reyes' });
+    expect(await prisma.conversation.count()).toBe(0);
+  });
+
+  it('a hand-off that reaches nobody says so instead of "I have passed this"', async () => {
+    // Placed nowhere: there is no supervisor to pass it to.
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Lopez' });
+    const { user } = await createUser({ role: 'ASSOCIATE', associateId: ana.id });
+    const agent = await loginAs(user.email);
+    const sent = await agent.post('/hugo/handoff').send({ text: 'my badge broke' });
+    expect(sent.status).toBe(200);
+    expect(sent.body.sent).toBe(false);
+    expect(sent.body.reply).toMatch(/^I couldn't reach your .+ from here\. Please ask them in person\.$/);
+    expect(sent.body.reply).not.toMatch(/passed/i);
+    expect(await prisma.conversation.count()).toBe(0);
+  });
+
   it('a staff account gets no hand-off offer', async () => {
     const agent = await loginAs('owner@example.com');
     const asked = await agent.post('/hugo/ask').send({ text: 'tell me a joke' });
