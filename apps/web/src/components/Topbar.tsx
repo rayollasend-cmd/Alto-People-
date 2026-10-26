@@ -25,6 +25,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
 import { useAssistant } from '@/lib/assistantContext';
 import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
+import { HugoBadge, useHugoBadgeLabel } from '@/components/assistant/HugoBadge';
 import { InstallAppButton } from './InstallAppButton';
 import { RoleSwitchItem, RoleSwitchSheet } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
@@ -530,6 +531,7 @@ export function backCrumbOf(crumbs: { label: string; to?: string }[] | null): { 
  */
 function AssistantButton() {
   const { available, me, open, toggle } = useAssistant();
+  const label = useHugoBadgeLabel(`Ask ${me?.name ?? ''}`);
   if (!available || !me) return null;
   return (
     <Tooltip>
@@ -538,20 +540,24 @@ function AssistantButton() {
           variant="ghost"
           size="icon-sm"
           onClick={toggle}
-          aria-label={`Ask ${me.name}`}
+          aria-label={label}
           aria-pressed={open}
           aria-keyshortcuts="Meta+J Control+J"
           data-tour="assistant"
           className={open ? 'text-accent' : undefined}
         >
-          {isHugo(me.name) ? (
-            // On a soft gold disc: navy on the navy bar needs the lift.
-            <span className="grid h-7 w-7 place-items-center rounded-full bg-accent-fill/20">
-              <HugoMascot pose="face" size={24} play="still" />
-            </span>
-          ) : (
-            <Sparkles className="h-5 w-5" aria-hidden="true" />
-          )}
+          <span className="relative grid h-7 w-7 place-items-center">
+            {isHugo(me.name) ? (
+              // On a soft gold disc: navy on the navy bar needs the lift.
+              <span className="grid h-7 w-7 place-items-center rounded-full bg-accent-fill/20">
+                <HugoMascot pose="face" size={24} play="still" />
+              </span>
+            ) : (
+              <Sparkles className="h-5 w-5" aria-hidden="true" />
+            )}
+            {/* What he has for you, and a soft ring while he works in the background. */}
+            <HugoBadge />
+          </span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom">

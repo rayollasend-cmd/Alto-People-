@@ -1,11 +1,20 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const askHugo = vi.fn();
 const handoffToPerson = vi.fn();
 const decideAssistantAction = vi.fn();
+const getHugoSummary = vi.fn();
+const listHugoTasks = vi.fn();
+const listHugoNotes = vi.fn();
+const startHugoTask = vi.fn();
+const respondToHugoTask = vi.fn();
+const cancelHugoTask = vi.fn();
+const acceptHugoNote = vi.fn();
+const dismissHugoNote = vi.fn();
+const markHugoSeen = vi.fn();
 vi.mock('@/lib/hugoApi', () => ({
   getHugo: vi.fn(async () => ({
     name: 'Hugo',
@@ -17,6 +26,15 @@ vi.mock('@/lib/hugoApi', () => ({
   askHugo: (...a: unknown[]) => askHugo(...a),
   handoffToPerson: (...a: unknown[]) => handoffToPerson(...a),
   decideAssistantAction: (...a: unknown[]) => decideAssistantAction(...a),
+  getHugoSummary: () => getHugoSummary(),
+  listHugoTasks: () => listHugoTasks(),
+  listHugoNotes: () => listHugoNotes(),
+  startHugoTask: (...a: unknown[]) => startHugoTask(...a),
+  respondToHugoTask: (...a: unknown[]) => respondToHugoTask(...a),
+  cancelHugoTask: (...a: unknown[]) => cancelHugoTask(...a),
+  acceptHugoNote: (...a: unknown[]) => acceptHugoNote(...a),
+  dismissHugoNote: (...a: unknown[]) => dismissHugoNote(...a),
+  markHugoSeen: (...a: unknown[]) => markHugoSeen(...a),
 }));
 vi.mock('@/lib/auth', () => ({
   useAuth: () => ({ user: { id: 'u1', role: 'ASSOCIATE', email: 'a@example.com' }, can: () => true }),
@@ -53,6 +71,11 @@ function mount() {
 beforeEach(() => {
   askHugo.mockReset();
   handoffToPerson.mockReset();
+  for (const f of [startHugoTask, respondToHugoTask, cancelHugoTask, acceptHugoNote, dismissHugoNote, markHugoSeen]) f.mockReset();
+  getHugoSummary.mockReset().mockResolvedValue({ working: 0, needsYou: 0, unseenDone: 0, newNotes: 0 });
+  listHugoTasks.mockReset().mockResolvedValue({ tasks: [] });
+  listHugoNotes.mockReset().mockResolvedValue({ notes: [] });
+  markHugoSeen.mockResolvedValue({ tasks: 0, notes: 0 });
   window.sessionStorage.clear();
 });
 
@@ -225,3 +248,164 @@ describe('Hugo, the agent', () => {
     expect(screen.queryByTestId('hugo-launcher')).toBeNull();
   });
 });
+
+/* ------------------------------------------------- Hugo works for you */
+
+const T1 = '11111111-1111-4111-8111-111111111111';
+const N1 = '22222222-2222-4222-8222-222222222222';
+const iso = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
+
+function coverTask(over: Record<string, unknown> = {}) {
+  return {
+    id: T1,
+    kind: 'FIND_COVER',
+    status: 'NEEDS_YOU',
+    needs: 'NO_ONE_LEFT',
+    choices: ['KEEP_TRYING', 'ASK_SUPERVISOR', 'STOP'],
+    subject: { shift: { id: 's1', startsAt: '2026-10-31T11:00:00.000Z', endsAt: '2026-10-31T19:00:00.000Z', timezone: 'America/New_York', site: 'Walmart 1234', position: 'Cashier' } },
+    progress: { done: 2, total: 2 },
+    result: null,
+    linkUrl: '/scheduling',
+    source: 'chat',
+    seen: false,
+    createdAt: iso(-3),
+    updatedAt: iso(-1),
+    completedAt: null,
+    expiresAt: iso(40),
+    events: [
+      { id: 'e1', code: 'STARTED', data: {}, at: iso(-3) },
+      { id: 'e2', code: 'ASKED', data: { name: 'Cy D.' }, at: iso(-3) },
+      { id: 'e3', code: 'DECLINED', data: { name: 'Cy D.' }, at: iso(-2) },
+      { id: 'e4', code: 'ASKED', data: { name: 'Ben M.' }, at: iso(-2) },
+      { id: 'e5', code: 'NO_ANSWER', data: { name: 'Ben M.' }, at: iso(-1) },
+      { id: 'e6', code: 'NO_ONE_LEFT', data: { asked: 2 }, at: iso(-1) },
+    ],
+    ...over,
+  };
+}
+
+function Where() {
+  const loc = useLocation();
+  return <span data-testid="where">{loc.pathname + loc.search}</span>;
+}
+
+function mountAt(path: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>
+        <AssistantProvider>
+          <Opener />
+          <Where />
+          <AssistantPane />
+        </AssistantProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('Hugo works for you', () => {
+  it('a Start card hands him the work — nothing starts until the tap — and points to the Tasks tab', async () => {
+    askHugo.mockResolvedValue({ intent: 'TASK_TELL_ME_WHEN', reply: 'I can take care of that.', linkUrl: null, handoff: null, source: 'rules', offers: [{ task: { kind: 'WATCH_PAYCHECK' }, subject: {} }] });
+    const started = { ...coverTask(), id: T1, kind: 'WATCH_PAYCHECK', status: 'WAITING', needs: null, choices: [], subject: {}, progress: null, seen: true, events: [{ id: 'e1', code: 'STARTED', data: {}, at: iso(0) }] };
+    startHugoTask.mockResolvedValue({ task: started, existing: false });
+    mount();
+    fireEvent.click(await screen.findByText('seat'));
+    const card = await screen.findByRole('group', { name: 'Task to start: Your next paycheck' });
+    expect(card).toHaveTextContent('I’ll tell you when your pay is in and your paystub is ready.');
+    expect(startHugoTask).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(startHugoTask).toHaveBeenCalledWith({ kind: 'WATCH_PAYCHECK' }, 'chat'));
+    await screen.findByText('On it — I’ll tell you when it’s done.');
+
+    listHugoTasks.mockResolvedValue({ tasks: [started] });
+    fireEvent.click(screen.getByRole('button', { name: 'See in Tasks' }));
+    expect(screen.getByRole('tab', { name: /Tasks/ })).toHaveAttribute('aria-selected', 'true');
+    const task = await screen.findByRole('article', { name: 'Your next paycheck' });
+    expect(task).toHaveAttribute('data-status', 'WAITING');
+    // The composer belongs to the chat.
+    expect(screen.queryByLabelText(/ask hugo/i)).toBeNull();
+  });
+
+  it('what needs the person: the badge, the reason, the answers on offer — and the steps he took', async () => {
+    getHugoSummary.mockResolvedValue({ working: 0, needsYou: 1, unseenDone: 0, newNotes: 0 });
+    listHugoTasks.mockResolvedValue({ tasks: [coverTask()] });
+    respondToHugoTask.mockResolvedValue({ task: coverTask({ status: 'WAITING', needs: null, choices: [] }) });
+    mount();
+    fireEvent.click(await screen.findByText('spark'));
+    const tab = await screen.findByRole('tab', { name: 'Tasks, 1 new' });
+    fireEvent.click(tab);
+    const card = await screen.findByRole('article', { name: /^Cover for Sat, Oct 31/ });
+    expect(card).toHaveTextContent('No one free could take it. You’re still on this shift.');
+    expect(card).toHaveTextContent('Asked 2 of 2');
+    expect(screen.getByRole('img', { name: 'New' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show steps (5)' }));
+    const steps = screen.getByRole('list', { name: 'What I did' });
+    expect(steps).toHaveTextContent('Asked Cy D.');
+    expect(steps).toHaveTextContent('Cy D. can’t take it');
+    expect(steps).toHaveTextContent('No answer from Ben M. — moved on');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Keep trying' }));
+    await waitFor(() => expect(respondToHugoTask).toHaveBeenCalledWith(T1, 'KEEP_TRYING'));
+    // Looking counts as seen — after a moment, so the dot is seen first.
+    await waitFor(() => expect(markHugoSeen).toHaveBeenCalledWith({ tasks: [T1], notes: [] }), { timeout: 3000 });
+  });
+
+  it('stopping asks first, and a cover search says the request is withdrawn and the shift stays theirs', async () => {
+    listHugoTasks.mockResolvedValue({ tasks: [coverTask({ status: 'WAITING', needs: null, choices: [], events: [{ id: 'e1', code: 'STARTED', data: {}, at: iso(-1) }, { id: 'e2', code: 'ASKED', data: { name: 'Cy D.' }, at: iso(-1) }] })] });
+    cancelHugoTask.mockResolvedValue({ task: coverTask({ status: 'CANCELLED', needs: null, choices: [] }) });
+    mount();
+    fireEvent.click(await screen.findByText('spark'));
+    fireEvent.click(await screen.findByRole('tab', { name: /Tasks/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Stop: Cover for/ }));
+    expect(await screen.findByText('I’ll withdraw the request I sent. You stay on the shift.')).toBeInTheDocument();
+    expect(cancelHugoTask).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop it' }));
+    await waitFor(() => expect(cancelHugoTask).toHaveBeenCalledWith(T1));
+  });
+
+  it('what he noticed: one tap to act, or put away', async () => {
+    listHugoNotes.mockResolvedValue({
+      notes: [
+        {
+          id: N1,
+          kind: 'OPEN_SHIFT_MATCH',
+          status: 'NEW',
+          data: { shift: { id: 'os1', startsAt: '2026-10-30T13:00:00.000Z', endsAt: '2026-10-30T21:00:00.000Z', timezone: 'America/New_York', site: 'Walmart 1234', position: 'Cashier' }, more: 0 },
+          action: { kind: 'link', url: '/marketplace?shift=os1' },
+          createdAt: iso(-1),
+        },
+      ],
+    });
+    acceptHugoNote.mockResolvedValue({ note: { id: N1 }, task: null, url: '/marketplace?shift=os1' });
+    dismissHugoNote.mockResolvedValue({ note: { id: N1 } });
+    mountAt('/me');
+    fireEvent.click(await screen.findByText('spark'));
+    fireEvent.click(await screen.findByRole('tab', { name: /Tasks/ }));
+    const note = await screen.findByRole('article', { name: 'An open shift fits you' });
+    expect(note).toHaveTextContent('Walmart 1234. Take it only if you want the hours.');
+    fireEvent.click(screen.getByRole('button', { name: 'See the shift' }));
+    await waitFor(() => expect(acceptHugoNote).toHaveBeenCalledWith(N1));
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/marketplace?shift=os1'));
+  });
+
+  it('a link to a task opens the pane on it, wherever it lands, and the link tidies itself away', async () => {
+    listHugoTasks.mockResolvedValue({ tasks: [coverTask()] });
+    mountAt(`/payroll?hugo=task:${T1}`);
+    const card = await screen.findByRole('article', { name: /^Cover for/ });
+    expect(screen.getByRole('tab', { name: /Tasks/ })).toHaveAttribute('aria-selected', 'true');
+    expect(card).toHaveClass('ring-2');
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/payroll$/));
+  });
+
+  it('says when he is working in the background', async () => {
+    getHugoSummary.mockResolvedValue({ working: 2, needsYou: 0, unseenDone: 0, newNotes: 0 });
+    mount();
+    fireEvent.click(await screen.findByText('spark'));
+    // A desktop opens with the cursor in the box (he is listening); idle, he says what he is busy with.
+    fireEvent.blur(await screen.findByLabelText(/ask hugo/i));
+    await waitFor(() => expect(screen.getByTestId('hugo-status')).toHaveTextContent('Working on 2 tasks for you'));
+  });
+});
+

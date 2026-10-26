@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, BookOpen, CalendarCheck, CalendarPlus, CheckCircle2, ClipboardList, Clock, FileSignature, FileUp, FileWarning, Inbox, MessageSquare, type LucideIcon } from '@/components/ui/icons';
+import { ArrowRight, BookOpen, CalendarCheck, CalendarPlus, CheckCircle2, ClipboardList, Clock, FileSignature, FileUp, FileWarning, Inbox, MessageSquare, Sparkles, type LucideIcon } from '@/components/ui/icons';
 import type { InboxSource } from '@alto-people/shared';
 import { useInbox } from '@/lib/inboxApi';
 import { getMyTraining } from '@/lib/lms94Api';
@@ -40,6 +40,7 @@ const ROW: Record<string, { icon: LucideIcon; label: MessageKey }> = {
   'my-shifts': { icon: CalendarCheck, label: 'needs.my-shifts' },
   'my-ot-offers': { icon: CalendarPlus, label: 'needs.my-ot-offers' },
   'my-training': { icon: BookOpen, label: 'needs.my-training' },
+  'hugo-tasks': { icon: Sparkles, label: 'needs.hugo-tasks' },
   messages: { icon: MessageSquare, label: 'needs.messages' },
 };
 

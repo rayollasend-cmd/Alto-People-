@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { internalSites } from '../lib/scope.js';
 import type { SessionUser } from '../types/express.js';
 import { z } from 'zod';
-import { ROLE_LABELS, termsIn, type Role, can, redactSensitiveNumbers } from '@alto-people/shared';
+import { HugoNoteSettingInputSchema, HugoSeenInputSchema, HugoTaskRespondInputSchema, HugoTaskStartSchema, ROLE_LABELS, termsIn, type HugoSummary, type Role, can, redactSensitiveNumbers } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -23,6 +23,10 @@ import { answerDriverNextRun, answerDriverRiders, answerDriverVanIssue } from '.
 import { helpCenterReply, helpCenterToolText, searchHelpCenter } from '../lib/helpCenterSearch.js';
 import { WA_REPLY, toWaLang, type WaLang } from '../lib/whatsappContent.js';
 import { ActionError, actionTools, decideAction, type ActionContext } from '../lib/assistantActions.js';
+import { hugoTaskTurn } from '../lib/hugoTaskChat.js';
+import { toHugoLang } from '../lib/hugoWorkCopy.js';
+import { cancelHugoTask, getHugoTask, hugoTaskCounts, listHugoTasks, markHugoTasksSeen, respondToHugoTask, startHugoTask } from '../lib/hugoTasks.js';
+import { acceptHugoNote, countNewHugoNotes, dismissHugoNote, hugoNoteSettings, listHugoNotes, markHugoNotesSeen, setHugoNoteKind } from '../lib/hugoNotes.js';
 
 /**
  * The assistant in the app (agent families step 3; docs/agent-families-investigation.md §4.5).
@@ -30,6 +34,20 @@ import { ActionError, actionTools, decideAction, type ActionContext } from '../l
  *   GET  /hugo          who it is and what it can do for this person, here
  *   POST /hugo/ask      { text, page?, history? } → { intent, reply, linkUrl, handoff?, source }
  *   POST /hugo/handoff  { text } → passes an associate's question to a person
+ *
+ *   Hugo works for you (lib/hugoTasks, lib/hugoNotes) — the caller's own rows only:
+ *   GET  /hugo/tasks                 open tasks and the last two weeks' finished ones
+ *   POST /hugo/tasks                 { task, source } → start one (the person's tap)
+ *   GET  /hugo/tasks/:id             one, with its trail
+ *   POST /hugo/tasks/:id/cancel      stop; what Hugo started is withdrawn
+ *   POST /hugo/tasks/:id/respond     { choice } → the answer to a NEEDS_YOU
+ *   GET  /hugo/notes                 what Hugo noticed, still true
+ *   POST /hugo/notes/:id/accept      the person's yes: a link, or a task started
+ *   POST /hugo/notes/:id/dismiss
+ *   GET  /hugo/notes/settings        which kinds of note are on
+ *   PUT  /hugo/notes/settings        { kind, on }
+ *   POST /hugo/seen                  { tasks?, notes? } → they looked
+ *   GET  /hugo/summary               the badge: working, needs you, done unseen, new notes
  *
  *   One registry (lib/hugo) answers on WhatsApp and here: an associate asks
  *   about their own payday, ride, schedule and documents; a desk asks about
@@ -118,11 +136,16 @@ async function contextFor(user: Asker): Promise<{ tenantId: string; audience: Hu
  * offer a question the registry has no runner for (a module off, a
  * capability paused, an intent added without an answer here).
  */
-function canList(tools: AssistantTool[], lang: WaLang) {
-  return tools.flatMap((tool) => {
+function canList(tools: AssistantTool[], lang: WaLang, ctx?: HugoContext) {
+  const fromTools = tools.flatMap((tool) => {
     const i = HUGO_INTENTS.find((x) => x.key === tool.key);
     return i?.help ? [{ key: i.key, label: i.help[lang].label, example: i.help[lang].example }] : [];
   });
+  // Work to hand Hugo (lib/hugoTaskChat) has no tool — the chat answers it with a Start card.
+  const tasks = ctx
+    ? intentsFor(ctx).flatMap((i) => (i.key.startsWith('TASK_') && i.help ? [{ key: i.key, label: i.help[lang].label, example: i.help[lang].example }] : []))
+    : [];
+  return [...tasks, ...fromTools];
 }
 
 /** The registry for one person, in one place: the runner per intent and the tools the model may call. */
@@ -290,7 +313,7 @@ hugoRouter.get('/', requireAuth, async (req, res) => {
   const user = req.user! as Asker;
   const { tenantId, audience, ctx, lang, name, profile } = await contextFor(user);
   const sitesNoun = termsIn(profile, lang).sites.toLowerCase();
-  const can = canList(registryFor(user, tenantId, lang, sitesNoun, new Date(), name, ctx).tools, lang);
+  const can = canList(registryFor(user, tenantId, lang, sitesNoun, new Date(), name, ctx).tools, lang, ctx);
   res.json({ name, audience, intro: WA_REPLY.appIntro(lang, name, can.map((c) => c.label.toLowerCase())), can, model: modelAvailable() });
 });
 
@@ -307,6 +330,16 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
   const terms = termsIn(profile, lang);
   const sitesNoun = terms.sites.toLowerCase();
   const { mk, tools } = registryFor(user, tenantId, lang, sitesNoun, now, name, ctx, text);
+
+  // Work handed to Hugo is answered with a Start card, the same with or
+  // without the model: what Hugo will do for someone is never a guess.
+  const taskTurn = await hugoTaskTurn(text, req.user!, ctx, toHugoLang(user.language), now);
+  if (taskTurn) {
+    await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent: taskTurn.intent, tools: [], source: 'rules', channel: 'app', audience, lang, offers: taskTurn.offers.map((o) => o.task.kind) } });
+    enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: taskTurn.intent, metadata: { intent: taskTurn.intent, tools: [], source: 'rules', channel: 'app', audience } }, 'hugo');
+    res.json({ intent: taskTurn.intent, reply: taskTurn.reply, linkUrl: null, handoff: null, source: 'rules', actions: [], tables: [], offers: taskTurn.offers, view: taskTurn.view ?? null });
+    return;
+  }
 
   let intent: string;
   let out: Answer;
@@ -357,7 +390,7 @@ hugoRouter.post('/ask', requireAuth, async (req, res) => {
   // On the assistant's trail and the audit log: the intent and the tools, never the words.
   await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.reply', entityType: 'User', entityId: user.id, metadata: { intent, tools: toolsUsed, source, channel: 'app', audience, lang } });
   enqueueAudit({ actorUserId: user.id, clientId: user.clientId, action: 'hugo.asked', entityType: 'Hugo', entityId: intent, metadata: { intent, tools: toolsUsed, source, channel: 'app', audience } }, 'hugo');
-  res.json({ intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source, actions: acting.proposals, tables: acting.tables });
+  res.json({ intent, reply: out.reply, linkUrl: out.linkUrl, handoff: offer, source, actions: acting.proposals, tables: acting.tables, offers: [], view: null });
 });
 
 const ConfirmSchema = z.object({ token: z.string().min(10).max(400), decision: z.enum(['confirm', 'cancel']).default('confirm') });
@@ -430,4 +463,94 @@ hugoRouter.post('/handoff', requireAuth, async (req, res) => {
   const hand = await handoff(prisma, user.associateId, user.id, text, new Date(), name);
   await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.app.handoff', entityType: 'User', entityId: user.id, metadata: { channel: 'app', sent: Boolean(hand.conversationId) } });
   res.json({ reply: hand.conversationId ? WA_REPLY.handoff(lang, hand.who) : WA_REPLY.handoffUnsent(lang), linkUrl: hand.conversationId ? `/messages/${hand.conversationId}` : hand.conversationId === null ? null : '/messages', sent: Boolean(hand.conversationId) });
+});
+
+/* ------------------------------------------------------- Hugo works for you */
+
+const IdParam = z.object({ id: z.string().uuid() });
+
+/** The work Hugo does for this person, here: the assistant on, and someone it serves. */
+async function worker(req: Express.Request): Promise<SessionUser> {
+  await contextFor(req.user! as Asker);
+  return req.user!;
+}
+
+hugoRouter.get('/tasks', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  res.json({ tasks: await listHugoTasks(user.id) });
+});
+
+hugoRouter.post('/tasks', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  const { task, source } = HugoTaskStartSchema.parse(req.body ?? {});
+  const out = await startHugoTask(user, task, source);
+  res.status(out.existing ? 200 : 201).json(out);
+});
+
+hugoRouter.get('/tasks/:id', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  const { id } = IdParam.parse(req.params);
+  res.json({ task: await getHugoTask(user.id, id) });
+});
+
+hugoRouter.post('/tasks/:id/cancel', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  const { id } = IdParam.parse(req.params);
+  res.json({ task: await cancelHugoTask(user, id) });
+});
+
+hugoRouter.post('/tasks/:id/respond', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  const { id } = IdParam.parse(req.params);
+  const { choice } = HugoTaskRespondInputSchema.parse(req.body ?? {});
+  res.json({ task: await respondToHugoTask(user, id, choice) });
+});
+
+hugoRouter.get('/notes', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  res.json({ notes: await listHugoNotes(user.id) });
+});
+
+hugoRouter.get('/notes/settings', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  res.json(await hugoNoteSettings(user));
+});
+
+hugoRouter.put('/notes/settings', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  const { kind, on } = HugoNoteSettingInputSchema.parse(req.body ?? {});
+  res.json(await setHugoNoteKind(user, kind, on));
+});
+
+hugoRouter.post('/notes/:id/accept', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  const { id } = IdParam.parse(req.params);
+  res.json(await acceptHugoNote(user, id));
+});
+
+hugoRouter.post('/notes/:id/dismiss', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  const { id } = IdParam.parse(req.params);
+  res.json({ note: await dismissHugoNote(user, id) });
+});
+
+hugoRouter.post('/seen', requireAuth, async (req, res) => {
+  const user = await worker(req);
+  const { tasks, notes } = HugoSeenInputSchema.parse(req.body ?? {});
+  const [t, n] = await Promise.all([markHugoTasksSeen(user.id, tasks ?? []), markHugoNotesSeen(user.id, notes ?? [])]);
+  res.json({ tasks: t, notes: n });
+});
+
+/**
+ * The badge. Polled by every signed-in screen, so it answers zeros — not
+ * an error — for someone the assistant doesn't serve or while it is off.
+ */
+hugoRouter.get('/summary', requireAuth, async (req, res) => {
+  const user = req.user!;
+  const zero: HugoSummary = { working: 0, needsYou: 0, unseenDone: 0, newNotes: 0 };
+  if (!hugoAudienceOf(user)) return void res.json(zero);
+  if (!(await inProcessAgent(prisma, 'whatsapp-assistant', tenantIdForWrite()))) return void res.json(zero);
+  const [tasks, newNotes] = await Promise.all([hugoTaskCounts(user.id), countNewHugoNotes(user.id)]);
+  const out: HugoSummary = { ...tasks, newNotes };
+  res.json(out);
 });

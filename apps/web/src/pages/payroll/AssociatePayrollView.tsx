@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { PALETTE, Sparkline } from '@/components/ui/charts';
 import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { toast } from 'sonner';
@@ -433,7 +433,14 @@ const FILING_STATUS_KEY: Record<MyW4['filingStatus'], MessageKey> = {
 
 function TaxAndPaySettings() {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
+  // /payroll#payout-method (Hugo's "add direct deposit" note) opens this and scrolls to the account.
+  const { hash } = useLocation();
+  const [open, setOpen] = useState(hash === '#payout-method');
+  useEffect(() => {
+    if (hash !== '#payout-method') return;
+    setOpen(true);
+    requestAnimationFrame(() => document.getElementById('payout-method')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }));
+  }, [hash]);
   return (
     <div className="mb-4 rounded-lg border border-navy-secondary bg-navy-secondary/20">
       <button
@@ -455,7 +462,9 @@ function TaxAndPaySettings() {
         <div className="space-y-4 border-t border-navy-secondary p-4">
           <div className="grid gap-4 md:grid-cols-2">
             <W4Card />
-            <PayoutMethodCard />
+            <div id="payout-method" className="scroll-mt-20">
+              <PayoutMethodCard />
+            </div>
           </div>
           <Link
             to="/me?tab=tax-docs"

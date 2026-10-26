@@ -1,6 +1,7 @@
 // Every English key, as a type only — no pack is loaded by importing this.
 import type { enCore } from './core';
 import type { enHugoPane } from './hugoPane';
+import type { enHugoWork } from './hugoWork';
 import type { enAddr } from './addr';
 import type { enAdminHome } from './adminHome';
 import type { enAgr } from './agr';
@@ -113,6 +114,7 @@ import type { enWhatsnew } from './whatsnew';
 export type EnglishKey =
   | keyof typeof enCore
   | keyof typeof enHugoPane
+  | keyof typeof enHugoWork
   | keyof typeof enAddr
   | keyof typeof enAdminHome
   | keyof typeof enAgr

@@ -6,7 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 /** A client account has no assistant: the app never asks GET /hugo for it (a refused request on every page load — F500 G5). */
 
 const getHugo = vi.fn(async () => ({ name: 'Hugo' }));
-vi.mock('@/lib/hugoApi', () => ({ getHugo: () => getHugo(), askHugo: vi.fn(), handoffToPerson: vi.fn(), decideAssistantAction: vi.fn() }));
+const getHugoSummary = vi.fn();
+vi.mock('@/lib/hugoApi', () => ({ getHugo: () => getHugo(), getHugoSummary: () => getHugoSummary(), askHugo: vi.fn(), handoffToPerson: vi.fn(), decideAssistantAction: vi.fn() }));
 vi.mock('@/lib/auth', () => ({
   useAuth: () => ({ user: { id: 'u1', role: 'CLIENT_PORTAL', email: 'store@example.com' }, can: () => false }),
 }));
@@ -31,5 +32,7 @@ describe('the assistant for a client account', () => {
     );
     expect(await screen.findByTestId('available')).toHaveTextContent('false');
     expect(getHugo).not.toHaveBeenCalled();
+    // Nor is the badge: no assistant, nothing to count.
+    expect(getHugoSummary).not.toHaveBeenCalled();
   });
 });

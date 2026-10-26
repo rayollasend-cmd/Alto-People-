@@ -8,6 +8,7 @@ export const enNeeds = {
   'needs.my-shifts': 'Shifts to confirm',
   'needs.my-training': 'Training due',
   'needs.my-notifications': 'Unread in your inbox',
+  'needs.hugo-tasks': 'Tasks waiting on you',
   'needs.messages': 'Unread messages',
   'needs.my-onboarding': 'Finish onboarding',
   'needs.my-leave-certification': 'Upload leave certification',

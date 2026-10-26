@@ -37,6 +37,8 @@ function connect(): void {
   es.addEventListener('message', () => dispatch('message'));
   // A van moved (a rider's, the desk's, a store's) — its map refetches now.
   es.addEventListener('transport', () => dispatch('transport'));
+  // Hugo's work moved (a task stepped, a note came or went) — the badge and the Tasks tab refetch.
+  es.addEventListener('hugo', () => dispatch('hugo'));
   es.onerror = () => {
     // EventSource retries by itself for transient blips; for hard
     // failures (auth expired, server down) it closes — reschedule with

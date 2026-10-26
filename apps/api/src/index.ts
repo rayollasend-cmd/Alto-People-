@@ -48,6 +48,8 @@ import { startPayrollAgentCron } from './lib/payrollAgent.js';
 import { startShiftAutofillCron } from './lib/shiftAutofill.js';
 import { startExecutiveDigestCron } from './lib/executiveDigest.js';
 import { startScheduleDigestCron } from './lib/scheduleDigest.js';
+import { installHugoTaskEvents, startHugoTasksCron } from './lib/hugoTasks.js';
+import { startHugoNotesCron } from './lib/hugoNotes.js';
 import { startReadyToWorkNudgeCron } from './lib/readyToWork.js';
 import { startWeekAheadCron } from './lib/weekAheadDigest.js';
 import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
@@ -177,6 +179,10 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startUploadsBackupCron();
   startShiftReminderCron();
   startScheduleDigestCron();
+  // Hugo works for you: tasks take their next step, notes stay current (lib/hugoTasks, lib/hugoNotes).
+  startHugoTasksCron();
+  startHugoNotesCron();
+  installHugoTaskEvents();
   startReadyToWorkNudgeCron();
   startExecutiveDigestCron();
   startExecutiveAlertsCron();

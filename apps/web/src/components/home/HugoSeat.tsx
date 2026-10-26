@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { Sparkles } from '@/components/ui/icons';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import type { HugoNoteView } from '@alto-people/shared';
+import { ArrowRight, Sparkles } from '@/components/ui/icons';
 import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
+import { HugoNoteCard } from '@/components/assistant/HugoNoteCard';
 import { ApiError } from '@/lib/api';
-import { askHugo, getHugo, type HugoAnswer } from '@/lib/hugoApi';
+import { acceptHugoNote, askHugo, dismissHugoNote, getHugo, listHugoNotes, type HugoAnswer } from '@/lib/hugoApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { useAssistant } from '@/lib/assistantContext';
 import { useAuth } from '@/lib/auth';
 import '@/lib/i18n/en/hugoSeat';
+import '@/lib/i18n/en/hugoWork';
 
 /**
  * Hugo's seat on a home (design system §4.1): the same place on every
@@ -20,7 +23,8 @@ import '@/lib/i18n/en/hugoSeat';
  * only what is switched on for this organization and this person (the
  * server's registry), takes a question, and answers in place. Switched
  * off, or nothing to offer: renders nothing, so the home never shows an
- * empty assistant.
+ * empty assistant. Under it, what he noticed for this person and what of
+ * his work needs them (HugoSeatWork) — the first place they look.
  */
 /** Roles the assistant has nothing for (the API answers 403): don't ask on every page. */
 const NO_ASSISTANT_ROLES: ReadonlySet<string> = new Set(['CLIENT_PORTAL']);
@@ -140,6 +144,7 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
             ))}
           </div>
         )}
+        {assistant.mounted && assistant.available && <HugoSeatWork name={me.data.name} />}
         {ask.error && <p className="text-sm text-negative">{ask.error instanceof ApiError ? ask.error.message : t('hugoSeat.failed')}</p>}
         {turn && (
           <div className="rounded-md border border-line bg-surface-raised/40 p-3 text-sm" aria-live="polite">
@@ -154,5 +159,70 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * What Hugo has for the person, on their home: the two newest things he
+ * noticed (each one tap to act on, or put away), and the tasks waiting on
+ * them — one tap opens the Tasks tab. Nothing to show: nothing rendered.
+ */
+function HugoSeatWork({ name }: { name: string }) {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { summary, openTasks } = useAssistant();
+  const notes = useQuery({ queryKey: ['hugo', 'notes'], queryFn: listHugoNotes, staleTime: 30_000, retry: false });
+  const [busy, setBusy] = useState<{ id: string; what: 'accept' | 'dismiss' } | null>(null);
+  const done = () => {
+    setBusy(null);
+    void queryClient.invalidateQueries({ queryKey: ['hugo'], predicate: (q) => q.queryKey[1] !== 'me' });
+  };
+  const accept = useMutation({
+    mutationFn: (n: HugoNoteView) => acceptHugoNote(n.id),
+    onMutate: (n) => setBusy({ id: n.id, what: 'accept' }),
+    onSuccess: (r) => {
+      if (r.task) openTasks(r.task.id);
+      else if (r.url) navigate(r.url);
+    },
+    onSettled: done,
+  });
+  const dismiss = useMutation({
+    mutationFn: (n: HugoNoteView) => dismissHugoNote(n.id),
+    onMutate: (n) => setBusy({ id: n.id, what: 'dismiss' }),
+    onSettled: done,
+  });
+  const shown = (notes.data?.notes ?? []).slice(0, 2);
+  const needsYou = summary?.needsYou ?? 0;
+  const working = summary?.working ?? 0;
+  if (!shown.length && !needsYou && !working) return null;
+  return (
+    <div className="space-y-2 lg:pl-[21.5rem]" data-testid="hugo-seat-work">
+      {shown.length > 0 && (
+        <>
+          <h3 className="text-xs font-medium uppercase tracking-wider text-ink-muted">{t('hugoWork.seat.noticed', { name })}</h3>
+          <ul className="grid gap-2 md:grid-cols-2">
+            {shown.map((n) => (
+              <li key={n.id}>
+                <HugoNoteCard note={n} compact busy={busy?.id === n.id ? busy.what : null} onAccept={() => accept.mutate(n)} onDismiss={() => dismiss.mutate(n)} />
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {(needsYou > 0 || working > 0) && (
+        <button
+          type="button"
+          onClick={() => openTasks()}
+          className="group flex min-h-11 w-full items-center gap-2 rounded-xl border border-line bg-surface-raised px-3 py-2 text-left text-sm text-ink transition-colors hover:border-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <span className="min-w-0 flex-1">
+            {needsYou > 0 ? (needsYou === 1 ? t('hugoWork.seat.needsOne') : t('hugoWork.seat.needsMany', { count: needsYou })) : working === 1 ? t('hugoWork.seat.workingOne', { name }) : t('hugoWork.seat.workingMany', { name, count: working })}
+          </span>
+          <span className="text-xs text-accent">{t('hugoWork.seat.open')}</span>
+          <ArrowRight className="h-4 w-4 shrink-0 text-ink-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }

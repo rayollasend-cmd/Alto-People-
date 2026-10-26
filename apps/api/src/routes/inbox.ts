@@ -9,6 +9,7 @@ import {
   type TenantModule,
 } from '@alto-people/shared';
 import { pendingTimeWhere, pendingTimeWindow } from '../lib/pendingTime.js';
+import { hugoAudienceOf } from '../lib/hugo.js';
 import { prisma } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { wotcFilingsDue } from './wotc.js';
@@ -1210,6 +1211,15 @@ const SOURCES: SourceDef[] = [
     // Company-wide money, like the desk itself (routes/contractors.ts).
     visible: (u) => can(u, 'process:payroll') && !isClientBoundedRole(u) && !isInternallyScoped(u),
     count: (u) => contractorsNeedingYou(prisma, u.id),
+  },
+  {
+    // Hugo works for you (lib/hugoTasks): a task only its person can take the next step on.
+    key: 'hugo-tasks',
+    label: 'Tasks waiting on you',
+    description: 'Work you handed the assistant that needs your answer to go on — cover not found, a document to upload again, shifts still unconfirmed.',
+    path: '/?hugo=tasks',
+    visible: (u) => hugoAudienceOf(u) !== null,
+    count: (u) => prisma.hugoTask.count({ where: { userId: u.id, status: 'NEEDS_YOU' } }),
   },
   {
     key: 'messages',

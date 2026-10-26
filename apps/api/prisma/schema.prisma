@@ -787,6 +787,9 @@ model User {
   goalsOwned                        Goal[]                        @relation("GoalOwner")
   leadBenchCreated                  LeadBenchCandidate[]          @relation("LeadBenchCreator")
   talentRatingsGiven                TalentRating[]                @relation("TalentRater")
+  hugoTasks                         HugoTask[]                    @relation("HugoTaskOwner")
+  hugoNotes                         HugoNote[]                    @relation("HugoNoteOwner")
+  hugoNoteMutes                     HugoNoteMute[]                @relation("HugoNoteMuter")
 
   @@index([role])
   @@index([clientId])
@@ -17012,5 +17015,103 @@ model ProductEventDaily {
 
   @@unique([day, role, kind])
   @@index([day])
+  @@index([tenantId])
+}
+
+/// Hugo works for you (lib/hugoTasks, packages/shared/src/hugoWork.ts): work a person handed
+/// the assistant with a tap — watch for a decision, a paycheck or an open shift and say when it
+/// comes; ask coworkers to cover a shift one at a time; chase tomorrow's unconfirmed shifts.
+/// kind / status / needs are the shared HUGO_TASK_* codes. Only its owner reads it.
+model HugoTask {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId      String    @db.Uuid
+  kind        String    @db.VarChar(32)
+  status      String    @default("WORKING") @db.VarChar(16)
+  needs       String?   @db.VarChar(32)
+  /// What the person asked for (HugoTaskCreateInput).
+  params      Json      @default("{}")
+  /// What it is about, captured at the start — the title is built from it.
+  subject     Json      @default("{}")
+  /// The engine's working memory: who was asked, what was already reported.
+  state       Json      @default("{}")
+  progress    Json?
+  result      Json?
+  linkUrl     String?   @db.VarChar(300)
+  /// panel | chat | note
+  source      String    @default("panel") @db.VarChar(8)
+  noteId      String?   @db.Uuid
+  /// The sweep picks it up from here; set to now to look again at once.
+  nextCheckAt DateTime  @default(now()) @db.Timestamptz(6)
+  /// A step in flight (the guarded claim); a stale claim is taken over.
+  claimedAt   DateTime? @db.Timestamptz(6)
+  /// When the person last looked at it since it finished or needed them.
+  seenAt      DateTime? @db.Timestamptz(6)
+  expiresAt   DateTime  @db.Timestamptz(6)
+  completedAt DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+
+  user   User            @relation("HugoTaskOwner", fields: [userId], references: [id], onDelete: Cascade)
+  events HugoTaskEvent[]
+
+  @@index([userId, status])
+  @@index([status, nextCheckAt])
+  @@index([tenantId])
+}
+
+/// A task's trail, one line per step (HUGO_TASK_EVENT_CODES); `data` names what the line names.
+model HugoTaskEvent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  taskId    String   @db.Uuid
+  code      String   @db.VarChar(32)
+  data      Json     @default("{}")
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  task HugoTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
+  @@index([tenantId])
+}
+
+/// Something Hugo noticed in a person's own records, with one thing it could do about it
+/// (lib/hugoNotes). One per person, kind and subject: a dismissed note stays dismissed.
+model HugoNote {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String    @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId     String    @db.Uuid
+  kind       String    @db.VarChar(32)
+  /// What it is about (a credential and its date, a shift, a payday) — the dedupe key.
+  subjectKey String    @db.VarChar(120)
+  data       Json      @default("{}")
+  /// NEW | SEEN | ACCEPTED | DISMISSED | EXPIRED
+  status     String    @default("NEW") @db.VarChar(12)
+  /// Sent to the lock screen (at most two a day per person).
+  pushedAt   DateTime? @db.Timestamptz(6)
+  seenAt     DateTime? @db.Timestamptz(6)
+  actedAt    DateTime? @db.Timestamptz(6)
+  expiresAt  DateTime  @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(6)
+
+  user User @relation("HugoNoteOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, subjectKey])
+  @@index([userId, status])
+  @@index([tenantId])
+}
+
+/// A kind of note the person turned off (Settings › Notifications).
+model HugoNoteMute {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  userId    String   @db.Uuid
+  kind      String   @db.VarChar(32)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation("HugoNoteMuter", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind])
   @@index([tenantId])
 }

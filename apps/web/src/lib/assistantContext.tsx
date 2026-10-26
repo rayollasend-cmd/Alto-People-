@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { HugoSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { getHugo, type AssistantPage, type HugoMe } from '@/lib/hugoApi';
+import { getHugo, getHugoSummary, type AssistantPage, type HugoMe } from '@/lib/hugoApi';
+import { onLiveEvent } from '@/lib/liveEvents';
 import { usePageTitle } from '@/lib/pageTitle';
 
 /**
@@ -18,7 +20,15 @@ import { usePageTitle } from '@/lib/pageTitle';
  *
  * Outside the provider (a test rendering one component) `useAssistant`
  * returns an inert value: the seat then answers in place, as it did.
+ *
+ * Hugo also works in the background (lib/hugoApi tasks and notes): the
+ * pane's Tasks tab, the badge on every way in (`summary`), and a link any
+ * notice can carry — `?hugo=tasks`, `?hugo=task:<id>`, `?hugo=notes`,
+ * `?hugo=chat` opens the pane there on whatever page it lands (a
+ * notification URL contract: keep these working).
  */
+
+export type AssistantTab = 'chat' | 'tasks';
 
 export interface AssistantRecord {
   type: string;
@@ -41,6 +51,15 @@ export interface AssistantValue {
   takeQueued: () => string | null;
   page: AssistantPage;
   setRecord: (record: AssistantRecord | null) => void;
+  tab: AssistantTab;
+  setTab: (tab: AssistantTab) => void;
+  /** Open the pane on its Tasks tab, with this task opened up. */
+  openTasks: (taskId?: string | null) => void;
+  /** The task a link or a card asked to show; the tab scrolls to it once. */
+  focusTaskId: string | null;
+  clearFocus: () => void;
+  /** What Hugo is doing in the background — the badge. Null until known. */
+  summary: HugoSummary | null;
 }
 
 const INERT: AssistantValue = {
@@ -54,6 +73,12 @@ const INERT: AssistantValue = {
   takeQueued: () => null,
   page: { path: '/' },
   setRecord: () => {},
+  tab: 'chat',
+  setTab: () => {},
+  openTasks: () => {},
+  focusTaskId: null,
+  clearFocus: () => {},
+  summary: null,
 };
 
 const AssistantContext = createContext<AssistantValue>(INERT);
@@ -61,8 +86,12 @@ const AssistantContext = createContext<AssistantValue>(INERT);
 export function AssistantProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const title = usePageTitle();
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<AssistantTab>('chat');
+  const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
   const [record, setRecord] = useState<AssistantRecord | null>(null);
   const queued = useRef<string | null>(null);
   const [queueTick, setQueueTick] = useState(0);
@@ -83,6 +112,47 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   });
   const available = Boolean(user) && !me.isError && Boolean(me.data);
 
+  // The badge: what Hugo has for the person. Polled gently; a live nudge
+  // (a task stepped, a note came) refetches it and the Tasks tab at once.
+  const summary = useQuery({
+    queryKey: ['hugo', 'summary'],
+    queryFn: getHugoSummary,
+    enabled: available,
+    refetchInterval: 90_000,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+  useEffect(() => {
+    if (!available) return;
+    const refresh = () => void queryClient.invalidateQueries({ queryKey: ['hugo'], predicate: (q) => q.queryKey[1] !== 'me' });
+    const offHugo = onLiveEvent('hugo', refresh);
+    // A notice from Hugo lands as a notification too.
+    const offBell = onLiveEvent('notification', () => void queryClient.invalidateQueries({ queryKey: ['hugo', 'summary'] }));
+    return () => {
+      offHugo();
+      offBell();
+    };
+  }, [available, queryClient]);
+
+  // ?hugo=tasks | task:<id> | notes | chat — open the pane there, then drop the parameter.
+  const hugoParam = new URLSearchParams(location.search).get('hugo');
+  useEffect(() => {
+    if (!hugoParam || !available) return;
+    if (hugoParam === 'chat') setTab('chat');
+    else {
+      setTab('tasks');
+      const m = /^task:([0-9a-f-]{36})$/i.exec(hugoParam);
+      setFocusTaskId(m ? m[1]! : null);
+    }
+    setOpen(true);
+    const next = new URLSearchParams(location.search);
+    next.delete('hugo');
+    const qs = next.toString();
+    navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '', hash: location.hash }, { replace: true });
+    // Once per link: the parameter is gone after this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hugoParam, available]);
+
   // A record belongs to the page that named it; leaving the page drops it.
   useEffect(() => {
     setRecord(null);
@@ -91,9 +161,16 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const toggle = useCallback(() => setOpen((o) => !o), []);
   const ask = useCallback((text: string) => {
     queued.current = text;
+    setTab('chat');
     setOpen(true);
     setQueueTick((t) => t + 1);
   }, []);
+  const openTasks = useCallback((taskId?: string | null) => {
+    setTab('tasks');
+    setFocusTaskId(taskId ?? null);
+    setOpen(true);
+  }, []);
+  const clearFocus = useCallback(() => setFocusTaskId(null), []);
   const takeQueued = useCallback(() => {
     const q = queued.current;
     queued.current = null;
@@ -119,10 +196,27 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<AssistantValue>(
-    () => ({ mounted: true, available, me: me.data ?? null, open: open && available, setOpen, toggle, ask, takeQueued, page, setRecord }),
+    () => ({
+      mounted: true,
+      available,
+      me: me.data ?? null,
+      open: open && available,
+      setOpen,
+      toggle,
+      ask,
+      takeQueued,
+      page,
+      setRecord,
+      tab,
+      setTab,
+      openTasks,
+      focusTaskId,
+      clearFocus,
+      summary: summary.data ?? null,
+    }),
     // queueTick is in the list so a repeated `ask` of the same text re-renders the pane.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [available, me.data, open, toggle, ask, takeQueued, page, queueTick],
+    [available, me.data, open, toggle, ask, takeQueued, page, queueTick, tab, openTasks, focusTaskId, clearFocus, summary.data],
   );
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;

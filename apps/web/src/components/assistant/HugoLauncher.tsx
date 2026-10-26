@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Sparkles } from '@/components/ui/icons';
 import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
 import { useAssistant } from '@/lib/assistantContext';
+import { HugoBadge, useHugoBadgeLabel } from './HugoBadge';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import '@/lib/i18n/en/hugoPane';
@@ -12,12 +13,14 @@ import '@/lib/i18n/en/hugoPane';
  * the button from md up); gone while the panel is open.
  *
  * It steps out of the way while the page scrolls down (the content under it
- * is what the person is reading) and comes back on the way up.
+ * is what the person is reading) and comes back on the way up — but not
+ * while something of Hugo's needs them (the badge stays in reach).
  */
 export function HugoLauncher() {
-  const { available, me, open, toggle } = useAssistant();
+  const { available, me, open, toggle, summary } = useAssistant();
   const { t } = useI18n();
   const [tucked, setTucked] = useState(false);
+  const label = useHugoBadgeLabel(t('hugoPane.ask', { name: me?.name ?? '' }));
 
   useEffect(() => {
     const scroller = document.querySelector('main');
@@ -39,23 +42,26 @@ export function HugoLauncher() {
     <button
       type="button"
       onClick={toggle}
-      aria-label={t('hugoPane.ask', { name: me.name })}
+      aria-label={label}
       data-testid="hugo-launcher"
       className={cn(
         'fixed right-4 z-30 grid h-14 w-14 place-items-center rounded-full border border-accent/50 bg-surface-raised shadow-lg shadow-black/30 md:hidden',
         'bottom-[calc(4.5rem+env(safe-area-inset-bottom))] transition-[transform,opacity] duration-200 active:scale-95',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-        tucked && 'pointer-events-none translate-y-6 opacity-0',
+        tucked && !summary?.needsYou && 'pointer-events-none translate-y-6 opacity-0',
       )}
     >
-      {hugo ? (
-        // On a soft gold disc, like the top bar's: navy on navy needs the lift.
-        <span className="grid h-12 w-12 place-items-center rounded-full bg-accent-fill/25">
-          <HugoMascot pose="face" size={42} />
-        </span>
-      ) : (
-        <Sparkles className="h-6 w-6 text-accent" aria-hidden="true" />
-      )}
+      <span className="relative grid h-12 w-12 place-items-center">
+        {hugo ? (
+          // On a soft gold disc, like the top bar's: navy on navy needs the lift.
+          <span className="grid h-12 w-12 place-items-center rounded-full bg-accent-fill/25">
+            <HugoMascot pose="face" size={42} />
+          </span>
+        ) : (
+          <Sparkles className="h-6 w-6 text-accent" aria-hidden="true" />
+        )}
+        <HugoBadge className="-right-1.5 -top-1.5" />
+      </span>
     </button>
   );
 }

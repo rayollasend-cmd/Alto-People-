@@ -108,6 +108,15 @@ export const NOTIFICATION_CATEGORIES = [
     audience: 'all',
   },
   {
+    key: 'assistant',
+    label: 'Assistant tasks and notes',
+    description:
+      'When a task you gave the assistant is done or needs you, and what it noticed for you. Which notes it raises is just below.',
+    mandatory: false,
+    // A client portal account has no assistant (the web never offers it one).
+    audience: 'staff',
+  },
+  {
     key: 'messages',
     label: 'Messages',
     description: 'New messages in your conversations and store channels.',
@@ -246,6 +255,9 @@ export function bucketForCategory(
   // portal.* buckets above are for CLIENT_PORTAL accounts, and these two go
   // to HR, Ops and the chairman.
   if (raw === 'portal.engagement_digest' || raw === 'kiosk_device_alert') return 'workplace';
+  // The assistant's own notices (lib/hugoTasks, lib/hugoNotes) — named
+  // hugo_*, never the audit action 'hugo.asked'.
+  if (raw.startsWith('hugo_')) return 'assistant';
   if (raw === 'discipline') return 'discipline';
   if (raw === 'probation') return 'probation';
   if (raw === 'security') return 'security';

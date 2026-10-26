@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { OutOfOfficeCard } from '@/components/OutOfOfficeCard';
 import { DeliveryCard } from '@/components/settings/DeliveryCard';
+import { HugoNotesCard } from '@/components/settings/HugoNotesCard';
 import { DevicesCard } from '@/components/settings/DevicesCard';
 import { PhonesCard } from '@/components/settings/PhonesCard';
 import { WhatsAppCard } from '@/components/WhatsAppCard';
@@ -182,6 +183,8 @@ export function Settings() {
       <SettingsSection id="notifications" title={t('settings.sec.notifications')} icon={Bell} open={open.has('notifications')} onToggle={toggle}>
         <NotificationsCard />
         <DeliveryCard />
+        {/* What Hugo points out on his own, kind by kind. */}
+        <HugoNotesCard />
         {user?.associateId && <WhatsAppCard />}
       </SettingsSection>
 

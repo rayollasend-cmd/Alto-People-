@@ -1,4 +1,16 @@
-import type { AgentProposalSummary } from '@alto-people/shared';
+import type {
+  AgentProposalSummary,
+  HugoNoteKind,
+  HugoNoteListResponse,
+  HugoNoteSettings,
+  HugoNoteView,
+  HugoSummary,
+  HugoTaskChoice,
+  HugoTaskCreateInput,
+  HugoTaskListResponse,
+  HugoTaskOffer,
+  HugoTaskView,
+} from '@alto-people/shared';
 import { apiFetch } from './api';
 
 /**
@@ -37,6 +49,10 @@ export interface HugoAnswer {
   actions?: AssistantActionCard[];
   /** Tables a numbers question produced (the report builder, within the person's reach). */
   tables?: AssistantTable[];
+  /** Work the person can hand Hugo: a Start card each — nothing starts until they tap it. */
+  offers?: HugoTaskOffer[];
+  /** The panel shows this tab (the person asked what Hugo is working on). */
+  view?: 'tasks' | null;
 }
 
 export interface AssistantActionCard {
@@ -94,4 +110,52 @@ export function handoffToPerson(text: string): Promise<{ reply: string; linkUrl:
 export function listProposals(filter: { status?: string } = {}): Promise<{ proposals: AgentProposalSummary[] }> {
   const q = filter.status ? `?status=${encodeURIComponent(filter.status)}` : '';
   return apiFetch<{ proposals: AgentProposalSummary[] }>(`/agents/proposals${q}`);
+}
+
+/* ------------------------------------------------- Hugo works for you */
+
+export function listHugoTasks(): Promise<HugoTaskListResponse> {
+  return apiFetch<HugoTaskListResponse>('/hugo/tasks');
+}
+
+/** The person's tap on Start. Asked twice, the same task comes back (`existing`). */
+export function startHugoTask(task: HugoTaskCreateInput, source: 'panel' | 'chat' | 'note' = 'panel'): Promise<{ task: HugoTaskView; existing: boolean }> {
+  return apiFetch('/hugo/tasks', { method: 'POST', body: { task, source } });
+}
+
+export function cancelHugoTask(id: string): Promise<{ task: HugoTaskView }> {
+  return apiFetch(`/hugo/tasks/${id}/cancel`, { method: 'POST', body: {} });
+}
+
+export function respondToHugoTask(id: string, choice: HugoTaskChoice): Promise<{ task: HugoTaskView }> {
+  return apiFetch(`/hugo/tasks/${id}/respond`, { method: 'POST', body: { choice } });
+}
+
+export function listHugoNotes(): Promise<HugoNoteListResponse> {
+  return apiFetch<HugoNoteListResponse>('/hugo/notes');
+}
+
+export function acceptHugoNote(id: string): Promise<{ note: HugoNoteView; task: HugoTaskView | null; url: string | null }> {
+  return apiFetch(`/hugo/notes/${id}/accept`, { method: 'POST', body: {} });
+}
+
+export function dismissHugoNote(id: string): Promise<{ note: HugoNoteView }> {
+  return apiFetch(`/hugo/notes/${id}/dismiss`, { method: 'POST', body: {} });
+}
+
+export function getHugoNoteSettings(): Promise<HugoNoteSettings> {
+  return apiFetch<HugoNoteSettings>('/hugo/notes/settings');
+}
+
+export function setHugoNoteKind(kind: HugoNoteKind, on: boolean): Promise<HugoNoteSettings> {
+  return apiFetch<HugoNoteSettings>('/hugo/notes/settings', { method: 'PUT', body: { kind, on } });
+}
+
+/** The person looked at these: they stop counting on the badge. */
+export function markHugoSeen(ids: { tasks?: string[]; notes?: string[] }): Promise<{ tasks: number; notes: number }> {
+  return apiFetch('/hugo/seen', { method: 'POST', body: ids });
+}
+
+export function getHugoSummary(): Promise<HugoSummary> {
+  return apiFetch<HugoSummary>('/hugo/summary');
 }

@@ -110,3 +110,4 @@ import './wf';
 import './whatsNewPage';
 import './whatsnew';
 import './hugoPane';
+import './hugoWork';

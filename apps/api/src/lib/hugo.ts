@@ -23,6 +23,10 @@ export type HugoIntentKey =
   | 'LANGUAGE'
   | 'WHO'
   | 'HELP'
+  | 'TASK_LIST'
+  | 'TASK_FIND_COVER'
+  | 'TASK_TELL_ME_WHEN'
+  | 'TASK_CHASE'
   | 'DESK'
   | 'COVERAGE'
   | 'RENEW'
@@ -73,6 +77,11 @@ const LANGS: Array<[RegExp, WaLang]> = [
 // "Who are you?" in three languages: the answer always says the product and that he is an AI.
 const WHO = /\b(who are you|what are you|are you (a |an )?(bot|robot|ai|human|real person|person)|is this a (bot|robot|person)|quien eres|que eres|eres (un|una) (bot|robot|persona|humano|ia)|kimsin|nesin|sen kimsin|bot musun|robot musun|insan misin)\b/;
 const HELP = /\b(help|what can you do|what do you do|ayuda|ayudame|que puedes hacer|que haces|yardim|neler yapabilirsin|ne yapabilirsin)\b/;
+// Hugo works for you (lib/hugoTaskChat): what it is doing, and work to hand it.
+const TASK_LIST = /\b(my tasks|your tasks|what are you working on|what('s| is) running|tasks? (status|list)|mis tareas|tus tareas|en que (estas )?trabajando|gorevlerim|gorevler|ne uzerinde calisiyorsun)\b/;
+const TASK_FIND_COVER = /\b(find (someone )?(to )?cover|cover (for )?my shift|cover me|swap my shift|trade my shift|give (away|up) my shift|someone (to )?take my shift|take my shift|can'?t (make|work) my shift|need (a )?cover|cubr\w* mi turno|cambiar mi turno|alguien (que )?(tome|cubra) mi turno|no puedo (ir|trabajar) (a )?mi turno|vardiyami? (devret\w*|degis\w*)|yerime (birini|biri)|vardiyama (birini|biri))\b/;
+const TASK_TELL_ME_WHEN = /\b(tell me when|let me know when|notify me when|ping me when|alert me when|text me when|keep an eye on|watch for|avisame cuando|dime cuando|notificame cuando|hazme saber cuando|bana haber ver|haber ver|olunca (bana )?(haber|bildir)\w*|ne zaman .* bildir\w*)\b/;
+const TASK_CHASE = /\b((chase|follow up( on)?|nudge|remind) .*(confirm\w*|unconfirmed)|unconfirmed (shifts? )?(for )?(tomorrow|today)|confirmations? (for )?(tomorrow|today)|who (hasn'?t|has not|didn'?t) confirm\w*|persigue .*confirm\w*|sin confirmar (para )?(manana|hoy)|onaylamayan\w*|onaylari takip)\b/;
 const DESK = /\b(waiting on me|my desk|my queue|to approve|approvals?|proposals?|pending|what are you doing|que estas haciendo|pendientes?|aprobar|bekleyen|bekliyor|onay\w*|ne yapiyorsun)\b/;
 const COVERAGE = /\b(coverage|covered|short|shortfall|staffing|staffed|understaffed|gaps?|cobertura|faltan?|falta gente|personal|eksik|kadro)\b/;
 const RENEW = /\b(renew\w*|expir\w*|my documents?|my papers|documents?|papers|renovar|vence\w*|vencid\w*|documentos?|papeles|yenile\w*|suresi|belge\w*)\b/;
@@ -106,6 +115,16 @@ export const HUGO_INTENTS: readonly HugoIntent[] = [
     },
     help: null,
   },
+  // "What are you working on" is the task list, not "what are you" (WHO).
+  {
+    key: 'TASK_LIST',
+    capability: null,
+    audiences: EVERYONE,
+    channels: ['app'],
+    requiresModule: null,
+    match: (t) => TASK_LIST.test(t),
+    help: null,
+  },
   { key: 'WHO', capability: null, audiences: EVERYONE, channels: ['whatsapp', 'app'], requiresModule: null, match: (t) => WHO.test(t), help: null },
   {
     key: 'HELP',
@@ -115,6 +134,35 @@ export const HUGO_INTENTS: readonly HugoIntent[] = [
     requiresModule: null,
     match: (t) => HELP.test(t),
     help: null,
+  },
+  // Hugo works for you: ahead of the record questions — "tell me when I get
+  // paid" is a task to hand over, not a question about payday.
+  {
+    key: 'TASK_FIND_COVER',
+    capability: null,
+    audiences: ['associate'],
+    channels: ['app'],
+    requiresModule: 'scheduling',
+    match: (t) => TASK_FIND_COVER.test(t),
+    help: h(['Find cover for a shift', 'Find someone to cover my shift'], ['Buscar quien cubra un turno', 'Busca a alguien que cubra mi turno'], ['Vardiyana birini bul', 'Vardiyamı devralacak birini bul']),
+  },
+  {
+    key: 'TASK_TELL_ME_WHEN',
+    capability: null,
+    audiences: ['associate'],
+    channels: ['app'],
+    requiresModule: null,
+    match: (t) => TASK_TELL_ME_WHEN.test(t),
+    help: h(['Tell me when…', 'Tell me when I get paid'], ['Avísame cuando…', 'Avísame cuando me paguen'], ['Bana haber ver…', 'Maaşım yatınca bana haber ver']),
+  },
+  {
+    key: 'TASK_CHASE',
+    capability: null,
+    audiences: STAFF,
+    channels: ['app'],
+    requiresModule: 'scheduling',
+    match: (t) => TASK_CHASE.test(t),
+    help: h(["Chase tomorrow's confirmations", "Chase tomorrow's unconfirmed shifts"], ['Perseguir las confirmaciones de mañana', 'Persigue los turnos sin confirmar de mañana'], ['Yarının onaylarını takip et', 'Yarının onaylanmamış vardiyalarını takip et']),
   },
   {
     key: 'DESK',

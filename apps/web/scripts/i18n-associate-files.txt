@@ -85,3 +85,10 @@ src/components/InstallPrompt.tsx
 src/components/ui/AddressAutocomplete.tsx
 src/components/assistant/AssistantPane.tsx
 src/components/assistant/HugoLauncher.tsx
+src/components/assistant/HugoTasksPanel.tsx
+src/components/assistant/HugoTaskCard.tsx
+src/components/assistant/HugoNoteCard.tsx
+src/components/assistant/HugoTaskOffer.tsx
+src/components/assistant/HugoBadge.tsx
+src/components/assistant/hugoWorkText.ts
+src/components/settings/HugoNotesCard.tsx

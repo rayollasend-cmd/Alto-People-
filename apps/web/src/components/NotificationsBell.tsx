@@ -19,6 +19,7 @@ import {
   MessageSquare,
   Plane,
   ShieldAlert,
+  Sparkles,
   Sunrise,
   TrendingUp,
   Wallet,
@@ -86,6 +87,8 @@ const BUCKET_ICON: Record<NotificationCategory, LucideIcon> = {
   discipline: ShieldAlert,
   probation: ShieldAlert,
   security: Lock,
+  // Hugo's own notices: a task done or needing you, something it noticed.
+  assistant: Sparkles,
   messages: MessageSquare,
   store_daily: Sunrise,
   store_alerts: AlertTriangle,
@@ -116,7 +119,7 @@ const SHOW_LIMIT = 50;
 
 /** Told, not asked: digests, announcements, earnings, paystubs and other
  *  "it's done" notices, the store's daily reads. */
-const FYI_CATEGORY = /digest|earnings|broadcast|announce|celebrat|kudos|week_ahead|whats_new|newsletter|recap|paystub|payslip|emailed|receipt|confirmed|_sent$/;
+const FYI_CATEGORY = /digest|earnings|broadcast|announce|celebrat|kudos|week_ahead|whats_new|newsletter|recap|paystub|payslip|emailed|receipt|confirmed|_sent$|hugo_task_done|hugo_note|request_closed/;
 const FYI_BUCKETS: ReadonlySet<NotificationCategory> = new Set(['broadcast', 'growth', 'store_daily', 'store_reports']);
 
 /**

@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { findSensitiveNumbers } from '@alto-people/shared';
+import { hugoBadgeCount, type HugoTaskOffer } from '@alto-people/shared';
 import {
+  ArrowLeftRight,
   ArrowRight,
   ArrowUp,
+  Bell,
   BookOpen,
   Bus,
   CalendarDays,
@@ -12,6 +15,7 @@ import {
   Copy,
   FileText,
   Inbox,
+  ListTodo,
   Lock,
   MessageSquare,
   Mic,
@@ -32,12 +36,16 @@ import { useAuth } from '@/lib/auth';
 import { useAssistant } from '@/lib/assistantContext';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import '@/lib/i18n/en/hugoPane';
+import '@/lib/i18n/en/hugoWork';
 import { askHugo, decideAssistantAction, handoffToPerson, type ActionResult, type AssistantActionCard, type AssistantTable, type AssistantTurn, type HugoAnswer } from '@/lib/hugoApi';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { cn } from '@/lib/cn';
 import { useSpeechInput, useSpeechOutput } from './useSpeech';
+import { HugoTaskOfferCard } from './HugoTaskOffer';
+import { HugoTasksPanel } from './HugoTasksPanel';
 
 /**
  * Hugo's panel: a column at the right that stays open while the person
@@ -57,7 +65,11 @@ import { useSpeechInput, useSpeechOutput } from './useSpeech';
  *    answer read back when they did (or always, from the menu);
  *  - "don't share your SSN or bank details here": a message carrying one is
  *    stopped before it is sent (shared/sensitiveText; the API strips any
- *    that get through).
+ *    that get through);
+ *  - he works while you do other things: the Tasks tab holds what you
+ *    handed him and what he noticed for you (HugoTasksPanel), a Start card
+ *    in the chat hands him something new, and the header says when he is
+ *    working in the background.
  */
 
 interface Turn {
@@ -74,6 +86,8 @@ interface Turn {
   /** What happened to each action, by id. */
   results?: Record<string, ActionResult>;
   tables?: AssistantTable[];
+  /** Work the answer offered to take on; each starts only on the person's tap. */
+  offers?: HugoTaskOffer[];
 }
 
 const KEY = (userId: string) => `alto:assistant:thread:${userId}`;
@@ -144,6 +158,10 @@ const ICON_OF: Record<string, LucideIcon> = {
   DRIVER_NEXT_RUN: Bus,
   DRIVER_RUN_RIDERS: Users,
   HANDOFF: MessageSquare,
+  TASK_FIND_COVER: ArrowLeftRight,
+  TASK_TELL_ME_WHEN: Bell,
+  TASK_CHASE: Users,
+  TASK_LIST: ListTodo,
 };
 
 const isPhone = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches;
@@ -151,7 +169,7 @@ const isPhone = () => typeof window !== 'undefined' && window.matchMedia?.('(max
 export function AssistantPane() {
   const { user, isOffline } = useAuth();
   const { t, lang } = useI18n();
-  const { available, me, open, setOpen, takeQueued, page } = useAssistant();
+  const { available, me, open, setOpen, takeQueued, page, tab, setTab, openTasks, summary } = useAssistant();
   const userId = user?.id ?? '';
   const [turns, setTurns] = useState<Turn[]>(() => (userId ? readThread(userId) : []));
   const [text, setText] = useState('');
@@ -185,8 +203,10 @@ export function AssistantPane() {
       setAskedAt(Date.now());
     },
     onSuccess: (a: HugoAnswer) => {
-      setTurns((x) => [...x, { id: `${Date.now()}-a`, role: 'assistant', text: a.reply, intent: a.intent, linkUrl: a.linkUrl, handoff: a.handoff ?? null, actions: a.actions ?? [], tables: a.tables ?? [] }]);
+      setTurns((x) => [...x, { id: `${Date.now()}-a`, role: 'assistant', text: a.reply, intent: a.intent, linkUrl: a.linkUrl, handoff: a.handoff ?? null, actions: a.actions ?? [], tables: a.tables ?? [], offers: a.offers ?? [] }]);
       setAnsweredAt(Date.now());
+      // "What are you working on?" — the answer is the Tasks tab.
+      if (a.view === 'tasks') setTab('tasks');
       setActiveAt(Date.now());
       if (askedByVoice.current || readAloud) voiceOut.speak(a.reply);
     },
@@ -299,9 +319,13 @@ export function AssistantPane() {
                   : now - activeAt > COFFEE_MS
                     ? 'coffee'
                     : 'ready';
-  const pose = POSE_OF[status];
+  const working = summary?.working ?? 0;
+  // Idle in front of you, busy behind the scenes: say so.
+  const background = working > 0 && (status === 'ready' || status === 'coffee');
+  const pose = background ? 'working' : POSE_OF[status];
   const heroPose: HugoPose = status === 'ready' && now - openedAt < HELLO_MS ? 'hello' : pose;
-  const statusText = t(`hugoPane.status.${status}` as MessageKey);
+  const statusText = background ? (working === 1 ? t('hugoWork.bg.one') : t('hugoWork.bg.many', { count: working })) : t(`hugoPane.status.${status}` as MessageKey);
+  const badge = hugoBadgeCount(summary);
   const hour = new Date(now).getHours();
   const greeting = user?.firstName
     ? t(hour < 12 ? 'hugoPane.greeting.morning' : hour < 18 ? 'hugoPane.greeting.afternoon' : 'hugoPane.greeting.evening', { name: user.firstName })
@@ -340,7 +364,7 @@ export function AssistantPane() {
       {/* Who he is and what he is doing, live. */}
       <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         {hugo ? (
-          <HugoMascot pose={turns.length ? pose : 'face'} size={52} eager className="-my-1" />
+          <HugoMascot pose={turns.length || background ? pose : 'face'} size={52} eager className="-my-1" />
         ) : (
           <span className="grid h-10 w-10 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
             <Sparkles className="h-5 w-5" />
@@ -353,7 +377,11 @@ export function AssistantPane() {
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-muted" aria-live="polite">
             <span
-              className={cn('h-2 w-2 shrink-0 rounded-full', status === 'offline' ? 'bg-negative' : status === 'coffee' ? 'bg-caution' : 'bg-positive', status !== 'ready' && status !== 'coffee' && status !== 'offline' && 'animate-pulse')}
+              className={cn(
+                'h-2 w-2 shrink-0 rounded-full',
+                status === 'offline' ? 'bg-negative' : status === 'coffee' && !background ? 'bg-caution' : 'bg-positive',
+                ((status !== 'ready' && status !== 'coffee' && status !== 'offline') || background) && 'animate-pulse',
+              )}
               aria-hidden="true"
             />
             <span className="truncate" data-testid="hugo-status">
@@ -395,224 +423,251 @@ export function AssistantPane() {
         <span className="truncate">{t('hugoPane.promise')}</span>
       </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4" aria-live="polite">
-        {turns.length === 0 && (
-          <div className="space-y-5">
-            <div className="flex flex-col items-center gap-2 text-center">
-              {hugo && <HugoMascot pose={heroPose} size={128} eager />}
-              <p className="font-display text-2xl text-ink">{greeting}</p>
-              <p className="max-w-[34ch] text-sm leading-relaxed text-ink-muted">{me.intro}</p>
-            </div>
-            {page.record && (
-              <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-muted">
-                {t('hugoPane.onRecord', { name: page.record.name, type: page.record.type })}
+      {/* What he says, and what he is doing for you. */}
+      <Tabs value={tab} onValueChange={(v) => setTab(v === 'tasks' ? 'tasks' : 'chat')} className="flex min-h-0 flex-1 flex-col">
+        <TabsList className="shrink-0 px-2" aria-label={name}>
+          <TabsTrigger value="chat" className="flex-1 sm:flex-none">
+            {t('hugoWork.tab.chat')}
+          </TabsTrigger>
+          <TabsTrigger value="tasks" className="flex-1 sm:flex-none" aria-label={badge ? t('hugoWork.tab.tasksCount', { count: badge }) : undefined} data-testid="hugo-tab-tasks">
+            {t('hugoWork.tab.tasks')}
+            {badge > 0 && (
+              <span className="ml-1.5 inline-grid min-w-5 place-items-center rounded-full bg-accent-fill px-1 text-xs font-semibold leading-5 text-on-accent" aria-hidden="true">
+                {badge > 9 ? '9+' : badge}
+              </span>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+          <TabsContent value="tasks" className="pt-0">
+            <HugoTasksPanel hugo={hugo} onNavigate={closeOnPhone} />
+          </TabsContent>
+          <TabsContent value="chat" className="pt-0" aria-live="polite">
+            {turns.length === 0 && (
+              <div className="space-y-5">
+                <div className="flex flex-col items-center gap-2 text-center">
+                  {hugo && <HugoMascot pose={heroPose} size={128} eager />}
+                  <p className="font-display text-2xl text-ink">{greeting}</p>
+                  <p className="max-w-[34ch] text-sm leading-relaxed text-ink-muted">{me.intro}</p>
+                </div>
+                {page.record && (
+                  <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-muted">
+                    {t('hugoPane.onRecord', { name: page.record.name, type: page.record.type })}
+                  </p>
+                )}
+                {me.can.length > 0 && (
+                  <div>
+                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-ink-muted">{t('hugoPane.tryAsking')}</h3>
+                    <ul className="space-y-2">
+                      {me.can.map((c) => {
+                        const Icon = ICON_OF[c.key] ?? Sparkles;
+                        return (
+                          <li key={c.key}>
+                            <button
+                              type="button"
+                              onClick={() => send(c.example)}
+                              disabled={ask.isPending}
+                              className="group flex min-h-12 w-full items-center gap-3 rounded-xl border border-line bg-surface-raised px-3 py-2 text-left text-sm text-ink transition-colors hover:border-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-60"
+                            >
+                              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent-fill/15 text-accent" aria-hidden="true">
+                                <Icon className="h-4 w-4" aria-hidden="true" />
+                              </span>
+                              <span className="min-w-0 flex-1">{c.example}</span>
+                              <ArrowRight className="h-4 w-4 shrink-0 text-ink-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+            <ol className="space-y-4">
+              {turns.map((turn, i) => {
+                const mine = turn.role === 'user';
+                const firstOfRun = !mine && turns[i - 1]?.role !== 'assistant';
+                return (
+                  <li key={turn.id} className={cn('flex gap-2', mine ? 'justify-end' : 'justify-start')}>
+                    {!mine && (
+                      <span className="w-7 shrink-0 pt-0.5" aria-hidden="true">
+                        {firstOfRun && (hugo ? <HugoMascot pose="face" size={28} play="still" /> : <Sparkles className="h-5 w-5 text-accent" />)}
+                      </span>
+                    )}
+                    <div className={cn('flex max-w-[86%] flex-col', mine ? 'items-end' : 'items-start')}>
+                      <div
+                        className={cn(
+                          'rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
+                          mine ? 'rounded-br-md bg-accent-fill/15 text-ink' : 'rounded-bl-md border border-line bg-surface-raised text-ink',
+                        )}
+                      >
+                        <p className="whitespace-pre-wrap">{turn.text}</p>
+                        {turn.linkUrl && (
+                          <Button asChild size="sm" variant="secondary" className="mt-2 h-8">
+                            <Link to={turn.linkUrl} onClick={closeOnPhone}>
+                              {t('hugoPane.open')}
+                              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                            </Link>
+                          </Button>
+                        )}
+                        {(turn.tables ?? []).map((tb) => (
+                          <AnswerTable key={tb.linkUrl} table={tb} onNavigate={closeOnPhone} />
+                        ))}
+                        {(turn.actions ?? []).map((card) => (
+                          <ActionCard
+                            key={card.id}
+                            card={card}
+                            result={turn.results?.[card.id] ?? null}
+                            busy={decide.isPending && decide.variables?.card.id === card.id}
+                            onDecide={(decision) => decide.mutate({ turnId: turn.id, card, decision })}
+                            onNavigate={closeOnPhone}
+                          />
+                        ))}
+                        {(turn.offers ?? []).map((offer, oi) => (
+                          <HugoTaskOfferCard key={`${offer.task.kind}-${oi}`} offer={offer} onSeeTasks={(id) => openTasks(id)} />
+                        ))}
+                        {turn.handoff && !turn.handoffSent && (
+                          <div className="mt-2">
+                            <Button size="sm" variant="outline" loading={handoff.isPending} onClick={() => handoff.mutate(turn.handoff!.summary)}>
+                              {turn.handoff.who ? t('hugoPane.sendTo', { who: turn.handoff.who }) : t('hugoPane.sendToSupervisor')}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                      {!mine && (
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-1 text-xs text-ink-muted">
+                          {turn.intent && SOURCED.has(turn.intent) && (
+                            <span className="inline-flex items-center gap-1">
+                              <ShieldCheck className="h-3.5 w-3.5 text-positive" aria-hidden="true" />
+                              {t(`hugoPane.source.${turn.intent}` as MessageKey)}
+                            </span>
+                          )}
+                          {voiceOut.supported && (
+                            <button type="button" className="inline-flex min-h-8 items-center gap-1 rounded px-1 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" onClick={() => voiceOut.speak(turn.text)}>
+                              <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+                              {t('hugoPane.listen')}
+                            </button>
+                          )}
+                          <button type="button" className="inline-flex min-h-8 items-center gap-1 rounded px-1 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" onClick={() => copy(turn)}>
+                            {copiedId === turn.id ? <Check className="h-3.5 w-3.5 text-positive" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                            {copiedId === turn.id ? t('hugoPane.copied') : t('hugoPane.copy')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+              {ask.isPending && (
+                <li className="flex justify-start gap-2">
+                  <span className="w-7 shrink-0" aria-hidden="true" />
+                  <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-line bg-surface-raised px-3.5 py-2.5 text-sm text-ink-muted">
+                    <span className="sr-only">{t('hugoPane.thinking', { name })}</span>
+                    <span aria-hidden="true">{statusText}</span>
+                    <span className="hugo-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </div>
+                </li>
+              )}
+            </ol>
+          </TabsContent>
+        </div>
+
+        {tab === 'chat' && (
+          <form
+            className="shrink-0 border-t border-line px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(text);
+            }}
+          >
+            {sensitive && (
+              <p role="alert" className="mb-2 flex items-start gap-1.5 rounded-lg border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-ink">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0 text-negative" aria-hidden="true" />
+                {t('hugoPane.privacy.blocked', { name })}
               </p>
             )}
-            {me.can.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-ink-muted">{t('hugoPane.tryAsking')}</h3>
-                <ul className="space-y-2">
-                  {me.can.map((c) => {
-                    const Icon = ICON_OF[c.key] ?? Sparkles;
-                    return (
-                      <li key={c.key}>
-                        <button
-                          type="button"
-                          onClick={() => send(c.example)}
-                          disabled={ask.isPending}
-                          className="group flex min-h-12 w-full items-center gap-3 rounded-xl border border-line bg-surface-raised px-3 py-2 text-left text-sm text-ink transition-colors hover:border-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-60"
-                        >
-                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent-fill/15 text-accent" aria-hidden="true">
-                            <Icon className="h-4 w-4" aria-hidden="true" />
-                          </span>
-                          <span className="min-w-0 flex-1">{c.example}</span>
-                          <ArrowRight className="h-4 w-4 shrink-0 text-ink-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
+            {voiceIn.error && (
+              <p role="status" className="mb-2 text-sm text-ink-muted">
+                {t(voiceIn.error === 'denied' ? 'hugoPane.mic.denied' : 'hugoPane.mic.noSpeech')}
+              </p>
             )}
-          </div>
-        )}
-        <ol className="space-y-4">
-          {turns.map((turn, i) => {
-            const mine = turn.role === 'user';
-            const firstOfRun = !mine && turns[i - 1]?.role !== 'assistant';
-            return (
-              <li key={turn.id} className={cn('flex gap-2', mine ? 'justify-end' : 'justify-start')}>
-                {!mine && (
-                  <span className="w-7 shrink-0 pt-0.5" aria-hidden="true">
-                    {firstOfRun && (hugo ? <HugoMascot pose="face" size={28} play="still" /> : <Sparkles className="h-5 w-5 text-accent" />)}
-                  </span>
-                )}
-                <div className={cn('flex max-w-[86%] flex-col', mine ? 'items-end' : 'items-start')}>
-                  <div
-                    className={cn(
-                      'rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
-                      mine ? 'rounded-br-md bg-accent-fill/15 text-ink' : 'rounded-bl-md border border-line bg-surface-raised text-ink',
-                    )}
-                  >
-                    <p className="whitespace-pre-wrap">{turn.text}</p>
-                    {turn.linkUrl && (
-                      <Button asChild size="sm" variant="secondary" className="mt-2 h-8">
-                        <Link to={turn.linkUrl} onClick={closeOnPhone}>
-                          {t('hugoPane.open')}
-                          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                        </Link>
-                      </Button>
-                    )}
-                    {(turn.tables ?? []).map((tb) => (
-                      <AnswerTable key={tb.linkUrl} table={tb} onNavigate={closeOnPhone} />
-                    ))}
-                    {(turn.actions ?? []).map((card) => (
-                      <ActionCard
-                        key={card.id}
-                        card={card}
-                        result={turn.results?.[card.id] ?? null}
-                        busy={decide.isPending && decide.variables?.card.id === card.id}
-                        onDecide={(decision) => decide.mutate({ turnId: turn.id, card, decision })}
-                        onNavigate={closeOnPhone}
-                      />
-                    ))}
-                    {turn.handoff && !turn.handoffSent && (
-                      <div className="mt-2">
-                        <Button size="sm" variant="outline" loading={handoff.isPending} onClick={() => handoff.mutate(turn.handoff!.summary)}>
-                          {turn.handoff.who ? t('hugoPane.sendTo', { who: turn.handoff.who }) : t('hugoPane.sendToSupervisor')}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  {!mine && (
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-1 text-xs text-ink-muted">
-                      {turn.intent && SOURCED.has(turn.intent) && (
-                        <span className="inline-flex items-center gap-1">
-                          <ShieldCheck className="h-3.5 w-3.5 text-positive" aria-hidden="true" />
-                          {t(`hugoPane.source.${turn.intent}` as MessageKey)}
-                        </span>
-                      )}
-                      {voiceOut.supported && (
-                        <button type="button" className="inline-flex min-h-8 items-center gap-1 rounded px-1 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" onClick={() => voiceOut.speak(turn.text)}>
-                          <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
-                          {t('hugoPane.listen')}
-                        </button>
-                      )}
-                      <button type="button" className="inline-flex min-h-8 items-center gap-1 rounded px-1 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" onClick={() => copy(turn)}>
-                        {copiedId === turn.id ? <Check className="h-3.5 w-3.5 text-positive" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-                        {copiedId === turn.id ? t('hugoPane.copied') : t('hugoPane.copy')}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-          {ask.isPending && (
-            <li className="flex justify-start gap-2">
-              <span className="w-7 shrink-0" aria-hidden="true" />
-              <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-line bg-surface-raised px-3.5 py-2.5 text-sm text-ink-muted">
-                <span className="sr-only">{t('hugoPane.thinking', { name })}</span>
-                <span aria-hidden="true">{statusText}</span>
-                <span className="hugo-dots" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-              </div>
-            </li>
-          )}
-        </ol>
-      </div>
-
-      <form
-        className="shrink-0 border-t border-line px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send(text);
-        }}
-      >
-        {sensitive && (
-          <p role="alert" className="mb-2 flex items-start gap-1.5 rounded-lg border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-ink">
-            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-negative" aria-hidden="true" />
-            {t('hugoPane.privacy.blocked', { name })}
-          </p>
-        )}
-        {voiceIn.error && (
-          <p role="status" className="mb-2 text-sm text-ink-muted">
-            {t(voiceIn.error === 'denied' ? 'hugoPane.mic.denied' : 'hugoPane.mic.noSpeech')}
-          </p>
-        )}
-        <label htmlFor="assistant-ask" className="sr-only">
-          {t('hugoPane.ask', { name })}
-        </label>
-        <div
-          className={cn(
-            'flex items-end gap-1.5 rounded-2xl border bg-surface-raised p-1.5 transition-colors',
-            voiceIn.listening ? 'border-accent' : sensitive ? 'border-negative' : 'border-line focus-within:border-accent',
-          )}
-        >
-          <Textarea
-            ref={inputRef}
-            id="assistant-ask"
-            value={draft}
-            rows={1}
-            maxLength={500}
-            readOnly={voiceIn.listening}
-            placeholder={voiceIn.listening ? t('hugoPane.askAloud') : t('hugoPane.ask', { name })}
-            className="min-h-10 max-h-40 flex-1 resize-none rounded-xl border-0 border-transparent bg-transparent px-2.5 py-2 shadow-none hover:border-transparent focus:border-transparent focus:ring-0 focus:ring-offset-0"
-            onFocus={() => {
-              setFocused(true);
-              wake();
-              preloadHugo(['celebrate', 'handoff', 'coffee']);
-            }}
-            onBlur={() => setFocused(false)}
-            onChange={(e) => {
-              setText(e.target.value);
-              wake();
-              // Grow with the words, up to the cap.
-              e.target.style.height = 'auto';
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send(text);
-              }
-            }}
-          />
-          {voiceIn.supported && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className={cn('shrink-0 rounded-xl', voiceIn.listening && 'hugo-mic-live text-accent')}
-              aria-pressed={voiceIn.listening}
-              aria-label={voiceIn.listening ? t('hugoPane.mic.stop') : t('hugoPane.mic.start')}
-              title={t('hugoPane.mic.note')}
-              onClick={() => {
-                wake();
-                voiceIn.clearError();
-                if (voiceIn.listening) voiceIn.stop();
-                else {
-                  voiceOut.stop();
-                  voiceIn.start();
-                }
-              }}
-              disabled={ask.isPending}
+            <label htmlFor="assistant-ask" className="sr-only">
+              {t('hugoPane.ask', { name })}
+            </label>
+            <div
+              className={cn(
+                'flex items-end gap-1.5 rounded-2xl border bg-surface-raised p-1.5 transition-colors',
+                voiceIn.listening ? 'border-accent' : sensitive ? 'border-negative' : 'border-line focus-within:border-accent',
+              )}
             >
-              <Mic className="h-5 w-5" aria-hidden="true" />
-            </Button>
-          )}
-          <Button type="submit" size="icon" className="shrink-0 rounded-xl" aria-label={t('hugoPane.send')} disabled={!text.trim() || ask.isPending || sensitive || voiceIn.listening}>
-            <ArrowUp className="h-5 w-5" aria-hidden="true" />
-          </Button>
-        </div>
-        <p className="mt-2 flex items-center gap-1.5 px-1 text-xs text-ink-muted">
-          <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          {t('hugoPane.privacy')}
-        </p>
-      </form>
+              <Textarea
+                ref={inputRef}
+                id="assistant-ask"
+                value={draft}
+                rows={1}
+                maxLength={500}
+                readOnly={voiceIn.listening}
+                placeholder={voiceIn.listening ? t('hugoPane.askAloud') : t('hugoPane.ask', { name })}
+                className="min-h-10 max-h-40 flex-1 resize-none rounded-xl border-0 border-transparent bg-transparent px-2.5 py-2 shadow-none hover:border-transparent focus:border-transparent focus:ring-0 focus:ring-offset-0"
+                onFocus={() => {
+                  setFocused(true);
+                  wake();
+                  preloadHugo(['celebrate', 'handoff', 'coffee']);
+                }}
+                onBlur={() => setFocused(false)}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  wake();
+                  // Grow with the words, up to the cap.
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    send(text);
+                  }
+                }}
+              />
+              {voiceIn.supported && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className={cn('shrink-0 rounded-xl', voiceIn.listening && 'hugo-mic-live text-accent')}
+                  aria-pressed={voiceIn.listening}
+                  aria-label={voiceIn.listening ? t('hugoPane.mic.stop') : t('hugoPane.mic.start')}
+                  title={t('hugoPane.mic.note')}
+                  onClick={() => {
+                    wake();
+                    voiceIn.clearError();
+                    if (voiceIn.listening) voiceIn.stop();
+                    else {
+                      voiceOut.stop();
+                      voiceIn.start();
+                    }
+                  }}
+                  disabled={ask.isPending}
+                >
+                  <Mic className="h-5 w-5" aria-hidden="true" />
+                </Button>
+              )}
+              <Button type="submit" size="icon" className="shrink-0 rounded-xl" aria-label={t('hugoPane.send')} disabled={!text.trim() || ask.isPending || sensitive || voiceIn.listening}>
+                <ArrowUp className="h-5 w-5" aria-hidden="true" />
+              </Button>
+            </div>
+            <p className="mt-2 flex items-center gap-1.5 px-1 text-xs text-ink-muted">
+              <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {t('hugoPane.privacy')}
+            </p>
+          </form>
+        )}
+      </Tabs>
     </aside>
   );
 }

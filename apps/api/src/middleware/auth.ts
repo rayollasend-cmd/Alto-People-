@@ -6,6 +6,7 @@ import {
   type Capability,
   can,
 } from '@alto-people/shared';
+import type { Prisma } from '@prisma/client';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
@@ -33,6 +34,100 @@ export const MFA_PENDING_COOKIE = env.NODE_ENV === 'production'
 export const MFA_ENROLL_COOKIE = env.NODE_ENV === 'production'
   ? '__Host-alto.mfa_enroll'
   : 'alto.mfa_enroll';
+
+/** What a session reads about its user — the middleware and sessionUserById share it. */
+const SESSION_USER_SELECT = {
+  id: true,
+  email: true,
+  role: true,
+  additionalRoles: true,
+  activeRole: true,
+  status: true,
+  clientId: true,
+  locationId: true,
+  regionId: true,
+  tenantId: true,
+  orgUnitId: true,
+  orgUnit: { select: { path: true } },
+  associateId: true,
+  tokenVersion: true,
+  timezone: true,
+  language: true,
+  mfaEnabledAt: true,
+  photoS3Key: true,
+  photoUpdatedAt: true,
+  scopeSiteIds: true,
+  scopeRegionIds: true,
+  tenantRole: { select: { id: true, name: true, archetype: true, capabilities: true, deletedAt: true } },
+  associate: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
+    },
+  },
+} satisfies Prisma.UserSelect;
+
+type SessionUserRow = Prisma.UserGetPayload<{ select: typeof SESSION_USER_SELECT }>;
+
+/** The session's view of a user row: the hat they wear, their custom role, their reach. */
+function toSessionUser(
+  user: SessionUserRow,
+  associateId: string | null,
+  associate: SessionUserRow['associate'],
+): SessionUser {
+  const {
+    associate: _a,
+    associateId: _aid,
+    photoS3Key,
+    photoUpdatedAt,
+    mfaEnabledAt,
+    additionalRoles: _additionalRoles,
+    activeRole: _activeRole,
+    orgUnit,
+    tenantRole,
+    ...rest
+  } = user;
+  const hat = effectiveRoleOf(user);
+  // A custom role narrows the role it was made for, and only while the
+  // account wears that role: another hat is that hat's built-in set.
+  const custom = tenantRole && !tenantRole.deletedAt && tenantRole.archetype === user.role && hat === user.role ? tenantRole : null;
+  return {
+    ...rest,
+    // The hat, not the wardrobe. effectiveRoleOf fails closed to the
+    // primary role, so an activeRole an administrator has since revoked
+    // stops authorizing anything on the next cache miss.
+    role: hat,
+    primaryRole: user.role,
+    availableRoles: rolesAvailableTo(user),
+    associateId,
+    firstName: associate?.firstName ?? null,
+    lastName: associate?.lastName ?? null,
+    photoUrl: accountPhotoUrlFor({ id: user.id, photoS3Key, photoUpdatedAt, associate }),
+    mfaEnabled: mfaEnabledAt !== null,
+    orgUnitPath: orgUnit?.path ?? null,
+    capabilities: custom?.capabilities ?? null,
+    tenantRoleId: custom?.id ?? null,
+    tenantRoleName: custom?.name ?? null,
+    scopeSiteIds: user.scopeSiteIds,
+    scopeRegionIds: user.scopeRegionIds,
+  };
+}
+
+/**
+ * The same user a request would carry, for work done on someone's behalf
+ * with no request in hand (Hugo's tasks): read fresh, so a role revoked or
+ * an account suspended since the work began stops it. Null when the
+ * account could not sign in now. No associate auto-link — that belongs to
+ * a real sign-in.
+ */
+export async function sessionUserById(userId: string): Promise<SessionUser | null> {
+  const user = await prisma.user.findFirst({ where: { id: userId, deletedAt: null }, select: SESSION_USER_SELECT });
+  if (!user || user.status !== 'ACTIVE' || !HUMAN_ROLES.includes(user.role)) return null;
+  return toSessionUser(user, user.associateId, user.associate);
+}
 
 // ---------------------------------------------------------------------------
 // In-process user cache
@@ -205,39 +300,7 @@ async function attachUserResolved(
 
     const user = await prisma.user.findFirst({
       where: { id: payload.sub, deletedAt: null },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        additionalRoles: true,
-        activeRole: true,
-        status: true,
-        clientId: true,
-        locationId: true,
-        regionId: true,
-        tenantId: true,
-        orgUnitId: true,
-        orgUnit: { select: { path: true } },
-        associateId: true,
-        tokenVersion: true,
-        timezone: true,
-        language: true,
-        mfaEnabledAt: true,
-        photoS3Key: true,
-        photoUpdatedAt: true,
-        scopeSiteIds: true,
-        scopeRegionIds: true,
-        tenantRole: { select: { id: true, name: true, archetype: true, capabilities: true, deletedAt: true } },
-        associate: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            photoS3Key: true,
-            photoUpdatedAt: true,
-          },
-        },
-      },
+      select: SESSION_USER_SELECT,
     });
 
     if (
@@ -286,42 +349,7 @@ async function attachUserResolved(
       }
     }
 
-    const {
-      associate: _a,
-      associateId: _aid,
-      photoS3Key,
-      photoUpdatedAt,
-      mfaEnabledAt,
-      additionalRoles: _additionalRoles,
-      activeRole: _activeRole,
-      orgUnit,
-      tenantRole,
-      ...rest
-    } = user;
-    const hat = effectiveRoleOf(user);
-    // A custom role narrows the role it was made for, and only while the
-    // account wears that role: another hat is that hat's built-in set.
-    const custom = tenantRole && !tenantRole.deletedAt && tenantRole.archetype === user.role && hat === user.role ? tenantRole : null;
-    const sessionUser: SessionUser = {
-      ...rest,
-      // The hat, not the wardrobe. effectiveRoleOf fails closed to the
-      // primary role, so an activeRole an administrator has since revoked
-      // stops authorizing anything on the next cache miss.
-      role: hat,
-      primaryRole: user.role,
-      availableRoles: rolesAvailableTo(user),
-      associateId,
-      firstName: associate?.firstName ?? null,
-      lastName: associate?.lastName ?? null,
-      photoUrl: accountPhotoUrlFor({ id: user.id, photoS3Key, photoUpdatedAt, associate }),
-      mfaEnabled: mfaEnabledAt !== null,
-      orgUnitPath: orgUnit?.path ?? null,
-      capabilities: custom?.capabilities ?? null,
-      tenantRoleId: custom?.id ?? null,
-      tenantRoleName: custom?.name ?? null,
-      scopeSiteIds: user.scopeSiteIds,
-      scopeRegionIds: user.scopeRegionIds,
-    };
+    const sessionUser = toSessionUser(user, associateId, associate);
     userCache.set(payload.sub, {
       user: sessionUser,
       expiresAt: Date.now() + USER_CACHE_TTL_MS,

@@ -31,9 +31,9 @@ describe('GET /auth/me/notification-preferences', () => {
       mandatory: boolean;
       emailEnabled: boolean;
     }>;
-    // 9 staff opt-out-able + messages + 3 mandatory = 13; the portal
-    // buckets are not offered to staff.
-    expect(entries.length).toBe(13);
+    // 10 staff opt-out-able (the assistant's tasks and notes among them) +
+    // messages + 3 mandatory = 14; the portal buckets are not offered to staff.
+    expect(entries.length).toBe(14);
     expect(entries.some((e) => e.category.startsWith('store_'))).toBe(false);
     // Every entry defaults to enabled when no row exists.
     expect(entries.every((e) => e.emailEnabled)).toBe(true);

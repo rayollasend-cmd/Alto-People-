@@ -312,6 +312,11 @@ const EnvSchema = z.object({
   // SCHEDULE_DIGEST_HOUR in the deployment timezone. Default 900 so the
   // digest lands within ~15 min of the hour; 0 disables.
   SCHEDULE_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(900),
+  // Hugo works for you (lib/hugoTasks, lib/hugoNotes): how often each
+  // tenant's due tasks take their next step, and how often notes are brought
+  // up to date. 0 turns either timer off (tasks still step when read).
+  HUGO_TASKS_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(120),
+  HUGO_NOTES_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
   // Local hour (0-23, deployment timezone) after which the daily digest
   // may send. Default 6 → admins have it before the first shift.
   SCHEDULE_DIGEST_HOUR: z.coerce.number().int().min(0).max(23).default(6),

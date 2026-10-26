@@ -1155,6 +1155,19 @@ input[type='radio'] {
   30% { opacity: 1; transform: translateY(-3px); }
 }
 /* The microphone while it listens: a ring that pulses out. */
+/* Hugo working in the background (HugoBadge): a slow gold breath around his button. */
+.hugo-working-ring {
+  box-shadow: 0 0 0 2px rgb(var(--color-gold-bright) / 0.55);
+  animation: hugo-working 2.4s ease-in-out infinite;
+}
+@keyframes hugo-working {
+  0%, 100% { box-shadow: 0 0 0 1px rgb(var(--color-gold-bright) / 0.35); }
+  50% { box-shadow: 0 0 0 4px rgb(var(--color-gold-bright) / 0.12); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hugo-working-ring { animation: none; }
+}
+
 .hugo-mic-live { position: relative; }
 .hugo-mic-live::after {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
