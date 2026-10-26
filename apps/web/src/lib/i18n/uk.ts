@@ -3479,4 +3479,5 @@ export const uk: Partial<Record<MessageKey, string>> = {
   'hugoWork.error.no_supervisor': 'Не знайшов керівника, якому це передати. Якщо не зможете вийти на зміну, повідомте в застосунку, щоб там знали.',
   'hugoWork.error.hugo_off': 'Асистента наразі вимкнено.',
   'hugoWork.error.generic': 'Не вдалося виконати. Спробуйте ще раз.',
+  'common.pickDate': 'Виберіть дату',
 };

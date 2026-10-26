@@ -3477,4 +3477,5 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'hugoWork.error.no_supervisor': 'Bunu iletebileceğim bir yönetici bulamadım. Vardiyaya gelemeyeceksen bilmeleri için uygulamadan bildir.',
   'hugoWork.error.hugo_off': 'Asistan şimdilik kapalı.',
   'hugoWork.error.generic': 'Bu işlem tamamlanmadı. Tekrar dene.',
+  'common.pickDate': 'Bir tarih seç',
 };

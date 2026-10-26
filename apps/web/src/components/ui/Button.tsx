@@ -6,7 +6,7 @@ import { cn } from '@/lib/cn';
 
 const buttonVariants = cva(
   // base — every button gets these
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,background-color,border-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] disabled:active:scale-100 select-none',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,background-color,border-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.98] disabled:active:scale-100 select-none',
   {
     variants: {
       variant: {
@@ -16,7 +16,9 @@ const buttonVariants = cva(
         // rather than Tailwind utilities so the gradient + multi-shadow
         // can layer cleanly across hover/active/disabled states.
         primary:
-          'btn-gold text-on-accent',
+          // disabled:opacity-100 — .btn-gold:disabled draws its own outline
+          // and readable label; the base's half opacity hid it on navy.
+          'btn-gold text-on-accent disabled:opacity-100',
         // Secondary — subtle border, used for "Cancel", "Edit", row
         // actions. Lifts to elev-1 + translates 2px up on hover so the
         // affordance reads alongside the rest of the system (Card

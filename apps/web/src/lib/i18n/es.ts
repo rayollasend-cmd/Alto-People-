@@ -5876,4 +5876,5 @@ export const es: Record<MessageKey, string> = {
   'hugoWork.error.no_supervisor': 'No encontré un supervisor a quien pasárselo. Si no puedes ir al turno, avisa en la app para que lo sepan.',
   'hugoWork.error.hugo_off': 'El asistente está desactivado por ahora.',
   'hugoWork.error.generic': 'Eso no se completó. Inténtalo de nuevo.',
+  'common.pickDate': 'Elige una fecha',
 };

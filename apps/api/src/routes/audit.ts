@@ -66,6 +66,9 @@ function buildWhere(f: Filters): Prisma.AuditLogWhereInput {
   }
   if (f.hideSystem === '1' || f.hideSystem === 'true') {
     and.push({ NOT: { action: { startsWith: AUDIT_SYSTEM_PREFIX } } }, { NOT: { entityType: AUDIT_SYSTEM_ENTITY } });
+    // An assistant's question-and-reply pair is chatter, not a change: it buried the
+    // sign-ins under "Hugo asked / Agent app reply" rows. Its tasks stay (they act).
+    and.push({ NOT: { action: { in: [...AUDIT_CHATTER_ACTIONS] } } });
   }
   const createdAt: Prisma.DateTimeFilter = {};
   if (f.since) createdAt.gte = new Date(f.since);
@@ -123,6 +126,20 @@ async function entityLabels(rows: LabelledRow[], tenantId: string): Promise<Map<
     const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
     if (t) out.set(key('Tenant', tenantId), { label: t.name, href: '/admin/organization' });
   }
+  // Hugo's own rows (routes/hugo.ts, lib/hugoTasks, lib/hugoNotes) said in words, never a code
+  // ("Hugo TASK_FIN…", "HugoTask 6db1be26…" — F500 audit 2026-10-26). Tasks and notes are their
+  // person's own and have no page an auditor can open.
+  const hugoTasks = idsOf('HugoTask');
+  const hugoNotes = idsOf('HugoNote');
+  const [ht, hn] = await Promise.all([
+    hugoTasks.length ? prisma.hugoTask.findMany({ where: { id: { in: hugoTasks }, tenantId }, select: { id: true, kind: true } }) : [],
+    hugoNotes.length ? prisma.hugoNote.findMany({ where: { id: { in: hugoNotes }, tenantId }, select: { id: true, kind: true } }) : [],
+  ]);
+  for (const x of ht) out.set(key('HugoTask', x.id), { label: `Hugo task · ${HUGO_KIND_LABEL[x.kind] ?? humanizeCode(x.kind)}`, href: null });
+  for (const x of hn) out.set(key('HugoNote', x.id), { label: `Hugo note · ${HUGO_KIND_LABEL[x.kind] ?? humanizeCode(x.kind)}`, href: null });
+  for (const r of rows) {
+    if (r.entityType === 'Hugo') out.set(key('Hugo', r.entityId), { label: `Hugo · ${r.entityId === 'MODEL' ? 'Open question' : humanizeCode(r.entityId)}`, href: null });
+  }
   // The API's own request rows are keyed by the route: "POST /auth/login".
   for (const r of rows) {
     if (r.entityType !== AUDIT_SYSTEM_ENTITY) continue;
@@ -132,7 +149,29 @@ async function entityLabels(rows: LabelledRow[], tenantId: string): Promise<Map<
   return out;
 }
 
+/** Assistant conversation rows hidden with the system requests (routes/hugo.ts, lib/agents logBuiltInAgentAction). */
+const AUDIT_CHATTER_ACTIONS = ['hugo.asked', 'agent.app.reply', 'agent.whatsapp.reply'] as const;
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const HUGO_KIND_LABEL: Record<string, string> = {
+  WATCH_TIME_OFF: 'Time-off decision watch',
+  WATCH_OPEN_SHIFTS: 'Open-shift watch',
+  WATCH_PAYCHECK: 'Paycheck watch',
+  WATCH_DOCUMENT: 'Document review watch',
+  FIND_COVER: 'Find cover',
+  CHASE_CONFIRMATIONS: 'Chase confirmations',
+  CREDENTIAL_EXPIRING: 'Credential expiring',
+  OPEN_SHIFT_MATCH: 'Open shift that fits',
+  DIRECT_DEPOSIT_MISSING: 'Direct deposit missing',
+  UNCONFIRMED_TOMORROW: 'Unconfirmed shifts tomorrow',
+};
+
+/** "TASK_FIND_COVER" → "Find cover", "HELP_CENTER" → "Help center". */
+function humanizeCode(code: string): string {
+  const words = code.replace(/^(TASK|DRIVER)_/, '').toLowerCase().replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 const ACTOR_SELECT = { email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } as const;
 function actorNameOf(u: { email: string; displayName: string | null; associate: { firstName: string; lastName: string } | null } | null): string | null {

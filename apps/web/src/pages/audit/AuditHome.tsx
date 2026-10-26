@@ -347,11 +347,11 @@ export function AuditHome() {
               cell: (e) => (
                 <span className="block min-w-0">
                   {e.entityHref ? (
-                    <Link to={e.entityHref} onClick={(ev) => ev.stopPropagation()} className="block max-w-[28ch] truncate text-ink underline-offset-2 hover:text-accent hover:underline">
+                    <Link to={e.entityHref} onClick={(ev) => ev.stopPropagation()} className="block max-w-[40ch] truncate text-ink underline-offset-2 hover:text-accent hover:underline">
                       {recordName(e)}
                     </Link>
                   ) : (
-                    <span className="block max-w-[28ch] truncate text-ink">{recordName(e)}</span>
+                    <span className="block max-w-[40ch] truncate text-ink">{recordName(e)}</span>
                   )}
                   <span className="block text-2xs text-silver/70">{auditEntityTypeLabel(e.entityType)}</span>
                 </span>

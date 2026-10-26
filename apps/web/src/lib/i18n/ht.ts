@@ -3479,4 +3479,5 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'hugoWork.error.no_supervisor': 'Mwen pa t jwenn yon sipèvizè pou pase sa a. Si ou pa ka vin nan chif la, avèti nan aplikasyon an pou yo konnen.',
   'hugoWork.error.hugo_off': 'Asistan an fèmen pou kounye a.',
   'hugoWork.error.generic': 'Sa pa t pase. Eseye ankò.',
+  'common.pickDate': 'Chwazi yon dat',
 };

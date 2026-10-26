@@ -3479,4 +3479,5 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'hugoWork.error.no_supervisor': 'Não encontrei um supervisor para passar isso. Se não puder ir ao turno, avise pelo app para eles saberem.',
   'hugoWork.error.hugo_off': 'O assistente está desligado por enquanto.',
   'hugoWork.error.generic': 'Isso não foi concluído. Tente de novo.',
+  'common.pickDate': 'Escolha uma data',
 };

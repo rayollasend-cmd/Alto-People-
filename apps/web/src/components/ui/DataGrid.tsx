@@ -924,7 +924,7 @@ function GridCore<T>({
           {selectable && !child && !selectable.disabled?.(row) && (
             <input
               type="checkbox"
-              className="mt-0.5 h-6 w-6 shrink-0 accent-gold"
+              className="mt-0.5 h-4 w-4 shrink-0"
               checked={selected.has(key)}
               onChange={(e) => pick(key, shiftOf(e))}
               onClick={(e) => e.stopPropagation()}
@@ -1274,7 +1274,7 @@ function GridCore<T>({
                       <TableHead className="w-8 pr-0">
                         <input
                           type="checkbox"
-                          className="h-6 w-6 accent-gold"
+                          className="h-4 w-4"
                           checked={allSelected}
                           onChange={toggleAll}
                           disabled={selectableRows.length === 0}
@@ -1383,7 +1383,7 @@ function GridCore<T>({
                             {!child && !selectable.disabled?.(row) && (
                               <input
                                 type="checkbox"
-                                className="h-6 w-6 accent-gold"
+                                className="h-4 w-4"
                                 checked={isSelected}
                                 onChange={(e) => pick(key, shiftOf(e))}
                                 aria-label={`Select ${primary.accessor(row) ?? 'row'}`}

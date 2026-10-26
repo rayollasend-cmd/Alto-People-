@@ -21,6 +21,7 @@ export * from './ErrorBanner';
 export * from './Field';
 export * from './FilterBar';
 export * from './Input';
+export * from './DateField';
 export * from './Label';
 export * from './MetricCard';
 export * from './MetricStrip';

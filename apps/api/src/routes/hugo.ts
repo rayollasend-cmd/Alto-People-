@@ -314,7 +314,7 @@ hugoRouter.get('/', requireAuth, async (req, res) => {
   const { tenantId, audience, ctx, lang, name, profile } = await contextFor(user);
   const sitesNoun = termsIn(profile, lang).sites.toLowerCase();
   const can = canList(registryFor(user, tenantId, lang, sitesNoun, new Date(), name, ctx).tools, lang, ctx);
-  res.json({ name, audience, intro: WA_REPLY.appIntro(lang, name, can.map((c) => c.label.toLowerCase())), can, model: modelAvailable() });
+  res.json({ name, audience, intro: WA_REPLY.appIntro(lang, name, can.map((c) => c.label.toLowerCase()), { tasks: can.some((c) => c.key.startsWith('TASK_')) }), can, model: modelAvailable() });
 });
 
 hugoRouter.post('/ask', requireAuth, async (req, res) => {

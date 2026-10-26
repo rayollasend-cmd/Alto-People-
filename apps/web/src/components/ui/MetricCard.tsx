@@ -26,14 +26,17 @@ export interface MetricTrend {
 export type TrendGood = 'up' | 'down' | 'neutral';
 
 /**
- * What a tile's colour means. `default` is the data colour (gold);
+ * What a tile's colour means. `default` is the data colour — ink, like the
+ * rest of the page: gold is punctuation (docs/design-system.md), and a
+ * strip of gold numbers read as links and made zeros look like news (F500
+ * audit 2026-10-26). `accent` is the one hero figure a page leads with;
  * `warning` / `alert` ask for attention, `good` reports good news, and
  * `neutral` is for a fact that is neither (and for "nothing to count").
  * A ZERO never wears warning or alert: "0 overdue" in red reads as a
  * problem (Hotline's five red/amber zero tiles) — the tile drops to the
  * default colour on its own.
  */
-export type MetricTone = 'default' | 'neutral' | 'good' | 'warning' | 'alert';
+export type MetricTone = 'default' | 'accent' | 'neutral' | 'good' | 'warning' | 'alert';
 
 /** A change with no sparkline: "↑ 3 vs last week". */
 export interface MetricDelta {
@@ -287,7 +290,8 @@ export function effectiveTone(tone: MetricTone, value: React.ReactNode): MetricT
 }
 
 const VALUE_TONE: Record<MetricTone, string> = {
-  default: 'text-gold',
+  default: 'text-ink',
+  accent: 'text-gold',
   neutral: 'text-ink',
   good: 'text-success',
   warning: 'text-warning',
@@ -295,6 +299,7 @@ const VALUE_TONE: Record<MetricTone, string> = {
 };
 const ICON_TONE: Record<MetricTone, string> = {
   default: 'text-ink-muted',
+  accent: 'text-ink-muted',
   neutral: 'text-ink-muted',
   good: 'text-success',
   warning: 'text-warning',

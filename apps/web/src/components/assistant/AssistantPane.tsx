@@ -271,7 +271,11 @@ export function AssistantPane() {
     return () => window.clearInterval(id);
   }, [open]);
 
+  // Follow the conversation to its newest line — but an empty one opens at
+  // the top, his greeting whole (on a phone it opened scrolled to the
+  // suggestions, Hugo cut in half).
   useEffect(() => {
+    if (!turns.length && !ask.isPending) return;
     listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [turns, ask.isPending]);
 

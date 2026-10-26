@@ -16,6 +16,7 @@ export const enCore = {
   'common.undo': 'Undo',
   'common.from': 'From',
   'common.to': 'To',
+  'common.pickDate': 'Pick a date',
   'common.gotIt': 'Got it',
   'common.confirm': 'Confirm',
   'common.columns': 'Columns',

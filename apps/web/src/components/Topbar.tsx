@@ -220,7 +220,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
           <span className="text-sm max-w-[4.5rem] truncate">{backLabel}</span>
         </button>
       ) : (
-        <Logo size="xs" className="md:hidden" alt={t('top.logo')} />
+        <Logo size="sm" className="md:hidden" alt={t('top.logo')} />
       )}
 
       {/* Page title / breadcrumbs — sticks in chrome so wayfinding survives

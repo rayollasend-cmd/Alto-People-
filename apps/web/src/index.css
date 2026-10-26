@@ -654,20 +654,23 @@
     0 1px 2px rgba(0, 0, 0, 0.25) inset,
     0 0 0 1px rgba(217, 185, 103, 0.5);
 }
-/* Disabled state: drop the gradient entirely and paint a flat
-   navy-secondary fill with muted silver text. The previous
-   opacity-50 over the gold gradient read as "loading / processing"
-   (a faded gold sheen); a navy fill reads unambiguously as inert. */
+/* Disabled state: drop the gradient and draw the button as an outline
+   with its label still readable. A flat navy fill at the base's half
+   opacity was navy on navy — "Sign in", "Save", "Ask" looked missing, not
+   waiting (F500 audit 2026-10-26). The outline keeps the button's place
+   and shape; the dimmed label says it can't be pressed yet. */
 .btn-gold:disabled {
   background-image: none;
-  background-color: rgb(var(--color-navy-secondary));
-  color: rgb(var(--color-silver) / 0.6);
+  background-color: rgb(var(--color-navy-secondary) / 0.35);
+  border: 1px solid rgb(var(--color-silver) / 0.5);
+  color: rgb(var(--color-silver) / 0.85);
   box-shadow: none;
   opacity: 1;
 }
 :root[data-theme='light'] .btn-gold:disabled {
-  background-color: rgb(var(--color-navy-secondary));
-  color: rgb(var(--color-silver) / 0.7);
+  background-color: rgb(var(--color-navy-secondary) / 0.5);
+  border-color: rgb(var(--color-silver) / 0.45);
+  color: rgb(var(--color-silver) / 0.9);
 }
 /* Light mode keeps the base gradient (it already reads off the fill tier,
    which does not darken with the text tier) and only softens the glow. */
@@ -775,11 +778,67 @@ select.border-navy-secondary:focus {
   border-color: rgb(var(--color-silver) / 0.6); /* 4.78:1 — up from 3.68 resting */
 }
 
-/* Theme native checkboxes / radios with the brand gold so the checked
-   fill matches the rest of the chrome. One line, no per-site changes. */
-input[type='checkbox'],
+/* Theme native radios with the brand gold so the checked fill matches
+   the rest of the chrome. One line, no per-site changes. */
 input[type='radio'] {
   accent-color: rgb(var(--color-gold));
+}
+
+/* Native checkboxes, drawn in the app's own colours. `accent-color` alone
+   left the browser's box, which renders unchecked as a flat grey square on
+   navy — it read as a broken image in every table (F500 audit 2026-10-26).
+   One rule for all of them, no per-site changes: a hairline box that holds
+   its place in both themes, gold fill with a dark check when on, a bar
+   when partly selected (select-all), the app's focus ring. Size classes
+   (h-4 w-4, h-6 w-6) still win: the default size is a zero-specificity
+   :where(). A visually hidden switch input (sr-only peer) is unaffected. */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+  margin: 0;
+  border: 1.5px solid rgb(var(--color-silver) / 0.7);
+  border-radius: 0.25rem;
+  background-color: transparent;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+:where(input[type='checkbox']) {
+  width: 1rem;
+  height: 1rem;
+}
+input[type='checkbox']:hover:not(:disabled) {
+  border-color: rgb(var(--color-silver));
+}
+input[type='checkbox']:checked,
+input[type='checkbox']:indeterminate {
+  background-color: rgb(var(--color-gold-fill));
+  border-color: rgb(var(--color-gold-fill));
+}
+input[type='checkbox']:checked::before {
+  content: '';
+  width: 0.65rem;
+  height: 0.65rem;
+  background-color: rgb(var(--color-on-accent));
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+input[type='checkbox']:indeterminate::before {
+  content: '';
+  width: 0.55rem;
+  height: 0.125rem;
+  border-radius: 1px;
+  background-color: rgb(var(--color-on-accent));
+}
+input[type='checkbox']:focus-visible {
+  outline: 2px solid rgb(var(--color-gold-bright));
+  outline-offset: 2px;
+}
+input[type='checkbox']:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Touch-size every native checkbox / radio in one rule. 64 of them across

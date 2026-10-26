@@ -27,10 +27,17 @@ describe('MetricCard', () => {
     expect(effectiveTone('alert', '3')).toBe('alert');
     expect(effectiveTone('good', 0)).toBe('good');
 
+    // A zero drops to the data colour, ink — not gold (gold is punctuation).
     const zero = render(<MetricCard label="Overdue" value="0" tone="alert" />);
-    expect(valueOf(zero.container)).toHaveClass('text-gold');
+    expect(valueOf(zero.container)).toHaveClass('text-ink');
+    expect(valueOf(zero.container)).not.toHaveClass('text-gold');
     expect(valueOf(zero.container)).not.toHaveClass('text-alert');
     zero.unmount();
+
+    // The one hero figure a page leads with asks for gold by name.
+    const hero = render(<MetricCard label="Payroll" value="$41,200" tone="accent" />);
+    expect(valueOf(hero.container)).toHaveClass('text-gold');
+    hero.unmount();
 
     const three = render(<MetricCard label="Overdue" value="3" tone="alert" />);
     expect(valueOf(three.container)).toHaveClass('text-alert');
