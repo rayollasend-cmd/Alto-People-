@@ -26,8 +26,8 @@ export const enAppr = {
   'appr.q.pickups': 'Pickups',
   'appr.q.pickupsBusy': 'Approve to fill the shift',
   // The queue names are the one registry's (packages/shared queues.ts) — the Inbox says the same.
-  'appr.q.proposals': 'Suggested by an agent',
-  'appr.q.proposalsBusy': 'An agent proposes; you decide',
+  'appr.q.proposals': 'Suggested by an AI agent',
+  'appr.q.proposalsBusy': 'An AI agent suggests; you decide',
   'appr.q.requests': 'Pay & access changes',
   'appr.q.requestsBusy': 'A second person approves pay, access and offboarding changes',
   'appr.q.timesheets': 'Timesheets',
@@ -42,7 +42,7 @@ export const enAppr = {
   'appr.allClearAria': 'Queues with nothing waiting',
   'appr.openFullQueue': 'Open the full queue on Time & attendance →',
   'appr.clearTitle': 'Nothing waiting on you',
-  'appr.clearBody': 'No one at the kiosk, and no time off, swaps, pickups, timesheets, agent proposals or second-person requests to decide.',
+  'appr.clearBody': 'No one at the kiosk, and no time off, swaps, pickups, timesheets, AI suggestions or pay and access changes to decide.',
   'appr.pickTitle': 'Pick a queue',
   'appr.pickBody': 'Open a queue to work it here.',
   'appr.allQueues': 'All queues',
@@ -63,6 +63,8 @@ export const enAppr = {
   'appr.selectAllPickups': 'Select all pickup requests',
   'appr.pickupsAria': 'Pickup requests',
   'appr.over40': 'Over 40h',
+  'appr.proposalsEmptyTitle': 'No AI suggestions waiting',
+  'appr.proposalsEmptyBody': 'When an AI agent suggests filling a shift, opening a case or another step that needs a person, it lands here with its reasons. Nothing happens until you decide.',
 } as const;
 
 registerEnglish(enAppr);

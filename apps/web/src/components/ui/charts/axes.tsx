@@ -116,3 +116,28 @@ export function dateHeading(value: unknown, grain: DateGrain = 'day'): string {
   if (grain !== 'week') return day;
   return displayLocale() === 'es-US' ? `Semana del ${day}` : `Week of ${day}`;
 }
+
+/* ------------------------------------------------------------ money ticks */
+
+/**
+ * Money on a chart axis, one compact dialect for every tick: "$0", "$500",
+ * "$2.5k", "$6k", "$12k", "$1.5M", "−$6k". A trailing ".0" never shows, so a
+ * scale reads "$6k · $12k" rather than "$6.0k · $12k" (F500 audit
+ * 2026-10-26); negatives carry a real minus sign. Axis only — tables and
+ * tooltips keep the exact `fmtMoney`.
+ */
+export function fmtMoneyAxis(value: number): string {
+  if (!Number.isFinite(value)) return '';
+  const sign = value < 0 ? '−' : '';
+  const abs = Math.abs(value);
+  const trim = (n: number) => String(Math.round(n * 10) / 10).replace(/\.0$/, '');
+  if (abs >= 1_000_000) return `${sign}$${trim(abs / 1_000_000)}M`;
+  if (abs >= 1_000) return `${sign}$${trim(abs / 1_000)}k`;
+  return `${sign}$${Math.round(abs).toLocaleString(displayLocale())}`;
+}
+
+/** A count on an axis with a real minus sign ("−4", never "4" below zero). */
+export function fmtSignedAxis(value: number): string {
+  if (!Number.isFinite(value)) return '';
+  return value < 0 ? `−${Math.abs(value).toLocaleString(displayLocale())}` : value.toLocaleString(displayLocale());
+}

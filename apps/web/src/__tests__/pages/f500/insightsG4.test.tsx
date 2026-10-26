@@ -78,11 +78,11 @@ beforeEach(() => {
 describe('Analytics', () => {
   it('reads the window from ?days= and writes it back when changed', async () => {
     renderAs('HR_ADMINISTRATOR', <AnalyticsHome />, '/analytics?days=7');
-    expect(await screen.findByText('Open shifts (next 7d)')).toBeInTheDocument();
+    expect(await screen.findByText('Open shifts (next 7 days)')).toBeInTheDocument();
     expect(getDashboardKPIs).toHaveBeenCalledWith(7);
-    await userEvent.click(screen.getByRole('radio', { name: '90d' }));
+    await userEvent.click(screen.getByRole('radio', { name: '90 days' }));
     await waitFor(() => expect(getDashboardKPIs).toHaveBeenCalledWith(90));
-    expect(await screen.findByText('Open shifts (next 90d)')).toBeInTheDocument();
+    expect(await screen.findByText('Open shifts (next 90 days)')).toBeInTheDocument();
   });
 
   it('shows the two named people numbers, changes in words, and links retention to People analytics', async () => {
@@ -258,8 +258,8 @@ describe('Product usage', () => {
     renderAs('HR_ADMINISTRATOR', <ProductAnalytics />, '/product-analytics?days=7');
     expect(await screen.findByRole('heading', { level: 1, name: 'Product usage' })).toBeInTheDocument();
     expect(pa.getActiveUsers).toHaveBeenCalledWith(7);
-    expect(await screen.findByText('HR Administrator')).toBeInTheDocument();
-    expect(screen.getByText('Client Portal')).toBeInTheDocument();
+    expect(await screen.findByText('HR administrator')).toBeInTheDocument();
+    expect(screen.getByText('Client portal')).toBeInTheDocument();
     // Whole percentages; a bucketed vital reads as "at or under".
     expect(screen.getByText('100%')).toBeInTheDocument();
     expect(screen.getByText('0%')).toBeInTheDocument();

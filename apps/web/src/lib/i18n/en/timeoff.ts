@@ -69,6 +69,7 @@ export const enTimeoff = {
   'timeoff.dayWordPlural': '{count} days',
   'timeoff.fullDays': 'Full days ({hours}h)',
   'timeoff.halfDays': 'Half days ({hours}h)',
+  'timeoff.noRequestsHint': 'Ask for time off and follow it here until it’s decided.',
 } as const;
 
 registerEnglish(enTimeoff);

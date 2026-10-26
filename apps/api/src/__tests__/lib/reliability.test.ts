@@ -117,6 +117,16 @@ describe('computeReliability', () => {
     expect(r.routes.slowest[0]).toMatchObject({ p95Ms: 3_000, serverError: 2 });
   });
 
+  it('keeps the held-open event stream out of the speed rankings, and in the totals', async () => {
+    await seedRoute('/time/me', { requests: 500, ms: 80 });
+    // A tab holds the stream open for its whole visit: thirty seconds is a visit, not a slow answer.
+    await seedRoute('/events/stream', { requests: 900, ms: 30_000 });
+    const r = await computeReliability(7, NOW);
+    expect(r.routes.busiest.map((x) => x.route)).toEqual(['/time/me']);
+    expect(r.routes.slowest.map((x) => x.route)).toEqual(['/time/me']);
+    expect(r.errors.weeks[r.errors.weeks.length - 1]!.requests).toBe(1400);
+  });
+
   it('says the error budget is unknown without Sentry, and still counts 5xx and restarts', async () => {
     await seedRoute('/x', { requests: 10, ms: 10, serverError: 3 });
     await recordApiBoot('abc123');

@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { XL, XL_FMT } from './docKit/xlsx.js';
 import type { TimesheetWeekResponse } from '@alto-people/shared';
+import { fmtDayRange } from './humanDates.js';
 
 /**
  * Fieldglass-shaped weekly timesheet as an .xlsx the buyer's list view
@@ -73,7 +74,7 @@ export async function renderTimesheetXlsx(
   ws.getCell('A2').font = { bold: true, size: 9, color: { argb: MUTED } };
 
   const meta: Array<[string, string]> = [
-    ['Week', `Sat ${data.weekStart} → Fri ${data.weekEndIso}`],
+    ['Week', fmtDayRange(data.weekStart, data.weekEndIso, { year: true })],
     ['Week ending', data.weekEnding],
     ['Basis', 'Approved hours only · net of unpaid breaks'],
     ['Generated', new Date(data.generatedAt).toLocaleString('en-US')],

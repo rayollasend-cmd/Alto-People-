@@ -456,7 +456,19 @@ describe('<TransportHome> — the command center', () => {
     expect(body.rides.map((r) => r.rideId)).toEqual(['r1', 'r2']);
   });
 
-  it('says "needs a van" once (the section, not a tile too), and a quiet day is one line per section (F500 G5)', async () => {
+  it('says "needs a van" once (the section, not a tile too), and a quiet day is one empty state (F500 polish)', async () => {
+    // A day with bookings: the five tiles, and "Needs a van" only as the section.
+    routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
+    const first = renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
+    const kpis = await screen.findByTestId('transport-kpis');
+    expect(within(kpis).getByText('Booked')).toBeTruthy();
+    expect(within(kpis).queryByText('Needs a van')).toBeNull();
+    // No run planned yet: "Vans out" says so instead of "0 of 0".
+    expect(within(kpis).getByText('No runs yet')).toBeTruthy();
+    first.unmount();
+
+    // Nothing booked, nothing planned: one quiet state — no zero tiles, no
+    // green "all clear", no two "nothing here" boxes.
     routes((path) => {
       // Answer for the day asked (after 6 PM a quiet board opens on tomorrow).
       if (path.startsWith('/transport/board')) {
@@ -465,17 +477,11 @@ describe('<TransportHome> — the command center', () => {
       }
     });
     renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    // The board re-renders once the day settles (after 6 PM a quiet board moves to tomorrow): wait for it, then query fresh.
-    await waitFor(
-      () => {
-        const kpis = screen.getByTestId('transport-kpis');
-        expect(within(kpis).getByText('Booked')).toBeTruthy();
-        expect(within(kpis).queryByText('Needs a van')).toBeNull();
-        expect(screen.getByTestId('needs-van-none').textContent).toMatch(/Everyone has a van/);
-        expect(screen.getByTestId('runs-none').textContent).toMatch(/No runs yet/);
-      },
-      { timeout: 3000 },
-    );
+    expect(await screen.findByText(/^No rides booked for /)).toBeInTheDocument();
+    expect(screen.queryByTestId('transport-kpis')).toBeNull();
+    expect(screen.queryByTestId('needs-van-none')).toBeNull();
+    expect(screen.queryByTestId('runs-none')).toBeNull();
+    expect(screen.queryByText(/All clear/)).toBeNull();
   });
 
   it('the rides list tells a manager’s waiver from a ride nobody could charge, and flags rides that still need a signature', async () => {

@@ -137,9 +137,20 @@ function doorFor(mod: ModuleNav, shape: NavShape | null, term: (key: TermKey) =>
  */
 export function navCrumbs(input: NavTrailInput & { leaf?: string | null }): BreadcrumbSegment[] | null {
   const { parents, module, atModuleRoot } = navParents(input);
-  if (!module || parents.length === 0) return null;
+  if (!module) return null;
   const leaf = input.leaf?.trim() || (atModuleRoot ? module.label : null);
   if (!leaf) return null;
+  if (parents.length === 0) {
+    // A section's own page (Scheduling under "Time & scheduling", Payroll
+    // under "Pay & finance"): its door is where it lives, said once as a
+    // plain crumb — the door's target is this page, so it isn't a link.
+    // Pages with no door keep no trail (PageHeader holds the row's place).
+    const door = doorFor(module, input.shape, input.term);
+    // "My pay" over "Pay" says the same thing twice: the page name is enough.
+    const plain = (x: string) => x.trim().toLowerCase().replace(/^my\s+/, '');
+    if (door && plain(door.label) !== plain(leaf)) return [{ label: door.label }, { label: leaf }];
+    return null;
+  }
   const last = parents[parents.length - 1]!;
   // "Payroll › Payroll" — the leaf repeats its parent: the parent is enough.
   if (last.label.toLowerCase() === leaf.toLowerCase()) {

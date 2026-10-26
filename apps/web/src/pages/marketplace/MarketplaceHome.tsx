@@ -87,6 +87,8 @@ export function MarketplaceHome() {
     // The trail comes from the nav ("Time & scheduling › Open shifts"); a
     // manager reads what the page is for them, not the associate's pitch.
     <ListTemplate
+        // A worker reads at 16px on a phone (helper lines at 14px); the manager's desk keeps the office size.
+        className={canManage ? undefined : 'max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm'}
         title={t('mk.title')}
         subtitle={canManage ? t('mk.subtitleManager') : t('mk.subtitle')}
     >

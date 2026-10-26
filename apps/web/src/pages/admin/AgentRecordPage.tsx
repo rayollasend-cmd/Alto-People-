@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, ShieldAlert } from '@/components/ui/icons';
+import { BadgeCheck, Pencil, Play, ShieldAlert } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { AGENT_ENVIRONMENT_LABELS, AGENT_SCOPES, WORKER_STATUS_LABELS, type AgentDetail } from '@alto-people/shared';
 import { RecordTemplate } from '@/components/templates';
@@ -16,7 +16,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDate, fmtMoney, fmtPercent } from '@/lib/format';
-import { getAgent, listAgentCapabilities, updateAgent } from '@/lib/agentsApi';
+import { certifyAgent, getAgent, listAgentCapabilities, runAgentScenarios, updateAgent } from '@/lib/agentsApi';
 import { AgentDecisionRecordTab, decisionRecordQuery } from '@/pages/admin/AgentDecisionRecordTab';
 import {
   CapabilitiesSection,
@@ -148,6 +148,7 @@ function AgentRecord({
   decisionsCount: number | undefined;
 }) {
   const { suspend, busy: suspending } = useSuspendAgent(agent, onChanged);
+  const next = useNextStep(agent, canManage, onChanged, () => setTab('certification'));
   const s = agent.scorecard;
   const liveCredentials = agent.credentials.filter((c) => c.state === 'ACTIVE' || c.state === 'ROTATING').length;
   const over =
@@ -158,10 +159,24 @@ function AgentRecord({
     s.errorRatePct >= agent.drift.driftErrorRatePct;
   // A name, never an email address, in the subtitle (F500 G2).
   const ownerName = agent.owner ? agent.owner.name || 'an owner with no name on file' : 'no owner';
-  const statusWords = WORKER_STATUS_LABELS[agent.status].toLowerCase();
   // Edit beside the title; Suspend (destructive) in "More", where its own
   // reason prompt is the confirm (F500 G2 — the Clients lesson).
   const actions: PageAction[] = [
+    // The one gold button: what this agent needs next (certify, run its scenarios, add one).
+    ...(next
+      ? [
+          {
+            key: 'next',
+            label: next.busy ? next.busyLabel : next.label,
+            icon: next.icon,
+            primary: true,
+            loading: next.busy,
+            disabled: next.busy,
+            hint: next.hint,
+            onSelect: () => void next.run(),
+          } satisfies PageAction,
+        ]
+      : []),
     {
       key: 'edit',
       label: 'Edit',
@@ -186,6 +201,9 @@ function AgentRecord({
   // A tab with nothing in it waits until there is something — unless the
   // reader can add the first one (a credential, a spend line) from it.
   const showEmpty = (n: number | undefined, addable: boolean) => n === undefined || n > 0 || (addable && canManage);
+  // A count of nothing is no count: "Credentials (0)" and "Spend (0)" pushed
+  // the strip past its column at 1440 (F500 2026-10-26).
+  const nonZero = (n: number | undefined) => (n ? n : undefined);
 
   return (
     <RecordTemplate
@@ -196,7 +214,8 @@ function AgentRecord({
           {WORKER_STATUS_LABELS[agent.status]}
         </Badge>
       }
-      subtitle={`${familyLabel(agent.profile.family) || 'Not yet placed in a family'} · owned by ${ownerName} · ${statusWords}`}
+      // The status is the badge beside the name — said once, not again in words.
+      subtitle={`${familyLabel(agent.profile.family) || 'Not yet placed in a family'} · owned by ${ownerName}`}
       actions={actions}
       // The activity trail reads beside the tabs, not behind one of nine.
       aside={
@@ -239,9 +258,9 @@ function AgentRecord({
             <ProfileView agent={agent} />
           ),
         },
-        { key: 'capabilities', label: 'Capabilities & gates', count: capabilitiesCount, content: <CapabilitiesSection agent={agent} canManage={canManage} /> },
+        { key: 'capabilities', label: 'Capabilities & gates', count: nonZero(capabilitiesCount), content: <CapabilitiesSection agent={agent} canManage={canManage} /> },
         ...(showEmpty(agent.credentials.length, true)
-          ? [{ key: 'credentials', label: 'Credentials', count: liveCredentials, content: <CredentialsSection agent={agent} canManage={canManage} onChanged={onChanged} /> }]
+          ? [{ key: 'credentials', label: 'Credentials', count: nonZero(liveCredentials), content: <CredentialsSection agent={agent} canManage={canManage} onChanged={onChanged} /> }]
           : []),
         {
           key: 'certification',
@@ -250,17 +269,107 @@ function AgentRecord({
         },
         { key: 'scorecard', label: 'Scorecard', content: <ScorecardSection agent={agent} canManage={canManage} onChanged={onChanged} /> },
         ...(showEmpty(agent.approvals.length, false)
-          ? [{ key: 'requests', label: 'Proposals', count: agent.approvals.length, content: <RequestsSection approvals={agent.approvals} /> }]
+          ? [{ key: 'requests', label: 'Proposals', count: nonZero(agent.approvals.length), content: <RequestsSection approvals={agent.approvals} /> }]
           : []),
         ...(showEmpty(agent.spend.length, true)
-          ? [{ key: 'spend', label: 'Spend', count: agent.spend.length, content: <SpendSection agent={agent} canManage={canManage} onChanged={onChanged} /> }]
+          ? [{ key: 'spend', label: 'Spend', count: nonZero(agent.spend.length), content: <SpendSection agent={agent} canManage={canManage} onChanged={onChanged} /> }]
           : []),
         ...(showEmpty(decisionsCount, false)
-          ? [{ key: 'record', label: 'Decision record', count: decisionsCount, content: <AgentDecisionRecordTab agentId={agent.id} canManage={canManage} /> }]
+          ? [{ key: 'record', label: 'Decision record', count: nonZero(decisionsCount), content: <AgentDecisionRecordTab agentId={agent.id} canManage={canManage} /> }]
           : []),
       ]}
     />
   );
+}
+
+/* ---------------------------------------------------------- next step */
+
+interface NextStep {
+  label: string;
+  busyLabel: string;
+  icon: typeof BadgeCheck;
+  hint?: string;
+  busy: boolean;
+  run: () => Promise<void>;
+}
+
+/**
+ * What this agent needs from a person next, as the record's one primary
+ * (F500 2026-10-26): an onboarding agent whose scenarios all pass is
+ * certified — which makes it active; one with scenarios the product can
+ * run has them run; one with none is taken to Certification to add the
+ * first. An active agent whose model moved past its certificate is
+ * recertified the same way. Anything else needs nothing (null).
+ */
+export function nextStepKind(agent: Pick<AgentDetail, 'status' | 'certification'>): 'certify' | 'run' | 'add' | 'open' | null {
+  const cert = agent.certification;
+  const needs = agent.status === 'ONBOARDING' || (agent.status === 'ACTIVE' && cert !== undefined && !cert.current);
+  if (!needs || !cert) return null;
+  if (cert.ready) return 'certify';
+  if (cert.runnable && cert.scenarios > 0) return 'run';
+  if (cert.scenarios === 0) return 'add';
+  return 'open';
+}
+
+function useNextStep(agent: AgentDetail, canManage: boolean, onChanged: () => Promise<unknown>, openCertification: () => void): NextStep | null {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const kind = canManage ? nextStepKind(agent) : null;
+  if (!kind) return null;
+  const onboarding = agent.status === 'ONBOARDING';
+  const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ['agents', 'scenarios', agent.id] }), onChanged()]);
+  if (kind === 'certify') {
+    return {
+      label: onboarding ? 'Certify and activate' : 'Recertify',
+      busyLabel: 'Certifying…',
+      icon: BadgeCheck,
+      hint: onboarding ? 'Every scenario passes: certifying makes the agent active' : 'Every scenario passes under the new model version',
+      busy,
+      run: async () => {
+        setBusy(true);
+        try {
+          const r = await certifyAgent(agent.id);
+          toast.success(r.agent.status === 'ACTIVE' && onboarding ? `${agent.name} certified and active.` : `${agent.name} certified for ${r.certification.modelVersion}.`);
+          await refresh();
+        } catch (err) {
+          toast.error(errorMessage(err, 'Could not certify the agent.'));
+        } finally {
+          setBusy(false);
+        }
+      },
+    };
+  }
+  if (kind === 'run') {
+    return {
+      label: 'Run scenarios',
+      busyLabel: 'Running…',
+      icon: Play,
+      hint: 'Certification needs every scenario to pass',
+      busy,
+      run: async () => {
+        setBusy(true);
+        try {
+          const r = await runAgentScenarios(agent.id);
+          qc.setQueryData(['agents', 'scenarios', agent.id], { scenarios: r.scenarios });
+          toast[r.passed === r.ran ? 'success' : 'info'](`${r.passed} of ${r.ran} scenarios passed.`);
+          openCertification();
+          await onChanged();
+        } catch (err) {
+          toast.error(errorMessage(err, 'Could not run the scenarios.'));
+        } finally {
+          setBusy(false);
+        }
+      },
+    };
+  }
+  return {
+    label: kind === 'add' ? 'Add a scenario' : 'Open certification',
+    busyLabel: kind === 'add' ? 'Add a scenario' : 'Open certification',
+    icon: BadgeCheck,
+    hint: kind === 'add' ? 'An agent is certified once every scenario passes' : undefined,
+    busy: false,
+    run: async () => openCertification(),
+  };
 }
 
 /* ------------------------------------------------------------ profile */
@@ -293,11 +402,6 @@ function ProfileView({ agent }: { agent: AgentDetail }) {
       <Row label="Model">{modelLine(p)}</Row>
       <Row label="Model version">{versionLabel(p.modelVersion)}</Row>
       <Row label="Environment">{AGENT_ENVIRONMENT_LABELS[p.environment]}</Row>
-      <Row label="Status">
-        <Badge variant={STATUS_VARIANT[agent.status]} size="sm">
-          {WORKER_STATUS_LABELS[agent.status]}
-        </Badge>
-      </Row>
       <Row label="Scopes">
         {p.scopes.length ? (
           <span className="flex flex-wrap gap-1">

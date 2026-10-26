@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { tenantIdForWrite } from './tenant.js';
+import { fmtDayInZone } from './humanDates.js';
 
 /**
  * ONE DEFINITION OF "ACTIVE" (Brief 1A-2).
@@ -285,7 +286,7 @@ export async function explainActive(associateId: string, now: Date = new Date(),
   else if (!placement) reason = 'Not placed at any site (no open assignment or approved application).';
   else if (worked) reason = `Clocked in within the last ${windowDays} days.`;
   else if (scheduled) reason = 'Has a shift assigned ahead.';
-  else reason = lastEntry ? `Last clock-in ${lastEntry.clockInAt.toISOString().slice(0, 10)} is outside the ${windowDays}-day window and nothing is scheduled.` : `Never clocked in and nothing is scheduled.`;
+  else reason = lastEntry ? `Last clock-in ${fmtDayInZone(lastEntry.clockInAt)} is outside the ${windowDays}-day window and nothing is scheduled.` : `Never clocked in and nothing is scheduled.`;
   return { active, employed, placement, lastClockInAt: lastEntry?.clockInAt ?? null, nextShiftAt: nextShift?.startsAt ?? null, windowDays, reason };
 }
 

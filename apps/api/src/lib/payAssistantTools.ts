@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import type { AssistantTool } from './assistantModel.js';
 import { estimateW4, w4EstimatorContext } from './w4Estimator.js';
+import { fmtDay, fmtDayRange } from './humanDates.js';
 
 /**
  * The assistant's pay tools (PAYEXP §5), for a worker asking about their
@@ -50,7 +51,7 @@ export async function explainLatestPaystub(db: PrismaClient, associateId: string
   const run = item.payrollRun;
   const lines: string[] = [];
   const kindWord = run.kind === 'DAILY' ? 'daily pay' : run.kind === 'MANUAL' ? 'a manual (paper) check' : run.kind === 'OFF_CYCLE' ? 'an extra (off-cycle) check' : run.kind === 'AMENDMENT' ? 'a correction to an earlier check' : 'a regular paycheck';
-  lines.push(`Paystub for ${run.periodStart.toISOString().slice(0, 10)} to ${run.periodEnd.toISOString().slice(0, 10)}, ${kindWord}${run.disbursedAt ? `, paid ${run.disbursedAt.toISOString().slice(0, 10)}` : ' (not paid yet)'}.`);
+  lines.push(`Paystub for ${fmtDayRange(run.periodStart, run.periodEnd)}, ${kindWord}${run.disbursedAt ? `, paid ${fmtDay(run.disbursedAt)}` : ' (not paid yet)'}.`);
   lines.push('PAY:');
   for (const e of item.earnings) {
     const label = EARNING_LABEL[e.kind] ?? e.kind;

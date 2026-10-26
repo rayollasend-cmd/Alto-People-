@@ -22,6 +22,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { DateRangeField } from '@/components/ui/DateField';
 import { Input } from '@/components/ui/Input';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
@@ -59,9 +60,11 @@ function metaPreview(m: Record<string, unknown> | null): string {
 }
 
 const shortId = (id: string) => (id.length > 13 ? `${id.slice(0, 8)}…` : id);
+/** A row about the actor's own account (a sign-in, a password change). */
+const isOwnAccount = (e: AuditSearchEntry) => e.entityType === 'User' && !!e.actorUserId && e.entityId === e.actorUserId;
 /** What a row's record is called: its name, or its kind and a short id; a sign-in's account is the actor's own. */
 const recordName = (e: AuditSearchEntry) =>
-  e.entityType === 'User' && e.actorUserId && e.entityId === e.actorUserId ? 'Own account' : (e.entityLabel ?? `${auditEntityTypeLabel(e.entityType)} ${shortId(e.entityId)}`);
+  isOwnAccount(e) ? 'Own account' : (e.entityLabel ?? `${auditEntityTypeLabel(e.entityType)} ${shortId(e.entityId)}`);
 const actorOf = (e: AuditSearchEntry) => e.actorName ?? e.actorEmail ?? null;
 
 /**
@@ -230,8 +233,11 @@ export function AuditHome() {
             ))}
             <option value="custom">Pick dates…</option>
           </Select>
-          <FilterChip active={!showSystem} aria-pressed={!showSystem} onClick={() => setShowSystem(!showSystem)} title="The API’s own request trail (http.post, http.patch…)">
-            Hide system requests
+          {/* On by default: the API's own request trail and the assistant's
+              question-and-reply pairs are routine, not changes — they buried
+              the sign-ins and edits a reviewer is looking for. */}
+          <FilterChip active={!showSystem} aria-pressed={!showSystem} onClick={() => setShowSystem(!showSystem)} title="Hides the system’s own request trail and the assistant’s questions and replies">
+            Hide routine activity
           </FilterChip>
           <FilterChip active={moreOpen} aria-expanded={moreOpen} aria-controls="audit-more-filters" onClick={() => setMoreOpen((o) => !o)}>
             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
@@ -239,14 +245,17 @@ export function AuditHome() {
           </FilterChip>
           {moreOpen && (
             <div id="audit-more-filters" className="flex w-full flex-wrap items-center gap-2 border-t border-line pt-2">
-              <label className="flex items-center gap-1.5 text-xs text-ink-muted">
-                From
-                <Input type="date" className="h-8 w-36 text-xs" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
-              </label>
-              <label className="flex items-center gap-1.5 text-xs text-ink-muted">
-                To
-                <Input type="date" className="h-8 w-36 text-xs" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
-              </label>
+              <DateRangeField
+                size="sm"
+                from={from}
+                to={to}
+                fromLabel="From"
+                toLabel="To"
+                onChange={(r) => {
+                  if (r.from !== from) setFrom(r.from);
+                  if (r.to !== to) setTo(r.to);
+                }}
+              />
               <Select size="sm" aria-label="Record type" value={entityType} onChange={(e) => setEntityType(e.target.value)} className="w-full sm:w-44">
                 <option value="">Any record type</option>
                 {KNOWN_ENTITY_TYPES.map((t) => (
@@ -303,7 +312,8 @@ export function AuditHome() {
               csv: (e) => e.createdAt,
               sortable: true,
               searchable: false,
-              className: 'text-silver text-xs whitespace-nowrap tabular-nums w-24',
+              width: '7.5rem',
+              className: 'text-silver text-xs whitespace-nowrap tabular-nums',
               cell: (e) => <span title={fmtDateTime(e.createdAt)}>{fmtTimeOnly(e.createdAt, { seconds: true })}</span>,
             },
             {
@@ -313,6 +323,7 @@ export function AuditHome() {
               csv: (e) => e.action,
               sortable: true,
               primary: true,
+              width: '28%',
               cell: (e) => (
                 <span className="text-ink" title={e.action}>
                   {auditActionLabel(e.action)}
@@ -326,6 +337,7 @@ export function AuditHome() {
               csv: (e) => e.actorEmail ?? '',
               sortable: true,
               cardMeta: true,
+              width: '22%',
               className: 'text-xs',
               cell: (e) =>
                 actorOf(e) ? (
@@ -344,16 +356,19 @@ export function AuditHome() {
               sortable: true,
               cardMeta: true,
               className: 'text-xs',
+              // The record takes the room the short event and actor columns
+              // leave (it was the narrowest column holding the longest text).
               cell: (e) => (
                 <span className="block min-w-0">
                   {e.entityHref ? (
-                    <Link to={e.entityHref} onClick={(ev) => ev.stopPropagation()} className="block max-w-[40ch] truncate text-ink underline-offset-2 hover:text-accent hover:underline">
+                    <Link to={e.entityHref} onClick={(ev) => ev.stopPropagation()} className="block max-w-[64ch] truncate text-ink underline-offset-2 hover:text-accent hover:underline">
                       {recordName(e)}
                     </Link>
                   ) : (
-                    <span className="block max-w-[40ch] truncate text-ink">{recordName(e)}</span>
+                    <span className="block max-w-[64ch] truncate text-ink">{recordName(e)}</span>
                   )}
-                  <span className="block text-2xs text-silver/70">{auditEntityTypeLabel(e.entityType)}</span>
+                  {/* "Own account" already says what it is. */}
+                  {!isOwnAccount(e) && <span className="block text-2xs text-silver/70">{auditEntityTypeLabel(e.entityType)}</span>}
                 </span>
               ),
             },
@@ -396,13 +411,10 @@ function AuditDetail({ entry }: { entry: AuditSearchEntry }) {
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
           <dt className="text-silver">When</dt>
           <dd className="text-ink">{fmtDateTime(entry.createdAt)}</dd>
-          <dt className="text-silver">Event key</dt>
-          <dd className="font-mono text-xs text-ink">{entry.action}</dd>
           <dt className="text-silver">Who</dt>
           <dd className="break-all text-ink">
             {actorOf(entry) ?? <span className="text-silver/70">System</span>}
             {entry.actorEmail && entry.actorEmail !== actorOf(entry) && <div className="text-xs text-silver">{entry.actorEmail}</div>}
-            {entry.actorUserId && <div className="font-mono text-2xs text-silver/70">{entry.actorUserId}</div>}
           </dd>
           <dt className="text-silver">Record</dt>
           <dd className="break-all text-ink">
@@ -413,24 +425,37 @@ function AuditDetail({ entry }: { entry: AuditSearchEntry }) {
             ) : (
               recordName(entry)
             )}
-            <div className="text-xs text-silver">{auditEntityTypeLabel(entry.entityType)}</div>
-            <div className="font-mono text-2xs text-silver/70">{entry.entityId}</div>
+            {!isOwnAccount(entry) && <div className="text-xs text-silver">{auditEntityTypeLabel(entry.entityType)}</div>}
           </dd>
-          {entry.clientId && (
-            <>
-              <dt className="text-silver">Client ID</dt>
-              <dd className="break-all font-mono text-xs text-ink">{entry.clientId}</dd>
-            </>
-          )}
         </dl>
-        <div>
-          <div className="mb-1.5 text-xs uppercase tracking-widest text-silver">Details</div>
+        {/* The identifiers and the raw record an auditor samples, behind one
+            disclosure: the plain answer (when, who, what) reads first. */}
+        <details className="rounded-md border border-line px-3 py-2">
+          <summary className="cursor-pointer select-none text-sm font-medium text-ink">Technical details</summary>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+            <dt className="text-silver">Event key</dt>
+            <dd className="break-all font-mono text-ink">{entry.action}</dd>
+            {entry.actorUserId && (
+              <>
+                <dt className="text-silver">User ID</dt>
+                <dd className="break-all font-mono text-ink">{entry.actorUserId}</dd>
+              </>
+            )}
+            <dt className="text-silver">Record ID</dt>
+            <dd className="break-all font-mono text-ink">{entry.entityId}</dd>
+            {entry.clientId && (
+              <>
+                <dt className="text-silver">Client ID</dt>
+                <dd className="break-all font-mono text-ink">{entry.clientId}</dd>
+              </>
+            )}
+          </dl>
           {entry.metadata ? (
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-line bg-surface-raised p-3 font-mono text-xs text-ink">{JSON.stringify(entry.metadata, null, 2)}</pre>
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-line bg-surface-raised p-3 font-mono text-xs text-ink">{JSON.stringify(entry.metadata, null, 2)}</pre>
           ) : (
-            <div className="italic text-silver/70">No details recorded for this event.</div>
+            <p className="mt-2 text-xs text-silver/70">No other details were recorded for this event.</p>
           )}
-        </div>
+        </details>
       </DrawerBody>
     </>
   );

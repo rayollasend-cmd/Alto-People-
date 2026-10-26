@@ -51,9 +51,11 @@ describe('overdue contract duties', () => {
     const duties = home.filter((d) => d.key.startsWith('compliance:contract-duty:'));
     expect(duties).toHaveLength(3);
     expect(duties.every((d) => d.linkUrl === '/compliance?tab=scorecard')).toBe(true);
-    // The title names the duty and its day in words; the age rides in the chip (F500 SH-4).
+    // The title names the duty, its day and how overdue, in words — one
+    // phrase, so the queue draws no second "264d" chip (F500 2026-10-26).
     const wc = duties.find((d) => d.key.includes('WORKERS_COMP'))!;
-    expect(wc.label).toBe('Workers Comp insurance current — due Sat, Jan 31');
+    expect(wc.label).toMatch(/^Workers’ comp insurance current — was due Jan 31 · 26\d days overdue$/);
+    expect(wc.dueDay).toBe('2026-01-31');
     expect(wc.ageDays).toBe(264);
 
     // The compliance desk's, not every wide-capability home: the recruiter,

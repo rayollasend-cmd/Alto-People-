@@ -110,6 +110,14 @@ export interface GridColumn<T> {
   className?: string;
   /** A cell of buttons: clicks inside it must not also open the row. */
   stopRowClick?: boolean;
+  /**
+   * Column priority by room: the column leaves the TABLE while the grid's own
+   * box is narrower than this many CSS pixels (1440 with the sidebar open
+   * leaves a list ~1,090px), so the important columns fit instead of the
+   * table scrolling sideways. It stays in the column chooser, the phone
+   * cards and the export. Never applies to the primary column.
+   */
+  hideBelow?: number;
 }
 
 export interface DataGridProps<T> {
@@ -565,6 +573,28 @@ function GridCore<T>({
   };
   const visible = columns.filter((c) => c.primary || !hidden.has(c.key));
 
+  /* ---- column priority by room (GridColumn.hideBelow) ---------------- */
+  // The grid's own width, not the window's: the same list sits beside a
+  // drawer, under an open sidebar or full width.
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const [boxWidth, setBoxWidth] = React.useState<number | null>(null);
+  const anyByRoom = columns.some((c) => c.hideBelow);
+  React.useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!anyByRoom || !el) return;
+    setBoxWidth(el.clientWidth);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (typeof w === 'number') setBoxWidth(Math.round(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [anyByRoom]);
+  const tableCols = anyByRoom && boxWidth !== null && boxWidth > 0
+    ? visible.filter((c) => c.primary || !c.hideBelow || boxWidth >= c.hideBelow)
+    : visible;
+
   /* ---- selection ---------------------------------------------------- */
   const [ownSelected, setOwnSelected] = React.useState<Set<string>>(new Set());
   const controlled = selectable?.selection;
@@ -766,7 +796,7 @@ function GridCore<T>({
 
   /* ---- the body, in drawing order ------------------------------------ */
   const leadCols = (selectable ? 1 : 0) + (expandable ? 1 : 0);
-  const colSpan = visible.length + leadCols;
+  const colSpan = tableCols.length + leadCols;
   const withDetails = (row: T): GridItem<T>[] => {
     const out: GridItem<T>[] = [{ kind: 'row', row, child: false, v: null }];
     for (const c of subRows?.(row) ?? []) out.push({ kind: 'row', row: c, child: true, v: null });
@@ -922,14 +952,20 @@ function GridCore<T>({
             )}
           </div>
           {selectable && !child && !selectable.disabled?.(row) && (
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0"
-              checked={selected.has(key)}
-              onChange={(e) => pick(key, shiftOf(e))}
+            // The box stays 16px; the label around it is the finger's target
+            // (44px on touch, F500 2026-10-26: a 16px tap on a phone card).
+            <label
+              className="-m-2 grid shrink-0 cursor-pointer place-items-center p-2 coarse:-m-3.5 coarse:p-3.5"
               onClick={(e) => e.stopPropagation()}
-              aria-label={`Select ${primary.accessor(row) ?? 'row'}`}
-            />
+            >
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={selected.has(key)}
+                onChange={(e) => pick(key, shiftOf(e))}
+                aria-label={`Select ${primary.accessor(row) ?? 'row'}`}
+              />
+            </label>
           )}
         </div>
         {fields.length > 0 && (
@@ -1156,7 +1192,7 @@ function GridCore<T>({
 
   /* ---- render ---------------------------------------------------------- */
   return (
-    <div className={cn('space-y-3', className)}>
+    <div ref={rootRef} className={cn('space-y-3', className)}>
       {toolbarNode}
 
       {selectable?.actions && selected.size > 0 && (
@@ -1271,7 +1307,9 @@ function GridCore<T>({
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     {selectable && (
-                      <TableHead className="w-8 pr-0">
+                      // pr-2: the next column's sort button fills its cell, and a 16px box
+                      // needs clear space around it to stay a 24px target (WCAG 2.5.8).
+                      <TableHead className="w-8 pr-2">
                         <input
                           type="checkbox"
                           className="h-4 w-4"
@@ -1287,7 +1325,7 @@ function GridCore<T>({
                         <span className="sr-only">Details</span>
                       </TableHead>
                     )}
-                    {visible.map((c) =>
+                    {tableCols.map((c) =>
                       c.sortable ? (
                         <SortableTableHead
                           key={c.key}
@@ -1371,6 +1409,8 @@ function GridCore<T>({
                         aria-label={onRowClick && !child ? rowActionLabel?.(row) : undefined}
                         aria-expanded={expandable && !child ? isOpen : undefined}
                         className={cn(
+                          // group/row: a cell's secondary controls (a copy button) can show on the row's hover or focus only.
+                          'group/row',
                           rowClick && 'cursor-pointer',
                           child && 'bg-navy-secondary/[0.15] text-xs text-silver',
                           !child && rowClassName?.(row),
@@ -1409,7 +1449,7 @@ function GridCore<T>({
                             )}
                           </TableCell>
                         )}
-                        {visible.map((c, i) => (
+                        {tableCols.map((c, i) => (
                           <TableCell
                             key={c.key}
                             className={cn(alignClass(c.align), c.className, child && i === 0 && 'pl-8')}

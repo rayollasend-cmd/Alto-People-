@@ -81,7 +81,7 @@ describe('the payroll period ledger', () => {
     const late = r.exceptions.filter((e) => e.kind === 'LATE_APPROVED_TIME');
     expect(late).toHaveLength(1);
     expect(late[0]).toMatchObject({ associateId: w.ana.id, severity: 'WARNING', detail: { hours: 6 } });
-    expect(late[0]!.message).toMatch(/6\.0h approved for 2026-09-12/);
+    expect(late[0]!.message).toMatch(/6\.0h approved for Sep 12 – 25 \(payday /);
   });
 
   it('GET /payroll/period-ledger, the inbox count, and "Pay these hours now" paying only the unpaid hours, once', async () => {

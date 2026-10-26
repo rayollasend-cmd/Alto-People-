@@ -8,7 +8,7 @@ import { apiFetch } from './api';
 export interface TenantProfileResponse {
   tenantId: string;
   /** The Organization page's header: name, plan, people on the books (hired, not separated), active sites. */
-  facts?: { name: string | null; plan: string | null; createdAt: string | null; onTheBooks: number; sites: number };
+  facts?: { name: string | null; plan: string | null; /** The plan in words ("Internal", "Not invoiced"); absent from an older API. */ planLabel?: string | null; createdAt: string | null; onTheBooks: number; sites: number };
   profile: TenantProfile;
   defaults: { modules: TenantModules; terminology: Terminology };
   catalog: {

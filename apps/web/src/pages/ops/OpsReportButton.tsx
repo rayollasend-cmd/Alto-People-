@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
+import { termizeText } from '@/lib/modules';
 import {
   emailOpsReport,
   listOpsReportRecipients,
@@ -66,11 +67,12 @@ export function OpsReportButton({
   size?: 'xs' | 'sm';
 }) {
   const [open, setOpen] = useState(false);
+  const term = useTerm();
   return (
     <>
       <Button variant="outline" size={size} onClick={() => setOpen(true)}>
         <FileBarChart2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
-        Store report
+        {termizeText('Store report', term)}
       </Button>
       {open && <OpsReportDialog stores={stores} initialStoreId={storeId ?? ''} onClose={() => setOpen(false)} />}
     </>

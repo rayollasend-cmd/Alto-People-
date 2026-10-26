@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { KeyRound, Lock, UserPlus, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +13,6 @@ import { personPhotoUrl } from '@/lib/photoUrl';
 import { useUrlParam, useUrlWriter } from '@/lib/useUrlState';
 import { forcePasswordReset, listAdminUsers, patchAdminUser, deactivateUsers, type AdminUser, type ListUsersFilters, type UserStatus } from '@/lib/usersAdminApi';
 import { listClients } from '@/lib/clientsApi';
-import { getShiftCoverageGaps } from '@/lib/shiftWindowsApi';
 import { useDeskItem } from '@/components/templates';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -42,7 +41,8 @@ const FILTER_KEYS = ['q', 'role', 'status'] as const;
  *
  * The access report moved to Access certifications, the access-review home
  * (?view=report still lands there). Shifts without a lead are Store leads'
- * work; one line points there when there are any.
+ * work and are said there (and on the workforce home), not on this
+ * identity page (F500 2026-10-26).
  */
 export function UsersAdmin() {
   const { search } = useLocation();
@@ -97,10 +97,6 @@ function UsersAdminPage() {
   const reload = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['UsersAdmin'] });
   }, [queryClient]);
-
-  // Shifts nobody leads are Store leads' work (G2); here, one line at most.
-  const gaps = useQuery({ queryKey: ['shift-windows', 'gaps'], queryFn: () => getShiftCoverageGaps(), staleTime: 60_000, retry: false, enabled: canManage });
-  const unled = (gaps.data?.clients ?? []).reduce((n, c) => n + c.uncovered.length, 0);
 
   // Past the 500 cap, "Load all" fans out one capped request per role.
   const [loadingAll, setLoadingAll] = useState(false);
@@ -180,6 +176,14 @@ function UsersAdminPage() {
               {me?.id === u.id && <span className="ml-2 text-xs text-accent">(you)</span>}
             </div>
             {u.associateName && <div className="truncate text-xs text-ink-muted">{u.email}</div>}
+            {/* A staff login with no person record cannot clock in, be scheduled
+                or be paid: a quiet fact on the identity, not a warning badge in
+                every row (F500 2026-10-26); the drawer sets it up. */}
+            {!u.associateId && u.role !== 'ASSOCIATE' && u.role !== 'CLIENT_PORTAL' && (
+              <div className="truncate text-xs text-ink-muted" title="Their clock, schedule and pay won't work until a person record exists. Open the account to set it up.">
+                No person record
+              </div>
+            )}
           </div>
         </div>
       ),
@@ -191,22 +195,17 @@ function UsersAdminPage() {
       accessor: (u) => roleLabel(u.pendingAccess?.invite && u.pendingAccess.role ? u.pendingAccess.role : u.role),
       sortable: true,
       cardMeta: true,
+      // One line: "Transportation director" wrapped to two beside the rail
+      // (the label is nowrap; no fixed width, so Two-step keeps its header).
       cell: (u) => {
         const shown = u.pendingAccess?.invite && u.pendingAccess.role ? u.pendingAccess.role : u.role;
         const extra = u.additionalRoles ?? [];
         return (
           <span className="flex flex-wrap items-center gap-1.5">
-            <span className="text-ink">{roleLabel(shown)}</span>
+            <span className="whitespace-nowrap text-ink">{roleLabel(shown)}</span>
             {extra.length > 0 && (
               <Badge variant="default" size="sm" withDot={false} title={`Also works as ${extra.map((r) => roleLabel(r)).join(', ')}`}>
                 +{extra.length}
-              </Badge>
-            )}
-            {/* A staff login with no person record cannot clock in, be scheduled
-                or be paid: say so in the row; the drawer sets it up. */}
-            {!u.associateId && u.role !== 'ASSOCIATE' && u.role !== 'CLIENT_PORTAL' && (
-              <Badge variant="pending" size="sm" withDot={false} title="Their clock, schedule and pay won't work until a person record exists. Open the account to set it up.">
-                No person record
               </Badge>
             )}
             {u.pendingAccess && !u.pendingAccess.invite && (
@@ -244,7 +243,7 @@ function UsersAdminPage() {
       header: 'Scope',
       accessor: (u) => scopeText(u, storeWord),
       sortable: true,
-      className: 'min-w-[9rem] text-ink-muted',
+      className: 'min-w-[8rem] text-ink-muted',
     },
     {
       key: 'lastSeen',
@@ -262,7 +261,8 @@ function UsersAdminPage() {
       accessor: (u) => (u.mfaEnabled ? 'On' : 'Off'),
       sortable: true,
       searchable: false,
-      cell: (u) => (u.mfaEnabled ? <Badge variant="success" size="sm">On</Badge> : <span className="text-ink-muted">Off</span>),
+      // One shape for both answers: a badge either way, Off neutral (not a warning).
+      cell: (u) => (u.mfaEnabled ? <Badge variant="success" size="sm">On</Badge> : <Badge variant="outline" size="sm">Off</Badge>),
     },
     {
       key: 'created',
@@ -299,15 +299,6 @@ function UsersAdminPage() {
           { label: 'Access review', to: '/admin/access-certifications' },
         ]}
       />
-
-      {unled > 0 && (
-        <p className="text-sm text-ink-muted" data-testid="shift-leads-line">
-          {unled === 1 ? '1 shift has no lead.' : `${unled} shifts have no lead.`}{' '}
-          <Link to="/scheduling/supervisors" className="text-accent underline-offset-2 hover:underline">
-            Assign them in {termOf('label.store')} leads
-          </Link>
-        </p>
-      )}
 
       {listQuery.isError && !rows ? (
         <QueryError what="the accounts" query={listQuery} />

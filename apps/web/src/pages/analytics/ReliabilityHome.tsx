@@ -19,6 +19,7 @@ import { ScheduledJobsCard } from '@/components/reliability/ScheduledJobsCard';
 import { useAuth, useTenant } from '@/lib/auth';
 import { useUrlParam } from '@/lib/useUrlState';
 import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
+import { EndpointCell, endpointLabel, fmtMs } from './usageLabels';
 
 /**
  * IS THE PLATFORM STAYING UP?
@@ -45,7 +46,7 @@ type WindowValue = (typeof WINDOW_VALUES)[number];
 
 /** "97%", "97.5%" — a decimal only when there is one to show. */
 const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 1000) / 10}%`);
-const ms = (v: number | null) => (v === null ? '—' : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${v} ms`);
+const ms = (v: number | null) => fmtMs(v);
 const endpoint = (r: ReliabilityRouteRow) => `${r.method} ${r.route}`;
 
 /**
@@ -73,21 +74,18 @@ const ROUTE_COLUMNS = [
   {
     key: 'endpoint',
     header: 'Endpoint',
-    accessor: (r: ReliabilityRouteRow) => endpoint(r),
+    accessor: (r: ReliabilityRouteRow) => `${endpointLabel(r.route)} ${endpoint(r)}`,
+    csv: (r: ReliabilityRouteRow) => endpoint(r),
     sortable: true,
     primary: true,
-    className: 'font-mono text-xs',
-    cell: (r: ReliabilityRouteRow) => (
-      <>
-        <span className="text-silver">{r.method}</span> {r.route}
-      </>
-    ),
+    cell: (r: ReliabilityRouteRow) => <EndpointCell method={r.method} route={r.route} />,
   },
   {
     key: 'p95',
     header: 'Slowest 5%',
     accessor: (r: ReliabilityRouteRow) => r.p95Ms ?? -1,
-    csv: (r: ReliabilityRouteRow) => (r.p95Ms === null ? '' : `${r.p95Ms}ms`),
+    // The export says it the way the page does ("17.5 s"), not raw milliseconds.
+    csv: (r: ReliabilityRouteRow) => (r.p95Ms === null ? '' : ms(r.p95Ms)),
     sortable: true,
     searchable: false,
     align: 'right' as const,
@@ -99,11 +97,11 @@ const ROUTE_COLUMNS = [
     key: 'avg',
     header: 'Avg',
     accessor: (r: ReliabilityRouteRow) => r.avgMs,
-    csv: (r: ReliabilityRouteRow) => `${r.avgMs}ms`,
+    csv: (r: ReliabilityRouteRow) => ms(r.avgMs),
     sortable: true,
     searchable: false,
     align: 'right' as const,
-    className: 'tabular-nums text-silver',
+    className: 'tabular-nums text-ink-muted',
     cell: (r: ReliabilityRouteRow) => ms(r.avgMs),
   },
   {
@@ -126,7 +124,7 @@ const ROUTE_COLUMNS = [
     align: 'right' as const,
     className: 'tabular-nums',
     cell: (r: ReliabilityRouteRow) =>
-      r.serverError > 0 ? <span className="text-alert">{r.serverError}</span> : <span className="text-silver">0</span>,
+      r.serverError > 0 ? <span className="text-alert">{r.serverError}</span> : <span className="text-ink-muted">0</span>,
   },
 ];
 
@@ -199,8 +197,7 @@ export function ReliabilityHome() {
             Errors this week
           </CardTitle>
           <CardDescription>
-            Org week, Saturday to Friday. The budget is {data?.budget ?? 10} errors a week; the goal is eight weeks in a
-            row under it.
+            Org week, Saturday to Friday, against a budget of {data?.budget ?? 10} errors.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -240,12 +237,13 @@ export function ReliabilityHome() {
                   title="Error tracking isn't connected"
                   description={
                     <>
-                      Errors can&apos;t be counted against the budget until it is. Ask your Alto admin to connect error
-                      tracking.
+                      Errors can&apos;t be counted against the budget until it is.
+                      {!operator && ' Ask your Alto admin to connect error tracking.'}
                       {operator && (
-                        <span className="mt-1 block text-xs">
-                          For the platform team: set SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECTS on the API.
-                        </span>
+                        <details className="mt-1 text-xs">
+                          <summary className="cursor-pointer text-accent underline-offset-2 hover:underline">How to connect it</summary>
+                          <span className="mt-1 block">Set SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECTS on the API service.</span>
+                        </details>
                       )}
                     </>
                   }
@@ -273,7 +271,7 @@ export function ReliabilityHome() {
             label="Slowest busy route"
             value={ms(slowestBusy?.p95Ms ?? null)}
             nothing={slowestBusy ? undefined : 'Needs a day of traffic'}
-            hint={slowestBusy ? `Slowest 5% of requests · ${endpoint(slowestBusy)}` : undefined}
+            hint={slowestBusy ? `Slowest 5% of requests · ${endpointLabel(slowestBusy.route)}` : undefined}
             tone={slowestBusy && (slowestBusy.p95Ms ?? 0) >= 2000 ? 'warning' : 'default'}
           />
           <MetricCard
@@ -310,7 +308,7 @@ export function ReliabilityHome() {
               <Gauge className="h-4 w-4 text-gold" aria-hidden="true" />
               Busiest routes
             </CardTitle>
-            <CardDescription>The ten most-called endpoints, and how long their slowest 5% of requests took.</CardDescription>
+            <CardDescription>The ten most-called endpoints and their slowest 5% of requests.</CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             {q.isLoading || !data ? (
@@ -339,7 +337,7 @@ export function ReliabilityHome() {
               <RefreshCw className="h-4 w-4 text-warning" aria-hidden="true" />
               Slowest routes
             </CardTitle>
-            <CardDescription>The five slowest, judged by their slowest 5% of requests, among endpoints with at least twenty calls.</CardDescription>
+            <CardDescription>The five slowest endpoints with at least twenty calls.</CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             {q.isLoading || !data ? (
@@ -348,7 +346,7 @@ export function ReliabilityHome() {
               <EmptyState
                 icon={RefreshCw}
                 title="No timings yet"
-                description="Response-time histograms accumulate from the first request after this shipped; a day of traffic fills this in."
+                description="A day of traffic fills this in."
               />
             ) : (
               <DataGrid<ReliabilityRouteRow>
@@ -401,15 +399,15 @@ export function ReliabilityHome() {
                     sortable: true,
                     primary: true,
                     cell: (r) => (
-                      <a href={r.permalink} target="_blank" rel="noreferrer" className="text-white underline-offset-2 hover:underline">
-                        <span className="font-mono text-xs text-silver">{r.shortId}</span> {r.title}
+                      <a href={r.permalink} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
+                        <span className="font-mono text-xs text-ink-muted">{r.shortId}</span> {r.title}
                       </a>
                     ),
                   },
-                  { key: 'where', header: 'Where', accessor: (r) => r.culprit, sortable: true, className: 'font-mono text-xs text-silver' },
+                  { key: 'where', header: 'Where', accessor: (r) => r.culprit, sortable: true, className: 'font-mono text-xs text-ink-muted' },
                   { key: 'events', header: 'Events', accessor: (r) => r.count, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
                   { key: 'users', header: 'People', accessor: (r) => r.userCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
-                  { key: 'last', header: 'Last seen', accessor: (r) => r.lastSeen, sortable: true, searchable: false, cell: (r) => fmtDateTime(r.lastSeen), className: 'text-silver' },
+                  { key: 'last', header: 'Last seen', accessor: (r) => r.lastSeen, sortable: true, searchable: false, cell: (r) => fmtDateTime(r.lastSeen), className: 'text-ink-muted' },
                 ]}
               />
             )}
@@ -449,10 +447,10 @@ export function ReliabilityHome() {
                     align: 'right',
                     cardMeta: true,
                     className: 'tabular-nums',
-                    cell: (w) => (w.sentryErrors === null ? <span className="text-silver">—</span> : w.sentryErrors),
+                    cell: (w) => (w.sentryErrors === null ? <span className="text-ink-muted">—</span> : w.sentryErrors),
                   },
-                  { key: '5xx', header: 'Server errors', accessor: (w) => w.serverErrors, sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver' },
-                  { key: 'calls', header: 'Calls', accessor: (w) => w.requests, sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-silver', cell: (w) => w.requests.toLocaleString() },
+                  { key: '5xx', header: 'Server errors', accessor: (w) => w.serverErrors, sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-ink-muted' },
+                  { key: 'calls', header: 'Calls', accessor: (w) => w.requests, sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-ink-muted', cell: (w) => w.requests.toLocaleString() },
                   {
                     key: 'verdict',
                     header: 'Budget',
@@ -477,12 +475,30 @@ export function ReliabilityHome() {
         </Card>
       </div>
 
-      <p className="flex items-center gap-2 text-xs text-silver">
-        <ScanFace className="h-3.5 w-3.5" aria-hidden="true" />
-        A rejected kiosk punch is one the kiosk refused (wrong PIN, inactive person, stale clock).
-        <Bus className="ml-2 h-3.5 w-3.5" aria-hidden="true" />
-        Ride completion counts seats past their pickup time; cancellations are left out.
-      </p>
+      {/* The definitions, one click away instead of a paragraph under every table (F500 2026-10-26). */}
+      <details className="group rounded-lg border border-line bg-surface px-4 py-3 text-sm" data-testid="reliability-how-to-read">
+        <summary className="cursor-pointer list-none font-medium text-ink [&::-webkit-details-marker]:hidden">
+          How to read this <span className="text-xs font-normal text-ink-muted group-open:hidden">· what each measure counts</span>
+        </summary>
+        <ul className="mt-2 space-y-1.5 text-ink-muted">
+          <li className="flex gap-2">
+            <HeartPulse className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            The goal is eight org weeks in a row under the error budget; the week in progress is not judged until it ends.
+          </li>
+          <li className="flex gap-2">
+            <Gauge className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            “Slowest 5%” is how long the slowest one in twenty requests took — what a person on a bad day waits.
+          </li>
+          <li className="flex gap-2">
+            <ScanFace className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            A rejected kiosk punch is one the kiosk refused (wrong PIN, inactive person, stale clock).
+          </li>
+          <li className="flex gap-2">
+            <Bus className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Ride completion counts seats past their pickup time; cancellations are left out.
+          </li>
+        </ul>
+      </details>
 
       {/* ---- The timers: what each scheduled job did last and does next -- */}
       <ScheduledJobsCard canRun={can('manage:org')} />

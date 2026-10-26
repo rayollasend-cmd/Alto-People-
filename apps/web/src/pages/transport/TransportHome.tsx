@@ -27,7 +27,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
-import { STUCK_RUN_MINUTES, fmtDate, fmtDateTime, fmtMinutes, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, utcToZonedDatetimeInput, ymdLocal } from '@/lib/format';
+import { STUCK_RUN_MINUTES, fmtDate, fmtDateOnly, fmtDateTime, fmtMinutes, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, utcToZonedDatetimeInput, ymdLocal } from '@/lib/format';
 import { useMinWidth } from '@/lib/useViewport';
 import { useChargesRange } from '@/lib/transportRange';
 import { useTransportKeyboard } from '@/lib/transportKeyboard';
@@ -98,8 +98,11 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
+import { DateField, DateRangeField } from '@/components/ui/DateField';
 import { AddressAutocomplete } from '@/components/ui/AddressAutocomplete';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -200,6 +203,14 @@ function shiftDay(ymd: string, n: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
 }
 
+/** "today", "tomorrow", or "Tue, Oct 27" — the board's day in a sentence. */
+function dayName(ymd: string): string {
+  const today = ymdLocal();
+  if (ymd === today) return 'today';
+  if (ymd === shiftDay(today, 1)) return 'tomorrow';
+  return fmtDateOnly(ymd, { weekday: true, year: 'auto' });
+}
+
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 /** A real calendar day (2026-02-31 is not), so a hand-typed link never opens a blank board. */
 function isRealYmd(s: string | null): s is string {
@@ -261,6 +272,8 @@ export function TransportHome() {
   const manage = can('manage:transport');
   const [params, setParams] = useSearchParams();
   const wide = useMinWidth(640);
+  // The page header's own phone/desktop line (PageHeader switches at 768).
+  const headerWide = useMinWidth(768);
   // Transport walk 7: the rider's record, from a link (?rider=…).
   const riderId = params.get('rider');
   const setRider = (id: string | null) => {
@@ -307,57 +320,55 @@ export function TransportHome() {
     setAutoDay(eveningBoardDay(board.data, today));
   }, [linkedDay, autoDay, board.data, today]);
 
+  // The day: one control everywhere — the app's date field, and Today /
+  // Tomorrow as the view toggle it is. On a phone (below the header's own
+  // 768px phone layout) it is ONE row: the day, the toggle, and the sound
+  // switch as an icon; the audit found three rows (date, chips, a lone
+  // "More" holding only the sound switch) eating ~190px of the first screen.
+  const dayToggle = (
+    <SegmentedControl
+      ariaLabel="Jump to"
+      value={date === today ? 'today' : date === tomorrow ? 'tomorrow' : 'other'}
+      onChange={(v) => setDate(v === 'tomorrow' ? tomorrow : today)}
+      className="flex-nowrap"
+      options={[
+        { value: 'today', label: 'Today' },
+        { value: 'tomorrow', label: 'Tomorrow' },
+      ]}
+    />
+  );
+  const soundToggle = (compact: boolean) => (
+    <SoundToggle onLabel="Sounds on — tap to mute" offLabel="Sounds off — tap to turn on" {...(compact ? {} : { text: { on: 'Sounds on', off: 'Sounds off' } })} />
+  );
+  const dayControls =
+    tab !== 'today' ? undefined : headerWide ? (
+      <div className="flex items-center gap-1">
+        <Button variant="ghost" size="icon-sm" aria-label="Previous day" onClick={() => setDate(shiftDay(date, -1))}>
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <DateField aria-label="Day" value={date} clearable={false} onChange={(v) => v && setDate(v)} className="w-36" />
+        <Button variant="ghost" size="icon-sm" aria-label="Next day" onClick={() => setDate(shiftDay(date, 1))}>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+        <div className="ml-2">{dayToggle}</div>
+      </div>
+    ) : (
+      <div className="flex w-full min-w-0 flex-nowrap items-center gap-2" data-testid="transport-day-row">
+        <DateField aria-label="Day" size="sm" value={date} clearable={false} onChange={(v) => v && setDate(v)} className="min-w-0 flex-1" />
+        {dayToggle}
+        {soundToggle(true)}
+      </div>
+    );
+
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
         title="Transportation"
         topbarTitle="Transportation"
         subtitle="The Alto vans — bookings, dispatch, drivers, and everything that comes up."
-        secondaryActions={<SoundToggle onLabel="Sounds on — tap to mute" offLabel="Sounds off — tap to turn on" text={{ on: 'Sounds on', off: 'Sounds off' }} />}
-        primaryAction={
-          tab === 'today' ? (
-            // Transport walk 11: on a phone the day controls are one row —
-            // ‹ date › and a Today / Tomorrow segmented control — not a
-            // strip that clips to "Tomor".
-            <div className={cn('flex items-center gap-1', !wide && 'w-full flex-wrap')}>
-              <Button variant="ghost" size="icon-sm" aria-label="Previous day" onClick={() => setDate(shiftDay(date, -1))}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Input
-                type="date"
-                aria-label="Day"
-                value={date}
-                onChange={(e) => e.target.value && setDate(e.target.value)}
-                className={wide ? 'w-40' : 'min-w-[9.5rem] flex-1'}
-              />
-              <Button variant="ghost" size="icon-sm" aria-label="Next day" onClick={() => setDate(shiftDay(date, 1))}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              {wide ? (
-                <div className="ml-1 flex items-center gap-1" role="group" aria-label="Jump to">
-                  {[
-                    { day: today, label: 'Today' },
-                    { day: tomorrow, label: 'Tomorrow' },
-                  ].map((c) => (
-                    <Button key={c.label} variant={date === c.day ? 'primary' : 'secondary'} size="sm" aria-pressed={date === c.day} onClick={() => setDate(c.day)}>
-                      {c.label}
-                    </Button>
-                  ))}
-                </div>
-              ) : (
-                <SegmentedControl
-                  ariaLabel="Jump to"
-                  value={date === today ? 'today' : date === tomorrow ? 'tomorrow' : 'other'}
-                  onChange={(v) => setDate(v === 'tomorrow' ? tomorrow : today)}
-                  options={[
-                    { value: 'today', label: 'Today' },
-                    { value: 'tomorrow', label: 'Tomorrow' },
-                  ]}
-                />
-              )}
-            </div>
-          ) : undefined
-        }
+        // On a phone the sound switch rides in the day row (no "More" of one).
+        secondaryActions={headerWide || tab !== 'today' ? soundToggle(false) : undefined}
+        primaryAction={dayControls}
     >
       <Tabs value={isSetupTab(tab) ? 'setup' : tab} onValueChange={(v) => setTab(v === 'setup' ? lastSetup : v)}>
         <TabsList className="mb-4">
@@ -365,7 +376,9 @@ export function TransportHome() {
             <TabsTrigger key={k} value={k}>
               {TAB_LABEL[k]}
               {k === 'issues' && openIssues > 0 && (
-                <span className="ml-1.5 rounded-full bg-warning/20 px-1.5 text-xs font-semibold text-warning">{openIssues}</span>
+                <Badge size="sm" variant="pending" withDot={false} className="ml-1.5 tabular-nums">
+                  {openIssues}
+                </Badge>
               )}
             </TabsTrigger>
           ))}
@@ -564,7 +577,7 @@ interface Attention {
   actions: Array<{ label: string; onClick?: () => void; href?: string }>;
 }
 
-function NeedsAttention({ items, compact = false }: { items: Attention[]; compact?: boolean }) {
+function NeedsAttention({ items, compact = false, active = true }: { items: Attention[]; compact?: boolean; active?: boolean }) {
   // Transport walk 11: on a phone the list is one line — "4 need you" —
   // until it's opened; four cards filled the first screen.
   const [open, setOpen] = useState(false);
@@ -585,6 +598,9 @@ function NeedsAttention({ items, compact = false }: { items: Attention[]; compac
     );
   }
   if (items.length === 0) {
+    // A pass only when something was checked: an empty day says nothing here
+    // (the board's one empty state speaks for it).
+    if (!active) return null;
     return (
       <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/[0.06] px-4 py-3 text-sm text-success">
         <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -594,9 +610,9 @@ function NeedsAttention({ items, compact = false }: { items: Attention[]; compac
   }
   return (
     <section aria-label="Needs attention" className="rounded-lg border border-warning/40 bg-warning/[0.05]">
-      <h2 className="flex items-center gap-1.5 px-4 pt-3 text-xs font-semibold uppercase tracking-wider text-warning">
-        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-        Needs attention <span className="text-white">{items.length}</span>
+      <h2 className="flex items-center gap-2 px-4 pt-3 text-sm font-medium text-ink">
+        <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
+        Needs attention <span className="tabular-nums text-ink-muted">{items.length}</span>
       </h2>
       <ul className="divide-y divide-navy-secondary/60 px-4">
         {items.map((a) => (
@@ -604,26 +620,28 @@ function NeedsAttention({ items, compact = false }: { items: Attention[]; compac
             <span
               className={cn(
                 'h-2 w-2 shrink-0 rounded-full',
-                a.tone === 'alert' ? 'bg-alert' : a.tone === 'warning' ? 'bg-warning' : 'bg-gold',
+                a.tone === 'alert' ? 'bg-alert' : a.tone === 'warning' ? 'bg-warning' : 'bg-info',
               )}
               aria-hidden="true"
             />
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-white">{a.title}</div>
-              {a.body && <div className="text-xs text-silver">{a.body}</div>}
+              <div className="text-sm font-medium text-ink">{a.title}</div>
+              {a.body && <div className="text-xs text-ink-muted">{a.body}</div>}
             </div>
             {/* The first action here writes something — close a run, message
                 a van's riders, re-offer a seat — and the one beside it just
                 navigates. Same-size neighbours on touch, so they get the
-                wider gap there. */}
+                wider gap there. Outline, not gold: one primary per screen
+                (Plan runs / Dispatch below), and a list of six items was six
+                gold buttons. */}
             <div className="flex flex-wrap gap-2 coarse:gap-3">
               {a.actions.map((x, i) =>
                 x.href ? (
-                  <Button key={x.label} size="xs" variant={i === 0 ? 'primary' : 'secondary'} asChild>
+                  <Button key={x.label} size="xs" variant={i === 0 ? 'outline' : 'ghost'} asChild>
                     <a href={x.href}>{x.label}</a>
                   </Button>
                 ) : (
-                  <Button key={x.label} size="xs" variant={i === 0 ? 'primary' : 'secondary'} onClick={x.onClick}>
+                  <Button key={x.label} size="xs" variant={i === 0 ? 'outline' : 'ghost'} onClick={x.onClick}>
                     {x.label}
                   </Button>
                 ),
@@ -638,21 +656,18 @@ function NeedsAttention({ items, compact = false }: { items: Attention[]; compac
 
 function KpiStrip({ k }: { k: TransportBoard['kpis'] }) {
   // "Needs a van" is the section header's own count below (it was a tile too — F500 G5).
-  const tiles: Array<{ label: string; value: string | number; warn?: boolean }> = [
-    { label: 'Booked', value: k.booked },
-    { label: 'Vans out', value: `${k.vansOut}/${k.runs}` },
-    { label: 'On board', value: k.onBoard },
-    { label: 'Done', value: k.completed },
-    { label: 'No-shows', value: k.noShows, warn: k.noShows > 0 },
-  ];
+  // The kit's tiles (values in ink; a zero never coloured), three a row
+  // below xl so five never strand "No-shows" alone: 3 + 2 (the last spans
+  // two), then all five in one row from xl.
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 [&>div:last-child]:col-span-2 sm:[&>div:last-child]:col-span-1" data-testid="transport-kpis">
-      {tiles.map((x) => (
-        <div key={x.label} className="rounded-lg border border-navy-secondary bg-navy px-3 py-2.5">
-          <div className="text-2xs font-medium uppercase tracking-wider text-silver">{x.label}</div>
-          <div className={cn('mt-0.5 text-xl font-bold tabular-nums', x.warn ? 'text-warning' : 'text-white')}>{x.value}</div>
-        </div>
-      ))}
+    <div data-testid="transport-kpis">
+      <MetricStrip label="The day at a glance" className="grid-cols-3">
+        <MetricCard label="Booked" value={k.booked} />
+        <MetricCard label="Vans out" value={`${k.vansOut} of ${k.runs}`} nothing={k.runs === 0 ? 'No runs yet' : undefined} />
+        <MetricCard label="On board" value={k.onBoard} />
+        <MetricCard label="Done" value={k.completed} />
+        <MetricCard label="No-shows" value={k.noShows} tone="warning" />
+      </MetricStrip>
     </div>
   );
 }
@@ -940,12 +955,25 @@ function TodayBoard({
     () => rideAlert('attention'),
   );
 
+  // Nothing booked and no run planned: one quiet state for the day, not a
+  // row of zero tiles, a green "all clear" and two "nothing here" boxes.
+  const quietDay = board.rides.length === 0 && liveRuns.length === 0;
+
   return (
     <div className="space-y-5">
-      <NeedsAttention items={attention} compact={compact} />
-      <KpiStrip k={board.kpis} />
+      <NeedsAttention items={attention} compact={compact} active={!quietDay} />
+      {quietDay ? (
+        <EmptyState
+          icon={Bus}
+          title={`No rides booked for ${dayName(board.date)}`}
+          description="Bookings land here as riders make them. Then plan runs, or pick bookings and dispatch them onto a van."
+          className="py-8"
+        />
+      ) : (
+        <KpiStrip k={board.kpis} />
+      )}
       {/* Transport walk 6: which van is free at 5:30, at a glance. */}
-      {!compact && (
+      {!compact && !quietDay && (
         <VanDayTimeline
           board={board}
           onDispatch={manage ? (rides, vanId) => setDispatch({ rides, vanId }) : undefined}
@@ -953,14 +981,20 @@ function TodayBoard({
         />
       )}
 
+      {!quietDay && (
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         {/* Waiting on a van */}
         <section aria-label="Needs a van">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">
-              Needs a van <span className="text-white">{waiting.length}</span>
-            </h2>
-            {manage && (
+          <SectionTitle
+            className="mb-2"
+            wrap
+            title={
+              <>
+                Needs a van{waiting.length > 0 && <span className="ml-2 text-sm font-normal tabular-nums text-ink-muted">{waiting.length}</span>}
+              </>
+            }
+            trailing={
+              manage ? (
               <div className="flex items-center gap-2">
                 {pickedRides.length > 0 ? (
                   <>
@@ -982,10 +1016,13 @@ function TodayBoard({
                   )
                 )}
               </div>
-            )}
-          </div>
+              ) : undefined
+            }
+          />
           {groups.length === 0 ? (
-            <p className="rounded-lg border border-line px-4 py-3 text-sm text-silver" data-testid="needs-van-none">Everyone has a van — new bookings for this day land here.</p>
+            <div data-testid="needs-van-none">
+              <EmptyState size="sm" icon={Check} title="Everyone has a van" description="New bookings for this day land here." />
+            </div>
           ) : (
             <div className="space-y-3">
               {groups.map((g) => {
@@ -1013,7 +1050,7 @@ function TodayBoard({
                           </div>
                         </div>
                         {manage && (
-                          <Button size="xs" onClick={() => setDispatch({ rides: g.rides })} aria-label={`Dispatch ${g.storeName} ${fmtTimeTz(g.at, g.tz)}`}>
+                          <Button size="xs" variant="secondary" onClick={() => setDispatch({ rides: g.rides })} aria-label={`Dispatch ${g.storeName} ${fmtTimeTz(g.at, g.tz)}`}>
                             <Send className="h-3.5 w-3.5" />
                             Dispatch
                           </Button>
@@ -1076,11 +1113,18 @@ function TodayBoard({
 
         {/* The runs */}
         <section aria-label="Runs">
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-silver">
-            Runs <span className="text-white">{liveRuns.length}</span>
-          </h2>
+          <SectionTitle
+            className="mb-2"
+            title={
+              <>
+                Runs{liveRuns.length > 0 && <span className="ml-2 text-sm font-normal tabular-nums text-ink-muted">{liveRuns.length}</span>}
+              </>
+            }
+          />
           {liveRuns.length === 0 ? (
-            <p className="rounded-lg border border-line px-4 py-3 text-sm text-silver" data-testid="runs-none">No runs yet — plan runs, or pick bookings and dispatch them onto a van.</p>
+            <div data-testid="runs-none">
+              <EmptyState size="sm" icon={Bus} title="No runs yet" description="Plan runs, or pick bookings and dispatch them onto a van." />
+            </div>
           ) : (
             <div className="space-y-3">
               {liveRuns.map((run) => (
@@ -1104,6 +1148,7 @@ function TodayBoard({
           )}
         </section>
       </div>
+      )}
 
       {dispatch && (
         <DispatchDialog
@@ -1821,9 +1866,9 @@ function DispatchDialog({
 
             <div>
               <div className="mb-1.5 flex items-center justify-between">
-                <span className="text-xs font-medium uppercase tracking-wider text-silver">
+                <span className="text-sm font-medium text-ink">
                   Pickups in order{' '}
-                  <span className={cn('tabular-nums', over ? 'text-alert' : 'text-white')}>
+                  <span className={cn('tabular-nums', over ? 'text-alert' : 'text-ink-muted')}>
                     {order.length}/{van?.capacity ?? '—'}
                   </span>
                 </span>
@@ -2046,17 +2091,17 @@ function LiveTab() {
         )}
       </div>
       <section aria-label="Runs" className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">
-          On the road <span className="text-white">{onRoad.length}</span>
+        <h2 className="text-base font-medium text-ink">
+          On the road{onRoad.length > 0 && <span className="ml-2 text-sm font-normal tabular-nums text-ink-muted">{onRoad.length}</span>}
         </h2>
-        {onRoad.length === 0 && <EmptyState size="sm" title={"Nothing on the road right now."} />}
+        {onRoad.length === 0 && <EmptyState size="sm" title="Nothing on the road right now" />}
         {onRoad.map((r) => (
           <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} onClose={can('manage:transport') ? () => void closeRun(r.runId, r.van.name) : undefined} />
         ))}
         {planned.length > 0 && (
           <>
-            <h2 className="pt-3 text-sm font-semibold uppercase tracking-wider text-silver">
-              Leaving later <span className="text-white">{planned.length}</span>
+            <h2 className="pt-3 text-base font-medium text-ink">
+              Leaving later <span className="ml-1 text-sm font-normal tabular-nums text-ink-muted">{planned.length}</span>
             </h2>
             {planned.map((r) => (
               <LiveRunRow key={r.runId} run={r} now={now} selected={r.runId === selected?.runId} onPick={() => setPicked(r.runId)} />
@@ -2215,8 +2260,7 @@ function RidesTab({ manage, onRider }: { manage: boolean; onRider?: (associateId
           a mouse keeps the compact filter row. */}
       <div className="flex flex-wrap items-end gap-2">
         <Input size="sm" className="w-48" placeholder="Search a rider" aria-label="Search a rider" value={q} onChange={(e) => setQ(e.target.value)} />
-        <Input size="sm" type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36 coarse:w-44" />
-        <Input size="sm" type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="w-36 coarse:w-44" />
+        <DateRangeField size="sm" from={from} to={to} fromLabel="From" toLabel="To" onChange={(r) => { setFrom(r.from); setTo(r.to); }} />
         <Select size="sm" aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value as RideStatus | '')} className="w-40">
           <option value="">Every status</option>
           {(Object.keys(STATUS_LABEL) as RideStatus[]).map((s) => (
@@ -2611,19 +2655,12 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
           </Button>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[
-          { label: 'Earned', value: cents(totals.revenue) },
-          { label: 'Riders carried', value: totals.riders },
-          { label: 'Runs', value: totals.runs },
-          { label: 'Miles', value: Math.round(totals.miles) },
-        ].map((x) => (
-          <div key={x.label} className="rounded-lg border border-navy-secondary bg-navy px-3 py-2.5">
-            <div className="text-2xs font-medium uppercase tracking-wider text-silver">{x.label}</div>
-            <div className="mt-0.5 text-xl font-bold tabular-nums text-white">{x.value}</div>
-          </div>
-        ))}
-      </div>
+      <MetricStrip label={`The fleet, last ${days} days`}>
+        <MetricCard label="Earned" value={cents(totals.revenue)} />
+        <MetricCard label="Riders carried" value={totals.riders.toLocaleString('en-US')} />
+        <MetricCard label="Runs" value={totals.runs.toLocaleString('en-US')} />
+        <MetricCard label="Miles" value={Math.round(totals.miles).toLocaleString('en-US')} />
+      </MetricStrip>
       <DriverAccessCard manage={manage} />
       {fleet.isLoading ? (
         <Skeleton className="h-64" />
@@ -2640,7 +2677,7 @@ function FleetTab({ manage, drivers }: { manage: boolean; drivers: TransportBoar
               <Card key={v.id} className={cn(!v.isActive && 'opacity-70', v.now && 'border-success/40')}>
                 <CardContent>
                   <div className="flex items-start gap-3">
-                    <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full', v.now ? 'bg-success/15 text-success' : 'bg-gold/15 text-gold')}>
+                    <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full', v.now ? 'bg-success/15 text-success' : 'bg-surface-raised text-ink-muted')}>
                       <Bus className="h-5 w-5" aria-hidden="true" />
                     </span>
                     <div className="min-w-0 flex-1">
@@ -2796,8 +2833,8 @@ function VansRoster({ manage, onRecord, onEdit }: { manage: boolean; onRecord: (
   if (vans.length === 0) return null;
   return (
     <section aria-label="All vans" className="space-y-2">
-      <h3 className="text-sm font-semibold uppercase tracking-wider text-silver">
-        All vans <span className="text-ink">{vans.length}</span>
+      <h3 className="text-base font-medium text-ink">
+        All vans <span className="ml-1 text-sm font-normal tabular-nums text-ink-muted">{vans.length}</span>
       </h3>
       <div className="overflow-x-auto">
         <DataGrid<Van>
@@ -3254,7 +3291,20 @@ function StopDialog({ stop, onClose }: { stop: TransportStop | null; onClose: ()
 
 function ChargesTab({ onRider }: { onRider?: (associateId: string) => void }) {
   // Transport walk 13: one range, in the URL, shared with cost per seat below.
-  const { from, to, setFrom, setTo } = useChargesRange();
+  const { from, to } = useChargesRange();
+  // Both ends in one write: moving "from" past "to" moves "to" with it, and
+  // two setters back to back would each start from the old URL.
+  const [, setParams] = useSearchParams();
+  const setRange = (r: { from: string; to: string }) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('from', YMD.test(r.from) ? r.from : from);
+        next.set('to', YMD.test(r.to) ? r.to : to);
+        return next;
+      },
+      { replace: true },
+    );
   const charges = useQuery({ queryKey: ['transport', 'charges', from, to], queryFn: () => getTransportCharges(from, to) });
   const rows = charges.data?.rows ?? [];
   const totals = charges.data?.totals;
@@ -3278,9 +3328,14 @@ function ChargesTab({ onRider }: { onRider?: (associateId: string) => void }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
-        {/* w-36 clips the picker glyph once the text goes 16px — see Rides. */}
-        <Input size="sm" type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36 coarse:w-44" />
-        <Input size="sm" type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="w-36 coarse:w-44" />
+        <DateRangeField
+          size="sm"
+          from={from}
+          to={to}
+          fromLabel="From"
+          toLabel="To"
+          onChange={(r) => setRange(r)}
+        />
         <Button size="sm" variant="secondary" onClick={exportCsv} disabled={rows.length === 0}>
           <Download className="h-3.5 w-3.5" />
           CSV
@@ -3674,7 +3729,7 @@ function SettingsForm({
           )}
         </Field>
         <div className="space-y-3 border-t border-navy-secondary pt-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-silver">Drivers</h3>
+          <h3 className="text-sm font-medium text-ink">Drivers</h3>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Most hours a day" hint="Driver shifts and runs past this are refused.">
               {(p) => <Input {...p} type="number" min={1} max={24} value={maxHours} onChange={(e) => setMaxHours(e.target.value)} disabled={!manage} />}

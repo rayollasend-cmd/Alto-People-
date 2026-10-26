@@ -59,6 +59,15 @@ describe('manager contact on the self profile', () => {
     expect(res.body.managerPhone).toBe('+1 555 010 0100');
     expect(res.body.managerEmail).toBe(manager.email);
   });
+
+  it('an admin with no person record gets a stable code and a plain message, not a route error', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const res = await (await loginAs(hr.email)).get('/self/me/profile');
+    expect(res.status).toBe(403);
+    expect(res.body.error?.code).toBe('no_person_record');
+    expect(res.body.error?.message).toMatch(/isn’t linked to a person record/);
+    expect(res.body.error?.message).not.toMatch(/route/i);
+  });
 });
 
 describe('GET /learning/me', () => {

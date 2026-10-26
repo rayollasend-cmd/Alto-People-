@@ -47,7 +47,9 @@ export function coverageGaps(roster: WaveRow[], windows: MyShiftWindow[], now: D
 
 function windowName(w: MyShiftWindow, t: Translate): string {
   // Evening windows read as "tonight" — the way the floor says it.
-  return w.startMinute >= 17 * 60 ? t('floorUi.tonightsWindow', { label: w.label }) : t('floorUi.todaysWindow', { label: w.label });
+  // Mid-sentence, the window's name is a common noun: "Today's swing", not "Today's Swing".
+  const label = w.label.charAt(0).toLowerCase() + w.label.slice(1);
+  return w.startMinute >= 17 * 60 ? t('floorUi.tonightsWindow', { label }) : t('floorUi.todaysWindow', { label });
 }
 
 export function CoverageGapNotice({ gaps, today }: { gaps: CoverageGap[]; today: string }) {

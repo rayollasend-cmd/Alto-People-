@@ -46,15 +46,17 @@ async function signedInState(browser: Browser, who: Exclude<PersonaKey, 'public'
   if (fs.existsSync(file)) {
     const ctx = await browser.newContext({ storageState: file });
     const res = await ctx.request.get('/api/auth/me');
+    // An expired session still answers 200, with no user.
+    const live = res.ok() && ((await res.json()) as { user: unknown }).user != null;
     await ctx.close();
-    if (res.ok()) return file;
+    if (live) return file;
   }
   const p = PERSONAS[who];
   const ctx = await browser.newContext({ ...FORMS.desktop });
   const page = await ctx.newPage();
   await walkLogin(page, p.email, p.pass);
   const me = await ctx.request.get('/api/auth/me');
-  if (!me.ok()) throw new Error(`visual record: sign-in as ${p.email} failed (${me.status()})`);
+  if (!me.ok() || ((await me.json()) as { user: unknown }).user == null) throw new Error(`visual record: sign-in as ${p.email} failed (${me.status()})`);
   fs.mkdirSync(AUTH, { recursive: true });
   await ctx.storageState({ path: file });
   await ctx.close();

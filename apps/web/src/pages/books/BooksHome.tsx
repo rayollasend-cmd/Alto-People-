@@ -161,7 +161,8 @@ function NeedsYou({ items }: { items: BooksOverview['needsYou'] }) {
                     <ArrowRight className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
                   </Link>
                   {/* The books don't hold history yet: the fix is one press, here. */}
-                  {n.key === 'ar-unposted' && <PostHistoryButton size="sm" className="ml-7 sm:ml-0" />}
+                  {/* The header's "Journal entry" is the page's one gold primary. */}
+                  {n.key === 'ar-unposted' && <PostHistoryButton size="sm" variant="secondary" label="Add them to the books" className="ml-7 sm:ml-0" />}
                 </li>
               );
             })}
@@ -186,14 +187,17 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
   const best = [...o.profit.trend].sort((x, y) => y.netIncome - x.netIncome)[0];
   const losing = o.profit.trend.filter((t) => t.netIncome < 0).length;
   const summary = o.profit.trend.length
-    ? `Income and net income, the last ${o.profit.trend.length === 1 ? 'month' : `${o.profit.trend.length} months`}. Best: ${best!.label}, ${fmtMoney(best!.netIncome)} kept${losing ? `; ${losing} ${losing === 1 ? 'month' : 'months'} at a loss` : ''}.`
+    ? `Income and net income, the last ${o.profit.trend.length === 1 ? 'month' : `${o.profit.trend.length} months`}. Best: ${best!.label}, ${fmtMoney(best!.netIncome)} net income${losing ? `; ${losing} ${losing === 1 ? 'month' : 'months'} at a loss` : ''}.`
     : 'No months to show yet.';
   return (
     <ChartFrame
       title="Profit"
       description={
         <>
-          This year: {fmtMoney(ytd.income)} in, {fmtMoney(ytd.netIncome)} kept{ytd.grossMarginPct == null ? '' : ` · ${ytd.grossMarginPct}% gross margin`} ·{' '}
+          {/* "$0.00 in, $0.00 kept" said nothing: with nothing posted, say so. */}
+          {ytd.income === 0 && ytd.netIncome === 0
+            ? 'Nothing has posted to income or expenses this year yet.'
+            : `This year: ${fmtMoney(ytd.income)} income, ${fmtMoney(ytd.netIncome)} net income${ytd.grossMarginPct == null ? '' : `, ${ytd.grossMarginPct}% gross margin`}.`}{' '}
           <Link to="/books/reports" className="text-accent hover:underline">
             Profit and loss
           </Link>
@@ -232,7 +236,8 @@ function cashHint(o: BooksOverview): string {
 
 function receivablesHint(o: BooksOverview): string {
   const r = o.receivables;
-  if (Math.abs(r.openOnStatements - r.total) >= 0.01) return `${fmtMoney(r.total)} in the ledger — post history to match`;
+  // The two numbers differ until older statements are posted to the books: say that, not "post history to match".
+  if (Math.abs(r.openOnStatements - r.total) >= 0.01) return `The ledger shows ${fmtMoney(r.total)}: some older statements aren’t in it yet`;
   return r.aging.over90 > 0 ? `${fmtMoney(r.aging.over90)} over 90 days` : 'nothing over 90 days';
 }
 

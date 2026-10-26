@@ -80,7 +80,7 @@ describe('runScheduleDigestSweep', () => {
     expect(rows[0].subject).toContain('1 filled');
     expect(rows[0].subject).toContain('1 open');
     expect(rows[0].body).toContain('Dana Diaz');
-    expect(rows[0].body).toContain('OPEN — needs someone');
+    expect(rows[0].body).toContain('Open — no one assigned yet');
 
     // Same day, later sweep → no second digest.
     const second = await runScheduleDigestSweep(

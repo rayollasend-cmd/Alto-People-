@@ -1,19 +1,21 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import type { InboxSource, PayrollUpcomingSummary } from '@alto-people/shared';
+import { getPayrollUpcoming } from '@/lib/payrollApi';
 import { AlarmClock, AlertTriangle, ScrollText, ArrowRight, Banknote, CalendarRange, Check, CheckCircle2, ClipboardCheck, ClockAlert, FileWarning, Inbox, Receipt, Scale, ShieldCheck, TrendingUp, UserCheck, Wallet } from '@/components/ui/icons';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDateOnly, fmtDateTz, fmtHours, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
+import { displayLocale, fmtDateOnly, fmtDateOnlyRange, fmtDateTz, fmtMoney, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { DetailsTable } from '@/components/ui/charts';
-import { AgingBar, CashFlowChart, MarginChart } from './financeCharts';
+import { AGING_COLORS, AgingBar, CashFlowChart, MarginChart } from './financeCharts';
 import type { BillingWeek, CashWeek, FinanceOverview, MarginTrend, PayCycle } from './financeTypes';
 import { useTenant } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
-import type { InboxSource } from '@alto-people/shared';
 import '@/lib/i18n/en/fin';
 
 /**
@@ -47,6 +49,41 @@ function left(ms: number): string {
   if (h >= 1) return `${h}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
   return `${Math.max(1, Math.round(ms / 60_000))}m`;
 }
+/** Hours to one decimal, every time: "1,111.0h of 1,297.9h", never "1,111h of 1,297.9h". */
+export const hrs1 = (h: number) => `${h.toLocaleString(displayLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h`;
+
+/**
+ * Why payroll can't run this period, by the SAME gate the Payroll page's
+ * "Run payroll" uses (GET /payroll/upcoming: the schedule's people, and
+ * hired people on no schedule). The hero once read "Not started — the
+ * period is over — ready to run" with a "Run payroll" link while Payroll's
+ * button was disabled ("this run would pay no one"; F500 audit 2026-10-26).
+ * Null when nothing blocks it, a run exists, or the gate can't be read.
+ */
+export interface PayrollBlock {
+  scheduleId: string;
+  scheduleName: string;
+  /** Hired people on no pay schedule at all. */
+  peopleOnNoSchedule: number;
+}
+
+export function payrollBlock(cycle: PayCycle | null | undefined, upcoming: Pick<PayrollUpcomingSummary, 'bySchedule' | 'peopleOnNoSchedule'> | null | undefined): PayrollBlock | null {
+  if (!cycle || cycle.run || !upcoming) return null;
+  const rows = upcoming.bySchedule ?? [];
+  const row = rows.find((r) => r.periodStart === cycle.periodStart && r.periodEnd === cycle.periodEnd) ?? (rows.length === 1 ? rows[0] : null);
+  if (!row || row.people > 0 || row.draftRunId) return null;
+  return { scheduleId: row.scheduleId, scheduleName: row.scheduleName, peopleOnNoSchedule: upcoming.peopleOnNoSchedule ?? 0 };
+}
+
+/** The payroll gate's read — the same query (and cache) as the Payroll page's hero. */
+export function usePayrollBlock(cycle: PayCycle | null | undefined): PayrollBlock | null {
+  const upcoming = useQuery({ queryKey: ['payroll', 'upcoming'], queryFn: () => getPayrollUpcoming(), retry: false, staleTime: 60_000, enabled: !!cycle && !cycle.run });
+  return payrollBlock(cycle, upcoming.data);
+}
+
+/** How late the oldest money is: "oldest 48 days past due", or "not yet due" (it read "oldest -11d past due"). */
+export const oldestText = (t: ReturnType<typeof useI18n>['t'], days: number) => (days <= 0 ? t('fin.arNotDue') : t('fin.arOldest', { count: days }));
+
 /** Re-render every minute — countdowns stay honest without a refetch. */
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
@@ -108,6 +145,9 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
   const missed = inbox.data?.sources?.find((src) => src.key === 'payroll-missed-paydays');
   // Hours waiting from periods before this one (the close chase counts them all).
   const earlierPending = cycle ? Math.max(0, data.close.pendingHours - cycle.hours.pending) : 0;
+  const block = usePayrollBlock(cycle);
+  const fixTo = block ? `/payroll/schedules/${block.scheduleId}` : null;
+  const booked = !!data.cash?.opening && data.cash.opening.onFile !== false;
 
   return (
     <Card className="relative h-full overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
@@ -118,14 +158,15 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
       <CardContent className="relative flex h-full flex-col">
         {missed && missed.count > 0 && (
           <Link
-            to={missed.path}
+            to={fixTo ?? missed.path}
             data-testid="missed-paydays"
             className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-alert/40 bg-alert/10 px-3 py-2 text-sm font-medium text-alert hover:bg-alert/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="min-w-0 flex-1">{t('fin.missedLine', { count: missed.count })}</span>
             <span className="inline-flex shrink-0 items-center gap-1 underline underline-offset-2">
-              {t('fin.missedRun', { count: missed.count })}
+              {/* Blocked, the way out is the schedule, not a run that can't start. */}
+              {block ? t('fin.missedFix') : t('fin.missedRun', { count: missed.count })}
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </span>
           </Link>
@@ -148,11 +189,11 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
           <p className="mt-2 text-sm text-silver">{t('fin.paydayNone')}</p>
         )}
 
-        {cycle && <PayCycleSteps cycle={cycle} today={today} earlierPending={earlierPending} />}
+        {cycle && <PayCycleSteps cycle={cycle} today={today} earlierPending={earlierPending} block={block} />}
 
         {/* On a phone the hero is the payday line and the two steps that need
             someone; the cash line and last payday are on the cards below. */}
-        {data.cash && data.cash.weeks.length > 0 && <CashLine weeks={data.cash.weeks} />}
+        {data.cash && data.cash.weeks.length > 0 && <CashLine weeks={data.cash.weeks} booked={booked} />}
 
         {data.payday.lastDisbursed && (
           <p className="mt-auto hidden pt-4 text-xs text-silver/60 tabular-nums sm:block">
@@ -167,7 +208,7 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
   );
 }
 
-function PayCycleSteps({ cycle, today, earlierPending = 0 }: { cycle: PayCycle; today: string; earlierPending?: number }) {
+function PayCycleSteps({ cycle, today, earlierPending = 0, block = null }: { cycle: PayCycle; today: string; earlierPending?: number; block?: PayrollBlock | null }) {
   const { t } = useI18n();
   const periodDays = daysBetween(cycle.periodStart, cycle.periodEnd) + 1;
   const periodOver = today > cycle.periodEnd;
@@ -178,7 +219,7 @@ function PayCycleSteps({ cycle, today, earlierPending = 0 }: { cycle: PayCycle; 
   const paid = run?.status === 'DISBURSED';
 
   const hoursState: StepState = cycle.hours.pending === 0 ? (periodOver ? 'done' : 'current') : periodOver ? 'warn' : 'current';
-  const runState: StepState = !run ? (periodOver ? 'current' : 'todo') : run.status === 'DRAFT' ? 'current' : 'done';
+  const runState: StepState = block && periodOver ? 'warn' : !run ? (periodOver ? 'current' : 'todo') : run.status === 'DRAFT' ? 'current' : 'done';
 
   return (
     <ol className="mt-5 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-gold/20 pt-4 md:flex md:gap-3" aria-label={t('fin.cycle.title')}>
@@ -186,7 +227,7 @@ function PayCycleSteps({ cycle, today, earlierPending = 0 }: { cycle: PayCycle; 
         className="hidden md:block"
         state={periodOver ? 'done' : 'current'}
         label={t('fin.cycle.period')}
-        value={`${md(cycle.periodStart)} – ${md(cycle.periodEnd)}`}
+        value={fmtDateOnlyRange(cycle.periodStart, cycle.periodEnd)}
         sub={periodOver ? t('fin.cycle.ended', { date: `${wd(cycle.periodEnd)} ${md(cycle.periodEnd)}` }) : t('fin.cycle.dayOf', { day, days: periodDays })}
       >
         {!periodOver && <Bar pct={(day / periodDays) * 100} />}
@@ -199,12 +240,12 @@ function PayCycleSteps({ cycle, today, earlierPending = 0 }: { cycle: PayCycle; 
             // Honest zero: "0h of 0h · all approved" read as done.
             <span className="font-normal text-silver">{t('fin.cycle.hoursNone')}</span>
           ) : (
-            t('fin.cycle.hoursOf', { approved: fmtHours(cycle.hours.approved), total: fmtHours(total) })
+            t('fin.cycle.hoursOf', { approved: hrs1(cycle.hours.approved), total: hrs1(total) })
           )
         }
         sub={
           total === 0 ? undefined : cycle.hours.pending > 0 ? (
-            <span className={cn(periodOver && 'text-warning')}>{t('fin.cycle.hoursWaiting', { hours: fmtHours(cycle.hours.pending) })}</span>
+            <span className={cn(periodOver && 'text-warning')}>{t('fin.cycle.hoursWaiting', { hours: hrs1(cycle.hours.pending) })}</span>
           ) : (
             t('fin.cycle.hoursAll')
           )
@@ -217,7 +258,7 @@ function PayCycleSteps({ cycle, today, earlierPending = 0 }: { cycle: PayCycle; 
             data-testid="hours-earlier"
             className="mt-1 inline-block text-xs tabular-nums text-warning underline underline-offset-2 hover:text-gold-bright"
           >
-            {t('fin.cycle.hoursEarlier', { hours: fmtHours(earlierPending) })}
+            {t('fin.cycle.hoursEarlier', { hours: hrs1(earlierPending) })}
           </Link>
         )}
       </Step>
@@ -229,17 +270,31 @@ function PayCycleSteps({ cycle, today, earlierPending = 0 }: { cycle: PayCycle; 
             <span className={cn(run.status === 'FINALIZED' && 'text-gold-bright')}>
               <CountUpValue value={fmtMoney(run.totalGross)} />
             </span>
+          ) : block ? (
+            <span className="text-warning">{t('fin.cycle.runBlocked')}</span>
           ) : (
             <span className="text-silver">{t('fin.cycle.runNone')}</span>
           )
         }
-        sub={run ? t(`fin.status.${run.status}` as MessageKey) : periodOver ? t('fin.cycle.runReady') : t('fin.cycle.runAfter', { date: md(cycle.periodEnd) })}
+        sub={
+          run
+            ? t(`fin.status.${run.status}` as MessageKey)
+            : block
+              ? // The blocker, said where "ready to run" used to be.
+                block.peopleOnNoSchedule > 0
+                ? t('fin.cycle.noSchedule', { count: block.peopleOnNoSchedule })
+                : t('fin.cycle.runBlockedEmpty', { schedule: block.scheduleName })
+              : periodOver
+                ? t('fin.cycle.runReady')
+                : t('fin.cycle.runAfter', { date: md(cycle.periodEnd) })
+        }
       >
         <Link
-          to={run ? `/payroll/runs/${run.id}/close` : '/payroll'}
+          to={run ? `/payroll/runs/${run.id}/close` : block ? `/payroll/schedules/${block.scheduleId}` : '/payroll'}
+          data-testid="hero-run-link"
           className="mt-1 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright"
         >
-          {run ? t('fin.guidedClose') : t('fin.goPayroll')}
+          {run ? t('fin.guidedClose') : block ? (block.peopleOnNoSchedule > 0 ? t('fin.cycle.fix') : t('fin.cycle.addPeople')) : t('fin.goPayroll')}
           <ArrowRight className="h-3 w-3" aria-hidden="true" />
         </Link>
       </Step>
@@ -254,11 +309,16 @@ function PayCycleSteps({ cycle, today, earlierPending = 0 }: { cycle: PayCycle; 
   );
 }
 
-/** The hero's one line about money moving: the next four weeks, net, with the low point. */
-function CashLine({ weeks }: { weeks: CashWeek[] }) {
+/**
+ * The hero's one line about money moving: the next four weeks, net, with the
+ * low point — the low point only against a real bank balance. With none on
+ * file the running total starts at $0, and its "low point" of −$15.9k read
+ * as an overdraft (F500 audit 2026-10-26).
+ */
+function CashLine({ weeks, booked }: { weeks: CashWeek[]; booked: boolean }) {
   const { t } = useI18n();
   const net = weeks.reduce((s, w) => s + w.net, 0);
-  const low = Math.min(...weeks.map((w) => w.cumulative));
+  const low = booked ? Math.min(...weeks.map((w) => w.balance ?? w.cumulative)) : 0;
   return (
     <Link
       to="/finance/cash-forecast"
@@ -270,7 +330,7 @@ function CashLine({ weeks }: { weeks: CashWeek[] }) {
       </span>
       <span>
         {t('fin.cashNet')}{' '}
-        <span className={cn('font-semibold', net >= 0 ? 'text-success' : 'text-alert')}>{fmtMoney(net)}</span>
+        <span className="font-semibold text-ink">{fmtMoney(net)}</span>
       </span>
       {low < 0 && (
         <span>
@@ -286,6 +346,9 @@ function CashLine({ weeks }: { weeks: CashWeek[] }) {
 export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
   const { t } = useI18n();
   if (!cash) return null;
+  // A balance line only from a real balance: with none on file the line started at
+  // $0 and its "low point" looked like an overdraft (F500 audit 2026-10-26).
+  const booked = !!cash.opening && cash.opening.onFile !== false;
   return (
     <Card className="animate-enter" style={enterStagger(5)}>
       <CardContent>
@@ -300,9 +363,9 @@ export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
           </Link>
         </div>
         <p className="mt-1 text-xs text-silver">{t('fin.cashSub')}</p>
-        {cash.opening && cash.opening.onFile === false ? (
+        {!booked ? (
           <p className="mt-2 text-sm text-silver" data-testid="cash-no-balance">
-            {t('fin.cashNoBalance')}{' '}
+            {t('fin.cashAddBalance')}{' '}
             <Link to="/books/accounts" className="text-gold underline underline-offset-2 hover:text-gold-bright">
               {t('fin.cashSet')}
             </Link>
@@ -323,22 +386,23 @@ export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
           <>
             <div
               role="img"
-              aria-label={`${t('fin.cashTitle')}: ${cash.weeks.map((w) => `${md(w.weekStart)} ${t('fin.cashIn')} ${fmtMoney(w.inflow)}, ${t('fin.cashOut')} ${fmtMoney(w.outflow)}, ${cash.opening ? t('fin.cashBalance') : t('fin.cashRunning')} ${fmtMoney(cash.opening ? (w.balance ?? w.cumulative) : w.cumulative)}`).join('; ')}`}
+              aria-label={`${t('fin.cashTitle')}: ${cash.weeks.map((w) => `${md(w.weekStart)} ${t('fin.cashIn')} ${fmtMoney(w.inflow)}, ${t('fin.cashOut')} ${fmtMoney(w.outflow)}${booked ? `, ${t('fin.cashBalance')} ${fmtMoney(w.balance ?? w.cumulative)}` : ''}`).join('; ')}`}
               className="mt-3 h-40"
             >
-              <CashFlowChart weeks={cash.weeks} compact withBalance={!!cash.opening} minimumCash={cash.minimumCash ?? null} />
+              <CashFlowChart weeks={cash.weeks} compact withBalance={booked} line={booked} minimumCash={booked ? (cash.minimumCash ?? null) : null} />
             </div>
             <DetailsTable
               label={t('fin.cashDetails')}
-              columns={[t('fin.cashWeekCol'), t('fin.cashIn'), t('fin.cashOut'), cash.opening ? t('fin.cashBalance') : t('fin.cashRunning')]}
-              rows={cash.weeks.map((w) => [md(w.weekStart), fmtMoney(w.inflow), fmtMoney(w.outflow), fmtMoney(cash.opening ? (w.balance ?? w.cumulative) : w.cumulative)])}
+              columns={[t('fin.cashWeekCol'), t('fin.cashIn'), t('fin.cashOut'), booked ? t('fin.cashBalance') : t('fin.cashNet')]}
+              rows={cash.weeks.map((w) => [md(w.weekStart), fmtMoney(w.inflow), fmtMoney(w.outflow), fmtMoney(booked ? (w.balance ?? w.cumulative) : w.net)])}
             />
           </>
         )}
         <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-navy-secondary bg-navy-secondary/60 text-center">
-          <Money label={t('fin.cashIn')} value={cash.totals.inflow} tone="text-success" />
+          {/* Money is ink: more out than in over four weeks is a fact, not an alarm. */}
+          <Money label={t('fin.cashIn')} value={cash.totals.inflow} tone="text-ink" />
           <Money label={t('fin.cashOut')} value={cash.totals.outflow} tone="text-ink" />
-          <Money label={t('fin.cashNet')} value={cash.totals.net} tone={cash.totals.net >= 0 ? 'text-success' : 'text-alert'} />
+          <Money label={t('fin.cashNet')} value={cash.totals.net} tone="text-ink" />
         </div>
       </CardContent>
     </Card>
@@ -367,7 +431,8 @@ export function financeTasks(
   // to bill (clientPortal + billRates); a direct employer never sees them.
   // `inbox`: the /me/inbox sources, so a queue the Inbox counts (paydays
   // that passed with no run) is the same item here, with the same link.
-  opts: { statements?: boolean; inbox?: ReadonlyArray<Pick<InboxSource, 'key' | 'count' | 'description' | 'path'>> } = {},
+  // `block`: payroll can't run this period (usePayrollBlock) — the run task names the fix.
+  opts: { statements?: boolean; inbox?: ReadonlyArray<Pick<InboxSource, 'key' | 'count' | 'description' | 'path'>>; block?: PayrollBlock | null } = {},
 ): FinanceTask[] {
   const statements = opts.statements ?? true;
   const tasks: Array<FinanceTask & { rank: number }> = [];
@@ -421,7 +486,7 @@ export function financeTasks(
       tone: unbilled > 0 ? 'alert' : 'gold',
       icon: UserCheck,
       title: t('fin.task.register', { count: queue }),
-      sub: unbilled > 0 ? t('fin.task.registerSub', { hours: fmtHours(unbilled) }) : t('fin.task.registerSubNone'),
+      sub: unbilled > 0 ? t('fin.task.registerSub', { hours: hrs1(unbilled) }) : t('fin.task.registerSubNone'),
       to: '/fieldglass',
     });
   }
@@ -430,7 +495,18 @@ export function financeTasks(
     const periodOver = todayYmd() > cycle.periodEnd;
     const daysToPay = daysBetween(todayYmd(), cycle.payDate);
     const sub = t('fin.task.runSub', { start: md(cycle.periodStart), end: md(cycle.periodEnd), date: `${wd(cycle.payDate)} ${md(cycle.payDate)}` });
-    if (periodOver && !cycle.run) {
+    const block = opts.block ?? null;
+    if (periodOver && !cycle.run && block) {
+      tasks.push({
+        key: 'run',
+        rank: daysToPay <= 3 ? 1 : 3,
+        tone: 'warning',
+        icon: Wallet,
+        title: t('fin.task.runBlocked'),
+        sub: block.peopleOnNoSchedule > 0 ? t('fin.task.runBlockedSub', { count: block.peopleOnNoSchedule }) : t('fin.task.runBlockedEmpty', { schedule: block.scheduleName }),
+        to: `/payroll/schedules/${block.scheduleId}`,
+      });
+    } else if (periodOver && !cycle.run) {
       tasks.push({ key: 'run', rank: daysToPay <= 3 ? 1 : 4, tone: daysToPay <= 3 ? 'warning' : 'gold', icon: Wallet, title: t('fin.task.runStart'), sub, to: '/payroll' });
     } else if (cycle.run?.status === 'DRAFT' && periodOver) {
       tasks.push({ key: 'run', rank: daysToPay <= 3 ? 1 : 4, tone: daysToPay <= 3 ? 'warning' : 'gold', icon: Wallet, title: t('fin.task.runFinalize'), sub, to: '/payroll' });
@@ -444,7 +520,7 @@ export function financeTasks(
       rank: 4,
       tone: 'warning',
       icon: ClockAlert,
-      title: t('fin.task.chase', { hours: fmtHours(data.close.pendingHours) }),
+      title: t('fin.task.chase', { hours: hrs1(data.close.pendingHours) }),
       sub: data.close.oldestDay
         ? t('fin.task.chaseSub', { count: data.close.pendingEntries, date: fmtDateOnly(data.close.oldestDay, { year: 'auto' }) })
         : undefined,
@@ -461,7 +537,7 @@ export function financeTasks(
       tone: aging && aging.over90 > 0 ? 'alert' : 'warning',
       icon: Scale,
       title: t('fin.task.collect', { amount: fmtMoney(pastDue) }),
-      sub: data.receivables.oldestDays !== null ? t('fin.arOldest', { days: data.receivables.oldestDays }) : undefined,
+      sub: data.receivables.oldestDays !== null ? oldestText(t, data.receivables.oldestDays) : undefined,
       to: '/clients/statements',
     });
   }
@@ -526,7 +602,8 @@ export function TodayList({ data, headless = false }: { data: FinanceOverview; h
   const tenant = useTenant();
   const now = useNow();
   const inbox = useInbox();
-  const tasks = financeTasks(data, t, now, { statements: tenant.moduleOn('clientPortal') && tenant.moduleOn('billRates'), inbox: inbox.data?.sources });
+  const block = usePayrollBlock(data.payCycle);
+  const tasks = financeTasks(data, t, now, { statements: tenant.moduleOn('clientPortal') && tenant.moduleOn('billRates'), inbox: inbox.data?.sources, block });
   return (
     <Card className="animate-enter" style={enterStagger(1)}>
       <CardContent>
@@ -632,9 +709,10 @@ export function BillingWeekCard({ billing }: { billing: BillingWeek | null | und
               {billing.variances > 0 && <Chip tone="border-warning/30 bg-warning/15 text-warning">{t('fin.billChipDiffer', { count: billing.variances })}</Chip>}
             </div>
             <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-navy-secondary bg-navy-secondary/60 text-center">
-              <Money label={t('fin.billApproved')} value={billing.money.approved} tone="text-success" />
-              <Money label={t('fin.billAwaiting')} value={billing.money.awaiting} tone="text-white" />
-              <Money label={t('fin.billAtRisk')} value={billing.money.atRisk} tone={billing.money.atRisk > 0 ? 'text-alert' : 'text-silver'} />
+              {/* A zero wears no status colour (a green "$0.00 approved" read as good news). */}
+              <Money label={t('fin.billApproved')} value={billing.money.approved} tone={billing.money.approved > 0 ? 'text-success' : 'text-ink-muted'} />
+              <Money label={t('fin.billAwaiting')} value={billing.money.awaiting} tone={billing.money.awaiting > 0 ? 'text-ink' : 'text-ink-muted'} />
+              <Money label={t('fin.billAtRisk')} value={billing.money.atRisk} tone={billing.money.atRisk > 0 ? 'text-alert' : 'text-ink-muted'} />
             </div>
           </>
         )}
@@ -644,7 +722,7 @@ export function BillingWeekCard({ billing }: { billing: BillingWeek | null | und
             {t('fin.billOlderRejected', { count: billing.rejectedOpen.count, amount: fmtMoney(billing.rejectedOpen.amount) })}
           </p>
         )}
-        {billing.unpricedHours > 0 && <p className="mt-1.5 text-2xs text-silver/70">{t('fin.billUnpriced', { hours: fmtHours(billing.unpricedHours) })}</p>}
+        {billing.unpricedHours > 0 && <p className="mt-1.5 text-2xs text-silver/70">{t('fin.billUnpriced', { hours: hrs1(billing.unpricedHours) })}</p>}
         <div className="flex flex-wrap gap-2 pt-4">
           <Button asChild size="sm" variant={billing.toEnter > 0 ? 'primary' : 'secondary'}>
             <Link to={`/time-attendance/timesheets?week=${billing.weekStart}`}>
@@ -708,9 +786,9 @@ export function MarginTrendCard({ margin }: { margin: MarginTrend | null | undef
               rows={weeks.map((w) => [w.inProgress ? t('fin.marginSoFar') : md(w.weekEnd), fmtMoney(w.revenue), fmtMoney(w.wages), w.marginPct === null ? '—' : `${Math.round(w.marginPct * 100)}%`])}
             />
             <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-navy-secondary bg-navy-secondary/60 text-center">
-              <Money label={t('fin.marginRevenue')} value={totals.revenue} tone="text-gold-bright" />
-              <Money label={t('fin.marginWages')} value={totals.wages} tone="text-white" />
-              <Money label={t('fin.marginMargin')} value={totalMargin} tone={totalMargin >= 0 ? 'text-success' : 'text-alert'} />
+              <Money label={t('fin.marginRevenue')} value={totals.revenue} tone="text-ink" />
+              <Money label={t('fin.marginWages')} value={totals.wages} tone="text-ink" />
+              <Money label={t('fin.marginMargin')} value={totalMargin} tone={totalMargin < 0 ? 'text-alert' : 'text-ink'} />
             </div>
             <p className="mt-1.5 text-2xs text-silver/70">
               {t('fin.marginTotal', { weeks: done.length })}
@@ -731,7 +809,7 @@ export function MarginTrendCard({ margin }: { margin: MarginTrend | null | undef
         {unpriced > 0 && (
           <Link to="/clients" className="mt-1 flex items-center gap-1.5 text-xs text-silver hover:underline">
             <CalendarRange className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            {t('fin.marginUnpriced', { hours: fmtHours(unpriced) })}
+            {t('fin.marginUnpriced', { hours: hrs1(unpriced) })}
           </Link>
         )}
       </CardContent>
@@ -748,12 +826,13 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
   const aging = receivables.aging ?? { current: receivables.outstandingTotal, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 };
   // The total shown is the sum of its buckets — one source (GET /finance/overview reads the Books aging).
   const total = aging.current + aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.over90;
-  const buckets: Array<{ key: keyof typeof aging; label: string; amount: number; tone: string }> = [
-    { key: 'current', label: t('fin.arCurrent'), amount: aging.current, tone: 'bg-success' },
-    { key: 'days1to30', label: t('fin.ar1'), amount: aging.days1to30, tone: 'bg-warning/60' },
-    { key: 'days31to60', label: t('fin.ar31'), amount: aging.days31to60, tone: 'bg-warning' },
-    { key: 'days61to90', label: t('fin.ar61'), amount: aging.days61to90, tone: 'bg-alert/60' },
-    { key: 'over90', label: t('fin.ar91'), amount: aging.over90, tone: 'bg-alert' },
+  // The swatches are the bar's own colours (financeCharts' AGING_COLORS), the same in both themes.
+  const buckets: Array<{ key: keyof typeof aging; label: string; amount: number }> = [
+    { key: 'current', label: t('fin.arCurrent'), amount: aging.current },
+    { key: 'days1to30', label: t('fin.ar1'), amount: aging.days1to30 },
+    { key: 'days31to60', label: t('fin.ar31'), amount: aging.days31to60 },
+    { key: 'days61to90', label: t('fin.ar61'), amount: aging.days61to90 },
+    { key: 'over90', label: t('fin.ar91'), amount: aging.over90 },
   ];
   return (
     <Card className="animate-enter" style={enterStagger(6)} data-testid="receivables-card">
@@ -779,7 +858,7 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
             <p className="text-xs text-silver tabular-nums">
               {[
                 t('fin.arLine', { count: receivables.outstandingCount }),
-                receivables.avgDaysToPay !== null && t('fin.arDso', { days: receivables.avgDaysToPay }),
+                receivables.avgDaysToPay !== null && t('fin.arDso', { count: receivables.avgDaysToPay }),
               ]
                 .filter(Boolean)
                 .join(' · ')}
@@ -791,7 +870,7 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
               {buckets.map((b) => (
                 <div key={b.key}>
                   <dt className="flex items-center gap-1 text-silver/70">
-                    <span className={cn('h-2 w-2 rounded-sm', b.tone)} aria-hidden="true" />
+                    <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: AGING_COLORS[b.key] }} aria-hidden="true" />
                     {b.label}
                   </dt>
                   <dd className={cn('tabular-nums', b.amount > 0 ? 'text-white' : 'text-silver/40')}>{fmtMoney(b.amount)}</dd>
@@ -806,7 +885,7 @@ export function ReceivablesCard({ receivables }: { receivables: FinanceOverview[
                     <span className="shrink-0 tabular-nums">
                       <span className="text-white">{fmtMoney(c.amount)}</span>
                       <span className={cn('ml-2 text-xs', c.oldestDays > 60 ? 'text-alert' : c.oldestDays > 30 ? 'text-warning' : 'text-silver/60')}>
-                        {t('fin.arOldest', { days: c.oldestDays })}
+                        {oldestText(t, c.oldestDays)}
                       </span>
                     </span>
                   </li>

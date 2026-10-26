@@ -1,8 +1,8 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1301,
-    "raw-heading": 84,
+    "brand-text": 1253,
+    "raw-heading": 82,
     "pill": 36,
     "empty-text": 5
   },
@@ -52,7 +52,7 @@
       "raw-heading": 1
     },
     "src/pages/Settings.tsx": {
-      "brand-text": 12
+      "brand-text": 8
     },
     "src/pages/SupervisorDashboard.tsx": {
       "brand-text": 8
@@ -82,7 +82,7 @@
       "brand-text": 18
     },
     "src/pages/admin/BillingHome.tsx": {
-      "brand-text": 6
+      "brand-text": 2
     },
     "src/pages/admin/EmployersAdmin.tsx": {
       "brand-text": 1
@@ -97,7 +97,7 @@
       "brand-text": 2
     },
     "src/pages/admin/SignInSettings.tsx": {
-      "brand-text": 18
+      "brand-text": 13
     },
     "src/pages/admin/SupervisorShiftDialog.tsx": {
       "brand-text": 2
@@ -109,14 +109,7 @@
       "brand-text": 2
     },
     "src/pages/analytics/AnalyticsHome.tsx": {
-      "brand-text": 1,
       "raw-heading": 1
-    },
-    "src/pages/analytics/ProductAnalytics.tsx": {
-      "brand-text": 1
-    },
-    "src/pages/analytics/ReliabilityHome.tsx": {
-      "brand-text": 1
     },
     "src/pages/approvals/ApprovalsHome.tsx": {
       "brand-text": 6,
@@ -190,7 +183,7 @@
       "brand-text": 6
     },
     "src/pages/compliance/I9Tab.tsx": {
-      "brand-text": 6
+      "brand-text": 5
     },
     "src/pages/compliance/J1Tab.tsx": {
       "brand-text": 1
@@ -229,7 +222,7 @@
       "brand-text": 2
     },
     "src/pages/finance/FinanceCockpit.tsx": {
-      "brand-text": 14,
+      "brand-text": 12,
       "pill": 1,
       "raw-heading": 4
     },
@@ -283,7 +276,7 @@
       "raw-heading": 1
     },
     "src/pages/me/MeHome.tsx": {
-      "brand-text": 8
+      "brand-text": 7
     },
     "src/pages/me/MyDiscipline.tsx": {
       "brand-text": 4
@@ -355,9 +348,6 @@
     },
     "src/pages/onboarding/tasks/ProfileInfoTask.tsx": {
       "brand-text": 3
-    },
-    "src/pages/ops/OpsBoard.tsx": {
-      "brand-text": 8
     },
     "src/pages/ops/OpsFloorFeed.tsx": {
       "brand-text": 2
@@ -457,10 +447,10 @@
       "brand-text": 1
     },
     "src/pages/portal/PortalHistory.tsx": {
-      "brand-text": 9
+      "brand-text": 5
     },
     "src/pages/portal/PortalOps.tsx": {
-      "brand-text": 18
+      "brand-text": 17
     },
     "src/pages/portal/PortalRequests.tsx": {
       "brand-text": 1
@@ -469,7 +459,7 @@
       "brand-text": 3
     },
     "src/pages/portal/PortalToday.tsx": {
-      "brand-text": 4
+      "brand-text": 3
     },
     "src/pages/portal/ServiceReportDialog.tsx": {
       "brand-text": 1
@@ -507,7 +497,7 @@
       "brand-text": 1
     },
     "src/pages/region/RegionHome.tsx": {
-      "brand-text": 19,
+      "brand-text": 18,
       "raw-heading": 4
     },
     "src/pages/reimbursements/ReimbursementsHome.tsx": {
@@ -555,7 +545,7 @@
       "raw-heading": 1
     },
     "src/pages/scheduling/AdminSchedulingView.tsx": {
-      "brand-text": 34
+      "brand-text": 30
     },
     "src/pages/scheduling/AssociateScheduleCalendar.tsx": {
       "brand-text": 3
@@ -702,9 +692,9 @@
       "brand-text": 4
     },
     "src/pages/transport/TransportHome.tsx": {
-      "brand-text": 35,
+      "brand-text": 26,
       "pill": 2,
-      "raw-heading": 5
+      "raw-heading": 3
     },
     "src/pages/transport/TripMap.tsx": {
       "brand-text": 2

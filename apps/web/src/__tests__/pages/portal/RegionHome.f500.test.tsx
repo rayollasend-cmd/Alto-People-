@@ -115,7 +115,9 @@ describe('the region command center', () => {
   it('one store: the plural is right, the ring is % of contract, below contract leads the tile, the report is the primary action', async () => {
     renderRegion([store(1)]);
     expect(await screen.findByText('3 short of contract at 1 store right now.')).toBeInTheDocument();
-    expect(screen.getByText('1 store below contract')).toBeInTheDocument();
+    // "Below contract" is the KPI tile's label — said once, not again under it or in the hero.
+    expect(screen.queryByText('1 store below contract')).toBeNull();
+    expect(screen.queryByText('Past grace')).toBeNull();
     // The ring says the share of the contract; the count is said once, beside it.
     expect(screen.getByText('50%')).toBeInTheDocument();
     // Below contract outranks the overdue request.
@@ -139,7 +141,8 @@ describe('the region command center', () => {
     expect(csv.downloadCsv).toHaveBeenCalledTimes(1);
     const rows = csv.downloadCsv.mock.calls[0]![1] as unknown[][];
     expect(rows).toHaveLength(8);
-    expect(rows[1]!.slice(0, 5)).toEqual(['Store 1', 'B', 80, 3, 6]);
+    // Contracted hours delivered as a figure — no letter grade column.
+    expect(rows[1]!.slice(0, 4)).toEqual(['Store 1', 80, 3, 6]);
     // And back to cards.
     await userEvent.click(screen.getByRole('radio', { name: 'Cards' }));
     expect(screen.queryByTestId('region-table')).toBeNull();

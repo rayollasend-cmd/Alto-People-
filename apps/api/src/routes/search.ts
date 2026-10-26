@@ -14,6 +14,7 @@ import {
   scopeShifts,
 } from '../lib/scope.js';
 import type { SessionUser } from '../types/express.js';
+import { fmtDayInZone, fmtDayRange } from '../lib/humanDates.js';
 
 export const searchRouter = Router();
 
@@ -151,7 +152,7 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
       return rows.map((r) => ({
         id: r.id,
         title: r.client ? `${r.position} — ${r.client.name}` : r.position,
-        hint: `${ymd(r.startsAt)} · ${r.status.toLowerCase()}`,
+        hint: `${fmtDayInZone(r.startsAt, undefined, { weekday: true })} · ${r.status.toLowerCase()}`,
         href: `/scheduling?view=week&week=${ymd(r.startsAt)}${r.clientId ? `&client=${r.clientId}` : ''}`,
       }));
     },
@@ -191,7 +192,7 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
       });
       return rows.map((r) => ({
         id: r.id,
-        title: `${r.client.name} — ${ymd(r.periodStart)} to ${ymd(r.periodEnd)}`,
+        title: `${r.client.name} — ${fmtDayRange(r.periodStart, r.periodEnd)}`,
         hint: r.status === 'FINAL' && r.number != null ? `No. ${String(r.number).padStart(4, '0')}` : 'draft',
         href: `/clients/statements?statement=${r.id}`,
       }));

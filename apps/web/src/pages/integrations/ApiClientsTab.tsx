@@ -96,69 +96,73 @@ export function ApiClientsTab({ canManage }: { canManage: boolean }) {
           )}
         </div>
       </div>
-      <Card>
-        <CardContent className="p-0">
-          {q.error ? (
-            <div className="p-6">
-              <ErrorBanner action={<Button size="sm" variant="secondary" onClick={refresh}>Retry</Button>}>{message(q.error)}</ErrorBanner>
-            </div>
-          ) : clients === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : clients.length === 0 ? (
-            <EmptyState
-              icon={ShieldCheck}
-              title="No API apps"
-              description="Create an app for each system that calls in: it gets only the scopes you grant, and an owner who answers for it."
-              action={canManage ? <Button onClick={() => setShowNew(true)}><Plus className="mr-2 h-4 w-4" /> New app</Button> : undefined}
-            />
-          ) : (
-            <DataGrid<ApiClientSummary>
-              id="api-clients"
-              caption="API apps"
-              rows={clients}
-              rowKey={(c) => c.id}
-              search={false}
-              urlState={false}
-              exportCsv={{ filename: 'api-clients' }}
-              columns={[
-                { key: 'name', header: 'Name', accessor: (c) => c.name, sortable: true, primary: true, className: 'font-medium text-white' },
-                { key: 'clientId', header: 'Client ID', accessor: (c) => c.clientId, cardMeta: true, className: 'font-mono text-xs' },
-                { key: 'owner', header: 'Owner', accessor: (c) => c.owner?.name ?? '', sortable: true },
-                { key: 'scopes', header: 'Scopes', accessor: (c) => c.scopes.join(' '), className: 'font-mono text-xs text-silver' },
-                { key: 'lastUsed', header: 'Last used', accessor: (c) => c.lastUsedAt, sortable: true, searchable: false, cardMeta: true, cell: (c) => fmtDate(c.lastUsedAt) },
-                {
-                  key: 'status',
-                  header: 'Status',
-                  accessor: (c) => c.status,
-                  sortable: true,
-                  cell: (c) => <Badge variant={c.status === 'ACTIVE' ? 'success' : 'destructive'}>{c.status === 'ACTIVE' ? 'Active' : 'Revoked'}</Badge>,
-                },
-                ...(canManage
-                  ? [
-                      {
-                        key: 'actions',
-                        header: 'Actions',
-                        accessor: () => null,
-                        searchable: false,
-                        csv: () => '',
-                        align: 'right' as const,
-                        stopRowClick: true,
-                        className: 'space-x-2',
-                        cell: (c: ApiClientSummary) =>
-                          c.status === 'ACTIVE' ? (
-                            <>
-                              <Button size="sm" variant="ghost" onClick={() => void onRotate(c)}>Rotate secret</Button>
-                              <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => void onRevoke(c)}>Revoke</Button>
-                            </>
-                          ) : null,
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-          )}
-        </CardContent>
-      </Card>
+      {/* Nothing yet: the empty state stands on the page, not inside a second box;
+          its New app is the page's only action, so it keeps the gold. */}
+      {clients !== null && clients.length === 0 && !q.error ? (
+        <EmptyState
+          icon={ShieldCheck}
+          title="No API apps"
+          description="Create an app for each system that calls in: it gets only the scopes you grant, and an owner who answers for it."
+          action={canManage ? <Button onClick={() => setShowNew(true)}><Plus className="mr-2 h-4 w-4" /> New app</Button> : undefined}
+        />
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            {q.error ? (
+              <div className="p-6">
+                <ErrorBanner action={<Button size="sm" variant="secondary" onClick={refresh}>Retry</Button>}>{message(q.error)}</ErrorBanner>
+              </div>
+            ) : clients === null ? (
+              <div className="p-6"><SkeletonRows count={3} /></div>
+            ) : (
+              <DataGrid<ApiClientSummary>
+                id="api-clients"
+                caption="API apps"
+                rows={clients}
+                rowKey={(c) => c.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'api-clients' }}
+                columns={[
+                  { key: 'name', header: 'Name', accessor: (c) => c.name, sortable: true, primary: true, className: 'font-medium text-white' },
+                  { key: 'clientId', header: 'Client ID', accessor: (c) => c.clientId, cardMeta: true, className: 'font-mono text-xs' },
+                  { key: 'owner', header: 'Owner', accessor: (c) => c.owner?.name ?? '', sortable: true },
+                  { key: 'scopes', header: 'Scopes', accessor: (c) => c.scopes.join(' '), className: 'font-mono text-xs text-silver' },
+                  { key: 'lastUsed', header: 'Last used', accessor: (c) => c.lastUsedAt, sortable: true, searchable: false, cardMeta: true, cell: (c) => fmtDate(c.lastUsedAt) },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (c) => c.status,
+                    sortable: true,
+                    cell: (c) => <Badge variant={c.status === 'ACTIVE' ? 'success' : 'destructive'}>{c.status === 'ACTIVE' ? 'Active' : 'Revoked'}</Badge>,
+                  },
+                  ...(canManage
+                    ? [
+                        {
+                          key: 'actions',
+                          header: 'Actions',
+                          accessor: () => null,
+                          searchable: false,
+                          csv: () => '',
+                          align: 'right' as const,
+                          stopRowClick: true,
+                          className: 'space-x-2',
+                          cell: (c: ApiClientSummary) =>
+                            c.status === 'ACTIVE' ? (
+                              <>
+                                <Button size="sm" variant="ghost" onClick={() => void onRotate(c)}>Rotate secret</Button>
+                                <Button size="sm" variant="ghost" className="text-silver hover:text-alert" onClick={() => void onRevoke(c)}>Revoke</Button>
+                              </>
+                            ) : null,
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
       {showNew && (
         <NewClientDrawer
           onClose={() => setShowNew(false)}

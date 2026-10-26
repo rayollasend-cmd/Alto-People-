@@ -20,6 +20,30 @@ function stateOf(j: ScheduledJob): { label: string; variant: 'success' | 'destru
   return { label: 'OK', variant: 'success' };
 }
 
+/** A job named for what it delivers ("Schedule digest to admins (daily)") checks more often than it sends. */
+const DELIVERS = /\s*\((daily|nightly|weekly)\)\s*$/i;
+
+/** The job's name without its delivery note, which the Runs column says instead. */
+export function jobName(label: string): string {
+  return label.replace(DELIVERS, '');
+}
+
+/**
+ * How often a job runs, as a person says it — and, for one that checks
+ * often but sends once a day, both: "Checks every 15 min, sends daily"
+ * rather than an "Every 15 min" beside a name that says daily (F500
+ * 2026-10-26).
+ */
+export function runsPhrase(j: Pick<ScheduledJob, 'label' | 'intervalSeconds'>): string {
+  const every = everyPhrase(j.intervalSeconds);
+  const m = DELIVERS.exec(j.label);
+  if (!m || j.intervalSeconds <= 0) return every;
+  const sends = m[1]!.toLowerCase();
+  const period = sends === 'weekly' ? 7 * 86_400 : 86_400;
+  if (j.intervalSeconds >= period) return sends.charAt(0).toUpperCase() + sends.slice(1);
+  return `Checks ${every.charAt(0).toLowerCase()}${every.slice(1)}, sends ${sends}`;
+}
+
 /**
  * The scheduled jobs the API runs: when each last ran, whether it failed,
  * when it runs next. A job set to 0 shows as Off — the audit of 2026-10-21
@@ -31,8 +55,8 @@ export function ScheduledJobsCard({ canRun }: { canRun: boolean }) {
   const run = useMutation({
     mutationFn: (name: string) => runScheduledJob(name),
     onSuccess: async (r) => {
-      if (r.job.lastError) toast.error(`${r.job.label} failed: ${r.job.lastError}`);
-      else toast.success(`${r.job.label} ran.`);
+      if (r.job.lastError) toast.error(`${jobName(r.job.label)} failed: ${r.job.lastError}`);
+      else toast.success(`${jobName(r.job.label)} ran.`);
       await qc.invalidateQueries({ queryKey: ['reliability', 'jobs'] });
     },
     onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not run the job.'),
@@ -73,18 +97,18 @@ export function ScheduledJobsCard({ canRun }: { canRun: boolean }) {
               {
                 key: 'label',
                 header: 'Job',
-                accessor: (j) => j.label,
+                accessor: (j) => jobName(j.label),
                 sortable: true,
                 primary: true,
                 cell: (j) => (
                   <span className="block min-w-0">
-                    <span className="font-medium text-ink">{j.label}</span>
+                    <span className="font-medium text-ink">{jobName(j.label)}</span>
                     {j.lastError && <span className="block text-2xs text-alert">{j.lastError}</span>}
                   </span>
                 ),
               },
               { key: 'state', header: 'State', accessor: (j) => stateOf(j).label, sortable: true, cardMeta: true, cell: (j) => <Badge variant={stateOf(j).variant}>{stateOf(j).label}</Badge> },
-              { key: 'every', header: 'Runs', accessor: (j) => j.intervalSeconds, sortable: true, searchable: false, cell: (j) => everyPhrase(j.intervalSeconds) },
+              { key: 'every', header: 'Runs', accessor: (j) => j.intervalSeconds, sortable: true, searchable: false, cell: (j) => runsPhrase(j) },
               { key: 'last', header: 'Last run', accessor: (j) => j.lastFinishedAt ?? '', sortable: true, searchable: false, cardMeta: true, cell: (j) => (j.lastFinishedAt ? fmtDateTime(j.lastFinishedAt) : '—') },
               { key: 'next', header: 'Next run', accessor: (j) => j.nextRunAt ?? '', sortable: true, searchable: false, cell: (j) => (j.nextRunAt ? fmtDateTime(j.nextRunAt) : '—') },
               {
@@ -96,7 +120,7 @@ export function ScheduledJobsCard({ canRun }: { canRun: boolean }) {
                 stopRowClick: true,
                 cell: (j) =>
                   canRun ? (
-                    <Button size="sm" variant="ghost" loading={run.isPending && run.variables === j.name} disabled={run.isPending || j.running} onClick={() => run.mutate(j.name)} aria-label={`Run ${j.label} now`}>
+                    <Button size="sm" variant="ghost" loading={run.isPending && run.variables === j.name} disabled={run.isPending || j.running} onClick={() => run.mutate(j.name)} aria-label={`Run ${jobName(j.label)} now`}>
                       <Play className="mr-1 h-3 w-3" aria-hidden="true" /> Run now
                     </Button>
                   ) : null,

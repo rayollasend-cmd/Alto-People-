@@ -40,7 +40,8 @@ export interface ScimTokenRow {
   createdAt: string;
 }
 
-export const getIdentity = () => apiFetch<{ connections: IdentityConnectionRow[]; domains: TenantDomainRow[]; scimTokens: ScimTokenRow[] }>('/identity');
+/** `loginPath`: the organization's own sign-in address ("/login/acme"); absent from an older API. */
+export const getIdentity = () => apiFetch<{ connections: IdentityConnectionRow[]; domains: TenantDomainRow[]; scimTokens: ScimTokenRow[]; loginPath?: string | null }>('/identity');
 
 export interface ConnectionInput {
   displayName: string;

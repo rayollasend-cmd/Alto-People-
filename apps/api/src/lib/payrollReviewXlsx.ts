@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { XL, XL_FMT } from './docKit/xlsx.js';
 import { FLAG_LABEL, type PayrollReviewReport, type ReviewState } from './payrollReview.js';
+import { fmtDayRange } from './humanDates.js';
 
 /**
  * The pre-payroll review as a workbook an accountant can sort, filter and
@@ -73,7 +74,7 @@ function summarySheet(wb: ExcelJS.Workbook, r: PayrollReviewReport, s: ReviewSta
   ws.getCell('A1').value = 'Pre-payroll review';
   ws.getCell('A1').font = { bold: true, size: 18, color: { argb: INK } };
   ws.mergeCells('A2:D2');
-  ws.getCell('A2').value = `${r.company} · ${r.run.clientName ?? 'All clients'} · pay period ${r.run.periodStart} to ${r.run.periodEnd} · ${r.run.status.toLowerCase()}`;
+  ws.getCell('A2').value = `${r.company} · ${r.run.clientName ?? 'All clients'} · pay period ${fmtDayRange(r.run.periodStart, r.run.periodEnd, { year: true })} · ${r.run.status.charAt(0) + r.run.status.slice(1).toLowerCase().replace(/_/g, ' ')}`;
   ws.getCell('A2').font = { color: { argb: MUTED } };
   ws.mergeCells('A3:D3');
   const so = signoffText(s);
@@ -128,7 +129,7 @@ function summarySheet(wb: ExcelJS.Workbook, r: PayrollReviewReport, s: ReviewSta
   );
   if (r.previous) {
     const h = ws.getRow(row);
-    h.values = [`Compared with ${r.previous.periodStart} to ${r.previous.periodEnd}`, 'Last payroll', 'This payroll', 'Change'];
+    h.values = [`Compared with ${fmtDayRange(r.previous.periodStart, r.previous.periodEnd, { year: true })}`, 'Last payroll', 'This payroll', 'Change'];
     headerRow(h);
     row += 1;
     const cmp: Array<[string, number, number, string]> = [

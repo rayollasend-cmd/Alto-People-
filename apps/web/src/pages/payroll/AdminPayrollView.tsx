@@ -111,13 +111,12 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { performWithUndo } from '@/lib/undoToast';
 import { pickOne } from '@/lib/validationCopy';
 import { FilterChip } from '@/components/ui/FilterBar';
-import { RunTotalsMismatch } from '@/components/payroll/RunTotalsMismatch';
+import { RunTotalsMismatch, totalsOnHold } from '@/components/payroll/RunTotalsMismatch';
 import { RunStatusBadge, paycheckStatusLabel, paycheckStatusTone, runStatusLabel } from '@/lib/payrollRunStatus';
 import '@/lib/i18n/en/payrollHome';
 
-/** "May 13, 2026 → May 26, 2026" — the run period, parsed as local days. */
-const fmtPeriod = (startYmd: string, endYmd: string) =>
-  `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
+/** "May 13 – 26, 2026" — the run period, said once (the app's one range format). */
+const fmtPeriod = (startYmd: string, endYmd: string) => fmtDateOnlyRange(startYmd, endYmd);
 
 type RunFilter = PayrollRunStatus | 'ALL' | 'OPEN';
 const RUN_FILTERS: readonly RunFilter[] = ['OPEN', 'DRAFT', 'FINALIZED', 'DISBURSED', 'CANCELLED', 'ALL'];
@@ -1386,11 +1385,14 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 {
                   key: 'nextStep',
                   header: 'Next step',
-                  accessor: (r) => r.nextStep?.label ?? '',
+                  accessor: (r) => (totalsOnHold(r) ? 'Totals and paychecks disagree' : r.nextStep?.label ?? ''),
                   sortable: true,
                   cardMeta: true,
                   cell: (r) =>
-                    r.nextStep ? (
+                    totalsOnHold(r) ? (
+                      // On hold: no step that would move money or file taxes from numbers that don't add up.
+                      <span className="text-xs text-alert">Totals and paychecks disagree</span>
+                    ) : r.nextStep ? (
                       <span className={cn('text-xs', r.nextStep.key === 'done' || r.nextStep.key === 'cancelled' ? 'text-ink-muted' : 'text-ink')}>
                         {r.nextStep.label}
                         {r.nextStep.waitingOn && <span className="block text-2xs text-ink-muted">waiting on {r.nextStep.waitingOn}</span>}
@@ -1416,7 +1418,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 // "0 paystubs", never a bare "0" on a phone card.
                 { key: 'paystubs', header: 'Paystubs', accessor: (r) => r.itemCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-ink-muted', cell: (r) => (desktopTable ? r.itemCount : fmtCount(r.itemCount, 'paystub')) },
                 { key: 'gross', header: 'Gross', accessor: (r) => r.totalGross, csv: (r) => fmtMoney(r.totalGross), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-ink-muted', cell: (r) => fmtMoney(r.totalGross) },
-                { key: 'net', header: 'Net', accessor: (r) => r.totalNet, csv: (r) => fmtMoney(r.totalNet), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-gold', cell: (r) => fmtMoney(r.totalNet) },
+                { key: 'net', header: 'Net', accessor: (r) => r.totalNet, csv: (r) => fmtMoney(r.totalNet), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums font-medium text-ink', cell: (r) => fmtMoney(r.totalNet) },
               ]}
             />
       </section>
@@ -1788,7 +1790,6 @@ function PayrollHero({
                 <HeroStat
                   label="Projected net"
                   value={fmtMoney(nr.projectedNet)}
-                  highlight
                 />
               </div>
               {nr.totalExceptions > 0 && (
@@ -1800,8 +1801,10 @@ function PayrollHero({
               )}
               {/* The blocker, inline — not only inside the dialog (finance walk 10). */}
               {emptySchedule && (
-                <p className="mt-3 text-xs text-alert" role="status">
-                  No one is on {only!.scheduleName} — this run would pay no one.{' '}
+                <p className="mt-3 text-xs text-alert" role="status" data-testid="payroll-blocker">
+                  No one is on {only!.scheduleName}, so this run would pay no one.
+                  {/* The same blocker the finance home names (GET /payroll/upcoming). */}
+                  {(upcoming.peopleOnNoSchedule ?? 0) > 0 && ` ${fmtCount(upcoming.peopleOnNoSchedule ?? 0, 'person', 'people')} on no pay schedule.`}{' '}
                   <Link to={`/payroll/schedules/${only!.scheduleId}`} className="underline underline-offset-2">
                     Add people to it
                   </Link>
@@ -1849,7 +1852,7 @@ function PayrollHero({
               <span className="text-ink-muted">Last run</span>
               <span className="tabular-nums text-ink">{fmtDateOnlyRange(lr.periodStart, lr.periodEnd)}</span>
               <RunStatusBadge status={lr.status} />
-              <span className="ml-auto tabular-nums text-gold">{fmtMoney(lr.totalNet)} net</span>
+              <span className="ml-auto tabular-nums text-ink">{fmtMoney(lr.totalNet)} net</span>
             </div>
             <div className="hidden sm:block">
               <div className="text-base text-ink tabular-nums">
@@ -1861,7 +1864,7 @@ function PayrollHero({
               </div>
               <div className="mt-3">
                 <div className="text-xs2 uppercase tracking-widest text-ink-muted">Net paid</div>
-                <div className="tabular-nums text-gold mt-0.5">{fmtMoney(lr.totalNet)}</div>
+                <div className="mt-0.5 font-medium tabular-nums text-ink">{fmtMoney(lr.totalNet)}</div>
               </div>
             </div>
             {/* The stored totals above, checked against the paychecks (apps/api/src/lib/payrollRunTotals.ts). */}
@@ -2048,7 +2051,7 @@ function SchedulesHero({
           <span className="text-ink-muted">Last run</span>
           <span className="tabular-nums text-ink">{fmtPeriod(lastRun.periodStart, lastRun.periodEnd)}</span>
           <RunStatusBadge status={lastRun.status} />
-          <span className="ml-auto tabular-nums text-gold">{fmtMoney(lastRun.totalNet)} net</span>
+          <span className="ml-auto tabular-nums text-ink">{fmtMoney(lastRun.totalNet)} net</span>
         </button>
       )}
       {lastRun && <RunTotalsMismatch compact check={{ ...lastRun, paychecks: lastRun.itemCount }} />}
@@ -2582,7 +2585,7 @@ function FailedPaymentsSummary({
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <div className="tabular-nums text-gold">{fmtMoney(it.netPay)}</div>
+                    <div className="tabular-nums text-ink">{fmtMoney(it.netPay)}</div>
                     {canProcess && isRailProblem && (
                       <Button
                         variant="secondary"
@@ -2694,7 +2697,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
         </div>
         <div className="text-right shrink-0">
           <div className="text-2xs uppercase tracking-widest text-ink-muted">Net</div>
-          <div className="tabular-nums text-gold">{fmtMoney(item.netPay)}</div>
+          <div className="font-medium tabular-nums text-ink">{fmtMoney(item.netPay)}</div>
         </div>
       </button>
       {expanded && (
@@ -2876,7 +2879,8 @@ function DrillRow({
         className={cn(
           'tabular-nums',
           bold && 'font-medium',
-          accent ? 'text-gold' : muted ? 'text-ink-muted' : 'text-ink'
+          // Money is ink: gold is punctuation, not a figure's colour (F500 audit 2026-10-26).
+          accent ? 'font-medium text-ink' : muted ? 'text-ink-muted' : 'text-ink'
         )}
       >
         {value}

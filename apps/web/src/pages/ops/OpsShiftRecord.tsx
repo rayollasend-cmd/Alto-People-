@@ -79,21 +79,21 @@ export function OpsShiftRecordDialog({
 
   async function onCancel() {
     const reason = await prompt({
-      title: 'Cancel this SOP?',
+      title: 'Cancel this checklist?',
       description:
-        'For an SOP opened against the wrong standard. It stops counting, the ' +
+        'For a checklist opened against the wrong standard. It stops counting, the ' +
         'supervisor can clock out, and the right one can be opened for this ' +
         'shift. The record stays, marked cancelled.',
       reasonLabel: 'Why',
       reasonPlaceholder: 'e.g. Afternoon supervisor opened the morning standard',
-      confirmLabel: 'Cancel the SOP',
+      confirmLabel: 'Cancel the checklist',
       destructive: true,
     });
     if (!reason || !reason.trim()) return;
     setCancelling(true);
     try {
       await cancelOpsShift(shiftId, reason.trim());
-      toast.success('SOP cancelled. The supervisor can open the right one now.');
+      toast.success('Checklist cancelled. The supervisor can open the right one now.');
       onClose();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not cancel it.');
@@ -137,7 +137,7 @@ export function OpsShiftRecordDialog({
                 <span className={DEPT_TONE[detail.shift.department] ?? 'text-gold'}>
                   {detail.shift.department}
                 </span>{' '}
-                — {PERIOD_LABEL[detail.shift.period]}
+                — {detail.shift.windowLabel ?? PERIOD_LABEL[detail.shift.period]}
                 {detail.shift.status === 'CLOSED' ? (
                   detail.shift.closedIncomplete ? (
                     <Badge variant="destructive" className="ml-2 align-middle">
@@ -171,7 +171,7 @@ export function OpsShiftRecordDialog({
                     disabled={cancelling}
                   >
                     <X className="h-3.5 w-3.5" aria-hidden="true" />
-                    Wrong SOP — cancel it
+                    Wrong checklist — cancel it
                   </Button>
                 </div>
               )}
@@ -200,7 +200,7 @@ export function OpsShiftRecordDialog({
                 {detail.shift.actualHeadcount}/{detail.shift.scheduledHeadcount} floor
               </span>
               <span className="text-silver">
-                SOP <span className="text-white">{detail.shift.sopDone}</span>/
+                Checklist <span className="text-white">{detail.shift.sopDone}</span>/
                 {detail.shift.sopTotal}
               </span>
               <span className="text-silver">

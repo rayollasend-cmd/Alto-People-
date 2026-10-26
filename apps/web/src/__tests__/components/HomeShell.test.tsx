@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
@@ -127,13 +127,14 @@ describe('<HugoSeat>', () => {
     expect(api.apiFetch).not.toHaveBeenCalledWith('/hugo');
   });
 
-  it('the intro is two lines with the rest on hover — not cut mid-word on one', async () => {
+  it('Hugo’s card carries a line written for it, whole — his full introduction is in the panel', async () => {
     api.apiFetch.mockImplementation(async (path: string) =>
-      path === '/hugo' ? { name: 'Hugo', audience: 'staff', intro: "I'm Hugo, the AI assistant in Alto People. I'm not a person.", model: false, can: [{ key: 'DESK', label: 'Desk', example: 'What is waiting?' }] } : {},
+      path === '/hugo' ? { name: 'Hugo', audience: 'staff', intro: "I'm Hugo, your AI assistant in Alto People — not a person. Ask me about your work here.", model: false, can: [{ key: 'DESK', label: 'Desk', example: 'What is waiting?' }] } : {},
     );
     renderHome(<HugoSeat />);
-    const intro = await screen.findByText(/I'm not a person\./);
-    await waitFor(() => expect(intro.className).toContain('line-clamp-2'));
-    expect(intro).toHaveAttribute('title', expect.stringContaining("I'm not a person."));
+    const line = await screen.findByText('Your AI assistant — not a person. Ask me anything, or hand me a task.');
+    // Never clamped mid-sentence ("Ask me about your work here, o…").
+    expect(line.className).not.toContain('line-clamp');
+    expect(screen.queryByText(/Ask me about your work here/)).toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import { computeExecutiveSummary } from '../lib/executiveSummary.js';
 import { recordScenarioAnswer } from '../lib/agentControls.js';
 import { createProposal } from '../lib/agentCapabilities.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { fmtDayRange } from '../lib/humanDates.js';
 
 /**
  * What an agent can call (Brief 1D-2). Bearer alto_agent_… on every route;
@@ -154,7 +155,9 @@ agentApiRouter.get('/exports/schedule.csv', requireAgent('view:scheduling'), asy
     const { from, to } = timeWindow(q);
     const payload = { clientId: q.clientId, from: from.toISOString(), to: to.toISOString() };
     if (!q.approvalId) {
-      const r = await createApprovalRequest(prisma, req.agent!, { action: 'DATA_EXPORT', summary: `Schedule export for client ${q.clientId}, ${payload.from.slice(0, 10)} to ${payload.to.slice(0, 10)}`, payload });
+      const client = await prisma.client.findFirst({ where: { id: q.clientId }, select: { name: true } });
+      const summary = `Schedule export for ${client?.name ?? 'a client'}, ${fmtDayRange(payload.from, new Date(to.getTime() - 1))}`;
+      const r = await createApprovalRequest(prisma, req.agent!, { action: 'DATA_EXPORT', summary, payload });
       res.locals.agentAction = 'agent.export.gated';
       res.locals.agentTarget = { type: 'AgentApprovalRequest', id: r.approval.id };
       res.status(202).json({ status: r.approval.status, approvalId: r.approval.id, created: r.created, payload, message: 'Exports are approved by a person. Ask again with the same clientId, from and to plus approvalId once it is approved.' });

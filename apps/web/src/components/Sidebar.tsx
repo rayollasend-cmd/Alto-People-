@@ -36,6 +36,7 @@ import { DASHBOARD_ICON, DOOR_ICONS, MODULE_ICONS } from '@/lib/moduleIcons';
 import { readRailCollapsed, sidebarFrameClass, writeRailCollapsed } from './ShellSidebar';
 import { useAuth, useTenant, useTerm, useRoleLabel } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
+import { navBadgeFor } from '@/lib/inboxCounts';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
@@ -78,6 +79,14 @@ const SECTIONS_KEY = 'alto.sidebar.collapsedGroups';
 const FOLD_OPEN = '__fold:open';
 const OPEN_DOORS_KEY = 'alto.sidebar.openDoors';
 
+/**
+ * Roles whose home (`/`) IS one of their modules' pages — the same desk under
+ * two rows. On `/` the module's row lights, under the name the page wears
+ * (the transport director's home is the Transportation desk: "Home" lit over
+ * a page titled Transportation, F500 2026-10-26).
+ */
+const HOME_IS_PAGE: Partial<Record<string, string>> = { TRANSPORTATION_DIRECTOR: '/transport' };
+
 function readStringSet(key: string): Set<string> | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -112,25 +121,22 @@ export function Sidebar() {
   );
   const shape = useMemo(() => navShapeFor(visible, user?.role, term), [visible, user?.role, term]);
   const portalHomePaths = useMemo(() => new Set(visible.filter((m) => PORTAL_HOME_KEYS.has(m.key)).map((m) => m.path)), [visible]);
-  const activePath = useActiveNavPath();
+  const routePath = useActiveNavPath();
   const location = useLocation();
+  // ONE active location (F500 2026-10-26): a home that is a module's page lights that module.
+  const homeIs = (user?.role && HOME_IS_PAGE[user.role]) || null;
+  const homeIsHere = !!homeIs && location.pathname === '/' && visible.some((m) => m.path === homeIs);
+  const activePath = homeIsHere ? homeIs : routePath;
+  const pathname = homeIsHere ? homeIs! : location.pathname;
 
   // One request carries every count the rail shows: the Inbox total and,
   // beside each page, what waits there (messages unread, punches to review,
-  // applications to approve…). Keyed by the page's path.
-  const inbox = useInbox();
-  const countByPath = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const s of inbox.data?.sources ?? []) {
-      // Another desk's queue (packages/shared queues.ts) badges nothing here — as on the Inbox.
-      if (s.watching) continue;
-      const path = s.path.split('?')[0] ?? s.path;
-      m.set(path, (m.get(path) ?? 0) + s.count);
-    }
-    return m;
-  }, [inbox.data]);
-  const badgeFor = (m: ModuleNav): number | null =>
-    m.key === 'inbox' ? (inbox.data?.total ?? null) : (countByPath.get(m.path) ?? null);
+  // applications to approve…). THE COUNT RULE (lib/inboxApi.ts): a page's
+  // badge is the sum of the sources whose home is that page, a door's is the
+  // sum of its pages, the Inbox row is the total — the page's own header
+  // says the same number.
+  const inboxData = useInbox().data;
+  const badgeFor: NavBadge = useCallback((rows) => navBadgeFor(inboxData, rows), [inboxData]);
 
   const { pinned, isPinned, togglePin } = usePinnedModules();
   const recents = useRecentModules();
@@ -149,7 +155,7 @@ export function Sidebar() {
   // Doors: the one holding the current page is open; the rest are the way
   // the person last left them. A route change into another door opens it
   // without closing the others — moving around should not fold the menu.
-  const activeDoor = doorKeyForPath(shape, location.pathname);
+  const activeDoor = doorKeyForPath(shape, pathname);
   const [openDoors, setOpenDoors] = useState<Set<string>>(
     () => readStringSet(OPEN_DOORS_KEY) ?? new Set(activeDoor ? [activeDoor] : []),
   );
@@ -158,22 +164,19 @@ export function Sidebar() {
     setOpenDoors((prev) => (prev.has(activeDoor) ? prev : new Set([...prev, activeDoor])));
   }, [activeDoor]);
   // Personalized shortcuts above the doors: explicit pins first, then the
-  // three most-recent modules a person can't already see on screen — not
-  // pinned, not an always-on row, not inside a door that is open, and not
-  // the page they are on (it is highlighted in its own place). "Recent"
-  // repeated Inbox and Messages and the open Me door's rows (F500 G5).
+  // three most-recent modules that are not ALWAYS on screen — not pinned,
+  // not an always-on row (Inbox, Messages…), not a door drawn as a single
+  // row (My team), not Home, and not the page in view. It no longer depends
+  // on which doors happen to be open, so the group stays put from page to
+  // page instead of appearing and vanishing, and never lists "My team" a
+  // second time (F500 2026-10-26; G5 before it).
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const pinnedModules = pinned.map((k) => byKey.get(k)).filter((m): m is ModuleNav => !!m);
-  const onScreen = new Set<string>(shape.rows.map((m) => m.key));
-  for (const d of allDoors(shape)) {
-    if (!openDoors.has(d.key) && d.key !== activeDoor) continue;
-    onScreen.add(d.target.key);
-    for (const c of d.children) onScreen.add(c.key);
-  }
+  const alwaysOn = useMemo(() => alwaysOnKeys(shape), [shape]);
   const recentModules = recents
-    .filter((k) => !pinned.includes(k) && !onScreen.has(k))
+    .filter((k) => !pinned.includes(k) && !alwaysOn.has(k))
     .map((k) => byKey.get(k))
-    .filter((m): m is ModuleNav => !!m && m.path !== location.pathname && m.path !== activePath)
+    .filter((m): m is ModuleNav => !!m && m.path !== DASHBOARD_NAV.path && m.path !== pathname && m.path !== activePath)
     .slice(0, 3);
 
   const toggleDoor = useCallback((key: string) => {
@@ -238,7 +241,7 @@ export function Sidebar() {
           to={DASHBOARD_NAV.path}
           // A store or region account's home IS "My store" / "Command
           // center" (one page, listed once): Home lights there too.
-          active={activePath === DASHBOARD_NAV.path || (user?.role === 'CLIENT_PORTAL' && portalHomePaths.has(activePath ?? ''))}
+          active={(activePath === DASHBOARD_NAV.path && !homeIsHere) || (user?.role === 'CLIENT_PORTAL' && portalHomePaths.has(activePath ?? ''))}
           label={DASHBOARD_NAV.label}
           icon={DASHBOARD_ICON}
           railCollapsed={railCollapsed}
@@ -267,7 +270,8 @@ export function Sidebar() {
               <PinnableRow
                 key={m.key}
                 module={m}
-                active={activePath === m.path}
+                // The page lights in its own place (its door or row) only — one active location.
+                active={activePath === m.path && !inDoors(shape, m.key) && !alwaysOn.has(m.key)}
                 railCollapsed={railCollapsed}
                 badge={badgeFor(m)}
                 pinned
@@ -288,7 +292,7 @@ export function Sidebar() {
               <PinnableRow
                 key={m.key}
                 module={m}
-                active={activePath === m.path}
+                active={false}
                 railCollapsed={railCollapsed}
                 badge={badgeFor(m)}
                 pinned={false}
@@ -358,6 +362,11 @@ interface SidebarBrandProps {
 
 function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
   const { t } = useI18n();
+  const { user } = useAuth();
+  // A client's own people see their company at the top: the store or market
+  // account works inside "Coastal Resort Holdings", on Alto People. (Clients
+  // carry no logo of their own yet; the name leads.)
+  const clientName = user?.role === 'CLIENT_PORTAL' ? (user.clientName ?? null) : null;
   return (
     <div
       className={cn(
@@ -365,7 +374,20 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
         railCollapsed ? 'justify-center px-0' : 'gap-2 px-4',
       )}
     >
-      {!railCollapsed && (
+      {!railCollapsed && clientName && (
+        <>
+          <Logo size="sm" alt={t('top.logo')} />
+          <span className="min-w-0 leading-tight" data-testid="sidebar-client">
+            <span className="block truncate text-sm font-medium text-ink" title={clientName}>
+              {clientName}
+            </span>
+            <span className="block truncate text-2xs text-ink-muted">
+              Alto <span className="text-accent">People</span>
+            </span>
+          </span>
+        </>
+      )}
+      {!railCollapsed && !clientName && (
         <>
           <Logo size="sm" alt={t('top.logo')} />
           <span className="text-lg text-ink leading-none tracking-tight truncate">
@@ -442,6 +464,27 @@ function SidebarSection({ label, collapsed, onToggle, railCollapsed, children }:
   );
 }
 
+/** Every module key always drawn as its own row: the top rows and the doors drawn as one row. */
+function alwaysOnKeys(shape: ReturnType<typeof navShapeFor>): Set<string> {
+  const keys = new Set<string>(shape.rows.map((m) => m.key));
+  for (const d of allDoors(shape)) {
+    const single = d.flat || (d.children.length === 1 && d.target.key === d.children[0]!.key);
+    if (single) {
+      keys.add(d.target.key);
+      for (const c of d.children) keys.add(c.key);
+    }
+  }
+  return keys;
+}
+
+/** Is this module behind any door (where the page lights in its own place)? */
+function inDoors(shape: ReturnType<typeof navShapeFor>, key: string): boolean {
+  return allDoors(shape).some((d) => d.target.key === key || d.children.some((c) => c.key === key));
+}
+
+/** A row's badge, or a door's (several rows): lib/inboxApi.ts navBadgeFor. */
+type NavBadge = (rows: ModuleNav | readonly ModuleNav[]) => number | null;
+
 interface DoorRowProps {
   door: NavDoorView;
   open: boolean;
@@ -449,7 +492,7 @@ interface DoorRowProps {
   active: boolean;
   activePath: string | null;
   railCollapsed: boolean;
-  badgeFor: (m: ModuleNav) => number | null;
+  badgeFor: NavBadge;
   isPinned: (key: ModuleNav['key']) => boolean;
   onTogglePin: (key: ModuleNav['key']) => void;
   onToggle: () => void;
@@ -465,7 +508,9 @@ interface DoorRowProps {
 function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPinned, onTogglePin, onToggle, onOpen }: DoorRowProps) {
   const Icon = DOOR_ICONS[door.key];
   const single = door.flat || (door.children.length === 1 && door.target.key === door.children[0]!.key);
-  const waiting = door.children.reduce((n, c) => n + (badgeFor(c) ?? 0), 0) + (door.children.includes(door.target) ? 0 : (badgeFor(door.target) ?? 0));
+  // The door's badge: what waits behind it — the queues listed on any of its
+  // pages, each queue once (the count rule, lib/inboxApi.ts).
+  const waiting = badgeFor([door.target, ...door.children]) ?? 0;
 
   if (single) {
     return (
@@ -582,7 +627,9 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
                   key={m.key}
                   module={m}
                   indent
-                  active={activePath === m.path}
+                  // Lit only inside the door that holds the page (Audit log sits behind
+                  // Compliance AND Settings & trust — one active location, F500 2026-10-26).
+                  active={active && activePath === m.path}
                   railCollapsed={false}
                   badge={badgeFor(m)}
                   pinned={isPinned(m.key)}
@@ -775,7 +822,11 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
   };
 
   const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  // The person's name first, the email second (F500 2026-10-26: a portal
+  // footer read "portal@coastalresort.e…"); the email shows on hover and in
+  // the menu.
   const displayName = fullName || user.email;
+  const role = roleLabel(user.role);
   const avatar = (
     <Avatar
       src={user.photoUrl}
@@ -808,11 +859,13 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
         aria-label={t('top.account')}
       >
         {avatar}
-        <div className="min-w-0 flex-1 text-left leading-tight">
-          <div className="text-2xs uppercase tracking-widest text-silver truncate">
-            {roleLabel(user.role)}
-          </div>
+        <div className="min-w-0 flex-1 text-left leading-tight" title={fullName ? `${fullName} · ${user.email}` : user.email}>
           <div className="text-sm text-ink truncate">{displayName}</div>
+          {/* The role in words, never cut: "Transportation Director" wraps to a
+              second line rather than reading "TRANSPORTATION DIRE…". */}
+          <div className="mt-0.5 text-2xs leading-snug text-ink-muted line-clamp-2 break-words" data-testid="sidebar-role">
+            {role}
+          </div>
         </div>
         <ChevronsUpDown className="h-3.5 w-3.5 text-silver/70 shrink-0" aria-hidden="true" />
       </button>

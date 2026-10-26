@@ -78,13 +78,13 @@ describe('coverage gaps in Needs you', () => {
     floor.coverShift.mockResolvedValue({ shiftId: 's2', steps: [] });
     const user = userEvent.setup();
     const { unmount } = renderAs('SHIFT_SUPERVISOR', <CoverageGapNotice today="2026-10-21" gaps={[{ window: swing, scheduled: 0, openShiftIds: ['s2', 's3'] }]} />);
-    expect(screen.getByText("Today's Swing: 0 of 6 scheduled")).toBeInTheDocument();
+    expect(screen.getByText("Today's swing: 0 of 6 scheduled")).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Fill from bench' }));
     expect(floor.coverShift).toHaveBeenCalledTimes(2);
     expect(await screen.findByRole('button', { name: 'Bench asked' })).toBeDisabled();
     unmount();
     renderAs('SHIFT_SUPERVISOR', <CoverageGapNotice today="2026-10-21" gaps={[{ window: { ...swing, startMinute: 18 * 60 }, scheduled: 0, openShiftIds: [] }]} />);
-    expect(screen.getByText("Tonight's Swing: 0 of 6 scheduled")).toBeInTheDocument();
+    expect(screen.getByText("Tonight's swing: 0 of 6 scheduled")).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Add shifts/ })).toHaveAttribute('href', '/scheduling?view=day&date=2026-10-21');
   });
 });

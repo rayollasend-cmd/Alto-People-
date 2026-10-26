@@ -1221,6 +1221,8 @@ const Row = memo(function Row({
             </div>
           )}
           {associate.offRoster && <OffRosterNote associateId={associate.id} />}
+          {/* Hours only when there are some — "0.0h" under every name was noise (F500 2026-10-26). */}
+          {minutes > 0 && (
           <div className="text-2xs tabular-nums">
             <span
               className={cn(
@@ -1239,6 +1241,7 @@ const Row = memo(function Row({
               {overTime && ' • OT'}
             </span>
           </div>
+          )}
         </div>
         {/* Crew membership: one tap takes them off the filtered crew —
             their shifts and roster spot survive; only membership changes. */}
@@ -1453,7 +1456,10 @@ const Cell = memo(function Cell({
             <button
               type="button"
               onClick={onCreate}
-              className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors can-hover:opacity-60 group-hover:opacity-100"
+              // "+" on the cell's hover or the button's focus only — ~200 of them
+              // in an empty week read as a pattern, not an invitation (F500
+              // 2026-10-26). Always shown on touch, where there is no hover.
+              className="absolute inset-0 flex items-center justify-center text-silver/50 hover:text-gold hover:bg-gold/5 transition-[color,background-color,opacity] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 coarse:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright"
               aria-label="Add shift"
             >
               <Plus className="h-4 w-4" />

@@ -8,6 +8,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { jobSecret } from '../lib/jobSecrets.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
+import { fmtDayInZone } from '../lib/humanDates.js';
 
 /**
  * Phase 109 — Anonymous pulse surveys.
@@ -109,7 +110,7 @@ pulseSurveysRouter.post('/pulse-surveys', VIEW_ADMIN, async (req, res) => {
           status: 'SENT' as const,
           recipientUserId: r.id,
           subject: 'Quick pulse check — your input is wanted',
-          body: `"${input.question}" — takes ten seconds, closes ${openUntil.toISOString().slice(0, 10)}.`,
+          body: `"${input.question}" — takes ten seconds, closes ${fmtDayInZone(openUntil)}.`,
           category: 'pulse',
           linkUrl: '/pulse',
           sentAt: now,

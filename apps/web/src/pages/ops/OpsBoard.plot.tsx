@@ -174,7 +174,7 @@ export function SopWeekPlot({ sopWeek }: { sopWeek: Array<{ dateKey: string; pct
           contentStyle={TOOLTIP_STYLE}
           labelStyle={TOOLTIP_LABEL_STYLE}
           itemStyle={TOOLTIP_ITEM_STYLE}
-          formatter={(value) => [`${String(value)}%`, 'SOP compliance']}
+          formatter={(value) => [`${String(value)}%`, 'Checklist completion']}
         />
         <Area
           type="linear"

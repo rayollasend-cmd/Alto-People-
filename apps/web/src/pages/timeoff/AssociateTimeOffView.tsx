@@ -243,6 +243,8 @@ export function AssociateTimeOffView() {
       <ListTemplate
         title={t('timeoff.title')}
         subtitle={t('timeoff.subtitle')}
+        // A worker reads at 16px on a phone (helper lines at 14px).
+        className="max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm"
         primaryAction={
           <Button onClick={() => setOpenCreate(true)}>
             <Plus className="h-4 w-4" />
@@ -274,6 +276,16 @@ export function AssociateTimeOffView() {
         />
       )}
 
+      {requests && requests.length === 0 ? (
+        // The kit's empty state, on its own — not a one-liner inside a
+        // titled card (the worker pages had five empty-state patterns).
+        // The header's "Request time off" is the way to start.
+        <EmptyState
+          icon={CalendarOff}
+          title={t('timeoff.noRequests')}
+          description={t('timeoff.noRequestsHint')}
+        />
+      ) : (
       <Card>
         <CardHeader>
           <CardTitle>{t('timeoff.myRequests')}</CardTitle>
@@ -281,10 +293,6 @@ export function AssociateTimeOffView() {
         </CardHeader>
         <CardContent>
           {!requests && !loadError && <SkeletonRows count={3} />}
-          {requests && requests.length === 0 && (
-            // One quiet line: two big empty cards filled the phone (F500 G2).
-            <EmptyState size="sm" icon={CalendarOff} title={t('timeoff.noRequests')} />
-          )}
           {requests && requests.length > 0 && (
             <>
               {/* The five-way filter only earns its width once the list is
@@ -362,6 +370,7 @@ export function AssociateTimeOffView() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Time off and protected leave are two pages; each points to the other. */}
       <p className="text-sm text-silver" data-testid="leave-pointer">

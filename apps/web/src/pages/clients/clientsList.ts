@@ -1,5 +1,5 @@
 import type { ClientListItem, ClientStatus } from '@alto-people/shared';
-import { fmtMoneyCompact } from '@/lib/format';
+import { fmtMoney } from '@/lib/format';
 
 /**
  * The clients list's rules, kept apart from the page so they are tested on
@@ -214,11 +214,11 @@ export const HEALTH_LABEL: Record<Health, string> = { good: 'Good', watch: 'Watc
 
 const pct = (v: number) => `${Math.round(v)}%`;
 
-/** The phone row's one line: "12 on assignment · 94% filled · $5.8k due". Only what is known; money only when present. */
+/** The phone row's one line: "12 on assignment · 94% filled · $5,760.00 due". Only what is known; money only when present, in full. */
 export function numbersLine(c: ClientListItem): string {
   const parts: string[] = [`${c.onAssignment ?? c.activeAssociateCount} on assignment`];
   if (c.fillRatePct !== null && c.fillRatePct !== undefined) parts.push(`${pct(c.fillRatePct)} filled`);
-  else if (c.hoursThisWeek) parts.push(`${Math.round(c.hoursThisWeek).toLocaleString('en-US')}h this week`);
-  if (c.outstanding !== undefined && c.outstanding > 0) parts.push(`${fmtMoneyCompact(c.outstanding)} due`);
+  else if (c.hoursThisWeek) parts.push(`${(Math.round(c.hoursThisWeek * 10) / 10).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h this week`);
+  if (c.outstanding !== undefined && c.outstanding > 0) parts.push(`${fmtMoney(c.outstanding)} due`);
   return parts.join(' · ');
 }

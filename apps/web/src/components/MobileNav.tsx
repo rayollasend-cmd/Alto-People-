@@ -16,6 +16,7 @@ import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { prefetchRoute } from '@/lib/prefetch';
 import { useInbox } from '@/lib/inboxApi';
+import { navBadgeFor } from '@/lib/inboxCounts';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { LANGS, LANG_LABELS, useI18n, type Lang } from '@/lib/i18n';
 import { useTheme, type ThemePreference } from '@/lib/theme';
@@ -44,17 +45,10 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const term = useTerm();
   const { lang, setLang, t } = useI18n();
   const { preference, setTheme } = useTheme();
-  // The same counts the desktop rail shows, from the one inbox request.
+  // The same counts the desktop rail shows, by the same rule (lib/inboxCounts:
+  // a page's own queues, each queue once behind a door, the Inbox the total).
   const inbox = useInbox();
-  const countByPath = new Map<string, number>();
-  for (const src of inbox.data?.sources ?? []) {
-    // Another desk's queue (packages/shared queues.ts) badges nothing here — as on the Inbox.
-    if (src.watching) continue;
-    const path = src.path.split('?')[0] ?? src.path;
-    countByPath.set(path, (countByPath.get(path) ?? 0) + src.count);
-  }
-  const badgeFor = (m: ModuleNav): number | null =>
-    m.key === 'inbox' ? (inbox.data?.total ?? null) : (countByPath.get(m.path) ?? null);
+  const badgeFor = (rows: ModuleNav | ModuleNav[]): number | null => navBadgeFor(inbox.data, rows);
   const { pinned } = usePinnedModules();
   const recents = useRecentModules();
   const visible = roleNavLabels(applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules), user?.role, t);
@@ -195,7 +189,8 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             }
             const items = (door.children.includes(door.target) ? door.children : [door.target, ...door.children]).filter(notInTabBar);
             if (items.length === 0) return null;
-            const total = items.reduce((n, m) => n + (badgeFor(m) ?? 0), 0);
+            // Each queue once behind a door — the timesheets on Approvals and Time count once.
+            const total = badgeFor(items) ?? 0;
             const holdsActive = items.some((m) => m.path === activePath);
             const isOpen = openDoors.has(door.key) || (holdsActive && !closedDoors.has(door.key));
             return (

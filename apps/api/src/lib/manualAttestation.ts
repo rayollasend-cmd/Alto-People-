@@ -1,7 +1,7 @@
 // Manual compliance attestation — config + period helpers.
 //
 // The "Coming soon" rows on the billing/invoicing scorecard tile are
-// signals where the actual action lives in Fieldglass / the Walmart
+// signals where the actual action lives in Fieldglass / a client's
 // vendor portal. Building real integrations for those is months of work
 // and politically hard. Manual attestation lets HR confirm "I did this
 // for this period" with a date, an outcome, and optional evidence —
@@ -56,7 +56,7 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
     deliverable: "Monthly compliance report",
     label: 'Monthly compliance report submitted',
     description:
-      'Walmart SOW requires a monthly compliance report. Submit through the vendor portal and confirm here once filed.',
+      'Your client contract requires a monthly compliance report. Submit it through the client’s vendor portal and confirm here once filed.',
     cadence: 'MONTHLY',
     tile: 'BILLING',
     dueOffsetDays: 4, // by the 5th
@@ -65,9 +65,9 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   {
     key: 'INVOICE_FORFEITURE',
     deliverable: "Invoice review for the 90-day forfeiture window",
-    label: 'Invoices reviewed for 90-day forfeiture window',
+    label: 'Invoices reviewed for the 90-day forfeiture window',
     description:
-      'Walmart MSA — invoices not submitted within 90 days are forfeit. Review the AR aging in QBO weekly and confirm any approaching 90 days have been escalated.',
+      'Under the client contract, invoices not submitted within 90 days are forfeited. Review the receivables aging in QuickBooks each week and confirm any invoice approaching 90 days has been escalated.',
     cadence: 'WEEKLY',
     tile: 'BILLING',
     dueOffsetDays: 4, // by Friday (Mon → Sun period)
@@ -75,10 +75,10 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   },
   {
     key: 'FIELDGLASS_TIMESHEET',
-    deliverable: "Fieldglass timesheet (Mon 2pm PT)",
-    label: 'Fieldglass timesheet submitted (Mon 2pm PST)',
+    deliverable: "Fieldglass timesheet (Mondays by 2 PM Pacific)",
+    label: 'Fieldglass timesheet submitted (Mondays by 2 PM Pacific)',
     description:
-      "Walmart SOW — Fieldglass timesheet must be submitted by Monday 2pm PST every week. Confirm here once it's filed.",
+      "Under the client contract, the Fieldglass timesheet is due by 2 PM Pacific every Monday. Confirm here once it's filed.",
     cadence: 'WEEKLY',
     tile: 'BILLING',
     dueOffsetDays: 0, // due Monday
@@ -87,9 +87,9 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   {
     key: 'WORKERS_COMP',
     deliverable: "Workers' comp certificate of insurance",
-    label: 'Workers Comp insurance current',
+    label: 'Workers’ comp insurance current',
     description:
-      'Walmart MSA Section 7 — Workers Comp insurance must be in force at all times. Each year, confirm the policy is current and the certificate of insurance has been provided to Walmart. Attach the COI as evidence if available.',
+      'Client contracts require workers’ compensation insurance to be in force at all times. Each year, confirm the policy is current and the certificate of insurance has been sent to each client. Attach the certificate as evidence if you have it.',
     cadence: 'ANNUAL',
     tile: 'EXPIRATIONS',
     dueOffsetDays: 30, // by Jan 31
@@ -109,9 +109,9 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
   {
     key: 'GENERAL_LIABILITY',
     deliverable: "General liability certificate of insurance",
-    label: 'General Liability insurance current',
+    label: 'General liability insurance current',
     description:
-      'Walmart MSA Section 7 — General Liability insurance must be in force at all times. Each year, confirm the policy is current and the certificate of insurance has been provided to Walmart. Attach the COI as evidence if available.',
+      'Client contracts require general liability insurance to be in force at all times. Each year, confirm the policy is current and the certificate of insurance has been sent to each client. Attach the certificate as evidence if you have it.',
     cadence: 'ANNUAL',
     tile: 'EXPIRATIONS',
     dueOffsetDays: 30, // by Jan 31

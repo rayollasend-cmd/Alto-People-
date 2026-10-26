@@ -182,6 +182,21 @@ describe('GET /analytics/dashboard', () => {
     expect(res.body.pendingI9Section2).toBe(1);
   });
 
+  it('counts a placed person with no I-9 at all as Section 2 owed — the I-9 tab\'s count (F500 audit 2026-10-26)', async () => {
+    const client = await createClient();
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const placed = await createAssociate();
+    await prisma.associateAssignment.create({ data: { associateId: placed.id, locationId: site.id, startedAt: new Date('2026-05-01') } });
+    await prisma.application.create({ data: { associateId: placed.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date('2026-05-01') } });
+    const pending = await createAssociate();
+    await prisma.i9Verification.create({ data: { associateId: pending.id, section1CompletedAt: new Date() } });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const agent = await loginAs(hr.email);
+    const res = await agent.get('/analytics/dashboard');
+    // One record without Section 2, and one placed person with no record: two owed, as the tab lists them.
+    expect(res.body.pendingI9Section2).toBe(2);
+  });
+
   it('returns weekly trends: 8 buckets + delta of last complete week', async () => {
     const client = await createClient();
     const associate = await createAssociate();

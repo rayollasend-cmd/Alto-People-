@@ -6,6 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { randomUUID } from 'node:crypto';
+import { fmtDay } from '../lib/humanDates.js';
 
 /**
  * Phase 84 — Performance: Goals/OKRs, 1:1s, Kudos, PIPs, 360 reviews.
@@ -622,7 +623,7 @@ performance84Router.get('/pips/prefill-from-goal/:goalId', MANAGE, async (req, r
     startDate: start.toISOString().slice(0, 10),
     endDate: end.toISOString().slice(0, 10),
     reason: `At-risk goal: "${goal.title}". ${goal.description ?? ''}`.trim().slice(0, 4000),
-    expectations: `Restore "${goal.title}" to on-track status. Current progress: ${goal.progressPct}%. Target: 100% by ${goal.periodEnd.toISOString().slice(0, 10)}.`.slice(0, 8000),
+    expectations: `Restore "${goal.title}" to on-track status. Current progress: ${goal.progressPct}%. Target: 100% by ${fmtDay(goal.periodEnd, { year: true })}.`.slice(0, 8000),
     supportPlan: null,
   });
 });

@@ -381,7 +381,7 @@ describe('the director', () => {
       if (path.startsWith('/transport/driver-shifts')) return { shifts: [{ id: 'sh1', startsAt: inH(1), endsAt: inH(9), status: 'ASSIGNED', notes: null, driver: { userId: 'd1', name: 'Mike Chen', associateId: 'a1' } }] };
     });
     renderAs('TRANSPORTATION_DIRECTOR', <DriversTab manage />);
-    expect(await screen.findByText('Licence lapsed')).toBeInTheDocument();
+    expect(await screen.findByText('License lapsed')).toBeInTheDocument();
     expect(screen.getByText('Current')).toBeInTheDocument();
     expect(screen.getByText(/No person record — can’t be scheduled/)).toBeInTheDocument();
     const shifts = screen.getByRole('region', { name: 'Driver shifts' });

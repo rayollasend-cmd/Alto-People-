@@ -141,25 +141,25 @@ beforeEach(() => {
 describe('the relay', () => {
   it('opens on your desk — its batons, its lanes — and every desk is a tap away', async () => {
     renderRelay();
-    const finance = await screen.findByRole('button', { name: /Finance\s*your desk/ });
+    const finance = await screen.findByRole('button', { name: /Finance\s*your team/ });
     expect(finance).toHaveAttribute('aria-pressed', 'true');
-    const batons = screen.getByRole('region', { name: /Open hand-offs/ });
+    const batons = screen.getByRole('region', { name: /Waiting on a team/ });
     expect(within(batons).getByText('Fieldglass adds')).toBeInTheDocument();
     expect(within(batons).queryByText('Timesheets awaiting approval')).not.toBeInTheDocument();
     // Lanes waiting on Finance only: Jay and Nia, not Leo (Workforce's).
-    expect(screen.getByRole('button', { name: 'Open Jay Patel’s lane' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Open Leo Ramos’s lane' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Jay Patel’s progress' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Leo Ramos’s progress' })).not.toBeInTheDocument();
     // The desk lens is a filter you can see — and take off (F500 G2).
-    expect(screen.getByRole('button', { name: /Show every desk's lanes, not just Finance's/ })).toHaveTextContent('Finance’s lanes ✕');
+    expect(screen.getByRole('button', { name: /Show every team's new hires, not just Finance's/ })).toHaveTextContent('Finance’s new hires ✕');
 
-    await userEvent.click(screen.getByRole('button', { name: 'All desks' }));
+    await userEvent.click(screen.getByRole('button', { name: 'All teams' }));
     expect(within(batons).getByText('Timesheets awaiting approval')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open Leo Ramos’s lane' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Leo Ramos’s progress' })).toBeInTheDocument();
   });
 
   it('names on the work: who holds a lane, and claiming a baton', async () => {
     const calls = renderRelay();
-    expect(await screen.findByRole('button', { name: /Jay Patel’s lane: held by Wes Ford/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Jay Patel’s progress: held by Wes Ford/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Claim “Fieldglass adds”' }));
     await waitFor(() =>
       expect(calls.find((c) => c.path === '/relay/claims')).toMatchObject({ method: 'POST', body: { subjectType: 'BATON', subjectKey: 'fieldglass-add' } }),
@@ -171,17 +171,17 @@ describe('the relay', () => {
     const fieldglass = await screen.findByRole('button', { name: /3\. Registration/ });
     await userEvent.click(fieldglass);
     expect(fieldglass).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Open Nia Carter’s lane' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Open Leo Ramos’s lane' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Nia Carter’s progress' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Leo Ramos’s progress' })).not.toBeInTheDocument();
   });
 
   it('a lane opens to its road, the move that unsticks it, and the conversation', async () => {
     renderRelay();
-    await userEvent.click(await screen.findByRole('button', { name: 'Open Jay Patel’s lane' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Open Jay Patel’s progress' }));
     const drawer = await screen.findByRole('dialog');
     expect(within(drawer).getByRole('heading', { name: 'Jay Patel' })).toBeInTheDocument();
     expect(within(drawer).getByRole('link', { name: /Register them in Fieldglass/ })).toHaveAttribute('href', '/fieldglass');
-    expect(within(drawer).getByText('1d late')).toBeInTheDocument();
+    expect(within(drawer).getByText('1 day late')).toBeInTheDocument();
     expect(within(drawer).getByRole('region', { name: 'The conversation' })).toBeInTheDocument();
   });
 
@@ -200,9 +200,9 @@ describe('the relay', () => {
 
   it('opens on every desk for an Operations Manager, who has no desk of their own, and talks plainly (F500 G2)', async () => {
     renderRelay('/relay', 'OPERATIONS_MANAGER');
-    expect(await screen.findByRole('button', { name: 'All desks' })).toHaveAttribute('aria-pressed', 'true');
+    expect(await screen.findByRole('button', { name: 'All teams' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByText('your desk')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open Leo Ramos’s lane' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Leo Ramos’s progress' })).toBeInTheDocument();
     expect(screen.queryByText(/baton|ruling|bleeding|Silence means green|Monday pack/i)).not.toBeInTheDocument();
     expect(screen.getByText('This week’s agenda')).toBeInTheDocument();
   });

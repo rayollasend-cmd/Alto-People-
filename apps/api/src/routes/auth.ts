@@ -345,14 +345,21 @@ async function loadProfileFor(user: { id: string; associateId: string | null }) 
     where: { id: user.id },
     select: {
       ...ACCOUNT_PHOTO_SELECT,
+      displayName: true,
       associate: {
         select: { id: true, firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true },
       },
     },
   });
+  // An account with no person record (a manager, a client's store login)
+  // still has a name: its display name, split at the first space. Without
+  // it the greeting read "Good morning." and the sidebar showed the email
+  // (F500 audit 2026-10-26).
+  const display = row?.displayName?.trim() || '';
+  const [first, ...rest] = display ? display.split(/\s+/) : [];
   return {
-    firstName: row?.associate?.firstName ?? null,
-    lastName: row?.associate?.lastName ?? null,
+    firstName: row?.associate?.firstName ?? (first || null),
+    lastName: row?.associate?.lastName ?? (rest.length ? rest.join(' ') : null),
     photoUrl: row ? accountPhotoUrlFor(row) : null,
   };
 }

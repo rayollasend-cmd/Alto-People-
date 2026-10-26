@@ -416,7 +416,7 @@ export function CommandPalette({
         onShowKeyboardShortcuts?.();
       },
     },
-  ], [can, user, onShowKeyboardShortcuts, tenant.modules, tenant.id, term, nav, recentKeys, assistant]);
+  ], [can, user, onShowKeyboardShortcuts, nav, recentKeys, assistant]);
 
   // Manual filtering (cmdk shouldFilter is off). Same fields the old
   // cmdk value string covered: label + keywords.
@@ -450,8 +450,9 @@ export function CommandPalette({
             <item.icon className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
             <div className="flex-1 min-w-0">
               <div className="truncate">{item.label}</div>
+              {/* Two lines, whole words — a one-line truncate cut every description mid-sentence. */}
               {item.hint && (
-                <div className="text-xs2 text-silver/70 truncate">{item.hint}</div>
+                <div className="text-xs2 text-silver/70 line-clamp-2" title={item.hint}>{item.hint}</div>
               )}
             </div>
           </Command.Item>
@@ -462,7 +463,9 @@ export function CommandPalette({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl p-0 overflow-hidden gap-0 rounded-xl elev-3 ring-1 ring-white/[0.06]">
+      {/* No bottom padding from the dialog: the footer is the last line (the sheet's
+          sm:pb-6 left an empty band under it). The phone keeps the home-indicator inset. */}
+      <DialogContent className="max-w-xl p-0 pt-5 sm:pt-0 pb-[env(safe-area-inset-bottom)] sm:pb-0 overflow-hidden gap-0 sm:rounded-lg elev-3 ring-1 ring-white/[0.06]">
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">
           Search to navigate, find people{tenant.moduleOn('clientPortal') ? ` and ${term('label.clients').toLowerCase()}` : ''}, run quick actions, or
@@ -616,7 +619,7 @@ export function CommandPalette({
                       <Icon className="h-4 w-4 shrink-0 text-silver" aria-hidden="true" />
                       <div className="flex-1 min-w-0">
                         <div className="truncate">{hit.title}</div>
-                        {hit.hint && <div className="text-xs2 text-silver/70 truncate">{hit.hint}</div>}
+                        {hit.hint && <div className="text-xs2 text-silver/70 line-clamp-2" title={hit.hint}>{hit.hint}</div>}
                       </div>
                     </Command.Item>
                   );

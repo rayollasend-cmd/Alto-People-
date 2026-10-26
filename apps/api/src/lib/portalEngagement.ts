@@ -9,6 +9,7 @@ import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { formatTimeInZone } from './timezone.js';
 import { dayLabel } from './portalDayReport.js';
 import { tenantIdForWrite } from './tenant.js';
+import { fmtDay, fmtDayRange } from './humanDates.js';
 
 /**
  * Portal engagement — who on the client side is actually using their
@@ -117,7 +118,7 @@ export async function notePortalReportDownload(
   const span = describeReportSpan(input.fromKey, input.toKey);
   await notifyRoles(DOWNLOAD_ROLES, {
     subject: `Report pulled · ${scope}`,
-    body: `${u.email} (${whoIs(u)}) downloaded the service report for ${span} at ${formatTimeInZone(now, ORG_TZ)} on ${orgDateKey(now)}.`,
+    body: `${u.email} (${whoIs(u)}) downloaded the service report for ${span} at ${formatTimeInZone(now, ORG_TZ)} on ${fmtDay(orgDateKey(now), { now })}.`,
     linkUrl: u.clientId ? `/clients/${u.clientId}?section=portal` : '/admin/regions',
     category: ENGAGEMENT_CATEGORY,
     quiet: true,
@@ -331,8 +332,8 @@ export async function runPortalEngagementDigest(
       const last = new Date(ever.lastSeenAt);
       line =
         signIns.length === 0
-          ? `no sign-ins last week — last seen ${orgDateKey(last)}`
-          : `${signIns.length} sign-in${signIns.length === 1 ? '' : 's'} · last seen ${orgDateKey(last)} ${formatTimeInZone(last, ORG_TZ)}`;
+          ? `no sign-ins last week — last seen ${fmtDay(orgDateKey(last), { now })}`
+          : `${signIns.length} sign-in${signIns.length === 1 ? '' : 's'} · last seen ${fmtDay(orgDateKey(last), { now })} at ${formatTimeInZone(last, ORG_TZ)}`;
       if (reports.length > 0) {
         line +=
           ' · reports: ' +
@@ -341,7 +342,7 @@ export async function runPortalEngagementDigest(
               const m = (r.metadata ?? {}) as { from?: string; to?: string; periodStart?: string; periodEnd?: string };
               const from = m.from ?? m.periodStart ?? '?';
               const to = m.to ?? m.periodEnd ?? from;
-              return `${describeReportSpan(from, to)} (pulled ${orgDateKey(r.createdAt)} ${formatTimeInZone(r.createdAt, ORG_TZ)})`;
+              return `${describeReportSpan(from, to)} (pulled ${fmtDay(orgDateKey(r.createdAt), { now })} at ${formatTimeInZone(r.createdAt, ORG_TZ)})`;
             })
             .join('; ');
       }
@@ -349,7 +350,7 @@ export async function runPortalEngagementDigest(
     lines.push(`${describePortalScope(a)} · ${a.email} — ${line}`);
   }
   const activeCount = accounts.filter((a) => rows.some((r) => r.actorUserId === a.id && r.action === LOGIN_ACTION)).length;
-  const subject = `Portal engagement · week of ${weekKey} – ${weekEndKey}`;
+  const subject = `Portal engagement · week of ${fmtDayRange(weekKey, weekEndKey, { now })}`;
   const bodyText =
     `${activeCount} of ${accounts.length} portal accounts signed in last week; ${pulled} report${pulled === 1 ? '' : 's'} pulled.\n\n` +
     lines.join('\n');

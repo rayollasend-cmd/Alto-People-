@@ -300,7 +300,7 @@ describe('handing the shift over', () => {
     }
     expect((await m.post(`/ops/shifts/${sop.id}/close`).send({ handoverNone: true })).status).toBe(200);
     await flushPendingNotifications();
-    const report = await bell(dana.user.id, 'Marcus Hill submitted your Swing SOP');
+    const report = await bell(dana.user.id, 'Marcus Hill submitted your swing checklist');
     expect(report?.body).toMatch(/2 of 2 done/);
     expect((await tablet()).body.action).toBe('CLOCK_OUT');
   });

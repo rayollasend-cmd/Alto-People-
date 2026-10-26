@@ -14,6 +14,7 @@ vi.mock('@/lib/scheduledJobsApi', async (orig) => ({
 import { getReliability } from '@/lib/reliabilityApi';
 import { listScheduledJobs, runScheduledJob, type ScheduledJob } from '@/lib/scheduledJobsApi';
 import { ReliabilityHome, weekLabel } from '@/pages/analytics/ReliabilityHome';
+import { endpointLabel, fmtMs, pageLabel } from '@/pages/analytics/usageLabels';
 import { AuthContext } from '@/lib/auth';
 
 /**
@@ -138,7 +139,9 @@ describe('ReliabilityHome', () => {
     // figure also sits in the slowest-routes table below).
     expect(screen.getAllByText('2.5 s').length).toBeGreaterThan(0);
     expect(screen.queryByText('900 ms')).toBeInTheDocument();
-    expect(screen.getByText('Slowest 5% of requests · GET /rides/:id')).toBeInTheDocument();
+    // The route in the sidebar's words, not "GET /rides/:id" (F500 2026-10-26).
+    expect(screen.getByText(`Slowest 5% of requests · ${endpointLabel('/rides/:id')}`)).toBeInTheDocument();
+    expect(screen.queryByText(/Slowest 5% of requests · GET/)).not.toBeInTheDocument();
     expect(screen.getByText('97%')).toBeInTheDocument();
     expect(screen.getByText('95%')).toBeInTheDocument();
     expect(screen.getByText('57 of 60 · 2 no-show · 1 never closed')).toBeInTheDocument();
@@ -213,5 +216,21 @@ describe('ReliabilityHome — F500 pass', () => {
     expect(await screen.findByText('More than 3 in 7 days')).toBeInTheDocument();
     // The value counts up to its number.
     expect(await screen.findByText('932', {}, { timeout: 2000 })).toBeInTheDocument();
+  });
+});
+
+describe('platform words (F500 2026-10-26)', () => {
+  it('says every duration one way', () => {
+    expect(fmtMs(25)).toBe('25 ms');
+    expect(fmtMs(17_500)).toBe('17.5 s');
+    expect(fmtMs(144_000)).toBe('2.4 min');
+    expect(fmtMs(null)).toBe('—');
+  });
+
+  it('names a page or an endpoint the way the sidebar does, never by its path', () => {
+    expect(pageLabel('/')).toBe('Home');
+    expect(pageLabel('/time-attendance/kiosk')).not.toMatch(/\//);
+    expect(endpointLabel('/auth/me')).toBe('Sign-in and session');
+    expect(endpointLabel('/kiosk-pins/verify')).toBe('Kiosk');
   });
 });

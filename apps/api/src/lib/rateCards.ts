@@ -4,6 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { placements } from './activeDefinition.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Rate cards (Brief 1A-2): one effective-dated pay and bill rate per
@@ -110,7 +111,7 @@ export async function setRateCard(db: Db, input: RateCardInput, actorUserId: str
   });
   const effectiveFrom = dateOnly(from);
   if (current && ymd(current.effectiveFrom) > from) {
-    throw new HttpError(409, 'rate_card_history', `A rate for ${input.position} already starts ${ymd(current.effectiveFrom)}; a new rate cannot start before it.`);
+    throw new HttpError(409, 'rate_card_history', `A rate for ${input.position} already starts ${fmtDay(current.effectiveFrom, { year: true })}; a new rate cannot start before it.`);
   }
   let row;
   if (current && ymd(current.effectiveFrom) === from) {
@@ -140,7 +141,7 @@ export async function setRateCard(db: Db, input: RateCardInput, actorUserId: str
 export async function endRateCard(db: Db, id: string, on: Date = new Date()): Promise<RateCard | null> {
   const row = await db.shiftRateDefault.findUnique({ where: { id } });
   if (!row) throw new HttpError(404, 'rate_default_not_found', 'Rate card not found.');
-  if (row.effectiveTo) throw new HttpError(409, 'rate_card_ended', `This rate already ended ${ymd(row.effectiveTo)}.`);
+  if (row.effectiveTo) throw new HttpError(409, 'rate_card_ended', `This rate already ended ${fmtDay(row.effectiveTo, { year: true })}.`);
   const lastDay = new Date(dateOnly(ymd(on)).getTime() - 86_400_000);
   if (lastDay < row.effectiveFrom) {
     await db.shiftRateDefault.delete({ where: { id } });

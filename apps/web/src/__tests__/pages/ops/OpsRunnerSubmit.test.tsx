@@ -106,9 +106,9 @@ describe('<OpsRunner> — submitting the shift SOP', () => {
 
   it('every submit hands over — a note, or "nothing to hand over" said out loud', async () => {
     const user = renderRunner(detail([task('t1', 'Walk the floor', 'DONE')]));
-    await user.click((await screen.findAllByRole('button', { name: /submit sop/i }))[0]!);
+    await user.click((await screen.findAllByRole('button', { name: /submit (the )?checklist/i }))[0]!);
     const dialog = await screen.findByRole('dialog');
-    const submit = within(dialog).getByRole('button', { name: 'Submit SOP' });
+    const submit = within(dialog).getByRole('button', { name: 'Submit checklist' });
     expect(submit).toBeDisabled();
     await user.click(within(dialog).getByLabelText('Nothing to hand over to the next shift'));
     expect(submit).toBeEnabled();
@@ -120,7 +120,7 @@ describe('<OpsRunner> — submitting the shift SOP', () => {
 
   it('with required items open it is "Submit incomplete" — and it needs the reason', async () => {
     const user = renderRunner(detail([task('t1', 'Walk the floor', 'DONE'), task('t2', 'Check the coolers', 'OPEN')]));
-    await user.click((await screen.findAllByRole('button', { name: /submit sop/i }))[0]!);
+    await user.click((await screen.findAllByRole('button', { name: /submit (the )?checklist/i }))[0]!);
     const dialog = await screen.findByRole('dialog');
     const submit = within(dialog).getByRole('button', { name: 'Submit incomplete' });
     // The unfinished item is handed over by default — that's the handover;
@@ -154,10 +154,10 @@ describe('<OpsRunner> — submitting the shift SOP', () => {
       detail([task('t1', 'Walk the floor', 'DONE')], [note('n1', 'Freezer 3 seal torn.'), note('n2', 'Two pallets in staging.')]),
     );
     expect(await screen.findByText('Freezer 3 seal torn.')).toBeInTheDocument();
-    await user.click((await screen.findAllByRole('button', { name: /submit sop/i }))[0]!);
+    await user.click((await screen.findAllByRole('button', { name: /submit (the )?checklist/i }))[0]!);
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('2 notes from the previous shift to read first')).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Submit SOP' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Submit checklist' })).toBeDisabled();
     await user.click(within(dialog).getByRole('button', { name: 'Back to the notes' }));
 
     await user.click(screen.getByRole('button', { name: 'Got it on all 2' }));
@@ -175,9 +175,9 @@ describe('<OpsRunner> — a floor supervisor helping on their shift supervisor\'
       access: 'help',
       shift: { ...d.shift, runBy: { id: 'u-dana', name: 'Dana Reyes' } },
     });
-    expect(await screen.findByText(/Dana Reyes is running this SOP/)).toBeInTheDocument();
+    expect(await screen.findByText(/Dana Reyes is running this checklist/)).toBeInTheDocument();
     expect(screen.getByText(/Due by .* · Dana submits it/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /submit sop/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /submit (the )?checklist/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Add task/ })).not.toBeInTheDocument();
     // The previous shift's note is there to read; acknowledging it isn't theirs.
     expect(screen.getByText('Freezer 3 seal torn.')).toBeInTheDocument();
@@ -197,6 +197,6 @@ describe('<OpsRunner> — a floor supervisor helping on their shift supervisor\'
       },
     });
     expect(await screen.findByText('Marcus Hill · covering for Dana Reyes')).toBeInTheDocument();
-    expect((await screen.findAllByRole('button', { name: /submit sop/i })).length).toBeGreaterThan(0);
+    expect((await screen.findAllByRole('button', { name: /submit (the )?checklist/i })).length).toBeGreaterThan(0);
   });
 });

@@ -6,6 +6,7 @@ import { enqueueAudit } from './audit.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyAssociate, notifyUser } from './notify.js';
 import { ledWindows } from './shiftWindows.js';
 import { associateWeekLink } from './appLinks.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * THE READY-TO-WORK HANDOFF.
@@ -269,7 +270,7 @@ export async function startReadyToWorkHandoff(input: {
   });
 
   const where = store ? `${store.name} (${client.name})` : client.name;
-  const hire = associate.hireDate ? ` · hire date ${associate.hireDate}` : '';
+  const hire = associate.hireDate ? ` · hire date ${fmtDay(associate.hireDate)}` : '';
   const position = associate.position ? ` · ${associate.position}` : '';
 
   // The store hears: who is coming, how to reach them, and where to put

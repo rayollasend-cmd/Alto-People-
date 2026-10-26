@@ -8,6 +8,7 @@ import { createApprovalRequest, registerApplyHandler } from '../approvalRequests
 import { describeBranchFailure } from '../achReturnCodes.js';
 import { bankingProfile, originate, ownAccount, usesOurAch } from './ach.js';
 import { achTimeline, adjustPayDate, setHolidayOverrides, type AchSpeed } from './holidays.js';
+import { fmtDay } from '../humanDates.js';
 
 /**
  * The money behind a run.
@@ -197,7 +198,7 @@ export async function submitFunding(db: PrismaClient, runId: string, actor: { id
       subjectType: 'PayrollRun',
       subjectId: runId,
       title: `Pull ${money(amount)} for payroll — ${why}`,
-      summary: `Debit ${account.label} ····${account.accountLast4} on ${funding.debitEffectiveDate.toISOString().slice(0, 10)} for pay on ${funding.payDate.toISOString().slice(0, 10)}.`,
+      summary: `Debit ${account.label} ····${account.accountLast4} on ${fmtDay(funding.debitEffectiveDate, { year: true })} for pay on ${fmtDay(funding.payDate, { year: true })}.`,
       proposed: { payrollRunId: runId, amountCents: amount },
       before: null,
       requesterUserId: actor.id,
@@ -323,7 +324,7 @@ export async function assertRunFunded(db: Db, runId: string): Promise<void> {
   const message: Record<string, string> = {
     DRAFT: 'Pull this run’s funding first — no one is paid until the employer’s money arrives.',
     AWAITING_APPROVAL: 'The funding is over a limit and waits for a second person.',
-    SUBMITTED: `The funding debit settles on ${funding.debitEffectiveDate.toISOString().slice(0, 10)}; pay goes out after that.`,
+    SUBMITTED: `The funding debit settles on ${fmtDay(funding.debitEffectiveDate)}; pay goes out after that.`,
     RETURNED: `The funding came back (${funding.returnCode ?? 'returned'}): ${funding.returnReason ?? 'see the funding page'}. Wire the money or pull again.`,
     WIRE_PENDING: 'Waiting for the wire to arrive.',
     CANCELLED: 'The funding was cancelled.',

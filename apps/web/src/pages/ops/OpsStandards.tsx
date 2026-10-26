@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { termizeText } from '@/lib/modules';
 import { useTerm } from '@/lib/auth';
-import { AlertTriangle, CheckCircle2, Clock, Thermometer } from '@/components/ui/icons';
+import { AlertTriangle, CheckCircle2, ClipboardList, Clock, Thermometer } from '@/components/ui/icons';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PALETTE } from '@/components/ui/charts';
 import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { cn } from '@/lib/cn';
@@ -165,7 +166,7 @@ function CompletionGrid({ rows, onPick }: { rows: Row[]; onPick: (r: Row) => voi
     <div className="overflow-x-auto">
       <table className="w-full min-w-[420px] border-separate border-spacing-1 text-left">
         <caption className="sr-only">
-          SOP completion by store and shift over the scorecard window
+          Checklist completion by store and shift over the scorecard window
         </caption>
         <thead>
           <tr>
@@ -243,10 +244,6 @@ function CompletionGrid({ rows, onPick }: { rows: Row[]; onPick: (r: Row) => voi
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-2xs text-silver/50">
-        Each cell is the weighted SOP completion for that store and shift. A red dot means the cell
-        carried a temperature alert or an incomplete submission. Empty cells never ran.
-      </p>
     </div>
   );
 }
@@ -266,6 +263,14 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
     exceptions: w.incomplete + w.tempAlerts,
   }));
   if (data.every((d) => d.shifts === 0)) return null;
+  // One week is a dot and a bar, not a trend: say when there will be one.
+  if (data.filter((d) => d.shifts > 0).length < 2) {
+    return (
+      <p className="text-xs text-ink-muted" data-testid="ops-weekly-too-few">
+        The week-by-week trend appears once two weeks have submitted shifts.
+      </p>
+    );
+  }
   return (
     <div>
       <div className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -277,7 +282,7 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
             style={{ background: PALETTE.primary }}
             aria-hidden="true"
           />
-          SOP completion
+          Checklist completion
         </span>
         <span className="flex items-center gap-1.5 text-2xs text-silver/70">
           <span className="h-2 w-2 rounded-sm bg-alert" aria-hidden="true" />
@@ -287,10 +292,6 @@ function WeeklyStandards({ weekly }: { weekly: Scorecard['weekly'] }) {
       <div className="h-40">
         <WeeklyStandardsPlot data={data} />
       </div>
-      <p className="mt-1 text-2xs text-silver/50">
-        The dashed line is the 95% standard. Columns count exceptions — shifts submitted
-        incomplete plus temperature alerts — on the same 0&ndash;100 scale.
-      </p>
     </div>
   );
 }
@@ -315,9 +316,11 @@ export function OpsStandards({
           <CardTitle className="text-base">Standards — last {scorecard.weeks} weeks</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-silver">
-            No shifts were submitted in this window under the current filters.
-          </p>
+          <EmptyState
+            size="sm"
+            icon={ClipboardList}
+            title="No shifts were submitted in this window under the current filters."
+          />
         </CardContent>
       </Card>
     );
@@ -355,7 +358,7 @@ export function OpsStandards({
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Figure
             icon={CheckCircle2}
-            label="SOP completion"
+            label="Checklist completion"
             value={overall == null ? '—' : `${overall}%`}
             sub={`across ${t.shifts.toLocaleString('en-US')} submitted shifts`}
             tone={BAND_TEXT[band(overall)]}
@@ -369,14 +372,14 @@ export function OpsStandards({
                 ? `${t.tempOutOfRange} of ${t.tempChecks.toLocaleString('en-US')} out of band`
                 : `${t.tempChecks.toLocaleString('en-US')} checks, all in band`
             }
-            tone={t.tempOutOfRange > 0 ? 'text-alert' : 'text-success'}
+            tone={t.tempOutOfRange > 0 ? 'text-alert' : t.tempChecks > 0 ? 'text-success' : undefined}
           />
           <Figure
             icon={AlertTriangle}
             label="Closed incomplete"
             value={incomplete.toLocaleString('en-US')}
             sub={incomplete === 0 ? 'every shift finished its list' : 'each with a written reason'}
-            tone={incomplete > 0 ? 'text-warning' : 'text-success'}
+            tone={incomplete > 0 ? 'text-warning' : undefined}
           />
           <Figure
             icon={Clock}
@@ -466,10 +469,26 @@ export function OpsStandards({
           )}
         </div>
 
-        <p className="text-2xs text-silver/50">
-          Green is 95% and above, amber 85–94%, red below 85%. Percentages are weighted by the number
-          of shifts, so {termizeText('a store', term)} that ran twenty shifts is not averaged against one that ran two.
-        </p>
+        {/* Three paragraphs of legend used to sit under the charts: one disclosure. */}
+        <details className="group text-xs text-ink-muted" data-testid="ops-standards-howto">
+          <summary className="inline-flex min-h-8 cursor-pointer list-none items-center text-ink-muted hover:text-ink [&::-webkit-details-marker]:hidden">
+            How to read this
+          </summary>
+          <ul className="mt-1 max-w-prose list-disc space-y-1 pl-4">
+            <li>
+              Green is 95% and above, amber 85–94%, red below 85%. Percentages are weighted by the number
+              of shifts, so {termizeText('a store', term)} that ran twenty shifts is not averaged against one that ran two.
+            </li>
+            <li>
+              Week by week: the dashed line is the 95% standard. Columns count exceptions — shifts
+              submitted incomplete plus temperature alerts — on the same 0&ndash;100 scale.
+            </li>
+            <li>
+              Each grid cell is the weighted checklist completion for that {termizeText('store', term)} and shift. A red dot
+              means the cell carried a temperature alert or an incomplete submission. Empty cells never ran.
+            </li>
+          </ul>
+        </details>
       </CardContent>
     </Card>
   );

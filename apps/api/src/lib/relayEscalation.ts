@@ -14,8 +14,10 @@ import {
  * The Relay's teeth — "silence means green" with enforcement.
  *
  * Every 6 hours, recompute the shared board and, for each OVERDUE baton,
- * ring the desk that holds it: one bell per baton per org-day, per
- * person. Nothing at-risk or quiet ever escalates; lateness is the only
+ * ring the desk that holds it: one bell per baton, then a reminder at most
+ * once a week while it stays overdue (a bell that rang every day for the
+ * same thing read as noise — seventeen copies of one line).
+ * The climb up the chain still happens the day after the first ring. Nothing at-risk or quiet ever escalates; lateness is the only
  * thing that makes noise. The chairman's batons card and the board
  * itself go red on their own — this cron exists for the desk that
  * hasn't opened either.
@@ -23,6 +25,16 @@ import {
 
 const CATEGORY = 'relay.escalation';
 const SWEEP_SECONDS = 6 * 60 * 60;
+/** The same bell rings again only after this many org-days. */
+export const RELAY_REMIND_EVERY_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** "5 hours" · "3 days" — how late, the way a person says it. */
+function lateBy(hours: number): string {
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  const days = Math.floor(hours / 24);
+  return `${days} days`;
+}
 
 const DESK_ROLES: Record<Desk, string[]> = {
   FINANCE: ['FINANCE_ACCOUNTANT'],
@@ -39,6 +51,8 @@ export async function runRelayEscalationSweep(
   const overdue = board.batons.filter((b) => b.status === 'overdue' && b.count > 0);
 
   const dayStart = utcInstantOfLocalMidnight(orgDateKey(now), 'America/New_York');
+  // A bell already rung inside the window is not rung again.
+  const windowStart = new Date(dayStart.getTime() - (RELAY_REMIND_EVERY_DAYS - 1) * DAY_MS);
   let sent = 0;
 
   const ringOnce = async (
@@ -51,7 +65,7 @@ export async function runRelayEscalationSweep(
   ): Promise<boolean> => {
     if (recipientIds.length === 0) return false;
     const already = await prisma.notification.findFirst({
-      where: { category: CATEGORY, linkUrl: { in: [linkUrl, ...formerLinks] }, createdAt: { gte: dayStart } },
+      where: { category: CATEGORY, linkUrl: { in: [linkUrl, ...formerLinks] }, createdAt: { gte: windowStart } },
       select: { id: true },
     });
     if (already) return false;
@@ -126,7 +140,7 @@ export async function runRelayEscalationSweep(
             stage1Link,
             sups.map((s) => s.id),
             `Overdue at ${storeName}: timesheet approvals`,
-            `${count} timesheet${count === 1 ? '' : 's'} from a closed week still await approval at ${storeName}. Approve them today — tomorrow this escalates to the Workforce Manager.`,
+            `${count} timesheet${count === 1 ? '' : 's'} from a closed week still await approval at ${storeName}. Approve them today — tomorrow this escalates to the workforce manager.`,
             formerStage1,
           );
         }
@@ -148,7 +162,7 @@ export async function runRelayEscalationSweep(
       `/relay#${b.key}`,
       await deskIds(b.desk),
       `Overdue on your desk: ${b.label}`,
-      `${b.label}: ${b.count} item${b.count === 1 ? '' : 's'} overdue on ${DESK_LABELS[b.desk]}'s desk. ` +
+      `${b.label}: ${b.count} item${b.count === 1 ? '' : 's'} overdue, waiting on ${DESK_LABELS[b.desk]}. ` +
         'The relay board is red until this clears — everyone can see it.',
     );
   }
@@ -181,7 +195,7 @@ export async function runRelayEscalationSweep(
       stage1,
       await deskIds(desk),
       `Past due for ${r.client.name}: ${r.subject}`,
-      `${r.client.name}'s ${r.kind.toLowerCase()} request "${r.subject}" is ${hoursLate}h past the reply-by date the store can see in their portal. Reply today.`,
+      `${r.client.name}'s ${r.kind.toLowerCase()} request "${r.subject}" is ${lateBy(hoursLate)} past the reply-by date the store can see in their portal. Reply today.`,
     );
     if (rungBefore) {
       await ringOnce(
@@ -194,7 +208,7 @@ export async function runRelayEscalationSweep(
           })
         ).map((u) => u.id),
         `Escalated: ${r.client.name} is still waiting — ${r.subject}`,
-        `${DESK_LABELS[desk]} was reminded yesterday and "${r.subject}" from ${r.client.name} is still open, ${hoursLate}h past its reply-by. The store is watching it age in their portal.`,
+        `${DESK_LABELS[desk]} was reminded and "${r.subject}" from ${r.client.name} is still open, ${lateBy(hoursLate)} past its reply-by. The store is watching it age in their portal.`,
       );
     }
   }
@@ -215,7 +229,7 @@ export function startRelayEscalationCron(): void {
   }, SWEEP_SECONDS * 1000);
   timer.unref();
   console.log(
-    '[alto-people/api] relay escalation cron armed (6-hourly, one bell per overdue baton per org-day)',
+    `[alto-people/api] relay escalation cron armed (6-hourly, one bell per overdue baton, reminded every ${RELAY_REMIND_EVERY_DAYS} days)`,
   );
 }
 

@@ -36,7 +36,7 @@ export const enSupport = {
   'support.sendFailed': 'Could not send it.',
   'support.mine': 'My requests',
   'support.mineWhat': 'your requests',
-  'support.mineNone': 'None yet.',
+  'support.mineNone': 'No requests yet',
   'support.statusOpen': 'Open',
   'support.statusInProgress': 'In progress',
   'support.statusResolved': 'Resolved',
@@ -46,6 +46,9 @@ export const enSupport = {
   'support.followupAria': 'Your answer',
   'support.followupPh': 'Write your answer — it reopens the request.',
   'support.followupSent': 'Sent. The request is open again.',
+  'support.browseHelp': 'Browse the help center',
+  'support.helpHint': 'Type a word or two — answers come from the help center.',
+  'support.mineNoneDesc': 'What you send appears here with our answer.',
 } as const;
 
 registerEnglish(enSupport);

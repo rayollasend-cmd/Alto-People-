@@ -314,6 +314,10 @@ describe('GET /clients/:id/overview', () => {
     const kinds = o.recentActivity.map((x) => x.kind);
     expect(kinds.slice(0, 2).sort()).toEqual(['contact_added', 'owner_changed']);
     expect(o.recentActivity.find((x) => x.kind === 'owner_changed')).toMatchObject({ actor: 'Harper Lane', text: 'Account owner set to Harper Lane' });
+    // An owner with no name on file reads as a person, never an address (F500 2026-10-26).
+    const { personName } = await import('../../lib/clientActivity.js');
+    expect(personName({ email: 'manager@altohr.com', displayName: null, associate: null })).toBe('Manager');
+    expect(personName({ email: 'priya.shah@altohr.com' })).toBe('Priya Shah');
     expect(o.recentActivity.find((x) => x.kind === 'contact_added')).toMatchObject({ text: 'Contact added: Dana Reyes, GM' });
   });
 

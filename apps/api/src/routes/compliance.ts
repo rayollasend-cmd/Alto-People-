@@ -51,6 +51,7 @@ import { placements } from '../lib/activeDefinition.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { everifyRouter } from './everify.js';
 import { drugTestsRouter } from './drugTests.js';
+import { fmtDay } from '../lib/humanDates.js';
 
 export const complianceRouter = Router();
 
@@ -848,7 +849,7 @@ complianceRouter.post('/background/:id/final-adverse', MANAGE, async (req, res, 
       throw new HttpError(
         409,
         'waiting_period',
-        `They still have until ${c.adverseWaitUntil ? ymd(c.adverseWaitUntil) : 'the end of the waiting period'} to respond to the pre-adverse notice.`,
+        `They still have until ${c.adverseWaitUntil ? fmtDay(ymd(c.adverseWaitUntil), { weekday: true }) : 'the end of the waiting period'} to respond to the pre-adverse notice.`,
       );
     }
     const attachment = await reportAttachment(c.associateId);

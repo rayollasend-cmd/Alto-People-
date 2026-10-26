@@ -28,6 +28,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   'careers-page': 'Careers page',
   indeed: 'Indeed',
   linkedin: 'LinkedIn',
+  ziprecruiter: 'ZipRecruiter',
   'walk-in': 'Walk-in',
   agency: 'Agency',
   other: 'Other',

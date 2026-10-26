@@ -11,6 +11,7 @@ import { scopeAssociates, scopeBackgroundChecks, scopeDrugTests, scopeWhere } fr
 import { activeConnection } from '../lib/providers/connections.js';
 import { providerInfo } from '../lib/providers/catalog.js';
 import { ProviderError } from '../lib/providers/http.js';
+import { providerFailureText } from '../lib/providers/failureText.js';
 import {
   cancelAdverse,
   closeEVerifyCase,
@@ -55,16 +56,26 @@ async function connectionOr409(kind: ProviderKind) {
   return c;
 }
 
-/** A provider's refusal reads as what it said; our own preconditions keep their status. */
+/**
+ * Our own preconditions keep their status and words; a provider's refusal
+ * reads as a plain sentence, with the vendor's own words in `details.detail`.
+ */
 function asHttp(err: unknown): never {
   if (err instanceof HttpError) throw err;
   if (err instanceof ProviderError) {
     if (err.status && err.status >= 400 && err.status < 500 && ['not_found', 'section2_incomplete', 'case_exists', 'no_ssn', 'no_dob', 'no_citizenship', 'no_first_day', 'already_ordered', 'no_package', 'no_panel', 'no_report', 'already_started', 'not_pending', 'invalid_state', 'already_submitted', 'no_ein', 'not_submitted'].includes(err.code)) {
       throw new HttpError(err.status, err.code, err.message);
     }
-    throw new HttpError(502, 'provider_error', err.message);
+    const failure = providerFailureText(err.message, { label: 'The provider' });
+    throw new HttpError(502, 'provider_error', failure?.message ?? err.message, failure?.detail ? { detail: failure.detail } : undefined);
   }
   throw err;
+}
+
+/** A stored failure as the page shows it: the sentence, and the vendor's words behind it. */
+function failureFields(raw: string | null | undefined, label: string, kind: ProviderKind) {
+  const f = providerFailureText(raw, { label, kind });
+  return { lastError: f?.message ?? null, lastErrorDetail: f?.detail ?? null };
 }
 
 providerActionsRouter.get('/summary', requireAuth, async (req, res) => {
@@ -149,7 +160,7 @@ async function everifyView(req: Request) {
     },
     closureReason: i9?.eVerifyClosureReason ?? null,
     lastSyncAt: i9?.eVerifyLastSyncAt?.toISOString() ?? null,
-    lastError: i9?.eVerifyLastError ?? null,
+    ...failureFields(i9?.eVerifyLastError, conn ? providerInfo(conn.provider)?.label ?? 'E-Verify' : 'E-Verify', 'EVERIFY'),
   };
 }
 
@@ -261,7 +272,7 @@ async function checkView(req: Request) {
     canSendFinal: c.adjudication === 'PRE_ADVERSE' && waitDone,
     adverseSentAt: c.adverseSentAt?.toISOString() ?? null,
     lastSyncAt: c.lastSyncAt?.toISOString() ?? null,
-    lastError: c.lastError,
+    ...failureFields(c.lastError, providerInfo(c.provider ?? '')?.label ?? 'The screening provider', 'BACKGROUND_CHECK'),
   };
 }
 
@@ -376,7 +387,7 @@ async function testView(req: Request) {
     resultCode: t.resultCode,
     mroVerifiedAt: t.mroVerifiedAt?.toISOString() ?? null,
     lastSyncAt: t.lastSyncAt?.toISOString() ?? null,
-    lastError: t.lastError,
+    ...failureFields(t.lastError, providerInfo(t.provider ?? '')?.label ?? 'The drug-test provider', 'DRUG_TEST'),
   };
 }
 

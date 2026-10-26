@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Check, ClipboardCheck, Clock, X } from '@/components/ui/icons';
 import { toast } from 'sonner';
-import { APPROVAL_REQUEST_KIND_LABELS, type ApprovalRequestSummary } from '@alto-people/shared';
+import { APPROVAL_REQUEST_KIND_LABELS, ROLE_LABELS, type ApprovalRequestSummary } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -15,7 +15,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
-import { fmtDateTime, fmtRelativeDate } from '@/lib/format';
+import { fmtDateOnly, fmtDateTime, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { APPROVAL_DECISION_INVALIDATES, cancelApprovalRequest, decideApprovalRequest } from '@/lib/approvalRequestsApi';
 
 /**
@@ -63,50 +63,90 @@ export function subjectPath(r: ApprovalRequestSummary): string | null {
   }
 }
 
-const money = (v: unknown) => (typeof v === 'number' ? `$${v.toFixed(2)}` : v == null ? '—' : String(v));
+const money = (v: unknown) => (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) ? fmtMoney(v as number | string) : v == null ? '—' : String(v));
+
+/** A calendar day as people read it ("Oct 26", "Jan 31, 2027"), never "2026-10-26". */
+const day = (v: unknown, fallback = '—') => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? fmtDateOnly(v.slice(0, 10), { year: 'auto' }) : fallback);
+
+/**
+ * A pay change's reason, in words. The server is adding these labels to the
+ * request (ApprovalRequestSummary.display); until every request carries
+ * them, the known codes are named here and anything else is made a sentence.
+ */
+const PAY_REASON_LABELS: Record<string, string> = {
+  hire: 'New hire',
+  new_hire: 'New hire',
+  merit: 'Merit increase',
+  promotion: 'Promotion',
+  adjustment: 'Adjustment',
+  market: 'Market adjustment',
+  market_adjustment: 'Market adjustment',
+  correction: 'Correction',
+  cola: 'Cost-of-living increase',
+  transfer: 'Transfer',
+  demotion: 'Demotion',
+  other: 'Other',
+};
+export function payReasonLabel(code: unknown, display?: string | null): string {
+  if (display) return display;
+  if (typeof code !== 'string' || !code.trim()) return '—';
+  const known = PAY_REASON_LABELS[code.trim().toLowerCase()];
+  if (known) return known;
+  const words = code.replace(/[_-]+/g, ' ').trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** A role as the product names it ("Shift Supervisor"), never SHIFT_SUPERVISOR. */
+const roleName = (v: unknown) => (typeof v === 'string' ? ((ROLE_LABELS as Record<string, string>)[v] ?? v.replace(/_/g, ' ').toLowerCase()) : String(v));
+
+/** A status code as a word ("open", "pending approval"). */
+const statusWord = (v: unknown) => (typeof v === 'string' ? v.replace(/_/g, ' ').toLowerCase() : null);
 
 /** The before → after of a request, as short rows a person can read at a glance. */
 export function changeRows(r: ApprovalRequestSummary): Array<{ label: string; before: string | null; after: string }> {
   const p = (r.proposed ?? {}) as Record<string, unknown>;
   const b = (r.before ?? null) as Record<string, unknown> | null;
+  // The server's words for the proposed side, where it sends them.
+  const shown = ((r as { display?: { proposed?: Record<string, string> } }).display?.proposed ?? {}) as Record<string, string>;
   switch (r.kind) {
     case 'PAY_RATE_CHANGE':
       return [
         { label: 'Rate', before: b ? `${money(b.amount)} ${b.payType === 'SALARY' ? 'per year' : 'per hour'}` : null, after: `${money(p.amount)} ${p.payType === 'SALARY' ? 'per year' : 'per hour'}` },
-        { label: 'Effective', before: null, after: typeof p.effectiveFrom === 'string' ? p.effectiveFrom.slice(0, 10) : '—' },
-        { label: 'Reason', before: null, after: typeof p.reason === 'string' ? p.reason.replace(/_/g, ' ').toLowerCase() : '—' },
+        { label: 'Effective', before: null, after: day(p.effectiveFrom) },
+        { label: 'Reason', before: null, after: payReasonLabel(p.reason, shown.reason) },
       ];
     case 'BILL_RATE_CHANGE':
       return [
         { label: 'Bill rate', before: b ? `${money(b.billRate)}/h` : null, after: `${money(p.billRate)}/h` },
         { label: 'Pay rate', before: b ? `${money(b.payRate)}/h` : null, after: `${money(p.payRate)}/h` },
-        { label: 'Effective', before: null, after: typeof p.effectiveFrom === 'string' ? p.effectiveFrom : 'today' },
+        { label: 'Effective', before: null, after: day(p.effectiveFrom, 'today') },
       ];
     case 'PROMOTION':
       return [
         ...(p.newTitle || p.jobProfileId ? [{ label: 'Seat', before: b && typeof b.jobProfileTitle === 'string' ? b.jobProfileTitle : null, after: typeof p.newTitle === 'string' ? p.newTitle : 'new job profile' }] : []),
         ...(p.level ? [{ label: 'Level', before: null, after: String(p.level) }] : []),
         ...(p.amount != null ? [{ label: 'Pay', before: b && b.amount != null ? money(b.amount) : null, after: money(p.amount) }] : []),
-        { label: 'Effective', before: null, after: typeof p.effectiveFrom === 'string' ? p.effectiveFrom : '—' },
+        { label: 'Effective', before: null, after: day(p.effectiveFrom) },
+        ...(typeof p.reason === 'string' ? [{ label: 'Reason', before: null, after: payReasonLabel(p.reason, shown.reason) }] : []),
       ];
     case 'REQUISITION':
       return [
-        { label: 'Status', before: b && typeof b.status === 'string' ? b.status.toLowerCase() : null, after: 'open' },
-        { label: 'Budget', before: null, after: p.budgetAmount != null ? `$${Number(p.budgetAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })} ${p.budgetPeriod === 'MONTHLY' ? 'per month' : 'per year'}` : 'not set' },
+        { label: 'Status', before: b ? statusWord(b.status) : null, after: 'open' },
+        { label: 'Budget', before: null, after: p.budgetAmount != null ? `${fmtMoney(Number(p.budgetAmount))} ${p.budgetPeriod === 'MONTHLY' ? 'per month' : 'per year'}` : 'not set' },
         { label: 'FTE', before: null, after: String(p.fteAuthorized ?? '1') },
       ];
     case 'ROLE_CHANGE':
       return [
-        ...(p.role ? [{ label: 'Role', before: b && typeof b.role === 'string' ? b.role.replace(/_/g, ' ').toLowerCase() : null, after: String(p.role).replace(/_/g, ' ').toLowerCase() }] : []),
-        ...(Array.isArray(p.additionalRoles) ? [{ label: 'Also works as', before: Array.isArray(b?.additionalRoles) ? (b!.additionalRoles as string[]).map((x) => x.replace(/_/g, ' ').toLowerCase()).join(', ') || 'nothing' : null, after: (p.additionalRoles as string[]).map((x) => x.replace(/_/g, ' ').toLowerCase()).join(', ') || 'nothing' }] : []),
+        ...(p.role ? [{ label: 'Role', before: b && typeof b.role === 'string' ? roleName(b.role) : null, after: roleName(p.role) }] : []),
+        ...(Array.isArray(p.additionalRoles) ? [{ label: 'Also works as', before: Array.isArray(b?.additionalRoles) ? (b!.additionalRoles as string[]).map(roleName).join(', ') || 'nothing' : null, after: (p.additionalRoles as string[]).map(roleName).join(', ') || 'nothing' }] : []),
       ];
     case 'SEPARATION_COMPLETE':
-      return [{ label: 'Status', before: b && typeof b.status === 'string' ? b.status.replace(/_/g, ' ').toLowerCase() : null, after: 'complete' }];
+      return [{ label: 'Status', before: b ? statusWord(b.status) : null, after: 'complete' }];
     case 'LABOR_RULES_LIVE': {
       const report = (p.changeReport ?? null) as { people?: number; amountDifference?: number; premiumAmount?: number } | null;
       return [
         { label: 'Pay by', before: 'Federal rules (shadow)', after: String(p.jurisdictionLabel ?? p.jurisdiction ?? 'the state') + ' rules' },
-        { label: 'Counsel', before: null, after: [p.counselName, p.counselFirm].filter(Boolean).join(', ') + (typeof p.counselSignedOn === 'string' ? ` · signed ${p.counselSignedOn}` : '') },
+        { label: 'Counsel', before: null, after: [p.counselName, p.counselFirm].filter(Boolean).join(', ') + (typeof p.counselSignedOn === 'string' ? ` · signed ${day(p.counselSignedOn, p.counselSignedOn)}` : '') },
         ...(report && typeof report.amountDifference === 'number'
           ? [{ label: 'Recent runs', before: null, after: `${report.people ?? 0} people would be paid ${report.amountDifference >= 0 ? '+' : '−'}${money(Math.abs(report.amountDifference))}${report.premiumAmount ? `, incl. ${money(report.premiumAmount)} premiums` : ''}` }]
           : []),

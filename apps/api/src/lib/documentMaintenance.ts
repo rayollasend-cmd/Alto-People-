@@ -4,6 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { getBlobStore } from './blobStore.js';
 import { env } from '../config/env.js';
 import { purgeByRetention } from './documentRetention.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Daily document maintenance sweep.
@@ -151,7 +152,7 @@ export async function expireLapsedDocs(
       subject: `Your ${doc.kind.replace(/_/g, ' ').toLowerCase()} on file has expired`,
       body:
         `The ${doc.kind.replace(/_/g, ' ').toLowerCase()} you provided (${doc.filename}) ` +
-        `expired on ${doc.expiresAt!.toISOString().slice(0, 10)}. ` +
+        `expired on ${fmtDay(doc.expiresAt!)}. ` +
         `Please upload a current copy from Documents so your records stay compliant.`,
       category: 'documents.expired',
       linkUrl: '/documents',

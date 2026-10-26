@@ -1,5 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
+import { fmtMoney } from '@/lib/format';
 import { ChartTooltipContent } from '@/components/ui/charts/ChartTooltip';
 import { PALETTE, TICK } from '@/components/ui/charts/palette';
 
@@ -12,7 +13,7 @@ export function ProfitPlot({ rows }: { rows: Array<{ month: string; income: numb
       <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barGap={2}>
         <CartesianGrid stroke={PALETTE.grid} vertical={false} />
         <XAxis dataKey="month" tick={TICK} tickLine={false} axisLine={{ stroke: PALETTE.grid }} />
-        <YAxis tick={TICK} tickLine={false} axisLine={false} width={56} tickFormatter={(v: number) => fmtMoneyCompact(v)} />
+        <YAxis tick={TICK} tickLine={false} axisLine={false} width={56} tickFormatter={fmtMoneyAxis} />
         <ReferenceLine y={0} stroke={PALETTE.ref} />
         <Tooltip cursor={{ fill: PALETTE.cursor }} content={<ChartTooltipContent series={PROFIT_SERIES} format={(v) => fmtMoney(v)} />} />
         <Bar dataKey="income" name="Income" fill={PALETTE.primary} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false}>

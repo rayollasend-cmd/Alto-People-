@@ -1,4 +1,5 @@
-import { WEBHOOK_EVENTS } from '@alto-people/shared';
+import { ROLE_LABELS, WEBHOOK_EVENTS } from '@alto-people/shared';
+import { midSentence } from '@/pages/portal/words';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Copy, Download, Key, Plus, Webhook } from '@/components/ui/icons';
@@ -179,91 +180,94 @@ export function KeysTab({ canManage }: { canManage: boolean }) {
           </div>
         </div>
       )}
-      <Card>
-        <CardContent className="p-0">
-          {loadError ? (
-            <div className="p-6">
-              <ErrorBanner
-                action={
-                  <Button size="sm" variant="secondary" onClick={refresh}>
-                    Retry
-                  </Button>
-                }
-              >
-                {loadError}
-              </ErrorBanner>
-            </div>
-          ) : keys === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : keys.length === 0 ? (
-            <EmptyState
-              icon={Key}
-              title="No API keys"
-              description="Create a key to call the platform programmatically. The plaintext is shown ONCE."
-              action={
-                canManage ? (
-                  <Button onClick={() => setShowNew(true)}>
-                    <Plus className="mr-2 h-4 w-4" /> New key
-                  </Button>
-                ) : undefined
-              }
-            />
-          ) : filtered.length === 0 ? (
-            <div className="p-6 text-sm text-ink-muted">
-              No keys match the current search / filter.
-            </div>
-          ) : (
-            <DataGrid<(typeof filtered)[number]>
-              id="api-keys"
-              caption="API keys"
-              rows={filtered}
-              rowKey={(k) => k.id}
-              search={false}
-              urlState={false}
-              exportCsv={{ filename: 'api-keys' }}
-              columns={[
-                { key: 'name', header: 'Name', accessor: (k) => k.name, sortable: true, primary: true, className: 'font-medium text-ink' },
-                { key: 'key', header: 'Key', accessor: (k) => `altop_…${k.last4}`, sortable: true, cardMeta: true, className: 'font-mono text-xs' },
-                { key: 'capabilities', header: 'Capabilities', accessor: (k) => (k.capabilities.length > 0 ? k.capabilities.join(', ') : '(inherits creator)'), className: 'text-xs text-ink-muted' },
-                { key: 'lastUsed', header: 'Last used', accessor: (k) => k.lastUsedAt, sortable: true, searchable: false, cardMeta: true, cell: (k) => fmtDate(k.lastUsedAt) },
-                {
-                  key: 'status',
-                  header: 'Status',
-                  accessor: (k) => KEY_STATUS_LABELS[keyStatus(k)],
-                  sortable: true,
-                  cell: (k) => <Badge variant={statusTone(keyStatus(k), { overrides: KEY_STATUS_TONES })}>{KEY_STATUS_LABELS[keyStatus(k)]}</Badge>,
-                },
-                ...(canManage
-                  ? [
-                      {
-                        key: 'actions',
-                        header: 'Actions',
-                        accessor: () => null,
-                        searchable: false,
-                        csv: () => '',
-                        align: 'right' as const,
-                        stopRowClick: true,
-                        className: 'space-x-2',
-                        cell: (k: (typeof filtered)[number]) => (
-                          <>
-                            {!k.revokedAt && (
-                              <Button size="sm" variant="ghost" onClick={() => onRevoke(k.id)}>
-                                Revoke
+      {/* Nothing yet: the empty state stands on the page, not inside a second box. */}
+      {keys !== null && keys.length === 0 && !loadError ? (
+        <EmptyState
+          icon={Key}
+          title="No API keys"
+          description="Create a key to call the platform from your own systems. The key itself is shown only once."
+          action={
+            canManage ? (
+              <Button onClick={() => setShowNew(true)}>
+                <Plus className="mr-2 h-4 w-4" /> New key
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            {loadError ? (
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {loadError}
+                </ErrorBanner>
+              </div>
+            ) : keys === null ? (
+              <div className="p-6"><SkeletonRows count={3} /></div>
+            ) : filtered.length === 0 ? (
+              <div className="p-4">
+                <EmptyState size="sm" title="No keys match the current search or filter." />
+              </div>
+            ) : (
+              <DataGrid<(typeof filtered)[number]>
+                id="api-keys"
+                caption="API keys"
+                rows={filtered}
+                rowKey={(k) => k.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'api-keys' }}
+                columns={[
+                  { key: 'name', header: 'Name', accessor: (k) => k.name, sortable: true, primary: true, className: 'font-medium text-ink' },
+                  { key: 'key', header: 'Key', accessor: (k) => `altop_…${k.last4}`, sortable: true, cardMeta: true, className: 'font-mono text-xs' },
+                  { key: 'capabilities', header: 'Capabilities', accessor: (k) => (k.capabilities.length > 0 ? k.capabilities.join(', ') : '(inherits creator)'), className: 'text-xs text-ink-muted' },
+                  { key: 'lastUsed', header: 'Last used', accessor: (k) => k.lastUsedAt, sortable: true, searchable: false, cardMeta: true, cell: (k) => fmtDate(k.lastUsedAt) },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (k) => KEY_STATUS_LABELS[keyStatus(k)],
+                    sortable: true,
+                    cell: (k) => <Badge variant={statusTone(keyStatus(k), { overrides: KEY_STATUS_TONES })}>{KEY_STATUS_LABELS[keyStatus(k)]}</Badge>,
+                  },
+                  ...(canManage
+                    ? [
+                        {
+                          key: 'actions',
+                          header: 'Actions',
+                          accessor: () => null,
+                          searchable: false,
+                          csv: () => '',
+                          align: 'right' as const,
+                          stopRowClick: true,
+                          className: 'space-x-2',
+                          cell: (k: (typeof filtered)[number]) => (
+                            <>
+                              {!k.revokedAt && (
+                                <Button size="sm" variant="ghost" onClick={() => onRevoke(k.id)}>
+                                  Revoke
+                                </Button>
+                              )}
+                              <Button size="sm" variant="ghost" className="text-ink-muted hover:text-alert" onClick={() => onDelete(k.id)}>
+                                Delete
                               </Button>
-                            )}
-                            <Button size="sm" variant="ghost" className="text-ink-muted hover:text-alert" onClick={() => onDelete(k.id)}>
-                              Delete
-                            </Button>
-                          </>
-                        ),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-          )}
-        </CardContent>
-      </Card>
+                            </>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
       {showNew && (
         <NewKeyDrawer
           onClose={() => setShowNew(false)}
@@ -320,7 +324,8 @@ interface AsnPreset {
 const ASN_PRESETS: readonly AsnPreset[] = [
   {
     id: 'asn-supervisor',
-    label: 'ASN Supervisor',
+    // Role words from ROLE_LABELS, sentence case, so a key's name matches the role it mirrors.
+    label: `ASN ${midSentence(ROLE_LABELS.SHIFT_SUPERVISOR)}`,
     description:
       'One store. Read schedule, roster, clocked-in roster, and weekly KPIs.',
     storeScoped: true,
@@ -328,24 +333,24 @@ const ASN_PRESETS: readonly AsnPreset[] = [
   },
   {
     id: 'asn-lead',
-    label: 'ASN Lead Supervisor',
+    label: 'ASN lead supervisor',
     description:
-      'One store. Same surface as Supervisor — kept distinct for audit-trail clarity.',
+      'One store. Same surface as the shift supervisor — kept distinct for audit-trail clarity.',
     storeScoped: true,
     capabilities: ASN_CAPABILITIES,
   },
   {
     id: 'asn-command-desk',
-    label: 'ASN Command Desk',
+    label: 'ASN command desk',
     description: 'Every store. Live monitoring across all locations.',
     storeScoped: false,
     capabilities: ASN_CAPABILITIES,
   },
   {
     id: 'asn-ops-mgr',
-    label: 'ASN Operations Manager',
+    label: `ASN ${midSentence(ROLE_LABELS.OPERATIONS_MANAGER)}`,
     description:
-      'Every store. Same read surface as Command Desk — kept distinct for audit-trail clarity.',
+      'Every store. Same read surface as the command desk — kept distinct for audit-trail clarity.',
     storeScoped: false,
     capabilities: ASN_CAPABILITIES,
   },
@@ -748,100 +753,103 @@ export function WebhooksTab({ canManage }: { canManage: boolean }) {
           )}
         </div>
       )}
-      <Card>
-        <CardContent className="p-0">
-          {loadError ? (
-            <div className="p-6">
-              <ErrorBanner
-                action={
-                  <Button size="sm" variant="secondary" onClick={refresh}>
-                    Retry
-                  </Button>
-                }
-              >
-                {loadError}
-              </ErrorBanner>
-            </div>
-          ) : rows === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              icon={Webhook}
-              title="No webhooks"
-              description="Subscribe an HTTPS endpoint to receive payroll, onboarding, and other events."
-              action={
-                canManage ? (
-                  <Button onClick={() => setShowNew(true)}>
-                    <Plus className="mr-2 h-4 w-4" /> New webhook
-                  </Button>
-                ) : undefined
-              }
-            />
-          ) : filtered.length === 0 ? (
-            <div className="p-6 text-sm text-ink-muted">
-              No webhooks match the current search / filter.
-            </div>
-          ) : (
-            <DataGrid<(typeof filtered)[number]>
-              id="webhooks"
-              caption="Webhooks"
-              rows={filtered}
-              rowKey={(w) => w.id}
-              search={false}
-              urlState={false}
-              exportCsv={{ filename: 'webhooks' }}
-              columns={[
-                { key: 'name', header: 'Name', accessor: (w) => w.name, sortable: true, primary: true, className: 'font-medium text-ink' },
-                {
-                  key: 'url',
-                  header: 'URL',
-                  accessor: (w) => w.url,
-                  sortable: true,
-                  cardMeta: true,
-                  className: 'font-mono text-xs',
-                  cell: (w) => <span className="block truncate max-w-[200px] md:max-w-[280px]">{w.url}</span>,
-                },
-                { key: 'events', header: 'Events', accessor: (w) => (w.eventTypes.length > 0 ? w.eventTypes.join(', ') : '(all)'), className: 'text-xs text-ink-muted' },
-                { key: 'deliveries', header: 'Deliveries', accessor: (w) => w.deliveryCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
-                {
-                  key: 'status',
-                  header: 'Status',
-                  accessor: (w) => (w.isActive ? 'Active' : 'Paused'),
-                  sortable: true,
-                  cell: (w) => (w.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="default">Paused</Badge>),
-                },
-                ...(canManage
-                  ? [
-                      {
-                        key: 'actions',
-                        header: 'Actions',
-                        accessor: () => null,
-                        searchable: false,
-                        csv: () => '',
-                        align: 'right' as const,
-                        stopRowClick: true,
-                        className: 'space-x-2',
-                        cell: (w: (typeof filtered)[number]) => (
-                          <>
-                            <Button size="sm" variant="ghost" onClick={() => onTest(w.id)}>
-                              Test
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => onToggle(w.id)}>
-                              {w.isActive ? 'Pause' : 'Resume'}
-                            </Button>
-                            <Button size="sm" variant="ghost" className="text-ink-muted hover:text-alert" onClick={() => onDelete(w.id)}>
-                              Delete
-                            </Button>
-                          </>
-                        ),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
-          )}
-        </CardContent>
-      </Card>
+      {/* Nothing yet: the empty state stands on the page, not inside a second box. */}
+      {rows !== null && rows.length === 0 && !loadError ? (
+        <EmptyState
+          icon={Webhook}
+          title="No webhooks"
+          description="Subscribe an HTTPS endpoint to receive payroll, onboarding, and other events."
+          action={
+            canManage ? (
+              <Button onClick={() => setShowNew(true)}>
+                <Plus className="mr-2 h-4 w-4" /> New webhook
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            {loadError ? (
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {loadError}
+                </ErrorBanner>
+              </div>
+            ) : rows === null ? (
+              <div className="p-6"><SkeletonRows count={3} /></div>
+            ) : filtered.length === 0 ? (
+              <div className="p-4">
+                <EmptyState size="sm" title="No webhooks match the current search or filter." />
+              </div>
+            ) : (
+              <DataGrid<(typeof filtered)[number]>
+                id="webhooks"
+                caption="Webhooks"
+                rows={filtered}
+                rowKey={(w) => w.id}
+                search={false}
+                urlState={false}
+                exportCsv={{ filename: 'webhooks' }}
+                columns={[
+                  { key: 'name', header: 'Name', accessor: (w) => w.name, sortable: true, primary: true, className: 'font-medium text-ink' },
+                  {
+                    key: 'url',
+                    header: 'URL',
+                    accessor: (w) => w.url,
+                    sortable: true,
+                    cardMeta: true,
+                    className: 'font-mono text-xs',
+                    cell: (w) => <span className="block truncate max-w-[200px] md:max-w-[280px]">{w.url}</span>,
+                  },
+                  { key: 'events', header: 'Events', accessor: (w) => (w.eventTypes.length > 0 ? w.eventTypes.join(', ') : '(all)'), className: 'text-xs text-ink-muted' },
+                  { key: 'deliveries', header: 'Deliveries', accessor: (w) => w.deliveryCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    accessor: (w) => (w.isActive ? 'Active' : 'Paused'),
+                    sortable: true,
+                    cell: (w) => (w.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="default">Paused</Badge>),
+                  },
+                  ...(canManage
+                    ? [
+                        {
+                          key: 'actions',
+                          header: 'Actions',
+                          accessor: () => null,
+                          searchable: false,
+                          csv: () => '',
+                          align: 'right' as const,
+                          stopRowClick: true,
+                          className: 'space-x-2',
+                          cell: (w: (typeof filtered)[number]) => (
+                            <>
+                              <Button size="sm" variant="ghost" onClick={() => onTest(w.id)}>
+                                Test
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => onToggle(w.id)}>
+                                {w.isActive ? 'Pause' : 'Resume'}
+                              </Button>
+                              <Button size="sm" variant="ghost" className="text-ink-muted hover:text-alert" onClick={() => onDelete(w.id)}>
+                                Delete
+                              </Button>
+                            </>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
       {showNew && (
         <NewWebhookDrawer
           onClose={() => setShowNew(false)}

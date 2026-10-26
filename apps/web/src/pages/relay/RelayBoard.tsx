@@ -83,14 +83,14 @@ function DeskScoreboard({
   onLens: (l: Lens) => void;
 }) {
   return (
-    <section aria-label="The desks">
+    <section aria-label="The teams">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h2 className="flex items-center gap-1.5 text-sm font-semibold text-white">
           <Users className="h-4 w-4 text-gold" aria-hidden="true" />
-          The desks
+          The teams
         </h2>
         <Button size="sm" variant={lens === 'ALL' ? 'secondary' : 'ghost'} aria-pressed={lens === 'ALL'} onClick={() => onLens('ALL')}>
-          All desks
+          All teams
         </Button>
       </div>
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
@@ -117,14 +117,14 @@ function DeskScoreboard({
               <span className="flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-white">
                   {DESK_LABELS[d]}
-                  {myDesk === d && <span className="ml-1.5 rounded-full bg-gold/15 px-1.5 py-0.5 text-2xs font-medium text-gold">your desk</span>}
+                  {myDesk === d && <span className="ml-1.5 rounded-full bg-gold/15 px-1.5 py-0.5 text-2xs font-medium text-gold">your team</span>}
                 </span>
                 <FacePile people={people.map((p) => ({ key: p.userId, name: p.name, photoUrl: p.photoUrl }))} max={4} label={`${DESK_LABELS[d]}: ${people.map((p) => p.name).join(', ') || 'nobody yet'}`} />
               </span>
               <span className="mt-2 flex items-baseline gap-1.5">
                 <span className={cn('text-2xl font-semibold tabular-nums', late ? 'text-alert' : batons.length ? 'text-white' : 'text-success')}>{batons.length}</span>
                 <span className="text-xs text-silver">
-                  {batons.length === 1 ? 'open hand-off' : 'open hand-offs'}
+                  {batons.length === 1 ? 'item waiting' : 'items waiting'}
                   {late > 0 && <span className="font-medium text-alert"> · {late} late</span>}
                 </span>
               </span>
@@ -221,7 +221,7 @@ export function RelayBoard() {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
-          title="The relay" subtitle="Where the desks work together — the board, the questions between HR, Recruiting, Workforce and Finance, and the documents the work runs on."
+          title="Relay" subtitle="One board where HR, Recruiting, Workforce and Finance pass work to each other: every new hire on the way to a first paycheck, who has it now, the questions between teams and the documents behind them."
       >
         <ErrorBanner
           action={
@@ -230,7 +230,7 @@ export function RelayBoard() {
             </Button>
           }
         >
-          Could not load the relay board.
+          Could not load the Relay board.
         </ErrorBanner>
       </ListTemplate>
     );
@@ -254,8 +254,10 @@ export function RelayBoard() {
     <div className="space-y-5">
       <div>
         <PageHeader
-          title="The relay"
-          subtitle="Where the desks work together — the board, the questions between HR, Recruiting, Workforce and Finance, and the documents the work runs on."
+          // What Relay is, in one line (F500 2026-10-26: "the relay", "desks", "lanes"
+          // and "hand-offs" were never explained). "Teams" where it said "desks".
+          title="Relay"
+          subtitle="One board where HR, Recruiting, Workforce and Finance pass work to each other: every new hire on the way to a first paycheck, who has it now, the questions between teams and the documents behind them."
           secondaryActions={
             <span className="flex items-center gap-2 text-xs text-silver/70">
               <span className="relative flex h-2 w-2" aria-hidden="true">
@@ -263,7 +265,7 @@ export function RelayBoard() {
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
               </span>
               Live · updated {ago(board.dataUpdatedAt)}
-              <Button size="sm" variant="ghost" onClick={refreshAll} aria-label="Refresh the relay" disabled={board.isFetching}>
+              <Button size="sm" variant="ghost" onClick={refreshAll} aria-label="Refresh Relay" disabled={board.isFetching}>
                 <RefreshCw className={cn('h-3.5 w-3.5', board.isFetching && 'animate-spin')} />
               </Button>
             </span>
@@ -322,7 +324,7 @@ export function RelayBoard() {
           />
           <WavesSection cohorts={data.cohorts} canManage={can('manage:recruiting')} onChanged={refreshAll} />
         </div>
-        <aside className="min-w-0 space-y-6" aria-label="Where the desks talk">
+        <aside className="min-w-0 space-y-6" aria-label="Where the teams talk">
           <MondayPack agenda={data.agenda} lens={lens} />
           <DecisionsPanel decisions={decisions} loading={activity.isLoading} lens={lens} myDesk={myDesk} onOpen={openLane} onChanged={refreshAll} />
           <ActivityFeed notes={activity.data?.notes ?? []} loading={activity.isLoading} lens={lens} onOpen={openLane} />

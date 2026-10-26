@@ -111,7 +111,7 @@ describe('decision notifications', () => {
       },
     });
     expect(approveNotes).toHaveLength(1);
-    expect(approveNotes[0].body).toContain('8.0h');
+    expect(approveNotes[0].body).toContain('8.0 hours');
 
     // quiet delivery: an approval is routine-positive news — bell only,
     // no email (an email per approved entry was a daily "everything is
@@ -209,7 +209,7 @@ describe('editing an APPROVED entry (payroll correction)', () => {
       },
     });
     expect(note).not.toBeNull();
-    expect(note?.body).toContain('14.0h');
+    expect(note?.body).toContain('14.0 hours');
   });
 
   it('a notes-only edit on an approved entry does not touch accrual or notify', async () => {

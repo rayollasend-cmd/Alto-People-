@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Calendar, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, List, Send, Wand2 } from '@/components/ui/icons';
 import type { LucideIcon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
-import { fmtMoneyCompact } from '@/lib/format';
+import { fmtMoneyWhole } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import type { SchedulingKpis } from '@/lib/schedulingApi';
 
@@ -50,15 +50,16 @@ function ViewButton({ current, value, onClick, icon: Icon, label }: { current: T
       role="radio"
       aria-checked={active}
       onClick={() => onClick(value)}
+      // Labelled at every size (four bare icons on a phone said nothing,
+      // F500 2026-10-26), sentence case, 44px tall to a finger.
       className={cn(
-        'inline-flex h-7 items-center gap-1.5 rounded-sm border px-2 text-xs font-medium uppercase tracking-wider transition coarse:h-9',
+        'inline-flex h-7 items-center gap-1.5 rounded-sm border px-2 text-xs font-medium transition coarse:h-11 coarse:px-2.5',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
-        active ? 'bg-gold/15 border-gold/50 text-gold' : 'border-transparent text-silver hover:text-ink',
+        active ? 'bg-gold/15 border-gold/50 text-ink' : 'border-transparent text-silver hover:text-ink',
       )}
-      title={label}
     >
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-      <span className="hidden lg:inline">{label}</span>
+      <Icon className="h-3.5 w-3.5 max-sm:hidden" aria-hidden="true" />
+      <span>{label}</span>
     </button>
   );
 }
@@ -70,8 +71,10 @@ export function SchedulingToolbar(p: SchedulingToolbarProps) {
       aria-label="Schedule"
       data-testid="scheduling-toolbar"
       className={cn(
-        'sticky top-0 z-20 -mx-4 mb-2 flex h-12 items-center gap-2 overflow-x-auto border-b border-navy-secondary bg-navy/95 px-4 backdrop-blur no-print',
-        'md:mx-0 md:rounded-md md:border md:px-2',
+        // A phone wraps the bar onto two lines (view and period, then the
+        // scope) instead of a 401px row in a 390px screen; a desk keeps one.
+        'sticky top-0 z-20 -mx-4 mb-2 flex min-h-12 flex-wrap items-center gap-2 border-b border-navy-secondary bg-navy/95 px-4 py-1.5 backdrop-blur no-print',
+        'md:mx-0 md:h-12 md:flex-nowrap md:overflow-x-auto md:rounded-md md:border md:px-2 md:py-0',
         p.className,
       )}
     >
@@ -102,35 +105,39 @@ export function SchedulingToolbar(p: SchedulingToolbarProps) {
       )}
       {/* The scope stays in view: the chips keep room for one ("Coastal
           Resort Ho…") however crowded the bar gets. */}
-      <div className={cn('flex min-w-0 flex-1 items-center gap-1 overflow-x-auto', p.chips.length > 0 && 'min-w-[5.5rem]')}>
+      <div className={cn('flex min-w-0 flex-1 items-center gap-1 overflow-x-auto max-md:order-last max-md:basis-full', p.chips.length > 0 && 'min-w-[5.5rem]')}>
         {p.chips.map((c) => (
           <span
             key={c.key}
             // A long store name ends in "…" (full name on hover) instead of
             // being cut off at the scroller's edge.
-            className="inline-flex h-7 min-w-[5rem] max-w-[16rem] shrink items-center gap-1 rounded-full border border-navy-secondary bg-navy-secondary/40 px-2.5 text-xs text-ink"
+            className="inline-flex h-7 min-w-[5rem] max-w-[16rem] shrink items-center gap-1 rounded-full border border-navy-secondary bg-navy-secondary/40 px-2.5 text-xs text-ink coarse:h-9"
             title={c.label}
           >
             <span className="min-w-0 truncate">{c.label}</span>
             {c.onRemove && (
-              <button type="button" onClick={c.onRemove} aria-label={`Clear ${c.label}`} className="text-silver/70 hover:text-ink">
+              <button type="button" onClick={c.onRemove} aria-label={`Clear ${c.label}`} className="-my-2 -mr-2 grid h-7 w-7 place-items-center text-silver/70 hover:text-ink coarse:h-11 coarse:w-11">
                 ×
               </button>
             )}
           </span>
         ))}
       </div>
-      {/* Outside the chips' scroller, so it never clips to "Edit filte". */}
-      {p.onOpenFilters && (
-        <button
-          type="button"
-          onClick={p.onOpenFilters}
-          className="h-7 shrink-0 whitespace-nowrap rounded-full border border-dashed border-navy-secondary px-2.5 text-xs text-silver hover:text-ink"
-        >
-          {p.chips.length === 0 ? 'Filter…' : 'Edit filters'}
-        </button>
-      )}
-      {p.trailing}
+      {/* Outside the chips' scroller, so it never clips to "Edit filte"; with
+          the page's extra controls it stays one group (a lone "…" wrapped
+          onto its own line on a phone). */}
+      <div className="flex shrink-0 items-center gap-2 max-md:ml-auto">
+        {p.onOpenFilters && (
+          <button
+            type="button"
+            onClick={p.onOpenFilters}
+            className="h-7 shrink-0 whitespace-nowrap rounded-full border border-dashed border-navy-secondary px-2.5 text-xs text-silver hover:text-ink coarse:h-11 coarse:px-3.5"
+          >
+            {p.chips.length === 0 ? 'Filter…' : 'Edit filters'}
+          </button>
+        )}
+        {p.trailing}
+      </div>
       {p.canManage && p.onBuild && (
         <Button variant="secondary" size="sm" onClick={p.onBuild} loading={p.building} className="relative shrink-0" title="Copy this week into next week, fill what's open, review the picks, then publish">
           <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -175,12 +182,14 @@ export function kpiParts(kpis: SchedulingKpis | null, forecastHours: number | nu
   if (filled + open > 0) parts.push({ key: 'filled', text: `${kpis.fillRatePercent}% filled` });
   parts.push({ key: 'open', text: `${open} open` });
   if (unfilled > 0) parts.push({ key: 'unfilled', text: `${unfilled} unfilled` });
-  const hours = Math.round(kpis.totalScheduledMinutes / 60);
+  // Hours with one decimal, like every hours figure in the app.
+  const hours = (kpis.totalScheduledMinutes / 60).toFixed(1);
   if (forecastHours != null) {
     parts.push({ key: 'hours', text: `${hours}h scheduled` });
-    parts.push({ key: 'forecast', text: `${Math.round(forecastHours)}h forecast` });
+    parts.push({ key: 'forecast', text: `${forecastHours.toFixed(1)}h forecast` });
   } else parts.push({ key: 'hours', text: `${hours}h` });
-  if (kpis.projectedLaborCost !== null) parts.push({ key: 'cost', text: fmtMoneyCompact(kpis.projectedLaborCost) });
+  // A figure, not a chart axis: whole dollars, never "$1.1k" (F500 2026-10-26).
+  if (kpis.projectedLaborCost !== null) parts.push({ key: 'cost', text: fmtMoneyWhole(kpis.projectedLaborCost) });
   return parts;
 }
 

@@ -37,6 +37,10 @@ export const enDecisions = {
   'decisions.overdue': 'Overdue · {date}',
   'decisions.quietFold': '{n} queues clear',
   'decisions.quietFoldOne': '1 queue clear',
+  'decisions.subtitleN': '{count} items waiting on you, in one place.',
+  'decisions.subtitleN_one': '1 item waiting on you.',
+  'decisions.unreadNotices': '{count} unread notifications — read them in Notifications',
+  'decisions.unreadNotices_one': '1 unread notification — read it in Notifications',
 } as const;
 
 registerEnglish(enDecisions);

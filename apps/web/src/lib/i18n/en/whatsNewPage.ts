@@ -15,8 +15,6 @@ export const enWhatsNewPage = {
   'whatsNewPage.deleteFailed': 'Could not delete the note.',
   'whatsNewPage.newNote': 'New note',
   'whatsNewPage.loadWhat': 'release notes',
-  'whatsNewPage.editAria': 'Edit note for {day}',
-  'whatsNewPage.deleteAria': 'Delete note for {day}',
   'whatsNewPage.deleteConfirm': 'Delete this release note?',
   'whatsNewPage.editTitle': 'Edit release note',
   'whatsNewPage.newTitle': 'New release note',
@@ -28,6 +26,11 @@ export const enWhatsNewPage = {
   'whatsNewPage.publishedCheckbox': 'Published — on every home screen at the next open',
   'whatsNewPage.publish': 'Publish',
   'whatsNewPage.saveDraft': 'Save draft',
+  'whatsNewPage.edit': 'Edit',
+  'whatsNewPage.delete': 'Delete',
+  'whatsNewPage.moreAria': 'Actions for the note of {day}',
+  'whatsNewPage.questions': 'Questions about a change?',
+  'whatsNewPage.contactSupport': 'Contact support',
 } as const;
 
 registerEnglish(enWhatsNewPage);

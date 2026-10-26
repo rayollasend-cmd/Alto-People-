@@ -364,8 +364,11 @@ function NeedsYou({
     );
 
   // The number beside "Needs you" counts what is listed under it: the
-  // company queue's rows and these cards, one each.
-  const shownCount = useNeedsYouCount({ queue: true, cards: cards.length });
+  // company queue's rows and these cards, each thing once — a card and the
+  // queue row for the same pile (time off waiting, timesheets to approve)
+  // are one item, named by the queue's key (lib/roleDecisions).
+  const QUEUE_KEY: Record<string, string> = { timeoff: 'timeoff:pending', timesheets: 'time:unapproved' };
+  const shownCount = useNeedsYouCount({ queue: true, cardKeys: cards.map((c) => QUEUE_KEY[c.key] ?? c.key) });
 
   return (
     <section aria-labelledby="manager-needs-you" className="space-y-3">

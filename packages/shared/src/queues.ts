@@ -47,7 +47,7 @@ export const APPROVALS_QUEUE_LABELS: Readonly<Record<ApprovalsQueueKey, string>>
   'time-off': 'Time off',
   swaps: 'Swaps',
   pickups: 'Pickups',
-  proposals: 'Suggested by an agent',
+  proposals: 'Suggested by an AI agent',
   requests: 'Pay & access changes',
   timesheets: 'Timesheets',
   unconfirmed: 'Unconfirmed shifts (48h)',

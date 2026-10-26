@@ -3,7 +3,10 @@ import { latestCoverageGaps } from './coverageForecast.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { soonestPayday } from './payday.js';
 import { buildFieldglassQueue } from './fieldglassQueue.js';
+import { fmtDay } from './humanDates.js';
 import { billingWeek } from './financeCockpit.js';
+
+const daysWord = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 
 /**
  * THE RELAY — the one shared operating picture all four rooms stare at.
@@ -819,7 +822,7 @@ export async function computeRelayBoard(
     agenda.push({
       severity: 'red',
       desk: stage.desk,
-      text: `${stalledLanes.length} first-paycheck lane${stalledLanes.length === 1 ? ' is' : 's are'} stalled past due — worst: ${worst.name} at "${STAGE_LABELS[stage.key]}" (${DESK_LABELS[stage.desk]}'s desk).`,
+      text: `${stalledLanes.length} new hire${stalledLanes.length === 1 ? ' is' : 's are'} stalled on the way to a first paycheck — longest: ${worst.name} at "${STAGE_LABELS[stage.key]}" (waiting on ${DESK_LABELS[stage.desk]}).`,
       link: '/relay',
     });
   }
@@ -827,7 +830,7 @@ export async function computeRelayBoard(
     agenda.push({
       severity: 'red',
       desk: b.desk,
-      text: `${b.label}: ${b.count} overdue on ${DESK_LABELS[b.desk]}'s desk${b.oldestAt ? ` (oldest ${Math.floor(ageDays(new Date(b.oldestAt))!)}d)` : ''}.`,
+      text: `${b.label}: ${b.count} overdue, waiting on ${DESK_LABELS[b.desk]}${b.oldestAt ? ` (oldest ${daysWord(Math.floor(ageDays(new Date(b.oldestAt))!))})` : ''}.`,
       link: b.link,
     });
   }
@@ -862,7 +865,7 @@ export async function computeRelayBoard(
       severity: pendingCount > 0 ? 'amber' : 'info',
       desk: pendingCount > 0 ? 'WORKFORCE' : 'FINANCE',
       text:
-        `Payday ${orgDateKey(new Date(payday.date))}` +
+        `Payday ${fmtDay(orgDateKey(new Date(payday.date)), { weekday: true, now })}` +
         (pendingCount > 0
           ? ` — ${pendingCount} timesheet${pendingCount === 1 ? '' : 's'} still unapproved ahead of the close.`
           : ' — the close is clear.'),

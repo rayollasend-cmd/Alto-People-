@@ -67,7 +67,7 @@ export function LaneDrawer({
                 <DrawerDescription>
                   {lane
                     ? `${lane.clientName ?? 'No client yet'} · approved ${fmtDate(lane.approvedAt)}`
-                    : 'Their thread on the relay'}
+                    : 'Their thread on Relay'}
                 </DrawerDescription>
               </div>
             </div>
@@ -79,7 +79,7 @@ export function LaneDrawer({
                   <OwnerControl
                     subjectType="LANE"
                     subjectKey={associateId}
-                    what={`${who}’s lane`}
+                    what={`${who}’s progress`}
                     claim={claims[claimKey('LANE', associateId)]}
                     desks={desks}
                     meId={meId}
@@ -156,7 +156,7 @@ export function LaneDrawer({
                           onChanged();
                           toast.success('Hiring push updated.');
                         })
-                        .catch(() => toast.error('Could not move the lane.'));
+                        .catch(() => toast.error('Could not move this new hire.'));
                     }}
                   >
                     <option value="">No hiring push</option>

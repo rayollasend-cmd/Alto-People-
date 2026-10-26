@@ -757,7 +757,8 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'portal',
     path: '/portal',
-    label: 'My store',
+    // The nav, the breadcrumbs and the Recent list all say Home — one name for one page.
+    label: 'Home',
     description:
       'Live floor coverage, today’s roster, this week’s fill, statements, and the coverage record for your store.',
     requires: 'view:dashboard',
@@ -1601,7 +1602,7 @@ export const MODULES: ModuleNav[] = [
     path: '/books/assets',
     label: 'Fixed assets',
     description:
-      'Vans, equipment and build-outs on the books, depreciated each month.',
+      'Vehicles, equipment and build-outs on the books, depreciated each month.',
     requires: 'view:books',
     group: 'payroll-finance',
   },
@@ -2067,6 +2068,8 @@ export const MODULES: ModuleNav[] = [
     description:
       'Who signs in, what they open, and what breaks — daily and monthly active users, traffic, error rates, and adoption.',
     requires: 'view:product-analytics',
+    // The platform operator's own tool — never a customer's menu or search.
+    platformOnly: true,
     group: 'platform',
   },
   {
@@ -2075,6 +2078,8 @@ export const MODULES: ModuleNav[] = [
     label: 'Design system',
     description: 'The written standard the product follows: tokens, type, components and their states, the five page templates, and the design debt the sweep pays down.',
     requires: 'view:product-analytics',
+    // The platform operator's own tool — never a customer's menu or search.
+    platformOnly: true,
     group: 'platform',
   },
   {
@@ -2103,6 +2108,8 @@ export const MODULES: ModuleNav[] = [
     description:
       'Errors against the weekly budget, p95 by route, kiosk punch success, ride completion, and API restarts — with a Saturday summary by email.',
     requires: 'view:product-analytics',
+    // The platform operator's own tool — never a customer's menu or search.
+    platformOnly: true,
     group: 'platform',
   },
   {

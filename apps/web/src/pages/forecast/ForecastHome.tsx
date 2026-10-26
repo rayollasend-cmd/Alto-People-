@@ -7,7 +7,7 @@ import { FORECAST_SIGNAL_KINDS, FORECAST_SIGNAL_LABELS, type ForecastResponse, t
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { listClients } from '@/lib/clientsApi';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateOnly } from '@/lib/format';
 import { createPlanFromForecast, getSiteForecast, listForecastSites, removeForecastSignal, runForecast, setForecastSignal } from '@/lib/forecastApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -21,6 +21,7 @@ import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { DataGrid } from '@/components/ui/DataGrid';
 import { ListTemplate } from '@/components/templates';
 import { DetailsTable, PALETTE } from '@/components/ui/charts';
 import { lazyPlot } from '@/components/ui/charts/lazyPlot';
@@ -40,12 +41,67 @@ const kindLabel = (k: ForecastSignalKind) => FORECAST_SIGNAL_LABELS[k] ?? k;
 /** The chart's drawing (recharts) loads with the chart, not the page (lazyPlot). */
 const ForecastPlot = lazyPlot(() => import('./ForecastChart.plot').then((m) => ({ default: m.ForecastPlot })));
 
-/** The forecast's uncertainty band: the primary hue, faint. */
-const BAND = 'rgb(var(--color-chart-1) / 0.18)';
+/**
+ * The forecast's likely range: the forecast's own hue, clear enough to read
+ * as a band on navy and on white (at 0.18 it vanished in both themes).
+ */
+const BAND = 'rgb(var(--color-chart-1) / 0.28)';
+const BAND_EDGE = 'rgb(var(--color-chart-1) / 0.55)';
 
 const hours = (n: number | null | undefined) => (n === null || n === undefined ? '—' : `${Math.round(n).toLocaleString()} h`);
 const pct = (n: number | null | undefined) => (n === null || n === undefined ? '—' : `${n.toFixed(1)}%`);
-const weekLabel = (key: string) => fmtDate(`${key}T12:00:00Z`);
+const weekLabel = (key: string) => fmtDateOnly(key, { year: 'auto' });
+/** A signed change in hours, the way a person writes it: "+12 h", "−41 h". */
+const signedHours = (n: number) => `${n < 0 ? '−' : '+'}${Math.abs(Math.round(n)).toLocaleString()} h`;
+/** A multiplier as the change it makes: 1.05 → "+5%", 0.8 → "−20%". */
+const factorPct = (f: number) => {
+  const p = Math.round((f - 1) * 100);
+  return `${p < 0 ? '−' : '+'}${Math.abs(p)}%`;
+};
+/** The band edge as words: −0.15 → "15% under", 0.18 → "18% over". */
+const bandWords = (n: number) => `${Math.round(Math.abs(n) * 100)}% ${n < 0 ? 'under' : 'over'}`;
+
+/** The trend's TOTAL pull is capped at a fifth of the recent level (the API's TREND_CAP), so a falling site settles instead of sliding to zero. */
+const TREND_CAP = 0.2;
+function trendPull(d: ForecastWeek['drivers']): { pull: number; capped: boolean } {
+  const cap = TREND_CAP * d.recentMean;
+  const raw = d.trendPerWeek * d.leadWeeks;
+  const capped = Math.abs(raw) > cap + 0.05;
+  return { pull: capped ? Math.sign(raw) * cap : raw, capped };
+}
+
+/**
+ * What every week ahead starts from, said once above the weeks: the last
+ * eight weeks' average, their trend, how far a trend may carry, and how
+ * much last year counts. "recent 83 h falling 16 h a week (held to 17 h
+ * below)" on every row read as code (F500 audit 2026-10-26).
+ */
+export function forecastBasis(weeks: ForecastWeek[]): string {
+  const d = weeks[0]?.drivers;
+  if (!d) return '';
+  const avg = Math.round(d.recentMean).toLocaleString();
+  const t = Math.abs(Math.round(d.trendPerWeek));
+  const parts = [
+    `Each week starts from the last 8 weeks' average, ${avg} h a week${d.trendPerWeek && t ? `, and their trend: ${d.trendPerWeek > 0 ? 'up' : 'down'} about ${t} h a week` : ''}.`,
+  ];
+  if (weeks.some((w) => trendPull(w.drivers).capped)) {
+    parts.push(`A trend counts for at most a fifth of the average (${Math.round(TREND_CAP * d.recentMean).toLocaleString()} h), so a few weeks' change doesn't carry on for months.`);
+  }
+  const ly = weeks.find((w) => w.drivers.lastYearScaled !== null)?.drivers;
+  if (ly) parts.push(`The same week last year, scaled to this year's level, counts for ${Math.round(ly.lastYearWeight * 100)}%.`);
+  return parts.join(' ');
+}
+
+/** What moves one week off the average: its share of the trend, last year, a holiday, a client's signal. */
+export function weekParts(d: ForecastWeek['drivers']): string[] {
+  const parts: string[] = [];
+  const { pull, capped } = trendPull(d);
+  if (Math.round(pull) !== 0) parts.push(`trend ${signedHours(pull)}${capped ? ' (its limit)' : ''}`);
+  if (d.lastYearScaled !== null) parts.push(`last year ${Math.round(d.lastYearScaled).toLocaleString()} h`);
+  if (d.holidayName) parts.push(`${d.holidayName} ${factorPct(d.holidayFactor)}`);
+  for (const sg of d.signals) parts.push(`${kindLabel(sg.kind)} ${factorPct(sg.factor)}${sg.source ? ` (${sg.source})` : ''}`);
+  return parts;
+}
 /** Fewer weeks than one horizon of history: the forecast is a guess, and says so. */
 export const CONFIDENT_HISTORY_WEEKS = 26;
 const lowConfidence = (s: ForecastSiteSummary | null) => s !== null && s.historyWeeks < CONFIDENT_HISTORY_WEEKS;
@@ -83,7 +139,7 @@ export function ForecastHome() {
     // Design system §4.2: the List template — the summary strip, one filter row, the lists.
     <ListTemplate
       title="Demand forecast"
-      subtitle="Verified hours per site and week, twenty-six weeks ahead with the band the model has earned. Start a season plan from it in one click."
+      subtitle="Verified hours per site and week, and the next 26 weeks forecast from them. Start a season plan from it in one click."
       actions={[
         { label: run ? 'Recompute' : 'Compute forecast', icon: RefreshCw, primary: true, onSelect: () => compute.mutate(), loading: compute.isPending, hidden: !canManage },
         { label: 'Signals', icon: SlidersHorizontal, onSelect: () => setSignalsOpen(true), disabled: !selected, hidden: !canManage },
@@ -91,8 +147,8 @@ export function ForecastHome() {
       ]}
       summary={
         <MetricStrip label="Forecast at a glance">
-          <MetricCard label="Sites forecast" value={sitesQ.isLoading ? '…' : String(sites.length)} hint={run ? `Computed ${fmtDate(run.generatedAt)}` : 'Not computed yet'} />
-          <MetricCard label="Next 4 weeks" value={siteQ.isLoading ? '…' : hours(run ? next4 : null)} hint={site ? site.siteName : 'Pick a site'} />
+          <MetricCard label="Sites forecast" value={sitesQ.isLoading ? '…' : String(sites.length)} hint={run ? `Model tuned ${fmtDate(run.generatedAt)}` : 'Not computed yet'} />
+          <MetricCard label="Next 4 weeks" value={siteQ.isLoading ? '…' : hours(run ? next4 : null)} hint={site ? `${site.siteName}, forecast` : 'Pick a site'} />
           <MetricCard
             label="Back-test error"
             value={pct(site?.mapePct ?? null)}
@@ -101,7 +157,8 @@ export function ForecastHome() {
           />
           <MetricCard
             label="History"
-            value={site ? `${site.historyWeeks} wk` : '—'}
+            value={site ? String(site.historyWeeks) : '—'}
+            unit={site ? (site.historyWeeks === 1 ? 'week' : 'weeks') : undefined}
             tone={lowConfidence(site) ? 'warning' : 'default'}
             hint={lowConfidence(site) ? `Low confidence: ${site!.historyWeeks} of ${CONFIDENT_HISTORY_WEEKS} weeks of history` : 'Weeks of verified hours behind the forecast'}
           />
@@ -165,8 +222,6 @@ export function ForecastHome() {
 function ForecastChart({ weeks, site, band }: { weeks: ForecastWeek[]; site: ForecastSiteSummary | null; band: { bandLow: number; bandHigh: number } }) {
   const siteName = site?.siteName ?? '';
   const pastWeeks = weeks.filter((w) => w.actualHours !== null).length;
-  // The band as multiples of the forecast, not as signed percents ("band -100% to +15%").
-  const times = (n: number) => `${Math.max(0, 1 + n).toFixed(2).replace(/\.?0+$/, '')}×`;
   const anchor = weeks.find((w) => w.actualHours === null)?.weekStart;
   const data = weeks.map((w) => ({
     week: w.weekStart,
@@ -192,23 +247,24 @@ function ForecastChart({ weeks, site, band }: { weeks: ForecastWeek[]; site: For
         </div>
         <CardDescription>
           {pastWeeks > 0
-            ? `The ${pastWeeks === 1 ? 'week' : `${pastWeeks} weeks`} since this site's first verified hours, the next twenty-six as the model expects them, inside the range its back-test earned.`
-            : 'No verified hours yet: the next twenty-six weeks start from nothing until hours come in.'}
+            ? `${pastWeeks === 1 ? 'The last week' : `The last ${pastWeeks} weeks`} of verified hours, then the next 26 weeks forecast from them, with the likely range shaded around the forecast.`
+            : 'No verified hours yet: the next 26 weeks start from nothing until hours come in.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="h-72 w-full">
-          <ForecastPlot data={data} series={series} bandColor={BAND} nowLabel={anchor ? weekLabel(anchor) : undefined} />
+          <ForecastPlot data={data} series={series} bandColor={BAND} bandEdge={BAND_EDGE} nowLabel={anchor ? weekLabel(anchor) : undefined} />
         </div>
-        <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-silver/80">
+        <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
           <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: PALETTE.secondary }} />Verified hours</li>
           <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-0.5 w-3.5 rounded-full" style={{ background: PALETTE.primary }} />Forecast</li>
-          <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: BAND }} />Likely range: {times(band.bandLow)} to {times(band.bandHigh)} the forecast</li>
+          <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm border" style={{ background: BAND, borderColor: BAND_EDGE }} />Likely range: {bandWords(band.bandLow)} to {bandWords(band.bandHigh)} the forecast</li>
         </ul>
         <DetailsTable
           label="Details"
           columns={['Week', 'Verified', 'Low', 'Forecast', 'High']}
-          rows={weeks.map((w) => [weekLabel(w.weekStart), w.actualHours === null ? '—' : Math.round(w.actualHours), w.actualHours === null ? Math.round(w.p10) : '—', Math.round(w.p50), w.actualHours === null ? Math.round(w.p90) : '—'])}
+          // A worked week shows what was worked; the forecast columns are the weeks ahead.
+          rows={weeks.map((w) => (w.actualHours === null ? [weekLabel(w.weekStart), '—', Math.round(w.p10), Math.round(w.p50), Math.round(w.p90)] : [weekLabel(w.weekStart), Math.round(w.actualHours), '—', '—', '—']))}
         />
       </CardContent>
     </Card>
@@ -218,39 +274,29 @@ function ForecastChart({ weeks, site, band }: { weeks: ForecastWeek[]; site: For
 /* -------------------------------------------------------------- drivers */
 
 function DriversCard({ weeks }: { weeks: ForecastWeek[] }) {
+  const basis = forecastBasis(weeks);
   return (
     <Card>
       <CardHeader>
         <CardTitle>Why the next four weeks</CardTitle>
-        <CardDescription>Every number is built from parts a person can check.</CardDescription>
+        <CardDescription>{weeks.length ? basis : 'Every number is built from parts a person can check.'}</CardDescription>
       </CardHeader>
       <CardContent>
         {weeks.length === 0 ? (
           <EmptyState icon={LineChart} title="No weeks ahead" description="Compute the forecast to see the next four weeks and why." />
         ) : (
-          <ul className="divide-y divide-navy-secondary/60">
+          <ul className="divide-y divide-line">
             {weeks.map((w) => {
-              const d = w.drivers;
-              const parts: string[] = [];
-              if (d.lastYearScaled !== null) parts.push(`last year ${Math.round(d.lastYearScaled)} h at ${Math.round(d.lastYearWeight * 100)}%`);
-              // The trend's total pull is capped at 20% of the recent level (the API's TREND_CAP),
-              // so a falling site settles instead of sliding to zero: say so when the cap holds.
-              const cap = 0.2 * d.recentMean;
-              const capped = Math.abs(d.trendPerWeek * d.leadWeeks) > cap + 0.05;
-              parts.push(
-                `recent ${Math.round(d.recentMean)} h${d.trendPerWeek ? ` ${d.trendPerWeek > 0 ? 'rising' : 'falling'} ${Math.abs(Math.round(d.trendPerWeek))} h a week` : ''}${capped ? ` (held to ${Math.round(cap)} h ${d.trendPerWeek > 0 ? 'above' : 'below'})` : ''}`,
-              );
-              if (d.holidayName) parts.push(`${d.holidayName} ×${d.holidayFactor.toFixed(2)}`);
-              for (const s of d.signals) parts.push(`${kindLabel(s.kind)} ×${s.factor.toFixed(2)}${s.source ? ` (${s.source})` : ''}`);
+              const parts = weekParts(w.drivers);
               return (
                 <li key={w.weekStart} className="flex items-start justify-between gap-3 py-2">
                   <div className="min-w-0">
                     <div className="text-sm text-ink">Week of {weekLabel(w.weekStart)}</div>
-                    <div className="text-xs text-ink-muted">{parts.join(' · ')}</div>
+                    <div className="text-xs text-ink-muted">{[`${Math.round(w.drivers.recentMean).toLocaleString()} h average`, ...parts].join(' · ')}</div>
                   </div>
                   <div className="shrink-0 text-right">
-                    <div className="text-sm font-semibold tabular-nums text-ink">{Math.round(w.p50)} h</div>
-                    <div className="text-2xs tabular-nums text-ink-muted">{Math.round(w.p10)} to {Math.round(w.p90)}</div>
+                    <div className="text-sm font-semibold tabular-nums text-ink">{hours(w.p50)}</div>
+                    <div className="text-xs tabular-nums text-ink-muted">likely {Math.round(w.p10).toLocaleString()}–{Math.round(w.p90).toLocaleString()} h</div>
                   </div>
                 </li>
               );
@@ -265,7 +311,7 @@ function DriversCard({ weeks }: { weeks: ForecastWeek[] }) {
 /* ------------------------------------------------------------- accuracy */
 
 function AccuracyCard({ data }: { data: ForecastResponse }) {
-  const rows = data.accuracy;
+  const rows = data.accuracy.slice(0, 16);
   return (
     <Card>
       <CardHeader>
@@ -274,36 +320,36 @@ function AccuracyCard({ data }: { data: ForecastResponse }) {
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
-          <p className="text-sm text-ink-muted">No scored week yet. The first scoring comes a month after the first compute, when forecast weeks have been worked.</p>
+          <EmptyState size="sm" icon={LineChart} title="No scored week yet" description="The first scoring comes a month after the first compute, once forecast weeks have been worked." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-2xs uppercase tracking-wider text-ink-muted">
-                  <th className="py-1 pr-3 font-medium">Week</th>
-                  <th className="py-1 pr-3 font-medium">Lead</th>
-                  <th className="py-1 pr-3 font-medium">Forecast</th>
-                  <th className="py-1 pr-3 font-medium">Actual</th>
-                  <th className="py-1 pr-3 font-medium">Error</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-navy-secondary/60">
-                {rows.slice(0, 16).map((r) => (
-                  <tr key={`${r.weekStart}:${r.leadWeeks}`}>
-                    <td className="py-1 pr-3 text-silver">{weekLabel(r.weekStart)}</td>
-                    <td className="py-1 pr-3 tabular-nums text-ink">{r.leadWeeks} wk</td>
-                    <td className="py-1 pr-3 tabular-nums text-ink">{Math.round(r.forecastP50)} h</td>
-                    <td className="py-1 pr-3 tabular-nums text-ink">{Math.round(r.actualHours)} h</td>
-                    <td className="py-1 pr-3 tabular-nums">
-                      <Badge variant={r.absPctError <= 15 ? 'success' : r.absPctError <= 30 ? 'pending' : 'destructive'} size="sm">
-                        {r.absPctError.toFixed(1)}%
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataGrid<ForecastResponse['accuracy'][number]>
+            id="forecast-accuracy"
+            caption="How the forecast scored"
+            rows={rows}
+            rowKey={(r) => `${r.weekStart}:${r.leadWeeks}`}
+            search={false}
+            urlState={false}
+            columnChooser={false}
+            exportCsv={false}
+            columns={[
+              { key: 'week', header: 'Week', accessor: (r) => r.weekStart, cell: (r) => weekLabel(r.weekStart), primary: true },
+              { key: 'lead', header: 'Ahead', accessor: (r) => r.leadWeeks, align: 'right', className: 'tabular-nums', cell: (r) => `${r.leadWeeks} ${r.leadWeeks === 1 ? 'week' : 'weeks'}` },
+              { key: 'forecast', header: 'Forecast', accessor: (r) => r.forecastP50, align: 'right', className: 'tabular-nums', cell: (r) => hours(r.forecastP50) },
+              { key: 'actual', header: 'Worked', accessor: (r) => r.actualHours, align: 'right', className: 'tabular-nums', cell: (r) => hours(r.actualHours) },
+              {
+                key: 'error',
+                header: 'Off by',
+                accessor: (r) => r.absPctError,
+                align: 'right',
+                className: 'tabular-nums',
+                cell: (r) => (
+                  <Badge variant={r.absPctError <= 15 ? 'success' : r.absPctError <= 30 ? 'pending' : 'destructive'} size="sm">
+                    {r.absPctError.toFixed(1)}%
+                  </Badge>
+                ),
+              },
+            ]}
+          />
         )}
       </CardContent>
     </Card>
@@ -322,14 +368,14 @@ function SignalsDialog({ locationId, data, weeks, onClose }: { locationId: strin
   const save = useMutation({
     mutationFn: () => setForecastSignal({ locationId, weekStart, kind, factor: Number(factor), source: source.trim() || null, note: note.trim() || null }),
     onSuccess: async () => {
-      toast.success('Signal saved. Recompute to apply it.');
-      await qc.invalidateQueries({ queryKey: ['forecast', 'site', locationId] });
+      toast.success('Signal saved. The forecast includes it now.');
+      await qc.invalidateQueries({ queryKey: ['forecast'] });
     },
     onError: (err: unknown) => toast.error(err instanceof ApiError ? err.message : 'Could not save the signal.'),
   });
   const remove = useMutation({
     mutationFn: removeForecastSignal,
-    onSuccess: async () => qc.invalidateQueries({ queryKey: ['forecast', 'site', locationId] }),
+    onSuccess: async () => qc.invalidateQueries({ queryKey: ['forecast'] }),
     onError: (err: unknown) => toast.error(err instanceof ApiError ? err.message : 'Could not remove the signal.'),
   });
   const f = Number(factor);
@@ -339,7 +385,7 @@ function SignalsDialog({ locationId, data, weeks, onClose }: { locationId: strin
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Client signals</DialogTitle>
-          <DialogDescription>What the client told you about a week: a truck schedule, occupancy, an event. Each is a multiplier on that week's hours, and the forecast says it used it.</DialogDescription>
+          <DialogDescription>What the client told you about a week: a truck schedule, occupancy, an event. Each raises or lowers that week's hours, and the forecast says it used it.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           {(data?.signals ?? []).length > 0 && (
@@ -348,7 +394,7 @@ function SignalsDialog({ locationId, data, weeks, onClose }: { locationId: strin
                 <li key={s.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                   <div className="min-w-0">
                     <span className="text-ink">Week of {weekLabel(s.weekStart)}</span>
-                    <span className="text-ink-muted"> · {kindLabel(s.kind)} ×{s.factor.toFixed(2)}{s.source ? ` · ${s.source}` : ''}</span>
+                    <span className="text-ink-muted"> · {kindLabel(s.kind)} {factorPct(s.factor)}{s.source ? ` · ${s.source}` : ''}</span>
                   </div>
                   <Button size="xs" variant="ghost" aria-label="Remove signal" onClick={() => remove.mutate(s.id)} disabled={remove.isPending}>
                     <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />

@@ -113,10 +113,8 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
             )}
             <div className="min-w-0">
               <div className="text-base font-medium text-ink">{me.data.name}</div>
-              {/* Two lines, then the rest on hover — it was cut mid-word ("I'm not a p…"). */}
-              <div className="line-clamp-2 text-xs2 text-ink-muted" title={me.data.intro}>
-                {me.data.intro}
-              </div>
+              {/* A line written for the card; his full introduction is in the panel. */}
+              <div className="text-xs2 text-ink-muted">{isHugo(me.data.name) ? t('hugoSeat.tagline') : me.data.intro}</div>
             </div>
           </div>
           <form

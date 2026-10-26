@@ -233,19 +233,25 @@ function DayOffsetTag({ entry }: { entry: TimeEntry }) {
 // start, surface it inline so reviewers see lateness without opening
 // the drawer. 5-minute grace absorbs kiosk-queue jitter.
 const LATE_GRACE_MINUTES = 5;
+/** "Late 24 min", "Late 1.5 h" — words, not "LATE 24M". Exported for tests. */
+export function lateWords(lateMin: number): string {
+  return lateMin >= 60 ? `Late ${(lateMin / 60).toFixed(1)} h` : `Late ${lateMin} min`;
+}
 function LateChip({ entry }: { entry: TimeEntry }) {
   const lateMin = lateMinutes(entry);
   if (lateMin === null || !entry.shiftStartsAt) return null;
   return (
-    <span
-      className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
+    <Badge
+      variant="destructive"
+      size="sm"
+      className="whitespace-nowrap"
       title={`Scheduled ${fmtPunchTime(entry.shiftStartsAt, entry.locationTimezone)}${entry.shiftPosition ? ` · ${entry.shiftPosition}` : ''}`}
     >
-      {/* Lateness stays in minutes below the hour (an offset, not paid
-          time); an hour-plus lateness reads as decimal hours like every
-          other duration. */}
-      Late {lateMin >= 60 ? `${(lateMin / 60).toFixed(1)}h` : `${lateMin}m`}
-    </span>
+      {/* Words, sentence case (F500 2026-10-26: a boxed "LATE 24M"). Minutes
+          below the hour; an hour-plus lateness reads as decimal hours like
+          every other duration. */}
+      {lateWords(lateMin)}
+    </Badge>
   );
 }
 
@@ -333,12 +339,9 @@ function AnomalyChips({ anomalies }: { anomalies?: string[] | null }) {
   return (
     <div className="flex flex-wrap gap-1 mt-1">
       {anomalies.map((a) => (
-        <span
-          key={a}
-          className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-warning/40 bg-warning/10 text-warning whitespace-nowrap"
-        >
+        <Badge key={a} variant="pending" size="sm" className="whitespace-nowrap">
           {timeAnomalyLabel(a)}
-        </span>
+        </Badge>
       ))}
     </div>
   );
@@ -2141,9 +2144,10 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             type="button"
             onClick={() => focusOn(e)}
             title="View individual timesheet"
-            className="flex items-center gap-2.5 rounded text-left font-medium hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="flex min-w-[10rem] items-center gap-2.5 rounded text-left font-medium hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             <Avatar src={personPhotoUrl({ photoUrl: e.photoUrl, associateId: e.associateId })} name={e.associateName ?? '—'} size="sm" />
+            {/* Names get room: the times keep to one line now, so the name need not wrap. */}
             <span className="underline-offset-2 hover:underline">{e.associateName ?? '—'}</span>
           </button>
         ),
@@ -2157,6 +2161,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               sortable: true,
               cardMeta: true,
               className: 'text-silver',
+              // Gives way first when the list is narrow (a drawer open); still on the card and the export.
+              hideBelow: 1000,
             } satisfies GridColumn<TimeEntry>,
           ]
         : []),
@@ -2167,7 +2173,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         csv: (e) => e.clockInAt,
         sortable: true,
         searchable: false,
-        className: 'tabular-nums',
+        // One line, always: "Oct 23, 10:04 PM CDT" wrapped mid-value.
+        className: 'tabular-nums whitespace-nowrap',
         cell: (e) => fmtPunchDateTime(e.clockInAt, e.locationTimezone),
       },
       {
@@ -2177,7 +2184,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         csv: (e) => e.clockOutAt ?? '',
         sortable: true,
         searchable: false,
-        className: 'tabular-nums',
+        className: 'tabular-nums whitespace-nowrap',
         cell: (e) =>
           e.clockOutAt ? (
             <>
@@ -2195,6 +2202,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         csv: (e) => formatHM(e.netMinutes ?? e.minutesElapsed),
         sortable: true,
         searchable: false,
+        className: 'whitespace-nowrap',
         cell: (e) => <DurationCell entry={e} />,
       },
       {
@@ -2205,7 +2213,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         cell: (e) => (
           <>
             <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant={statusVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
+              {/* The list pinned to one status ("Pending review") doesn't say it
+                  on every row — only what differs: late, flags, a paid period. */}
+              {filter !== e.status && <Badge variant={statusVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>}
               <LateChip entry={e} />
               {e.status === 'COMPLETED' && paidPeriodOf(e) && (
                 <Badge size="sm" variant="pending" title="This pay period has already run — approved time here goes on an off-cycle or an adjustment.">
@@ -2297,7 +2307,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           ]
         : []),
     ],
-    [canManage, focusOn, pendingId, bulkBusy, openEditRow, onApproveAtShiftEnd, onApprove, openRejectOne, term, liveCols.client, isOwnEntry, paidPeriodOf],
+    [canManage, focusOn, pendingId, bulkBusy, openEditRow, onApproveAtShiftEnd, onApprove, openRejectOne, term, liveCols.client, isOwnEntry, paidPeriodOf, filter],
   );
 
   // The phone's queue card: the same columns, folded — "Sep 18 · 1:55 PM–
@@ -2330,12 +2340,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
             </Badge>
           )}
           {(e.anomalies ?? []).map((a) => (
-            <span
-              key={a}
-              className="whitespace-nowrap rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-2xs uppercase tracking-widest text-warning"
-            >
+            <Badge key={a} variant="pending" size="sm" className="whitespace-nowrap">
               {timeAnomalyLabel(a)}
-            </span>
+            </Badge>
           ))}
         </span>
       ),

@@ -74,10 +74,13 @@ describe('the Walmart SOP library', () => {
     for (const tpl of WALMART_TEMPLATES) expect(names).toContain(tpl.name);
     expect(names).toContain('Deli & Bakery — Morning');
     expect(names).toContain('General Merchandise — Closing');
-    expect(names).not.toContain('Frozen & Dairy — Morning');
+    // One Frozen & Dairy morning — the manual's (it shares the first library's name now its hours are gone).
+    expect(names.filter((x) => x === 'Frozen & Dairy — Morning')).toHaveLength(1);
+    // No hours in a checklist's name: the store's shift windows say them.
+    expect(names.some((x) => /\d\s*(AM|PM)/.test(x))).toBe(false);
 
     const overnight = (lib.body.templates as Array<{ name: string; tasks: Array<Task & { dueTime: string | null }> }>).find(
-      (t) => t.name === 'Frozen & Dairy — Overnight (10 PM–7 AM)',
+      (t) => t.name === 'Frozen & Dairy — Overnight',
     )!;
     expect(overnight.tasks.every((t) => /^\d\d:\d\d$/.test(t.dueTime ?? ''))).toBe(true);
     expect(overnight.tasks[0]!.dueTime).toBe('22:30');
@@ -111,11 +114,27 @@ describe('the Walmart SOP library', () => {
     ]);
     expect(old.retiredAt).not.toBeNull();
     expect(kept.retiredAt).toBeNull();
-    expect(mapping.template.name).toBe('Frozen & Dairy — Morning (7 AM–4 PM)');
+    expect(mapping.template.name).toBe('Frozen & Dairy — Morning');
+    // The manual's own Morning shares the first library's name; it stays active.
+    expect(mapping.template.retiredAt).toBeNull();
 
     const count = await prisma.opsSopTemplate.count();
     await lead.get('/ops/library');
     expect(await prisma.opsSopTemplate.count()).toBe(count);
+  });
+
+  it('a library seeded with the hours in its names takes the plain names once — no second library', async () => {
+    const { lead } = await store();
+    const former = await prisma.opsSopTemplate.create({
+      data: { name: 'Frozen & Dairy — Evening (2–11 PM)', department: 'Frozen & Dairy', period: 'EVENING' },
+    });
+    expect((await lead.get('/ops/library')).status).toBe(200);
+    const renamed = await prisma.opsSopTemplate.findUniqueOrThrow({ where: { id: former.id } });
+    expect(renamed.name).toBe('Frozen & Dairy — Evening');
+    expect(renamed.retiredAt).toBeNull();
+    // The marker was there: the manual was not seeded a second time beside it.
+    expect(await prisma.opsSopTemplate.count({ where: { name: 'Frozen & Dairy — Evening' } })).toBe(1);
+    expect(await prisma.opsSopTemplate.count({ where: { name: { contains: 'PM)' } } })).toBe(0);
   });
 
   it("a run carries each block's deadline; my-sop names the block to work and what's overdue", async () => {
@@ -145,7 +164,7 @@ describe('the Walmart SOP library', () => {
     const agent = await loginAs(exec.email);
     const lib = await agent.get('/ops/library');
     const tpl = (lib.body.templates as Array<{ id: string; name: string; tasks: Task[] }>).find(
-      (t) => t.name === 'Food & Consumables — Morning (6 AM–3 PM)',
+      (t) => t.name === 'Food & Consumables — Morning',
     )!;
     const section = tpl.tasks[0]!.section;
 
@@ -221,7 +240,7 @@ describe('store operations, in the portal', () => {
     const opsAgent = await loginAs(ops.email);
     const lib = await opsAgent.get('/ops/library');
     const tpl = (lib.body.templates as Array<{ id: string; name: string }>).find(
-      (t) => t.name === 'Frozen & Dairy — Morning (7 AM–4 PM)',
+      (t) => t.name === 'Frozen & Dairy — Morning',
     )!;
     const started = new Date(Date.now() - 2 * H);
     await prisma.staffingTarget.create({

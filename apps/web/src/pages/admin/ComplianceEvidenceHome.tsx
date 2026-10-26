@@ -40,7 +40,27 @@ const EVIDENCE_STATUS_LABEL: Record<string, string> = { PASS: 'Passed', FAIL: 'F
 /** A control's status: the one vocabulary the Trust Center shows too (controlStatusOf). */
 const statusOfRow = (c: ComplianceControlView): ControlStatus => c.status ?? controlStatusOf(c);
 
-const age = (d: number | null) => (d === null ? '—' : d === 0 ? 'Today' : d === 1 ? '1 day' : `${d} days`);
+const age = (d: number | null) => (d === null ? 'Not collected' : d === 0 ? 'Today' : d === 1 ? '1 day' : `${d} days`);
+
+/**
+ * A result as people read it: the plain sentence first, the technical line
+ * (setting names, rule keys, versions) behind "Details" — it used to be one
+ * line mixing both (F500 audit 2026-10-26). Clicking the disclosure never
+ * opens the row.
+ */
+function ResultText({ summary, detail }: { summary: string; detail?: string | null }) {
+  return (
+    <div className="min-w-0">
+      <span>{summary}</span>
+      {detail && (
+        <details className="mt-1 text-xs text-ink-muted" onClick={(e) => e.stopPropagation()}>
+          <summary className="inline-flex min-h-6 cursor-pointer select-none items-center hover:text-ink coarse:min-h-11">Details</summary>
+          <p className="mt-1 break-words font-mono text-2xs leading-relaxed">{detail}</p>
+        </details>
+      )}
+    </div>
+  );
+}
 
 const STATUS_FILTERS = ['all', ...CONTROL_STATUSES] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
@@ -99,7 +119,7 @@ export function ComplianceEvidenceHome() {
         const s = statusOfRow(c);
         return (
           <div className="min-w-0">
-            {c.latest ? <span>{c.latest.summary}</span> : <span className="text-ink-muted">Not collected yet</span>}
+            {c.latest ? <ResultText summary={c.latest.summary} detail={c.latest.detail} /> : <span className="text-ink-muted">Not collected yet</span>}
             {s !== 'PASSING' && (
               <button
                 type="button"
@@ -116,8 +136,8 @@ export function ComplianceEvidenceHome() {
         );
       },
     },
-    { key: 'age', header: 'Age', accessor: (c) => c.ageDays ?? Number.POSITIVE_INFINITY, sortable: true, align: 'right', cell: (c) => age(c.ageDays) },
-    { key: 'window', header: 'Window', accessor: (c) => c.freshnessDays, sortable: true, align: 'right', defaultHidden: true, cell: (c) => `${c.freshnessDays} d` },
+    { key: 'age', header: 'Age', accessor: (c) => c.ageDays ?? Number.POSITIVE_INFINITY, sortable: true, align: 'right', className: 'tabular-nums whitespace-nowrap', cell: (c) => (c.ageDays === null ? <span className="text-ink-muted">{age(null)}</span> : age(c.ageDays)) },
+    { key: 'window', header: 'Counts for', accessor: (c) => c.freshnessDays, sortable: true, align: 'right', defaultHidden: true, className: 'tabular-nums whitespace-nowrap', cell: (c) => `${c.freshnessDays} ${c.freshnessDays === 1 ? 'day' : 'days'}` },
   ];
 
   return (
@@ -247,7 +267,9 @@ function ControlDialog({ control, onClose }: { control: ComplianceControlView; o
                     <span className="text-ink-muted">{fmtDateTime(e.collectedAt)}</span>
                     <span className="text-xs text-ink-muted">by {e.collectedBy}</span>
                   </div>
-                  <div className="mt-1">{e.summary}</div>
+                  <div className="mt-1">
+                    <ResultText summary={e.summary} detail={e.detail} />
+                  </div>
                   {e.signoffs.map((s) => (
                     <div key={s.id} className="mt-1 text-xs text-ink-muted">
                       Signed off by {s.signedOffByEmail ?? 'a former user'} on {fmtDateTime(s.createdAt)}

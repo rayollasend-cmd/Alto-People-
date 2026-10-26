@@ -4,6 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { notifyAllAdmins } from './notify.js';
 import { orgDateKey } from './timeAnomalies.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Evening store-ops digest — the "how did the floor actually go today"
@@ -100,7 +101,7 @@ export async function runOpsDigestSweep(
   await notifyAllAdmins({
     subject: `Store ops today: ${shifts.length} shift${shifts.length === 1 ? '' : 's'} across ${byStore.size} store${byStore.size === 1 ? '' : 's'}`,
     body:
-      `Ops digest for ${dateKey}:\n\n${lines.join('\n')}` +
+      `Ops digest for ${fmtDay(dateKey, { weekday: true })}:\n\n${lines.join('\n')}` +
       (pendingHandover > 0
         ? `\n\n${pendingHandover} handover item${pendingHandover === 1 ? '' : 's'} still waiting for the next shift to decide.`
         : '') +

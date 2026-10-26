@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { runShiftAutofillSweep } from './shiftAutofill.js';
 import { runShiftFill, broadcastWindowPassed } from './workforceAgent.js';
+import { fmtDayInZone } from './humanDates.js';
 
 /**
  * Cover a shift: the three moves behind the floor's one-tap "Cover this
@@ -47,7 +48,7 @@ export async function runCoverFlow(
       acknowledgedAt: null,
       publishedAt: shift.publishedAt ?? now,
       ...(released && opts.reason
-        ? { notes: [shift.notes, `Released ${now.toISOString().slice(0, 10)}: ${opts.reason}`].filter(Boolean).join('\n') }
+        ? { notes: [shift.notes, `Released ${fmtDayInZone(now)}: ${opts.reason}`].filter(Boolean).join('\n') }
         : {}),
     },
     select: { id: true, publishedAt: true },

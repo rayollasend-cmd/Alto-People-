@@ -11,7 +11,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
-import { CopyValue, kindLook, titleInSentence } from './providerShared';
+import { CopyValue, TechnicalDetail, apiErrorDetail, kindLook, titleInSentence } from './providerShared';
 
 /**
  * Connect a provider for one kind, in three steps on one panel:
@@ -35,7 +35,7 @@ export function ProviderSetupDrawer({
   const [environment, setEnvironment] = useState<'SANDBOX' | 'PRODUCTION'>('SANDBOX');
   const [values, setValues] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<Record<string, string>>({});
-  const [result, setResult] = useState<{ id: string; ok: boolean; message: string | null; secret: string | null; webhookUrl: string | null } | null>(null);
+  const [result, setResult] = useState<{ id: string; ok: boolean; message: string | null; detail?: string | null; secret: string | null; webhookUrl: string | null } | null>(null);
 
   useEffect(() => {
     if (!kind) return;
@@ -58,8 +58,12 @@ export function ProviderSetupDrawer({
         credentials: values,
         settings: Object.fromEntries(Object.entries(settings).filter(([, v]) => v.trim())),
       });
-      const tested = await testProviderConnection(made.connection.id).catch(() => ({ ok: false, message: 'The test couldn’t run.' }));
-      return { id: made.connection.id, ok: tested.ok, message: tested.message, secret: made.webhookSecret, webhookUrl: made.connection.webhookUrl };
+      const tested: { ok: boolean; message: string | null; detail?: string | null } = await testProviderConnection(made.connection.id).catch((e: unknown) => ({
+        ok: false,
+        message: e instanceof ApiError ? e.message : 'The test couldn’t run.',
+        detail: apiErrorDetail(e),
+      }));
+      return { id: made.connection.id, ok: tested.ok, message: tested.message, detail: tested.detail ?? null, secret: made.webhookSecret, webhookUrl: made.connection.webhookUrl };
     },
     onSuccess: (r) => setResult(r),
   });
@@ -83,6 +87,7 @@ export function ProviderSetupDrawer({
                 <p className="mt-1 text-ink-muted">
                   {result.ok ? 'We reached the provider with these credentials.' : `${result.message ?? 'The provider didn’t answer.'} You can fix the credentials from Manage and test again.`}
                 </p>
+                {!result.ok && <TechnicalDetail detail={result.detail} className="mt-1" />}
               </div>
             </div>
             {result.webhookUrl && (

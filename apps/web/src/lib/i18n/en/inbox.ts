@@ -37,6 +37,8 @@ export const enInbox = {
   'inbox.open': 'Open',
   'inbox.loadFailed': 'Failed to load inbox.',
   'inbox.markFailed': 'Could not mark the message as read.',
+  'inbox.repeats': '{count}×',
+  'inbox.repeatsTitle': 'The same notification {count} times — the newest is shown.',
 } as const;
 
 registerEnglish(enInbox);

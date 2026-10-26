@@ -8,6 +8,7 @@ import { env } from '../config/env.js';
 import { armJob } from './jobs.js';
 import { raiseSecurityAlert } from './securityAlerts.js';
 import { platformJob } from './tenantJobs.js';
+import { auditChainText } from './evidenceText.js';
 
 /**
  * Brief 2-3 step 4 — tamper evidence and retention for the audit trail
@@ -141,9 +142,13 @@ export async function auditChainEvidence(db: Db): Promise<{ status: 'PASS' | 'FA
   const broken = await runAuditChainChecks(db);
   const checked = await db.auditChainCheck.findMany({ where: { checkedAt: { gte: new Date(Date.now() - 3_600_000) } }, select: { tenantId: true, rows: true, ok: true } });
   const rows = checked.reduce((a, c) => a + c.rows, 0);
-  return broken.length
-    ? { status: 'FAIL', summary: `The audit hash chain is broken for ${broken.length} tenant${broken.length === 1 ? '' : 's'}: investigate now.`, details: { broken: broken.map((b) => ({ tenantId: b.tenantId, breaks: b.breaks.slice(0, 10) })) } }
-    : { status: 'PASS', summary: `Every tenant's audit hash chain verifies (${rows} chained rows across ${checked.length} chains).`, details: { chains: checked.length, rows } };
+  // Plain words (lib/evidenceText): "across 1 organization", never "across 1 chains".
+  if (broken.length) {
+    const details = { broken: broken.map((b) => ({ tenantId: b.tenantId, breaks: b.breaks.slice(0, 10) })) };
+    return { status: 'FAIL', summary: auditChainText('FAIL', details)!.summary, details };
+  }
+  const details = { chains: checked.length, rows };
+  return { status: 'PASS', summary: auditChainText('PASS', details)!.summary, details };
 }
 
 export async function retentionYearsFor(db: Db, tenantId: string): Promise<number> {

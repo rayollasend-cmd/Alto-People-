@@ -1002,6 +1002,11 @@ describe('closing the loops — people, reviewed marks, the store roll-up', () =
     expect((await store.post('/client-portal/acknowledge').send({ kind: 'SERVICE_REPORT', key: 'nope' })).status).toBe(400);
     const week = await store.post('/client-portal/acknowledge').send({ kind: 'SERVICE_REPORT', key: '2026-01-03' });
     expect(week.status).toBe(201);
+    // A week still under way is not reviewable yet (its report is only "so far").
+    const thisWeek = (await store.get('/client-portal/overview')).body.week.start as string;
+    const early = await store.post('/client-portal/acknowledge').send({ kind: 'SERVICE_REPORT', key: thisWeek });
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe('week_in_progress');
     // The marks show up on the overview and on the staff statements list.
     const overview = await store.get('/client-portal/overview');
     const st = overview.body.statements.find((x: { id: string }) => x.id === s.statement.id);

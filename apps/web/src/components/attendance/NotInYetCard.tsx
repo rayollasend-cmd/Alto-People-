@@ -68,9 +68,16 @@ export function NotInYetCard({
   filter,
   canCover = false,
   quiet,
+  bare = false,
   className,
 }: {
   siteId?: string;
+  /**
+   * Part of a bigger card (the supervisor's "Today's floor"): no card of its
+   * own, and nothing at all until someone is actually not in — the host
+   * already says when the shift starts or that everyone is in.
+   */
+  bare?: boolean;
   /** What to say when nobody is listed and nobody is due yet ("Swing starts 2:00 PM — nobody due yet"), instead of "Everyone's in". */
   quiet?: { title: string; description?: string };
   /** Narrow to the people in view (the supervisor's own shift). */
@@ -97,10 +104,11 @@ export function NotInYetCard({
   });
   const [textOpen, setTextOpen] = useState(false);
 
-  if (q.isPending) return <Skeleton className={cn('h-40', className)} />;
+  if (q.isPending) return bare ? null : <Skeleton className={cn('h-40', className)} />;
   if (q.isError) return <QueryError what={t('notIn.what')} query={q} />;
 
   const people = filter ? q.data.people.filter(filter) : q.data.people;
+  if (bare && people.length === 0) return null;
   // "Missing" is who we're still waiting on — not the ones who said they
   // aren't coming, and not someone on approved time off.
   const missing = people.filter((p) => p.status === 'due' || p.status === 'late' || p.status === 'no-show-risk');
@@ -127,105 +135,118 @@ export function NotInYetCard({
     return { sent, failed, optedOut, noPhone, notConfigured };
   };
 
+  const body = (
+    <>
+      <SectionTitle
+        as="h3"
+        icon={UserX}
+        title={
+          <>
+            {t('notIn.title')}
+            {missing.length > 0 && <span className="ml-1.5 tabular-nums text-warning">{missing.length}</span>}
+          </>
+        }
+        description={
+          people.length > 0
+            ? t('notIn.desc', { grace: q.data.graceMinutes, risk: q.data.noShowRiskMinutes })
+            : undefined
+        }
+        trailing={
+          q.data.canText && textable.length > 0 ? (
+            <Button size="sm" variant="secondary" onClick={() => setTextOpen(true)}>
+              <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {t('notIn.textLate', { n: textable.length })}
+            </Button>
+          ) : undefined
+        }
+      />
+      {people.length === 0 ? (
+        quiet ? (
+          <EmptyState size="sm" icon={Clock} title={quiet.title} description={quiet.description} />
+        ) : (
+          <EmptyState size="sm" icon={CheckCircle2} title={t('notIn.allInTitle')} description={t('notIn.allInDesc')} />
+        )
+      ) : (
+        <ul className="divide-y divide-line" aria-label={t('notIn.listAria')}>
+          {people.map((p) => (
+            <li key={p.shiftId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
+              <Avatar src={photoUrl(p.associateId)} name={p.name} email="" size="sm" />
+              <div className="min-w-0 flex-1">
+                <Link to={`/people/${p.associateId}`} className="block truncate text-sm font-medium text-ink hover:text-gold hover:underline">
+                  {p.name}
+                </Link>
+                <span className="block truncate text-xs text-ink-muted">
+                  {p.position} · {fmtTimeTz(p.startsAt, p.timezone)}
+                  {p.siteName ? ` · ${p.siteName}` : ''}
+                </span>
+              </div>
+              <Badge variant={STATUS_BADGE[p.status]} size="sm" className="tabular-nums">
+                {lateness(t, p)}
+              </Badge>
+              <div className="flex flex-wrap gap-1.5">
+                {p.phone && (
+                  <>
+                    <Button size="xs" variant="outline" asChild>
+                      <a href={`tel:${dialable(p.phone)}`} aria-label={t('notIn.callAria', { name: p.name })}>
+                        <Phone className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                        {t('notIn.call')}
+                      </a>
+                    </Button>
+                    <Button size="xs" variant="outline" asChild>
+                      <a href={`sms:${dialable(p.phone)}`} aria-label={t('notIn.textAria', { name: p.name })}>
+                        <MessageSquareText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                        {t('notIn.text')}
+                      </a>
+                    </Button>
+                  </>
+                )}
+                {canCover && needsCover(p) && (
+                  // The shift itself: it's still assigned to them, so the
+                  // call-outs desk (confirmed, released shifts) wouldn't list it.
+                  <Button size="xs" asChild>
+                    <Link to={`/scheduling?shift=${p.shiftId}`}>
+                      {p.status === 'no-show-risk' ? t('notIn.noShowCover') : t('notIn.findCover')}
+                      <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
+                    </Link>
+                  </Button>
+                )}
+                {canFlag && (p.status === 'no-show-risk' || p.status === 'late') && (
+                  <Button size="xs" variant="outline" loading={flag.isPending && flag.variables?.shiftId === p.shiftId} onClick={() => flag.mutate(p)}>
+                    <Flag className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                    {t('notIn.flagToSup')}
+                  </Button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {canCover && needCover.length > 1 && <p className="text-xs text-ink-muted">{t('notIn.needCover', { n: needCover.length })}</p>}
+    </>
+  );
+  const textDialog =
+    q.data.canText && textable.length > 0 ? (
+      <CrewTextDialog
+        open={textOpen}
+        onOpenChange={setTextOpen}
+        shiftIds={textable.map((p) => p.shiftId)}
+        label={t('notIn.crewLabel')}
+        count={textable.length}
+        send={sendToLate}
+      />
+    ) : null;
+  if (bare) {
+    return (
+      <div className={cn('space-y-3', className)} data-testid="not-in-bare">
+        {body}
+        {textDialog}
+      </div>
+    );
+  }
   return (
     <Card className={className}>
-      <CardContent className="space-y-3">
-        <SectionTitle
-          as="h3"
-          icon={UserX}
-          title={
-            <>
-              {t('notIn.title')}
-              {missing.length > 0 && <span className="ml-1.5 tabular-nums text-warning">{missing.length}</span>}
-            </>
-          }
-          description={
-            people.length > 0
-              ? t('notIn.desc', { grace: q.data.graceMinutes, risk: q.data.noShowRiskMinutes })
-              : undefined
-          }
-          trailing={
-            q.data.canText && textable.length > 0 ? (
-              <Button size="sm" variant="secondary" onClick={() => setTextOpen(true)}>
-                <MessageSquareText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                {t('notIn.textLate', { n: textable.length })}
-              </Button>
-            ) : undefined
-          }
-        />
-        {people.length === 0 ? (
-          quiet ? (
-            <EmptyState size="sm" icon={Clock} title={quiet.title} description={quiet.description} />
-          ) : (
-            <EmptyState size="sm" icon={CheckCircle2} title={t('notIn.allInTitle')} description={t('notIn.allInDesc')} />
-          )
-        ) : (
-          <ul className="divide-y divide-line" aria-label={t('notIn.listAria')}>
-            {people.map((p) => (
-              <li key={p.shiftId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
-                <Avatar src={photoUrl(p.associateId)} name={p.name} email="" size="sm" />
-                <div className="min-w-0 flex-1">
-                  <Link to={`/people/${p.associateId}`} className="block truncate text-sm font-medium text-ink hover:text-gold hover:underline">
-                    {p.name}
-                  </Link>
-                  <span className="block truncate text-xs text-ink-muted">
-                    {p.position} · {fmtTimeTz(p.startsAt, p.timezone)}
-                    {p.siteName ? ` · ${p.siteName}` : ''}
-                  </span>
-                </div>
-                <Badge variant={STATUS_BADGE[p.status]} size="sm" className="tabular-nums">
-                  {lateness(t, p)}
-                </Badge>
-                <div className="flex flex-wrap gap-1.5">
-                  {p.phone && (
-                    <>
-                      <Button size="xs" variant="outline" asChild>
-                        <a href={`tel:${dialable(p.phone)}`} aria-label={t('notIn.callAria', { name: p.name })}>
-                          <Phone className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                          {t('notIn.call')}
-                        </a>
-                      </Button>
-                      <Button size="xs" variant="outline" asChild>
-                        <a href={`sms:${dialable(p.phone)}`} aria-label={t('notIn.textAria', { name: p.name })}>
-                          <MessageSquareText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                          {t('notIn.text')}
-                        </a>
-                      </Button>
-                    </>
-                  )}
-                  {canCover && needsCover(p) && (
-                    // The shift itself: it's still assigned to them, so the
-                    // call-outs desk (confirmed, released shifts) wouldn't list it.
-                    <Button size="xs" asChild>
-                      <Link to={`/scheduling?shift=${p.shiftId}`}>
-                        {p.status === 'no-show-risk' ? t('notIn.noShowCover') : t('notIn.findCover')}
-                        <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
-                      </Link>
-                    </Button>
-                  )}
-                  {canFlag && (p.status === 'no-show-risk' || p.status === 'late') && (
-                    <Button size="xs" variant="outline" loading={flag.isPending && flag.variables?.shiftId === p.shiftId} onClick={() => flag.mutate(p)}>
-                      <Flag className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                      {t('notIn.flagToSup')}
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        {canCover && needCover.length > 1 && <p className="text-xs text-ink-muted">{t('notIn.needCover', { n: needCover.length })}</p>}
-      </CardContent>
-      {q.data.canText && textable.length > 0 && (
-        <CrewTextDialog
-          open={textOpen}
-          onOpenChange={setTextOpen}
-          shiftIds={textable.map((p) => p.shiftId)}
-          label={t('notIn.crewLabel')}
-          count={textable.length}
-          send={sendToLate}
-        />
-      )}
+      <CardContent className="space-y-3">{body}</CardContent>
+      {textDialog}
     </Card>
   );
 }

@@ -147,13 +147,15 @@ export function weeklySplit(entries: readonly HoursEntry[]): { regularHours: num
     const wo = h <= 40 ? 0 : h - 40;
     reg += wr;
     ot += wo;
-    // The overtime is the week's latest hours.
-    let left = wr;
+    // The overtime is the week's latest hours. Counted in milliseconds, so an
+    // entry wholly inside the 40 carries exactly zero overtime: in float
+    // hours a minute after a 4.75-hour punch kept 1e-15 h of it, and the
+    // associate's earnings read "Overtime unlocked" at 12 hours.
+    let leftMs = Math.min(w.ms, 40 * HOUR);
     for (const { e, ms } of [...w.parts].sort((a, b) => a.e.clockInAt.getTime() - b.e.clockInAt.getTime())) {
-      const worked = ms / HOUR;
-      const r = Math.min(worked, Math.max(0, left));
-      left -= r;
-      allocations.set(e, { date: localParts(e.clockInAt, tzOf(e)).date, workedHours: worked, regularHours: r, overtimeHours: worked - r, doubleTimeHours: 0 });
+      const regMs = Math.min(ms, Math.max(0, leftMs));
+      leftMs -= regMs;
+      allocations.set(e, { date: localParts(e.clockInAt, tzOf(e)).date, workedHours: ms / HOUR, regularHours: regMs / HOUR, overtimeHours: (ms - regMs) / HOUR, doubleTimeHours: 0 });
     }
   }
   return { regularHours: round2(reg), overtimeHours: round2(ot), allocations };

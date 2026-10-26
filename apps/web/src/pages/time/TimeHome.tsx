@@ -109,7 +109,25 @@ export function TimeHome() {
  *  here, with the email HR must match. */
 function ClockNotSetUpStrip() {
   const { t } = useI18n();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // Someone who can add the record themselves (HR) gets one quiet line with
+  // the way to do it — a full-width "Ask HR to add it" banner told HR to ask
+  // HR (F500 2026-10-26). It opens a new application prefilled with them.
+  if (can('manage:onboarding')) {
+    return (
+      <p className="mb-4 flex flex-wrap items-center gap-x-2 text-sm text-ink-muted" data-testid="clock-setup-link">
+        <ScanLine className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span>{t('timeHome.clockNotSetUpShort')}</span>
+        <Link
+          to="/onboarding?new=invite"
+          state={{ invitePrefill: { firstName: user?.firstName ?? '', lastName: user?.lastName ?? '', email: user?.email ?? '' } }}
+          className="inline-flex min-h-6 items-center font-medium text-ink underline underline-offset-2 hover:text-gold-bright coarse:min-h-11"
+        >
+          {t('timeHome.setUpClock')}
+        </Link>
+      </p>
+    );
+  }
   return (
     <section
       aria-label={t('timeHome.ownClockAria')}
@@ -151,7 +169,10 @@ function TabletClockStrip() {
         </div>
         <div className="text-xs text-silver">{t('time.tabletClockHint')}</div>
       </div>
-      <Link to="/time-attendance?mine=1" className="text-xs text-gold underline-offset-2 hover:underline">
+      <Link
+        to="/time-attendance?mine=1"
+        className="inline-flex min-h-8 items-center px-1 text-xs text-gold underline-offset-2 hover:underline coarse:min-h-11 coarse:text-sm"
+      >
         {t('time.myTime')} →
       </Link>
     </section>

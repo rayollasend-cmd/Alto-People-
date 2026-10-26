@@ -53,11 +53,15 @@ describe('BillingHome', () => {
     expect(history).toHaveTextContent('September 2026');
     expect(history).toHaveTextContent('198');
     expect(history).toHaveTextContent('Due');
-    expect(history).toHaveTextContent('No activity counted');
+    // A month with nothing counted folds into one line under the table, not a row of dashes.
+    expect(history).not.toHaveTextContent('July 2026');
+    expect(screen.getByText('Nothing was counted in July 2026.')).toBeTruthy();
+    // This month leads the table, so far.
+    expect(history).toHaveTextContent('October 2026so far');
     const results = await axe(container, { rules: { 'color-contrast': { enabled: false }, region: { enabled: false } } });
     expect(results.violations).toHaveLength(0);
   });
-  it('says in one line when the last six months counted nothing, instead of six rows of zeros', async () => {
+  it('says in one line when the last six months counted nothing, names the plan in words, and drops worker types it never counted', async () => {
     const { apiFetch } = await import('@/lib/api');
     vi.mocked(apiFetch).mockImplementationOnce(async () => ({
       plan: 'internal', invoiced: false, stripe: 'off', month: '2026-10', daysCounted: 3, running: { PERSON: 1, AGENT: 0, ROBOT: 0 },
@@ -65,7 +69,14 @@ describe('BillingHome', () => {
       invoices: [],
     }) as never);
     renderAs('HR_ADMINISTRATOR', <BillingHome />, '/admin/billing');
-    expect(await screen.findByText('No activity was counted from April 2026 to September 2026.')).toBeTruthy();
-    expect(screen.queryByRole('table', { name: /Billable workers by month/ })).toBeNull();
+    expect(await screen.findByText('Nothing was counted from April 2026 to September 2026.')).toBeTruthy();
+    // The usage table still stands, with this month in it.
+    expect(screen.getByRole('table', { name: /Billable workers by month/ })).toHaveTextContent('October 2026');
+    // "Plan Internal · Not invoiced" read as unfinished: the plan in words, and what it means.
+    expect(screen.getByTestId('page-facts')).toHaveTextContent('Internal plan');
+    expect(screen.getByTestId('page-facts')).toHaveTextContent('Not invoiced');
+    expect(screen.getByTestId('billing-internal')).toHaveTextContent('Internal plan accounts aren’t invoiced');
+    // No AI agents were ever counted: no "AI agents 0" tile or column.
+    expect(screen.queryByText('AI agents')).toBeNull();
   });
 });

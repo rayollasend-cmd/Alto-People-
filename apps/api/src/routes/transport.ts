@@ -74,6 +74,7 @@ import {
   transportPhotoUrl,
   vanLook,
 } from '../lib/transport.js';
+import { fmtDayInZone } from '../lib/humanDates.js';
 
 /**
  * Transportation — the Alto vans (lib/transport for the model).
@@ -2587,7 +2588,7 @@ transportRouter.post('/authorizations/remind', MANAGE, async (req, res) => {
         subject: 'Sign your ride authorization',
         body:
           (p.heldCents > 0 ? `${money(p.heldCents)} for ${p.heldRides === 1 ? 'a ride' : `${p.heldRides} rides`} you took is held until you sign. ` : '') +
-          (p.nextRideAt ? `Your next ride is ${fmtTime(new Date(p.nextRideAt), DEFAULT_TIMEZONE)} on ${dateKeyInZone(new Date(p.nextRideAt), DEFAULT_TIMEZONE)}. ` : '') +
+          (p.nextRideAt ? `Your next ride is ${fmtTime(new Date(p.nextRideAt), DEFAULT_TIMEZONE)} on ${fmtDayInZone(new Date(p.nextRideAt), DEFAULT_TIMEZONE, { weekday: true })}. ` : '') +
           'Rides can only be taken from pay with your signed authorization — it takes a minute.',
         category: 'transport',
         linkUrl: '/rides?sign=1',

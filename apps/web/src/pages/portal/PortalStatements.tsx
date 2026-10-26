@@ -4,6 +4,8 @@ import { useI18n } from '@/lib/i18n';
 import { fmtDateOnly, fmtDateOnlyRange, fmtHours, fmtMoney, fmtStatementNo } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import '@/lib/i18n/en/portal';
 
@@ -115,5 +117,53 @@ export function OpenBalance({ balance }: { balance: { count: number; amount: num
         ? t('portal.stBalance', { amount: fmtMoney(balance.amount), count: balance.count })
         : t('portal.stBalanceCount', { count: balance.count })}
     </span>
+  );
+}
+
+/** Where the portal's billing lives: History's Billing section (statements are not the floor). */
+export function billingHref(scopeQs: string): string {
+  return `/portal/history${scopeQs}#billing`;
+}
+
+/**
+ * Billing, apart from the operations record (F500 2026-10-26: past-due
+ * statements led the store home's Needs you, in red, above the floor). The
+ * open balance once, then the latest statements — whatever range the page
+ * around it is showing, because a bill does not stop being owed when the
+ * range moves on.
+ */
+export function PortalBilling({
+  statements,
+  balance,
+  inStore,
+  actions,
+}: {
+  statements: PortalStatement[];
+  balance: { count: number; amount: number | null; pastDue: number } | undefined;
+  inStore: boolean;
+  actions?: (s: PortalStatement) => ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <section id="billing" className="scroll-mt-20" aria-label={t('portal.billingTitle')} data-testid="portal-billing">
+      <SectionTitle
+        wrap
+        className="mb-0"
+        title={t('portal.billingTitle')}
+        description={statements.length > 0 ? t('portal.billingSub') : undefined}
+        trailing={<OpenBalance balance={balance} />}
+      />
+      {statements.length === 0 ? (
+        <EmptyState size="sm" icon={FileText} title={t('portal.stNone')} className="mt-3" />
+      ) : (
+        <>
+          <ul className="mt-2 divide-y divide-line">
+            {statements.map((s) => (
+              <StatementRow key={s.id} s={s} inStore={inStore} actions={actions?.(s)} />
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
   );
 }

@@ -66,7 +66,7 @@ describe('Organization profile', () => {
   it('loads the profile, toggles a module, edits a term and sends only what changed', async () => {
     const user = userEvent.setup();
     renderPage();
-    const transport = await screen.findByRole('checkbox', { name: /^Transportation/ });
+    const transport = await screen.findByRole('switch', { name: 'Transportation' });
     expect(transport).toBeChecked();
     expect(screen.getByDisplayValue('Workforce provider')).toBeInTheDocument();
 
@@ -90,7 +90,7 @@ describe('Organization profile', () => {
 
   it('names the assistant by what this tenant calls it: two tenants, two names, never a fixed one', async () => {
     renderPage({ ...DEFAULT_TENANT, assistantName: 'Coco' });
-    await screen.findByRole('checkbox', { name: /^Transportation/ });
+    await screen.findByRole('switch', { name: 'Transportation' });
     expect(screen.getByText(/The words here reach the navigation, the roles and Coco\./)).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('tab', { name: 'Terminology' }));
     expect(screen.getByText(/the screens and Coco use/)).toBeInTheDocument();
@@ -98,7 +98,7 @@ describe('Organization profile', () => {
     cleanup();
 
     renderPage({ ...DEFAULT_TENANT, assistantName: 'Max' });
-    await screen.findByRole('checkbox', { name: /^Transportation/ });
+    await screen.findByRole('switch', { name: 'Transportation' });
     expect(screen.getByText(/the roles and Max\./)).toBeInTheDocument();
     expect(screen.queryByText(/Coco/)).toBeNull();
   });
@@ -106,14 +106,14 @@ describe('Organization profile', () => {
   it('resets to the model\'s defaults after a confirm', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByRole('checkbox', { name: /^Transportation/ });
+    await screen.findByRole('switch', { name: 'Transportation' });
     await user.click(screen.getByRole('button', { name: "Reset to the model's defaults" }));
     await waitFor(() => expect(saveTenantProfile).toHaveBeenCalledWith({ businessModel: 'WORKFORCE_PROVIDER', resetToDefaults: true }));
   });
 
   it('the header says what this organization is, each number linked to its list', async () => {
     renderPage();
-    await screen.findByRole('checkbox', { name: /^Transportation/ });
+    await screen.findByRole('switch', { name: 'Transportation' });
     const fact = (label: string) => screen.getByText(label, { selector: 'dt' }).nextElementSibling!;
     expect(fact('Name')).toHaveTextContent('Coastal Resort Holdings');
     expect(fact('Plan')).toHaveTextContent('Growth');
@@ -136,5 +136,18 @@ describe('Organization profile', () => {
     await waitFor(() => expect(patchOrgBranding).toHaveBeenCalledWith({ weekStartsOn: 1, timezone: 'America/New_York' }));
     // Only the calendar changed: the profile is not re-sent.
     expect(saveTenantProfile).not.toHaveBeenCalled();
+  });
+});
+
+describe('Organization › Modules reads cleanly (F500 2026-10-26)', () => {
+  it('short titles in the menu’s words, each page named once, and no "answer not found"', async () => {
+    renderPage();
+    const time = await screen.findByRole('switch', { name: 'Time & attendance' });
+    const card = time.closest('li')!;
+    const menu = within(card).getByText(/^Menu:/).textContent ?? '';
+    expect(menu.match(/Time & attendance/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    expect(screen.getByRole('switch', { name: 'Talent programs' })).toBeInTheDocument();
+    expect(screen.queryByText(/\(skills, career/)).toBeNull();
+    expect(screen.queryByText(/answer not found/)).toBeNull();
   });
 });

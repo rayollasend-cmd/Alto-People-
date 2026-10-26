@@ -79,6 +79,27 @@ describe('MessagesHome (F500)', () => {
     expect(screen.queryByRole('textbox', { name: 'Search messages' })).toBeNull();
   });
 
+  it('an empty inbox is one empty state with one labelled "New message" — no second pane, no icon-only button', async () => {
+    page('ASSOCIATE', '/messages');
+    await screen.findByText('No conversations yet');
+    expect(screen.getAllByRole('button', { name: 'New message' })).toHaveLength(1);
+    expect(screen.getByTestId('msg-new')).toHaveTextContent('New message');
+    // The "pick a conversation" pane only shows beside a list.
+    expect(screen.queryByText('Pick a conversation')).toBeNull();
+  });
+
+  it('with conversations, the header carries the one labelled "New message"', async () => {
+    vi.mocked(listConversations).mockResolvedValue({
+      conversations: [
+        { id: 'c1', kind: 'DIRECT', title: 'Ana Reyes', participants: [ana], unread: 0, lastPreview: 'See you Friday', lastMessageAt: new Date().toISOString() },
+      ],
+    } as unknown as Awaited<ReturnType<typeof listConversations>>);
+    page('ASSOCIATE', '/messages');
+    await screen.findByText('See you Friday');
+    expect(screen.getAllByRole('button', { name: 'New message' })).toHaveLength(1);
+    expect(screen.queryByText('No conversations yet')).toBeNull();
+  });
+
   it('a new conversation needs its first message', async () => {
     const { messageDirectory } = await import('@/lib/messagesApi');
     vi.mocked(messageDirectory).mockResolvedValue({ people: [{ ...ana, clientName: null }] });

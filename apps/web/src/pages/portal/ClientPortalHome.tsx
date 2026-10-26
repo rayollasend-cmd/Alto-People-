@@ -30,7 +30,6 @@ import {
   fmtHours,
   fmtMoney,
   fmtShiftRangeTz,
-  fmtStatementNo,
   fmtTime,
   fmtTimeTz,
   parseYmd,
@@ -47,13 +46,15 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import type { PageAction } from '@/components/ui/PageHeader';
 import { HomeMeta } from '@/components/home/HomeMeta';
-import { OpenBalance, StatementRow, type PortalStatement } from './PortalStatements';
+import { billingHref, type PortalStatement } from './PortalStatements';
+import { DELIVERED_TARGET_PCT, midSentence } from './words';
 import { PortalRequests, type RequestPrefill } from './PortalRequests';
 import { groupWaves, wavePresent } from './waves';
 import { PushPrompt } from '@/components/PushPrompt';
@@ -319,14 +320,6 @@ function ReviewedMark({
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
-const GRADE_STYLE: Record<NonNullable<PortalOverview['reliability']['grade']>, string> = {
-  A: 'text-success',
-  B: 'text-success',
-  C: 'text-warning',
-  D: 'text-alert',
-  F: 'text-alert',
-};
-
 /** Build the API query string for the caller's scope: admins pass the
  *  preview client (+ store); a client-wide portal account may drill into
  *  one of its own stores. */
@@ -430,13 +423,14 @@ export function ClientPortalHome() {
     return (
       <HomeTemplate
         title={t('portal.title')}
-        topbarTitle={t('portal.title')}
+        topbarTitle={t('portal.homeCrumb')}
         subtitle={t('portal.subtitle')}
         hero={
               <EmptyState
                 icon={Building2}
                 title={t('portal.onFloorNow')}
-                description={query.error instanceof ApiError && query.error.message ? query.error.message : t('portal.loadFailed')}
+                // A refusal (4xx) says why; a server fault is never "Request failed (500)".
+                description={query.error instanceof ApiError && query.error.status < 500 && query.error.message ? query.error.message : t('portal.loadFailed')}
                 action={
                   <div className="flex flex-wrap justify-center gap-2">
                     {isRegionAccount && (
@@ -463,7 +457,7 @@ export function ClientPortalHome() {
 
   if (!data) {
     return (
-      <HomeTemplate title={t('portal.title')} topbarTitle={t('portal.title')} subtitle={t('portal.subtitle')} hero={<Skeleton className="h-64" />}>
+      <HomeTemplate title={t('portal.title')} topbarTitle={t('portal.homeCrumb')} subtitle={t('portal.subtitle')} hero={<Skeleton className="h-64" />}>
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
@@ -513,6 +507,7 @@ export function ClientPortalHome() {
   const hoursPct =
     data.week.hours > 0 ? Math.min(100, Math.round((data.week.workedHours / data.week.hours) * 100)) : null;
   const tomorrowTotal = data.tomorrow.confirmed + data.tomorrow.unconfirmed + data.tomorrow.open;
+  const weekScheduled = data.week.filled + data.week.open;
   // The card used to lead with LAST NIGHT and only fall back to today, so
   // at ten in the morning a store manager saw a finished overnight while
   // the morning crew was on the floor in front of them. It leads with now.
@@ -544,13 +539,20 @@ export function ClientPortalHome() {
   // The contract, said where it bites: nothing scheduled today against it.
   const scheduledToday = data.today.roster.filter((r) => r.state !== 'open').length;
   const nothingScheduled = target !== null && scheduledToday === 0;
-  const windowName = data.now.targetLabel ?? t('portal.heroContracted');
+  // The window's own name, said mid-sentence ("today's morning window");
+  // without one the sentences say the contract plainly.
+  const windowLabel = data.now.targetLabel ? midSentence(data.now.targetLabel) : null;
   const requestCoverage = (when: 'today' | 'tomorrow') => {
     const day = when === 'today' ? data.today.date : shiftDays(data.today.date, 1);
     setPrefill({
       kind: 'STAFFING',
       subject: t('portal.coverageSubject', { date: fmtDateOnly(day, { weekday: true, year: 'auto' }) }),
-      body: when === 'today' && target !== null ? t('portal.coverageBody', { window: windowName, target }) : '',
+      body:
+        when === 'today' && target !== null
+          ? windowLabel
+            ? t('portal.coverageBody', { window: windowLabel, target })
+            : t('portal.coverageBodyPlain', { target })
+          : '',
       nonce: Date.now(),
     });
   };
@@ -563,23 +565,11 @@ export function ClientPortalHome() {
   const contractedHours4w = sum((w) => w.contracted);
 
   // ---- Needs you: what the store manager has to do, each with its link ----
+  // Billing is not the floor: statements live under History › Billing, and
+  // the home says an unpaid balance once, in a neutral line (F500 2026-10-26).
   const bal = data.balance;
+  const billingTo = billingHref(qs);
   const needs: NeedRow[] = [];
-  if (bal && bal.pastDue > 0) {
-    needs.push({
-      key: 'statements',
-      tone: 'alert',
-      icon: FileText,
-      title: t('portal.needStatements', { count: bal.pastDue }),
-      sub: [
-        bal.pastDueAmount !== null ? fmtMoney(bal.pastDueAmount) : null,
-        bal.oldestDaysPastDue !== null ? t('portal.needOldest', { count: bal.oldestDaysPastDue }) : null,
-      ]
-        .filter(Boolean)
-        .join(' · '),
-      href: '#portal-statements',
-    });
-  }
   if (canAct && data.serviceReport.hadShifts !== false && !data.serviceReport.reviewed) {
     needs.push({
       key: 'report',
@@ -635,7 +625,7 @@ export function ClientPortalHome() {
       ? [
           {
             key: 'request',
-            label: t('portal.requestCoverage'),
+            label: t('portal.reqNew'),
             icon: MessageSquarePlus,
             primary: true,
             onSelect: () => requestCoverage('today'),
@@ -644,7 +634,7 @@ export function ClientPortalHome() {
           },
         ]
       : []),
-    { key: 'report', label: t('portal.svcReport'), icon: FileText, primary: !canAct || nothingScheduled, onSelect: () => setReportOpen(true), hint: t('portal.svcReportHint') },
+    { key: 'report', label: t('portal.svcReport'), icon: FileText, primary: !canAct, onSelect: () => setReportOpen(true), hint: t('portal.svcReportHint') },
     { key: 'schedule', label: t('portal.openSchedule'), icon: CalendarDays, to: scheduleTo },
   ];
   const relWeeks = data.reliability.weeks.map((w) => ({
@@ -660,7 +650,7 @@ export function ClientPortalHome() {
     <HomeTemplate
         className="print-area"
         title={data.store ? data.store.name : data.client.name}
-        topbarTitle={t('portal.title')}
+        topbarTitle={t('portal.homeCrumb')}
         subtitle={
           data.store ? (
             <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -694,8 +684,6 @@ export function ClientPortalHome() {
                     ? t('portal.reportReviewedBy', { name: data.serviceReport.reviewed.reviewedBy, date: fmtDate(data.serviceReport.reviewed.reviewedAt) })
                     : t('portal.reportReviewed', { date: fmtDate(data.serviceReport.reviewed.reviewedAt) })}
                 </span>
-              ) : data.serviceReport.hadShifts !== false ? (
-                <span key="report" className="text-warning">{t('portal.reportNotReviewed')}</span>
               ) : null,
             ]}
           />
@@ -745,13 +733,16 @@ export function ClientPortalHome() {
                 {target !== null
                   ? nothingScheduled
                     ? // The real problem, said: nothing scheduled against the contract.
-                      t('portal.heroNothingScheduled', { window: windowName, target })
+                      windowLabel
+                      ? t('portal.heroNothingScheduled', { window: windowLabel, target })
+                      : t('portal.heroNothingScheduledPlain', { target })
                     : short
-                      ? t('portal.heroShort', {
-                          missing: target - onFloor.length,
-                          window: windowName,
-                        })
-                      : t('portal.heroMet', { window: windowName })
+                      ? windowLabel
+                        ? t('portal.heroShortWindow', { missing: target - onFloor.length, window: windowLabel })
+                        : t('portal.heroShort', { missing: target - onFloor.length, window: t('portal.heroContracted') })
+                      : windowLabel
+                        ? t('portal.heroMetWindow', { window: windowLabel })
+                        : t('portal.heroMet', { window: t('portal.heroContracted') })
                   : data.now.scheduledNow > 0
                     ? t('portal.onOfSched', { on: onFloor.length, sched: data.now.scheduledNow })
                     : onFloor.length > 0
@@ -761,7 +752,7 @@ export function ClientPortalHome() {
               {canAct && nothingScheduled && (
                 <Button size="sm" className="mt-3 print:hidden" onClick={() => requestCoverage('today')}>
                   <MessageSquarePlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                  {t('portal.requestCoverage')}
+                  {t('portal.reqNew')}
                 </Button>
               )}
               {onFloor.length > 0 && (
@@ -820,7 +811,7 @@ export function ClientPortalHome() {
       </Card>
         }
         banners={
-          isPortal ? (
+          isPortal || (bal && bal.pastDue > 0) ? (
             <>
               {/* A region account opened one of its stores: back is the command
                   center (/portal with no store is "Pick a store in your region"). */}
@@ -830,7 +821,28 @@ export function ClientPortalHome() {
                   {t('portal.backToRegion')}
                 </Link>
               )}
-              <PushPrompt />
+              {isPortal && <PushPrompt />}
+              {/* Money, said once and calmly: the statements themselves live
+                  under History › Billing. The Inbox's #portal-statements lands here. */}
+              {bal && bal.pastDue > 0 && (
+                <ErrorBanner
+                  id="portal-statements"
+                  severity="info"
+                  className="scroll-mt-20 print:hidden"
+                  data-testid="portal-billing-banner"
+                  action={
+                    <Button size="sm" variant="secondary" asChild>
+                      <Link to={billingTo}>{t('portal.billingOpen')}</Link>
+                    </Button>
+                  }
+                >
+                  <span className="tabular-nums">
+                    {bal.pastDueAmount !== null
+                      ? t(bal.pastDue === 1 ? 'portal.billingPastDueOne' : 'portal.billingPastDue', { count: bal.pastDue, amount: fmtMoney(bal.pastDueAmount) })
+                      : t(bal.pastDue === 1 ? 'portal.billingPastDueCountOne' : 'portal.billingPastDueCount', { count: bal.pastDue })}
+                  </span>
+                </ErrorBanner>
+              )}
             </>
           ) : undefined
         }
@@ -876,7 +888,8 @@ export function ClientPortalHome() {
                               {text}
                             </span>
                           )}
-                          {n.action && <span className="pb-2 sm:pb-0">{n.action}</span>}
+                          {/* Below the text on a phone: beside it, the title squeezed to a word a line. */}
+                          {n.action && <span className="basis-full pb-2 pl-7 sm:basis-auto sm:pb-0 sm:pl-0">{n.action}</span>}
                         </li>
                       );
                     })}
@@ -961,19 +974,23 @@ export function ClientPortalHome() {
                 }
               : null
           }
-          sub={t('portal.kpiFillSub', { filled: data.week.filled, total: data.week.filled + data.week.open })}
+          // Nothing scheduled yet is said, not shown as "0 of 0 shifts filled".
+          sub={weekScheduled > 0 ? t('portal.kpiFillSub', { filled: data.week.filled, total: weekScheduled }) : t('portal.covNothingScheduledTile')}
         />
-        {/* The grade explains itself: the person-hours behind the letter (as History says). */}
+        {/* Contracted hours delivered leads, as a percentage with its
+            person-hours under it — no letter grade on the client's own home
+            (a red "F" beside "100% filled" read as a contradiction). */}
         <MetricCard
-          label={t('portal.kpiGrade')}
+          label={data.reliability.basis === 'schedule' ? t('portal.kpiShowedUp') : t('portal.kpiDelivered')}
           href={`/portal/history${qs}`}
-          value={
-            <span className={data.reliability.grade ? GRADE_STYLE[data.reliability.grade] : 'text-silver/50'}>
-              {data.reliability.grade ?? '—'}
-            </span>
+          value={data.reliability.score !== null ? `${data.reliability.score}%` : '—'}
+          valueTitle={t('portal.deliveredDef')}
+          meter={
+            data.reliability.score !== null
+              ? { percent: data.reliability.score, tone: data.reliability.score >= DELIVERED_TARGET_PCT ? 'good' : 'warn' }
+              : null
           }
-          valueTitle={data.reliability.grade ?? undefined}
-          deltaText={data.reliability.score !== null ? { text: t('portal.relScore', { score: data.reliability.score }), tone: 'neutral' } : null}
+          deltaText={data.reliability.score !== null ? { text: t('portal.deliveredTarget', { pct: DELIVERED_TARGET_PCT }), tone: 'neutral' } : null}
           hint={
             contractedHours4w > 0
               ? t('portal.kpiDeliveredSub', {
@@ -982,7 +999,7 @@ export function ClientPortalHome() {
                 })
               : pastWeeks.some((w) => w.total > 0)
                 ? t('portal.kpiGradeSub', { ncns: sum((w) => w.noCallNoShows), replaced: sum((w) => w.replaced) })
-                : t('portal.relNoHistory')
+                : t('portal.relNoHistoryPlain')
           }
         />
         {/* Scheduled against the contract, this week — the gap the page used never to say. */}
@@ -1041,521 +1058,489 @@ export function ClientPortalHome() {
         />
       </MetricStrip>
 
-      {/* items-start: a short card no longer stretches to its tall neighbour (200px of nothing). */}
-      <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-12">
-        {/* ---- Today by shift (the full list lives on /portal/today) ---- */}
-        <Card className="animate-enter xl:col-span-5" style={enterStagger(2)}>
-          <CardContent>
-            <SectionTitle
-              size="sm"
-              className="mb-0"
-              title={t('portal.todayByShift')}
-              trailing={
-                <Link to={`/portal/today${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
-                  {t('portal.todayOpen')}
-                </Link>
-              }
-            />
-            {waves.length === 0 ? (
-              <p className="mt-3 text-sm text-silver/60">{t('portal.noShiftsToday')}</p>
-            ) : (
-              <ul className="mt-3 space-y-3">
-                {waves.map((w) => {
-                  const inCount = w.phase === 'finished' ? wavePresent(w) : w.clockedIn.length;
-                  const pct = w.expected > 0 ? Math.round((inCount / w.expected) * 100) : 0;
-                  const short = w.phase === 'live' && inCount < w.expected;
-                  return (
-                    <li key={w.key}>
-                      <Link
-                        to={`/portal/today${qs}`}
-                        className="-mx-2 block rounded-md px-2 py-1 hover:bg-navy-secondary/30"
-                      >
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span
-                            className={cn(
-                              'text-sm tabular-nums',
-                              w.phase === 'finished' ? 'text-silver/70' : 'text-white',
-                            )}
-                          >
-                            {fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone)}
-                            {w.phase === 'live' && (
-                              <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">
-                                {t('portal.live')}
-                              </span>
-                            )}
-                          </span>
-                          <span
-                            className={cn(
-                              'text-sm font-semibold tabular-nums',
-                              short ? 'text-warning' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
-                            )}
-                          >
-                            {w.phase === 'upcoming'
-                              ? t('portal.waveExpected', { expected: w.expected })
-                              : t('portal.waveInOfShort', { in: inCount, expected: w.expected })}
-                            {w.open.length > 0 && (
-                              <span className="text-alert"> · {t('portal.openCount', { count: w.open.length })}</span>
-                            )}
-                          </span>
-                        </div>
-                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
-                          <div
-                            className={cn(
-                              'h-full rounded-full',
-                              w.phase === 'upcoming' ? 'bg-silver/30' : short ? 'bg-warning' : 'bg-success',
-                            )}
-                            style={{ width: `${w.phase === 'upcoming' ? 100 : pct}%` }}
-                          />
-                        </div>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* ---- Your Alto lead ------------------------------------------ */}
-        <Card className="animate-enter xl:col-span-3" style={enterStagger(3)}>
-          <CardContent>
-            <SectionTitle size="sm" className="mb-0" icon={HardHat} title={t('portal.leadTitle')} />
-            {data.leads.people.length === 0 ? (
-              <p className="mt-3 text-sm text-silver/60">
-                {data.leads.supportEmail ? t('portal.leadNoneEmail') : t('portal.leadNone')}
-              </p>
-            ) : (
-              <ul className="mt-3 space-y-3">
-                {data.leads.people.map((p) => (
-                  <li key={p.email} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                    {/* The API's photoUrl: null means no photo on file — initials, no request that 404s. */}
-                    <Avatar src={p.photoUrl !== undefined ? (p.photoUrl ?? undefined) : userPhotoUrl(p.userId)} name={p.name} email={p.email} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 text-sm font-medium text-white">
-                        <span className="truncate">{p.name}</span>
-                        <a
-                          href={`mailto:${p.email}`}
-                          aria-label={t('portal.emailPerson', { name: p.name })}
-                          title={p.email}
-                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/70 hover:text-gold print:hidden"
+      {/* Two columns that stack on their own: the floor and its record on the
+          left, the people and evidence in a rail on the right — rows of mixed
+          heights left 200–300px holes beside the tall cards (F500 2026-10-26). */}
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
+        <div className="min-w-0 space-y-4 xl:col-span-8">
+          {/* ---- Today by shift (the full list lives on /portal/today). Nothing
+               today: the hero already says so — no card to say it again. ---- */}
+          {waves.length > 0 && (
+          <Card className="animate-enter" style={enterStagger(2)}>
+            <CardContent>
+              <SectionTitle
+                size="sm"
+                className="mb-0"
+                title={t('portal.todayByShift')}
+                trailing={
+                  <Link to={`/portal/today${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
+                    {t('portal.todayOpen')}
+                  </Link>
+                }
+              />
+              {waves.length === 0 ? (
+                <p className="mt-3 text-sm text-silver/60">{t('portal.noShiftsToday')}</p>
+              ) : (
+                <ul className="mt-3 space-y-3">
+                  {waves.map((w) => {
+                    const inCount = w.phase === 'finished' ? wavePresent(w) : w.clockedIn.length;
+                    const pct = w.expected > 0 ? Math.round((inCount / w.expected) * 100) : 0;
+                    const short = w.phase === 'live' && inCount < w.expected;
+                    return (
+                      <li key={w.key}>
+                        <Link
+                          to={`/portal/today${qs}`}
+                          className="-mx-2 block rounded-md px-2 py-1 hover:bg-navy-secondary/30"
                         >
-                          <Mail className="h-3.5 w-3.5" aria-hidden="true" />
-                        </a>
-                        {p.onFloor && (
-                          <span className="relative flex h-2 w-2" aria-hidden="true">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-                            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-                          </span>
+                          <div className="flex items-baseline justify-between gap-3">
+                            <span
+                              className={cn(
+                                'text-sm tabular-nums',
+                                w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+                              )}
+                            >
+                              {fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone)}
+                              {w.phase === 'live' && (
+                                <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">
+                                  {t('portal.live')}
+                                </span>
+                              )}
+                            </span>
+                            <span
+                              className={cn(
+                                'text-sm font-semibold tabular-nums',
+                                short ? 'text-warning' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+                              )}
+                            >
+                              {w.phase === 'upcoming'
+                                ? t('portal.waveExpected', { expected: w.expected })
+                                : t('portal.waveInOfShort', { in: inCount, expected: w.expected })}
+                              {w.open.length > 0 && (
+                                <span className="text-alert"> · {t('portal.openCount', { count: w.open.length })}</span>
+                              )}
+                            </span>
+                          </div>
+                          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+                            <div
+                              className={cn(
+                                'h-full rounded-full',
+                                w.phase === 'upcoming' ? 'bg-silver/30' : short ? 'bg-warning' : 'bg-success',
+                              )}
+                              style={{ width: `${w.phase === 'upcoming' ? 100 : pct}%` }}
+                            />
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+          )}
+
+          {/* ---- This week: fill by day ------------------------------------ */}
+          <Card className="animate-enter" style={enterStagger(5)}>
+            <CardContent>
+              <SectionTitle
+                size="sm"
+                className="mb-0"
+                icon={CalendarDays}
+                title={t('portal.week')}
+                trailing={
+                  <span className="text-xs text-silver/60 tabular-nums">
+                    {fmtDate(parseYmd(data.week.start))} – {fmtDate(parseYmd(data.week.end))}
+                  </span>
+                }
+              />
+              <div className="mt-3">
+                <WeekFillChart
+                  days={weekDays}
+                  todayKey={data.today.date}
+                  labels={{
+                    filled: t('portal.chartFilled'),
+                    open: t('portal.chartOpen'),
+                    heading: (d) => {
+                      const row = weekDays.find((x) => x.day === d);
+                      return row ? fmtDate(parseYmd(row.date)) : d;
+                    },
+                  }}
+                />
+              </div>
+              <p className="mt-2 text-sm text-silver tabular-nums">
+                {data.week.fillRatePct !== null
+                  ? t('portal.weekSentence', { pct: data.week.fillRatePct, hours: fmtHours(data.week.hours) })
+                  : t('portal.weekHoursOnly', { hours: fmtHours(data.week.hours) })}
+                <span className="text-silver/60"> · {t('portal.weekDelivered', { worked: fmtHours(data.week.workedHours) })}</span>
+              </p>
+              <DetailsTable
+                label={t('portal.details')}
+                columns={[t('portal.chartDay'), t('portal.chartFilled'), t('portal.chartOpen')]}
+                rows={data.week.days.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
+              />
+            </CardContent>
+          </Card>
+
+          {/* ---- Reliability (4 weeks) ------------------------------------ */}
+          <Card className="animate-enter" style={enterStagger(6)}>
+            <CardContent>
+              <SectionTitle
+                size="sm"
+                className="mb-0"
+                icon={ShieldCheck}
+                title={t('portal.reliability')}
+                trailing={
+                  // The figure, in ink — the bar beside it says where the target sits.
+                  <span className="text-2xl font-semibold leading-none tracking-tight text-ink tabular-nums">
+                    {data.reliability.score !== null ? `${data.reliability.score}%` : '—'}
+                  </span>
+                }
+              />
+              <p className="mt-1 text-xs text-silver/70">
+                {data.reliability.basis === 'schedule' ? t('portal.showedUpDef') : t('portal.deliveredDef')}
+              </p>
+              <div className="mt-3">
+                <ReliabilityChart
+                  weeks={relWeeks}
+                  labels={{
+                    fill: t('portal.chartShowed'),
+                    target: t('portal.chartTarget'),
+                    heading: (l) => {
+                      const w = relWeeks.find((x) => x.label === l);
+                      return w ? `${fmtDate(parseYmd(w.start))} – ${fmtDate(parseYmd(w.end))}` : l;
+                    },
+                  }}
+                />
+              </div>
+              <p className="mt-2 text-sm text-silver tabular-nums">
+                {pastWeeks.some((w) => w.total > 0)
+                  ? t('portal.relMonthLine', {
+                      ncns: sum((w) => w.noCallNoShows),
+                      lates: sum((w) => w.lates),
+                      replaced: sum((w) => w.replaced),
+                    })
+                  : t('portal.relNoHistoryPlain')}
+              </p>
+              <p className="mt-1 text-xs text-silver/70 tabular-nums">
+                {t('portal.relThisWeek')}{' '}
+                {covParts.length > 0 ? (
+                  covParts.join(' · ')
+                ) : weekScheduled === 0 ? (
+                  // Nothing on the schedule is not "full coverage" — said plainly, no green.
+                  t('portal.covNothingScheduled')
+                ) : data.week.open > 0 ? (
+                  t('portal.covNoIncidents')
+                ) : (
+                  <span className="text-success">{t('portal.covClean')}</span>
+                )}
+                {replaced && <span className="text-success"> · {replaced}</span>}
+              </p>
+              {data.reliability.basis === 'schedule' && (
+                <p className="mt-2 text-xs text-warning">{t('portal.relBasisSchedulePlain')}</p>
+              )}
+              <DetailsTable
+                label={t('portal.details')}
+                columns={[
+                  t('portal.chartWeek'),
+                  t('portal.chartShowed'),
+                  t('portal.chartShowedUp'),
+                  t('portal.chartFillPct'),
+                  t('portal.covNoShowCol'),
+                  t('portal.covCallOutCol'),
+                  t('portal.covLateCol'),
+                  t('portal.covReplacedCol'),
+                ]}
+                rows={data.reliability.weeks.map((w) => [
+                  `${fmtDate(parseYmd(w.start))} – ${fmtDate(parseYmd(w.end))}`,
+                  w.reliabilityPct === null ? '—' : `${w.reliabilityPct}%`,
+                  w.showedUpPct === null ? '—' : `${w.showedUpPct}%`,
+                  w.fillPct === null ? '—' : `${w.fillPct}%`,
+                  w.noCallNoShows,
+                  w.callOuts,
+                  w.lates,
+                  w.replaced,
+                ])}
+              />
+            </CardContent>
+          </Card>
+
+        </div>
+        <div className="grid min-w-0 content-start gap-4 md:grid-cols-2 xl:col-span-4 xl:grid-cols-1">
+          {/* ---- Your Alto lead ------------------------------------------ */}
+          <Card className="animate-enter" style={enterStagger(3)}>
+            <CardContent>
+              <SectionTitle size="sm" className="mb-0" icon={HardHat} title={t('portal.leadTitle')} />
+              {data.leads.people.length === 0 ? (
+                <p className="mt-3 text-sm text-silver/60">
+                  {data.leads.supportEmail ? t('portal.leadNoneEmail') : t('portal.leadNone')}
+                </p>
+              ) : (
+                <ul className="mt-3 space-y-3">
+                  {data.leads.people.map((p) => (
+                    <li key={p.email} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      {/* The API's photoUrl: null means no photo on file — initials, no request that 404s. */}
+                      <Avatar src={p.photoUrl !== undefined ? (p.photoUrl ?? undefined) : userPhotoUrl(p.userId)} name={p.name} email={p.email} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-sm font-medium text-white">
+                          <span className="truncate">{p.name}</span>
+                          <a
+                            href={`mailto:${p.email}`}
+                            aria-label={t('portal.emailPerson', { name: p.name })}
+                            title={p.email}
+                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/70 hover:text-gold print:hidden"
+                          >
+                            <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                          </a>
+                          {p.onFloor && (
+                            <span className="relative flex h-2 w-2" aria-hidden="true">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+                              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-silver/70">
+                          {t(p.title === 'supervisor' ? 'portal.leadSupervisor' : 'portal.leadFloor')}
+                          {p.shifts && p.shifts.length > 0 && <span className="text-silver"> · {p.shifts.join(', ')}</span>}
+                          {p.onFloor && <span className="text-success"> · {t('portal.leadOnFloor')}</span>}
+                          {p.runningOps && <span className="text-gold"> · {t('portal.leadRunningOps')}</span>}
+                        </div>
+                      </div>
+                      {/* Actions take their own row so the name never squeezes —
+                          two equal buttons side by side, not a button over a bare link. */}
+                      {(canAct || p.phone) && (
+                      <div className="grid w-full grid-cols-2 gap-2 pl-11 print:hidden">
+                        {canAct && (
+                          <Button size="sm" variant="secondary" className="w-full" asChild>
+                            <Link to={`/messages?to=${p.userId}`} aria-label={`${t('portal.messageLead')} ${p.name}`}>
+                              <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                              {t('portal.messageLead')}
+                            </Link>
+                          </Button>
+                        )}
+                        {p.phone && (
+                          <Button size="sm" variant="secondary" className="w-full" asChild>
+                            <a href={`tel:${p.phone.replace(/[^+\d]/g, '')}`}>
+                              <Phone className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                              {t('portal.call')}
+                            </a>
+                          </Button>
                         )}
                       </div>
-                      <div className="text-xs text-silver/70">
-                        {t(p.title === 'supervisor' ? 'portal.leadSupervisor' : 'portal.leadFloor')}
-                        {p.shifts && p.shifts.length > 0 && <span className="text-silver"> · {p.shifts.join(', ')}</span>}
-                        {p.onFloor && <span className="text-success"> · {t('portal.leadOnFloor')}</span>}
-                        {p.runningOps && <span className="text-gold"> · {t('portal.leadRunningOps')}</span>}
-                      </div>
-                    </div>
-                    {/* Actions take their own row on a phone so the name never squeezes. */}
-                    <div className="flex w-full flex-wrap items-center gap-1 pl-11 print:hidden">
-                      {canAct && (
-                        <Button size="sm" variant="secondary" asChild>
-                          <Link to={`/messages?to=${p.userId}`} aria-label={`${t('portal.messageLead')} ${p.name}`}>
-                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                            {t('portal.messageLead')}
-                          </Link>
-                        </Button>
                       )}
-                      {p.phone && (
-                        <Button size="sm" variant="ghost" asChild>
-                          <a href={`tel:${p.phone.replace(/[^+\d]/g, '')}`}>
-                            <Phone className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                            {t('portal.call')}
-                          </a>
-                        </Button>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {data.leads.supportEmail && (
-              <p className="mt-3 text-xs text-silver/60">
-                {t('portal.leadEscalate')}{' '}
-                <a className="text-gold hover:underline" href={`mailto:${data.leads.supportEmail}`}>
-                  {data.leads.supportEmail}
-                </a>
-              </p>
-            )}
-          </CardContent>
-        </Card>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {data.leads.supportEmail && (
+                <p className="mt-3 text-xs text-silver/60">
+                  {t('portal.leadEscalate')}{' '}
+                  <a className="text-gold hover:underline" href={`mailto:${data.leads.supportEmail}`}>
+                    {data.leads.supportEmail}
+                  </a>
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
-        {/* ---- Last night's work (ops evidence) ------------------------- */}
-        <Card className="animate-enter xl:col-span-4" style={enterStagger(4)}>
-          <CardContent>
-            <SectionTitle
-              size="sm"
-              className="mb-0"
-              icon={ClipboardCheck}
-              title={
-                <>
-                  {opsLive.length > 0 ? t('portal.opsNowTitle') : t('portal.opsTodayTitle')}
-                  {opsLive.length > 0 && (
-                    <span className="ml-1 inline-flex items-center gap-1 text-2xs font-normal text-success">
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
-                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+          {/* ---- Last night's work (ops evidence) ------------------------- */}
+          <Card className="animate-enter" style={enterStagger(4)}>
+            <CardContent>
+              <SectionTitle
+                size="sm"
+                className="mb-0"
+                icon={ClipboardCheck}
+                title={
+                  <>
+                    {opsLive.length > 0 ? t('portal.opsNowTitle') : t('portal.opsTodayTitle')}
+                    {opsLive.length > 0 && (
+                      <span className="ml-1 inline-flex items-center gap-1 text-2xs font-normal text-success">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+                        </span>
+                        {t('portal.opsNowLine', { count: opsLive.length })}
                       </span>
-                      {t('portal.opsNowLine', { count: opsLive.length })}
-                    </span>
+                    )}
+                  </>
+                }
+                trailing={
+                  <Link to={`/portal/ops${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
+                    {t('portal.opsOpen')}
+                  </Link>
+                }
+              />
+              {!opsDay ? (
+                <div className="mt-3 text-sm text-silver/70" data-testid="portal-ops-plan">
+                  {data.opsPlan?.next ? (
+                    <p>
+                      {t('portal.opsNextUp', {
+                        department: data.opsPlan.next.department,
+                        window: midSentence(data.opsPlan.next.windowLabel),
+                        time: fmtTimeTz(data.opsPlan.next.startsAt, storeTz),
+                      })}
+                    </p>
+                  ) : data.opsPlan?.everRan ? (
+                    <p>{t('portal.opsNothingYet')}</p>
+                  ) : (
+                    <p className="text-silver/60">{t('portal.opsNone')}</p>
+                  )}
+                  {(data.opsPlan?.missedToday ?? 0) > 0 && (
+                    <p className="mt-1 text-xs text-warning">{t('portal.opsMissedToday', { count: data.opsPlan?.missedToday ?? 0 })}</p>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="mt-3 flex items-center gap-4">
+                    <RingMeter
+                      percent={sopPct}
+                      tone={sopPct === null ? 'primary' : sopPct >= 95 ? 'good' : sopPct >= 80 ? 'primary' : 'warn'}
+                      label={t('portal.opsSopWord')}
+                    >
+                      <span className="text-xl font-bold tracking-tight text-white">
+                        {sopPct === null ? '—' : `${sopPct}%`}
+                      </span>
+                    </RingMeter>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm text-white">{t('portal.opsSopWord')}</div>
+                      <p className="mt-1 text-xs text-silver/70 tabular-nums">
+                        {t('portal.opsLine', {
+                          shifts: opsDay.shifts,
+                          tasks: opsDay.taskDone,
+                          total: opsDay.taskTotal,
+                          photos: opsDay.photos,
+                        })}
+                      </p>
+                      {(opsDay.tempAlerts > 0 || opsDay.incomplete > 0 || opsDay.open > 0) && (
+                        <p className="mt-1 text-xs text-warning tabular-nums">
+                          {[
+                            opsDay.tempAlerts > 0 && t('portal.opsTemp', { count: opsDay.tempAlerts }),
+                            opsDay.incomplete > 0 && t('portal.opsIncomplete', { count: opsDay.incomplete }),
+                            opsDay.open > 0 && t('portal.opsStillOpen', { count: opsDay.open }),
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {/* What is on the floor right now, named. A percentage
+                      alone never told the manager who to walk up to. */}
+                  {opsLive.length > 0 && (
+                    <ul className="mt-3 space-y-1 border-t border-navy-secondary/60 pt-3">
+                      {opsLive.map((l) => {
+                        const pct = l.sopTotal > 0 ? Math.round((l.sopDone / l.sopTotal) * 100) : null;
+                        return (
+                          <li key={l.id} className="flex items-center gap-2 text-xs">
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
+                            <span className="min-w-0 flex-1 truncate text-white">
+                              {l.department}
+                              <span className="text-silver/50"> · {l.period.toLowerCase()}</span>
+                            </span>
+                            <span className="shrink-0 tabular-nums text-silver/70">
+                              {pct === null ? '—' : `${pct}%`}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-silver/50">
+                              {t('portal.opsSince', { time: fmtTime(new Date(l.openedAt)) })}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  {/* Last night, on purpose — the thing this card used to be,
+                      now a link into the filter that actually shows it. */}
+                  {opsLastNight && (
+                    <Link
+                      to={lastNightHref}
+                      className="mt-3 flex items-center justify-between gap-2 rounded-md border border-navy-secondary/70 px-2.5 py-2 text-xs transition-colors hover:border-gold/40"
+                    >
+                      <span className="min-w-0">
+                        <span className="text-white">{t('portal.opsLastNight')}</span>
+                        <span className="ml-1.5 text-silver/70 tabular-nums">
+                          {t('portal.opsLastNightLine', {
+                            shifts: opsLastNight.shifts,
+                            pct: lastNightPct ?? 0,
+                          })}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-gold">{t('portal.opsSeeLastNight')}</span>
+                    </Link>
+                  )}
+                  {opsNotes.length > 0 && (
+                    <ul className="mt-3 space-y-1.5 border-t border-navy-secondary/60 pt-3">
+                      {opsNotes.map((n, i) => (
+                        <li key={i} className="text-xs text-silver/80">
+                          <span className="font-medium text-white">{n.department}</span>
+                          <span className="text-silver/50"> · {n.period.toLowerCase()}</span>
+                          <span className="text-silver/60"> — </span>
+                          {n.summary}
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </>
-              }
-              trailing={
-                <Link to={`/portal/ops${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
-                  {t('portal.opsOpen')}
-                </Link>
-              }
-            />
-            {!opsDay ? (
-              <div className="mt-3 text-sm text-silver/70" data-testid="portal-ops-plan">
-                {data.opsPlan?.next ? (
-                  <p>
-                    {t('portal.opsNextUp', {
-                      department: data.opsPlan.next.department,
-                      window: data.opsPlan.next.windowLabel,
-                      time: fmtTimeTz(data.opsPlan.next.startsAt, storeTz),
-                    })}
-                  </p>
-                ) : data.opsPlan?.everRan ? (
-                  <p>{t('portal.opsNothingYet')}</p>
-                ) : (
-                  <p className="text-silver/60">{t('portal.opsNone')}</p>
-                )}
-                {(data.opsPlan?.missedToday ?? 0) > 0 && (
-                  <p className="mt-1 text-xs text-warning">{t('portal.opsMissedToday', { count: data.opsPlan?.missedToday ?? 0 })}</p>
-                )}
-              </div>
-            ) : (
-              <>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ---- Crew clearance ------------------------------------------- */}
+          <Card className="animate-enter" style={enterStagger(7)}>
+            <CardContent>
+              <SectionTitle size="sm" className="mb-0" title={t('portal.clearance')} />
+              {cl.total === 0 ? (
+                <p className="mt-3 text-sm text-silver/60">{t('portal.clNone')}</p>
+              ) : (
                 <div className="mt-3 flex items-center gap-4">
                   <RingMeter
-                    percent={sopPct}
-                    tone={sopPct === null ? 'primary' : sopPct >= 95 ? 'good' : sopPct >= 80 ? 'primary' : 'warn'}
-                    label={t('portal.opsSopWord')}
+                    percent={clearancePct}
+                    tone={clearanceClean ? 'good' : cl.flagged > 0 ? 'bad' : 'warn'}
+                    label={t('portal.clearance')}
                   >
                     <span className="text-xl font-bold tracking-tight text-white">
-                      {sopPct === null ? '—' : `${sopPct}%`}
+                      {clearedCount}
+                      <span className="text-xs font-normal text-silver/60">/{cl.total}</span>
                     </span>
                   </RingMeter>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm text-white">{t('portal.opsSopWord')}</div>
-                    <p className="mt-1 text-xs text-silver/70 tabular-nums">
-                      {t('portal.opsLine', {
-                        shifts: opsDay.shifts,
-                        tasks: opsDay.taskDone,
-                        total: opsDay.taskTotal,
-                        photos: opsDay.photos,
-                      })}
-                    </p>
-                    {(opsDay.tempAlerts > 0 || opsDay.incomplete > 0 || opsDay.open > 0) && (
-                      <p className="mt-1 text-xs text-warning tabular-nums">
-                        {[
-                          opsDay.tempAlerts > 0 && t('portal.opsTemp', { count: opsDay.tempAlerts }),
-                          opsDay.incomplete > 0 && t('portal.opsIncomplete', { count: opsDay.incomplete }),
-                          opsDay.open > 0 && t('portal.opsStillOpen', { count: opsDay.open }),
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
+                    {clearanceClean ? (
+                      <p className="flex items-start gap-1.5 text-sm text-success">
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                        {t('portal.clAllClear', { count: cl.total })}
                       </p>
+                    ) : (
+                      <>
+                        <p className="text-sm text-white tabular-nums">
+                          {t('portal.clCleared', { cleared: clearedCount, total: cl.total })}
+                        </p>
+                        <p className={cn('mt-1 text-xs tabular-nums', cl.flagged > 0 ? 'text-alert' : 'text-warning')}>
+                          {clearanceParts.join(' · ')}
+                        </p>
+                      </>
                     )}
                   </div>
                 </div>
-                {/* What is on the floor right now, named. A percentage
-                    alone never told the manager who to walk up to. */}
-                {opsLive.length > 0 && (
-                  <ul className="mt-3 space-y-1 border-t border-navy-secondary/60 pt-3">
-                    {opsLive.map((l) => {
-                      const pct = l.sopTotal > 0 ? Math.round((l.sopDone / l.sopTotal) * 100) : null;
-                      return (
-                        <li key={l.id} className="flex items-center gap-2 text-xs">
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
-                          <span className="min-w-0 flex-1 truncate text-white">
-                            {l.department}
-                            <span className="text-silver/50"> · {l.period.toLowerCase()}</span>
-                          </span>
-                          <span className="shrink-0 tabular-nums text-silver/70">
-                            {pct === null ? '—' : `${pct}%`}
-                          </span>
-                          <span className="shrink-0 tabular-nums text-silver/50">
-                            {t('portal.opsSince', { time: fmtTime(new Date(l.openedAt)) })}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                {/* Last night, on purpose — the thing this card used to be,
-                    now a link into the filter that actually shows it. */}
-                {opsLastNight && (
-                  <Link
-                    to={lastNightHref}
-                    className="mt-3 flex items-center justify-between gap-2 rounded-md border border-navy-secondary/70 px-2.5 py-2 text-xs transition-colors hover:border-gold/40"
-                  >
-                    <span className="min-w-0">
-                      <span className="text-white">{t('portal.opsLastNight')}</span>
-                      <span className="ml-1.5 text-silver/70 tabular-nums">
-                        {t('portal.opsLastNightLine', {
-                          shifts: opsLastNight.shifts,
-                          pct: lastNightPct ?? 0,
-                        })}
-                      </span>
-                    </span>
-                    <span className="shrink-0 text-gold">{t('portal.opsSeeLastNight')}</span>
-                  </Link>
-                )}
-                {opsNotes.length > 0 && (
-                  <ul className="mt-3 space-y-1.5 border-t border-navy-secondary/60 pt-3">
-                    {opsNotes.map((n, i) => (
-                      <li key={i} className="text-xs text-silver/80">
-                        <span className="font-medium text-white">{n.department}</span>
-                        <span className="text-silver/50"> · {n.period.toLowerCase()}</span>
-                        <span className="text-silver/60"> — </span>
-                        {n.summary}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* ---- This week: fill by day ------------------------------------ */}
-        <Card className="animate-enter xl:col-span-7" style={enterStagger(5)}>
-          <CardContent>
-            <SectionTitle
-              size="sm"
-              className="mb-0"
-              icon={CalendarDays}
-              title={t('portal.week')}
-              trailing={
-                <span className="text-xs text-silver/60 tabular-nums">
-                  {fmtDate(parseYmd(data.week.start))} – {fmtDate(parseYmd(data.week.end))}
-                </span>
-              }
-            />
-            <div className="mt-3">
-              <WeekFillChart
-                days={weekDays}
-                todayKey={data.today.date}
-                labels={{
-                  filled: t('portal.chartFilled'),
-                  open: t('portal.chartOpen'),
-                  heading: (d) => {
-                    const row = weekDays.find((x) => x.day === d);
-                    return row ? fmtDate(parseYmd(row.date)) : d;
-                  },
-                }}
-              />
-            </div>
-            <p className="mt-2 text-sm text-silver tabular-nums">
-              {data.week.fillRatePct !== null
-                ? t('portal.weekSentence', { pct: data.week.fillRatePct, hours: fmtHours(data.week.hours) })
-                : t('portal.weekHoursOnly', { hours: fmtHours(data.week.hours) })}
-              <span className="text-silver/60"> · {t('portal.weekDelivered', { worked: fmtHours(data.week.workedHours) })}</span>
-            </p>
-            <DetailsTable
-              label={t('portal.details')}
-              columns={[t('portal.chartDay'), t('portal.chartFilled'), t('portal.chartOpen')]}
-              rows={data.week.days.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
-            />
-          </CardContent>
-        </Card>
-
-        {/* ---- Reliability (4 weeks) ------------------------------------ */}
-        <Card className="animate-enter xl:col-span-5" style={enterStagger(6)}>
-          <CardContent>
-            <SectionTitle
-              size="sm"
-              className="mb-0"
-              icon={ShieldCheck}
-              title={t('portal.reliability')}
-              trailing={
-                <span
-                  className={cn(
-                    'text-2xl font-bold leading-none tracking-tight',
-                    data.reliability.grade ? GRADE_STYLE[data.reliability.grade] : 'text-silver/50',
-                  )}
-                >
-                  {data.reliability.grade ?? '—'}
-                </span>
-              }
-            />
-            <div className="mt-3">
-              <ReliabilityChart
-                weeks={relWeeks}
-                labels={{
-                  fill: t('portal.chartShowed'),
-                  target: t('portal.chartTarget'),
-                  heading: (l) => {
-                    const w = relWeeks.find((x) => x.label === l);
-                    return w ? `${fmtDate(parseYmd(w.start))} – ${fmtDate(parseYmd(w.end))}` : l;
-                  },
-                }}
-              />
-            </div>
-            <p className="mt-2 text-sm text-silver tabular-nums">
-              {pastWeeks.some((w) => w.total > 0)
-                ? t('portal.relMonthLine', {
-                    ncns: sum((w) => w.noCallNoShows),
-                    lates: sum((w) => w.lates),
-                    replaced: sum((w) => w.replaced),
-                  })
-                : t('portal.relNoHistory')}
-            </p>
-            <p className="mt-1 text-xs text-silver/70 tabular-nums">
-              {t('portal.relThisWeek')}{' '}
-              {covParts.length === 0 ? (
-                <span className="text-success">{t('portal.covClean')}</span>
-              ) : (
-                covParts.join(' · ')
               )}
-              {replaced && <span className="text-success"> · {replaced}</span>}
-            </p>
-            {data.reliability.basis === 'schedule' && (
-              <p className="mt-2 text-xs text-warning">{t('portal.relBasisSchedule')}</p>
-            )}
-            <DetailsTable
-              label={t('portal.details')}
-              columns={[
-                t('portal.chartWeek'),
-                t('portal.chartShowed'),
-                t('portal.chartShowedUp'),
-                t('portal.chartFillPct'),
-                t('portal.covNoShowCol'),
-                t('portal.covCallOutCol'),
-                t('portal.covLateCol'),
-                t('portal.covReplacedCol'),
-              ]}
-              rows={data.reliability.weeks.map((w) => [
-                `${fmtDate(parseYmd(w.start))} – ${fmtDate(parseYmd(w.end))}`,
-                w.reliabilityPct === null ? '—' : `${w.reliabilityPct}%`,
-                w.showedUpPct === null ? '—' : `${w.showedUpPct}%`,
-                w.fillPct === null ? '—' : `${w.fillPct}%`,
-                w.noCallNoShows,
-                w.callOuts,
-                w.lates,
-                w.replaced,
-              ])}
-            />
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        {/* ---- Crew clearance ------------------------------------------- */}
-        <Card className="animate-enter xl:col-span-4" style={enterStagger(7)}>
-          <CardContent>
-            <SectionTitle size="sm" className="mb-0" title={t('portal.clearance')} />
-            {cl.total === 0 ? (
-              <p className="mt-3 text-sm text-silver/60">{t('portal.clNone')}</p>
-            ) : (
-              <div className="mt-3 flex items-center gap-4">
-                <RingMeter
-                  percent={clearancePct}
-                  tone={clearanceClean ? 'good' : cl.flagged > 0 ? 'bad' : 'warn'}
-                  label={t('portal.clearance')}
-                >
-                  <span className="text-xl font-bold tracking-tight text-white">
-                    {clearedCount}
-                    <span className="text-xs font-normal text-silver/60">/{cl.total}</span>
-                  </span>
-                </RingMeter>
-                <div className="min-w-0 flex-1">
-                  {clearanceClean ? (
-                    <p className="flex items-start gap-1.5 text-sm text-success">
-                      <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                      {t('portal.clAllClear', { count: cl.total })}
-                    </p>
-                  ) : (
-                    <>
-                      <p className="text-sm text-white tabular-nums">
-                        {t('portal.clCleared', { cleared: clearedCount, total: cl.total })}
-                      </p>
-                      <p className={cn('mt-1 text-xs tabular-nums', cl.flagged > 0 ? 'text-alert' : 'text-warning')}>
-                        {clearanceParts.join(' · ')}
-                      </p>
-                    </>
-                  )}
-                </div>
+          {/* ---- Safety ---------------------------------------------------- */}
+          <Card className="animate-enter" style={enterStagger(8)}>
+            <CardContent>
+              <SectionTitle size="sm" className="mb-0" title={t('portal.safety')} />
+              <div className="mt-2 text-4xl font-bold tracking-tight text-white">
+                {data.safety.daysSinceLast === null ? '365+' : data.safety.daysSinceLast}
+                <span className="ml-2 text-base font-normal text-silver">{t('portal.safetyDays')}</span>
               </div>
-            )}
-          </CardContent>
-        </Card>
+              <p className={cn('mt-1.5 text-sm tabular-nums', data.safety.open > 0 ? 'text-warning' : 'text-silver')}>
+                {data.safety.monthIncidents === 0
+                  ? t('portal.safetyCleanMonth')
+                  : t('portal.safetyMonth', { count: data.safety.monthIncidents })}
+                {data.safety.open > 0 && ` · ${t('portal.safetyOpen', { count: data.safety.open })}`}
+              </p>
+            </CardContent>
+          </Card>
 
-        {/* ---- Safety ---------------------------------------------------- */}
-        <Card className="animate-enter xl:col-span-4" style={enterStagger(8)}>
-          <CardContent>
-            <SectionTitle size="sm" className="mb-0" title={t('portal.safety')} />
-            <div className="mt-2 text-4xl font-bold tracking-tight text-white">
-              {data.safety.daysSinceLast === null ? '365+' : data.safety.daysSinceLast}
-              <span className="ml-2 text-base font-normal text-silver">{t('portal.safetyDays')}</span>
-            </div>
-            <p className={cn('mt-1.5 text-sm tabular-nums', data.safety.open > 0 ? 'text-warning' : 'text-silver')}>
-              {data.safety.monthIncidents === 0
-                ? t('portal.safetyCleanMonth')
-                : t('portal.safetyMonth', { count: data.safety.monthIncidents })}
-              {data.safety.open > 0 && ` · ${t('portal.safetyOpen', { count: data.safety.open })}`}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* ---- Statements: money, due dates, how late — one row kit with History ---- */}
-        <Card className="animate-enter scroll-mt-20 xl:col-span-4" style={enterStagger(9)} id="portal-statements">
-          <CardContent>
-            <SectionTitle size="sm" className="mb-0" title={t('portal.statements')} trailing={<OpenBalance balance={data.balance} />} />
-            {data.statements.length === 0 ? (
-              <p className="mt-3 text-sm text-silver/60">{t('portal.stNone')}</p>
-            ) : (
-              <ul className="mt-3 divide-y divide-navy-secondary/60">
-                {data.statements.slice(0, 4).map((s) => (
-                  <StatementRow
-                    key={s.id}
-                    s={s}
-                    inStore={!!data.store}
-                    actions={
-                      s.paidAt ? null : (
-                      <>
-                        {canAct && (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            onClick={() =>
-                              setPrefill({
-                                kind: 'BILLING',
-                                subject: t('portal.stDisputeSubject', {
-                                  n: s.number !== null ? fmtStatementNo(s.number) : fmtDate(parseYmd(s.periodEnd)),
-                                }),
-                                nonce: Date.now(),
-                              })
-                            }
-                          >
-                            {t('portal.stDispute')}
-                          </Button>
-                        )}
-                        <ReviewedMark
-                          reviewed={s.reviewed}
-                          onMark={canAct ? () => void markReviewed('STATEMENT', s.id) : null}
-                          t={t}
-                          busy={marking === `STATEMENT:${s.id}`}
-                        />
-                      </>
-                      )
-                    }
-                  />
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        </div>
       </div>
 
       {/* ---- Requests: the client in the loop -------------------------- */}

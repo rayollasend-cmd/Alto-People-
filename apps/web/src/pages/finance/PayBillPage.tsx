@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtDateOnlyRange, fmtMoney, fmtMoneyCompact, fmtStatementNo } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtMoney, fmtStatementNo } from '@/lib/format';
 import { useStoreScope } from '@/lib/storeScope';
 import { useUrlParam } from '@/lib/useUrlState';
 import { cn } from '@/lib/cn';
@@ -259,7 +260,7 @@ function Reconciliation({ periodStart, periodEnd }: { periodStart: string; perio
           data={chartRows}
           x="line"
           stacked={false}
-          format={(v) => fmtMoneyCompact(v)}
+          format={fmtMoneyAxis}
           series={[
             { key: 'paid', name: 'Paid', color: PALETTE.primary },
             { key: 'billed', name: 'Billed', color: PALETTE.good },
@@ -806,7 +807,7 @@ function ThisWeek() {
             data={chartRows}
             x="store"
             layout="horizontal"
-            format={(v) => fmtMoneyCompact(v)}
+            format={fmtMoneyAxis}
             series={[
               { key: 'wages', name: 'Wages', color: PALETTE.primary },
               { key: 'loaded', name: 'Burden and overhead', color: PALETTE.secondary },

@@ -440,6 +440,12 @@ describe('walk 11 — the header on a phone', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual(['Today', 'Live map', 'Rides', 'Issues', 'Setup']);
     expect(screen.queryByRole('button', { name: 'More tabs' })).toBeNull();
     expect(screen.getByRole('radiogroup', { name: 'Jump to' })).toBeInTheDocument();
+    // F500 polish: one row — the day, Today/Tomorrow and the sound switch;
+    // no "More" sheet holding only the sound switch.
+    const row = screen.getByTestId('transport-day-row');
+    expect(within(row).getByLabelText('Day')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: /Sounds (on|off)/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /More actions/i })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: /need you/ }));
     expect(screen.getByRole('region', { name: 'Needs attention' })).toBeInTheDocument();
   });

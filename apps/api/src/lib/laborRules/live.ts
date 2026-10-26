@@ -8,6 +8,7 @@ import { TODAYS_RULES, payFor, penaltyAmount, splitHours, weeklySplit, type PayR
 import { SHIPPED_PACKS, jurisdictionsFor } from './packs.js';
 import { loadRulePool, rulesForSite, type StoredRuleSet } from './store.js';
 import type { ResolvedRules, RuleSetDef } from './params.js';
+import { fmtDay } from '../humanDates.js';
 
 /**
  * Brief 2-2 step 4 — the engine pays, one jurisdiction at a time.
@@ -314,7 +315,7 @@ export async function requestGoLive(db: Db, input: GoLiveInput, actorUserId: str
     subjectType: 'LaborRuleActivation',
     subjectId: activation.id,
     title: `Pay ${input.siteId ? 'one site in ' : ''}${label} by its labor rules`,
-    summary: `Counsel ${input.counselName} (${input.counselFirm}) signed on ${input.counselSignedOn}. Over the last ${report.runs.length} runs, ${report.people} people would have been paid ${report.amountDifference >= 0 ? 'more' : 'less'} by $${Math.abs(report.amountDifference).toFixed(2)}.`,
+    summary: `Counsel ${input.counselName} (${input.counselFirm}) signed on ${fmtDay(input.counselSignedOn, { year: true })}. Over the last ${report.runs.length} runs, ${report.people} people would have been paid ${report.amountDifference >= 0 ? 'more' : 'less'} by $${Math.abs(report.amountDifference).toFixed(2)}.`,
     proposed: { jurisdiction: input.jurisdiction, jurisdictionLabel: label, siteId: input.siteId ?? null, counselName: input.counselName, counselFirm: input.counselFirm, counselSignedOn: input.counselSignedOn, signed: report.signables.map((s) => s.label), changeReport: summary },
     before: { mode: 'shadow' },
     requesterUserId: actorUserId,

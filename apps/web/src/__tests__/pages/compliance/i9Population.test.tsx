@@ -94,8 +94,28 @@ describe('<I9Tab> reads the scorecard’s population', () => {
     renderTab();
     await screen.findByText('Aaliyah Brooks');
     await user.click(screen.getByRole('button', { name: 'All' }));
-    const row = (await screen.findByText('Maria Lopez')).closest('li')!;
+    const row = (await screen.findByText('Maria Lopez')).closest('tr')!;
     expect(within(row).getByText('Onboarding')).toBeInTheDocument();
+  });
+
+  it('"Section 2 pending" counts exactly the Pending view, people with no I-9 included', async () => {
+    renderTab();
+    const tile = await screen.findByTitle('Show section 2 pending');
+    // The ten placed people with no I-9 (Maria's is complete).
+    expect(tile).toHaveTextContent('10');
+    expect(tile).toHaveAttribute('aria-pressed', 'true');
+    await screen.findByText('Aaliyah Brooks');
+    const table = screen.getByRole('table', { name: 'I-9 records' });
+    // One header row plus one row per pending person.
+    expect(within(table).getAllByRole('row').length - 1).toBe(10);
+    expect(screen.getByTitle('Show no i-9 on file')).toHaveTextContent('10');
+  });
+
+  it('says how late Section 2 is in words, not "overdue 55d"', async () => {
+    renderTab();
+    await screen.findByText('Aaliyah Brooks');
+    expect(screen.getAllByText(/^\d[\d,]* days overdue$/).length).toBe(10);
+    expect(screen.queryByText(/overdue \d+d/)).not.toBeInTheDocument();
   });
 
   it('a not-started row opens like any other: nothing done, Section 2 due from the hire date', () => {

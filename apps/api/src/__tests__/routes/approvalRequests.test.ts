@@ -80,6 +80,10 @@ describe('pay-rate changes', () => {
     expect(inbox.body.sources.find((s: { key: string }) => s.key === 'approval-requests').count).toBe(1);
     const decide = await B.get('/approvals/requests?scope=decide');
     expect(decide.body.requests[0]).toMatchObject({ id, kind: 'PAY_RATE_CHANGE', mayDecide: true, requester: { id: a.id } });
+    // What a person reads: a date and a reason in words, never "2026-11-01" or "merit".
+    expect(decide.body.requests[0].summary).toBe('Merit increase, effective Nov 1, 2026');
+    expect(decide.body.requests[0].display.proposed).toMatchObject({ effectiveFrom: 'Nov 1, 2026', reason: 'Merit increase', payType: 'Hourly' });
+    expect(decide.body.requests[0].display.before).toMatchObject({ payType: 'Hourly' });
     const rejectNoReason = await B.post(`/approvals/requests/${id}/decide`).send({ decision: 'REJECT' });
     expect(rejectNoReason.status).toBe(400);
     const approved = await B.post(`/approvals/requests/${id}/decide`).send({ decision: 'APPROVE' });
@@ -177,6 +181,9 @@ describe('separations take a second person', () => {
     expect((await prisma.separation.findUniqueOrThrow({ where: { id: created.body.id } })).status).toBe('IN_PROGRESS');
     expect((await A.post(`/separations/${created.body.id}/advance`)).status).toBe(409);
 
+    const pending = (await B.get(`/approvals/requests/${asked.body.approvalId}`)).body;
+    expect(pending.summary).toMatch(/^Voluntary — personal · last day Oct 30, 2026\./);
+    expect(pending.display.before).toMatchObject({ status: 'In progress' });
     expect((await A.post(`/approvals/requests/${asked.body.approvalId}/decide`).send({ decision: 'APPROVE' })).status).toBe(403);
     expect((await B.post(`/approvals/requests/${asked.body.approvalId}/decide`).send({ decision: 'APPROVE' })).status).toBe(200);
     const sep = await prisma.separation.findUniqueOrThrow({ where: { id: created.body.id } });

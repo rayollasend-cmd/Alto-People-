@@ -5,7 +5,8 @@ import { ShieldAlert } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getSecurityPolicy, putSecurityPolicy, type SecurityPolicy } from '@/lib/identityApi';
-import { Button } from '@/components/ui/Button';
+import { SettingsSaveBar } from '@/pages/settings/SettingsSaveBar';
+import { LearnMore } from '@/pages/settings/LearnMore';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
@@ -60,12 +61,33 @@ export function SecurityPolicyCard() {
     }
   };
   const num = (v: string): number | null => (v.trim() === '' ? null : Math.max(0, Number(v)) || null);
+  // One save model for every settings form (F500 polish, 2026-10-26): the
+  // save bar counts what changed; there is no "Save policy" mid-page.
+  const base = q.data;
+  const sameList = (a: string[], b: string) => a.join('\n') === fromLines(b).join('\n');
+  const dirty = base
+    ? [
+        base.sessionIdleMinutes !== d.sessionIdleMinutes,
+        base.sessionAbsoluteHours !== d.sessionAbsoluteHours,
+        !sameList(base.allowedCidrsInternal, internal),
+        hasClients && !sameList(base.allowedCidrsClient, client),
+        !sameList(base.allowedCidrsAssociate, associate),
+        base.deviceTrustEnabled !== d.deviceTrustEnabled,
+        base.deviceTrustDays !== d.deviceTrustDays,
+        base.breakGlassEnabled !== d.breakGlassEnabled,
+      ].filter(Boolean).length
+    : 0;
+  const discard = () => {
+    if (!base) return;
+    setDraft(base);
+    setInternal(toLines(base.allowedCidrsInternal));
+    setClient(toLines(base.allowedCidrsClient));
+    setAssociate(toLines(base.allowedCidrsAssociate));
+  };
   return (
     <section aria-labelledby="security-policy-title" className="space-y-2">
       <h2 id="security-policy-title" className="text-base font-semibold text-ink">Sessions, networks and devices</h2>
-      <p className="text-sm text-ink-muted">
-        Where a session may come from and how long it lives. Everything here applies on the next request, not the next sign-in.
-      </p>
+      <p className="text-sm text-ink-muted">Where a session may come from and how long it lives.</p>
       <Card>
         <CardContent className="space-y-5 p-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -108,16 +130,18 @@ export function SecurityPolicyCard() {
               <span>
                 Break-glass sign-in stays open
                 <span className="block text-xs text-ink-muted">
-                  While staff must use company sign-in, the owners flagged in Users &amp; access may still sign in with password + two-step. Every use is audited and alerts the security contact. Turn this off and an identity-provider outage locks every administrator out.
+                  Owners flagged in Users &amp; access can still sign in if your identity provider is down.
+                  <LearnMore>
+                    While staff must use company sign-in, those owners may still sign in with password + two-step. Every use is audited and alerts the
+                    security contact. Turn this off and an identity-provider outage locks every administrator out.
+                  </LearnMore>
                 </span>
               </span>
             </span>
           </label>
-          <div className="flex justify-end">
-            <Button onClick={() => void save()} loading={saving}>Save policy</Button>
-          </div>
         </CardContent>
       </Card>
+      <SettingsSaveBar dirty={dirty} saving={saving} onSave={() => void save()} onDiscard={discard} note="Applies to every session on its next request." />
     </section>
   );
 }

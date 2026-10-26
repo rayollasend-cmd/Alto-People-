@@ -67,14 +67,16 @@ export function AuthShell({ children, wide = false }: { children: React.ReactNod
     }
   })();
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora" data-testid="auth-shell">
+    // 100dvh, not 100vh: on a phone the browser's own bars make 100vh
+    // taller than the screen, and the aurora has to reach the bottom edge.
+    <div className="min-h-screen min-h-[100dvh] flex items-center justify-center px-4 py-8 sm:py-12 bg-login-aurora" data-testid="auth-shell">
       <div className={cn('w-full', wide ? 'max-w-xl' : 'max-w-md')}>
-        <div className="text-center mb-8 animate-fade-in">
+        <div className="text-center mb-6 sm:mb-8 animate-fade-in">
           <Logo size="lg" className="mx-auto mb-4 rounded-xl ring-1 ring-gold/25 shadow-[0_8px_32px_rgba(217,185,103,0.15)]" />
           <div className="font-display text-4xl md:text-5xl text-ink leading-none">
             Alto <span className="text-gold">People</span>
           </div>
-          <p className="text-silver/70 text-xs2 tracking-[0.32em] uppercase mt-2">{t('login.brandTagline')}</p>
+          <p className="text-silver/70 text-xs2 tracking-[0.32em] uppercase mt-2 text-balance">{t('login.brandTagline')}</p>
         </div>
         {children}
         <p className="text-center text-xs text-silver/70 mt-6">© {new Date().getFullYear()} Alto Etho LLC d/b/a Alto HR</p>

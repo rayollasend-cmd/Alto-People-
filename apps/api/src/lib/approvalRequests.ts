@@ -1,11 +1,12 @@
 import { Prisma, type PrismaClient, type ApprovalRequest, type ApprovalRequestKind, type Role } from '@prisma/client';
-import { ROLE_CAPABILITIES, can, type Capability } from '@alto-people/shared';
+import { ROLE_CAPABILITIES, ROLE_LABELS, can, type Capability } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit, recordCriticalAudit } from './audit.js';
 import { notifyUser } from './notify.js';
 import { tenantIdForWrite } from './tenant.js';
 import { rolesHolding } from './approvalPolicy.js';
 import { applyBillRateChange, applyPayRateChange } from './payChanges.js';
+import { calendarDay, fmtDay, sentenceFromCode } from './humanDates.js';
 
 /**
  * The approval engine's one record ("maker-checker").
@@ -72,6 +73,47 @@ export interface ApprovalRequestSummary {
   applyError: string | null;
   createdAt: string;
   mayDecide: boolean;
+  /**
+   * The proposed (and before) values a person reads, keyed like `proposed`:
+   * a date as "Oct 26, 2026", a reason code as "New hire", a role as its
+   * name. Only the keys that carry a code or a date; the UI shows these in
+   * place of the raw value.
+   */
+  display: { proposed: Record<string, string>; before: Record<string, string> | null };
+}
+
+/** A pay change's reason, as people say it. */
+export const PAY_CHANGE_REASON_LABELS: Record<string, string> = {
+  HIRE: 'New hire',
+  MERIT: 'Merit increase',
+  PROMOTION: 'Promotion',
+  MARKET_ADJUSTMENT: 'Market adjustment',
+  CORRECTION: 'Correction',
+  OTHER: 'Other',
+  MARKET: 'Market adjustment',
+};
+
+export function payChangeReasonLabel(code: string): string {
+  return PAY_CHANGE_REASON_LABELS[code] ?? sentenceFromCode(code);
+}
+
+const PAY_REASON_KINDS = new Set<ApprovalRequestKind>(['PAY_RATE_CHANGE', 'PAY_RATE_BATCH', 'PROMOTION']);
+const DATE_KEYS = /(^effectiveFrom$|^effectiveDate$|^counselSignedOn$|Date$|On$)/;
+const roleLabel = (r: unknown): string => (typeof r === 'string' ? (ROLE_LABELS as Record<string, string>)[r] ?? sentenceFromCode(r) : String(r));
+
+/** The human words for one side (proposed or before) of a request — see ApprovalRequestSummary.display. */
+export function displayValues(kind: ApprovalRequestKind, values: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return out;
+  for (const [k, v] of Object.entries(values as Record<string, unknown>)) {
+    if (typeof v === 'string' && DATE_KEYS.test(k) && calendarDay(v)) out[k] = fmtDay(v, { year: true });
+    else if (k === 'reason' && typeof v === 'string' && PAY_REASON_KINDS.has(kind)) out[k] = payChangeReasonLabel(v);
+    else if (k === 'payType' && typeof v === 'string') out[k] = v === 'SALARY' ? 'Salary' : v === 'HOURLY' ? 'Hourly' : sentenceFromCode(v);
+    else if (k === 'role' && typeof v === 'string') out[k] = roleLabel(v);
+    else if (k === 'additionalRoles' && Array.isArray(v)) out[k] = v.length ? v.map(roleLabel).join(', ') : 'Nothing';
+    else if (k === 'status' && typeof v === 'string' && /^[A-Z_]+$/.test(v)) out[k] = sentenceFromCode(v);
+  }
+  return out;
 }
 
 const KIND_LINK: Record<ApprovalRequestKind, (r: ApprovalRequest) => string> = {
@@ -198,6 +240,7 @@ export async function shapeRequest(db: Db, r: ApprovalRequest, user: Decider | n
     applyError: r.applyError,
     createdAt: r.createdAt.toISOString(),
     mayDecide: may,
+    display: { proposed: displayValues(r.kind, r.proposed), before: r.before == null ? null : displayValues(r.kind, r.before) },
   };
 }
 

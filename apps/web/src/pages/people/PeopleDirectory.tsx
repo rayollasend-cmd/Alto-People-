@@ -61,7 +61,7 @@ import { useI18n } from '@/lib/i18n';
 import { withReturn } from '@/lib/returnPath';
 import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtHours, fmtMoney, fmtPayRate, fmtPhone, parseYmd, phoneHref, ymdLocal } from '@/lib/format';
+import { displayLocale, fmtDate, fmtMoney, fmtPayRate, fmtPhone, parseYmd, phoneHref, ymdLocal } from '@/lib/format';
 import { useMinWidth } from '@/lib/useViewport';
 import { QueryError } from '@/components/ui/QueryError';
 import { proposePromotion } from '@/lib/approvalRequestsApi';
@@ -512,7 +512,7 @@ function DirectoryPage() {
           // The definition is the tile's tooltip: six two-line definitions
           // under six numbers made the strip taller than the list's first rows.
           valueTitle={t(workStatusKeys(s).definition, { days: stats.windowDays })}
-          accent={s === 'ONBOARDING' && stats[s] > 0}
+          // Ink, all six: onboarding is not a warning (it read in gold beside five ink numbers).
           onClick={() => toggleStatus(s)}
           selected={status === s}
           compact
@@ -806,6 +806,11 @@ const EMPTY_CELL = (
 );
 
 /** Copy a phone or an email from the list (the retired Directory's affordance, F500 G4 note). */
+/** Hours with one decimal, in the reader's locale: "45.0h". */
+function hoursOneDecimal(hours: number): string {
+  return `${(Math.round(hours * 10) / 10).toLocaleString(displayLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h`;
+}
+
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -813,7 +818,13 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       type="button"
       aria-label={label}
       title={label}
-      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/60 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40"
+      // Shown on the row's hover or the button's own focus (a table of copy
+      // icons on every row was noise, F500 2026-10-26); always on touch, and
+      // while it says "copied".
+      className={cn(
+        'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/60 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
+        !copied && 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 coarse:opacity-100',
+      )}
       onClick={(e) => {
         e.stopPropagation();
         navigator.clipboard
@@ -856,7 +867,7 @@ function directoryColumns(opts: {
       cell: (r) => (
         <div className="flex min-w-0 items-center gap-2.5">
           <Avatar src={r.photoUrl} hasPhoto={r.photoUrl !== null} name={`${r.firstName} ${r.lastName}`} email={r.email} size="sm" />
-          <div className="min-w-0">
+          <div className="min-w-0 max-w-[15rem]">
             {/* The row opens the record; the name is the same link, for a
                 middle-click or a copied address. */}
             <Link
@@ -891,7 +902,8 @@ function directoryColumns(opts: {
       width: '10rem',
       cell: (r) => (
         <div className="flex items-center gap-2">
-          <PeopleStatusBadge status={workStatusOf(r)} windowDays={opts.windowDays} />
+          {/* One dot rule: every status in the column wears its dot (some variants have none by default). */}
+          <PeopleStatusBadge status={workStatusOf(r)} windowDays={opts.windowDays} withDot />
           {r.status === 'PENDING' && r.onboardingPercent !== null && (
             <span className="text-2xs tabular-nums text-silver">{r.onboardingPercent}%</span>
           )}
@@ -910,7 +922,8 @@ function directoryColumns(opts: {
         const client = opts.hasClients ? r.workplaceClientName : null;
         if (!client && !store) return EMPTY_CELL;
         return (
-          <div className="min-w-0 leading-5">
+          // Capped, so a long client or store name truncates (its whole name on hover) instead of pushing the table sideways.
+          <div className="min-w-0 max-w-[13rem] leading-5">
             {client && r.workplaceClientId ? (
               <Link
                 to={`/clients/${r.workplaceClientId}`}
@@ -949,14 +962,15 @@ function directoryColumns(opts: {
       key: 'hours',
       header: `Hours (${opts.windowDays} days)`,
       accessor: (r) => r.recentMinutes ?? null,
-      csv: (r) => (r.recentMinutes != null ? fmtHours(r.recentMinutes / 60) : ''),
+      csv: (r) => (r.recentMinutes != null ? hoursOneDecimal(r.recentMinutes / 60) : ''),
       sortable: true,
       searchable: false,
       align: 'right',
-      width: '8rem',
-      className: 'tabular-nums',
+      width: '7rem',
+      className: 'tabular-nums whitespace-nowrap',
+      // One decimal, always ("45.0h", "60.1h", "0.0h"), so the column lines up.
       cell: (r) =>
-        r.recentMinutes == null ? EMPTY_CELL : r.recentMinutes === 0 ? <span className="text-silver/70">0h</span> : fmtHours(Math.round((r.recentMinutes / 60) * 10) / 10),
+        r.recentMinutes == null ? EMPTY_CELL : r.recentMinutes === 0 ? <span className="text-silver/70">{hoursOneDecimal(0)}</span> : hoursOneDecimal(r.recentMinutes / 60),
     },
     {
       key: 'phone',
@@ -965,6 +979,9 @@ function directoryColumns(opts: {
       csv: (r) => r.phone ?? '',
       searchable: false,
       width: '10rem',
+      // The first column to give way when the list is narrow (a drawer open,
+      // a small laptop): still on the card, in the record and the export.
+      hideBelow: 1000,
       className: 'tabular-nums text-silver whitespace-nowrap',
       cell: (r) => {
         const href = phoneHref(r.phone);

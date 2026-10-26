@@ -185,6 +185,27 @@ describe('overtime-aware earnings (fixed past week — no clock dependence)', ()
     expect(e.days[4].workedAmount).toBeGreaterThan(e.days[0].workedAmount);
   });
 
+  it('off the clock and under 40 hours, overtime is not "unlocked" — whatever the last day was', async () => {
+    const { computeAssociateEarnings } = await import('../../lib/associateEarnings.js');
+    const { startOfWeekUTC } = await import('../../lib/timeAnomalies.js');
+    const weekStart = startOfWeekUTC(REF);
+    const client = await createClient();
+    // A store with a daily overtime rule: a minute appended after a long
+    // day was read as "every hour now pays 1.5×" with 0 overtime hours.
+    await prisma.site.updateMany({ where: { clientId: client.id }, data: { state: 'CA' } });
+    const associate = await createAssociate();
+    await prisma.compensationRecord.create({
+      data: { associateId: associate.id, payType: 'HOURLY', amount: 16, currency: 'USD', reason: 'HIRE', effectiveFrom: new Date('2026-01-01T00:00:00Z') },
+    });
+    const start = weekStart.getTime() + 2 * 24 * 3600_000 + 14 * 3600_000;
+    await prisma.timeEntry.create({
+      data: { associateId: associate.id, clientId: client.id, clockInAt: new Date(start), clockOutAt: new Date(start + 10.9 * 3600_000), status: 'APPROVED' },
+    });
+    const e = await computeAssociateEarnings(prisma, associate.id, new Date(start + 11 * 3600_000));
+    expect(e.onClock).toBe(false);
+    expect(e.overtime.unlocked).toBe(false);
+  });
+
   it('returns last week as the pace to beat (OT-aware, zero-based clock)', async () => {
     const { computeAssociateEarnings } = await import('../../lib/associateEarnings.js');
     const { startOfWeekUTC } = await import('../../lib/timeAnomalies.js');

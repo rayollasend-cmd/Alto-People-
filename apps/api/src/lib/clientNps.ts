@@ -6,6 +6,7 @@ import { generateInviteToken } from './inviteToken.js';
 import { send } from './notifications.js';
 import { runForEachTenant } from './tenantJobs.js';
 import { tenantIdForWrite } from './tenant.js';
+import { fmtDayInZone } from './humanDates.js';
 
 /**
  * Client NPS — the one question, once a quarter, to every store manager
@@ -85,7 +86,7 @@ export async function sendNpsWave(
         `Once a quarter we ask every ${clientNames.get(a.clientId!) ? `${clientNames.get(a.clientId!)} ` : ''}store we staff one question: how likely are you to recommend ${branding.orgName}? Your answer goes straight to our leadership.`,
       ],
       cta: { label: 'Answer in ten seconds', url },
-      after: [`The link is yours alone and works until ${closesAt.toISOString().slice(0, 10)}.`],
+      after: [`The link is yours alone and works until ${fmtDayInZone(closesAt, undefined, { year: true })}.`],
     });
     void send({
       channel: 'EMAIL',
@@ -121,7 +122,7 @@ export async function remindNpsWave(prisma: PrismaClient = defaultPrisma, now = 
       heading: 'One question about this quarter',
       paragraphs: [`How likely are you to recommend ${branding.orgName}? Your answer goes straight to our leadership.`],
       cta: { label: 'Answer in ten seconds', url },
-      after: [`The link works until ${wave.closesAt.toISOString().slice(0, 10)}.`],
+      after: [`The link works until ${fmtDayInZone(wave.closesAt, undefined, { year: true })}.`],
     });
     void send({
       channel: 'EMAIL',

@@ -14,18 +14,20 @@ import { claimKey, type Baton, type Claim, type Desk, type DeskPerson } from './
  */
 
 const DAY_MS = 86_400_000;
+/** Ages in words ('3 days late', never '3d late'). */
+const days$ = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 
 function when(b: Baton): { text: string; late: boolean } | null {
   if (b.dueOn) {
     const due = Date.parse(`${b.dueOn}T23:59:00`);
     const days = Math.round((due - Date.now()) / DAY_MS);
-    if (days < 0) return { text: `${-days}d late`, late: true };
+    if (days < 0) return { text: `${days$(-days)} late`, late: true };
     if (days === 0) return { text: 'due today', late: false };
     return { text: `due ${fmtDate(`${b.dueOn}T12:00:00Z`)}`, late: false };
   }
   if (b.oldestAt) {
     const days = Math.floor((Date.now() - Date.parse(b.oldestAt)) / DAY_MS);
-    return { text: days < 1 ? 'oldest today' : `oldest ${days}d`, late: b.status === 'overdue' };
+    return { text: days < 1 ? 'oldest today' : `oldest ${days$(days)}`, late: b.status === 'overdue' };
   }
   return null;
 }
@@ -55,7 +57,7 @@ export function RelayBatons({
     <section aria-labelledby="relay-batons">
       <SectionHead
         icon={Flag}
-        title="Open hand-offs"
+        title="Waiting on a team"
         meta={
           active.length === 0 ? 'all clear' : `${active.length} open${overdue ? ` · ${overdue} late` : ''}`
         }
@@ -65,7 +67,7 @@ export function RelayBatons({
         {active.length === 0 ? (
           <p className="flex items-center gap-2 px-4 py-3 text-sm text-success">
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            Nothing waiting{lens === 'ALL' ? '' : ' on this desk'}.
+            Nothing waiting{lens === 'ALL' ? '' : ' on this team'}.
           </p>
         ) : (
           <ul className="divide-y divide-navy-secondary/60">

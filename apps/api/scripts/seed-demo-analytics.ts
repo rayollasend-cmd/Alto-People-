@@ -56,7 +56,8 @@ const TENANT = '00000000-0000-4000-8000-000000000001';
 const ID_PREFIX = 'da7a5eed-a11a-4';
 /** Picked (from a sweep of seeds) so the default 90 days show every kind of exit and someone still open at every step. */
 const SEED = 20261059;
-const EMAIL_DOMAIN = 'analytics-demo.altohr.example';
+/** The cast's addresses read like the rest of the demo's people (first.last@example.com). */
+const EMAIL_DOMAIN = 'example.com';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -585,6 +586,9 @@ async function main() {
   }
 
   const now = new Date();
+  // Addresses already taken (the base seed's people share the domain): a namesake gets a numbered one.
+  for (const r of await prisma.associate.findMany({ where: { tenantId: TENANT }, select: { email: true } })) usedEmails.add(r.email.toLowerCase());
+  for (const r of await prisma.candidate.findMany({ where: { tenantId: TENANT }, select: { email: true } })) usedEmails.add(r.email.toLowerCase());
 
   // ---- The people and places the base seed made ----------------------------
   const admin = await prisma.user.findUnique({ where: { email: 'admin@altohr.com' }, select: { id: true } });
@@ -1152,7 +1156,7 @@ async function main() {
       maxSalary: rate.pay + 1.5,
       payUnit: 'HOUR',
       schedule: p.spec.schedule,
-      slug: `analytics-demo-${p.spec.key}-${p.store.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      slug: `${p.spec.key}-${p.store.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
       status: p.status,
       openings: p.spec.openings,
       openedAt: p.openedAt,

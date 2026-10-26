@@ -278,7 +278,8 @@ describe('<SupervisorDashboard> — My floor', () => {
       ],
     });
     // Ann, Ben and walk-in Wes are Swing; Zed isn't. 3 of Swing's 5.
-    expect(await screen.findByText(/2 short of Swing's target right now/)).toBeInTheDocument();
+    // The store's shift name, lowercased mid-sentence (F500: one shift-naming source, said as words).
+    expect(await screen.findByText(/2 short of the swing target right now/)).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /My shift · Swing/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByText('/ 5')).toBeInTheDocument();
 
@@ -288,9 +289,10 @@ describe('<SupervisorDashboard> — My floor', () => {
     expect(screen.getByText('/ 4')).toBeInTheDocument();
   });
 
-  it('reads a week with nothing scheduled yet as a dash, not 0%', async () => {
+  it('leaves out a fill tile with nothing to count — no "—", no 0% (F500: "nothing scheduled" was said six times)', async () => {
     renderPage({ kpis: { fillRatePercent: 0, assignedShifts: 0, completedShifts: 0, openShifts: 0 } });
-    expect(await screen.findByText('Nothing scheduled this week yet')).toBeInTheDocument();
+    expect(await screen.findByTestId('floor-kpis')).toBeInTheDocument();
+    expect(screen.queryByText('Fill rate · this week')).not.toBeInTheDocument();
     expect(screen.queryByText('0%')).not.toBeInTheDocument();
   });
 
@@ -302,7 +304,7 @@ describe('<SupervisorDashboard> — My floor', () => {
         sopDone: 3, sopTotal: 12, requiredOpen: 9, handoverCount: 0,
       },
     });
-    const banner = await screen.findByText('Your Overnight SOP is open');
+    const banner = await screen.findByText('Your overnight checklist is open');
     expect(screen.getByText(/3 of 12 done/)).toBeInTheDocument();
     expect(screen.getByText(/submit it before you clock out/)).toBeInTheDocument();
     expect(banner.closest('a')).toHaveAttribute('href', '/ops?tab=shift&shift=sop1');
@@ -338,7 +340,7 @@ describe('<SupervisorDashboard> — My floor', () => {
       clockedIn: true,
       submitted: { id: 's1', windowLabel: 'Morning', position: 'Morning shift', closedAt: new Date().toISOString(), closedIncomplete: false },
     });
-    expect(await screen.findByText('Your Morning SOP is submitted')).toBeInTheDocument();
+    expect(await screen.findByText('Your morning checklist is submitted')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clock out' })).toBeInTheDocument();
   });
 });
@@ -417,7 +419,7 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
     expect(screen.getByText('Not in yet')).toBeInTheDocument();
     expect(screen.getByText('Unfilled today')).toBeInTheDocument();
     // Dana's SOP isn't open yet — they help on it once it is.
-    expect(screen.getByText(/Dana's SOP opens when Dana clocks in/)).toBeInTheDocument();
+    expect(screen.getByText(/Dana’s checklist opens when Dana clocks in/)).toBeInTheDocument();
   });
 
   it("on the clock with Dana's SOP running: help on it", async () => {
@@ -436,7 +438,7 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
         runBy: { id: 'u-dana', name: 'Dana Reyes' },
       },
     });
-    const banner = await screen.findByRole('link', { name: /Dana's Swing SOP/ });
+    const banner = await screen.findByRole('link', { name: /Dana’s swing checklist/ });
     expect(banner).toHaveAttribute('href', '/ops?tab=shift&shift=sop1');
     expect(banner).toHaveTextContent('3 of 12 done');
     expect(banner).toHaveTextContent('Dana submits it');
@@ -453,7 +455,7 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
     });
     expect(await screen.findByText("You're running Dana's shift today")).toBeInTheDocument();
     expect(
-      screen.getByText(/Clock in at the store tablet with your clock-in number — the shift’s SOP opens for you, and it’s yours to submit/),
+      screen.getByText(/Clock in at the store tablet with your clock-in number — the shift’s checklist opens for you, and it’s yours to submit/),
     ).toBeInTheDocument();
     // They punch at the tablet only — no clock button in the app.
     expect(screen.queryByRole('button', { name: 'Clock in' })).not.toBeInTheDocument();
@@ -461,7 +463,7 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
 
   it('off the clock on an ordinary day: where to clock in, never a clock button', async () => {
     renderPage({ role: 'FLOOR_SUPERVISOR', clockedIn: false, floorTeam: floorTeam() });
-    expect(await screen.findByText(/Clock in at the store tablet with your clock-in number — you help on Dana’s SOP/)).toBeInTheDocument();
+    expect(await screen.findByText(/Clock in at the store tablet with your clock-in number — you help on Dana’s checklist/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clock in' })).not.toBeInTheDocument();
   });
 
@@ -495,7 +497,7 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
         coveringFor: { id: 'u-dana', name: 'Dana Reyes' },
       },
     });
-    expect(await screen.findByText("You're running Dana's Swing SOP")).toBeInTheDocument();
+    expect(await screen.findByText('You’re running Dana’s swing checklist')).toBeInTheDocument();
   });
 });
 
@@ -628,7 +630,7 @@ describe('<SupervisorDashboard> — the floor from a phone', () => {
     expect(screen.queryByText('Open shifts · next 7 days')).not.toBeInTheDocument();
   });
 
-  it('before their window starts, "who isn\'t in" says nobody is due yet — not "Everyone\'s in" (F500)', async () => {
+  it('before their window starts, the floor says when it starts — once, with no "Who isn\'t in yet" card and no "Everyone\'s in" (F500)', async () => {
     try {
       sessionStorage.removeItem('alto.floor.focus');
     } catch {
@@ -636,13 +638,16 @@ describe('<SupervisorDashboard> — the floor from a phone', () => {
     }
     const mod = (h: number) => minuteOfDayInZone(new Date(Date.now() + h * 3_600_000), tz);
     renderPage({ myWindows: [{ label: 'Swing', startMinute: mod(2), endMinute: mod(8), targetCount: 5 }] });
-    expect(await screen.findByText(/^Swing starts .* — nobody due yet$/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Swing starts at .* · nothing scheduled yet\.$/)).toBeInTheDocument();
+    expect(screen.queryByText('Who isn’t in yet')).not.toBeInTheDocument();
     expect(screen.queryByText('Everyone’s in')).not.toBeInTheDocument();
   });
 
-  it('with nobody scheduled, "who isn\'t in" says there is nobody to wait for — not "Everyone\'s in" (F500)', async () => {
+  it('with nobody scheduled, the floor says so once — no "who isn\'t in" card, no empty coverage column (F500)', async () => {
     renderPage({ emptyDay: true });
-    expect(await screen.findByText('Nobody is scheduled today — nobody to wait for')).toBeInTheDocument();
+    expect(await screen.findByText(/On the floor now/i)).toBeInTheDocument();
+    expect(screen.queryByText('Who isn’t in yet')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Coverage across today —/)).not.toBeInTheDocument();
     expect(screen.queryByText('Everyone’s in')).not.toBeInTheDocument();
   });
 

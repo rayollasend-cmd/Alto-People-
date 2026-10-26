@@ -44,13 +44,14 @@ export function PortalRequestsPage() {
   }
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
+    // The portal's one content width (F500 2026-10-26: Requests was a narrow
+    // centred column while every other portal page ran full width).
     <ListTemplate
-        className="mx-auto max-w-3xl"
         title={t('portal.reqTitle')}
-        subtitle={t('portal.reqDialogHint')}
+        subtitle={t('portal.reqHintTeam')}
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
-        breadcrumbs={[{ label: t('portal.title'), to: '/portal' }, { label: t('portal.reqTitle') }]}
+        breadcrumbs={[{ label: t('portal.homeCrumb'), to: '/portal' }, { label: t('portal.reqTitle') }]}
         // "Make a request" is the page's action, in its header — it sat inside
         // a card titled "Requests" under a page titled "Requests" (F500 G5).
         actions={[

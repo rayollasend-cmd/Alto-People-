@@ -36,7 +36,7 @@ export function StoreShiftSops({ canEdit }: { canEdit: boolean }) {
     setSaving(`${locationId}|${label}`);
     try {
       await setStoreShiftSop({ locationId, label, templateId });
-      toast.success(`${label} now runs that SOP at clock-in.`);
+      toast.success(`${label} now runs that checklist at clock-in.`);
       await queryClient.invalidateQueries({ queryKey: ['ops', 'store-shifts', clientId] });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not save.');
@@ -68,7 +68,7 @@ export function StoreShiftSops({ canEdit }: { canEdit: boolean }) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex flex-wrap items-baseline gap-x-2 text-base">
-          Store shifts — the SOP each shift runs
+          Store shifts — the checklist each shift runs
           <span className="text-xs font-normal text-silver/60">
             opens at the supervisor&apos;s clock-in; they can&apos;t clock out until it&apos;s submitted
           </span>
@@ -96,7 +96,7 @@ export function StoreShiftSops({ canEdit }: { canEdit: boolean }) {
             </Select>
             {data && unassigned > 0 && (
               <span className="text-xs text-warning">
-                {unassigned} shift{unassigned === 1 ? '' : 's'} without an SOP
+                {unassigned} shift{unassigned === 1 ? '' : 's'} without a checklist
               </span>
             )}
           </div>
@@ -145,7 +145,7 @@ export function StoreShiftSops({ canEdit }: { canEdit: boolean }) {
                                       className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy-secondary/30 px-2 py-1 text-xs"
                                     >
                                       <span className="min-w-0 flex-1 truncate text-white">
-                                        {t ? `${t.department} · ${t.name}` : 'SOP no longer in the library'}
+                                        {t ? `${t.department} · ${t.name}` : 'Checklist no longer in the library'}
                                       </span>
                                       {t && (
                                         <span className="shrink-0 tabular-nums text-silver/70">
@@ -157,7 +157,7 @@ export function StoreShiftSops({ canEdit }: { canEdit: boolean }) {
                                           type="button"
                                           onClick={() => void removeOne(s.locationId, w.label, id)}
                                           disabled={saving === key}
-                                          aria-label={`Remove ${t ? t.name : 'this SOP'} from ${w.label}`}
+                                          aria-label={`Remove ${t ? t.name : 'this checklist'} from ${w.label}`}
                                           className="shrink-0 rounded p-0.5 text-silver/60 hover:text-alert focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
                                         >
                                           <X className="h-3.5 w-3.5" />
@@ -170,7 +170,7 @@ export function StoreShiftSops({ canEdit }: { canEdit: boolean }) {
                             )}
                             <Select
                               size="sm"
-                              aria-label={`Add an SOP to ${s.locationName} ${w.label}`}
+                              aria-label={`Add a checklist to ${s.locationName} ${w.label}`}
                               className="w-full"
                               value=""
                               disabled={!canEdit || saving === key}
@@ -178,8 +178,8 @@ export function StoreShiftSops({ canEdit }: { canEdit: boolean }) {
                             >
                               <option value="">
                                 {w.templateIds.length === 0
-                                  ? 'No SOP — nothing opens at clock-in'
-                                  : 'Add another department’s SOP…'}
+                                  ? 'No checklist — nothing opens at clock-in'
+                                  : 'Add another department’s checklist…'}
                               </option>
                               {data.templates
                                 .filter((t) => !w.templateIds.includes(t.id))

@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HAPPENED } from './opsShiftStatus.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { fmtMomentInZone } from './humanDates.js';
 
 /**
  * The SOP packet — the record a store's operations leave behind, as a
@@ -601,7 +602,7 @@ export async function buildOpsPacket(
         department: s.department,
         account: s.openedBy?.email ?? null,
         headline: 'Never submitted — the shift window has ended',
-        detail: `Opened ${s.openedBy?.name ?? 'unknown'}, due ${s.dueAt.toISOString()}`,
+        detail: `Opened by ${s.openedBy?.name ?? 'someone unknown'}, due ${fmtMomentInZone(s.dueAt)}`,
         severity: 'unsubmitted',
         shiftId: s.id,
       });

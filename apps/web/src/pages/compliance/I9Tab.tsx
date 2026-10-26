@@ -26,7 +26,7 @@ import {
 } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { personPhotoUrl } from '@/lib/photoUrl';
-import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtDateTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useStoreScope } from '@/lib/storeScope';
 import { toast } from 'sonner';
@@ -34,22 +34,20 @@ import {
   Avatar,
   Badge,
   Button,
-  Card,
-  CardContent,
   Drawer,
   DrawerBody,
   DrawerDescription,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-  EmptyState,
   ErrorBanner,
   Input,
   Label,
   Select,
   SkeletonRows,
 } from '@/components/ui';
-import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { DataGrid } from '@/components/ui/DataGrid';
 
 /* ---------------- Section 2 deadline helpers ----------------
  * Date-only strings ("YYYY-MM-DD") are parsed at LOCAL midnight —
@@ -134,6 +132,14 @@ function matchesStarted(startDate: string | null | undefined, f: StartedFilter):
   if (!startDate) return false;
   const days = f === 'week' ? 7 : f === 'month' ? 30 : 90;
   return daysFromToday(parseLocalDate(startDate)) >= -days;
+}
+
+/** A row's I-9 state in words — the grid's sort key, search text and CSV. */
+function i9StatusWords(r: I9Verification, notStarted: boolean): string {
+  if (notStarted) return 'No I-9 on file';
+  if (r.section2CompletedAt) return 'Complete';
+  if (r.section1CompletedAt) return 'Section 2 pending';
+  return 'Section 1 pending';
 }
 
 const DOC_LIST_LABELS: Record<I9DocumentList, string> = {
@@ -405,19 +411,26 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   }, [rows]);
   const hasUnattributed = (rows ?? []).some((r) => !r.clientId);
 
-  // Whole-population stats (rows is always the full list).
+  // The tiles count the same people the list shows (F500 audit 2026-10-26):
+  // the whole population in the client in scope, before the status chips.
+  // "Section 2 pending" read 0 over a Pending list of 33 "Section 2 due"
+  // rows, because it skipped the people with no I-9 at all — who have
+  // neither section done and whose Section 2 clock runs from their hire
+  // date. Every pending count now includes them, as the list does.
+  const inScope = (r: I9Verification) =>
+    !clientFilter || (clientFilter === 'none' ? !r.clientId : r.clientId === clientFilter);
   const kpi = useMemo(() => {
-    const all = rows ?? [];
-    const records = all.filter((r) => !notStartedIds.has(r.id));
+    const all = (rows ?? []).filter(inScope);
     const placed = all.filter((r) => r.placed);
     const pending2 = all.filter((r) => !r.section2CompletedAt);
     return {
       // The scorecard's population and its I-9 line, the same rule.
       placed: placed.length,
       placedComplete: placed.filter((r) => !!r.section1CompletedAt && !!r.section2CompletedAt).length,
-      notStarted: notStartedIds.size,
-      pendingS1: records.filter((r) => !r.section1CompletedAt).length,
-      pendingS2: records.filter((r) => !r.section2CompletedAt).length,
+      notStarted: all.filter((r) => notStartedIds.has(r.id)).length,
+      pendingS1: all.filter((r) => !r.section1CompletedAt).length,
+      // Exactly the Pending view's rows.
+      pendingS2: pending2.length,
       overdue: pending2.filter((r) => {
         const due = section2DueDate(r.startDate);
         return due !== null && due.getTime() < Date.now();
@@ -429,7 +442,21 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
       ).length,
     };
-  }, [rows, notStartedIds]);
+    // inScope reads clientFilter, listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, notStartedIds, clientFilter]);
+  const retentionInScope = retentionRows.filter(inScope);
+  // Reverification dates are a column only when someone has one.
+  const showReverify = (rows ?? []).some((r) => !!(r.reverifyDueAt ?? r.workAuthExpiresAt));
+  const activeFilterCount =
+    (filter !== 'pending' ? 1 : 0) + (clientFilter ? 1 : 0) + (started !== 'any' ? 1 : 0) + (dueDay ? 1 : 0);
+  const clearFilters = () => {
+    setFilter('pending');
+    changeClientFilter('');
+    setStarted('any');
+    setDueDay(null);
+    setSearch('');
+  };
   const deadlineDates = useMemo(() => (rows ?? []).flatMap(i9DueDates), [rows]);
 
   return (
@@ -460,6 +487,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             value={kpi.pendingS1}
             tone={kpi.pendingS1 > 0 ? 'text-warning' : undefined}
           />
+          {/* The Pending chip's own number: every row in that view. */}
           <Kpi
             label="Section 2 pending"
             value={kpi.pendingS2}
@@ -475,7 +503,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             active={filter === 'overdue'}
           />
           <Kpi
-            label={`Reverify ≤ ${WORK_AUTH_WINDOW_DAYS}d`}
+            label={`Reverify within ${WORK_AUTH_WINDOW_DAYS} days`}
             value={kpi.workAuth}
             tone={kpi.workAuth > 0 ? 'text-alert' : undefined}
             onClick={() => setFilter('work_auth')}
@@ -483,8 +511,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           />
           <Kpi
             label="Past retention"
-            value={retentionRows.length}
-            tone={retentionRows.length > 0 ? 'text-warning' : undefined}
+            value={retentionInScope.length}
+            tone={retentionInScope.length > 0 ? 'text-warning' : undefined}
             onClick={() => setFilter('retention')}
             active={filter === 'retention'}
           />
@@ -501,7 +529,21 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
         />
       )}
 
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      <FilterBar
+        className="mb-3"
+        search={
+          <SearchInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name…"
+            aria-label="Search by name"
+            wrapperClassName="min-w-0 w-full sm:w-64"
+          />
+        }
+        activeFilters={activeFilterCount}
+        onClearFilters={clearFilters}
+        sheetDescription="Narrow the I-9 list by status, client and start date."
+      >
         {I9_FILTERS.filter((f) => f.value !== 'not_started' || kpi.notStarted > 0).map((f) => (
           <FilterChip
             key={f.value}
@@ -540,130 +582,138 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           <option value="month">Started in the last 30 days (or upcoming)</option>
           <option value="quarter">Started in the last 90 days (or upcoming)</option>
         </Select>
-        <div className="w-full sm:w-64 sm:ml-auto">
-          <SearchInput
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name…"
-            aria-label="Search by name"
-          />
-        </div>
-      </div>
+      </FilterBar>
 
-      {error && (
-        <ErrorBanner
-          className="mb-3"
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
-              Retry
-            </Button>
-          }
-        >
-          {error}
-        </ErrorBanner>
-      )}
-      {!displayRows && !error && <SkeletonRows count={4} rowHeight="h-20" />}
-      {displayRows && displayRows.length === 0 && (
-        <EmptyState
-          icon={FileCheck}
-          title="No I-9 records match this filter"
-          description={`Switch to a different filter, clear the search, or wait for ${term('workers').toLowerCase()} to complete Section 1.`}
-        />
-      )}
-      {displayRows && displayRows.length > 0 && (
-        <ul className="space-y-2">
-          {displayRows.map((r) => {
-            const sec1Done = !!r.section1CompletedAt;
-            const sec2Done = !!r.section2CompletedAt;
-            return (
-              <li key={r.id}>
-                <Card
-                  className="group cursor-pointer transition-colors hover:border-gold/40"
-                  onClick={(e) => {
-                    const target = e.target as HTMLElement;
-                    if (target.closest('button, a, input, [data-no-row-click]')) return;
-                    if (window.getSelection()?.toString()) return;
-                    setDrawerTarget(r);
-                  }}
-                >
-                  <CardContent>
-                    <div className="flex items-center justify-between gap-4 flex-wrap">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Avatar src={personPhotoUrl(r)} name={r.associateName} email={r.associateEmail} size="md" />
-                        <div className="min-w-0">
-                          <div className="text-white font-medium truncate">
-                            {r.associateName}
-                          </div>
-                          <div className="text-xs text-silver truncate">
-                            {r.associateEmail}
-                            {r.clientName ? ` · ${r.clientName}` : ''}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 flex-wrap">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {notStartedIds.has(r.id) ? (
-                            <Badge variant="destructive">No I-9 on file</Badge>
-                          ) : (
-                            <>
-                              <SectionBadge label="Sec 1" done={sec1Done} />
-                              <SectionBadge label="Sec 2" done={sec2Done} />
-                            </>
-                          )}
-                          {r.placed === false && <Badge variant="outline">Onboarding</Badge>}
-                          {r.documentList && (
-                            <Badge variant="outline">
-                              {DOC_LIST_LABELS[r.documentList]}
-                            </Badge>
-                          )}
-                        </div>
-                        {(r.reverifyDueAt ?? r.workAuthExpiresAt) && (
-                          <div className="text-right">
-                            <div className="text-2xs uppercase tracking-widest text-silver/80">
-                              Reverify by
-                            </div>
-                            <div
-                              className={cn(
-                                'text-xs tabular-nums',
-                                toneForDays(
-                                  daysFromToday(parseLocalDate((r.reverifyDueAt ?? r.workAuthExpiresAt)!.slice(0, 10))),
-                                ),
-                              )}
-                            >
-                              {fmtDate(parseLocalDate((r.reverifyDueAt ?? r.workAuthExpiresAt)!.slice(0, 10)))}
-                            </div>
-                          </div>
-                        )}
-                        {r.retainUntil && (
-                          <div className="text-right">
-                            <div className="text-2xs uppercase tracking-widest text-silver/80">
-                              Retain until
-                            </div>
-                            <div
-                              className={cn(
-                                'text-xs tabular-nums',
-                                r.retainUntil < ymdLocal() ? 'text-warning' : 'text-silver',
-                              )}
-                            >
-                              {fmtDate(parseLocalDate(r.retainUntil.slice(0, 10)))}
-                            </div>
-                          </div>
-                        )}
-                        <div className="text-right min-w-[84px]">
-                          <div className="text-2xs uppercase tracking-widest text-silver/80">
-                            Sec 2 due
-                          </div>
-                          <Section2DueCell row={r} />
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {/* The I-9 list (F500 audit 2026-10-26): one DataGrid — sortable,
+          exportable, a card per row on a phone — where a hand-built bordered
+          card per person used to stack. Filters stay above it, so an empty
+          view never hides the chips that would refill it. */}
+      <DataGrid<I9Verification>
+        id="compliance-i9"
+        caption="I-9 records"
+        noun={{ one: 'I-9', many: 'I-9s' }}
+        rows={displayRows}
+        loading={!displayRows && !error}
+        error={error}
+        onRetry={() => void refresh()}
+        rowKey={(r) => r.id}
+        search={false}
+        urlState={false}
+        toolbar="inline"
+        exportCsv={{ filename: 'i9-records' }}
+        onRowClick={(r) => setDrawerTarget(r)}
+        rowActionLabel={(r) => `Open ${r.associateName}’s I-9`}
+        empty={{
+          icon: FileCheck,
+          title: 'No I-9 records match this filter',
+          description: `Switch to a different filter, clear the search, or wait for ${term('workers').toLowerCase()} to complete Section 1.`,
+        }}
+        columns={[
+          {
+            key: 'person',
+            header: term('worker'),
+            accessor: (r) => r.associateName,
+            csv: (r) => r.associateName,
+            sortable: true,
+            primary: true,
+            cell: (r) => (
+              <span className="flex min-w-0 items-center gap-3">
+                <Avatar src={personPhotoUrl(r)} name={r.associateName} email={r.associateEmail} size="sm" />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium text-ink">{r.associateName}</span>
+                  {(r.associateEmail || r.clientName) && (
+                    <span className="block truncate text-xs text-ink-muted">
+                      {[hasClients ? r.clientName : null, r.associateEmail].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                </span>
+              </span>
+            ),
+          },
+          {
+            key: 'status',
+            header: 'Status',
+            accessor: (r) => i9StatusWords(r, notStartedIds.has(r.id)),
+            sortable: true,
+            cardMeta: true,
+            cell: (r) => (
+              <span className="flex flex-wrap items-center gap-1.5">
+                {notStartedIds.has(r.id) ? (
+                  <Badge variant="destructive">No I-9 on file</Badge>
+                ) : (
+                  <>
+                    <SectionBadge label="Section 1" done={!!r.section1CompletedAt} />
+                    <SectionBadge label="Section 2" done={!!r.section2CompletedAt} />
+                  </>
+                )}
+                {r.placed === false && <Badge variant="outline">Onboarding</Badge>}
+                {r.documentList && <Badge variant="outline">{DOC_LIST_LABELS[r.documentList]}</Badge>}
+              </span>
+            ),
+          },
+          {
+            key: 'sec2',
+            header: 'Section 2 due',
+            accessor: (r) => {
+              if (r.section2CompletedAt) return null;
+              return section2DueDate(r.startDate)?.getTime() ?? null;
+            },
+            csv: (r) => {
+              const due = r.section2CompletedAt ? null : section2DueDate(r.startDate);
+              return due ? ymdLocal(due) : '';
+            },
+            sortable: true,
+            searchable: false,
+            align: 'right',
+            cardMeta: true,
+            className: 'tabular-nums whitespace-nowrap',
+            cell: (r) => <Section2DueCell row={r} />,
+          },
+          ...(showReverify
+            ? [
+                {
+                  key: 'reverify',
+                  header: 'Reverify by',
+                  accessor: (r: I9Verification) => (r.reverifyDueAt ?? r.workAuthExpiresAt ?? '').slice(0, 10) || null,
+                  sortable: true,
+                  searchable: false,
+                  align: 'right' as const,
+                  className: 'tabular-nums whitespace-nowrap',
+                  cell: (r: I9Verification) => {
+                    const v = (r.reverifyDueAt ?? r.workAuthExpiresAt)?.slice(0, 10);
+                    if (!v) return <span className="text-ink-subtle">—</span>;
+                    return (
+                      <span className={cn('text-xs', toneForDays(daysFromToday(parseLocalDate(v))))}>
+                        {fmtDateOnly(v, { year: 'auto' })}
+                      </span>
+                    );
+                  },
+                },
+              ]
+            : []),
+          ...(filter === 'retention'
+            ? [
+                {
+                  key: 'retain',
+                  header: 'Retain until',
+                  accessor: (r: I9Verification) => r.retainUntil?.slice(0, 10) ?? null,
+                  sortable: true,
+                  searchable: false,
+                  align: 'right' as const,
+                  className: 'tabular-nums whitespace-nowrap',
+                  cell: (r: I9Verification) =>
+                    r.retainUntil ? (
+                      <span className={cn('text-xs', r.retainUntil < ymdLocal() ? 'text-warning' : 'text-ink-muted')}>
+                        {fmtDateOnly(r.retainUntil.slice(0, 10), { year: 'auto' })}
+                      </span>
+                    ) : (
+                      <span className="text-ink-subtle">—</span>
+                    ),
+                },
+              ]
+            : []),
+        ]}
+      />
 
       <Drawer
         open={!!drawerTarget}
@@ -689,24 +739,27 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   );
 }
 
-/** "Section 2 due" cell: overdue Nd in alert, due within 2 days in warning,
- *  otherwise a muted date. Em dash when complete or no start date. */
+/** "Section 2 due" cell: "941 days overdue" in alert, due within 2 days in
+ *  warning, otherwise a muted date ("Nov 2"). "Done" when complete; a dash
+ *  when there is no start date to count from. */
 function Section2DueCell({ row }: { row: I9Verification }) {
   if (row.section2CompletedAt) {
-    return <div className="text-xs text-silver/60">—</div>;
+    return <span className="text-xs text-ink-muted">Done</span>;
   }
   const due = section2DueDate(row.startDate);
-  if (!due) return <div className="text-xs text-silver/60">—</div>;
+  if (!due) return <span className="text-xs text-ink-subtle" title="No start date on file">—</span>;
   const days = daysFromToday(due);
   if (days < 0) {
     return (
-      <div className="text-xs font-medium text-alert">overdue {-days}d</div>
+      <span className="text-xs font-medium text-alert" title={`Was due ${fmtDate(due)}`}>
+        {-days === 1 ? '1 day overdue' : `${(-days).toLocaleString('en-US')} days overdue`}
+      </span>
     );
   }
   return (
-    <div className={cn('text-xs tabular-nums', toneForDays(days))}>
-      {fmtDate(due)}
-    </div>
+    <span className={cn('text-xs tabular-nums', toneForDays(days))}>
+      {days === 0 ? 'Today' : fmtDateOnly(ymdLocal(due), { year: 'auto' })}
+    </span>
   );
 }
 

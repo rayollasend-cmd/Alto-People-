@@ -14,6 +14,7 @@ import {
 import { prisma as defaultPrisma } from '../db.js';
 import { platformJob } from './tenantJobs.js';
 import { jobSecretStates } from './jobSecrets.js';
+import { describeEvidence, jobSecretsText } from './evidenceText.js';
 
 /**
  * Brief 2-5 step 1 — the evidence spine.
@@ -83,21 +84,34 @@ async function toRows(db: Db, rows: EvidenceWithSignoffs[]): Promise<EvidenceRow
   const signerIds = [...new Set(rows.flatMap((r) => r.signoffs.map((s) => s.signedOffById)))];
   const users = signerIds.length ? await db.user.findMany({ where: { id: { in: signerIds } }, select: { id: true, email: true } }) : [];
   const email = new Map(users.map((u) => [u.id, u.email]));
-  return rows.map((r) => ({
-    id: r.id,
-    control: r.control,
-    status: r.status,
-    summary: r.summary,
-    details: r.details,
-    collectedAt: r.collectedAt.toISOString(),
-    collectedBy: r.collectedBy,
-    periodStart: r.periodStart?.toISOString() ?? null,
-    periodEnd: r.periodEnd?.toISOString() ?? null,
-    signoffs: r.signoffs
-      .slice()
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-      .map((s) => ({ id: s.id, signedOffById: s.signedOffById, signedOffByEmail: email.get(s.signedOffById) ?? null, note: s.note, createdAt: s.createdAt.toISOString() })),
-  }));
+  // The access review's flags, by their labels (loaded on use: accessReview imports this module).
+  const labels = rows.some((r) => r.control === 'access-review')
+    ? {
+        accountFlagLabels: (await import('./accessCleanup.js')).ACCESS_FLAG_LABEL as Record<string, string>,
+        agentFlagLabels: (await import('./accessReview.js')).AGENT_FLAG_LABEL as Record<string, string>,
+      }
+    : {};
+  return rows.map((r) => {
+    // Every row said plainly, from its details — rows collected before the
+    // F500 wording read the same as new ones; the technical line is `detail`.
+    const text = describeEvidence({ control: r.control, status: r.status, summary: r.summary, details: r.details }, { signedOff: r.signoffs.length > 0, ...labels });
+    return {
+      id: r.id,
+      control: r.control,
+      status: r.status,
+      summary: text.summary,
+      detail: text.detail,
+      details: r.details,
+      collectedAt: r.collectedAt.toISOString(),
+      collectedBy: r.collectedBy,
+      periodStart: r.periodStart?.toISOString() ?? null,
+      periodEnd: r.periodEnd?.toISOString() ?? null,
+      signoffs: r.signoffs
+        .slice()
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        .map((s) => ({ id: s.id, signedOffById: s.signedOffById, signedOffByEmail: email.get(s.signedOffById) ?? null, note: s.note, createdAt: s.createdAt.toISOString() })),
+    };
+  });
 }
 
 /**
@@ -159,16 +173,15 @@ export async function signOffEvidence(evidenceId: string, signedOffById: string,
 export function jobSecretsResult(): EvidenceResult {
   const states = jobSecretStates();
   const unset = states.filter((s) => !s.set);
+  const details = {
+    secrets: states.map((s) => ({ job: s.job, variable: s.variable, set: s.set, sharesFieldKey: s.sharesPayoutKey })),
+    requireSplitSecrets: process.env.REQUIRE_SPLIT_SECRETS === '1',
+  };
+  // Plain words in the summary; the variable names stay in the details (the page's detail line).
   return {
     status: unset.length === 0 ? 'PASS' : 'WARN',
-    summary:
-      unset.length === 0
-        ? `All ${states.length} per-job secrets are set.`
-        : `${unset.length} of ${states.length} per-job secrets fall back to the field-encryption key: ${unset.map((s) => s.variable).join(', ')}.`,
-    details: {
-      secrets: states.map((s) => ({ job: s.job, variable: s.variable, set: s.set, sharesFieldKey: s.sharesPayoutKey })),
-      requireSplitSecrets: process.env.REQUIRE_SPLIT_SECRETS === '1',
-    },
+    summary: jobSecretsText(details)?.summary ?? `${unset.length} of ${states.length} protected services still share the main encryption key.`,
+    details,
   };
 }
 

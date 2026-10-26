@@ -1,5 +1,6 @@
 import type { BooksPnlTotals, BooksProfitAndLoss } from '@alto-people/shared';
-import { fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
+import { fmtMoney } from '@/lib/format';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, StackedBarChart, Waterfall, type WaterfallStep } from '@/components/ui/charts';
 
@@ -51,7 +52,7 @@ export function PnlWaterfall({ totals }: { totals: BooksPnlTotals }) {
       csvName="profit-and-loss-waterfall"
       height={260}
     >
-      <Waterfall start={{ label: 'Income', value: totals.income }} steps={steps} end={{ label: 'Net income' }} format={(v) => fmtMoneyCompact(v)} words={{ total: 'Subtotal' }} />
+      <Waterfall start={{ label: 'Income', value: totals.income }} steps={steps} end={{ label: 'Net income' }} format={fmtMoneyAxis} words={{ total: 'Subtotal' }} />
     </ChartFrame>
   );
 }
@@ -88,7 +89,7 @@ export function PnlMonthBars({ r }: { r: BooksProfitAndLoss }) {
           { key: 'costs', name: 'Costs', color: PALETTE.other },
           { key: 'net', name: 'Net income', color: PALETTE.tertiary },
         ]}
-        format={(v) => fmtMoneyCompact(v)}
+        format={fmtMoneyAxis}
       />
     </ChartFrame>
   );

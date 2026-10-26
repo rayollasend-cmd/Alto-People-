@@ -77,7 +77,7 @@ export function OpsPacketButton({
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size={size}>
           <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-          SOP packet
+          Checklist packet
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
@@ -119,7 +119,7 @@ export function OpsShiftPacketLink({
         target="_blank"
         rel="noreferrer"
         download
-        aria-label="Download this shift's SOP packet as a PDF"
+        aria-label="Download this shift's checklist packet as a PDF"
       >
         <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
         Shift packet

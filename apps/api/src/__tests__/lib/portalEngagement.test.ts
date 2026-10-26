@@ -118,10 +118,11 @@ describe('portal engagement', () => {
     const rows = await prisma.notification.findMany({ where: { category: 'portal.engagement_digest', channel: 'IN_APP' } });
     expect(rows.map((r) => r.recipientUserId).sort()).toEqual([s.hr.id, s.wfm.id, s.chair.id].sort());
     const body = rows[0]!.body;
-    expect(rows[0]!.subject).toBe('Portal engagement · week of 2026-09-12 – 2026-09-18');
+    expect(rows[0]!.subject).toBe('Portal engagement · week of Sep 12 – 18');
     expect(body).toContain('1 of 2 portal accounts signed in last week; 1 report pulled.');
     expect(body).toContain(`Front Beach 218 (Walmart 218) · ${s.manager.email} — 2 sign-ins`);
-    expect(body).toContain('reports: Tuesday, September 15, 2026 (pulled 2026-09-16');
+    expect(body).toContain('reports: Tuesday, September 15, 2026 (pulled Sep 16 at 2:14 PM');
+    expect(body).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(body).toContain(`Walmart 218 (all stores) · ${invited.email} — invited`);
     expect(body).toContain('has not signed in yet');
     // Once per week.

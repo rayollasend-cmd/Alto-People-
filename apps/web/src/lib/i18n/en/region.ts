@@ -37,7 +37,7 @@ export const enRegion = {
   'region.kpiShort': '{sites} below contract now',
   'region.kpiBelowContractSub': "{count} {sitesLc} below contract",
   'region.kpiShortUnit': 'of {total}',
-  'region.kpiShortAlerts': '{count} past the grace period',
+  'region.kpiShortAlerts': '{count} late and not in yet',
   'region.attnOverdue': '{count} requests past their reply-by',
   'region.attnOverdue_one': '{count} request past its reply-by',
   'region.attnOpenToday': '{count} unfilled slots today',
@@ -83,6 +83,14 @@ export const enRegion = {
   'region.viewTable': "Table",
   'region.exportCsv': "Export CSV",
   'region.ringOfContract': "Of contract on the floor",
+  'region.kpiDelivered': 'Contracted hours delivered · 4 weeks',
+  'region.kpiBelowTargetOne': '1 {siteLc} below the 88% target',
+  'region.kpiBelowTarget': '{count} {sitesLc} below the 88% target',
+  'region.kpiAllAtTarget': 'Every {siteLc} at or above the 88% target',
+  'region.kpiAtTarget': '{n} of {total} at or above target',
+  'region.kpiLateNotIn': 'Late, not in yet',
+  'region.colDelivered': 'Delivered',
+  'region.cardDelivered': '{pct}% delivered',
 } as const;
 
 registerEnglish(enRegion);

@@ -195,7 +195,7 @@ export function NewRequestDialog({
     <Dialog open={open} onOpenChange={(o) => !o && !send.isPending && onClose()}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Send to another desk</DialogTitle>
+          <DialogTitle>Send to another team</DialogTitle>
           <DialogDescription>A question, a document, or a task — it lands on that desk and anyone there can pick it up.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

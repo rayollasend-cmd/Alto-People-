@@ -76,7 +76,7 @@ describe('<PortalToday> F500 G5', () => {
     });
     renderAs('CLIENT_PORTAL', { clientId: 'c1', locationId: 'l1' }, '/portal/today');
     expect(await screen.findByTestId('today-contract-gap')).toHaveTextContent('Nothing scheduled against your contracted 8 (Morning).');
-    const href = screen.getByRole('link', { name: 'Request staff' }).getAttribute('href')!;
+    const href = screen.getByRole('link', { name: 'Make a request' }).getAttribute('href')!;
     expect(new URLSearchParams(href.split('?')[1]).get('subject')).toMatch(/^Coverage for /);
   });
 

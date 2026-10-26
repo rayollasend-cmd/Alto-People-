@@ -61,6 +61,8 @@ export function MyLeave() {
     <ListTemplate
       title={t('myLeave.title')}
       subtitle={t('myLeave.subtitle')}
+      // A worker reads at 16px on a phone (helper lines at 14px).
+      className="max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm"
       primaryAction={q.data?.linked ? <Button onClick={() => setAsking(true)}>{t('myLeave.request')}</Button> : undefined}
     >
       {q.isError ? (
@@ -75,23 +77,11 @@ export function MyLeave() {
       ) : !q.data ? (
         <SkeletonRows count={3} />
       ) : !q.data.linked ? (
-        <Card>
-          <CardContent className="p-0 first:pt-0">
-            <EmptyState icon={CalendarHeart} title={t('myLeave.title')} description={t('myLeave.notLinked')} className="py-10" />
-          </CardContent>
-        </Card>
+        // The kit's empty state on its own, never inside a card.
+        <EmptyState icon={CalendarHeart} title={t('myLeave.title')} description={t('myLeave.notLinked')} />
       ) : q.data.cases.length === 0 ? (
-        <Card>
-          <CardContent className="p-0 first:pt-0">
-            <EmptyState
-              icon={CalendarHeart}
-              title={t('myLeave.emptyTitle')}
-              description={t('myLeave.emptyBody')}
-              action={<Button onClick={() => setAsking(true)}>{t('myLeave.request')}</Button>}
-              className="py-10"
-            />
-          </CardContent>
-        </Card>
+        // The header already offers "Request leave": one gold button, not two.
+        <EmptyState icon={CalendarHeart} title={t('myLeave.emptyTitle')} description={t('myLeave.emptyBody')} />
       ) : (
         <ul className="space-y-3">
           {q.data.cases.map((c) => (

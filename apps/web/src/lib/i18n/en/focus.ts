@@ -5,10 +5,11 @@ export const enFocus = {
   'focus.aria': 'Show my shift or the whole store',
   'focus.myShift': 'My shift',
   'focus.wholeStore': 'Whole store',
-  'focus.windowTarget': "{label}'s target",
   'focus.startsAt': '{label} starts at {time} · {count} scheduled.',
   'focus.nothingToday': 'Nothing on your shift today.',
   'focus.band': 'Your shift',
+  'focus.windowTargetOf': 'the {label} target',
+  'focus.startsAtNone': '{label} starts at {time} · nothing scheduled yet.',
 } as const;
 
 registerEnglish(enFocus);

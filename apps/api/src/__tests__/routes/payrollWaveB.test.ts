@@ -247,7 +247,8 @@ describe('payroll desks', () => {
     });
     const bad = await a.get(`/payroll/runs/${run.id}/disburse-preview`);
     expect(bad.body.provider).toMatchObject({ health: 'erroring', blocked: true });
-    expect(bad.body.provider.detail).toMatch(/401 Unauthorized/);
+    expect(bad.body.provider.detail).toMatch(/Wise rejected the saved credentials — reconnect to resume payouts\./);
+    expect(bad.body.provider.detail).not.toMatch(/401/);
   });
 
   it('the Pay tab for in-house payroll: schedule, pay account, last paystubs and year to date', async () => {

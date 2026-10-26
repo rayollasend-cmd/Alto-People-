@@ -8,7 +8,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { cn } from '@/lib/cn';
 import { fmtDateOnly, ymdLocal } from '@/lib/format';
 import { AuthContext } from '@/lib/auth';
-import { inboxLink, useInbox } from '@/lib/inboxApi';
+import { NOT_A_QUEUE, inboxLink, useInbox } from '@/lib/inboxApi';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { useListKeyboard } from '@/lib/shortcuts';
 import '@/lib/i18n/en/decisions';
@@ -46,8 +46,12 @@ export function InboxHome() {
   const inbox = useInbox();
   const navigate = useNavigate();
 
-  const { waiting, quiet, watching, bands } = useMemo(() => {
-    const sources = inbox.data?.sources ?? [];
+  const { waiting, quiet, watching, bands, notices } = useMemo(() => {
+    const all = inbox.data?.sources ?? [];
+    // Unread notices are the bell's number, not a queue: one quiet line
+    // below, never a row counted with the queues (lib/inboxApi NOT_A_QUEUE).
+    const notices = all.find((s) => NOT_A_QUEUE.has(s.key) && s.count > 0) ?? null;
+    const sources = all.filter((s) => !NOT_A_QUEUE.has(s.key));
     // Company-wide queues another desk owns (packages/shared queues.ts):
     // shown below, folded, and never in the count (F500 SH-4).
     const waiting = rankInboxSources(sources.filter((s) => s.count > 0 && !s.watching));
@@ -57,13 +61,18 @@ export function InboxHome() {
       urgency,
       rows: waiting.filter((s) => (s.urgency ?? 'routine') === urgency),
     })).filter((b) => b.rows.length > 0);
-    return { waiting, quiet, watching, bands };
+    return { waiting, quiet, watching, bands, notices };
   }, [inbox.data]);
+  // The header says the Inbox row's own number (the count rule, lib/inboxApi.ts).
+  const total = inbox.data?.total ?? null;
   // j/k move over the queues, Enter opens one (lib/shortcuts).
   const kb = useListKeyboard({ items: waiting, idOf: (s) => s.key, onOpen: (s) => navigate(inboxLink(s.path, s.key)) });
 
   return (
-    <ListTemplate title={t('decisions.title')} subtitle={t('decisions.subtitle')}>
+    <ListTemplate
+      title={t('decisions.title')}
+      subtitle={total && total > 0 ? t('decisions.subtitleN', { count: total }) : t('decisions.subtitle')}
+    >
       {inbox.isPending && <SkeletonRows count={4} rowHeight="h-16" />}
       {inbox.isError && <QueryError what={t('decisions.loadWhat')} query={inbox} />}
       {inbox.data && (
@@ -84,7 +93,8 @@ export function InboxHome() {
                         id={`inbox-band-${band.urgency}`}
                         className={cn(
                           'border-b border-navy-secondary px-[var(--d-card)] pt-3 pb-1.5 text-2xs font-semibold uppercase tracking-widest',
-                          band.urgency === 'legal' ? 'text-alert' : band.urgency === 'money' ? 'text-gold' : 'text-silver/80',
+                          // Red is a legal clock running out; money and routine are labels, not alarms (gold is not decoration).
+                          band.urgency === 'legal' ? 'text-alert' : 'text-ink-muted',
                         )}
                       >
                         {t(BAND_LABEL[band.urgency])}
@@ -103,6 +113,13 @@ export function InboxHome() {
                 ))}
               </div>
             </Card>
+          )}
+          {notices && (
+            <p className="text-sm text-ink-muted" data-testid="inbox-notices">
+              <Link to={notices.path} className="text-ink underline-offset-2 hover:underline">
+                {t('decisions.unreadNotices', { count: notices.count })}
+              </Link>
+            </p>
           )}
           {watching.length > 0 && (
             // Another desk's job: seen, not counted, out of the way.
@@ -161,7 +178,7 @@ function DueChip({ dueAt, dueDate }: { dueAt?: string | null; dueDate?: string |
     <Badge variant={overdue ? 'destructive' : 'default'} size="sm" withDot={false} className="gap-1 tabular-nums" data-testid="inbox-due">
       <CalendarClock className="h-3 w-3" aria-hidden="true" />
       {/* A date-only due date arrives as UTC midnight: read it as the day it names (it showed Jan 30 for a Jan 31 deadline west of UTC). */}
-      {overdue ? t('decisions.overdue', { date: fmtDateOnly(day) }) : t('decisions.nextDue', { date: fmtDateOnly(day) })}
+      {overdue ? t('decisions.overdue', { date: fmtDateOnly(day, { year: 'auto' }) }) : t('decisions.nextDue', { date: fmtDateOnly(day, { year: 'auto' }) })}
     </Badge>
   );
 }

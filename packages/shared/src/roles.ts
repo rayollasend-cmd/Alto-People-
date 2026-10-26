@@ -19,27 +19,29 @@ export const ROLES = {
 export type Role = keyof typeof ROLES;
 
 export const ROLE_LABELS: Record<Role, string> = {
-  EXECUTIVE_CHAIRMAN: 'Executive / Chairman',
-  HR_ADMINISTRATOR: 'HR Administrator',
-  OPERATIONS_MANAGER: 'Operations Manager',
+  // Sentence case, like every other label in the product (and the tenant's
+  // own role words in tenantProfile.ts); acronyms keep their capitals.
+  EXECUTIVE_CHAIRMAN: 'Executive / chairman',
+  HR_ADMINISTRATOR: 'HR administrator',
+  OPERATIONS_MANAGER: 'Operations manager',
   LIVE_ASN: 'Live ASN (system)',
   ASSOCIATE: 'Associate',
-  CLIENT_PORTAL: 'Client Portal',
-  FINANCE_ACCOUNTANT: 'Finance / Accountant',
-  INTERNAL_RECRUITER: 'Internal Recruiter',
+  CLIENT_PORTAL: 'Client portal',
+  FINANCE_ACCOUNTANT: 'Finance / accountant',
+  INTERNAL_RECRUITER: 'Internal recruiter',
   MANAGER: 'Manager',
-  WORKFORCE_MANAGER: 'Workforce Manager',
-  MARKETING_MANAGER: 'Marketing Manager',
-  SHIFT_SUPERVISOR: 'Shift Supervisor',
-  FLOOR_SUPERVISOR: 'Floor Supervisor',
-  TRANSPORTATION_DIRECTOR: 'Transportation Director',
+  WORKFORCE_MANAGER: 'Workforce manager',
+  MARKETING_MANAGER: 'Marketing manager',
+  SHIFT_SUPERVISOR: 'Shift supervisor',
+  FLOOR_SUPERVISOR: 'Floor supervisor',
+  TRANSPORTATION_DIRECTOR: 'Transportation director',
   DRIVER: 'Driver',
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   EXECUTIVE_CHAIRMAN: 'Read-only access across all modules and clients',
   HR_ADMINISTRATOR:
-    'Everything — including the two highest-risk actions: voiding payroll runs and exporting payroll PII. Reserve for one or two owners; daily admins belong on Operations Manager',
+    'Everything — including the two highest-risk actions: voiding payroll runs and exporting payroll PII. Reserve for one or two owners; daily admins belong on Operations manager',
   OPERATIONS_MANAGER:
     'The everyday admin role: full org-wide access plus expense approval — everything except voiding payroll and exporting payroll PII',
   LIVE_ASN: 'System integration portal — not for human login',

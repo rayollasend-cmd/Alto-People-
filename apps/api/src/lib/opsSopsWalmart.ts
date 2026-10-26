@@ -105,7 +105,7 @@ const LUNCH = (section: string, due: string) =>
 /* ===== Frozen & Dairy ==================================================== */
 
 const FD_MORNING: WalmartTemplate = {
-  name: 'Frozen & Dairy — Morning (7 AM–4 PM)',
+  name: 'Frozen & Dairy — Morning',
   department: 'Frozen & Dairy',
   period: 'MORNING',
   description: 'Restock & prepare: scan and cap bins, priority picks, overstock, milk & eggs, zone, ready for the truck.',
@@ -150,7 +150,7 @@ const FD_MORNING: WalmartTemplate = {
 };
 
 const FD_EVENING: WalmartTemplate = {
-  name: 'Frozen & Dairy — Evening (2–11 PM)',
+  name: 'Frozen & Dairy — Evening',
   department: 'Frozen & Dairy',
   period: 'EVENING',
   description: 'Organize & maintain: morning handoff, scan bins, stock, customer service, receive and downstack the truck.',
@@ -199,7 +199,7 @@ const FD_EVENING: WalmartTemplate = {
 };
 
 const FD_OVERNIGHT: WalmartTemplate = {
-  name: 'Frozen & Dairy — Overnight (10 PM–7 AM)',
+  name: 'Frozen & Dairy — Overnight',
   department: 'Frozen & Dairy',
   period: 'OVERNIGHT',
   description: 'Receive & rebuild: the truck, downstack, stock Frozen, Dairy and Dept 97, deliver cross-department, morning-ready.',
@@ -247,7 +247,7 @@ const FD_OVERNIGHT: WalmartTemplate = {
 /* ===== Food & Consumables ================================================ */
 
 const FC_MORNING: WalmartTemplate = {
-  name: 'Food & Consumables — Morning (6 AM–3 PM)',
+  name: 'Food & Consumables — Morning',
   department: 'Food & Consumables',
   period: 'MORNING',
   description: 'Handoff, overstock, VIZPICK, topstock, returns, features, zone.',
@@ -299,7 +299,7 @@ const FC_MORNING: WalmartTemplate = {
 };
 
 const FC_EVENING: WalmartTemplate = {
-  name: 'Food & Consumables — Evening (2–11 PM)',
+  name: 'Food & Consumables — Evening',
   department: 'Food & Consumables',
   period: 'EVENING',
   description: 'Replenishment, customer service, recovery, returns, overnight preparation.',
@@ -347,7 +347,7 @@ const FC_EVENING: WalmartTemplate = {
 };
 
 const FC_OVERNIGHT: WalmartTemplate = {
-  name: 'Food & Consumables — Overnight (10 PM–7 AM)',
+  name: 'Food & Consumables — Overnight',
   department: 'Food & Consumables',
   period: 'OVERNIGHT',
   description: 'Freight execution, overstock, claims, cleanup, morning handoff.',
@@ -392,7 +392,7 @@ const FC_OVERNIGHT: WalmartTemplate = {
 /* ===== Meat & Produce ==================================================== */
 
 const MP_MORNING: WalmartTemplate = {
-  name: 'Meat & Produce — Morning (6 AM–3 PM)',
+  name: 'Meat & Produce — Morning',
   department: 'Meat & Produce',
   period: 'MORNING',
   description: 'Huddle, receiving & processing, stocking & merchandising, food safety, donations — the Team Lead’s checklist built in.',
@@ -449,7 +449,7 @@ const MP_MORNING: WalmartTemplate = {
 };
 
 const MP_EVENING: WalmartTemplate = {
-  name: 'Meat & Produce — Evening (2–11 PM)',
+  name: 'Meat & Produce — Evening',
   department: 'Meat & Produce',
   period: 'EVENING',
   description: 'Recovery and quality through the evening, markdowns, donations, closing sanitation.',
@@ -517,6 +517,24 @@ export const RETIRED_V1_NAMES: Record<string, { department: string; period: OpsP
   'Meat & Produce — Team Lead': { department: 'Meat & Produce', period: 'EVENING' },
   'Food & Consumables — Morning': { department: 'Food & Consumables', period: 'MORNING' },
   'Food & Consumables — Evening Recovery': { department: 'Food & Consumables', period: 'EVENING' },
+};
+
+/**
+ * The names these checklists carried before 2026-10-26, with the hours in
+ * them ("Frozen & Dairy — Evening (2–11 PM)"). A store's shift windows set
+ * the hours (lib/shiftWindows) and they disagreed with these, so the names
+ * lost them; a library seeded under the old names is renamed in place once
+ * (lib/opsSops ensureOpsSeed). Shifts already run keep the name they ran under.
+ */
+export const WALMART_FORMER_NAMES: Record<string, string> = {
+  'Frozen & Dairy — Morning (7 AM–4 PM)': 'Frozen & Dairy — Morning',
+  'Frozen & Dairy — Evening (2–11 PM)': 'Frozen & Dairy — Evening',
+  'Frozen & Dairy — Overnight (10 PM–7 AM)': 'Frozen & Dairy — Overnight',
+  'Food & Consumables — Morning (6 AM–3 PM)': 'Food & Consumables — Morning',
+  'Food & Consumables — Evening (2–11 PM)': 'Food & Consumables — Evening',
+  'Food & Consumables — Overnight (10 PM–7 AM)': 'Food & Consumables — Overnight',
+  'Meat & Produce — Morning (6 AM–3 PM)': 'Meat & Produce — Morning',
+  'Meat & Produce — Evening (2–11 PM)': 'Meat & Produce — Evening',
 };
 
 /** Labels for the measured outputs. */

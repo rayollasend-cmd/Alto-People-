@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Sparkles, Trash2 } from '@/components/ui/icons';
+import { MoreHorizontal, Pencil, Plus, Sparkles, Trash2 } from '@/components/ui/icons';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { toast } from 'sonner';
 import { RELEASE_NOTE_AUDIENCES, type ReleaseNote, type ReleaseNoteAudience, type ReleaseNoteInput, type ReleaseNoteItem } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -91,10 +93,10 @@ export function WhatsNewPage() {
     <ListTemplate
         title={t('whatsnew.pageTitle')}
         subtitle={t('whatsnew.pageSubtitle')}
-        secondaryActions={
+        primaryAction={
           canEdit ? (
             <Button onClick={() => setDraft(draftFrom(null))}>
-              <Plus className="mr-2 h-4 w-4" /> {t('whatsNewPage.newNote')}
+              <Plus className="mr-2 h-4 w-4" aria-hidden="true" /> {t('whatsNewPage.newNote')}
             </Button>
           ) : undefined
         }
@@ -118,23 +120,30 @@ export function WhatsNewPage() {
                   <h2 className="text-sm font-medium text-white">{fmtDate(parseYmd(note.day))}</h2>
                   {note.publishedAt === null && <Badge variant="pending">{t('whatsnew.draft')}</Badge>}
                   {canEdit && (
-                    <div className="ml-auto flex items-center gap-1">
-                      <Button size="sm" variant="ghost" onClick={() => setDraft(draftFrom(note))} aria-label={t('whatsNewPage.editAria', { day: note.day })}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-silver hover:text-alert"
-                        aria-label={t('whatsNewPage.deleteAria', { day: note.day })}
-                        onClick={async () => {
-                          if (!(await confirm({ title: t('whatsNewPage.deleteConfirm'), destructive: true }))) return;
-                          remove.mutate(note.id);
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                    // Edit and delete behind one "⋯" per note, not two icons on every card (F500 2026-10-26).
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="icon-sm" variant="ghost" className="ml-auto" aria-label={t('whatsNewPage.moreAria', { day: fmtDate(parseYmd(note.day)) })}>
+                          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => setDraft(draftFrom(note))}>
+                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                          {t('whatsNewPage.edit')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          destructive
+                          onSelect={async () => {
+                            if (!(await confirm({ title: t('whatsNewPage.deleteConfirm'), destructive: true }))) return;
+                            remove.mutate(note.id);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          {t('whatsNewPage.delete')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </div>
                 <ul className="space-y-1.5 text-sm text-silver">
@@ -157,6 +166,12 @@ export function WhatsNewPage() {
               </CardContent>
             </Card>
           ))}
+          <p className="pt-1 text-sm text-ink-muted">
+            {t('whatsNewPage.questions')}{' '}
+            <Link to="/support" className="text-accent underline underline-offset-2">
+              {t('whatsNewPage.contactSupport')}
+            </Link>
+          </p>
         </div>
       )}
 

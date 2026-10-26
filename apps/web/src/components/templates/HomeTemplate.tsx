@@ -4,6 +4,7 @@ import { useNeedsYouCount } from '@/lib/meDecisions';
 import { PageHeader, isPageActions, type PageAction } from '@/components/ui/PageHeader';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { FirstLoadGate } from './FirstLoadGate';
+import { WhatsNew } from '@/components/WhatsNew';
 
 /**
  * Home — a role's first screen (design system §4.1).
@@ -81,6 +82,8 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
         <PageHeader title={title} subtitle={subtitle} topbarTitle={topbarTitle} breadcrumbs={[]} actions={structured} primaryAction={structured ? undefined : (actions as React.ReactNode)}>
           {meta}
         </PageHeader>
+        {/* The latest release note, once per note — in the page, never floating over it. */}
+        <WhatsNew />
         <section aria-label="Today">{hero}</section>
         {decisions && (
           <section aria-labelledby="home-decisions">

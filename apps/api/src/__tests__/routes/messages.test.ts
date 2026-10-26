@@ -150,7 +150,7 @@ describe('messages', () => {
     expect(csv.status).toBe(200);
     expect(csv.text).toContain('Can you cover the 6am wave tomorrow?');
     expect(csv.text).toContain('Dana Reyes');
-    expect(csv.text).toContain('Shift Supervisor');
+    expect(csv.text).toContain('Shift supervisor');
 
     // Immutable: there is no edit or delete route.
     expect((await manager.patch(`/messages/conversations/${threadId}/messages/x`).send({ body: 'edited' })).status).toBe(404);
@@ -315,7 +315,7 @@ describe('one direct thread per pair, and no empty threads (F500 G5)', () => {
     const manager = await loginAs(s.manager.email);
     const dir = await manager.get('/messages/directory');
     const desk = dir.body.people.find((p: { id: string }) => p.id === s.wfm.id);
-    expect(desk.name).toBe(`Workforce Manager · ${s.wfm.email}`);
+    expect(desk.name).toBe(`Workforce manager · ${s.wfm.email}`);
     expect(desk.named).toBe(false);
     // A name on the account wins.
     await prisma.user.update({ where: { id: s.wfm.id }, data: { displayName: 'Casey Brooks' } });

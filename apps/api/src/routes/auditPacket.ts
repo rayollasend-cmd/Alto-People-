@@ -1069,7 +1069,7 @@ auditPacketRouter.post(
       );
       pdf.kv([
         { label: '1 · In-app concern reporting', value: 'The Alto People portal includes a concern-reporting tool (HR case system). Cases carry a documented status history and are visible only to HR case managers.' },
-        { label: '2 · Direct to HR', value: 'The HR Administrator is reachable directly; contact details appear in every company email footer and in the associate portal.' },
+        { label: '2 · Direct to HR', value: 'The HR administrator is reachable directly; contact details appear in every company email footer and in the associate portal.' },
         { label: '3 · Company contact', value: `${COMPANY_INFO.email} · ${COMPANY_INFO.phone} (${COMPANY_INFO.hours})` },
       ]);
       pdf.heading('Policy framework');
@@ -2036,7 +2036,7 @@ auditPacketRouter.post(
       );
       pdf.kv([
         { label: '1 · In-app concern reporting', value: 'The Alto People portal includes a concern-reporting tool (HR case system). Cases carry a documented status history and are visible only to HR case managers.' },
-        { label: '2 · Direct to HR', value: 'The HR Administrator is reachable directly; contact details appear in every company email footer and in the associate portal.' },
+        { label: '2 · Direct to HR', value: 'The HR administrator is reachable directly; contact details appear in every company email footer and in the associate portal.' },
         { label: '3 · Company contact', value: `${COMPANY_INFO.email} · ${COMPANY_INFO.phone} (${COMPANY_INFO.hours})` },
       ]);
       pdf.heading('Policy framework');

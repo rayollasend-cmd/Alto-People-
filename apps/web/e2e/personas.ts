@@ -50,9 +50,14 @@ export async function signIn(page: Page, persona: Persona): Promise<void> {
     const cookies = (state as { cookies?: unknown }).cookies as Parameters<ReturnType<Page['context']>['addCookies']>[0] | undefined;
     if (cookies && cookies.length > 0) {
       await page.context().addCookies(cookies);
-      await page.goto('/');
-      await page.waitForTimeout(1500);
-      return;
+      // An expired session still answers 200, with no user: sign in afresh then.
+      const me = await page.request.get('/api/auth/me');
+      if (me.ok() && ((await me.json()) as { user: unknown }).user != null) {
+        await page.goto('/');
+        await page.waitForTimeout(1500);
+        return;
+      }
+      await page.context().clearCookies();
     }
   }
   await page.goto('/login');

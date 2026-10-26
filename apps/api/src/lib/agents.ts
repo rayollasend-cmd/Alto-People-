@@ -156,6 +156,9 @@ export const BUILT_IN_AGENTS = [
   {
     key: 'claude-code-deploy',
     name: 'Claude Code deployment workflow',
+    // The platform's own build-and-deploy tool: the operator registers it; a
+    // customer's registry never shows it (F500 audit 2026-10-26).
+    platformOnly: true,
     family: 'deployment',
     capability: 'Build, test, push and watch the deploy',
     purpose: 'Builds Alto People from the briefs, runs the tests, pushes to main and watches the deploy. Acts through git and CI, not through the API, so it holds no credential.',
@@ -257,10 +260,22 @@ export const BUILT_IN_AGENTS = [
   capabilities: readonly string[];
   /** Agent families: the catalog capabilities the built-in holds (AgentCapability rows). */
   grants?: readonly string[];
+  /** The platform operator's own tool (how the product is built and shipped): registered in the operator's tenant only. */
+  platformOnly?: boolean;
   status: WorkerStatus;
 }[];
 
 export type BuiltInAgentKey = (typeof BUILT_IN_AGENTS)[number]['key'];
+
+/** Built-ins that are the platform operator's own tools, never a customer's agent. */
+export const PLATFORM_ONLY_BUILT_INS: ReadonlySet<string> = new Set(
+  BUILT_IN_AGENTS.filter((b) => 'platformOnly' in b && b.platformOnly).map((b) => b.key),
+);
+
+/** The built-ins a tenant's registry holds: all of them for the operator, the customer-facing ones elsewhere. */
+export function builtInAgentsFor(tenantId: string): ReadonlyArray<(typeof BUILT_IN_AGENTS)[number]> {
+  return tenantId === ALTO_TENANT_ID ? BUILT_IN_AGENTS : BUILT_IN_AGENTS.filter((b) => !PLATFORM_ONLY_BUILT_INS.has(b.key));
+}
 
 /** The oldest active account that can manage the org — who owns a built-in agent until someone claims it. */
 export async function defaultOrgOwner(db: Db, tenantId?: string | null): Promise<string | null> {
@@ -280,11 +295,14 @@ export async function defaultOrgOwner(db: Db, tenantId?: string | null): Promise
 export async function ensureBuiltInAgents(db: Db = defaultPrisma, tenantIdArg?: string | null): Promise<{ created: string[]; missing: string[]; profiled: number }> {
   // Agent families step 0 (owner's decision 5): built-ins are per tenant, owned by that tenant's oldest admin.
   const tenantId = registryTenant(tenantIdArg);
+  // A platform tool an earlier sweep registered in a customer's tenant leaves it.
+  if (tenantId !== ALTO_TENANT_ID) await removePlatformOnlyAgents(db, tenantId);
   const existing = await db.agentProfile.findMany({ where: { builtInKey: { not: null }, tenantId }, select: { builtInKey: true } });
   const have = new Set(existing.map((e) => e.builtInKey));
   const created: string[] = [];
   const missing: string[] = [];
-  for (const b of BUILT_IN_AGENTS) {
+  const builtIns = builtInAgentsFor(tenantId);
+  for (const b of builtIns) {
     if (have.has(b.key)) continue;
     const owner = await defaultOrgOwner(db, tenantId);
     if (!owner) {
@@ -322,7 +340,7 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma, tenantIdArg?: 
   }
   // Agent families step 1: a built-in holds its catalog capabilities, and its
   // certification scenarios come from the catalog's fixtures.
-  for (const b of BUILT_IN_AGENTS) {
+  for (const b of builtIns) {
     const p = await db.agentProfile.findFirst({ where: { builtInKey: b.key, tenantId }, select: { workerId: true, scopes: true, model: true } });
     if (!p) continue;
     // A built-in's model name is product copy. A row an earlier boot wrote
@@ -360,6 +378,25 @@ export async function ensureBuiltInAgents(db: Db = defaultPrisma, tenantIdArg?: 
     });
   }
   return { created, missing, profiled: bare.length };
+}
+
+/**
+ * Takes the platform's own tools out of a customer's registry. The record
+ * never acted through the API (it works through git and CI), so it is
+ * removed outright; if anything does hang off it, it is offboarded instead
+ * and the registry read leaves it out.
+ */
+async function removePlatformOnlyAgents(db: Db, tenantId: string): Promise<void> {
+  const strays = await db.agentProfile.findMany({ where: { tenantId, builtInKey: { in: [...PLATFORM_ONLY_BUILT_INS] } }, select: { workerId: true, builtInKey: true } });
+  for (const p of strays) {
+    try {
+      // The profile goes with its worker (cascade).
+      await db.worker.delete({ where: { id: p.workerId } });
+    } catch {
+      await db.worker.update({ where: { id: p.workerId }, data: { status: 'OFFBOARDED' } }).catch(() => undefined);
+    }
+    enqueueAudit({ actorUserId: null, clientId: null, tenantId, action: 'agent.platform_tool_removed', entityType: 'Worker', entityId: p.workerId, metadata: { builtInKey: p.builtInKey, reason: 'the platform operator’s own tool, not this organization’s agent' } }, 'agents');
+  }
 }
 
 const builtInIds = new Map<string, string>();
@@ -481,10 +518,12 @@ export async function listAgents(db: PrismaClient = defaultPrisma, now: Date = n
   // Agent families step 0: the registry is the caller's tenant's (the 2-6 investigation found it read every tenant).
   const tenantId = registryTenant(tenantIdArg);
   const { workers, counts } = await listWorkers(db, { type: 'AGENT', tenantId }, now);
-  const profiles = await db.agentProfile.findMany({ where: { workerId: { in: workers.map((w) => w.id) }, tenantId } });
+  const allProfiles = await db.agentProfile.findMany({ where: { workerId: { in: workers.map((w) => w.id) }, tenantId } });
+  // A customer's registry never lists the platform's own tools (a stray one an older sweep left behind included).
+  const profiles = tenantId === ALTO_TENANT_ID ? allProfiles : allProfiles.filter((p) => !p.builtInKey || !PLATFORM_ONLY_BUILT_INS.has(p.builtInKey));
   const agents = await decorate(db, workers, profiles, now);
   const pendingApprovals = await db.agentApprovalRequest.count({ where: { status: 'PENDING', agent: { tenantId } } });
-  const missingBuiltIns = BUILT_IN_AGENTS.filter((b) => !profiles.some((p) => p.builtInKey === b.key));
+  const missingBuiltIns = builtInAgentsFor(tenantId).filter((b) => !profiles.some((p) => p.builtInKey === b.key));
   return {
     agents,
     counts: counts.AGENT,

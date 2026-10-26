@@ -80,10 +80,10 @@ describe('expirations tile — dedup + new sources', () => {
   it('counts only the LATEST drug test per associate', async () => {
     const client = await createClient();
     const assoc = await activeAssociate(client.id);
-    // Old doc (expired 40+60 = would land nowhere near the fresh one) and a
-    // fresh retest 5 days ago. The old query pushed one row per doc.
-    await drugDoc(assoc.id, new Date(Date.now() - 40 * DAY));
-    await drugDoc(assoc.id, new Date(Date.now() - 5 * DAY));
+    // An older test two days from lapsing and a retest 45 days ago (15 days
+    // left). The old query pushed one row per doc.
+    await drugDoc(assoc.id, new Date(Date.now() - 58 * DAY));
+    await drugDoc(assoc.id, new Date(Date.now() - 45 * DAY));
 
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
@@ -99,10 +99,41 @@ describe('expirations tile — dedup + new sources', () => {
         i.kind === 'DRUG_TEST' && i.subject.associateId === assoc.id,
     );
     expect(drugItems).toHaveLength(1);
-    // Latest doc: created 5d ago, expires at +60 → ~55 days out (green-ish
-    // amber boundary tolerance: allow 53–56).
-    expect(drugItems[0].daysUntil).toBeGreaterThanOrEqual(53);
-    expect(drugItems[0].daysUntil).toBeLessThanOrEqual(56);
+    // The latest: created 45 days ago, good for 60 → ~15 days left, in amber.
+    expect(drugItems[0].daysUntil).toBeGreaterThanOrEqual(14);
+    expect(drugItems[0].daysUntil).toBeLessThanOrEqual(16);
+    expect(res.body.buckets.amber.some((i: { kind: string; subject: { associateId: string } }) => i.kind === 'DRUG_TEST' && i.subject.associateId === assoc.id)).toBe(true);
+  });
+
+  it('a drug test is good for 60 days: a fresh one raises nothing, the windows scale to its life', async () => {
+    const client = await createClient();
+    const fresh = await activeAssociate(client.id);
+    await drugDoc(fresh.id, new Date(Date.now() - 5 * DAY));
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get('/compliance-scorecard/expirations');
+    const all = [...res.body.buckets.red, ...res.body.buckets.amber, ...res.body.buckets.green];
+    // 55 days left on a 60-day test is not a warning (it sat in amber for a month before).
+    expect(all.filter((i: { kind: string; subject: { associateId: string } }) => i.kind === 'DRUG_TEST' && i.subject.associateId === fresh.id)).toHaveLength(0);
+  });
+
+  it('a no-show rate is a ceiling: well under target raises no action', async () => {
+    const client = await createClient();
+    const assoc = await activeAssociate(client.id);
+    // Ten ended shifts, none a no-show: 0% against a 2% ceiling. Read as a
+    // floor, 0 < 2 was filed as a critical "No-show rate: 0% (target 2%)".
+    for (let i = 1; i <= 10; i++) {
+      const endsAt = new Date(Date.now() - i * DAY);
+      await prisma.shift.create({
+        data: { clientId: client.id, position: 'Cashier', startsAt: new Date(endsAt.getTime() - 8 * 3_600_000), endsAt, status: 'COMPLETED', assignedAssociateId: assoc.id, publishedAt: new Date() },
+      });
+    }
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get('/compliance-scorecard/actions');
+    expect(res.status).toBe(200);
+    const ids = JSON.stringify(res.body);
+    expect(ids).not.toContain('shf:NO_SHOW_RATE');
   });
 
   it('surfaces document / vaccination / agreement expiries with their kinds', async () => {
@@ -225,6 +256,42 @@ describe('client scoping', () => {
 
     const bad = await a.get('/compliance-scorecard/onboarding?clientId=not-a-uuid');
     expect(bad.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe('contract citations (F500 audit 2026-10-26)', () => {
+  it('cite the scoped client’s own contract, a neutral one org-wide — never another customer’s', async () => {
+    const acme = await createClient('Acme Foods');
+    await activeAssociate(acme.id, { hireDaysAgo: 30 });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const tiles = ['onboarding', 'shifts', 'training', 'actions'];
+    for (const tile of tiles) {
+      const org = await a.get(`/compliance-scorecard/${tile}`);
+      expect(org.status, tile).toBe(200);
+      expect(JSON.stringify(org.body), tile).not.toMatch(/Walmart|\bSOW\b|\bMSA\b|MTSA|\bMSP\b/);
+      const scoped = await a.get(`/compliance-scorecard/${tile}?clientId=${acme.id}`);
+      expect(JSON.stringify(scoped.body), tile).not.toMatch(/Walmart/);
+    }
+
+    const org = await a.get('/compliance-scorecard/onboarding');
+    const clause = (body: { signals: Array<{ key: string; contractClause: string }> }, key: string) => body.signals.find((s) => s.key === key)!.contractClause;
+    expect(clause(org.body, 'AGE_18_PLUS')).toBe('Client contract — associates 18 or older');
+    expect(clause(org.body, 'BACKGROUND_CHECK')).toBe('FCRA — background check on file');
+    expect(clause(org.body, 'POLICY_ACK_SIGNED')).toBe('Company policy — signed policy acknowledgment');
+    const scoped = await a.get(`/compliance-scorecard/onboarding?clientId=${acme.id}`);
+    expect(clause(scoped.body, 'AGE_18_PLUS')).toBe('Acme Foods contract — associates 18 or older');
+
+    const training = await a.get('/compliance-scorecard/training');
+    expect(training.body.signals.map((s: { label: string }) => s.label)).toContain('CADE system training');
+
+    // The header's count and the list agree for a normal desk (the list is not cut at 200).
+    const actions = await a.get('/compliance-scorecard/actions');
+    expect(actions.body.truncated).toBe(false);
+    expect(actions.body.actions).toHaveLength(actions.body.totalActionCount);
+    expect(actions.body.criticalCount + actions.body.warnCount).toBe(actions.body.totalActionCount);
+    for (const act of actions.body.actions as Array<{ title: string }>) expect(act.title).not.toMatch(/ \d+d$/);
   });
 });
 

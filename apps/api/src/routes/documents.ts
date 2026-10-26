@@ -49,6 +49,7 @@ import {
   verifyFileMagic,
 } from '../lib/uploads.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
+import { fmtDay } from '../lib/humanDates.js';
 
 export const documentsRouter = Router();
 
@@ -1437,7 +1438,7 @@ documentsRouter.post('/admin/:id/request-reupload', MANAGE, async (req, res, nex
       : `/documents`; // there is no /me/documents route
     const docKindLabel = doc.kind.replace(/_/g, ' ').toLowerCase();
     const expiredOn = doc.expiresAt
-      ? ` on ${doc.expiresAt.toISOString().slice(0, 10)}`
+      ? ` on ${fmtDay(doc.expiresAt)}`
       : '';
     // Renewal-specific copy. No html passed on purpose: the notify layer
     // wraps html-less sends in the branded generic email layout, and the

@@ -99,13 +99,11 @@ beforeEach(() => {
 });
 
 describe('the store home: Needs you', () => {
-  it('leads with statements past due (money, how late), the service report, candidates, the late reply and the answer — each with its link', async () => {
+  it('leads with the floor — the service report, candidates, the late reply and the answer, each with its link; money is not a floor decision', async () => {
     renderAs(STORE);
     const list = await screen.findByRole('list', { name: 'Needs you' });
-    const st = within(list).getByTestId('need-statements');
-    expect(st).toHaveTextContent('2 statements past due');
-    expect(st).toHaveTextContent('$5,760.00 · oldest 44 days past due');
-    expect(within(st).getByRole('link')).toHaveAttribute('href', '#portal-statements');
+    // Billing left Needs you (F500 2026-10-26): one neutral line above the page instead.
+    expect(within(list).queryByTestId('need-statements')).toBeNull();
     expect(within(list).getByTestId('need-report')).toHaveTextContent(/Last week’s service report \(.+\) is ready to review/);
     expect(within(within(list).getByTestId('need-report')).getByRole('button', { name: /Mark reviewed/ })).toBeInTheDocument();
     expect(within(within(list).getByTestId('need-candidates')).getByRole('link')).toHaveAttribute('href', '/portal/candidates');
@@ -115,14 +113,16 @@ describe('the store home: Needs you', () => {
     expect(within(late).getByRole('link')).toHaveAttribute('href', '/portal/requests?id=r1');
     expect(within(within(list).getByTestId('need-requests-answered')).getByRole('link')).toHaveAttribute('href', '/portal/requests?id=r2');
     // Counted as listed.
-    expect(screen.getByTestId('needs-you-count')).toHaveTextContent('5');
+    expect(screen.getByTestId('needs-you-count')).toHaveTextContent('4');
   });
 
   it('says the contract gap and offers coverage; the KPIs carry the contract', async () => {
     renderAs(STORE);
-    expect(await screen.findByTestId('portal-hero-line')).toHaveTextContent('Nothing is scheduled for today’s Morning window. Your contract is 8.');
-    // The hero carries the coverage ask (the header doesn't repeat it).
-    expect(screen.getAllByRole('button', { name: /Request coverage/ })).toHaveLength(1);
+    expect(await screen.findByTestId('portal-hero-line')).toHaveTextContent('Nothing is scheduled for today’s morning window. Your contract is 8.');
+    // The hero carries the ask (the header doesn't repeat it); the request desk
+    // below keeps its own, as a secondary. One name for one action.
+    expect(screen.getAllByRole('button', { name: /Make a request/ })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Request coverage|Request staff/ })).toBeNull();
     expect(screen.getByText('Scheduled vs contracted · this week')).toBeInTheDocument();
     expect(screen.getByText('/ 1,120h')).toBeInTheDocument();
     expect(screen.getByTestId('tomorrow-vs-contract')).toHaveTextContent('0 of 20 contracted scheduled');
@@ -131,22 +131,18 @@ describe('the store home: Needs you', () => {
     // Clearance counts I-9: 1 of 2, never "2 of 2" beside "1 I-9 pending".
     expect(screen.getByText('1 of 2 cleared')).toBeInTheDocument();
     // Checklists: what is next, not "evidence appears once … runs its SOP shifts".
-    expect(screen.getByTestId('portal-ops-plan')).toHaveTextContent(/Nothing started yet today\. Next: Food & Consumables, Swing, /);
+    expect(screen.getByTestId('portal-ops-plan')).toHaveTextContent(/Nothing started yet today\. Next: Food & Consumables, swing, /);
     expect(screen.queryByText(/SOP/)).toBeNull();
     expect(screen.queryByText(/Counts only/)).toBeNull();
   });
 
-  it('statements: money, the due date, how late, the open balance', async () => {
+  it('billing: one neutral line on the home and the way to it — the statements live under History › Billing', async () => {
     renderAs(STORE);
-    const rows = await screen.findAllByTestId('portal-statement');
-    expect(rows[0]).toHaveTextContent('$2,880.00');
-    expect(rows[0]).toHaveTextContent('15 days past due');
-    expect(rows[0]).toHaveTextContent('PO PO-7781');
-    expect(rows[0]).toHaveTextContent(/due Oct 7/);
-    expect(rows[1]).toHaveTextContent(/Paid Sep 1/);
-    // A paid statement keeps its PDF only.
-    expect(within(rows[1]).queryByRole('button', { name: /Question this/ })).toBeNull();
-    expect(screen.getByTestId('open-balance')).toHaveTextContent('Open balance $5,760.00 · 2 statements');
+    const banner = await screen.findByTestId('portal-billing-banner');
+    expect(banner).toHaveTextContent('2 statements are past due — $5,760.00 in all.');
+    expect(within(banner).getByRole('link', { name: 'Open billing' })).toHaveAttribute('href', '/portal/history#billing');
+    // No statement list in the floor's columns, and no red Needs-you row.
+    expect(screen.queryAllByTestId('portal-statement')).toHaveLength(0);
   });
 });
 

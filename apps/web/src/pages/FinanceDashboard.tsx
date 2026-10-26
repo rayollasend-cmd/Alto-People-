@@ -23,11 +23,11 @@ import {
 import { apiFetch } from '@/lib/api';
 import { FieldglassQueueList } from './fieldglass/FieldglassQueue';
 import type { FinanceOverview } from './finance/financeTypes';
-import { BillingWeekCard, CashForecastCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks } from './finance/FinanceCockpit';
+import { BillingWeekCard, CashForecastCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks, hrs1, oldestText, usePayrollBlock } from './finance/FinanceCockpit';
 import { useAuth, useTenant } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
 import { useI18n } from '@/lib/i18n';
-import { fmtHours, fmtMoney } from '@/lib/format';
+import { fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { usePersistentState } from '@/lib/usePersistentState';
@@ -69,6 +69,8 @@ export function FinanceDashboard() {
   const data = query.data;
   // The Inbox's sources: "Needs you" counts the same queues it lists (paydays with no run).
   const inbox = useInbox();
+  // Payroll's own gate, so "Needs you" counts the blocked run the way the list says it.
+  const block = usePayrollBlock(query.data?.payCycle);
   // Which chase bar's Nudge is in flight ('all' | clientId | 'none').
   const [nudging, setNudging] = useState<string | null>(null);
   // Whole-section collapse, persisted per browser — the count stays
@@ -145,7 +147,10 @@ export function FinanceDashboard() {
   const atRisk = (data.billing?.money.atRisk ?? 0) + (data.billing?.rejectedOpen.amount ?? 0);
   const aging = data.receivables.aging;
   const pastDue = aging ? aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.over90 : 0;
-  const tasksToday = financeTasks(data, t, Date.now(), { statements: receivablesOn, inbox: inbox.data?.sources }).length;
+  const tasksToday = financeTasks(data, t, Date.now(), { statements: receivablesOn, inbox: inbox.data?.sources, block }).length;
+  // The home shows the first three people waiting for VMS setup; the desk has them all.
+  const fgTotal = data.fieldglassQueueTotal ?? data.fieldglassQueue.length;
+  const fgShown = data.fieldglassQueue.slice(0, 3);
   // The doors the day needs (plus the payroll case desk below): statements
   // only when the tenant bills clients.
   const doors = (
@@ -193,14 +198,16 @@ export function FinanceDashboard() {
         <MetricCard
           href="/labor-costs"
           label={t('fin.kpiRevenue')}
-          value={lastWeek ? fmtMoney(lastWeek.revenue) : '—'}
+          value={lastWeek ? fmtMoney(lastWeek.revenue) : ''}
+          nothing={lastWeek && lastWeek.hours > 0 ? undefined : t('fin.marginEmpty')}
           icon={DollarSign}
-          hint={lastWeek ? t('fin.kpiRevenueHint', { hours: fmtHours(lastWeek.hours - lastWeek.unpricedHours) }) : undefined}
+          hint={lastWeek ? t('fin.kpiRevenueHint', { hours: hrs1(lastWeek.hours - lastWeek.unpricedHours) }) : undefined}
         />
         <MetricCard
           href="/labor-costs"
           label={t('fin.kpiMargin')}
-          value={lastWeek?.marginPct != null ? `${Math.round(lastWeek.marginPct * 100)}%` : '—'}
+          value={lastWeek?.marginPct != null ? `${Math.round(lastWeek.marginPct * 100)}%` : ''}
+          nothing={lastWeek?.marginPct != null ? undefined : t('fin.marginEmpty')}
           tone={lastWeek?.marginPct != null && lastWeek.marginPct < 0 ? 'alert' : lastWeek?.marginPct != null && lastWeek.marginPct < 0.1 ? 'warning' : 'default'}
           icon={BarChart3}
           hint={lastWeek ? t('fin.kpiMarginHint', { amount: fmtMoney(lastWeek.margin) }) : undefined}
@@ -224,7 +231,7 @@ export function FinanceDashboard() {
               data.receivables.outstandingCount > 0
                 ? [
                     t('fin.arLine', { count: data.receivables.outstandingCount }),
-                    data.receivables.oldestDays !== null && t('fin.arOldest', { days: data.receivables.oldestDays }),
+                    data.receivables.oldestDays !== null && oldestText(t, data.receivables.oldestDays),
                   ]
                     .filter(Boolean)
                     .join(' · ')
@@ -266,7 +273,7 @@ export function FinanceDashboard() {
                   say how many workers are waiting. */}
               {data.fieldglassQueue.length > 0 && (
                 <span className="rounded-full bg-gold/15 px-2 py-0.5 text-xs font-medium text-gold tabular-nums">
-                  {t('fin.fgWaiting', { count: data.fieldglassQueueTotal ?? data.fieldglassQueue.length })}
+                  {t('fin.fgWaiting', { count: fgTotal })}
                 </span>
               )}
             </h2>
@@ -289,14 +296,16 @@ export function FinanceDashboard() {
             <p className="mt-3 text-sm text-success">{t('fin.fgEmpty')}</p>
           ) : (
             <div className="mt-3">
-              <FieldglassQueueList queue={data.fieldglassQueue} returnTo="/" />
-              {(data.fieldglassQueueTotal ?? data.fieldglassQueue.length) > data.fieldglassQueue.length && (
+              {/* Three on the home, the rest on the desk: twelve rows of "Mark added" made the home 3,400px tall (F500 audit 2026-10-26). */}
+              <FieldglassQueueList queue={fgShown} returnTo="/" />
+              {fgTotal > fgShown.length && (
                 <Link
                   to="/fieldglass"
-                  className="mt-2 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright"
+                  data-testid="fg-view-all"
+                  className="mt-2 inline-flex min-h-11 items-center gap-1 text-sm text-gold underline underline-offset-2 hover:text-gold-bright sm:min-h-0"
                 >
-                  {t('fin.fgMore', { count: (data.fieldglassQueueTotal ?? 0) - data.fieldglassQueue.length })}
-                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  {t('fin.fgViewAll', { count: fgTotal })}
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </Link>
               )}
             </div>
@@ -315,7 +324,7 @@ export function FinanceDashboard() {
               </h2>
               <p className="mt-1 text-sm text-silver tabular-nums">
                 {t('fin.closePending', {
-                  hours: fmtHours(data.close.pendingHours),
+                  hours: hrs1(data.close.pendingHours),
                   count: data.close.pendingEntries,
                 })}
               </p>
@@ -326,7 +335,7 @@ export function FinanceDashboard() {
                       <span className="truncate text-white">{c.clientName}</span>
                       <span className="flex shrink-0 items-baseline gap-2">
                         <span className="tabular-nums text-silver">
-                          {fmtHours(c.hours)}
+                          {hrs1(c.hours)}
                         </span>
                         <Button
                           size="xs"

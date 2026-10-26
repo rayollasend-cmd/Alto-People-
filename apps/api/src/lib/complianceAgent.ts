@@ -12,6 +12,7 @@ import { tenantJob } from './tenantJobs.js';
 import { moduleOn } from './tenantProfile.js';
 import { orgDateKey } from './timeAnomalies.js';
 import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * The Compliance agent (agent families step 4;
@@ -379,8 +380,8 @@ export async function runSection2Clock(db: Db = defaultPrisma, now: Date = new D
     const ready = h.blockers.length ? `E-Verify cannot open yet: ${h.blockers.map(blockerWords).join(', ')}.` : 'E-Verify can open once Section 2 is done.';
     for (const u of hr) {
       await notifyUser(u.id, {
-        subject: stage === 'late' ? `I-9 Section 2 is late: ${h.name}` : `I-9 Section 2 due ${dueKey}: ${h.name}`,
-        body: disclose!(`${stage === 'late' ? `Section 2 was due ${dueKey} (three business days from the start date).` : `Section 2 is due ${dueKey}, three business days from the start date.`} ${ready}`, toWaLang(u.language)),
+        subject: stage === 'late' ? `I-9 Section 2 is late: ${h.name}` : `I-9 Section 2 due ${fmtDay(dueKey, { weekday: true })}: ${h.name}`,
+        body: disclose!(`${stage === 'late' ? `Section 2 was due ${fmtDay(dueKey, { weekday: true })} (three business days from the start date).` : `Section 2 is due ${fmtDay(dueKey, { weekday: true })}, three business days from the start date.`} ${ready}`, toWaLang(u.language)),
         category: I9_CATEGORY,
         linkUrl: section2Link(h),
         byAgentId: agent.workerId,

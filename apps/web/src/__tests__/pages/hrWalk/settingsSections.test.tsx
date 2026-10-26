@@ -5,9 +5,10 @@ import { renderAs } from '../hrPack/harness';
 
 /**
  * Floor walk 26: Settings was twelve phone screens of cards in one column.
- * It is five sections now — Profile, Notifications, Security, Devices &
- * sessions, Your data — with a sticky row of links between them, and on a
- * phone each folds behind its heading (only Profile starts open).
+ * It is five sections — Profile, Notifications, Security, Devices &
+ * sessions, Your data. F500 polish (2026-10-26): one way to move between
+ * them, desktop and phone — the kit's tabs (the strip fades the edge with
+ * more) — instead of a row of pills plus Show/Hide folds on a phone.
  */
 
 // Every card loads its own data; for the page's structure none of it matters.
@@ -19,35 +20,26 @@ vi.mock('@/lib/api', async (orig) => ({
 import { Settings } from '@/pages/Settings';
 
 describe('<Settings> — grouped into sections', () => {
-  it('has a section nav and five sections, each with its heading', () => {
+  it('has five sections as tabs, Profile first and open', () => {
     renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
-    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual([
+    const tabs = screen.getByRole('tablist', { name: 'Settings sections' });
+    expect(within(tabs).getAllByRole('tab').map((a) => a.textContent)).toEqual([
       'Profile',
       'Notifications',
       'Security',
       'Devices & sessions',
       'Your data',
     ]);
-    for (const name of ['Profile', 'Notifications', 'Security', 'Devices & sessions', 'Your data']) {
-      expect(screen.getByRole('region', { name })).toBeInTheDocument();
-    }
+    expect(within(tabs).getByRole('tab', { name: 'Profile' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
   });
 
-  it('folds on a phone: Profile open, the rest behind Show, and a nav link opens its section', async () => {
+  it('moves by tab, with no Show/Hide folds on top', async () => {
     renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
-    const security = screen.getByRole('region', { name: 'Security' });
-    const toggle = within(security).getByRole('button', { name: /Show/ });
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(document.getElementById('settings-security-body')!.className).toContain('hidden md:grid');
-    expect(within(screen.getByRole('region', { name: 'Profile' })).getByRole('button', { name: /Hide/ })).toHaveAttribute('aria-expanded', 'true');
-
-    await userEvent.click(toggle);
-    expect(within(security).getByRole('button', { name: /Hide/ })).toHaveAttribute('aria-expanded', 'true');
-
-    const data = screen.getByRole('region', { name: 'Your data' });
-    expect(within(data).getByRole('button', { name: /Show/ })).toHaveAttribute('aria-expanded', 'false');
-    await userEvent.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('link', { name: 'Your data' }));
-    expect(within(data).getByRole('button', { name: /Hide/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('button', { name: /^(Show|Hide)/ })).toBeNull();
+    const tabs = screen.getByRole('tablist', { name: 'Settings sections' });
+    await userEvent.click(within(tabs).getByRole('tab', { name: 'Your data' }));
+    expect(within(tabs).getByRole('tab', { name: 'Your data' })).toHaveAttribute('aria-selected', 'true');
+    expect(within(screen.getByRole('tabpanel')).getByText('Download your data')).toBeInTheDocument();
   });
 });

@@ -779,7 +779,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             ? 'Verify or reject uploaded documents.'
             : 'Read-only view of associate documents.'
         }
-        actions={canManage ? [{ label: 'Request document', icon: FilePlus2, primary: true, onSelect: () => setRequestOpen(true) }] : undefined}
+        actions={canManage ? [{ label: 'Request a document', icon: FilePlus2, primary: true, onSelect: () => setRequestOpen(true) }] : undefined}
         // Sibling pages, not buttons: the letters people asked for, and the
         // mail-merge templates that generate the documents in this vault
         // (both gated on view:hr-admin).
@@ -994,8 +994,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             title="No documents yet"
             description="Uploads from onboarding and from associates land here for review."
             action={
+              // The header holds the page's one gold primary; this repeats it quietly.
               canManage ? (
-                <Button onClick={() => setRequestOpen(true)}>
+                <Button variant="outline" onClick={() => setRequestOpen(true)}>
                   <FilePlus2 className="h-4 w-4" />
                   Request a document
                 </Button>

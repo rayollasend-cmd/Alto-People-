@@ -190,13 +190,13 @@ export function ActivityFeed({
   const shown = all ? rows : rows.slice(0, 8);
   return (
     <section aria-labelledby="relay-latest">
-      <SectionHead icon={MessagesSquare} title="Latest on the relay" meta="two weeks" id="relay-latest" />
+      <SectionHead icon={MessagesSquare} title="Latest on Relay" meta="two weeks" id="relay-latest" />
       <Card className="overflow-hidden p-0">
         {loading ? (
           <Skeleton className="m-3 h-24" />
         ) : rows.length === 0 ? (
           <p className="px-4 py-3 text-sm text-silver">
-            {lens === 'ALL' ? 'No notes yet — open a lane and start the thread.' : `Nothing has called ${DESK_LABELS[lens]} in yet.`}
+            {lens === 'ALL' ? 'No notes yet — open a new hire and start the thread.' : `No notes for ${DESK_LABELS[lens]} yet.`}
           </p>
         ) : (
           <ul className="divide-y divide-navy-secondary/60">

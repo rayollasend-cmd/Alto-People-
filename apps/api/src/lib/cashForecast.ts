@@ -6,6 +6,7 @@ import { depositDueDate } from './taxDeposits.js';
 import { aggregatePayrollProjection } from './payrollAggregator.js';
 import { cashOnHand } from './books/ledger.js';
 import { tenantIdForWrite } from './tenant.js';
+import { fmtDay, fmtDayRange } from './humanDates.js';
 
 /**
  * The cash forecast: where the money stands and what leaves and arrives
@@ -229,7 +230,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
       lines.push({
         date: win.payDate,
         kind: 'PAYROLL',
-        label: `Payroll ${win.periodStart} – ${win.periodEnd}${run ? ` (${run.status.toLowerCase()})` : ' (projected)'}`,
+        label: `Payroll ${fmtDayRange(win.periodStart, win.periodEnd)}${run ? ` (${run.status.toLowerCase()})` : ' (projected)'}`,
         amount: -round2(net),
         confidence,
         linkUrl: run ? `/payroll?run=${run.id}` : '/payroll',
@@ -244,7 +245,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
           lines.push({
             date: due,
             kind: 'TAX_DEPOSIT',
-            label: `Federal deposit for the ${win.payDate} payday`,
+            label: `Federal deposit for the ${fmtDay(win.payDate)} payday`,
             amount: -deposit,
             confidence: 'estimated',
             linkUrl: '/payroll/taxes?tab=deposits',
@@ -257,7 +258,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
         lines.push({
           date: remitOn,
           kind: 'RETIREMENT',
-          label: `Retirement plan contributions from the ${win.payDate} payday`,
+          label: `Retirement plan contributions from the ${fmtDay(win.payDate)} payday`,
           amount: -retirement,
           confidence: 'estimated',
           linkUrl: '/payroll/retirement',
@@ -335,7 +336,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     lines.push({
       date,
       kind: 'RETIREMENT',
-      label: `${o.plan} — contributions from the ${o.payDate} payday${overdue ? ' (not sent yet)' : ''}`,
+      label: `${o.plan} — contributions from the ${fmtDay(o.payDate)} payday${overdue ? ' (not sent yet)' : ''}`,
       amount: -amount,
       confidence: overdue ? 'overdue' : 'scheduled',
       linkUrl: '/payroll/retirement',

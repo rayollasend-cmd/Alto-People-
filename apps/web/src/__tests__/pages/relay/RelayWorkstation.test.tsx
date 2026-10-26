@@ -110,7 +110,7 @@ describe('requests between desks', () => {
       <RelayRequests desks={{ HR: [{ userId: 'u-hr', name: 'Hana Reed', photoUrl: null }] }} myDesk="WORKFORCE" openId={null} onOpen={() => {}} />,
     );
     await userEvent.click(await screen.findByRole('button', { name: /Send to a desk/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Send to another desk' });
+    const dialog = await screen.findByRole('dialog', { name: 'Send to another team' });
     await userEvent.selectOptions(within(dialog).getByLabelText('To which desk'), 'HR');
     await userEvent.selectOptions(within(dialog).getByLabelText('Anyone there, or someone in particular'), 'u-hr');
     await userEvent.type(within(dialog).getByLabelText('Subject'), 'Which form for a rehire?');

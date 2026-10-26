@@ -19,7 +19,8 @@ export const WORK_STATUS_TONE: Readonly<Record<WorkStatus, BadgeVariant>> = {
   ACTIVE: 'success',
   PLACED_NOT_ACTIVE: 'pending',
   NOT_PLACED: 'default',
-  ONBOARDING: 'accent',
+  // Info, not accent: in light mode the accent tone turned rust and read as an error.
+  ONBOARDING: 'info',
   DEACTIVATED: 'outline',
   SEPARATED: 'outline',
 };
@@ -81,7 +82,8 @@ export function PeopleStatusBadge({ status: given, windowDays = 14, title, ...re
   const { t } = useI18n();
   const status: WorkStatus = isWorkStatus(given) ? given : 'NOT_PLACED';
   return (
-    <Badge variant={WORK_STATUS_TONE[status]} title={title ?? t(DEF_KEY[status], { days: windowDays })} data-work-status={status} {...rest}>
+    // A dot on every work status — "Working" had one and "Onboarding" didn't (one dot rule).
+    <Badge variant={WORK_STATUS_TONE[status]} withDot title={title ?? t(DEF_KEY[status], { days: windowDays })} data-work-status={status} {...rest}>
       {t(LABEL_KEY[status])}
     </Badge>
   );

@@ -81,7 +81,9 @@ describe('run totals: one source and a check that it holds', () => {
 
     const review = await a.get(`/payroll/runs/${run.id}/review`);
     expect(review.status).toBe(200);
-    expect(review.body.report.run).toMatchObject({ storedGross: 4054.5, storedNet: 3490.2, totalsAgree: false });
+    // The review's tiles read the run's recorded totals — the run record's header — taxes included.
+    expect(review.body.report.run).toMatchObject({ storedGross: 4054.5, storedNet: 3490.2, storedTax: 564.3, totalsAgree: false });
+    expect(typeof review.body.report.run.storedEmployerTax).toBe('number');
   });
 
   it('a sound run agrees to the cent everywhere', async () => {

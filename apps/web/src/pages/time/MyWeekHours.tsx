@@ -4,7 +4,10 @@ import { Timer } from '@/components/ui/icons';
 import { paidMinutesForRange, type Shift, type TimeEntry } from '@alto-people/shared';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
-import { fmtHours } from '@/lib/format';
+import { displayLocale } from '@/lib/format';
+
+/** Hours with one decimal, like every hours figure in the app (it read "10.98h / 35h"). */
+const fmtHours = (hours: number) => `${(Math.round(hours * 10) / 10).toLocaleString(displayLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h`;
 import { listMyTimeEntries } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';

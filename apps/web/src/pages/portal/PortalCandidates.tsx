@@ -239,7 +239,7 @@ export function PortalCandidates() {
         subtitle={t('portal.candHint')}
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
-        breadcrumbs={[{ label: t('portal.title'), to: `/portal${qs}` }, { label: t('portal.candTitle') }]}
+        breadcrumbs={[{ label: t('portal.homeCrumb'), to: `/portal${qs}` }, { label: t('portal.candTitle') }]}
     >
 
       {!isPortal && <p className="text-xs text-silver/70">{t('portal.candPreview')}</p>}
@@ -252,7 +252,7 @@ export function PortalCandidates() {
             </Button>
           }
         >
-          {query.error instanceof ApiError ? query.error.message : t('portal.loadFailed')}
+          {query.error instanceof ApiError && query.error.status < 500 ? query.error.message : t('portal.loadFailed')}
         </ErrorBanner>
       ) : query.isLoading ? (
         <Card>

@@ -14,6 +14,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { assertAssetsReturned, completeSeparation } from '../lib/separationComplete.js';
 import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js';
 import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
+import { fmtDay, sentenceFromCode } from '../lib/humanDates.js';
 
 /**
  * Phase 119 â€” Separations + exit interviews.
@@ -48,6 +49,20 @@ const REASON = z.enum([
 
 /** Rows a separations list draws per page. */
 const SEPARATION_PAGE = 100;
+
+/** A separation reason in the words the approval card shows. */
+const SEPARATION_REASON_WORDS: Record<string, string> = {
+  VOLUNTARY_OTHER_OPPORTUNITY: 'Voluntary — other opportunity',
+  VOLUNTARY_PERSONAL: 'Voluntary — personal',
+  VOLUNTARY_RELOCATION: 'Voluntary — relocation',
+  VOLUNTARY_RETIREMENT: 'Voluntary — retirement',
+  INVOLUNTARY_PERFORMANCE: 'Involuntary — performance',
+  INVOLUNTARY_LAYOFF: 'Involuntary — layoff',
+  INVOLUNTARY_MISCONDUCT: 'Involuntary — misconduct',
+  END_OF_CONTRACT: 'End of contract',
+  DECEASED: 'Deceased',
+  OTHER: 'Other',
+};
 
 /** This tenant's separations, for people whose placement was inside the caller's reach. */
 function reachOf(user: SessionUser): Prisma.SeparationWhereInput {
@@ -189,14 +204,14 @@ separation119Router.post('/separations', MANAGE, async (req, res) => {
     throw new HttpError(
       400,
       'invalid_date_range',
-      `The last day worked (${input.lastDayWorked}) is before the notice date (${input.noticeDate}). Check both dates.`,
+      `The last day worked (${fmtDay(input.lastDayWorked, { year: true })}) is before the notice date (${fmtDay(input.noticeDate, { year: true })}). Check both dates.`,
     );
   }
   if (input.finalPaycheckDate && input.finalPaycheckDate < input.lastDayWorked) {
     throw new HttpError(
       400,
       'invalid_date_range',
-      `The final paycheck date (${input.finalPaycheckDate}) is before the last day worked (${input.lastDayWorked}). Check both dates.`,
+      `The final paycheck date (${fmtDay(input.finalPaycheckDate, { year: true })}) is before the last day worked (${fmtDay(input.lastDayWorked, { year: true })}). Check both dates.`,
     );
   }
   // The last day worked also closes their open site assignment on
@@ -294,7 +309,7 @@ separation119Router.post(
         subjectType: 'Separation',
         subjectId: id,
         title: `Complete ${who}'s separation`,
-        summary: `${existing.reason.replace(/_/g, ' ').toLowerCase()} · last day ${existing.lastDayWorked.toISOString().slice(0, 10)}. Completing revokes access, ends the employment record and purges biometrics.`,
+        summary: `${SEPARATION_REASON_WORDS[existing.reason] ?? sentenceFromCode(existing.reason)} · last day ${fmtDay(existing.lastDayWorked, { year: true })}. Completing revokes access, ends the employment record and purges biometrics.`,
         proposed: { separationId: id, status: 'COMPLETE' },
         before: { status: existing.status },
         requesterUserId: req.user!.id,

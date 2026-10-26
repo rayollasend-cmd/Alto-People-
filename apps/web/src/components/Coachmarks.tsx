@@ -37,6 +37,25 @@ function everyAnchorPresent(tour: Tour): boolean {
   return tour.steps.every((s) => rectOf(s.anchor) !== null);
 }
 
+/**
+ * Something the person opened sits over the page — a dialog (the command
+ * palette is one), an open menu (the bell, the account menu) or a sheet. The
+ * tour yields while it does: its card drew ABOVE the palette's backdrop and
+ * over the bell's list (F500 2026-10-26). It comes back, on the same step,
+ * when the overlay closes. Our own card is marked and never counts.
+ */
+export const OVERLAY_SELECTOR = [
+  '[role="dialog"]:not([data-coachmark])',
+  '[role="alertdialog"]',
+  '[role="menu"]',
+  '[role="listbox"]',
+  '[cmdk-root]',
+].join(', ');
+
+export function overlayOpen(root: ParentNode = document): boolean {
+  return root.querySelector(OVERLAY_SELECTOR) !== null;
+}
+
 export function Coachmarks() {
   const { user } = useAuth();
   const { lang, t } = useI18n();
@@ -75,6 +94,17 @@ export function Coachmarks() {
     return () => window.clearTimeout(timer);
   }, [location.pathname, user, replay]);
 
+  // Step aside while an overlay is open (OVERLAY_SELECTOR). Checked a few
+  // times a second, only while a tour is showing.
+  const [covered, setCovered] = useState(false);
+  useEffect(() => {
+    if (!tour) return;
+    const check = () => setCovered(overlayOpen());
+    check();
+    const id = window.setInterval(check, 250);
+    return () => window.clearInterval(id);
+  }, [tour]);
+
   // Measure the current anchor, and again whenever the window changes.
   useLayoutEffect(() => {
     if (!tour) return;
@@ -88,7 +118,7 @@ export function Coachmarks() {
     };
   }, [tour, step]);
 
-  if (!tour || !rect || !user) return null;
+  if (!tour || !rect || !user || covered) return null;
 
   const finish = () => {
     try {
@@ -121,6 +151,7 @@ export function Coachmarks() {
         role="dialog"
         aria-modal="false"
         aria-label={current.title}
+        data-coachmark=""
         className="fixed z-[61] rounded-lg border border-gold/40 bg-navy p-4 elev-2 animate-fade-in"
         style={{ left, top, bottom, width: Math.min(CARD_W, vw - 16) }}
       >

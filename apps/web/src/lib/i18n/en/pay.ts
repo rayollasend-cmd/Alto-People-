@@ -9,7 +9,7 @@ export const enPay = {
   // Pay — associate paystub list
   'pay.nextPayday': 'Next payday',
   'pay.notOnSchedule': 'Not on a pay schedule yet',
-  'pay.notOnScheduleBody': 'No payday is set for you until you’re on one. Payroll has been told.',
+  'pay.notOnScheduleBody': 'Your payday shows here once the payroll team adds you to a pay schedule. They already know — there’s nothing you need to do.',
   'pay.paidToday': 'today',
   'pay.paidTomorrow': 'tomorrow',
   'pay.paidInDays': 'in {count} days',

@@ -61,7 +61,7 @@ describe('<WhatsNew> — the release-note card', () => {
     expect(screen.getByText('Only in English.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'See everything new' })).toHaveAttribute('href', '/whats-new');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Got it' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss what’s new' }));
     expect(screen.queryByText('Faster schedule loads.')).not.toBeInTheDocument();
     expect(window.localStorage.getItem('alto.whatsnew.seen.v2')).toBe('note-1');
 

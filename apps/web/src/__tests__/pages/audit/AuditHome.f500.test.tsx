@@ -119,7 +119,7 @@ describe('Audit log (F500 G4)', () => {
     renderAudit();
     await waitFor(() => expect(searchAuditLogs).toHaveBeenCalled());
     expect(vi.mocked(searchAuditLogs).mock.calls[0]![0]).toMatchObject({ hideSystem: '1', limit: 100 });
-    await userEvent.click(screen.getByRole('button', { name: 'Hide system requests' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Hide routine activity' }));
     await waitFor(() => expect(lastLocation).toContain('system=1'));
     await waitFor(() => expect(vi.mocked(searchAuditLogs).mock.lastCall![0].hideSystem).toBeUndefined());
   });

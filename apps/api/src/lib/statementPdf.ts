@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import type { StatementSnapshot } from './clientStatement.js';
 import { COLOR, SIZE, createDoc, fmt, loadBrand, type Brand } from './docKit/index.js';
 import { ageStatements } from './books/aging.js';
+import { fmtDayRange } from './humanDates.js';
 
 /**
  * The client statement, as the invoice a customer's accounts-payable team
@@ -184,7 +185,7 @@ export async function renderStatementPdf(raw: StatementPdfInput): Promise<Buffer
   const { hoursAmount, adjustmentsAmount, subtotal, salesTax, salesTaxRate } = statementMoney(s);
   const total = s.totals.amount;
   const amountDue = paid ? 0 : total;
-  const { k } = createDoc({ title: `${label} — ${s.clientName} — ${s.periodStart} to ${s.periodEnd}`, author: orgName, subject: `Workforce services, ${s.periodStart} to ${s.periodEnd}` });
+  const { k } = createDoc({ title: `${label} — ${s.clientName} — ${fmtDayRange(s.periodStart, s.periodEnd, { year: true })}`, author: orgName, subject: `Workforce services, ${fmtDayRange(s.periodStart, s.periodEnd, { year: true })}` });
   const L = k.L;
   const Wd = k.width();
 

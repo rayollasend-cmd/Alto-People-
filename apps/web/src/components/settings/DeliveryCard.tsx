@@ -4,18 +4,22 @@ import { Moon } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getDeliveryPrefs, hhmmToMinutes, minutesToHhmm, patchDeliveryPrefs, type DeliveryMode, type DeliveryPrefs } from '@/lib/accessApi';
-import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { SettingsSwitch } from './SettingsSwitch';
 
 /**
  * Access pack — WHEN things reach you. Quiet hours in your own time zone
  * (nothing buzzes; what arrived waits for the morning as one message), and
  * per channel, as it happens or once an hour together. Security, formal
  * notices, safety and pay never wait.
+ *
+ * Everything here applies the moment it changes and says so in a toast
+ * (F500 polish, 2026-10-26: one save model — this card had its own "Save
+ * quiet hours" button mid-page while its selects saved at once).
  */
 
 const CHANNELS: Array<{ key: 'deliveryEmail' | 'deliveryPush' | 'deliverySms'; label: string }> = [
@@ -38,27 +42,37 @@ export function DeliveryCard() {
     if (q.data.quietHoursEnd !== null) setEnd(minutesToHhmm(q.data.quietHoursEnd));
   }, [q.data]);
 
-  const apply = async (patch: Partial<Omit<DeliveryPrefs, 'timezone'>>) => {
+  const apply = async (patch: Partial<Omit<DeliveryPrefs, 'timezone'>>, ok = 'Saved.') => {
     setSaving(true);
     try {
       const saved = await patchDeliveryPrefs(patch);
       qc.setQueryData(['me', 'notification-delivery'], saved);
-      toast.success('Saved.');
+      toast.success(ok);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not save.');
     } finally {
       setSaving(false);
     }
   };
-  const saveQuiet = () => {
-    if (!quietOn) return apply({ quietHoursStart: null, quietHoursEnd: null });
+  const turnQuiet = (on: boolean) => {
+    setQuietOn(on);
+    if (!on) return void apply({ quietHoursStart: null, quietHoursEnd: null }, 'Quiet hours off.');
+    const s = hhmmToMinutes(start);
+    const e = hhmmToMinutes(end);
+    if (s === null || e === null) return;
+    void apply({ quietHoursStart: s, quietHoursEnd: e }, 'Quiet hours on.');
+  };
+  // A time saves when the field is left, if it changed.
+  const saveTime = (which: 'start' | 'end') => {
     const s = hhmmToMinutes(start);
     const e = hhmmToMinutes(end);
     if (s === null || e === null) {
       toast.error('Use a time like 22:00.');
       return;
     }
-    return apply({ quietHoursStart: s, quietHoursEnd: e });
+    const savedValue = which === 'start' ? q.data?.quietHoursStart : q.data?.quietHoursEnd;
+    if ((which === 'start' ? s : e) === savedValue) return;
+    void apply({ quietHoursStart: s, quietHoursEnd: e }, 'Quiet hours saved.');
   };
 
   return (
@@ -81,16 +95,19 @@ export function DeliveryCard() {
         ) : (
           <>
             <div className="space-y-3">
-              <label className="flex items-center gap-2 text-sm text-ink">
-                <input type="checkbox" checked={quietOn} onChange={(e) => setQuietOn(e.target.checked)} />
-                Quiet hours
-                <span className="text-xs text-ink-muted">({q.data.timezone ?? 'your device’s time zone'})</span>
-              </label>
-              <div className="flex flex-wrap items-end gap-3">
-                <Field label="From">{(p) => <Input {...p} type="time" className="w-32" value={start} disabled={!quietOn} onChange={(e) => setStart(e.target.value)} />}</Field>
-                <Field label="Until">{(p) => <Input {...p} type="time" className="w-32" value={end} disabled={!quietOn} onChange={(e) => setEnd(e.target.value)} />}</Field>
-                <Button size="sm" variant="secondary" loading={saving} onClick={() => void saveQuiet()}>Save quiet hours</Button>
+              <div className="flex items-center justify-between gap-4">
+                <span id="quiet-hours-label" className="text-sm text-ink">
+                  Quiet hours
+                  <span className="block text-xs text-ink-muted">In {q.data.timezone ?? 'your device’s time zone'}</span>
+                </span>
+                <SettingsSwitch checked={quietOn} disabled={saving} onCheckedChange={turnQuiet} aria-labelledby="quiet-hours-label" />
               </div>
+              {quietOn && (
+                <div className="flex flex-wrap items-end gap-3">
+                  <Field label="From">{(p) => <Input {...p} type="time" className="w-32" value={start} disabled={saving} onChange={(e) => setStart(e.target.value)} onBlur={() => saveTime('start')} />}</Field>
+                  <Field label="Until">{(p) => <Input {...p} type="time" className="w-32" value={end} disabled={saving} onChange={(e) => setEnd(e.target.value)} onBlur={() => saveTime('end')} />}</Field>
+                </div>
+              )}
             </div>
             <ul className="divide-y divide-line">
               {CHANNELS.map((c) => (

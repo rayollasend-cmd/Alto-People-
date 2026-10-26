@@ -12,7 +12,7 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { RunStatusStepper } from '@/components/payroll/RunStatusStepper';
-import { RunTotalsMismatch } from '@/components/payroll/RunTotalsMismatch';
+import { RunTotalsMismatch, liveNextStep } from '@/components/payroll/RunTotalsMismatch';
 import { RunTaxBreakdown } from '@/components/payroll/RunTaxBreakdown';
 import { RunStatusBadge, paycheckStatusLabel, paycheckStatusTone } from '@/lib/payrollRunStatus';
 import { PayrollReviewPage } from './PayrollReviewPage';
@@ -77,7 +77,8 @@ export function RunRecordPage() {
   }
 
   const open = run.status === 'DRAFT' || run.status === 'FINALIZED';
-  const next = run.nextStep && run.nextStep.key !== 'done' && run.nextStep.key !== 'cancelled' ? run.nextStep : null;
+  // A run on hold (its totals and paychecks disagree) offers no next step: the alert on Overview says why.
+  const next = liveNextStep(run);
   const tabs: RecordTab[] = [
     { key: 'overview', label: 'Overview', content: <RunOverview run={run} /> },
     { key: 'paychecks', label: 'Paychecks', count: run.items.length, content: <RunPaychecks run={run} /> },
@@ -136,7 +137,8 @@ function RunOverview({ run }: { run: PayrollRunDetail }) {
   const review = useQuery({
     queryKey: ['payroll', 'review-status', run.id],
     queryFn: () => getPayrollReviewStatus(run.id),
-    enabled: run.status === 'DRAFT' || run.status === 'FINALIZED',
+    // Every run but a voided one: a paid run's stepper needs to know whether a sign-off was required at all.
+    enabled: run.status !== 'CANCELLED',
   });
   return (
     <div className="space-y-[var(--d-stack)]">
@@ -166,7 +168,7 @@ function RunOverview({ run }: { run: PayrollRunDetail }) {
         </div>
       )}
       {/* The next step is the header's primary; the stepper doesn't say it twice. */}
-      <RunStatusStepper status={run.status} lifecycle={run} signedOff={!!review.data?.signoff?.current} showNext={false} />
+      <RunStatusStepper status={run.status} lifecycle={run} signedOff={!!review.data?.signoff?.current} signoffRequired={review.data?.signoff?.required} showNext={false} />
       {/* State and local taxes by jurisdiction (lib/taxEngine). */}
       <RunTaxBreakdown runId={run.id} />
       {run.notes && (
@@ -212,7 +214,7 @@ function RunPaychecks({ run }: { run: PayrollRunDetail }) {
         className: 'tabular-nums',
         cell: (i) => fmtMoney(i.federalWithholding + i.fica + i.medicare + i.stateWithholding),
       },
-      { key: 'net', header: 'Net', accessor: (i) => i.netPay, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-gold', cell: (i) => fmtMoney(i.netPay), csv: (i) => i.netPay },
+      { key: 'net', header: 'Net', accessor: (i) => i.netPay, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums font-medium text-ink', cell: (i) => fmtMoney(i.netPay), csv: (i) => i.netPay },
       { key: 'state', header: 'Tax state', accessor: (i) => i.taxState ?? '', sortable: true, defaultHidden: true, cell: (i) => i.taxState ?? '—' },
     ],
     [],

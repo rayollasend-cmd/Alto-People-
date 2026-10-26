@@ -76,7 +76,7 @@ beforeEach(() => {
 describe('<NotificationsBell> on touch', () => {
   it('one tap opens the panel; no tooltip covers Mark all read, and it works', async () => {
     renderBell();
-    const bell = await screen.findByRole('button', { name: 'Notifications (3 new)' });
+    const bell = await screen.findByRole('button', { name: 'Notifications (3 new for you)' });
     await userEvent.click(bell);
 
     const markAll = await screen.findByRole('button', { name: /Mark all read/ });

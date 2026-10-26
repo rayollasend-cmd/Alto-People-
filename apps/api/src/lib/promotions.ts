@@ -11,6 +11,7 @@ import { notifyAssociate, notifyManager } from './notify.js';
 import { tenantIdForWrite } from './tenant.js';
 import { createApprovalRequest, type Decider } from './approvalRequests.js';
 import { applyPayRateChange, currentComp } from './payChanges.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * A promotion as one record: the new seat (job profile, title, level), the
@@ -94,7 +95,7 @@ export async function proposePromotion(db: PrismaClient, input: PromotionInput, 
     subjectType: 'Promotion',
     subjectId: promotion.id,
     title: `Promote ${who}${parts.length ? ` ${parts.join(', ')}` : ''}`,
-    summary: `Effective ${input.effectiveFrom}.${input.notes ? ` ${input.notes}` : ''}`,
+    summary: `Effective ${fmtDay(input.effectiveFrom, { year: true })}.${input.notes ? ` ${input.notes}` : ''}`,
     proposed: { promotionId: promotion.id, ...input },
     before: { jobProfileTitle: associate.jobProfile?.title ?? null, amount: current?.amount ?? null, payType: current?.payType ?? null },
     requesterUserId: requester.id,
@@ -158,7 +159,7 @@ export async function applyPromotion(db: PrismaClient, promotionId: string, deci
   const orgName = getBrandingSync().orgName;
   const pdf = await renderLetterPdf({
     title: `Promotion${title ? `: ${title}` : ''}`,
-    body: letterBody({ orgName, who, title, level: p.level, amount: p.amount ? p.amount.toFixed(2) : null, payType: p.payType, effectiveFrom: effective }),
+    body: letterBody({ orgName, who, title, level: p.level, amount: p.amount ? p.amount.toFixed(2) : null, payType: p.payType, effectiveFrom: fmtDay(effective, { year: true }) }),
     issuedAt: new Date(),
     issuedTo: who,
   });
@@ -182,12 +183,12 @@ export async function applyPromotion(db: PrismaClient, promotionId: string, deci
   enqueueAudit({ actorUserId: decider.id, action: 'promotion.applied', entityType: 'Promotion', entityId: p.id, metadata: { associateId: p.associateId, approvalRequestId, letterDocumentId: filed.id } }, 'promotions.apply');
   void notifyAssociate(p.associateId, {
     subject: `Congratulations${title ? ` — ${title}` : ''}`,
-    body: `Your promotion is effective ${effective}. Your letter is in your documents.`,
+    body: `Your promotion is effective ${fmtDay(effective, { year: true })}. Your letter is in your documents.`,
     category: 'compensation',
     linkUrl: '/me?tab=documents',
     emailFallback: true,
   });
-  void notifyManager(p.associateId, { subject: 'Promotion applied on your team', body: `${who}: promotion effective ${effective}.`, category: 'compensation', linkUrl: `/people/${p.associateId}?tab=pay` });
+  void notifyManager(p.associateId, { subject: 'Promotion applied on your team', body: `${who}: promotion effective ${fmtDay(effective, { year: true })}.`, category: 'compensation', linkUrl: `/people/${p.associateId}?tab=pay` });
 }
 
 export async function rejectPromotion(db: PrismaClient, promotionId: string): Promise<void> {

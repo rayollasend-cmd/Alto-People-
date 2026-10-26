@@ -161,11 +161,12 @@ export function startUploadsBackupCron(): void {
             (r.prunedOld ? ` (pruned ${r.prunedOld} old)` : ''),
         );
         // Brief 2-5 step 5: every run is SOC 2 evidence (control uploads-backup).
-        await recordEvidence('uploads-backup', 'uploadsBackup', { status: 'PASS', summary: `Uploads archived to ${r.key}.`, details: { key: r.key, prunedOld: r.prunedOld } });
+        // Plain words in the summary; the archive key stays in the details (the page's detail line).
+        await recordEvidence('uploads-backup', 'uploadsBackup', { status: 'PASS', summary: 'Uploaded files were backed up.', details: { key: r.key, prunedOld: r.prunedOld } });
       })
       .catch(async (err) => {
         console.error('[backup] uploads backup failed:', err);
-        await recordEvidence('uploads-backup', 'uploadsBackup', { status: 'FAIL', summary: `The uploads backup failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300) });
+        await recordEvidence('uploads-backup', 'uploadsBackup', { status: 'FAIL', summary: 'The uploads backup failed.', details: { error: (err instanceof Error ? err.message : String(err)).slice(0, 300) } });
       });
   };
   // First run shortly after boot (not immediately — let the service warm

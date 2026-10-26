@@ -106,6 +106,19 @@ describe('GET /clients — the account numbers', () => {
     expect(JSON.stringify(r.body)).not.toContain('5760');
   });
 
+  it('leaves the internal-hires pseudo-client out of the accounts list, and keeps it for the pickers (F500 2026-10-26)', async () => {
+    await createClient('Harbor Hotel');
+    await createClient('Alto HR — Internal Hires');
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(agent(), user.email);
+    const accounts = await a.get('/clients?include=metrics');
+    expect(accounts.status).toBe(200);
+    expect((accounts.body.clients as ClientListItem[]).map((c) => c.name)).toEqual(['Harbor Hotel']);
+    // The new-applicant dialog's picker still offers it: internal staff are hired through it.
+    const picker = await a.get('/clients');
+    expect((picker.body.clients as ClientListItem[]).map((c) => c.name)).toContain('Alto HR — Internal Hires');
+  });
+
   it('keeps a store-bound account to the clients in its reach', async () => {
     const s = await seed();
     const { user } = await createUser({ role: 'OPERATIONS_MANAGER' });

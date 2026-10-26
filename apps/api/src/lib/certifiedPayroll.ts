@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, PrevailingWageProject, PrevailingWageRate, PrevailingWageWorker } from '@prisma/client';
 import { localDateKey } from './timezone.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Certified payroll — public-works (Davis-Bacon and state prevailing-wage)
@@ -285,7 +286,7 @@ export async function computeCertifiedWeek(db: Db, project: ProjectWithParts, we
       const apprentices = on.filter((r) => r.isApprentice).length;
       const journey = on.length - apprentices;
       if (apprentices > 0 && apprentices > journey * allowed) {
-        exceptions.push({ kind: 'APPRENTICE_RATIO', associateIds: on.filter((r) => r.isApprentice).map((r) => r.associateId), message: `${day}: ${apprentices} ${c} apprentice${apprentices === 1 ? '' : 's'} on site with ${journey} journeyworker${journey === 1 ? '' : 's'} — the ratio allows ${allowed} per journeyworker. Apprentices over the ratio must be paid the journeyworker rate.` });
+        exceptions.push({ kind: 'APPRENTICE_RATIO', associateIds: on.filter((r) => r.isApprentice).map((r) => r.associateId), message: `${fmtDay(day, { weekday: true, year: true })}: ${apprentices} ${c} apprentice${apprentices === 1 ? '' : 's'} on site with ${journey} journeyworker${journey === 1 ? '' : 's'} — the ratio allows ${allowed} per journeyworker. Apprentices over the ratio must be paid the journeyworker rate.` });
       }
     });
   }

@@ -42,10 +42,17 @@ describe('navCrumbs', () => {
     expect(crumbs('HR_ADMINISTRATOR', '/scheduling/supervisors')).toEqual([{ label: 'Scheduling', to: '/scheduling' }, { label: 'Store leads' }]);
   });
 
-  it('a page that IS its door’s first page has no parent, so no trail', () => {
+  it('a section’s own page shows its sidebar group, said once — never the page name twice', () => {
+    // "Compliance" over "Compliance" says nothing: no trail.
     expect(crumbs('HR_ADMINISTRATOR', '/compliance')).toBeNull();
-    // The associate's pay page opens "My pay" — nothing above it.
-    expect(crumbs('ASSOCIATE', '/payroll')).toBeNull();
+    // The associate's pay page is "My pay" — nothing above it.
+    expect(crumbs('ASSOCIATE', '/payroll', 'My pay')).toBeNull();
+    // A section under a differently named group shows where it lives (plain, not a link:
+    // the group opens this very page) — titles sat 24px higher without it.
+    const trail = crumbs('HR_ADMINISTRATOR', '/scheduling', 'Scheduling');
+    expect(trail).toHaveLength(2);
+    expect(trail![0]!.to).toBeUndefined();
+    expect(trail![1]).toEqual({ label: 'Scheduling' });
   });
 
   it('two steps to the same place collapse into the more specific one', () => {

@@ -25,7 +25,8 @@ import type {
   LaborCostRow,
   StaffingTargetLocation,
 } from '@alto-people/shared';
-import { PALETTE, Sparkline as KitSparkline, StackedBarChart, Treemap, TrendLineChart, type TreeNode } from '@/components/ui/charts';
+import { PALETTE, Sparkline as KitSparkline, StackedBarChart, Treemap, TREEMAP_MIN_ITEMS, TrendLineChart, fmtMoneyAxis, treemapLeaves, type TreeLeaf, type TreeNode } from '@/components/ui/charts';
+import { DateRangeField } from '@/components/ui/DateField';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
@@ -152,7 +153,8 @@ function CostTrendCard({
       csvName="labor-cost-by-day"
       height={260}
     >
-      <TrendLineChart data={data} x="date" xDates="day" series={LINE_SERIES} format={moneyCompact} />
+      {/* Under ten days the kit draws straight segments with a dot per day, never a smoothed arc. */}
+      <TrendLineChart data={data} x="date" xDates="day" series={LINE_SERIES} format={fmtMoneyAxis} />
     </ChartFrame>
   );
 }
@@ -333,6 +335,35 @@ function MoneyTreemapCard({
     [leaves, side, total],
   );
   const sized = side === 'scheduled' ? 'scheduled cost (shift hours at their pay rates)' : 'worked cost (punches at their pay, overtime included)';
+  // Two blocks or fewer is a sentence, not a picture: one $105 block filled the card in gold.
+  const blockCount = treemapLeaves(tree).length;
+  const few = blockCount < TREEMAP_MIN_ITEMS;
+  const sayFew = (blocks: TreeLeaf[]) => (
+    <div className="space-y-2 text-sm" data-testid="money-few">
+      <p className="text-ink">
+        {blocks.length === 1
+          ? `All ${money(blocks[0]!.value)} of the ${side} cost went to one job:`
+          : `The ${side} cost went to ${blocks.length} jobs:`}
+      </p>
+      <ul className="space-y-1">
+        {blocks.map((b) => {
+          const [position, ...where] = [...b.path].reverse();
+          return (
+            <li key={b.path.join('|')} className="flex flex-wrap items-baseline justify-between gap-x-3 border-t border-line pt-1.5 first:border-t-0 first:pt-0">
+              <span className="min-w-0 text-ink">
+                {position}
+                {where.length > 0 && <span className="text-ink-muted"> · {where.join(' · ')}</span>}
+              </span>
+              <span className="tabular-nums text-ink">
+                {money(b.value)}
+                {blocks.length > 1 && total > 0 && <span className="ml-2 text-ink-muted">{shareText(b.value, total)}</span>}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
   const inside = termizeText(start === 'client' ? ', inside its store and client' : start === 'store' ? ', inside its store' : ' at this store', term);
   return (
     <ChartFrame
@@ -340,8 +371,13 @@ function MoneyTreemapCard({
       description={
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <span className="min-w-0 flex-1 basis-64">
-            Which jobs the labor money pays for. Each block is a position&rsquo;s {sized}
-            {inside}; tap one to zoom in.
+            Which jobs the labor money pays for.
+            {!few && (
+              <>
+                {' '}Each block is a position&rsquo;s {sized}
+                {inside}; tap one to zoom in.
+              </>
+            )}
             {side === 'worked' && ' Time worked on no shift shows as Unscheduled.'}
           </span>
           <SegmentedControl<MoneySide>
@@ -365,7 +401,7 @@ function MoneyTreemapCard({
       ]}
       rows={tableRows}
       csvName={`labor-cost-by-position-${side}`}
-      height={wide ? 420 : 360}
+      height={few ? 36 + 32 * Math.max(1, blockCount) : wide ? 420 : 360}
       empty={
         <EmptyState
           size="sm"
@@ -375,7 +411,7 @@ function MoneyTreemapCard({
         />
       }
     >
-      <Treemap data={tree} format={moneyCompact} />
+      <Treemap data={tree} format={moneyCompact} few={sayFew} />
     </ChartFrame>
   );
 }
@@ -737,7 +773,8 @@ function StoreTrendsCard() {
                   : null;
               return (
                 <li key={s.locationId} className="flex items-center gap-3">
-                  <span className="w-40 min-w-0 shrink-0 truncate text-sm text-white">
+                  {/* On a phone the name takes what's left (a fixed 10rem pushed the margin 7px off a 390px screen). */}
+                  <span className="min-w-0 flex-1 truncate text-sm text-white sm:w-40 sm:flex-none sm:shrink-0">
                     {s.locationName}
                   </span>
                   <MarginSparkline weeks={s.weeks} />
@@ -1685,6 +1722,7 @@ const overTarget = (r: LaborCostRow) => r.targetHeads !== null && r.scheduledHea
 
 export function LaborCostsHome() {
   const term = useTerm();
+  const roomy = useMinWidth(768);
   const { can } = useAuth();
   // A tenant with no clients has its own sites only: no client lens.
   const hasClients = useTenant().moduleOn('clientPortal');
@@ -1991,6 +2029,18 @@ export function LaborCostsHome() {
   const rangeWhat =
     range?.preset === 'period' ? 'pay period to date' : range?.preset === 'last' ? 'last pay period' : range ? plural(spanDays, 'day', 'days') : '';
   const anyActivity = grand.scheduledShifts > 0 || grand.workedPunches > 0;
+  const presets =
+    presetOptions.length > 0 && range ? (
+      <SegmentedControl<RangePreset | 'custom'>
+        options={presetOptions}
+        value={range.preset}
+        onChange={(v) => v !== 'custom' && pickPreset(v)}
+        ariaLabel="Date range"
+        className="flex-nowrap"
+      />
+    ) : (
+      <Skeleton className="h-8 w-64" />
+    );
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -2009,18 +2059,7 @@ export function LaborCostsHome() {
         <FilterBar
           urlKey={['client', 'store']}
           sheetDescription="Pick exact dates, or narrow the report to one client or store."
-          search={
-            presetOptions.length > 0 && range ? (
-              <SegmentedControl<RangePreset | 'custom'>
-                options={presetOptions}
-                value={range.preset}
-                onChange={(v) => v !== 'custom' && pickPreset(v)}
-                ariaLabel="Date range"
-              />
-            ) : (
-              <Skeleton className="h-8 w-64" />
-            )
-          }
+          search={roomy ? undefined : presets}
           count={
             range ? (
               <span>
@@ -2029,28 +2068,17 @@ export function LaborCostsHome() {
             ) : null
           }
         >
-          <label className="flex items-center gap-1.5 text-xs text-silver">
-            From
-            <Input
-              type="date"
-              aria-label="From date"
-              value={range?.from ?? ''}
-              max={range?.to}
-              onChange={(e) => range && e.target.value && setRange(e.target.value, range.to < e.target.value ? e.target.value : range.to)}
-              className="h-8 w-[9.5rem]"
-            />
-          </label>
-          <label className="flex items-center gap-1.5 text-xs text-silver">
-            To
-            <Input
-              type="date"
-              aria-label="To date"
-              value={range?.to ?? ''}
-              min={range?.from}
-              onChange={(e) => range && e.target.value && setRange(range.from > e.target.value ? e.target.value : range.from, e.target.value)}
-              className="h-8 w-[9.5rem]"
-            />
-          </label>
+          {/* On a wide screen the presets lead the row (in the search slot they squeezed, and "30 days" wrapped alone). */}
+          {roomy && presets}
+          {/* The app's own date field: "Oct 24 – Oct 26", not a browser's "10/24/2026" beside it. */}
+          <DateRangeField
+            size="sm"
+            from={range?.from ?? ''}
+            to={range?.to ?? ''}
+            fromLabel="From date"
+            toLabel="To date"
+            onChange={({ from, to }) => range && from && to && setRange(from, to)}
+          />
           {hasClients && (
             <Select
               value={clientFilter}
@@ -2138,7 +2166,14 @@ export function LaborCostsHome() {
                   label="Scheduled cost"
                   value={money(grand.scheduledCost)}
                   nothing={grand.scheduledShifts === 0 ? 'No shifts in range' : undefined}
-                  hint={`${hours(grand.scheduledMinutes)} · ${plural(grand.scheduledShifts, 'shift', 'shifts')} · ${grand.leadHeads} lead / ${grand.associateHeads} associate head-days`}
+                  // People on the floor summed day by day, said plainly (it read "0 lead / 0 associate head-days").
+                  hint={[
+                    hours(grand.scheduledMinutes),
+                    plural(grand.scheduledShifts, 'shift', 'shifts'),
+                    grand.leadHeads + grand.associateHeads > 0 ? `${plural(grand.leadHeads + grand.associateHeads, 'person-day', 'person-days')} staffed` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 />
                 <MetricCard
                   icon={Timer}
@@ -2206,7 +2241,7 @@ export function LaborCostsHome() {
                   tone={grand.overstaffCost > 0.005 ? 'alert' : 'neutral'}
                   hint={
                     grand.overstaffHeads > 0
-                      ? `${plural(grand.overstaffHeads, 'head-day', 'head-days')} above the floor targets`
+                      ? `${plural(grand.overstaffHeads, 'extra person-day', 'extra person-days')} over the floor targets`
                       : 'No days above the floor targets'
                   }
                   onClick={overRows > 0 ? () => showRows('over') : undefined}
@@ -2348,7 +2383,7 @@ export function LaborCostsHome() {
                 onClearFilters={() => setFocus('all')}
                 empty={{ icon: DollarSign, title: 'No labor activity on these dates' }}
                 footnote={
-                  gridRows.length > 0 ? 'The page’s Export CSV carries every column, shift windows included.' : undefined
+                  gridRows.length > 0 ? 'Export CSV at the top of the page downloads every column, shift times included.' : undefined
                 }
               />
             </section>

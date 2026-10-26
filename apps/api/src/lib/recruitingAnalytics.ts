@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { RecruitingAnalytics, RecruitingFlow } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
+import { realName } from './displayName.js';
 
 /**
  * The recruiting dashboard's numbers, computed from what recruiting
@@ -388,7 +389,7 @@ export async function computeRecruitingAnalytics(input: {
     select: {
       candidateId: true,
       actorUserId: true,
-      actor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
+      actor: { select: { email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } },
     },
   });
   const hirer = new Map<string, { id: string; name: string } | null>();
@@ -399,7 +400,9 @@ export async function computeRecruitingAnalytics(input: {
       e.actorUserId && e.actor
         ? {
             id: e.actorUserId,
-            name: e.actor.associate ? `${e.actor.associate.firstName} ${e.actor.associate.lastName}` : e.actor.email,
+            // The person's name — their associate name or the name on the account — and the
+            // address only when no name is on file ("Hired by" listed bare emails).
+            name: realName(e.actor) ?? e.actor.email,
           }
         : null,
     );

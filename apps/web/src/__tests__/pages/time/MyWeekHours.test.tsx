@@ -56,12 +56,12 @@ describe('<MyWeekHours> — the week at a glance on the Time page', () => {
     vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [entry(4 * 60, undefined, 10), entry(4 * 60, undefined, 34)] });
     vi.mocked(listMyShifts).mockResolvedValue({ shifts: [shift(10, 4), shift(34, 4), shift(58, 4), shift(106, 4)] });
     renderIt();
-    expect(await screen.findByText('8h')).toBeInTheDocument();
-    expect(screen.getByText(/\/ 16h scheduled/)).toBeInTheDocument();
+    expect(await screen.findByText('8.0h')).toBeInTheDocument();
+    expect(screen.getByText(/\/ 16\.0h scheduled/)).toBeInTheDocument();
     // "To go" is only what is still ahead — not scheduled minus worked (8h).
-    expect(screen.getByText('4h to go')).toBeInTheDocument();
+    expect(screen.getByText('4.0h to go')).toBeInTheDocument();
     // The missed shift says so, with the way to fix it on this page.
-    expect(screen.getByText('4h scheduled, not punched')).toBeInTheDocument();
+    expect(screen.getByText('4.0h scheduled, not punched')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Fix a punch' })).toHaveAttribute('href', '/time-attendance?fix=1');
   });
 
@@ -73,7 +73,7 @@ describe('<MyWeekHours> — the week at a glance on the Time page', () => {
     // An 8h shift Monday: 7h paid (the unpaid meal hour).
     vi.mocked(listMyShifts).mockResolvedValue({ shifts: [shift(58, 8)] });
     renderIt();
-    expect(await screen.findByText('7h scheduled, not punched')).toBeInTheDocument();
+    expect(await screen.findByText('7.0h scheduled, not punched')).toBeInTheDocument();
     expect(screen.queryByText(/to go/)).not.toBeInTheDocument();
     expect(screen.queryByText('All scheduled hours worked')).not.toBeInTheDocument();
   });
@@ -83,7 +83,7 @@ describe('<MyWeekHours> — the week at a glance on the Time page', () => {
     vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [...Array.from({ length: 5 }, () => entry(7 * 60, { ot: 0 })), entry(7 * 60, { ot: 120 })] });
     vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
     renderIt();
-    expect(await screen.findByText('2h of overtime this week')).toBeInTheDocument();
+    expect(await screen.findByText('2.0h of overtime this week')).toBeInTheDocument();
   });
 
   it('a daily-overtime state: 30 hours can already carry overtime, and the tile says so', async () => {
@@ -91,14 +91,14 @@ describe('<MyWeekHours> — the week at a glance on the Time page', () => {
     vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [entry(600, { ot: 120 }), entry(600, { ot: 120 }), entry(600, { ot: 120 })] });
     vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
     renderIt();
-    expect(await screen.findByText('6h of overtime this week')).toBeInTheDocument();
+    expect(await screen.findByText('6.0h of overtime this week')).toBeInTheDocument();
   });
 
   it('never works out overtime itself: past 40 with no server split names none', async () => {
     vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: Array.from({ length: 6 }, () => entry(7 * 60)) });
     vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
     renderIt();
-    expect(await screen.findByText('42h')).toBeInTheDocument();
+    expect(await screen.findByText('42.0h')).toBeInTheDocument();
     expect(screen.queryByText(/overtime this week/)).not.toBeInTheDocument();
   });
 
@@ -107,7 +107,7 @@ describe('<MyWeekHours> — the week at a glance on the Time page', () => {
     vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [entry(4 * 60)] });
     vi.mocked(listMyShifts).mockResolvedValue({ shifts: [shift(10, 4)] });
     renderIt();
-    expect(await screen.findByText('Your schedule adds up to 4h of overtime this week')).toBeInTheDocument();
+    expect(await screen.findByText('Your schedule adds up to 4.0h of overtime this week')).toBeInTheDocument();
     vi.mocked(useMyEarnings).mockReturnValue({ data: undefined } as never);
   });
 

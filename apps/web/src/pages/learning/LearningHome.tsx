@@ -158,6 +158,8 @@ function MyTraining() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
+        // A worker reads at 16px on a phone (helper lines at 14px).
+        className="max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm"
         title={t('lrn.myTitle')}
         subtitle={t('lrn.mySubtitle')}
         breadcrumbs={[{ label: t('lrn.crumb') }]}

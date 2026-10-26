@@ -20,6 +20,7 @@ export type EvidenceCollection = 'job' | 'script' | 'ci' | 'runbook' | 'attestat
 
 export interface ComplianceControl {
   id: string;
+  /** The control's name in plain English (F500 audit 2026-10-26: no "HMAC", "TLS" or "HSTS"); the criteria codes are its secondary label. */
   title: string;
   /** The SOC 2 trust services criteria it answers. */
   criteria: string[];
@@ -45,7 +46,7 @@ export interface ComplianceControl {
 export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   {
     id: 'job-secrets-separated',
-    title: 'Each HMAC job and MFA has its own secret',
+    title: 'Each protected service has its own key',
     criteria: ['CC6.1'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -54,11 +55,11 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
     step: 2,
     how: 'Daily job: which of the per-job secrets are set apart from the field-encryption key (values are never read into the record).',
     plain: 'Each background job and two-step sign-in uses its own secret key.',
-    remedy: 'Give each job its own secret in the server’s settings (the latest result names the ones still sharing the field-encryption key), then redeploy.',
+    remedy: 'Give each service its own secret in the server’s settings (the latest result’s technical detail names the ones still sharing the main encryption key), then redeploy.',
   },
   {
     id: 'field-encryption-inventory',
-    title: 'Every encrypted column decrypts under the running key',
+    title: 'Encrypted fields readable with the current key',
     criteria: ['CC6.1'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -71,7 +72,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'keyring-rotation',
-    title: 'Field-encryption key rotated with no data loss',
+    title: 'Encryption key changed yearly without data loss',
     criteria: ['CC6.1'],
     freshnessDays: 366,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -84,7 +85,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'tls-web',
-    title: 'TLS and HSTS on the public site',
+    title: 'Encrypted connections to the website',
     criteria: ['CC6.7'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -97,7 +98,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'tls-database',
-    title: 'TLS to the database',
+    title: 'Encrypted connection to the database',
     criteria: ['CC6.7'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -110,7 +111,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'blob-encryption',
-    title: 'Uploaded documents encrypted at rest',
+    title: 'Uploaded documents encrypted where stored',
     criteria: ['CC6.1'],
     freshnessDays: 92,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -123,7 +124,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'database-backup',
-    title: 'Daily encrypted database backup',
+    title: 'Nightly encrypted database backup',
     criteria: ['A1.2'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -136,7 +137,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'restore-test',
-    title: 'Monthly restore test',
+    title: 'Backups restored and checked monthly',
     criteria: ['A1.2', 'A1.3'],
     freshnessDays: 35,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -149,7 +150,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'uploads-backup',
-    title: 'Nightly uploads backup',
+    title: 'Uploaded files backed up nightly',
     criteria: ['A1.2'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -176,7 +177,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'dependency-scanning',
-    title: 'No unaccepted high-severity dependency in production',
+    title: 'Software dependencies checked for serious flaws',
     criteria: ['CC7.1'],
     freshnessDays: 8,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -189,7 +190,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'auth-anomaly-alerting',
-    title: 'Sign-in anomalies alert the security contact',
+    title: 'Unusual sign-ins alert the security contact',
     criteria: ['CC7.2'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -203,7 +204,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'privilege-change-alerting',
-    title: 'Privilege changes alert the security contact',
+    title: 'Permission changes alert the security contact',
     criteria: ['CC6.3', 'CC7.2'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -217,7 +218,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'export-alerting',
-    title: 'Data exports are audited and large ones alert',
+    title: 'Every data export recorded, large ones alerted',
     criteria: ['CC7.2'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -244,7 +245,7 @@ export const COMPLIANCE_CONTROLS: readonly ComplianceControl[] = [
   },
   {
     id: 'audit-chain',
-    title: 'The audit log’s hash chain verifies',
+    title: 'Audit log checked nightly for changes',
     criteria: ['CC7.2', 'CC7.3'],
     freshnessDays: 2,
     ownerRole: 'HR_ADMINISTRATOR',
@@ -281,7 +282,10 @@ export const EvidenceRowSchema = /* @__PURE__ */ (() => z.object({
   id: z.string(),
   control: z.string(),
   status: z.enum(EVIDENCE_STATUSES),
+  /** One plain sentence: no variable names, rule keys or addresses (F500 audit 2026-10-26). */
   summary: z.string(),
+  /** The technical line behind it (variable names, rule keys, versions), for a "Technical detail" disclosure; null when there is none. Optional for older payloads. */
+  detail: z.string().nullable().optional(),
   details: z.unknown(),
   collectedAt: z.string(),
   collectedBy: z.string(),

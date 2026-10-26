@@ -5,6 +5,7 @@ import { cardOn, loadRateCards, type RateCard } from './rateCards.js';
 import { createApprovalRequest, registerApplyHandler } from './approvalRequests.js';
 import { netWorkedMinutes } from './timeAnomalies.js';
 import { tenantIdForWrite } from './tenant.js';
+import { fmtDay, fmtDayRange } from './humanDates.js';
 
 /**
  * The pay ↔ bill link (BEYOND). Every dollar payroll pays for work a client
@@ -329,7 +330,7 @@ async function linkRetro(db: PrismaClient, run: { id: string }, actorUserId: str
           clientId: share.clientId,
           kind: 'RETRO',
           ruleKey: null,
-          label: `Retroactive pay — ${who}, ${ymd(share.firstDay)} to ${ymd(share.lastDay)}`,
+          label: `Retroactive pay — ${who}, ${fmtDayRange(share.firstDay, share.lastDay)}`,
           basis: `${money(payDelta)} back pay (rate ${Number(r.oldRate).toFixed(2)} → ${Number(r.newRate).toFixed(2)}) × ${markup.toFixed(3)} bill-rate markup`,
           hours,
           payAmount: payDelta,
@@ -499,7 +500,7 @@ async function linkPremiums(db: PrismaClient, run: { id: string; periodStart: Da
         clientId,
         kind: 'PREMIUM',
         ruleKey: 'PREDICTABILITY',
-        label: `Predictability pay — ${p.associate.firstName} ${p.associate.lastName}, shift ${p.change} ${ymd(p.workDate)} (${p.rule})`,
+        label: `Predictability pay — ${p.associate.firstName} ${p.associate.lastName}, shift ${p.change} ${fmtDay(p.workDate)} (${p.rule})`,
         basis: bill.basis,
         hours: Number(p.premiumHours),
         payAmount: cost,

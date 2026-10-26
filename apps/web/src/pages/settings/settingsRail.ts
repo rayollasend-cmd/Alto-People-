@@ -1,12 +1,13 @@
 import { createElement, useMemo } from 'react';
 import {
   Activity,
+  HeartPulse,
   ArrowUpRight,
   Archive,
   Bot,
   Building2,
   CreditCard,
-  FileSpreadsheet,
+  Code,
   Inbox,
   Landmark,
   KeyRound,
@@ -24,6 +25,7 @@ import {
   Briefcase,
   ClipboardCheck,
   Megaphone,
+  MousePointerClick,
   Workflow,
 } from '@/components/ui/icons';
 import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
@@ -85,6 +87,10 @@ export function useSettingsRail(): SettingsRailEntry[] {
   return useMemo<SettingsRailEntry[]>(() => {
     // (`Map` here is the icon; the lookup is a plain record.)
     const named: Partial<Record<ModuleKey, string>> = Object.fromEntries(applyTerms(MODULES, term, tenant.modules).map((m) => [m.key, m.label]));
+    // The platform's own tools (its telemetry, its jobs, its SOC 2 evidence, its
+    // support inbox) belong to the platform operator; a customer's admin holds the
+    // same capabilities through their role and must not see them.
+    const operator = tenant.id === PLATFORM_OPERATOR_TENANT_ID;
     const items: Array<SettingsRailEntry & { show: boolean }> = [
       // Organization
       { key: 'organization', label: 'Organization', to: '/admin/organization', icon: Building2, section: 'Organization', description: 'Business model, the modules this organization runs, what it calls things, the workweek and time zone.', keywords: 'workweek week starts company time zone timezone business model modules terminology words terms', show: can('view:hr-admin') },
@@ -96,7 +102,7 @@ export function useSettingsRail(): SettingsRailEntry[] {
       { key: 'document-retention', label: 'Document retention', to: '/admin/document-retention', icon: Archive, section: 'Organization', description: 'How long each kind of document is kept after a person leaves, and what the next sweep would purge.', show: can('view:hr-admin') },
       { key: 'workflows', label: 'Workflows', to: '/workflows', icon: Workflow, section: 'Organization', description: 'Automations that run on hires, time-off decisions, position changes and other events.', keywords: 'automation trigger', leaves: true, show: can('view:org') },
       { key: 'communications', label: 'Communications', to: '/admin/communications', icon: Megaphone, section: 'Organization', description: 'Which channels can send, WhatsApp templates, the do-not-email list, and who hears about what.', keywords: 'email sms text whatsapp push notifications provider unsubscribe', show: can('manage:communications') },
-      { key: 'branding', label: 'Branding', to: '/admin/branding', icon: Palette, section: 'Organization', description: 'Name, colour, logo, sender and support email on every email, and the assistant’s name.', keywords: 'logo color colour sender support email assistant name hugo', show: can('view:hr-admin') },
+      { key: 'branding', label: 'Branding', to: '/admin/branding', icon: Palette, section: 'Organization', description: 'Name, color, logo, sender and support email on every email, and the assistant’s name.', keywords: 'logo color colour sender support email assistant name hugo', show: can('view:hr-admin') },
       { key: 'finance', label: 'Finance', to: '/admin/finance', icon: Landmark, section: 'Organization', description: 'The finance mailbox, an unverified bank change at cutoff, the remit-to on invoices, and the cash floor.', keywords: 'finance mailbox alerts remit-to remit to invoice statement how to pay ach cash floor minimum bank verification unverified payout hold', show: can('view:hr-admin') },
       // Access & trust
       { key: 'users', label: 'Users & access', to: '/admin/users', icon: Users, section: 'Access & trust', description: 'Every account, its role, reach and status; invite someone; open an account to change it.', keywords: 'accounts invite user disable deactivate password reset unlock locked break-glass last sign-in two-step mfa', show: can('view:hr-admin') },
@@ -106,18 +112,20 @@ export function useSettingsRail(): SettingsRailEntry[] {
       { key: 'audit', label: 'Audit & integrity', to: '/audit', icon: ScrollText, section: 'Access & trust', description: 'Every event, searchable and exportable, on a chain you can verify.', keywords: 'audit log trail history who did what sign-ins exports SIEM retention hash chain investigation', show: can('view:audit') },
       { key: 'approval-record', label: 'Approval record', to: '/audit/approvals', icon: ClipboardCheck, section: 'Access & trust', description: 'Every change that went to a second person: who asked, who decided, the before and after.', show: can('view:audit') || can('manage:org') || can('process:payroll') },
       { key: 'access-certifications', label: 'Access certifications', to: '/admin/access-certifications', icon: ClipboardCheck, section: 'Access & trust', description: 'The access review: campaigns where every account is kept, revoked or changed on the record, and the access report.', keywords: 'access review quarterly certification access report flagged accounts', show: can('manage:org') },
-      { key: 'compliance-evidence', label: 'Compliance evidence', to: '/admin/compliance-evidence', icon: ShieldCheck, section: 'Access & trust', description: 'Every control with its latest evidence, and the sign-offs a person owes.', keywords: 'SOC 2 controls evidence security contact alerts encryption backups TLS', show: can('view:org') },
+      { key: 'compliance-evidence', label: 'Compliance evidence', to: '/admin/compliance-evidence', icon: ShieldCheck, section: 'Access & trust', description: 'Every control with its latest evidence, and the sign-offs a person owes.', keywords: 'SOC 2 controls evidence security contact alerts encryption backups TLS', show: can('view:org') && operator },
       { key: 'trust', label: 'Trust Center', to: '/trust', icon: ShieldCheck, section: 'Access & trust', description: 'How the platform is run, with the evidence, and your own numbers.', keywords: 'SOC 2 report security questionnaire sub-processors DPA penetration test', show: can('manage:org') || can('view:executive') || can('view:audit') },
       // The agents themselves are a People page (/agents); this is their governance.
       { key: 'agents', label: 'Agents & gates', to: '/admin/agents', icon: Bot, section: 'Access & trust', description: 'Who approves what, certification and credentials across agents, the MCP tools, the decision record, and the switch that stops every agent.', keywords: 'AI agents approval gates policies kill switch suspend MCP credentials certification', show: can('view:org') },
       // Platform
       { key: 'billing', label: 'Billing', to: '/admin/billing', icon: CreditCard, section: 'Platform', description: 'Your plan, this month, and your invoices.', show: can('manage:org') || can('process:payroll') },
       { key: 'integrations', label: 'Integrations', to: '/integrations', icon: Plug, section: 'Platform', description: 'Payouts, screening, filing, tax, your bank, and your HR and VMS systems.', keywords: 'Wise payouts E-Verify background checks drug tests tax filing ACH bank feeds Fieldglass ADP Workday UKG Beeline', show: can('view:integrations') },
-      { key: 'developers', label: 'API & webhooks', to: '/developers', icon: FileSpreadsheet, section: 'Platform', description: 'The public API: the apps and keys that call it, the webhooks it sends, and its reference.', keywords: 'developers API keys OAuth apps webhooks OpenAPI reference', show: can('view:integrations') },
-      { key: 'reliability', label: 'Reliability', to: '/reliability', icon: Activity, section: 'Platform', description: 'Errors against the budget, speed by route, and what restarted.', show: can('view:product-analytics') },
-      { key: 'product-analytics', label: 'Product usage', to: '/product-analytics', icon: Activity, section: 'Platform', description: 'Who signs in, what they open, and what breaks.', show: can('view:product-analytics') },
-      { key: 'design-system', label: 'Design system', to: '/design-system', icon: Shapes, section: 'Platform', description: 'The written standard the product follows.', show: can('view:product-analytics') },
-      { key: 'platform-support', label: 'Support inbox', to: '/platform/support', icon: Inbox, section: 'Platform', description: 'Requests from every organization on the platform.', keywords: 'support tickets help requests', show: can('manage:org') && tenant.id === PLATFORM_OPERATOR_TENANT_ID },
+      { key: 'developers', label: 'API & webhooks', to: '/developers', icon: Code, section: 'Platform', description: 'The public API: the apps and keys that call it, the webhooks it sends, and its reference.', keywords: 'developers API keys OAuth apps webhooks OpenAPI reference', show: can('view:integrations') },
+      // Every customer's view of whether the platform is up: the public status page (F500 2026-10-26).
+      { key: 'service-health', label: 'Service health', to: '/status', icon: HeartPulse, section: 'Platform', description: 'Whether the platform is up, any incident in progress, and the history.', keywords: 'status uptime outage incident down availability sla', leaves: true, show: can('view:hr-admin') || can('manage:org') || can('view:integrations') },
+      { key: 'reliability', label: 'Reliability', to: '/reliability', icon: Activity, section: 'Platform', description: 'Errors against the budget, speed by route, and what restarted.', show: can('view:product-analytics') && operator },
+      { key: 'product-analytics', label: 'Product usage', to: '/product-analytics', icon: MousePointerClick, section: 'Platform', description: 'Who signs in, what they open, and what breaks.', show: can('view:product-analytics') && operator },
+      { key: 'design-system', label: 'Design system', to: '/design-system', icon: Shapes, section: 'Platform', description: 'The written standard the product follows.', show: can('view:product-analytics') && operator },
+      { key: 'platform-support', label: 'Support inbox', to: '/platform/support', icon: Inbox, section: 'Platform', description: 'Requests from every organization on the platform.', keywords: 'support tickets help requests', show: can('manage:org') && operator },
     ];
     return items
       .filter((i) => i.show)

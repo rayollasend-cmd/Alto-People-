@@ -9,6 +9,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
+import { fmtDay } from '../lib/humanDates.js';
 
 /**
  * Phase 122 — Per-associate legal agreements.
@@ -206,7 +207,7 @@ agreements122Router.post('/agreements', MANAGE, async (req, res) => {
     body:
       `A ${label} has been issued to you and is awaiting your signature. ` +
       `Review and sign it here: ${publicBaseUrl()}/agreements` +
-      (input.expiresOn ? ` (sign by ${input.expiresOn})` : ''),
+      (input.expiresOn ? ` (sign by ${fmtDay(input.expiresOn)})` : ''),
     category: 'agreements',
     linkUrl: '/agreements',
     emailFallback: true,

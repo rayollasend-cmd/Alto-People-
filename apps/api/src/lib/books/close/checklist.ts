@@ -5,6 +5,7 @@ import type { CloseTaskAction } from '@alto-people/shared';
 import { depreciationSchedule, monthEnd } from '../assets/depreciation.js';
 import { postingGaps } from '../posting/gaps.js';
 import { fromCents, toCents } from '../ledger.js';
+import { fmtDay } from '../../humanDates.js';
 
 /**
  * A month's close checklist. Every month gets the same steps (CloseTask
@@ -103,7 +104,7 @@ export async function runChecks(db: Db, periodKey: string): Promise<Map<string, 
   const notReconciled = feeds.filter((f) => !reconciled.has(f.id));
   out.set('bank_reconciled', {
     passing: notReconciled.length === 0,
-    summary: feeds.length === 0 ? 'No bank or card accounts are connected to the books.' : notReconciled.length === 0 ? `All ${plural(feeds.length, 'account')} reconciled through ${end.toISOString().slice(0, 10)}.` : `${plural(notReconciled.length, 'account')} not reconciled through month end.`,
+    summary: feeds.length === 0 ? 'No bank or card accounts are connected to the books.' : notReconciled.length === 0 ? `All ${plural(feeds.length, 'account')} reconciled through ${fmtDay(end, { year: true })}.` : `${plural(notReconciled.length, 'account')} not reconciled through month end.`,
     items: notReconciled.map((f) => ({ label: `Reconcile ${f.name}`, link: `/books/bank/${f.id}/reconcile` })),
   });
   const toReview = feeds.length
@@ -171,7 +172,7 @@ export async function runChecks(db: Db, periodKey: string): Promise<Map<string, 
   out.set('depreciation_posted', {
     passing: unposted.length === 0,
     summary: assets.length === 0 ? 'No fixed assets on the register.' : unposted.length === 0 ? 'Depreciation for the month is posted.' : `${plural(unposted.length, 'asset')} without the month’s depreciation.`,
-    items: unposted.slice(0, 25).map((a) => ({ label: `${a.name} — depreciation for ${periodKey}`, link: `/books/assets/${a.id}` })),
+    items: unposted.slice(0, 25).map((a) => ({ label: `${a.name} — depreciation for ${new Date(`${periodKey}-01T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' })}`, link: `/books/assets/${a.id}` })),
   });
 
   // QuickBooks: no open conflicts, nothing pending or failed in the outbox.

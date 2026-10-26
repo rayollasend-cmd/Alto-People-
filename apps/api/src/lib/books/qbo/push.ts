@@ -5,6 +5,7 @@ import { logEvent, readSettings, type QboSyncSettings } from './connection.js';
 import { raiseConflict } from './conflicts.js';
 import { fingerprint, linkFor, qboAccountType, remoteFingerprint, saveLink } from './links.js';
 import { QboError, type QboClient, type QboEntity, type QboType } from './types.js';
+import { fmtDay } from '../../humanDates.js';
 
 /**
  * Site → QuickBooks. One function per kind of record turns the site's
@@ -343,11 +344,11 @@ export async function pushRecord(ctx: PushCtx, localType: LocalType, localId: st
       linkId: link?.id ?? localId,
       localType,
       localId,
-      summary: `QuickBooks’ books are closed through ${ctx.bookCloseDate}; this ${labelOf(localType)} dated ${sv.date} wasn’t sent.`,
+      summary: `QuickBooks’ books are closed through ${fmtDay(ctx.bookCloseDate, { year: true })}; this ${labelOf(localType)} dated ${fmtDay(sv.date, { year: true })} wasn’t sent.`,
       siteVersion: sv.payload,
       qboVersion: { type: qboType, id: link?.qboId ?? '', entity: null, reason: 'BOOKS_CLOSED' },
     });
-    return { result: 'SKIPPED', message: `QuickBooks’ books are closed through ${ctx.bookCloseDate}.` };
+    return { result: 'SKIPPED', message: `QuickBooks’ books are closed through ${fmtDay(ctx.bookCloseDate, { year: true })}.` };
   }
   const localHash = fingerprint(sv.payload);
   const b = await body(ctx, localType, sv.payload);

@@ -181,9 +181,9 @@ function NewCohortButton({ onCreated }: { onCreated: () => void }) {
       setTarget('');
       setLandBy('');
       onCreated();
-      toast.success('Hiring push created — add new hires to it from each lane.');
+      toast.success('Hiring goal created — add new hires to it from each one’s card.');
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not create the hiring push.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the hiring goal.');
     } finally {
       setBusy(false);
     }
@@ -192,16 +192,16 @@ function NewCohortButton({ onCreated }: { onCreated: () => void }) {
   return (
     <>
       <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
-        New hiring push
+        New hiring goal
       </Button>
       <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New hiring push</DialogTitle>
-            <DialogDescription>A hiring push with a headcount and a landing date — its lanes group under one banner with a readiness bar.</DialogDescription>
+            <DialogTitle>New hiring goal</DialogTitle>
+            <DialogDescription>A headcount and a date to reach it — its new hires group under one banner with a readiness bar.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='Name — e.g. "Peak season — Walmart DC"' aria-label="Hiring push name" maxLength={120} />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='Name — e.g. "Peak season — Walmart DC"' aria-label="Hiring goal name" maxLength={120} />
             <Input type="number" min={1} value={target} onChange={(e) => setTarget(e.target.value)} placeholder="Target headcount" aria-label="Target headcount" />
             <Input type="date" value={landBy} onChange={(e) => setLandBy(e.target.value)} aria-label="Land by date" />
           </div>
@@ -210,7 +210,7 @@ function NewCohortButton({ onCreated }: { onCreated: () => void }) {
               Cancel
             </Button>
             <Button onClick={() => void create()} loading={busy} disabled={!valid}>
-              Create hiring push
+              Create hiring goal
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -223,11 +223,11 @@ export function WavesSection({ cohorts, canManage, onChanged }: { cohorts: Cohor
   if (cohorts.length === 0 && !canManage) return null;
   return (
     <section aria-labelledby="relay-waves">
-      <SectionHead icon={Target} title="Hiring pushes" meta={cohorts.length ? `${cohorts.length} with a deadline` : undefined} id="relay-waves">
+      <SectionHead icon={Target} title="Hiring goals" meta={cohorts.length ? `${cohorts.length} with a deadline` : undefined} id="relay-waves">
         {canManage && <NewCohortButton onCreated={onChanged} />}
       </SectionHead>
       {cohorts.length === 0 ? (
-        <p className="text-xs text-silver/60">No hiring pushes yet. A push groups the hires for one goal — “40 people by Nov 1” — so every desk works to the same date.</p>
+        <p className="text-xs text-silver/60">No hiring goals yet. A goal groups the hires for one target — “40 people by Nov 1” — so every team works to the same date.</p>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {cohorts.map((c) => {
@@ -242,14 +242,14 @@ export function WavesSection({ cohorts, canManage, onChanged }: { cohorts: Cohor
                       {c.clientName && <span className="font-normal text-silver/60"> · {c.clientName}</span>}
                     </span>
                     <span className={cn('shrink-0 text-xs tabular-nums', c.daysLeft <= 7 ? 'text-alert' : 'text-silver/60')}>
-                      {c.daysLeft >= 0 ? `${c.daysLeft}d to landing` : `${-c.daysLeft}d past landing`}
+                      {c.daysLeft >= 0 ? `${c.daysLeft} day${c.daysLeft === 1 ? '' : 's'} to go` : `${-c.daysLeft} day${c.daysLeft === -1 ? '' : 's'} past the date`}
                     </span>
                   </div>
                   <div className="mt-2 flex items-baseline gap-2 text-sm tabular-nums">
-                    <span className="font-display text-2xl leading-none tabular-nums text-gold-bright">{c.completed}</span>
+                    <span className="text-2xl font-semibold leading-none tabular-nums text-ink">{c.completed}</span>
                     <span className="text-silver/60">/ {c.targetHeadcount} ready</span>
                     <span className="text-silver/40">
-                      · {c.inFlight} in flight
+                      · {c.inFlight} in progress
                       {c.stalled > 0 && <span className="text-alert"> · {c.stalled} stalled</span>}
                     </span>
                   </div>

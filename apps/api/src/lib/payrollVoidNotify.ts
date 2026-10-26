@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { emitLiveEvent } from './liveEvents.js';
+import { fmtDayRange } from './humanDates.js';
 
 /**
  * Gap 3 — Fan-out IN_APP notifications to every associate whose paystub
@@ -14,8 +15,7 @@ import { emitLiveEvent } from './liveEvents.js';
  * see the affected paystub watermarked "VOID".
  */
 
-const fmtPeriod = (start: Date, end: Date) =>
-  `${start.toISOString().slice(0, 10)} – ${end.toISOString().slice(0, 10)}`;
+const fmtPeriod = (start: Date, end: Date) => fmtDayRange(start, end, { year: true });
 
 export interface VoidNotifyAssociate {
   /** Associate's user-portal account id; notifications target this row. */

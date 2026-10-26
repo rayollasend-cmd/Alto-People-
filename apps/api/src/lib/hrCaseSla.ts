@@ -3,6 +3,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { tenantIdForWrite } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
 import { env } from '../config/env.js';
+import { fmtMomentInZone } from './humanDates.js';
 
 /**
  * HR case SLAs (HR pack 2026-10).
@@ -157,7 +158,7 @@ export async function sweepCaseSlas(db: PrismaClient = defaultPrisma, now: Date 
   const { notifyAllAdmins, notifyUser, ADMIN_EMAIL_HR_ONLY } = await import('./notify.js');
   for (const c of due) {
     const label = c.category.replace(/_/g, ' ').toLowerCase();
-    const body = `The ${label} case "${c.subject}" (priority ${c.priority}) passed its target of ${c.dueAt?.toISOString().slice(0, 16).replace('T', ' ')} UTC and is still open.`;
+    const body = `The ${label} case "${c.subject}" (${c.priority.toLowerCase()} priority) passed its target of ${c.dueAt ? fmtMomentInZone(c.dueAt) : 'its due time'} and is still open.`;
     void notifyAllAdmins({
       subject: `HR case past its SLA: ${c.subject}`,
       body,

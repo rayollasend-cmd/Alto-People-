@@ -188,7 +188,7 @@ export function DriverTodayCard() {
             <Badge size="sm" variant={d.hours.onClock ? 'success' : 'default'}>
               {d.hours.onClock ? t('drive.todayOnClock') : t('drive.todayOffClock')}
             </Badge>
-            <Button size="sm" variant={d.hours.onClock ? 'secondary' : 'primary'} onClick={() => void clock()} loading={busy} disabled={busy}>
+            <Button size={d.hours.onClock ? 'sm' : 'md'} variant={d.hours.onClock ? 'secondary' : 'primary'} onClick={() => void clock()} loading={busy} disabled={busy}>
               {d.hours.onClock ? <LogOut className="h-3.5 w-3.5" /> : <LogIn className="h-3.5 w-3.5" />}
               {d.hours.onClock ? t('drive.clockOut') : t('drive.clockIn')}
             </Button>

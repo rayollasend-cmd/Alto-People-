@@ -8,8 +8,6 @@ export const enSup = {
   'sup.clockOut': 'Clock out',
   'sup.runningShiftToday': "You're running {name}'s shift today",
   'sup.offClock': "You're off the clock",
-  'sup.sopOpensWhen': "{name}'s SOP opens when {name} clocks in",
-  'sup.sopNotOpen': "Your shift's SOP isn't open yet",
   'sup.sopHelpBody': 'You help on it. If no shift supervisor is on the clock 30 minutes into the shift, it moves to you.',
   'sup.tomorrowConfirmed': 'Tomorrow · confirmed',
   'sup.yoursToSubmit': 'Yours to submit',
@@ -45,8 +43,7 @@ export const enSup = {
   'sup.day': 'Day',
   'sup.reportIncident': 'Report incident',
   'sup.raiseFlag': 'Raise a flag',
-  'sup.sopRunningFor': "You're running {name}'s {window} SOP",
-  'sup.sopOpen': 'Your {window} SOP is open',
+  'sup.sopOpen': 'Your {window} checklist is open',
   'sup.fromDay': 'from {day}',
   'sup.blockNow': 'Now: {section} · {left} left',
   'sup.nextBlock': 'Next block',
@@ -56,9 +53,12 @@ export const enSup = {
   'sup.nOverdue': '{n} overdue',
   'sup.submitBeforeClockOut': 'submit it before you clock out',
   'sup.continue': 'Continue',
-  'sup.theirSop': "{name}'s {window} SOP",
   'sup.helpCheckOff': 'check items off as you walk the floor — {name} submits it',
   'sup.help': 'Help',
+  'sup.listOpensWhen': '{name}’s checklist opens when {name} clocks in',
+  'sup.listNotOpen': 'Your shift’s checklist isn’t open yet',
+  'sup.listRunningFor': 'You’re running {name}’s {window} checklist',
+  'sup.theirList': '{name}’s {window} checklist',
 } as const;
 
 registerEnglish(enSup);

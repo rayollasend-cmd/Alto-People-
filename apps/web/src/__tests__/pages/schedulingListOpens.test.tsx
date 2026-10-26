@@ -74,8 +74,14 @@ afterEach(() => {
 });
 
 describe('the list opens on what is ahead', () => {
-  it('asks for still-open shifts from today through the next two weeks, and shows no past row', async () => {
+  it('with no chip picked it opens on every shift ahead, never an empty "Open" list (F500 2026-10-26)', async () => {
     renderSchedule(<AdminSchedulingView canManage />, '/scheduling?view=list');
+    await waitFor(() => expect(shiftCalls().length).toBeGreaterThan(0));
+    expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('asks for still-open shifts from today through the next two weeks, and shows no past row', async () => {
+    renderSchedule(<AdminSchedulingView canManage />, '/scheduling?view=list&status=OPEN');
     await waitFor(() => expect(shiftCalls().length).toBeGreaterThan(0));
     const p = shiftCalls().at(-1)!;
     const def = listRangeDefault('OPEN');
@@ -123,7 +129,7 @@ describe('the list opens on what is ahead', () => {
   it('an empty list says which list and which days, with the way to every shift', async () => {
     world.shifts = [world.shifts[0]!]; // only the past one
     const user = userEvent.setup();
-    renderSchedule(<AdminSchedulingView canManage />, '/scheduling?view=list');
+    renderSchedule(<AdminSchedulingView canManage />, '/scheduling?view=list&status=OPEN');
     const def = listRangeDefault('OPEN');
     expect(await screen.findByText(`No open shifts · ${fmtDateOnlyRange(def.from, def.to)}`)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Show every shift' }));
@@ -143,7 +149,7 @@ describe('the list opens on what is ahead', () => {
 });
 
 describe('the list chips and their windows', () => {
-  it('history chips look back 30 days; the planning chips look two weeks ahead; a stored history chip reopens as Open', () => {
+  it('history chips look back 30 days; the planning chips look two weeks ahead; a stored history chip reopens as All', () => {
     const now = new Date(2026, 9, 22, 15, 0); // Thu Oct 22, 2026
     expect(listRangeDefault('OPEN', now)).toEqual({ from: '2026-10-22', to: '2026-11-04' });
     expect(listRangeDefault('ASSIGNED', now)).toEqual({ from: '2026-10-22', to: '2026-11-04' });
@@ -151,8 +157,12 @@ describe('the list chips and their windows', () => {
     expect(listRangeDefault('CANCELLED', now)).toEqual({ from: '2026-09-22', to: '2026-11-04' });
     // The workweek so far: Sat Oct 17 → today.
     expect(unfilledThisWeekRange(now)).toEqual({ from: '2026-10-17', to: '2026-10-22' });
-    expect(restoredListStatus('COMPLETED')).toBe('OPEN');
-    expect(restoredListStatus('UNFILLED')).toBe('OPEN');
+    // A stored history chip, or none at all, reopens on everything ahead —
+    // never on an empty "Open" list nobody picked (F500 2026-10-26).
+    expect(restoredListStatus('COMPLETED')).toBe('ALL');
+    expect(restoredListStatus('UNFILLED')).toBe('ALL');
+    expect(restoredListStatus(null)).toBe('ALL');
+    expect(restoredListStatus('OPEN')).toBe('OPEN');
     expect(restoredListStatus('ASSIGNED')).toBe('ASSIGNED');
   });
 
@@ -165,8 +175,8 @@ describe('the list chips and their windows', () => {
       { key: 'filled', text: '18% filled' },
       { key: 'open', text: '0 open' },
       { key: 'unfilled', text: '9 unfilled' },
-      { key: 'hours', text: '77h' },
-      { key: 'cost', text: '$1.1k' },
+      { key: 'hours', text: '77.0h' },
+      { key: 'cost', text: '$1,100' },
     ]);
   });
 });

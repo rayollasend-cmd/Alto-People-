@@ -1,5 +1,6 @@
 import { FLAG_LABEL, type PayrollReviewReport, type ReviewRow, type ReviewState } from './payrollReview.js';
 import { COLOR, SIZE, createDoc, fmt, type Column } from './docKit/index.js';
+import { fmtDayRange } from './humanDates.js';
 
 /**
  * The pre-payroll review as a PDF an accountant reads, prints or files:
@@ -24,7 +25,7 @@ function delta(now: number, before: number): string {
 export async function renderPayrollReviewPdf(report: PayrollReviewReport, signoff: ReviewState): Promise<Buffer> {
   const r = report.run;
   const t = report.totals;
-  const { k } = createDoc({ title: `Payroll review ${r.periodStart} to ${r.periodEnd}`, author: report.company, layout: 'landscape', margin: 36 });
+  const { k } = createDoc({ title: `Payroll review ${fmtDayRange(r.periodStart, r.periodEnd, { year: true })}`, author: report.company, layout: 'landscape', margin: 36 });
   let y = k.masthead({
     title: 'Pre-payroll review',
     subtitle: `${r.clientName ?? 'All clients'} · ${KIND_LABEL[r.kind] ?? r.kind} run · ${STATUS_LABEL[r.status] ?? r.status}`,
@@ -193,5 +194,5 @@ export async function renderPayrollReviewPdf(report: PayrollReviewReport, signof
     y += 30;
   }
   k.para(`This report is version ${report.fingerprint}. A sign-off holds only for this version: any change to a paycheck needs a new review.`, k.L, y, k.width(), { size: SIZE.small, color: COLOR.ink3 });
-  return k.finish({ reference: `Pre-payroll review · ${r.periodStart} to ${r.periodEnd}`, note: report.company });
+  return k.finish({ reference: `Pre-payroll review · ${fmtDayRange(r.periodStart, r.periodEnd, { year: true })}`, note: report.company });
 }

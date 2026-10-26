@@ -150,3 +150,32 @@ describe('People and Agents open the roster on their own type', () => {
     expect(screen.queryByText('Maria Lopez')).not.toBeInTheDocument();
   });
 });
+
+describe('the roster counts people the way its tile does (F500 audit 2026-10-26)', () => {
+  it('lists people on the books by default — onboarding and separated people only when asked for', async () => {
+    routes['GET /workers'] = {
+      ...roster,
+      workers: [
+        worker({ workStatus: 'ACTIVE' }),
+        worker({ id: 'p2', name: 'Paused Pat', associateId: 'a2', workStatus: 'DEACTIVATED' }),
+        worker({ id: 'p3', name: 'New Nia', associateId: 'a3', workStatus: 'ONBOARDING' }),
+        worker({ id: 'p4', name: 'Gone Gus', associateId: 'a4', workStatus: 'SEPARATED' }),
+      ],
+    };
+    renderAs('HR_ADMINISTRATOR', <WorkerTypesAdmin />, '/workers?group=none');
+    expect(await screen.findByText('Paused Pat')).toBeInTheDocument();
+    expect(screen.getByText('Maria Lopez')).toBeInTheDocument();
+    expect(screen.queryByText('New Nia')).not.toBeInTheDocument();
+    expect(screen.queryByText('Gone Gus')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveDisplayValue('On the books');
+  });
+
+  it('?status=ANY shows everyone', async () => {
+    routes['GET /workers'] = {
+      ...roster,
+      workers: [worker({ workStatus: 'ACTIVE' }), worker({ id: 'p4', name: 'Gone Gus', associateId: 'a4', workStatus: 'SEPARATED' })],
+    };
+    renderAs('HR_ADMINISTRATOR', <WorkerTypesAdmin />, '/workers?group=none&status=ANY');
+    expect(await screen.findByText('Gone Gus')).toBeInTheDocument();
+  });
+});

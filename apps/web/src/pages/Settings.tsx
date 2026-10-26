@@ -4,10 +4,11 @@ import { OutOfOfficeCard } from '@/components/OutOfOfficeCard';
 import { DeliveryCard } from '@/components/settings/DeliveryCard';
 import { HugoNotesCard } from '@/components/settings/HugoNotesCard';
 import { DevicesCard } from '@/components/settings/DevicesCard';
+import { SettingsSwitch } from '@/components/settings/SettingsSwitch';
 import { PhonesCard } from '@/components/settings/PhonesCard';
 import { WhatsAppCard } from '@/components/WhatsAppCard';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, Bell, BellOff, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon, type LucideIcon } from '@/components/ui/icons';
+import { AtSign, Bell, BellOff, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Languages, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -34,7 +35,7 @@ import {
 } from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { unsubscribeFromPush } from '@/lib/push';
 import { pushColumnNote, pushIsNativeHere, thisDevicePushStatus, turnOnPushHere, type DevicePushStatus } from '@/lib/thisDevicePush';
 import { fmtDate, fmtDateTime, fmtTimeZone } from '@/lib/format';
@@ -65,6 +66,7 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { isLang, useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { Input } from '@/components/ui/Input';
@@ -72,8 +74,7 @@ import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { SectionTitle } from '@/components/ui/SectionTitle';
-import { cn } from '@/lib/cn';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { DataGrid } from '@/components/ui/DataGrid';
 import '@/lib/i18n/en/settings';
 import '@/lib/i18n/en/settingsPage';
@@ -88,55 +89,20 @@ import '@/lib/i18n/en/tabs';
 export function Settings() {
   const roleLabel = useRoleLabel();
   const { user } = useAuth();
-  // Which sections are unfolded on a phone (desktop shows them all).
-  const [open, setOpen] = useState<Set<SectionKey>>(() => new Set<SectionKey>(['profile']));
-  const toggle = (k: SectionKey) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
-  const jump = (k: SectionKey, smooth = true) => {
-    setOpen((prev) => new Set(prev).add(k));
-    // The section is in the URL (#notifications), so a link from the bell
-    // or another page lands on it open — and Back returns to it (F500 G5).
-    try {
-      if (window.location.hash !== `#${k}`) window.history.replaceState(window.history.state, '', `#${k}`);
-    } catch {
-      /* no history in this environment */
-    }
-    // After the fold opens, so the section's height is real.
-    requestAnimationFrame(() => document.getElementById(`settings-${k}`)?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }));
-  };
-  // Arriving at /settings#notifications (or #settings-notifications): open it and go there.
-  useEffect(() => {
-    const k = sectionFromHash(typeof window === 'undefined' ? '' : window.location.hash);
-    if (k) jump(k, false);
-  }, []);
-  // Which section is on screen, for the nav's current link (scroll-spy).
-  const [active, setActive] = useState<SectionKey>(() => sectionFromHash(typeof window === 'undefined' ? '' : window.location.hash) ?? 'profile');
-  useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return;
-    const seen = new Map<SectionKey, number>();
-    const io = new IntersectionObserver(
-      (items) => {
-        for (const it of items) {
-          const k = it.target.id.replace('settings-', '') as SectionKey;
-          seen.set(k, it.isIntersecting ? it.intersectionRatio : 0);
-        }
-        const top = SECTION_KEYS.find((k) => (seen.get(k) ?? 0) > 0);
-        if (top) setActive(top);
-      },
-      { rootMargin: '-80px 0px -50% 0px', threshold: [0, 0.01] },
-    );
-    for (const k of SECTION_KEYS) {
-      const el = document.getElementById(`settings-${k}`);
-      if (el) io.observe(el);
-    }
-    return () => io.disconnect();
-  }, []);
   const { t } = useI18n();
+  // One section at a time, as tabs (F500 polish, 2026-10-26). It was a row
+  // of pills that scrolled to sections and, on a phone, sections that also
+  // folded behind Show/Hide — two ways to move, and the strip cut off at
+  // "Devices & sess" with nothing to say there was more. The kit's tab
+  // strip fades the edge that has more. The section is in the URL
+  // (#notifications), so a link from the bell lands on it (F500 G5).
+  const location = useLocation();
+  const navigate = useNavigate();
+  const tab: SectionKey = sectionFromHash(location.hash) ?? 'profile';
+  const onTab = (v: string) => {
+    const k = sectionFromHash(v) ?? 'profile';
+    navigate({ search: location.search, hash: k === 'profile' ? '' : `#${k}` }, { replace: true });
+  };
 
   return (
     // One readable column (F500 G5): half-width cards beside empty space at 1440 read as gaps.
@@ -161,57 +127,64 @@ export function Settings() {
         }
       />
 
-      {/* Five sections instead of one long column of cards (floor walk 26:
-          the page was twelve phone screens tall). A sticky row of links
-          jumps between them; on a phone each section folds, and only
-          Profile starts open. */}
-      <SettingsNav active={active} onJump={jump} hasAssociate={!!user?.associateId} />
+      {/* One model for saving (F500 polish): every control here applies the
+          moment it changes and says so in a toast; email and password
+          changes open their own dialog. No Save buttons between cards. */}
+      <Tabs value={tab} onValueChange={onTab}>
+        <TabsList aria-label={t('settings.sec.nav')}>
+          {SECTION_KEYS.map((k) => (
+            <TabsTrigger key={k} value={k}>
+              {t(SECTION_LABEL[k])}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <SettingsSection id="profile" title={t('settings.sec.profile')} icon={UserIcon} open={open.has('profile')} onToggle={toggle}>
-        {/* One home for personal data (F500 G5): an associate's name, photo,
-            phone and address live on My profile; this page keeps sign-in,
-            notifications, devices, language and time zone. */}
-        {user?.associateId && <ProfileOnMeCard />}
-        {/* A staff account's photo (HR, recruiters, managers have no associate). */}
-        {!user?.associateId && <ProfilePhotoCard />}
-        <EmailCard />
-        <TimezoneCard />
-        <LanguageCard />
-        <OutOfOfficeCard />
-      </SettingsSection>
+        <TabsContent value="profile" className="space-y-6">
+          {/* One home for personal data (F500 G5): an associate's name, photo,
+              phone and address live on My profile; this page keeps sign-in,
+              notifications, devices, language and time zone. */}
+          {user?.associateId && <ProfileOnMeCard />}
+          {/* A staff account's photo (HR, recruiters, managers have no associate). */}
+          {!user?.associateId && <ProfilePhotoCard />}
+          <EmailCard />
+          <TimezoneCard />
+          <LanguageCard />
+          <OutOfOfficeCard />
+        </TabsContent>
 
-      <SettingsSection id="notifications" title={t('settings.sec.notifications')} icon={Bell} open={open.has('notifications')} onToggle={toggle}>
-        <NotificationsCard />
-        <DeliveryCard />
-        {/* What Hugo points out on his own, kind by kind. */}
-        <HugoNotesCard />
-        {user?.associateId && <WhatsAppCard />}
-      </SettingsSection>
+        <TabsContent value="notifications" className="space-y-6">
+          <NotificationsCard />
+          <DeliveryCard />
+          {/* What Hugo points out on his own, kind by kind. */}
+          <HugoNotesCard />
+          {user?.associateId && <WhatsAppCard />}
+        </TabsContent>
 
-      <SettingsSection id="security" title={t('settings.sec.security')} icon={Lock} open={open.has('security')} onToggle={toggle}>
-        <PasswordCard />
-        <PasskeysCard />
-        <MfaCard />
-      </SettingsSection>
+        <TabsContent value="security" className="space-y-6">
+          <MfaCard />
+          <PasskeysCard />
+          <PasswordCard />
+        </TabsContent>
 
-      <SettingsSection id="devices" title={t('settings.sec.devices')} icon={Smartphone} open={open.has('devices')} onToggle={toggle} wide>
-        <DevicesCard />
-        {/* Phones with the native app: notifications, the Face ID lock, remove a phone. */}
-        <PhonesCard />
-        <SessionsCard />
-        <LoginHistoryCard />
-      </SettingsSection>
+        <TabsContent value="devices" className="space-y-6">
+          <DevicesCard />
+          {/* Phones with the native app: notifications, the Face ID lock, remove a phone. */}
+          <PhonesCard />
+          <SessionsCard />
+          <LoginHistoryCard />
+        </TabsContent>
 
-      <SettingsSection id="data" title={t('settings.sec.data')} icon={Download} open={open.has('data')} onToggle={toggle}>
-        <DataExportCard />
-      </SettingsSection>
+        <TabsContent value="data" className="space-y-6">
+          <DataExportCard />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
 type SectionKey = 'profile' | 'notifications' | 'security' | 'devices' | 'data';
 const SECTION_KEYS: SectionKey[] = ['profile', 'notifications', 'security', 'devices', 'data'];
-/** "#notifications" or "#settings-notifications" → the section. */
+/** "#notifications", "#settings-notifications" or "notifications" → the section. */
 function sectionFromHash(hash: string): SectionKey | null {
   const k = hash.replace(/^#/, '').replace(/^settings-/, '') as SectionKey;
   return SECTION_KEYS.includes(k) ? k : null;
@@ -223,90 +196,6 @@ const SECTION_LABEL: Record<SectionKey, MessageKey> = {
   devices: 'settings.sec.devices',
   data: 'settings.sec.data',
 };
-
-/** The in-page section links, sticky under the top bar while the page scrolls. */
-function SettingsNav({ active, onJump }: { active: SectionKey; onJump: (k: SectionKey) => void; hasAssociate: boolean }) {
-  const { t } = useI18n();
-  return (
-    <nav
-      aria-label={t('settings.sec.nav')}
-      className="sticky top-0 z-10 -mx-4 overflow-x-auto border-b border-line bg-surface/95 px-4 py-2 backdrop-blur print:hidden"
-    >
-      <ul className="flex gap-1.5">
-        {SECTION_KEYS.map((k) => (
-          <li key={k}>
-            <a
-              href={`#${k}`}
-              onClick={(e) => {
-                e.preventDefault();
-                onJump(k);
-              }}
-              // The section on screen, by scroll — not every section a phone has unfolded.
-              aria-current={active === k ? 'location' : undefined}
-              className={cn(
-                'inline-flex whitespace-nowrap rounded-md px-3 py-1.5 text-sm text-ink-muted hover:bg-surface-raised hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11 coarse:items-center',
-                active === k && 'bg-surface-raised font-medium text-ink',
-              )}
-            >
-              {t(SECTION_LABEL[k])}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-/**
- * One section: a heading, and its cards in two columns on a wide screen.
- * Below `md` it folds behind its heading — the fold control hides from
- * `md` up, where every section is always open.
- */
-function SettingsSection({
-  id,
-  title,
-  icon,
-  open,
-  onToggle,
-  wide = false,
-  children,
-}: {
-  id: SectionKey;
-  title: string;
-  icon: LucideIcon;
-  open: boolean;
-  onToggle: (k: SectionKey) => void;
-  /** Wide tables (sessions, sign-in history): one column. */
-  wide?: boolean;
-  children: React.ReactNode;
-}) {
-  const { t } = useI18n();
-  return (
-    <section id={`settings-${id}`} aria-labelledby={`settings-${id}-title`} className="scroll-mt-16">
-      <div className="flex items-center justify-between gap-3">
-        <SectionTitle id={`settings-${id}-title`} icon={icon} title={title} className="mb-0" />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="md:hidden"
-          aria-expanded={open}
-          aria-controls={`settings-${id}-body`}
-          onClick={() => onToggle(id)}
-        >
-          {open ? t('settings.sec.hide') : t('settings.sec.show')}
-          {open ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
-        </Button>
-      </div>
-      <div
-        id={`settings-${id}-body`}
-        // One column: paired cards of unequal height left gaps at 1440 (F500 G5).
-        className={cn('mt-3 gap-6', open ? 'grid' : 'hidden md:grid', 'grid-cols-1', !wide && 'max-w-3xl', '[&>*]:min-w-0 items-start')}
-      >
-        {children}
-      </div>
-    </section>
-  );
-}
 
 function DataExportCard() {
   const { t } = useI18n();
@@ -449,8 +338,8 @@ function PasskeysCard() {
             ))}
           </ul>
         )}
-        <Button onClick={() => void onAdd()} loading={busy} disabled={busy}>
-          <Fingerprint className="h-4 w-4" />
+        <Button variant="outline" onClick={() => void onAdd()} loading={busy} disabled={busy}>
+          <Fingerprint className="h-4 w-4" aria-hidden="true" />
           {t('settingsPage.passkeys.add')}
         </Button>
       </CardContent>
@@ -633,10 +522,10 @@ function MfaCard() {
       <CardContent>
         {enroll ? (
           <div className="space-y-4">
-            <div className="rounded-md border border-gold/40 bg-gold/10 px-3 py-2 text-xs text-white">
-              <strong className="text-gold">{t('settingsPage.mfa.saveCodesFirst')}</strong>{' '}
-              {t('settingsPage.mfa.saveCodesFirstBody')}
-            </div>
+            <ErrorBanner severity="warning">
+              <strong>{t('settingsPage.mfa.saveCodesFirst')}</strong>{' '}
+              <span className="text-ink">{t('settingsPage.mfa.saveCodesFirstBody')}</span>
+            </ErrorBanner>
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="shrink-0">
                 {qrDataUrl ? (
@@ -780,9 +669,9 @@ function MfaCard() {
               )}
             </div>
             {regeneratedCodes && (
-              <div className="space-y-2 rounded-md border border-gold/40 bg-gold/10 p-3">
-                <div className="text-xs text-white">
-                  <strong className="text-gold">{t('settingsPage.mfa.saveNow')}</strong>{' '}
+              <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3">
+                <div className="text-xs text-ink">
+                  <strong className="text-warning">{t('settingsPage.mfa.saveNow')}</strong>{' '}
                   {t('settingsPage.mfa.saveNowBody')}
                 </div>
                 <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
@@ -911,10 +800,16 @@ function MfaCard() {
 function EmailCard() {
   const { user } = useAuth();
   const { t } = useI18n();
+  const [open, setOpen] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const close = () => {
+    setOpen(false);
+    setNewEmail('');
+    setCurrentPassword('');
+  };
 
   const submit = async () => {
     const target = newEmail.trim().toLowerCase();
@@ -934,8 +829,7 @@ function EmailCard() {
     try {
       await requestEmailChange({ newEmail: target, currentPassword });
       setSentTo(target);
-      setNewEmail('');
-      setCurrentPassword('');
+      close();
       toast.success(t('settingsPage.email.sentToast', { email: target }));
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
@@ -959,61 +853,80 @@ function EmailCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <AtSign className="h-4 w-4 text-gold" />
+          <AtSign className="h-4 w-4 text-gold" aria-hidden="true" />
           {t('settingsPage.email.title')}
         </CardTitle>
-        <CardDescription>
-          {t('settingsPage.email.currentLabel')} <span className="text-white">{user?.email}</span>.{' '}
-          {t('settingsPage.email.desc')}
-        </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
         {sentTo && (
-          <div className="mb-4 rounded-md border border-gold/40 bg-gold/10 px-3 py-2 text-xs text-white">
-            {t('settingsPage.email.sentPrefix')} <span className="font-mono">{sentTo}</span>.{' '}
-            {t('settingsPage.email.sentBody')}
-          </div>
+          <ErrorBanner severity="info">
+            <span className="text-ink">
+              {t('settingsPage.email.sentPrefix')} <span className="font-mono">{sentTo}</span>.{' '}
+              {t('settingsPage.email.sentBody')}
+            </span>
+          </ErrorBanner>
         )}
-        <div className="space-y-3">
-          <Field label={t('settingsPage.email.newEmail')} required>
-            {(p) => (
-              <Input
-                type="email"
-                autoComplete="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                maxLength={254}
-                placeholder="you@new-address.com"
-                {...p}
-              />
-            )}
-          </Field>
-          <Field
-            label={t('settingsPage.currentPassword')}
-            required
-            hint={t('settingsPage.email.passwordHint')}
-          >
-            {(p) => (
-              <Input
-                type="password"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                {...p}
-              />
-            )}
-          </Field>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <Button
-            onClick={submit}
-            loading={submitting}
-            disabled={!newEmail || !currentPassword}
-          >
-            {t('settingsPage.email.send')}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="min-w-0 break-all text-sm text-ink" data-testid="settings-current-email">
+            {user?.email}
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+            {t('settingsPage.email.change')}
           </Button>
         </div>
       </CardContent>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => (o ? setOpen(true) : close())}
+        confirmDiscard={newEmail !== '' || currentPassword !== ''}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settingsPage.email.change')}</DialogTitle>
+            <DialogDescription>{t('settingsPage.email.desc')}</DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submit();
+            }}
+          >
+            <Field label={t('settingsPage.email.newEmail')} required>
+              {(p) => (
+                <Input
+                  type="email"
+                  autoComplete="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  maxLength={254}
+                  placeholder="you@new-address.com"
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label={t('settingsPage.currentPassword')} required hint={t('settingsPage.email.passwordHint')}>
+              {(p) => (
+                <Input
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={close} disabled={submitting}>
+                {t('common.cancel')}
+              </Button>
+              <Button type="submit" loading={submitting} disabled={!newEmail || !currentPassword}>
+                {t('settingsPage.email.send')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -1115,6 +1028,8 @@ function NotificationsCard() {
     );
     try {
       await patchNotificationPreference(entry.category, { [channel]: next });
+      // Applies at once, said back once: one toast that a run of switches replaces.
+      toast.success(t('settingsPage.notif.saved'), { id: 'notification-preference-saved' });
     } catch (err) {
       setEntries((prev) =>
         prev.map((e) =>
@@ -1134,22 +1049,15 @@ function NotificationsCard() {
     channel: Channel,
     label: string,
   ) => (
-    <label
-      className={`inline-flex w-11 flex-col items-center gap-1 ${
-        e.mandatory ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-      }`}
-    >
-      <input
-        type="checkbox"
-        className="sr-only peer"
+    <span className="inline-flex w-11 justify-center">
+      <SettingsSwitch
         checked={e[channel]}
+        onCheckedChange={() => void onToggle(e, channel)}
         disabled={e.mandatory || pending === `${e.category}:${channel}`}
         aria-label={t('settingsPage.notif.toggleAria', { channel: label, category: e.label })}
         aria-describedby={channel === 'pushEnabled' && note ? 'push-column-note' : undefined}
-        onChange={() => onToggle(e, channel)}
       />
-      <div className="w-11 h-6 bg-navy-secondary peer-focus-visible:ring-2 peer-focus-visible:ring-gold rounded-full peer peer-checked:bg-gold/80 transition relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition peer-checked:after:translate-x-5" />
-    </label>
+    </span>
   );
 
   return (
@@ -1283,19 +1191,18 @@ function TimezoneCard() {
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
       : 'UTC';
 
-  const dirty = (user?.timezone ?? '') !== tz;
-
-  const submit = async () => {
+  // A choice that applies the moment it is made (F500 polish: one save model).
+  const choose = async (next: SupportedTimezone | '') => {
+    const before = tz;
+    setTz(next);
+    if ((user?.timezone ?? '') === next) return;
     setSubmitting(true);
     try {
-      await updateTimezone(tz === '' ? null : tz);
-      toast.success(
-        tz === ''
-          ? t('settingsPage.tz.cleared')
-          : t('settingsPage.tz.updated'),
-      );
+      await updateTimezone(next === '' ? null : next);
+      toast.success(next === '' ? t('settingsPage.tz.cleared') : t('settingsPage.tz.updated'));
       await refreshUser();
     } catch (err) {
+      setTz(before);
       toast.error(err instanceof ApiError ? err.message : t('settingsPage.updateFailed'));
     } finally {
       setSubmitting(false);
@@ -1306,7 +1213,7 @@ function TimezoneCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Clock className="h-4 w-4 text-gold" />
+          <Clock className="h-4 w-4 text-gold" aria-hidden="true" />
           {t('settingsPage.tz.title')}
         </CardTitle>
         <CardDescription>
@@ -1314,27 +1221,23 @@ function TimezoneCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label={t('settingsPage.tz.label')} className="flex-1 min-w-[240px]">
-            {(p) => (
-              <Select
-                value={tz}
-                onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
-                {...p}
-              >
-                <option value="">{t('settingsPage.tz.followDevice', { tz: fmtTimeZone(browserTz) })}</option>
-                {SUPPORTED_TIMEZONES.map((z) => (
-                  <option key={z} value={z}>
-                    {TIMEZONE_LABELS[z]}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Button onClick={submit} loading={submitting} disabled={!dirty}>
-            {t('settingsPage.tz.save')}
-          </Button>
-        </div>
+        <Field label={t('settingsPage.tz.label')}>
+          {(p) => (
+            <Select
+              value={tz}
+              disabled={submitting}
+              onChange={(e) => void choose(e.target.value as SupportedTimezone | '')}
+              {...p}
+            >
+              <option value="">{t('settingsPage.tz.followDevice', { tz: fmtTimeZone(browserTz) })}</option>
+              {SUPPORTED_TIMEZONES.map((z) => (
+                <option key={z} value={z}>
+                  {TIMEZONE_LABELS[z]}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
       </CardContent>
     </Card>
   );
@@ -1345,18 +1248,22 @@ function LanguageCard() {
   const { setLang, t } = useI18n();
   const [language, setLanguage] = useState<EmailLanguage | ''>(user?.language ?? '');
   const [submitting, setSubmitting] = useState(false);
-  const dirty = (user?.language ?? '') !== language;
 
-  const submit = async () => {
+  // Applies the moment it is chosen, the screen included (F500 polish: one save model).
+  const choose = async (next: EmailLanguage | '') => {
+    const before = language;
+    setLanguage(next);
+    if ((user?.language ?? '') === next) return;
     setSubmitting(true);
     try {
-      await updateLanguage(language === '' ? null : language);
+      await updateLanguage(next === '' ? null : next);
       // The UI follows the choice (Brief 2-1b: Turkish is a UI language too, English where a string is not yet translated).
-      if (isLang(language)) setLang(language);
-      if (language === '') setLang('en');
-      toast.success(language === '' ? t('settingsPage.lang.cleared') : t('settingsPage.lang.updated'));
+      if (isLang(next)) setLang(next);
+      if (next === '') setLang('en');
+      toast.success(next === '' ? t('settingsPage.lang.cleared') : t('settingsPage.lang.updated'));
       await refreshUser();
     } catch (err) {
+      setLanguage(before);
       toast.error(err instanceof ApiError ? err.message : t('settingsPage.updateFailed'));
     } finally {
       setSubmitting(false);
@@ -1367,7 +1274,7 @@ function LanguageCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Languages className="h-4 w-4 text-gold" />
+          <Languages className="h-4 w-4 text-gold" aria-hidden="true" />
           {t('common.language')}
         </CardTitle>
         <CardDescription>
@@ -1375,27 +1282,23 @@ function LanguageCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label={t('settingsPage.lang.label')} className="flex-1 min-w-[240px]">
-            {(p) => (
-              <Select
-                value={language}
-                onChange={(e) => setLanguage(e.target.value as EmailLanguage | '')}
-                {...p}
-              >
-                <option value="">{t('settingsPage.lang.englishDefault')}</option>
-                {EMAIL_LANGUAGES.map((l) => (
-                  <option key={l} value={l}>
-                    {EMAIL_LANGUAGE_LABELS[l]}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-          <Button onClick={submit} loading={submitting} disabled={!dirty}>
-            {t('settingsPage.lang.save')}
-          </Button>
-        </div>
+        <Field label={t('settingsPage.lang.label')}>
+          {(p) => (
+            <Select
+              value={language}
+              disabled={submitting}
+              onChange={(e) => void choose(e.target.value as EmailLanguage | '')}
+              {...p}
+            >
+              <option value="">{t('settingsPage.lang.englishDefault')}</option>
+              {EMAIL_LANGUAGES.map((l) => (
+                <option key={l} value={l}>
+                  {EMAIL_LANGUAGE_LABELS[l]}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
       </CardContent>
     </Card>
   );
@@ -1587,10 +1490,17 @@ export function ProfilePhotoCard() {
 
 function PasswordCard() {
   const { t } = useI18n();
+  const [open, setOpen] = useState(false);
   const [currentPassword, setCurrent] = useState('');
   const [newPassword, setNew] = useState('');
   const [confirmPassword, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const close = () => {
+    setOpen(false);
+    setCurrent('');
+    setNew('');
+    setConfirm('');
+  };
 
   const submit = async () => {
     if (newPassword !== confirmPassword) {
@@ -1611,9 +1521,7 @@ function PasswordCard() {
       toast.success(t('settingsPage.password.updated'), {
         description: t('settingsPage.password.othersSignedOut'),
       });
-      setCurrent('');
-      setNew('');
-      setConfirm('');
+      close();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'invalid_credentials') {
@@ -1634,7 +1542,7 @@ function PasswordCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-gold" />
+          <KeyRound className="h-4 w-4 text-gold" aria-hidden="true" />
           {t('settingsPage.password.title')}
         </CardTitle>
         <CardDescription>
@@ -1642,19 +1550,40 @@ function PasswordCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="space-y-3">
-          <Field label={t('settingsPage.currentPassword')} required>
-            {(p) => (
-              <Input
-                type="password"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrent(e.target.value)}
-                {...p}
-              />
-            )}
-          </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={() => setOpen(true)}>
+            {t('settingsPage.password.change')}
+          </Button>
+        </div>
+      </CardContent>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => (o ? setOpen(true) : close())}
+        confirmDiscard={currentPassword !== '' || newPassword !== '' || confirmPassword !== ''}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settingsPage.password.change')}</DialogTitle>
+            <DialogDescription>{t('settingsPage.password.desc')}</DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submit();
+            }}
+          >
+            <Field label={t('settingsPage.currentPassword')} required>
+              {(p) => (
+                <Input
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrent(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
             <Field label={t('settingsPage.password.new')} required hint={t('settingsPage.password.newHint')}>
               {(p) => (
                 <Input
@@ -1687,18 +1616,21 @@ function PasswordCard() {
                 />
               )}
             </Field>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <Button
-            onClick={submit}
-            loading={submitting}
-            disabled={!currentPassword || !newPassword || !confirmPassword}
-          >
-            {t('settingsPage.password.change')}
-          </Button>
-        </div>
-      </CardContent>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={close} disabled={submitting}>
+                {t('common.cancel')}
+              </Button>
+              <Button
+                type="submit"
+                loading={submitting}
+                disabled={!currentPassword || !newPassword || !confirmPassword}
+              >
+                {t('settingsPage.password.change')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

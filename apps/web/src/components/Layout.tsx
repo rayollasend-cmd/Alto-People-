@@ -12,7 +12,6 @@ import { ShellSidebar } from './ShellSidebar';
 import { StoreScopeStrip, Topbar } from './Topbar';
 import { BottomTabBar, tabBarHiddenFrom } from './BottomTabBar';
 import { InstallPrompt } from './InstallPrompt';
-import { WhatsNew } from './WhatsNew';
 import { Coachmarks } from './Coachmarks';
 import { NavigationProgress } from './NavigationProgress';
 import { RouteAnnouncer } from './RouteAnnouncer';
@@ -422,7 +421,6 @@ export function Layout() {
           </Suspense>
         )}
         <Coachmarks />
-        <WhatsNew />
       </div>
     </TooltipProvider>
     </AssistantProvider>

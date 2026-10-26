@@ -139,12 +139,15 @@ describe('the HR administrator’s home', () => {
     expect(open).toHaveAttribute('href', '/scheduling?open=1');
   });
 
-  it('colours a pipeline stage only when it has someone in it', async () => {
+  it('names the pipeline in the Onboarding page’s words, counts in ink (F500 2026-10-26)', async () => {
     renderHome('HR_ADMINISTRATOR');
-    const rejected = await screen.findByTitle('View rejected applications');
-    const approved = screen.getByTitle('View approved applications');
-    expect(within(rejected).getByText('0')).not.toHaveClass('text-alert');
-    expect(within(approved).getByText('17')).toHaveClass('text-success');
+    // "Archived" — the list's word for approved and rejected — never "Approved 17" here and "Archived" there.
+    const archived = await screen.findByTitle('View archived applications');
+    expect(within(archived).getByText(/17 approved · 0 rejected/)).toBeInTheDocument();
+    expect(archived).toHaveAttribute('href', '/onboarding?status=ARCHIVED');
+    expect(screen.queryByTitle('View approved applications')).toBeNull();
+    // Numbers are ink; the bar carries the stage.
+    expect(within(archived).getByText('17')).toHaveClass('text-ink');
   });
 });
 

@@ -53,10 +53,12 @@ describe('the HR administrator’s Needs-you', () => {
     expect(items[0]).toMatchObject({ key: `everify:tnc:${maria.id}`, severity: 'critical', linkUrl: `/compliance?tab=everify&associateId=${maria.id}` });
     const claimItem = items.find((i) => i.key === `claims:ui:${claim.id}`);
     // Action + record, and the day in words — never an ISO date (F500 SH-4).
-    expect(claimItem?.label).toMatch(/^Answer Tom Claim’s FL unemployment claim — due (Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
+    // …and how far off it is ("due Oct 29 · in 3 days"), never an ISO date or a bare weekday (F500 2026-10-26).
+    expect(claimItem?.label).toMatch(/^Answer Tom Claim’s FL unemployment claim — due [A-Z][a-z]{2} \d{1,2}(, \d{4})? · in \d+ days$/);
     expect(claimItem?.linkUrl).toBe(`/claims/unemployment?claim=${claim.id}`);
     const leaveItem = items.find((i) => i.key === `leave:notice:${leave.id}`);
-    expect(leaveItem?.label).toMatch(/^Send Lia Leave the leave notice by (Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
+    expect(leaveItem?.label).toMatch(/^Send Lia Leave the leave notice — due [A-Z][a-z]{2} \d{1,2}(, \d{4})? · in \d+ days$/);
+    expect(leaveItem?.dueDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(leaveItem?.linkUrl).toBe(`/leave?case=${leave.id}`);
     expect(items.find((i) => i.key === 'onboarding:idle-drafts')).toMatchObject({ label: '1 onboarding application stuck more than 7 days', linkUrl: '/onboarding?status=STUCK' });
 

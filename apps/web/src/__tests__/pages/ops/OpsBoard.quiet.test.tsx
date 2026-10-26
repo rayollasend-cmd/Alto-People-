@@ -25,6 +25,9 @@ import { ConfirmProvider } from '@/lib/confirm';
  * F500 G2 — a quiet board: one line that says when the floor wakes up
  * (instead of three big empty cards), one line instead of three empty
  * charts, and an SOP trend that only plots the last 7 store days.
+ * F500 audit 2026-10-26: "All floors quiet", the empty-charts line and
+ * "Nothing running right now" were three notices in a row — now the
+ * headline band says it once.
  */
 
 function renderBoard() {
@@ -70,12 +73,13 @@ function mockQuiet(overrides: { sopTrend?: { dateKey: string; pct: number | null
 
 describe('the quiet ops board', () => {
   it('collapses Live now, the photos and Closed today into one line naming the next shift', async () => {
-    mockQuiet();
+    mockQuiet({ sopTrend: [{ dateKey: '2026-10-21', pct: 90 }] });
     renderBoard();
     const line = await screen.findByTestId('ops-quiet-line');
-    expect(line).toHaveTextContent('Nothing running right now');
-    expect(line).toHaveTextContent(/next shift opens .*\(in 5h\) — Overnight stocker at Front Beach 218/);
-    expect(line).toHaveTextContent('nothing closed yet today');
+    expect(screen.getByText('All floors quiet')).toBeInTheDocument();
+    expect(line).toHaveTextContent(/Next shift opens .*\(in 5 hours\) — Overnight stocker at Front Beach 218\./);
+    expect(line).toHaveTextContent('Nothing closed yet today.');
+    expect(screen.queryByText('Nothing running right now')).not.toBeInTheDocument();
     expect(screen.queryByText('Live now')).not.toBeInTheDocument();
     expect(screen.queryByText('Closed today')).not.toBeInTheDocument();
     expect(screen.queryByText('No photos yet')).not.toBeInTheDocument();
@@ -84,24 +88,32 @@ describe('the quiet ops board', () => {
   it('says so when nothing is scheduled in the next 24 hours', async () => {
     mockQuiet({ nextShift: null });
     renderBoard();
-    expect(await screen.findByTestId('ops-quiet-line')).toHaveTextContent('no shift scheduled in the next 24 hours');
+    expect(await screen.findByTestId('ops-quiet-line')).toHaveTextContent('No shift scheduled in the next 24 hours.');
   });
 
-  it('shows one line for three empty charts — and a closed shift that opened a month ago is outside "last 7 days"', async () => {
+  it('folds three empty charts into the quiet line — and a closed shift that opened a month ago is outside "last 7 days"', async () => {
     mockQuiet({ sopTrend: [{ dateKey: '2026-09-18', pct: 60 }] });
     renderBoard();
-    expect(await screen.findByTestId('ops-charts-empty')).toHaveTextContent(
+    expect(await screen.findByTestId('ops-quiet-line')).toHaveTextContent(
       'No temperature readings or checklist completions in the last 24 hours, and no shifts closed in the last 7 days.',
     );
+    expect(screen.queryByTestId('ops-charts-empty')).not.toBeInTheDocument();
     expect(screen.queryByText(/Floor rhythm/)).not.toBeInTheDocument();
   });
 
-  it('draws the SOP chart when a closed shift falls inside the window, and the rhythm card says it is empty in words', async () => {
-    mockQuiet({ sopTrend: [{ dateKey: '2026-09-18', pct: 60 }, { dateKey: '2026-10-20', pct: 80 }] });
+  it('does not draw a one-day SOP "trend"', async () => {
+    mockQuiet({ sopTrend: [{ dateKey: '2026-10-20', pct: 80 }] });
     renderBoard();
-    const title = await screen.findByText(/SOP compliance — last 7 days/);
+    expect(await screen.findByText('The trend appears once shifts close on two days.')).toBeInTheDocument();
+  });
+
+  it('draws the SOP chart when closed shifts fall inside the window, and the rhythm card says it is empty in words', async () => {
+    mockQuiet({ sopTrend: [{ dateKey: '2026-09-18', pct: 60 }, { dateKey: '2026-10-20', pct: 80 }, { dateKey: '2026-10-21', pct: 90 }] });
+    renderBoard();
+    const title = await screen.findByText(/Checklists completed — last 7 days/);
     const card = title.closest('.group\\/card, [class*="rounded"]') as HTMLElement;
     expect(within(card).queryByText('No shifts closed in the last 7 days.')).not.toBeInTheDocument();
+    expect(within(card).queryByText('The trend appears once shifts close on two days.')).not.toBeInTheDocument();
     expect(screen.getByText('No checklist tasks completed in the last 24 hours.')).toBeInTheDocument();
     expect(screen.queryByTestId('ops-charts-empty')).not.toBeInTheDocument();
   });

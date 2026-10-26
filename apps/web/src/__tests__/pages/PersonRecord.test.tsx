@@ -428,12 +428,15 @@ describe('<PersonRecord> Overview (F500 fix-up)', () => {
     // Her manager is set, so no "No manager" line.
     expect(attention).not.toHaveTextContent(/No .* assigned/);
     // Work and pay.
-    expect(panel).toHaveTextContent('Hours (14 days)8h');
+    // The facts card (job, hire date, contact) — hours, last worked and the next
+    // shift are the strip's, said once (F500 2026-10-26).
+    expect(within(panel).getByTestId('person-facts')).toHaveTextContent('Hired');
+    expect(panel).not.toHaveTextContent('Hours (14 days)8');
     expect(panel).toHaveTextContent('No-shows (30 days)0');
     expect(panel).toHaveTextContent('$18.50/hr');
     expect(panel).toHaveTextContent('Biweekly');
     // The strip: hours link to the Time tab; the next shift names its store.
-    expect(screen.getAllByText('8h').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('8.0h').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/The Grand Hotel/).length).toBeGreaterThan(0);
   });
 

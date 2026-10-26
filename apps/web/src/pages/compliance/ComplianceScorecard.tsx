@@ -87,7 +87,7 @@ import type {
 } from '@alto-people/shared';
 import { Input, Textarea, Label } from '@/components/ui';
 import { downloadDocumentUrl } from '@/lib/documentsApi';
-import { fmtDate, fmtRelativeDate, fmtStatementNo, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtMoney, fmtRelativeDate, fmtStatementNo, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
@@ -176,6 +176,14 @@ const SEVERITY_BADGE: Record<ScorecardSeverity, { variant: 'success' | 'pending'
   warn: { variant: 'pending', label: 'Warn' },
   critical: { variant: 'destructive', label: 'Critical' },
 };
+
+/** A tile's badge: a severity, or 'none' when there was nothing to grade. */
+type TileSeverity = ScorecardSeverity | 'none';
+
+/** "1 day", "12 days". */
+const daysWord = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
+/** When an expiring item runs out: "today", "in 1 day", "in 12 days" — never "12d". */
+const inDays = (n: number) => (n <= 0 ? 'today' : `in ${daysWord(n)}`);
 
 const SEVERITY_RING: Record<ScorecardSeverity, string> = {
   ok: 'border-success/50',
@@ -780,13 +788,17 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
   // The header speaks for the documents it counts: 0 / 0 / 0 under a red
   // "Critical" read as a contradiction when the red came from the
   // insurance attestations below. Those carry their own badge.
-  const documentSeverity: ScorecardSeverity = !data
+  // Nothing in any bucket is no news, not a green pass (F500 audit
+  // 2026-10-26): the badge says so in the neutral tone.
+  const documentSeverity: TileSeverity = !data
     ? 'ok'
     : data.buckets.red.length > 0
       ? 'critical'
       : data.buckets.amber.length > 0
         ? 'warn'
-        : 'ok';
+        : data.buckets.green.length > 0
+          ? 'ok'
+          : 'none';
   const attestationSeverity = attestationsSeverity(signals);
 
   return (
@@ -794,6 +806,7 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
       icon={<Clock className="h-4 w-4" />}
       title="Expiring documents (next 90 days)"
       severity={documentSeverity}
+      noneLabel="Nothing expiring"
       loading={!data && !error}
       error={error}
       stale={stale}
@@ -835,7 +848,7 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
                       <>
                         <span className="text-white truncate">{it.subject.associateName ?? it.label}</span>
                         <span className="text-silver tabular-nums shrink-0">
-                          {it.label} · {it.daysUntil}d
+                          {it.label} · {inDays(it.daysUntil)}
                         </span>
                       </>
                     );
@@ -1019,7 +1032,7 @@ function ExpirationBucketDrawer({
                       it.daysUntil <= 7 ? 'text-alert font-semibold' : 'text-silver',
                     )}
                   >
-                    {fmtDate(it.expiresAt)} · {it.daysUntil}d
+                    {fmtDate(it.expiresAt)} · {inDays(it.daysUntil)}
                   </span>
                 </>
               );
@@ -1084,7 +1097,7 @@ function ShiftsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
                   <span className="text-xs text-silver tabular-nums">
                     {s.value}% / {s.target}%
                   </span>
-                  <PctBar pct={s.value} severity={liveSeverity(s.value, s.target ?? 0)} />
+                  <PctBar pct={s.value} severity={liveSeverity(s.value, s.target ?? 0, s.key === 'NO_SHOW_RATE')} />
                 </div>
               ) : s.status === 'live' && s.value === null ? (
                 <span className="text-xs2 text-silver/80 shrink-0">No data in window</span>
@@ -1119,6 +1132,8 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
     () => data?.rateChecks.filter((r) => r.expectedRate !== null && !r.match) ?? [],
     [data],
   );
+  // The jobs the check had an opinion on — a SOW pattern recognized them.
+  const matchedRates = data?.rateChecks.filter((r) => r.expectedRate !== null).length ?? 0;
 
   // Local copy lets the drawer optimistically replace a signal after the
   // upsert returns, without waiting for the next 15-min tile refresh.
@@ -1149,10 +1164,15 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
           <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
             Bill rates vs SOW
           </div>
-          {mismatches.length === 0 ? (
+          {matchedRates === 0 ? (
+            // 0 of 0 matched is not a pass: nothing was compared.
+            <p className="text-xs text-ink-muted">
+              No active job matches a SOW rate pattern, so no bill rate was checked.
+            </p>
+          ) : mismatches.length === 0 ? (
             <div className="text-xs text-success flex items-center gap-2">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              All matched jobs are at the contracted rate.
+              {matchedRates === 1 ? 'The 1 matched job bills' : `All ${matchedRates} matched jobs bill`} at the contracted rate.
             </div>
           ) : (
             <ul className="space-y-1">
@@ -1166,7 +1186,7 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
                       {r.clientName} / {r.jobName}
                     </span>
                     <span className="tabular-nums text-alert shrink-0">
-                      ${r.billRate.toFixed(2)} ≠ ${r.expectedRate?.toFixed(2)}
+                      {fmtMoney(r.billRate)} ≠ {fmtMoney(r.expectedRate)}
                     </span>
                   </Link>
                 </li>
@@ -1178,13 +1198,12 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
           )}
           {/* Honesty line: "all matched" only counts jobs a SOW pattern
               recognizes — say how many the check actually had an opinion on. */}
-          <p className="text-2xs text-silver/70 mt-1">
-            {data.rateChecks.filter((r) => r.expectedRate !== null).length} of{' '}
-            {data.rateChecks.length} active jobs matched a SOW rate pattern
-            {data.rateChecks.some((r) => r.expectedRate === null) &&
-              ' — the rest carry no contractual expectation'}
-            .
-          </p>
+          {matchedRates > 0 && (
+            <p className="text-2xs text-silver/70 mt-1">
+              {matchedRates} of {data.rateChecks.length} active jobs matched a SOW rate pattern
+              {matchedRates < data.rateChecks.length && ' — the rest carry no contractual expectation'}.
+            </p>
+          )}
 
           <div className="mt-3 pt-3 border-t border-navy-secondary">
             <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1.5">
@@ -1210,7 +1229,7 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
                         {s.clientName} · statement {fmtStatementNo(s.number)}
                         {s.amount !== null && (
                           <span className="text-silver/80">
-                            {' '}· ${s.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            {' '}· {fmtMoney(s.amount)}
                           </span>
                         )}
                       </span>
@@ -1221,8 +1240,8 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
                         )}
                       >
                         {s.daysToForfeit < 0
-                          ? `${-s.daysToForfeit}d past window`
-                          : `${s.daysToForfeit}d to forfeit`}
+                          ? `${daysWord(-s.daysToForfeit)} past the window`
+                          : `${daysWord(s.daysToForfeit)} to forfeit`}
                       </span>
                     </Link>
                   </li>
@@ -1351,9 +1370,9 @@ function AttestationRow({
         1,
         Math.floor((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)),
       );
-      return `Overdue by ${days} day${days === 1 ? '' : 's'} (was due ${fmtDate(parseYmd(signal.dueDate))})`;
+      return `${days.toLocaleString('en-US')} day${days === 1 ? '' : 's'} overdue · was due ${fmtDateOnly(signal.dueDate, { year: 'auto' })}`;
     }
-    return `Due ${fmtDate(parseYmd(signal.dueDate))}`;
+    return `Due ${fmtDateOnly(signal.dueDate, { year: 'auto' })}`;
   })();
 
   return (
@@ -1725,7 +1744,10 @@ function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; client
     <TileShell
       icon={<GraduationCap className="h-4 w-4" />}
       title="Training completeness"
-      severity={data?.severity ?? 'ok'}
+      // No training linked to a course is nothing measured — neutral, not a
+      // green "OK" over four "No course linked" rows.
+      severity={data && !data.signals.some((s) => s.status === 'live') ? 'none' : (data?.severity ?? 'ok')}
+      noneLabel="Not tracked"
       loading={!data && !error}
       error={error}
       stale={stale}
@@ -2437,7 +2459,9 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
           </div>
           {data && data.actions.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <FilterChip active={filter === 'all'} onClick={() => setFilter('all')} count={data.actions.length}>
+              {/* The same total the header counts (Critical + Warn); the
+                  list below says when it holds only the first 200. */}
+              <FilterChip active={filter === 'all'} onClick={() => setFilter('all')} count={data.totalActionCount}>
                 All
               </FilterChip>
               <FilterChip active={filter === 'critical'} onClick={() => setFilter('critical')} count={data.criticalCount}>
@@ -2486,6 +2510,11 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
             )}
           </div>
         )}
+        {data?.truncated && (
+          <p className="text-xs text-ink-muted" data-testid="actions-truncated">
+            Showing {data.actions.length.toLocaleString('en-US')} of {data.totalActionCount.toLocaleString('en-US')} open actions, critical first. Narrow by client or clear criticals to see the rest.
+          </p>
+        )}
         {error && <ErrorBanner>{error}</ErrorBanner>}
         {!data && !error && <Skeleton className="h-32" />}
         {data && data.actions.length === 0 && (
@@ -2509,11 +2538,8 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
             </ul>
             <div className="flex flex-wrap items-center justify-between gap-2 text-2xs text-silver/80">
               <span>
-                {plural(filtered.length, 'action', 'actions')} in {plural(entries.length, 'row', 'rows')}
-                {entries.length > shown ? ` · showing ${shown}` : ''}
-                {data.truncated
-                  ? ` · the list holds ${data.actions.length} of ${data.totalActionCount}; narrow by client or clear criticals to see the rest`
-                  : ''}
+                {plural(filtered.length, 'action', 'actions')}, grouped into {plural(entries.length, 'row', 'rows')}
+                {entries.length > shown ? ` · ${shown} rows shown` : ''}
               </span>
               {entries.length > shown && (
                 <Button size="xs" variant="outline" onClick={() => setShown((n) => n + ACTIONS_PAGE)}>
@@ -2534,6 +2560,7 @@ function TileShell({
   icon,
   title,
   severity,
+  noneLabel,
   loading,
   error,
   stale,
@@ -2541,14 +2568,17 @@ function TileShell({
 }: {
   icon: React.ReactNode;
   title: string;
-  severity: ScorecardSeverity;
+  /** 'none' — nothing to grade: a neutral badge, never a green "OK". */
+  severity: TileSeverity;
+  /** The neutral badge's words for 'none' ("Nothing expiring"). */
+  noneLabel?: string;
   loading: boolean;
   error: string | null;
   stale?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <Card className={cn('border', SEVERITY_RING[severity])}>
+    <Card className={cn('border', severity === 'none' ? 'border-navy-secondary' : SEVERITY_RING[severity])}>
       <CardContent className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -2562,9 +2592,13 @@ function TileShell({
                 Stale — refresh failed
               </span>
             )}
-            <Badge variant={SEVERITY_BADGE[severity].variant}>
-              {SEVERITY_BADGE[severity].label}
-            </Badge>
+            {severity === 'none' ? (
+              <Badge variant="default">{noneLabel ?? 'Not tracked'}</Badge>
+            ) : (
+              <Badge variant={SEVERITY_BADGE[severity].variant}>
+                {SEVERITY_BADGE[severity].label}
+              </Badge>
+            )}
           </div>
         </div>
         {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -2593,10 +2627,14 @@ function PctBar({
 }
 
 function BucketTile({ label, count, severity }: { label: string; count: number; severity: ScorecardSeverity }) {
+  // Status colour means status (F500 audit 2026-10-26): an empty bucket is
+  // a plain zero, never a red, amber or green one, and a renewal two months
+  // out is upcoming — not good news — so the far bucket stays neutral too.
   const tone =
+    count === 0 ? 'border-navy-secondary text-silver' :
     severity === 'critical' ? 'border-alert/60 bg-alert/10 text-alert' :
     severity === 'warn' ? 'border-warning/60 bg-warning/10 text-warning' :
-    'border-success/60 bg-success/10 text-success';
+    'border-navy-secondary text-ink';
   return (
     <div className={cn('rounded border px-2 py-2 text-center', tone)}>
       <div className="text-lg font-bold tabular-nums">{count}</div>
@@ -2678,10 +2716,11 @@ function pctSeverity(pct: number): ScorecardSeverity {
   return scorecardSeverityFromFailPct(100 - pct);
 }
 
-function liveSeverity(value: number, target: number): ScorecardSeverity {
-  if (value >= target) return 'ok';
-  if (value >= target * 0.93) return 'warn';
-  return 'critical';
+/** A signal against its target: a no-show rate is a ceiling, the rest are floors (the API's shiftSignalSeverity). */
+function liveSeverity(value: number, target: number, ceiling = false): ScorecardSeverity {
+  if (ceiling ? value <= target : value >= target) return 'ok';
+  const ratio = ceiling ? target / Math.max(value, 0.01) : value / target;
+  return ratio >= 0.93 ? 'warn' : 'critical';
 }
 
 // Shared relative formatter — one "time ago" dialect across the app.

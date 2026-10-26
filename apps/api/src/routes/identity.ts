@@ -99,12 +99,16 @@ identityRouter.put('/security-policy', MANAGE, async (req, res) => {
 identityRouter.get('/', MANAGE, async (_req, res) => {
   const tenantId = tenantIdForWrite();
   await ensureEnvIdentity(prisma);
-  const [connections, domains, tokens] = await Promise.all([
+  const [connections, domains, tokens, tenant] = await Promise.all([
     prisma.identityConnection.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' }, include: { _count: { select: { identities: true } } } }),
     prisma.tenantDomain.findMany({ where: { tenantId }, orderBy: { domain: 'asc' } }),
     prisma.scimToken.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' } }),
+    prisma.tenant.findUnique({ where: { id: tenantId }, select: { slug: true } }),
   ]);
   res.json({
+    // The organization's own sign-in address (/login/<slug>), for people at a
+    // shared email domain — the page shows it as a link, not "<your slug>".
+    loginPath: tenant?.slug ? `/login/${tenant.slug}` : null,
     connections: connections.map((c) => ({
       id: c.id,
       kind: c.kind,

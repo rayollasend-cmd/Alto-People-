@@ -135,6 +135,15 @@ describe('the run record', () => {
     expect(screen.getByText('No sign-off')).toBeInTheDocument();
   });
 
+  it('a run whose totals and paychecks disagree offers no next step: no "Create the tax deposit" under the alert (F500 audit 2026-10-26)', async () => {
+    routes = { [`/payroll/runs/${RUN}`]: { ...detail, items: [], itemCount: 0, paychecks: 0, itemsGross: 0, itemsNet: 0, totalsAgree: false } };
+    renderAt(`/payroll/runs/${RUN}`, <RunRecordPage />, '/payroll/runs/:id/:tab');
+    expect(await screen.findByTestId('run-totals-mismatch')).toHaveTextContent('Don’t deposit or file taxes from these numbers');
+    expect(screen.queryByRole('link', { name: /Create the tax deposit/ })).toBeNull();
+    expect(screen.getByTestId('run-on-hold')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open in payroll/ })).toHaveAttribute('href', `/payroll?run=${RUN}`);
+  });
+
   it('the old /close address opens the Close tab', async () => {
     routes = { [`/payroll/runs/${RUN}`]: detail, [`/payroll/runs/${RUN}/close`]: close() };
     renderAt(`/payroll/runs/${RUN}/close`, <RunRecordPage />, '/payroll/runs/:id/:tab');

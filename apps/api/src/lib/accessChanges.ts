@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient, Role } from '@prisma/client';
-import { ROLE_CAPABILITIES, type Role as SharedRole } from '@alto-people/shared';
+import { ROLE_CAPABILITIES, ROLE_LABELS, type Role as SharedRole } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
@@ -8,6 +8,7 @@ import { enqueueAudit, recordCriticalAudit } from './audit.js';
 import { notifyUser } from './notify.js';
 import { tenantIdForWrite } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
+import { fmtMomentInZone } from './humanDates.js';
 
 /**
  * Access changes the approval engine applies, and temporary elevation.
@@ -107,8 +108,8 @@ export async function grantTemporaryRole(db: PrismaClient, input: GrantInput, gr
   });
   await applyRoleChange(db, input.userId, { additionalRoles: [...target.additionalRoles, input.role] }, grantedById, { accessGrantId: grant.id, until: input.until.toISOString(), reason: input.reason });
   void notifyUser(input.userId, {
-    subject: `Temporary access: ${input.role.replace(/_/g, ' ').toLowerCase()}`,
-    body: `You can work as ${input.role.replace(/_/g, ' ').toLowerCase()} until ${input.until.toISOString().slice(0, 16).replace('T', ' ')} UTC. Switch roles from your account menu. Reason: ${input.reason}`,
+    subject: `Temporary access: ${ROLE_LABELS[input.role as SharedRole] ?? input.role}`,
+    body: `You can work as ${(ROLE_LABELS[input.role as SharedRole] ?? input.role).replace(/^(?!HR|ASN)\w/, (c) => c.toLowerCase())} until ${fmtMomentInZone(input.until)}. Switch roles from your account menu. Reason: ${input.reason}`,
     category: 'access',
     linkUrl: '/settings',
   });

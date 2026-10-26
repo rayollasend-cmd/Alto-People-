@@ -131,6 +131,8 @@ function auditClient(
 // keep working. The cursor is the id of the last client from the
 // previous page; the API skips it and returns the next batch.
 const CLIENTS_DEFAULT_PAGE_SIZE = 1000;
+/** How the internal-hires pseudo-client is recognised (no flag on Client yet): its name. */
+export const INTERNAL_HIRES_MARK = 'Internal Hires';
 const CLIENTS_MAX_PAGE_SIZE = 500;
 
 clientsRouter.get('/', async (req, res, next) => {
@@ -148,6 +150,15 @@ clientsRouter.get('/', async (req, res, next) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     if (q.length > 0) {
       where.name = { contains: q, mode: 'insensitive' };
+    }
+    // The accounts list (?include=metrics, the Clients page) is the company's
+    // book of business: the synthetic "client" its own internal hires are
+    // onboarded under (seeded as "Alto HR — Internal Hires") is not an
+    // account and stays out — of the rows and of every count built from
+    // them ("Active accounts"). The pickers (no include) still list it: the
+    // new-applicant dialog hires internal staff through it.
+    if (req.query.include === 'metrics') {
+      where.NOT = { name: { contains: INTERNAL_HIRES_MARK, mode: 'insensitive' } };
     }
 
     // Validate cursor + limit. Bad input is a 400 rather than silently

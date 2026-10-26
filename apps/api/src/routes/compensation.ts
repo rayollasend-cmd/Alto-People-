@@ -8,7 +8,8 @@ import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { assertInTenant } from '../lib/sameTenant.js';
 import { loadApprovalPolicy, payChangeNeedsApproval, secondPersonExists } from '../lib/approvalPolicy.js';
-import { createApprovalRequest, pendingResponse, registerApplyHandler } from '../lib/approvalRequests.js';
+import { createApprovalRequest, payChangeReasonLabel, pendingResponse, registerApplyHandler } from '../lib/approvalRequests.js';
+import { fmtDay } from '../lib/humanDates.js';
 import { applyPayRateChange, currentComp, listPayChanges } from '../lib/payChanges.js';
 import { coveringManagerIds } from '../lib/delegations.js';
 import { assertAssociateInScope, scopeActiveAssociates, scopeWhere } from '../lib/scope.js';
@@ -224,7 +225,7 @@ async function setStartingPay(user: SessionUser, associateId: string, input: Rec
       subjectType: 'Associate',
       subjectId: associateId,
       title: `${f.name}: starting pay ${fmt(input.amount)} ${unit}`,
-      summary: `Starting pay, effective ${day} — ${why}${input.notes ? ` — ${input.notes}` : ''}`,
+      summary: `Starting pay, effective ${fmtDay(day, { year: true })} — ${why}${input.notes ? ` — ${input.notes}` : ''}`,
       proposed: { associateId, effectiveFrom: effectiveFrom.toISOString(), payType: input.payType, amount: input.amount, reason: 'HIRE', notes: input.notes ?? null },
       before: current ? { payType: current.payType, amount: current.amount } : null,
       requesterUserId: user.id,
@@ -300,7 +301,7 @@ compensationRouter.post(
         subjectType: 'Associate',
         subjectId: associateId,
         title: `${who}: ${current ? `${fmt(current.amount)} → ` : ''}${fmt(input.amount)} ${input.payType === 'SALARY' ? 'per year' : 'per hour'}`,
-        summary: `${input.reason.replace(/_/g, ' ').toLowerCase()}, effective ${effectiveFrom.toISOString().slice(0, 10)}${input.notes ? ` — ${input.notes}` : ''}`,
+        summary: `${payChangeReasonLabel(input.reason)}, effective ${fmtDay(effectiveFrom, { year: true })}${input.notes ? ` — ${input.notes}` : ''}`,
         proposed: { associateId, effectiveFrom: effectiveFrom.toISOString(), payType: input.payType, amount: input.amount, reason: input.reason, notes: input.notes ?? null },
         before: current ? { payType: current.payType, amount: current.amount } : null,
         requesterUserId: req.user!.id,
@@ -1194,7 +1195,7 @@ compensationRouter.post('/batch', requireCapability('manage:comp'), async (req, 
       subjectType: 'CompensationBatch',
       subjectId: req.user!.id,
       title: `Pay change for ${changes.length} ${changes.length === 1 ? 'person' : 'people'}: ${describe}`,
-      summary: `${input.reason.replace(/_/g, ' ').toLowerCase()}, effective ${input.effectiveFrom}${input.notes ? ` — ${input.notes}` : ''}`,
+      summary: `${payChangeReasonLabel(input.reason)}, effective ${fmtDay(input.effectiveFrom, { year: true })}${input.notes ? ` — ${input.notes}` : ''}`,
       proposed,
       requesterUserId: req.user!.id,
       approver: { capability: 'manage:comp' },

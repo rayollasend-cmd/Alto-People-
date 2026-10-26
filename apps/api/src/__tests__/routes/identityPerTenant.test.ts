@@ -200,6 +200,8 @@ describe('administration', () => {
     expect(got.status).toBe(200);
     expect(JSON.stringify(got.body)).not.toContain(CLIENT_SECRET);
     expect(got.body.connections[0]).toMatchObject({ issuerUrl: ISSUER, clientId: CLIENT_ID, enabled: true, linkedPeople: 0 });
+    // The organization's own sign-in address, for people at a shared email domain (not "/login/<your slug>").
+    expect(got.body.loginPath).toBe('/login/acme-hotels');
     const row = await prisma.identityConnection.findFirstOrThrow({ where: { tenantId: T2 } });
     expect(decryptString(row.clientSecretEnc)).toBe(CLIENT_SECRET);
 

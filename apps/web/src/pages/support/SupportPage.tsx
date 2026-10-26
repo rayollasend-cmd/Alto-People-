@@ -1,7 +1,7 @@
 import { useContext, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, ExternalLink, Search } from '@/components/ui/icons';
+import { BookOpen, ExternalLink, LifeBuoy, Search } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { StatusState } from '@alto-people/shared';
 import { ApiError, apiFetch } from '@/lib/api';
@@ -13,6 +13,7 @@ import { getPublicStatus } from '@/lib/statusApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -147,22 +148,42 @@ export function SupportPage() {
       )}
 
       <section aria-labelledby="support-help" className="space-y-2">
-        <h2 id="support-help" className="flex items-center gap-2 text-base font-semibold text-ink">
-          <BookOpen className="h-4 w-4 text-gold" aria-hidden="true" />
-          {t('support.helpTitle')}
-        </h2>
+        <div className="flex max-w-2xl flex-wrap items-baseline justify-between gap-2">
+          <h2 id="support-help" className="flex items-center gap-2 text-base font-semibold text-ink">
+            <BookOpen className="h-4 w-4 text-gold" aria-hidden="true" />
+            {t('support.helpTitle')}
+          </h2>
+          {/* One help destination: the articles live in the help center; this box searches it. */}
+          <Link to="/help-center" className="text-sm text-accent underline-offset-2 hover:underline" data-testid="support-help-center">
+            {t('support.browseHelp')}
+          </Link>
+        </div>
         <label className="relative block max-w-2xl">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-silver/50" aria-hidden="true" />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('support.helpSearch')} aria-label={t('support.helpSearch')} className="pl-8" />
         </label>
-        {q.trim().length >= 2 && (
-          <ul className="max-w-2xl divide-y divide-navy-secondary/60 rounded-md border border-navy-secondary" data-testid="support-articles">
+        {q.trim().length < 2 ? (
+          <p className="max-w-2xl text-xs text-ink-muted" data-testid="support-articles-hint">
+            {t('support.helpHint')}
+          </p>
+        ) : !articles.isLoading && (articles.data?.articles ?? []).length === 0 ? (
+          <EmptyState
+            size="sm"
+            icon={Search}
+            className="max-w-2xl"
+            title={t('support.helpNone')}
+            description={
+              <Link to="/help-center" className="text-accent underline-offset-2 hover:underline">
+                {t('support.browseHelp')}
+              </Link>
+            }
+          />
+        ) : (
+          <ul className="max-w-2xl divide-y divide-line rounded-md border border-line" data-testid="support-articles">
             {articles.isLoading ? (
               <li className="p-3">
                 <Skeleton className="h-4 w-2/3" />
               </li>
-            ) : (articles.data?.articles ?? []).length === 0 ? (
-              <li className="p-3 text-sm text-silver">{t('support.helpNone')}</li>
             ) : (
               articles.data!.articles.slice(0, 5).map((a) => (
                 <li key={a.id}>
@@ -224,12 +245,15 @@ export function SupportPage() {
               <Skeleton className="h-16" />
             </div>
           ) : (
-            <ul className="space-y-2">
-              {(mine.data?.requests ?? []).map((r) => (
-                <RequestRow key={r.id} r={r} />
-              ))}
-              {mine.data && mine.data.requests.length === 0 && <li className="text-sm text-silver">{t('support.mineNone')}</li>}
-            </ul>
+            mine.data && mine.data.requests.length === 0 ? (
+              <EmptyState size="sm" icon={LifeBuoy} title={t('support.mineNone')} description={t('support.mineNoneDesc')} />
+            ) : (
+              <ul className="space-y-2">
+                {(mine.data?.requests ?? []).map((r) => (
+                  <RequestRow key={r.id} r={r} />
+                ))}
+              </ul>
+            )
           )}
         </section>
       </div>

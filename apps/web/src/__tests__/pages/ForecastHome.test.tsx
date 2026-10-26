@@ -104,14 +104,15 @@ describe('<ForecastHome>', () => {
     // The summary strip: the next four weeks from the horizon, the back-test error, the history.
     expect(screen.getByText('2,058 h')).toBeInTheDocument(); // 648 + 690 + 720
     expect(screen.getByText('8.4%')).toBeInTheDocument();
-    expect(screen.getByText('52 wk')).toBeInTheDocument();
-    // The drivers in words.
-    expect(screen.getByText(/Independence Day ×1\.08/)).toBeInTheDocument();
-    expect(screen.getByText(/Truck schedule ×1\.20 \(Client truck schedule\)/)).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Forecast at a glance' })).toHaveTextContent(/History\s*52\s*weeks/);
+    // The drivers in words: a change in percent, never a "×1.08" multiplier.
+    expect(screen.getByText(/Independence Day \+8%/)).toBeInTheDocument();
+    expect(screen.getByText(/Truck schedule \+20% \(Client truck schedule\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/×1\./)).not.toBeInTheDocument();
     // The scoring table.
     expect(screen.getByText('3.8%')).toBeInTheDocument();
     // The band, said as a range of the forecast — not "band -15% to +18%" on the filter row (F500 G4).
-    expect(screen.getByText(/Likely range: 0\.85× to 1\.18× the forecast/)).toBeInTheDocument();
+    expect(screen.getByText(/Likely range: 15% under to 18% over the forecast/)).toBeInTheDocument();
     expect(screen.queryByText(/Last year weighs/)).not.toBeInTheDocument();
     // A year of history: no low-confidence warning.
     expect(screen.queryByText(/Low confidence/)).not.toBeInTheDocument();
@@ -135,8 +136,12 @@ describe('<ForecastHome>', () => {
       weeks: [week('2026-10-03', 0, 80), week('2026-10-10', 66, null, { lastYearScaled: null, recentMean: 83, trendPerWeek: -16, leadWeeks: 2 })],
     });
     renderPage();
-    // 20% of 83 h is 17 h: two weeks at −16 h would be −32 h, so the pull stops at 17 h below.
-    expect(await screen.findByText(/recent 83 h falling 16 h a week \(held to 17 h below\)/)).toBeInTheDocument();
+    // 20% of 83 h is 17 h: two weeks at −16 h would be −32 h, so the pull stops at 17 h below —
+    // said once, in plain words, above the weeks (it read "recent 83 h falling 16 h a week (held to 17 h below)").
+    expect(await screen.findByText(/last 8 weeks' average, 83 h a week, and their trend: down about 16 h a week/)).toBeInTheDocument();
+    expect(screen.getByText(/A trend counts for at most a fifth of the average \(17 h\)/)).toBeInTheDocument();
+    expect(screen.getByText(/trend −17 h \(its limit\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/held to/)).not.toBeInTheDocument();
   });
 
   it('a read-only role sees the forecast and no compute, signals or plan actions', async () => {

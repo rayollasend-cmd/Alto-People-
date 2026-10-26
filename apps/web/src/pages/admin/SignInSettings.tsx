@@ -29,6 +29,8 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { SecurityPolicyCard } from '@/components/admin/SecurityPolicyCard';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { LearnMore } from '@/pages/settings/LearnMore';
 import { DirectoryGroups } from './DirectoryGroups';
 import { TwoStepSection } from './TwoStepSection';
 
@@ -225,12 +227,18 @@ export function SignInSettings() {
       ) : (
         <>
           <section aria-labelledby="conn-title" className="space-y-2">
-            <h2 id="conn-title" className="text-base font-semibold text-white">Identity providers</h2>
+            <h2 id="conn-title" className="text-base font-semibold text-ink">Identity providers</h2>
+            {d.connections.length === 0 ? (
+              <EmptyState
+                size="sm"
+                icon={ShieldCheck}
+                title="No identity provider yet"
+                description="Everyone signs in with a password or a passkey until you add one."
+              />
+            ) : (
             <Card>
               <CardContent className="p-0">
-                {d.connections.length === 0 ? (
-                  <p className="p-6 text-sm text-silver">None yet: everyone signs in with a password or a passkey.</p>
-                ) : (
+                {(
                   <ul className="divide-y divide-navy-secondary">
                     {d.connections.map((c) => (
                       <li key={c.id}>
@@ -249,6 +257,7 @@ export function SignInSettings() {
                 )}
               </CardContent>
             </Card>
+            )}
           </section>
 
           <TwoStepSection />
@@ -257,10 +266,26 @@ export function SignInSettings() {
           <SecurityPolicyCard />
 
           <section aria-labelledby="dom-title" className="space-y-2">
-            <h2 id="dom-title" className="text-base font-semibold text-white">Email domains</h2>
-            <p className="text-sm text-silver">
-              People who type an address at a verified domain on the login page see your sign-in. Prove the domain with a DNS TXT record; shared domains (gmail.com…) use the link
-              <code className="mx-1 text-white">/login/&lt;your slug&gt;</code>instead.
+            <h2 id="dom-title" className="text-base font-semibold text-ink">Email domains</h2>
+            <p className="text-sm text-ink-muted">
+              People with an address at a verified domain see your sign-in on the login page.
+              <LearnMore>
+                You prove you own a domain with a DNS TXT record. Shared addresses like Gmail or Outlook can’t be verified; people who use one
+                {d.loginPath ? (
+                  <>
+                    {' '}
+                    sign in at your organization’s own address,{' '}
+                    <span className="inline-flex items-center gap-1">
+                      <span className="break-all font-medium text-ink">{`${window.location.origin}${d.loginPath}`}</span>
+                      <Button size="icon-sm" variant="ghost" onClick={() => copy(`${window.location.origin}${d.loginPath}`)} aria-label="Copy your sign-in address">
+                        <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Button>
+                    </span>
+                  </>
+                ) : (
+                  ' sign in at your organization’s own sign-in address.'
+                )}
+              </LearnMore>
             </p>
             <Card>
               <CardContent className="space-y-3">
@@ -308,9 +333,13 @@ export function SignInSettings() {
           </section>
 
           <section aria-labelledby="scim-title" className="scroll-mt-20 space-y-2" id="directory">
-            <h2 id="scim-title" className="text-base font-semibold text-white">Directory provisioning (SCIM)</h2>
-            <p className="text-sm text-silver">
-              Your directory creates, updates and deactivates accounts at <code className="text-white">{`${window.location.origin}/api/scim/v2`}</code> with a token from here. Deactivation signs the person out everywhere within a minute.
+            <h2 id="scim-title" className="text-base font-semibold text-ink">Directory provisioning (SCIM)</h2>
+            <p className="text-sm text-ink-muted">
+              Your directory (Okta, Entra ID…) creates, updates and deactivates accounts with a token from here.
+              <LearnMore>
+                Give your directory this address: <code className="break-all text-ink">{`${window.location.origin}/api/scim/v2`}</code>. Deactivating someone there signs them out
+                everywhere within a minute.
+              </LearnMore>
             </p>
             <Card>
               <CardContent className="space-y-3">

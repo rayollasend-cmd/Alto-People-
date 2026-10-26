@@ -237,24 +237,22 @@ function ParticipantsTab({
   // Nothing on record at all: the empty state is the page — what these
   // records are and how to start one — not four zeros over filters.
   if (!programs.isLoading && rows.length === 0 && !filtered) {
+    // The kit's empty state on its own (not boxed in a card); its Add is
+    // outline — the header's Add program is the page's one gold action.
     return (
-      <Card>
-        <CardContent className="p-0">
-          <EmptyState
-            icon={Plane}
-            title="No programs on record"
-            description="A program record follows one person through one visa season: a J-1 participant's DS-2019, sponsor and SEVIS dates, or an H-2B worker's petition and the one client it was certified for. Alto fires an alert before each date."
-            action={
-              canManage ? (
-                <Button onClick={() => onCreate('blank')}>
-                  <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-                  Add program
-                </Button>
-              ) : undefined
-            }
-          />
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={Plane}
+        title="No programs on record"
+        description="A program record follows one person through one visa season: a J-1 participant's DS-2019, sponsor and SEVIS dates, or an H-2B worker's petition and the one client it was certified for. Alto fires an alert before each date."
+        action={
+          canManage ? (
+            <Button variant="outline" onClick={() => onCreate('blank')}>
+              <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              Add program
+            </Button>
+          ) : undefined
+        }
+      />
     );
   }
 
@@ -762,7 +760,7 @@ function SponsorsTab({ canManage }: { canManage: boolean }) {
               <CardDescription>Who to call, what each sponsor requires of us, and how often they want to hear from us.</CardDescription>
             </div>
             {canManage && (
-              <Button onClick={() => setEditing('new')}>
+              <Button variant="outline" onClick={() => setEditing('new')}>
                 <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
                 Add sponsor
               </Button>

@@ -4,12 +4,13 @@ import { useQuery } from '@tanstack/react-query';
 import { getLaborRuleSite, getLaborShadowRun, listLaborRuleSites, listLaborShadowRuns, type LaborRuleSite, type LaborRuleSummary, type LaborShadowRun } from '@/lib/laborRulesApi';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Input } from '@/components/ui/Input';
+import { DateField } from '@/components/ui/DateField';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
-import { fmtDate, fmtDateOnlyRange, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtDateOnlyRange, fmtMoney, parseYmd } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui';
 import { LaborOverridesSection } from './LaborOverridesSection';
@@ -102,11 +103,11 @@ function SiteDrawer({ id, date, onClose }: { id: string; date: string; onClose: 
                 <div key={s.id} className="rounded-md border border-line p-3 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-ink">{s.jurisdiction}</span>
-                    <span className="text-ink-muted">from {s.effectiveFrom} · v{s.version}</span>
+                    <span className="text-ink-muted">from {fmtDateOnly(s.effectiveFrom, { year: 'auto' })} · v{s.version}</span>
                     <Badge variant={s.status === 'ACTIVE' ? 'success' : 'pending'} size="sm">{s.status === 'ACTIVE' ? 'Signed' : 'Not signed'}</Badge>
                   </div>
                   <p className="mt-1 text-xs text-ink-muted">{s.source}</p>
-                  {s.approvedAt && <p className="mt-1 text-xs text-ink-muted">Signed {s.approvedAt.slice(0, 10)} by {s.approvedBy}{s.approvalNote ? ` — ${s.approvalNote}` : ''}</p>}
+                  {s.approvedAt && <p className="mt-1 text-xs text-ink-muted">Signed {fmtDate(s.approvedAt)} by {s.approvedBy}{s.approvalNote ? ` — ${s.approvalNote}` : ''}</p>}
                 </div>
               ))}
             </section>
@@ -146,11 +147,11 @@ export function LaborRulesPage() {
       {tab === 'tests' && <LaborShadowSection />}
       {tab === 'sites' && (
       <>
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="text-sm text-ink-muted">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="flex items-center gap-2 text-sm text-ink-muted">
           In force on
-          <Input type="date" className="mt-1 w-44" value={date} onChange={(e) => setDate(e.target.value)} />
-        </label>
+          <DateField value={date} onChange={(v) => v && setDate(v)} clearable={false} aria-label="Rules in force on" />
+        </span>
         <p className="text-xs text-ink-muted">Rules follow the site where the hours are worked, not the person’s home address.</p>
       </div>
       <Card>
@@ -172,7 +173,7 @@ export function LaborRulesPage() {
               columns={[
                 { key: 'name', header: 'Site', accessor: (s) => s.name, sortable: true, primary: true, className: 'font-medium text-ink' },
                 { key: 'where', header: 'Jurisdiction', accessor: (s) => s.jurisdictions.slice(1).join(' · ') || 'Federal only', sortable: true, cardMeta: true },
-                { key: 'wage', header: 'Minimum wage', accessor: (s) => s.summary.minimumWageCents, sortable: true, searchable: false, cell: (s) => (s.summary.minimumWageCents === null ? '—' : fmtMoney(s.summary.minimumWageCents / 100)) },
+                { key: 'wage', header: 'Minimum wage', accessor: (s) => s.summary.minimumWageCents, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (s) => (s.summary.minimumWageCents === null ? '—' : fmtMoney(s.summary.minimumWageCents / 100)) },
                 { key: 'ot', header: 'Overtime', accessor: (s) => `${hours(s.summary.weeklyOvertimeHours)} weekly${s.summary.dailyOvertimeHours !== null ? `, ${s.summary.dailyOvertimeHours} h daily` : ''}`, searchable: false },
                 { key: 'breaks', header: 'Meal / rest law', accessor: (s) => (s.summary.mealRequiredAfterHours !== null || s.summary.restPerHours !== null ? 'Yes' : 'No'), searchable: false },
                 {
@@ -257,7 +258,7 @@ export function LaborShadowSection() {
           ) : !runs ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : runs.length === 0 ? (
-            <p className="p-6 text-sm text-ink-muted">No finalized pay runs tested yet; each one is recomputed within the hour after it is finalized.</p>
+            <EmptyState size="sm" title="No test runs yet" description="Each finalized pay run is recomputed under the state rules within the hour after it is finalized." />
           ) : (
             <DataGrid<LaborShadowRun>
               id="labor-rules-shadow"
@@ -269,10 +270,21 @@ export function LaborShadowSection() {
               onRowClick={(r) => setOpen(r.id)}
               columns={[
                 { key: 'period', header: 'Pay period', accessor: (r) => r.periodStart, sortable: true, primary: true, cell: (r) => fmtDateOnlyRange(r.periodStart, r.periodEnd) },
-                { key: 'people', header: 'People paid', accessor: (r) => r.associates, sortable: true },
-                { key: 'diffs', header: 'Differences', accessor: (r) => r.differences, sortable: true, cell: (r) => <Badge variant={r.differences ? 'pending' : 'success'} size="sm">{r.differences}</Badge> },
-                { key: 'amount', header: 'Difference vs. what was paid', accessor: (r) => r.amountDifference, sortable: true, cell: (r) => fmtMoney(r.amountDifference) },
-                { key: 'premium', header: 'Premium hours shown', accessor: (r) => r.penaltyHours, sortable: true },
+                // Counts and money right-aligned in tabular figures, so columns of numbers line up.
+                { key: 'people', header: 'People paid', accessor: (r) => r.associates, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
+                {
+                  key: 'diffs',
+                  header: 'Differences',
+                  accessor: (r) => r.differences,
+                  sortable: true,
+                  searchable: false,
+                  align: 'right',
+                  className: 'tabular-nums',
+                  // A zero is not news: no green "0" badge.
+                  cell: (r) => (r.differences ? <Badge variant="pending" size="sm">{r.differences}</Badge> : <span className="text-ink-muted">0</span>),
+                },
+                { key: 'amount', header: 'Difference vs. what was paid', accessor: (r) => r.amountDifference, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => fmtMoney(r.amountDifference) },
+                { key: 'premium', header: 'Premium hours shown', accessor: (r) => r.penaltyHours, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (r) => `${(r.penaltyHours ?? 0).toFixed(1)}h` },
               ]}
             />
           )}

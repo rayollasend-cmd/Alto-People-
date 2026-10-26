@@ -114,7 +114,7 @@ export function UploadDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add a work document</DialogTitle>
-          <DialogDescription>Keep it on your own shelf, or put it on a desk’s where everyone there can find it.</DialogDescription>
+          <DialogDescription>Keep it on your own shelf, or put it on a team’s, where everyone on that team can find it.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <input
@@ -294,7 +294,7 @@ export function RelayFiles({ myDesk }: { myDesk: WorkDesk | null }) {
             description={
               filtered
                 ? 'No document on this shelf matches what you are looking for.'
-                : 'Put the forms, spreadsheets and photos the work runs on here — then send one to another desk without leaving the relay.'
+                : 'Put the forms, spreadsheets and photos the work runs on here — then send one to another team without leaving Relay.'
             }
             action={
               filtered ? (

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, CreditCard, Cpu, ExternalLink, Users as UsersIcon } from '@/components/ui/icons';
 import { ApiError, apiFetch } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { fmtMoney, fmtMonth } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +16,7 @@ import { SkeletonRows } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 /**
  * Brief 2-6 step 4 — Billing: the plan, this month's billable count so far
@@ -37,6 +38,8 @@ interface BillingContact {
 interface BillingOverview {
   contact?: BillingContact;
   plan: string;
+  /** The plan in words, from the API ("Internal", "Not invoiced", "Growth"). */
+  planLabel?: string;
   invoiced: boolean;
   stripe: 'test' | 'live' | 'off';
   month: string;
@@ -49,7 +52,7 @@ interface BillingOverview {
     month: string;
     status: 'DRAFT' | 'OPEN' | 'PAID' | 'VOID';
     totalCents: number;
-    lines: Array<{ type: WorkerType; quantity: number; unitPriceCents: number | null; amountCents: number }>;
+    lines: Array<{ type: WorkerType; quantity: number; unitPriceCents: number | null; amountCents: number; label?: string }>;
     holdReason: string | null;
     hostedUrl: string | null;
     lastPaymentError: string | null;
@@ -58,9 +61,16 @@ interface BillingOverview {
 }
 
 const TYPE: Record<WorkerType, { label: string; one: string; icon: typeof UsersIcon }> = {
-  PERSON: { label: 'People', one: 'Person', icon: UsersIcon },
+  PERSON: { label: 'People', one: 'person', icon: UsersIcon },
   AGENT: { label: 'AI agents', one: 'AI agent', icon: Bot },
-  ROBOT: { label: 'Robots', one: 'Robot', icon: Cpu },
+  ROBOT: { label: 'Robots', one: 'robot', icon: Cpu },
+};
+const ALL_TYPES = Object.keys(TYPE) as WorkerType[];
+
+/** "Internal" → "Internal plan"; a plan code reads as words, not as stored. */
+const planName = (plan: string) => {
+  const words = plan.replace(/[_-]+/g, ' ').trim().toLowerCase();
+  return words ? `${words.charAt(0).toUpperCase()}${words.slice(1)}${/plan$/.test(words) ? '' : ' plan'}` : 'No plan';
 };
 const STATUS: Record<BillingOverview['invoices'][number]['status'], 'pending' | 'accent' | 'success' | 'default'> = { DRAFT: 'pending', OPEN: 'accent', PAID: 'success', VOID: 'default' };
 const HOLD: Record<string, string> = {
@@ -70,48 +80,83 @@ const HOLD: Record<string, string> = {
 
 export function BillingHome() {
   const q = useQuery({ queryKey: ['billing', 'overview'], queryFn: () => apiFetch<BillingOverview>('/billing') });
+  const { moduleOn } = useTenant();
   const d = q.data;
+  // A worker type shows when the tenant runs it or something was counted for it:
+  // a "Robots 0" tile for a company with no robots said nothing (F500 audit 2026-10-26).
+  const types = d
+    ? ALL_TYPES.filter(
+        (t) =>
+          t === 'PERSON' ||
+          (t === 'ROBOT' && moduleOn('robotics')) ||
+          (d.running[t] ?? 0) > 0 ||
+          (d.history ?? []).some((h) => (h.counts[t] ?? 0) > 0) ||
+          d.invoices.some((i) => i.lines.some((l) => l.type === t && l.quantity > 0)),
+      )
+    : ALL_TYPES;
   return (
     <div className="space-y-5">
-      <PageHeader title="Billing" subtitle="Your plan, this month’s active workers by type, and your invoices." />
+      <PageHeader
+        title="Billing"
+        subtitle="Your plan, the people and agents active each month, and your invoices."
+        facts={
+          d
+            ? [
+                { label: 'Plan', value: d.planLabel ?? planName(d.plan) },
+                { label: 'Invoicing', value: d.invoiced ? (d.stripe === 'test' ? 'Monthly · test mode' : 'Monthly') : 'Not invoiced' },
+                { label: 'Days counted this month', value: String(d.daysCounted) },
+              ]
+            : undefined
+        }
+      />
       {q.isError ? (
         <QueryError what="billing" query={q} />
       ) : !d ? (
         <SkeletonRows count={4} />
       ) : (
         <>
-          <Card>
-            <CardContent className="flex flex-wrap items-center gap-3 text-sm">
-              <span className="text-silver">Plan</span>
-              <span className="font-semibold capitalize text-white">{d.plan}</span>
-              {!d.invoiced && <Badge variant="default" size="sm">Not invoiced</Badge>}
-              {d.invoiced && d.stripe === 'test' && <Badge variant="pending" size="sm">Payment processor in test mode</Badge>}
-            </CardContent>
-          </Card>
+          {!d.invoiced && (
+            <p className="text-sm text-ink-muted" data-testid="billing-internal">
+              {planName(d.plan)} accounts aren’t invoiced. Usage is still counted below, the same way an invoiced plan counts it.
+            </p>
+          )}
+          {d.invoiced && d.stripe === 'test' && (
+            <p className="text-sm text-ink-muted">
+              <Badge variant="pending" size="sm">Test mode</Badge> The payment processor is in test mode: invoices are drafts, and no card is charged.
+            </p>
+          )}
 
           {d.invoiced && d.contact && <ContactCard contact={d.contact} />}
 
           <section aria-labelledby="running" className="space-y-2">
-            <h2 id="running" className="text-base font-semibold text-white">
+            <h2 id="running" className="text-base font-semibold text-ink">
               {fmtMonth(d.month, 'long')} so far
             </h2>
-            <p className="text-sm text-silver">Each person, agent and robot active on at least one day of the month counts once. {d.daysCounted} day{d.daysCounted === 1 ? '' : 's'} counted so far.</p>
+            <p className="text-sm text-ink-muted">
+              Each {types.map((t) => TYPE[t].one).join(', ').replace(/, ([^,]*)$/, ' and $1')} active on at least one day of the month counts once.
+            </p>
             <MetricStrip label={`${fmtMonth(d.month, 'long')} so far`}>
-              {(Object.keys(TYPE) as WorkerType[]).map((t) => (
-                <MetricCard key={t} icon={TYPE[t].icon} label={TYPE[t].label} value={String(d.running[t] ?? 0)} hint={(d.running[t] ?? 0) === 1 ? `1 ${TYPE[t].one.toLowerCase()} active` : undefined} />
+              {types.map((t) => (
+                <MetricCard key={t} icon={TYPE[t].icon} label={TYPE[t].label} value={String(d.running[t] ?? 0)} />
               ))}
             </MetricStrip>
           </section>
 
-          {d.history && d.history.length > 0 && <HistorySection history={d.history} invoices={d.invoices} />}
+          <HistorySection month={d.month} running={d.running} daysCounted={d.daysCounted} history={d.history ?? []} invoices={d.invoices} types={types} />
 
           <section aria-labelledby="invoices" className="space-y-2">
-            <h2 id="invoices" className="text-base font-semibold text-white">Invoices</h2>
+            <h2 id="invoices" className="text-base font-semibold text-ink">Invoices</h2>
+            {d.invoices.length === 0 ? (
+              <EmptyState
+                size="sm"
+                icon={CreditCard}
+                title={d.invoiced ? 'No invoices yet' : 'Not invoiced'}
+                description={d.invoiced ? 'The first invoice follows the end of your first month.' : `The ${planName(d.plan).toLowerCase()} has no invoices.`}
+              />
+            ) : (
             <Card>
               <CardContent className="p-0">
-                {d.invoices.length === 0 ? (
-                  <p className="p-6 text-sm text-silver">{d.invoiced ? 'No invoice yet: the first follows the end of your first month.' : 'Your plan is not invoiced.'}</p>
-                ) : (
+                {(
                   <ul className="divide-y divide-navy-secondary">
                     {d.invoices.map((i) => (
                       <li key={i.id} className="space-y-1 px-4 py-3 text-sm">
@@ -128,7 +173,7 @@ export function BillingHome() {
                           )}
                         </div>
                         <p className="text-xs text-silver">
-                          {i.lines.map((l) => `${l.quantity} ${TYPE[l.type].label.toLowerCase()}${l.unitPriceCents !== null ? ` × ${fmtMoney(l.unitPriceCents / 100)}` : ''}`).join(' · ') || 'Nothing billable'}
+                          {i.lines.map((l) => `${l.label ?? `${l.quantity} ${l.quantity === 1 ? TYPE[l.type].one : TYPE[l.type].label}`}${l.unitPriceCents !== null ? ` × ${fmtMoney(l.unitPriceCents / 100)}` : ''}`).join(' · ') || 'Nothing billable'}
                         </p>
                         {i.status === 'DRAFT' && i.holdReason && <p className="text-xs text-warning">{HOLD[i.holdReason] ?? 'Being prepared.'}</p>}
                         {i.lastPaymentError && <p className="text-xs text-alert">{i.lastPaymentError}</p>}
@@ -138,6 +183,7 @@ export function BillingHome() {
                 )}
               </CardContent>
             </Card>
+            )}
           </section>
         </>
       )}
@@ -145,20 +191,49 @@ export function BillingHome() {
   );
 }
 
-/** The last six months, month by month, beside the invoice each became (F500 G4). */
-function HistorySection({ history, invoices }: { history: NonNullable<BillingOverview['history']>; invoices: BillingOverview['invoices'] }) {
+/**
+ * Usage month by month — this month so far, then the six before it — beside
+ * the invoice each became (F500 G4). A table, always: the history used to
+ * collapse into one sentence ("No activity was counted from April to
+ * September"), which read as a page left unfinished. A month nothing was
+ * counted in says so in its row.
+ */
+function HistorySection({
+  month,
+  running,
+  daysCounted,
+  history,
+  invoices,
+  types,
+}: {
+  month: string;
+  running: Record<WorkerType, number>;
+  daysCounted: number;
+  history: NonNullable<BillingOverview['history']>;
+  invoices: BillingOverview['invoices'];
+  types: WorkerType[];
+}) {
   const byMonth = new Map(invoices.map((i) => [i.month, i]));
-  const rows = history.map((h) => ({ ...h, invoice: byMonth.get(h.month) ?? null }));
-  // Six rows of zeros say less than one line (a new account, or counting began this month).
-  const nothingCounted = rows.every((r) => r.daysCounted === 0 && !r.invoice);
+  const past = history.map((h) => ({ ...h, current: false, invoice: byMonth.get(h.month) ?? null }));
+  // Months with nothing counted and no invoice fold into one line under the table, not six rows of dashes.
+  const quiet = past.filter((r) => r.daysCounted === 0 && !r.invoice);
+  const rows = [
+    { month, daysCounted, counts: running, current: true, invoice: null as BillingOverview['invoices'][number] | null },
+    ...past.filter((r) => !quiet.includes(r)),
+  ];
+  const quietNote =
+    quiet.length === 0
+      ? undefined
+      : quiet.length === 1
+        ? `Nothing was counted in ${fmtMonth(quiet[0]!.month, 'long')}.`
+        : `Nothing was counted from ${fmtMonth(quiet[quiet.length - 1]!.month, 'long')} to ${fmtMonth(quiet[0]!.month, 'long')}.`;
+  const count = (t: WorkerType) => (r: (typeof rows)[number]) =>
+    r.daysCounted === 0 && !r.current ? <span className="text-ink-muted">—</span> : (r.counts[t] ?? 0).toLocaleString('en-US');
   return (
     <section aria-labelledby="billing-history" className="space-y-2">
-      <h2 id="billing-history" className="text-base font-semibold text-white">
-        The last six months
+      <h2 id="billing-history" className="text-base font-semibold text-ink">
+        Usage by month
       </h2>
-      {nothingCounted ? (
-        <p className="text-sm text-ink-muted">No activity was counted from {fmtMonth(rows[rows.length - 1]!.month, 'long')} to {fmtMonth(rows[0]!.month, 'long')}.</p>
-      ) : (
       <DataGrid
         id="billing-history"
         caption="Billable workers by month"
@@ -169,11 +244,30 @@ function HistorySection({ history, invoices }: { history: NonNullable<BillingOve
         urlState={false}
         columnChooser={false}
         exportCsv={{ filename: 'billing-history' }}
+        footnote={quietNote}
         columns={[
-          { key: 'month', header: 'Month', accessor: (r) => r.month, primary: true, cell: (r) => fmtMonth(r.month, 'long'), csv: (r) => fmtMonth(r.month, 'long') },
-          { key: 'people', header: 'People', accessor: (r) => r.counts.PERSON ?? 0, align: 'right', className: 'tabular-nums' },
-          { key: 'agents', header: 'AI agents', accessor: (r) => r.counts.AGENT ?? 0, align: 'right', className: 'tabular-nums' },
-          { key: 'robots', header: 'Robots', accessor: (r) => r.counts.ROBOT ?? 0, align: 'right', className: 'tabular-nums' },
+          {
+            key: 'month',
+            header: 'Month',
+            accessor: (r) => r.month,
+            primary: true,
+            cell: (r) => (
+              <span>
+                {fmtMonth(r.month, 'long')}
+                {r.current && <span className="ml-1.5 text-xs text-ink-muted">so far</span>}
+              </span>
+            ),
+            csv: (r) => fmtMonth(r.month, 'long'),
+          },
+          { key: 'days', header: 'Days counted', accessor: (r) => r.daysCounted, align: 'right', className: 'tabular-nums', cell: (r) => (r.daysCounted === 0 ? <span className="text-ink-muted">None</span> : r.daysCounted) },
+          ...types.map((t) => ({
+            key: t,
+            header: TYPE[t].label,
+            accessor: (r: (typeof rows)[number]) => r.counts[t] ?? 0,
+            align: 'right' as const,
+            className: 'tabular-nums',
+            cell: count(t),
+          })),
           {
             key: 'invoice',
             header: 'Invoice',
@@ -188,8 +282,10 @@ function HistorySection({ history, invoices }: { history: NonNullable<BillingOve
                   </Badge>
                   {fmtMoney(r.invoice.totalCents / 100)}
                 </span>
+              ) : r.current ? (
+                <span className="text-ink-muted">After the month ends</span>
               ) : r.daysCounted === 0 ? (
-                <span className="text-ink-muted">No activity counted</span>
+                <span className="text-ink-muted">Not counted</span>
               ) : (
                 <span className="text-ink-muted">Not invoiced</span>
               ),
@@ -197,7 +293,6 @@ function HistorySection({ history, invoices }: { history: NonNullable<BillingOve
           },
         ]}
       />
-      )}
     </section>
   );
 }

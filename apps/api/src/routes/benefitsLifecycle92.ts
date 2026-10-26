@@ -10,6 +10,7 @@ import { employerFor } from '../lib/employment.js';
 import { hash1095cPdf, render1095cPdf, type F1095cMonth } from '../lib/f1095cPdf.js';
 import { buildAcaAirXml, type AirEmployee } from '../lib/acaAir.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { fmtDay } from '../lib/humanDates.js';
 
 /**
  * Phase 92 — Benefits lifecycle: open enrollment, QLE, COBRA, ACA.
@@ -208,7 +209,7 @@ benefitsLifecycle92Router.post('/qles/:id/decide', MANAGE, async (req, res) => {
       ? 'Your qualifying life event was approved'
       : 'Your qualifying life event was denied',
     body: approved
-      ? `Your qualifying life event was approved. You can update your benefit elections until ${q.allowedUntil.toISOString().slice(0, 10)}.`
+      ? `Your qualifying life event was approved. You can update your benefit elections until ${fmtDay(q.allowedUntil)}.`
       : `Your qualifying life event was denied.${reason ? ` Reason: ${reason}` : ''} Contact HR if you have questions.`,
     category: 'benefits',
     linkUrl: '/benefits',
@@ -279,7 +280,7 @@ benefitsLifecycle92Router.post('/cobra', MANAGE, async (req, res) => {
     subject: 'COBRA continuation coverage offer',
     body:
       `You are eligible to continue your health coverage under COBRA. ` +
-      `Elect or waive by ${electionDeadline.toISOString().slice(0, 10)}` +
+      `Elect or waive by ${fmtDay(electionDeadline, { year: true })}` +
       `${input.premiumPerMonth != null ? ` (premium $${input.premiumPerMonth}/month)` : ''}. ` +
       `If you do nothing, the offer expires on that date.`,
     category: 'benefits',

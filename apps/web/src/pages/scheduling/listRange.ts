@@ -61,7 +61,9 @@ export function listStatusQuery(status: ListStatus): { status?: ShiftStatus; end
  * where the planning page should reopen, so it reads as Open.
  */
 export function restoredListStatus(stored: string | null | undefined): ListStatus {
-  return stored === 'ASSIGNED' || stored === 'DRAFT' || stored === 'ALL' ? stored : 'OPEN';
+  // Nothing picked yet: everything ahead ("All"), not "Open" — a first visit
+  // opened on an empty "No open shifts" state (F500 2026-10-26).
+  return stored === 'ASSIGNED' || stored === 'DRAFT' || stored === 'ALL' || stored === 'OPEN' ? stored : 'ALL';
 }
 
 /** The workweek so far — what "N unfilled" on the KPI line counts (this week, up to today). */

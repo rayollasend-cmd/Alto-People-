@@ -1878,6 +1878,9 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
         weekStart: w,
         weekEnd: nextKey(w, 6),
         url: `/api/client-portal/service-report.pdf?week=${w}${previewQs}`,
+        // A week still under way has no report to sign off yet: the PDF is
+        // "so far", and "Mark reviewed" waits for the Saturday after.
+        complete: nextKey(w, 7) <= cal.key(now),
         reviewed: reviewed('SERVICE_REPORT', serviceReportKey(scope, w)),
       })),
       stores: storeRows,
@@ -1955,6 +1958,10 @@ clientPortalRouter.post('/client-portal/acknowledge', requireAuth, async (req, r
       if (!st) throw new HttpError(404, 'not_found', 'Statement not found');
     } else if (!/^\d{4}-\d{2}-\d{2}$/.test(input.key)) {
       throw new HttpError(400, 'invalid_key', 'A service report is keyed by its week start (YYYY-MM-DD).');
+    } else if (nextKey(input.key, 7) > orgDateKey(new Date())) {
+      // Only a finished week is reviewable — signing off a week that is
+      // still being worked would vouch for shifts that have not happened.
+      throw new HttpError(409, 'week_in_progress', 'This week is still under way. Its report can be reviewed once the week ends.');
     }
     // The caller sends the week; the store comes from their own account,
     // never from the request, so one store can never sign for another.

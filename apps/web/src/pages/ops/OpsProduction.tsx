@@ -103,9 +103,14 @@ function MetricPanel({ t }: { t: Trend }) {
         <span className="text-2xs text-silver/50">this week</span>
         <Delta read={read} />
       </div>
-      <div className="mt-1.5 h-24">
-        <OpsProductionPlot data={data} mean={read.mean} lastKey={lastKey} unit={t.unit} name={metricLabel(t.metricKey)} />
-      </div>
+      {/* One week of readings is a single bar, not a trend. */}
+      {t.weeks.filter((w) => w.total > 0).length >= 2 ? (
+        <div className="mt-1.5 h-24">
+          <OpsProductionPlot data={data} mean={read.mean} lastKey={lastKey} unit={t.unit} name={metricLabel(t.metricKey)} />
+        </div>
+      ) : (
+        <p className="mt-1.5 text-2xs text-ink-muted">The trend appears after two weeks of readings.</p>
+      )}
     </div>
   );
 }
@@ -140,13 +145,14 @@ export function OpsProduction({ scorecard }: { scorecard: Scorecard | null }) {
             <MetricPanel key={t.metricKey} t={t} />
           ))}
         </div>
-        <p className="text-2xs text-silver/50">
-          The dashed line is the window&rsquo;s weekly mean. Green means the week moved the right
-          way for that metric — more cases stocked is good, more items discarded is not.
-        </p>
-        {/* The table twin: nothing here is gated on hover or on colour. */}
+        {/* The table twin: nothing here is gated on hover or on colour. The
+            legend rides with it — prose under every chart was noise. */}
         {showTable && (
           <div className="overflow-x-auto border-t border-navy-secondary/60 pt-3">
+            <p className="mb-2 text-2xs text-ink-muted">
+              The dashed line is the window&rsquo;s weekly mean. Green means the week moved the right
+              way for that metric — more cases stocked is good, more items discarded is not.
+            </p>
             <table className="w-full text-left text-xs">
               <caption className="sr-only">Weekly production totals by metric</caption>
               <thead>

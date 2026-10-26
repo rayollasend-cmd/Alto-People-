@@ -92,9 +92,10 @@ function overview(over: Partial<FinanceOverview> = {}): FinanceOverview {
   };
 }
 
-function renderDashboard(data: FinanceOverview) {
+function renderDashboard(data: FinanceOverview, upcoming?: unknown) {
   vi.mocked(apiFetch).mockImplementation(async (path: string) => {
     if (path === '/finance/overview') return data as never;
+    if (path === '/payroll/upcoming' && upcoming) return upcoming as never;
     throw new Error(`unexpected ${path}`);
   });
   const caps = ROLE_CAPABILITIES.FINANCE_ACCOUNTANT;
@@ -221,9 +222,32 @@ describe('the finance cockpit', () => {
       }),
     );
     const line = await screen.findByTestId('cash-no-balance');
-    expect(line).toHaveTextContent('No bank balance on file yet.');
+    expect(line).toHaveTextContent('Add your bank balance to see where cash stands each week.');
     expect(within(line).getByRole('link', { name: 'Set today’s cash balance' })).toHaveAttribute('href', '/books/accounts');
     expect(screen.queryByText(/Cash today \$0\.00/)).toBeNull();
+    // No balance line from $0 (its "low point" read as an overdraft): bars only, no balance column.
+    expect(screen.queryByText('Running total')).toBeNull();
+    expect(screen.queryByText('Cash balance')).toBeNull();
+    expect(screen.queryByText(/Low point/)).toBeNull();
+  });
+
+  it('a period payroll cannot run says why, by the Payroll page\'s own gate, not "ready to run" (F500 audit 2026-10-26)', async () => {
+    const period = { periodStart: ymd(-20), periodEnd: ymd(-7), payDate: ymd(4) };
+    renderDashboard(overview({ payCycle: { ...period, schedule: 'Biweekly', hours: { approved: 120, pending: 0 }, run: null } }), {
+      nextRun: null,
+      lastRun: null,
+      peopleOnNoSchedule: 33,
+      bySchedule: [{ scheduleId: 's1', scheduleName: 'Biweekly', frequency: 'BIWEEKLY', ...period, people: 0, draftRunId: null }],
+    });
+    const cycle = await screen.findByRole('list', { name: 'Pay cycle' });
+    expect(await within(cycle).findByText('Can’t run yet')).toBeInTheDocument();
+    expect(within(cycle).getByText('33 people on no pay schedule')).toBeInTheDocument();
+    expect(within(cycle).queryByText(/ready to run/)).toBeNull();
+    expect(within(cycle).getByTestId('hero-run-link')).toHaveAttribute('href', '/payroll/schedules/s1');
+    expect(within(cycle).getByTestId('hero-run-link')).toHaveTextContent('Fix');
+    // "Needs you" names the fix, not "Start the payroll run".
+    expect(screen.getByText('Put people on the pay schedule')).toBeInTheDocument();
+    expect(screen.queryByText('Start the payroll run')).toBeNull();
   });
 
   it('all clear says so', async () => {

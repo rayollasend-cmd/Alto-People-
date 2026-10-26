@@ -141,7 +141,7 @@ describe('Users & access — a list you read', () => {
     const row = (await screen.findByText('Pat Chair')).closest('tr')!;
     expect(listAdminUsers).toHaveBeenCalledWith({ q: undefined, role: undefined, status: ['ACTIVE', 'INVITED'] });
     // Role as text with its extra role counted, scope in words, two-step and last active.
-    expect(within(row).getByText('HR Administrator')).toBeInTheDocument();
+    expect(within(row).getByText('HR administrator')).toBeInTheDocument();
     expect(within(row).getByText('+1')).toBeInTheDocument();
     expect(within(row).getByText('2 places')).toBeInTheDocument();
     expect(within(row).getByText('Off')).toBeInTheDocument();
@@ -224,16 +224,20 @@ describe('Users & access — a list you read', () => {
     expect(screen.queryByRole('button', { name: 'Invite user' })).not.toBeInTheDocument();
   });
 
-  it('points shifts without a lead to Store leads in one line, instead of a card above the accounts', async () => {
-    vi.mocked(getShiftCoverageGaps).mockResolvedValue({
-      total: 3,
-      covered: 1,
-      clients: [{ clientId: 'c1', clientName: 'Coastal Resort', uncovered: [{ locationId: 'l1', locationName: 'Pier Park', label: 'Morning', startMinute: 360, endMinute: 840 }, { locationId: 'l1', locationName: 'Pier Park', label: 'Overnight', startMinute: 1320, endMinute: 360 }], noShift: [], supervisors: [] }],
-    } as never);
+  it('leaves shifts without a lead to Store leads — this is an identity page, not an operations alert', async () => {
     renderPage();
-    const line = await screen.findByTestId('shift-leads-line');
-    expect(line).toHaveTextContent('2 shifts have no lead.');
-    expect(within(line).getByRole('link')).toHaveAttribute('href', '/scheduling/supervisors');
+    await screen.findByText('Pat Chair');
+    expect(screen.queryByTestId('shift-leads-line')).not.toBeInTheDocument();
+    expect(screen.queryByText(/no lead/i)).not.toBeInTheDocument();
+    expect(getShiftCoverageGaps).not.toHaveBeenCalled();
+  });
+
+  it('says "No person record" quietly under the account, and two-step as a badge either way', async () => {
+    renderPage();
+    const pat = (await screen.findByText('Pat Chair')).closest('tr')!;
+    const note = within(pat).getByText('No person record');
+    expect(note.className).toContain('text-ink-muted');
+    expect(within(pat).getByText('Off').closest('[class*="rounded"]')).not.toBeNull();
   });
 
   it('the old access-report link lands on Access certifications', async () => {

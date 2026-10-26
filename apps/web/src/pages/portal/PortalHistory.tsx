@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CheckCircle2, FileText, History } from '@/components/ui/icons';
@@ -9,13 +9,15 @@ import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtHours, parseYmd, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
+import { DateField } from '@/components/ui/DateField';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
-import { StatementRow, type PortalStatement } from './PortalStatements';
+import { PortalBilling, type PortalStatement } from './PortalStatements';
+import { DELIVERED_TARGET_PCT } from './words';
 import { DetailsTable, HoursChart, RingMeter, StatTile, WeekFillChart } from './portalCharts';
 import { fmtDateTick } from '@/components/ui/charts/axes';
 import { scopeParams, shiftDays } from './scope';
@@ -89,6 +91,8 @@ interface HistoryPayload {
     weekStart: string;
     weekEnd: string;
     url: string;
+    /** The week has ended: its report can be reviewed (absent from an older server). */
+    complete?: boolean;
     reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
   }>;
   /** Market accounts only: the stores side by side, ranked by grade. */
@@ -106,14 +110,6 @@ interface HistoryPayload {
 }
 
 type Preset = 'last7' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'custom';
-
-const GRADE_STYLE: Record<NonNullable<HistoryPayload['totals']['grade']>, string> = {
-  A: 'text-success',
-  B: 'text-success',
-  C: 'text-warning',
-  D: 'text-alert',
-  F: 'text-alert',
-};
 
 /** Org week starts Saturday: the last completed Sat→Fri week before today. */
 function lastWeekRange(today: string): { from: string; to: string } {
@@ -171,6 +167,22 @@ export function PortalHistory() {
     placeholderData: (prev) => prev,
   });
   const data = query.data;
+  // Billing (F500 2026-10-26): the latest statements and the open balance,
+  // whatever the range — the home's own read, so it is cached from there.
+  const billingQ = useQuery({
+    queryKey: ['clientPortal', 'overview', isPortal ? 'me' : previewId, scopeQs],
+    queryFn: () =>
+      apiFetch<{ statements: PortalStatement[]; balance?: { count: number; amount: number | null; pastDue: number } }>(
+        `/client-portal/overview${scopeQs}`,
+      ),
+    enabled,
+  });
+  const location = useLocation();
+  const billingReady = !!billingQ.data && !!data;
+  useEffect(() => {
+    // The home's "Open billing" lands on #billing: bring it into view once it has drawn.
+    if (billingReady && location.hash === '#billing') document.getElementById('billing')?.scrollIntoView({ block: 'start' });
+  }, [billingReady, location.hash]);
   const queryClient = useQueryClient();
   const [marking, setMarking] = useState<string | null>(null);
   const markReviewed = async (kind: 'STATEMENT' | 'SERVICE_REPORT', key: string) => {
@@ -254,6 +266,13 @@ export function PortalHistory() {
   // Worked is every punched hour (uncapped); "delivered" is the grade's,
   // capped at the contract each hour. More worked than scheduled is said in
   // so many words, not shown as a full meter (F500 G5: "444.1h of 56.5h").
+  // Only a week that has ended is a report to review: the week in progress
+  // offered a PDF and "Mark reviewed" for days that hadn't happened yet.
+  // The server says which weeks are complete (and refuses to sign off the
+  // rest); an older server's rows fall back to the week's last day.
+  const weekDone = (r: { weekEnd: string; complete?: boolean }) => r.complete ?? r.weekEnd < today;
+  const reportsDone = (data?.serviceReports ?? []).filter(weekDone);
+  const reportsOpenWeek = (data?.serviceReports ?? []).some((r) => !weekDone(r));
   const offSchedule = data ? (data.totals.offScheduleHours ?? Math.max(0, data.totals.workedHours - data.totals.scheduledHours)) : 0;
 
   return (
@@ -269,7 +288,7 @@ export function PortalHistory() {
         }
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
-        breadcrumbs={[{ label: t('portal.title'), to: `/portal${scopeQs}` }, { label: t('portal.historyNav') }]}
+        breadcrumbs={[{ label: t('portal.homeCrumb'), to: `/portal${scopeQs}` }, { label: t('portal.historyNav') }]}
         secondaryActions={
           <>
             <Button size="sm" variant="outline" onClick={() => setReportOpen(true)}>
@@ -301,24 +320,24 @@ export function PortalHistory() {
           ))}
           {preset === 'custom' && (
             <span className="flex items-center gap-1.5 text-xs text-silver/70">
-              <input
-                type="date"
+              <DateField
+                size="sm"
+                clearable={false}
                 value={range.from}
                 min={shiftDays(range.to, -30)}
                 max={range.to}
-                onChange={(e) => e.target.value && setPreset('custom', e.target.value, range.to)}
+                onChange={(v) => v && setPreset('custom', v, range.to)}
                 aria-label={t('portal.rangeFrom')}
-                className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-11 coarse:text-base"
               />
               –
-              <input
-                type="date"
+              <DateField
+                size="sm"
+                clearable={false}
                 value={range.to}
                 min={range.from}
                 max={shiftDays(range.from, 30) < today ? shiftDays(range.from, 30) : today}
-                onChange={(e) => e.target.value && setPreset('custom', range.from, e.target.value)}
+                onChange={(v) => v && setPreset('custom', range.from, v)}
                 aria-label={t('portal.rangeTo')}
-                className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-11 coarse:text-base"
               />
             </span>
           )}
@@ -350,27 +369,28 @@ export function PortalHistory() {
         <>
           {/* ---- KPI strip ------------------------------------------------ */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {/* Contracted hours delivered, as a percentage with its hours under
+                it — no letter grade: a red "F" beside "100% filled" and "240h
+                worked" read as a contradiction (F500 2026-10-26). Fill rate
+                (next tile) is the supervisor's measure: shifts filled of
+                shifts scheduled. */}
             <StatTile
-              label={t('portal.kpiGradeRange')}
-              value={
-                <span className={data.totals.grade ? GRADE_STYLE[data.totals.grade] : 'text-silver/50'}>
-                  {data.totals.grade ?? '—'}
-                </span>
-              }
-              delta={
+              label={data.totals.basis === 'schedule' ? t('portal.kpiShowedUpRange') : t('portal.kpiDeliveredRange')}
+              value={data.totals.reliabilityPct !== null ? `${data.totals.reliabilityPct}%` : '—'}
+              meter={
                 data.totals.reliabilityPct !== null
-                  ? t('portal.relScore', { score: data.totals.reliabilityPct })
+                  ? { percent: data.totals.reliabilityPct, tone: data.totals.reliabilityPct >= DELIVERED_TARGET_PCT ? 'good' : 'warn' }
                   : null
               }
               sub={
                 data.totals.basis === 'contract'
                   ? t('portal.kpiDeliveredSub', {
-                      delivered: Math.round(data.totals.deliveredHours),
-                      contracted: Math.round(data.totals.contractedHours),
+                      delivered: Math.round(data.totals.deliveredHours).toLocaleString('en-US'),
+                      contracted: Math.round(data.totals.contractedHours).toLocaleString('en-US'),
                     })
                   : data.totals.basis === 'schedule'
                     ? t('portal.kpiShowedSub', { showed: data.totals.showed, ended: data.totals.ended })
-                    : t('portal.relNoHistory')
+                    : t('portal.relNoHistoryPlain')
               }
             />
             <StatTile
@@ -394,9 +414,10 @@ export function PortalHistory() {
                 offSchedule > 0 ? (
                   <span className="text-warning" data-testid="hist-off-schedule">
                     {t('portal.kpiOffSchedule', {
-                      worked: fmtHours(Math.round(data.totals.workedHours)),
-                      scheduled: fmtHours(Math.round(data.totals.scheduledHours)),
-                      off: fmtHours(Math.round(offSchedule)),
+                      // One rounding everywhere: the headline's tenth of an hour.
+                      worked: fmtHours(data.totals.workedHours),
+                      scheduled: fmtHours(data.totals.scheduledHours),
+                      off: fmtHours(offSchedule),
                     })}
                   </span>
                 ) : (
@@ -417,9 +438,9 @@ export function PortalHistory() {
             />
           </div>
 
-          {data.totals.basis === 'schedule' && (
-            <p className="text-xs text-warning">{t('portal.relBasisSchedule')}</p>
-          )}
+          <p className="text-xs text-ink-muted">
+            {data.totals.basis === 'schedule' ? t('portal.relBasisSchedulePlain') : t('portal.deliveredDef')}
+          </p>
 
           {/* ---- Market accounts: the stores side by side ------------------ */}
           {data.stores.length > 0 && (
@@ -429,15 +450,14 @@ export function PortalHistory() {
                   size="sm"
                   className="mb-0"
                   title={t('portal.storesRanked')}
-                  trailing={<span className="text-xs text-silver/60">{t('portal.storesRankedSub')}</span>}
+                  trailing={<span className="text-xs text-silver/60">{t('portal.storesRankedSubPlain')}</span>}
                 />
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-left text-2xs uppercase tracking-wider text-silver/60">
                         <th className="py-1 pr-3 font-medium">{t('portal.colStore')}</th>
-                        <th className="py-1 pr-3 font-medium">{t('portal.colGrade')}</th>
-                        <th className="py-1 pr-3 font-medium">{t('portal.colShowed')}</th>
+                        <th className="py-1 pr-3 font-medium">{t('portal.colDelivered')}</th>
                         <th className="py-1 pr-3 font-medium">{t('portal.colFill')}</th>
                         <th className="py-1 pr-3 font-medium">{t('portal.colShifts')}</th>
                       </tr>
@@ -457,12 +477,8 @@ export function PortalHistory() {
                                 {s.name}
                               </Link>
                             </td>
-                            <td className={cn('py-2 pr-3 text-lg font-bold leading-none', s.grade ? GRADE_STYLE[s.grade] : 'text-silver/50')}>
-                              {s.grade ?? '—'}
-                            </td>
-                            <td className="py-2 pr-3 tabular-nums text-white">
+                            <td className="py-2 pr-3 tabular-nums text-ink">
                               {s.reliabilityPct === null ? '—' : `${s.reliabilityPct}%`}
-                              <span className="text-silver/50"> · {s.showed}/{s.ended}</span>
                             </td>
                             <td className="py-2 pr-3 tabular-nums text-white">{s.fillPct === null ? '—' : `${s.fillPct}%`}</td>
                             <td className="py-2 pr-3 tabular-nums text-silver">{s.published}</td>
@@ -593,26 +609,18 @@ export function PortalHistory() {
               </CardContent>
             </Card>
 
-            {/* ---- Statements + service reports ----------------------------- */}
+            {/* ---- Service reports: only weeks that have ended can be reviewed ---- */}
             <Card className="xl:col-span-4">
               <CardContent>
-                <SectionTitle size="sm" className="mb-0" title={t('portal.histDocs')} />
-                {data.statements.length === 0 && data.serviceReports.length === 0 ? (
-                  <p className="mt-3 text-sm text-silver/60">{t('portal.stNone')}</p>
+                <SectionTitle size="sm" className="mb-0" title={t('portal.histReports')} />
+                {reportsDone.length === 0 ? (
+                  <EmptyState size="sm" icon={FileText} title={t('portal.reportsNone')} className="mt-3" />
                 ) : (
-                  <ul className="mt-3 divide-y divide-navy-secondary/60">
-                    {data.statements.map((s) => (
-                      <StatementRow
-                        key={s.id}
-                        s={s}
-                        inStore={!!data.store}
-                        actions={s.paidAt ? null : <span className="basis-full sm:basis-auto">{reviewedMark(s.reviewed, () => void markReviewed('STATEMENT', s.id))}</span>}
-                      />
-                    ))}
-                    {data.serviceReports.map((r) => (
+                  <ul className="mt-3 divide-y divide-line">
+                    {reportsDone.map((r) => (
                       <li key={r.weekStart} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-2.5">
                         <div className="min-w-0">
-                          <div className="text-sm text-white">{t('portal.svcReportWeek')}</div>
+                          <div className="text-sm text-ink">{t('portal.svcReportWeek')}</div>
                           <div className="text-xs text-silver/70 tabular-nums">
                             {fmtDate(parseYmd(r.weekStart))} – {fmtDate(parseYmd(r.weekEnd))}
                           </div>
@@ -632,6 +640,23 @@ export function PortalHistory() {
                     ))}
                   </ul>
                 )}
+                {reportsOpenWeek && <p className="mt-2 text-xs text-ink-muted">{t('portal.svcReportInProgress')}</p>}
+              </CardContent>
+            </Card>
+
+            {/* ---- Billing: apart from the floor's record, whatever the range ---- */}
+            <Card className="md:col-span-2 xl:col-span-12">
+              <CardContent>
+                <PortalBilling
+                  statements={billingQ.data?.statements ?? []}
+                  balance={billingQ.data?.balance}
+                  inStore={!!data.store}
+                  actions={(st) =>
+                    st.paidAt ? null : (
+                      <span className="basis-full sm:basis-auto">{reviewedMark(st.reviewed, () => void markReviewed('STATEMENT', st.id))}</span>
+                    )
+                  }
+                />
               </CardContent>
             </Card>
           </div>

@@ -149,13 +149,26 @@ describe('the billing page', () => {
     const admin = await loginAs(agent(), user.email);
     const page = await admin.get('/billing');
     expect(page.status).toBe(200);
-    expect(page.body).toMatchObject({ plan: 'standard', invoiced: true });
+    expect(page.body).toMatchObject({ plan: 'standard', planLabel: 'Standard', invoiced: true });
     expect(page.body.running.ROBOT).toBe(1);
+    // The Organization page names the plan in words too.
+    expect((await admin.get('/admin/tenant/profile')).body.facts).toMatchObject({ planLabel: 'Standard' });
     expect((await admin.put('/billing/prices').send({ plan: 'standard', type: 'ROBOT', unitPriceCents: 1, effectiveFrom: '2026-01-01' })).status).toBe(404);
 
     const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
     const f = await loginAs(agent(), fin.email);
-    expect((await f.get('/billing')).body.plan).toBe('internal');
+    expect((await f.get('/billing')).body).toMatchObject({ plan: 'internal', planLabel: 'Internal' });
+  });
+
+  it('never names the internal plan to a customer, and keeps "AI" in capitals on an invoice line', async () => {
+    const { user } = await hotelTenant();
+    await prisma.tenant.update({ where: { id: T2 }, data: { plan: 'internal' } });
+    await prisma.billingInvoice.create({ data: { tenantId: T2, month: '2026-09', plan: 'standard', lines: [{ type: 'AGENT', quantity: 1, unitPriceCents: null }, { type: 'PERSON', quantity: 3, unitPriceCents: null }], totalCents: 0, status: 'DRAFT' } });
+    const admin = await loginAs(agent(), user.email);
+    const page = await admin.get('/billing');
+    expect(page.body).toMatchObject({ planLabel: 'Not invoiced', invoiced: false });
+    expect(page.body.invoices[0].lines.map((l: { label: string }) => l.label)).toEqual(['1 AI agent', '3 people']);
+    expect((await admin.get('/admin/tenant/profile')).body.facts.planLabel).toBe('Not invoiced');
   });
 });
 

@@ -58,7 +58,7 @@ export function WeeklyStandardsPlot({
           labelFormatter={(v) => `Week of ${String(v)}`}
           formatter={(value, name) =>
             name === 'sopPct'
-              ? [`${String(value)}%`, 'SOP completion']
+              ? [`${String(value)}%`, 'Checklist completion']
               : [String(value), 'Exceptions (incomplete + temp alerts)']
           }
         />

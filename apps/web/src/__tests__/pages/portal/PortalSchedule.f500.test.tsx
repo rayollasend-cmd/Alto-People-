@@ -73,11 +73,11 @@ function renderPage() {
 }
 
 describe('/portal/schedule (F500 G5)', () => {
-  it('is titled by page, leads with Request coverage, and says scheduled against contracted hours', async () => {
+  it('is titled by page, leads with Make a request (one name for one action), and says scheduled against contracted hours', async () => {
     renderPage();
     expect(await screen.findByRole('heading', { level: 1, name: 'Schedule' })).toBeInTheDocument();
     expect(await screen.findByText(/^Front Beach 218 · Week of /)).toBeInTheDocument();
-    const req = screen.getByRole('link', { name: /Request coverage/ });
+    const req = screen.getByRole('link', { name: /Make a request/ });
     const params = new URLSearchParams(req.getAttribute('href')!.split('?')[1]);
     expect(params.get('new')).toBe('STAFFING');
     expect(params.get('subject')).toMatch(/^Coverage for the week of /);

@@ -36,7 +36,10 @@ export interface ProviderConnection {
   health: ProviderHealth;
   lastSuccessAt: string | null;
   lastErrorAt: string | null;
+  /** The last failure as one plain sentence (what stopped, what to do). */
   lastError: string | null;
+  /** The provider's own words behind it (status codes…), for a details disclosure; absent from an older API. */
+  lastErrorDetail?: string | null;
   lastTestAt: string | null;
   lastTestOk: boolean | null;
   credentialsSet: Record<string, boolean>;
@@ -70,7 +73,7 @@ export const createProviderConnection = (body: { kind: ProviderKind; provider: s
   apiFetch<{ connection: ProviderConnection; webhookSecret: string | null }>('/provider-connections', { method: 'POST', body });
 export const patchProviderConnection = (id: string, body: Partial<{ name: string; environment: 'SANDBOX' | 'PRODUCTION'; active: boolean; credentials: Record<string, string>; settings: Record<string, unknown> }>) =>
   apiFetch<{ connection: ProviderConnection }>(`/provider-connections/${id}`, { method: 'PATCH', body });
-export const testProviderConnection = (id: string) => apiFetch<{ ok: boolean; message: string | null; connection: ProviderConnection }>(`/provider-connections/${id}/test`, { method: 'POST' });
+export const testProviderConnection = (id: string) => apiFetch<{ ok: boolean; message: string | null; detail?: string | null; connection: ProviderConnection }>(`/provider-connections/${id}/test`, { method: 'POST' });
 export const rotateProviderSecret = (id: string) => apiFetch<{ webhookSecret: string }>(`/provider-connections/${id}/rotate-secret`, { method: 'POST' });
 export const deleteProviderConnection = (id: string) => apiFetch<void>(`/provider-connections/${id}`, { method: 'DELETE' });
 export const providerEvents = (id: string) => apiFetch<{ events: ProviderEventRow[] }>(`/provider-connections/${id}/events?limit=30`);

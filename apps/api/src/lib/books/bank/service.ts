@@ -27,6 +27,7 @@ import { csvToTransactions, detectCsvMapping, isOfx, parseCsv, parseOfx, type Pa
 import { clientFor, itemToken, plaidRef, requirePlaid, splitPlaidRef, storeItemToken, withPlaidHealth, plaidConnection } from './plaid.js';
 import { contextFor } from '../../providers/connections.js';
 import { recordClientPayment, undoClientPayment, type RecordPaymentInput } from '../posting/receivables.js';
+import { fmtDay } from '../../humanDates.js';
 
 /**
  * The books' bank and card accounts (lib/books/bank). A feed account sits
@@ -1111,10 +1112,10 @@ export async function startReconciliation(db: Db, feedId: string, input: { state
   const feed = await feedOr404(db, feedId);
   const tenantId = tenantIdForWrite();
   const open = await db.bankReconciliation.findFirst({ where: { tenantId, feedAccountId: feed.id, status: 'IN_PROGRESS' } });
-  if (open) throw new HttpError(409, 'reconciliation_in_progress', `A reconciliation through ${ymd(open.statementEndDate)} is already open — finish or reopen that one.`, { reconciliationId: open.id });
+  if (open) throw new HttpError(409, 'reconciliation_in_progress', `A reconciliation through ${fmtDay(open.statementEndDate, { year: true })} is already open — finish or reopen that one.`, { reconciliationId: open.id });
   const last = await db.bankReconciliation.findFirst({ where: { tenantId, feedAccountId: feed.id, status: 'COMPLETED' }, orderBy: { statementEndDate: 'desc' } });
   if (last && ymd(last.statementEndDate) >= input.statementEndDate) {
-    throw new HttpError(400, 'statement_too_early', `This account is reconciled through ${ymd(last.statementEndDate)}; pick a later statement.`);
+    throw new HttpError(400, 'statement_too_early', `This account is reconciled through ${fmtDay(last.statementEndDate, { year: true })}; pick a later statement.`);
   }
   const rec = await db.bankReconciliation.create({
     data: {

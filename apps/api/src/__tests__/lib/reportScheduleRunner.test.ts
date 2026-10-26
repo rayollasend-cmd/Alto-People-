@@ -136,7 +136,7 @@ describe('runDueReportSchedules', () => {
     expect(sent).toHaveLength(2);
     for (const n of sent) {
       expect(n.status).toBe('SENT');
-      expect(n.subject).toBe('[Report] Roster — 2026-08-01');
+      expect(n.subject).toBe('[Report] Roster — Aug 1, 2026');
       expect(n.sentAt?.getTime()).toBe(NOW.getTime());
     }
     expect(sent.map((n) => n.recipientEmail)).toContain(

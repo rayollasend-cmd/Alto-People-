@@ -23,6 +23,8 @@ import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Card, CardContent } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -418,9 +420,13 @@ export function AssociateScheduleView() {
       <ListTemplate
         title={t('sched.title')}
         subtitle={t('sched.subtitle')}
+        // A worker reads at 16px on a phone (helper lines at 14px).
+        className="max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm"
+        // One labelled secondary, in view on a phone too: two set-up jobs
+        // folded into a lone "··· More" that stood where a primary goes.
+        // Adding the shifts to a calendar sits with the view switcher.
         actions={[
           { key: 'availability', label: t('sched.availAction'), icon: Clock, onSelect: () => setSheet('availability') },
-          { key: 'calendar', label: t('sched.calAction'), icon: CalendarPlus, onSelect: () => setSheet('calendar') },
         ]}
       >
 
@@ -434,57 +440,11 @@ export function AssociateScheduleView() {
         </div>
       )}
 
-      {/* The answer FIRST: the next shift as a hero, before any controls. */}
-      {loaded && !isEmpty && next && (
-        // The home's live shift card: late (amber) when the shift has
-        // started and there's no punch — this said "Happening now" in green
-        // to someone who hadn't clocked in.
-        <MyShiftHero
-          active={activeQuery.data}
-          shifts={shifts ?? []}
-          openShiftCount={null}
-          estRate={estRate}
-          onAcknowledged={markAcknowledged}
-          showScheduleLink={false}
-        />
-      )}
-
-      {/* No next shift: the hero's place says so, with the two ways to get
-          one — pick up an open shift, or be told when one fits. */}
-      {loaded && !unlinked && !error && upcomingCount === 0 && (
-        <NoNextShift openCount={openShiftCount} />
-      )}
-
+      {/* The view switcher sits above the schedule it switches (it was below
+          the empty state), with the one-line summary of what's ahead. */}
       {loaded && !isEmpty && (
-        <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-          {/* One human sentence where the three-cell stat console stood —
-              what's ahead, this week's hours, and the 40h flag folded in. */}
-          {upcomingCount === 0 ? (
-            // The hero above already says it; the views still switch.
-            <span />
-          ) : (
-            <p className="text-sm text-silver tabular-nums">
-              {upcomingCount === 1
-                ? t('sched.summaryAheadOne')
-                : t('sched.summaryAhead', { count: upcomingCount })}
-              {' · '}
-              {t('sched.summaryThisWeek', {
-                hours: fmtHours(thisWeekMinutes / 60),
-              })}
-              {nextWeekMinutes > 0 && (
-                <>
-                  {' · '}
-                  {t('sched.summaryNextWeek', {
-                    hours: fmtHours(nextWeekMinutes / 60),
-                  })}
-                </>
-              )}
-              {(thisWeekMinutes > 40 * 60 || nextWeekMinutes > 40 * 60) && (
-                <span className="text-alert"> · {t('sched.over40')}</span>
-              )}
-            </p>
-          )}
-          <div className="flex items-center gap-2 flex-wrap justify-end">
+        <div className="mb-4 flex items-center justify-between gap-3 flex-wrap" data-testid="schedule-toolbar">
+          <div className="flex items-center gap-2 flex-wrap">
             <SegmentedControl<ScheduleViewMode>
               ariaLabel={t('sched.viewAria')}
               options={[
@@ -508,8 +468,58 @@ export function AssociateScheduleView() {
                   width where there's room. */}
               <span className="hidden sm:inline">{t('sched.refresh')}</span>
             </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSheet('calendar')} aria-label={t('sched.calAction')}>
+              <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">{t('sched.calAction')}</span>
+            </Button>
           </div>
+          {/* One human sentence where the three-cell stat console stood —
+              what's ahead, this week's hours, and the 40h flag folded in.
+              With nothing ahead the empty state below says so. */}
+          {upcomingCount > 0 && (
+            <p className="text-sm text-silver tabular-nums">
+              {upcomingCount === 1
+                ? t('sched.summaryAheadOne')
+                : t('sched.summaryAhead', { count: upcomingCount })}
+              {' · '}
+              {t('sched.summaryThisWeek', {
+                hours: fmtHours(thisWeekMinutes / 60),
+              })}
+              {nextWeekMinutes > 0 && (
+                <>
+                  {' · '}
+                  {t('sched.summaryNextWeek', {
+                    hours: fmtHours(nextWeekMinutes / 60),
+                  })}
+                </>
+              )}
+              {(thisWeekMinutes > 40 * 60 || nextWeekMinutes > 40 * 60) && (
+                <span className="text-alert"> · {t('sched.over40')}</span>
+              )}
+            </p>
+          )}
         </div>
+      )}
+
+      {/* The answer first: the next shift as a hero, right under the switcher. */}
+      {loaded && !isEmpty && next && (
+        // The home's live shift card: late (amber) when the shift has
+        // started and there's no punch — this said "Happening now" in green
+        // to someone who hadn't clocked in.
+        <MyShiftHero
+          active={activeQuery.data}
+          shifts={shifts ?? []}
+          openShiftCount={null}
+          estRate={estRate}
+          onAcknowledged={markAcknowledged}
+          showScheduleLink={false}
+        />
+      )}
+
+      {/* No next shift: the hero's place says so, with the two ways to get
+          one — pick up an open shift, or be told when one fits. */}
+      {loaded && !unlinked && !error && upcomingCount === 0 && (
+        <NoNextShift openCount={openShiftCount} />
       )}
 
       {error && (
@@ -534,18 +544,24 @@ export function AssociateScheduleView() {
       )}
 
       {loaded && !unlinked && availabilityEmpty && (
-        <div
-          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3"
-          data-testid="availability-prompt"
-        >
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-ink">{t('sched.setAvailTitle')}</div>
-            <div className="text-xs text-silver">{t('sched.setAvailDesc')}</div>
-          </div>
-          <Button size="sm" onClick={() => setSheet('availability')}>
-            {t('sched.setAvailCta')}
-          </Button>
-        </div>
+        // The kit's card and a standard button (it was a brown gold-tinted
+        // strip with a small one). Gold only when the empty state above
+        // isn't already offering open shifts to pick up.
+        <Card className="mb-4" data-testid="availability-prompt">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-ink">{t('sched.setAvailTitle')}</div>
+              <div className="text-xs text-silver">{t('sched.setAvailDesc')}</div>
+            </div>
+            <Button
+              variant={upcomingCount === 0 && (openShiftCount ?? 0) > 0 ? 'secondary' : 'primary'}
+              onClick={() => setSheet('availability')}
+            >
+              <Clock className="h-4 w-4" aria-hidden="true" />
+              {t('sched.setAvailCta')}
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
       {isEmpty && unlinked && (
@@ -1097,7 +1113,7 @@ function useNotifyMe() {
   return { state, notify };
 }
 
-function NotifyMeButton({ variant = 'outline' }: { variant?: 'outline' | 'secondary' }) {
+function NotifyMeButton({ variant = 'outline', size = 'sm' }: { variant?: 'outline' | 'secondary'; size?: 'sm' | 'md' }) {
   const { t } = useI18n();
   const { state, notify } = useNotifyMe();
   return state === 'on' ? (
@@ -1106,7 +1122,7 @@ function NotifyMeButton({ variant = 'outline' }: { variant?: 'outline' | 'second
       {t('sched.notifyOn')}
     </span>
   ) : (
-    <Button size="sm" variant={variant} onClick={notify} loading={state === 'busy'} disabled={state === 'busy'}>
+    <Button size={size} variant={variant} onClick={notify} loading={state === 'busy'} disabled={state === 'busy'}>
       <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
       {t('sched.notifyMe')}
     </Button>
@@ -1121,36 +1137,27 @@ function NotifyMeButton({ variant = 'outline' }: { variant?: 'outline' | 'second
 function NoNextShift({ openCount }: { openCount: number | null }) {
   const { t } = useI18n();
   const hasOpen = (openCount ?? 0) > 0;
+  // The kit's empty state, like every other worker page (it was a card
+  // with a left icon, a sixth pattern).
   return (
-    <section
-      className="mb-4 rounded-lg border border-navy-secondary bg-navy-secondary/30 p-4"
-      data-testid="no-next-shift"
-      aria-labelledby="no-next-shift-title"
-    >
-      <div className="flex items-start gap-3">
-        <CalendarDays className="mt-0.5 h-5 w-5 shrink-0 text-gold" aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <h2 id="no-next-shift-title" className="text-base font-medium text-ink">
-            {t('sched.noNextTitle')}
-          </h2>
-          <p className="mt-0.5 text-sm text-silver">
-            {hasOpen ? t('sched.noNextOpen', { count: openCount ?? 0 }) : t('sched.noNextDesc')}
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+    <div className="mb-4" data-testid="no-next-shift">
+      <EmptyState
+        icon={CalendarDays}
+        title={t('sched.noNextTitle')}
+        description={hasOpen ? t('sched.noNextOpen', { count: openCount ?? 0 }) : t('sched.noNextDesc')}
+        action={
+          <div className="flex flex-wrap items-center justify-center gap-2">
             {hasOpen && (
-              <Button
-                size="sm"
-                onClick={() => document.getElementById('open-shifts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-              >
-                <HandHelping className="h-3.5 w-3.5" aria-hidden="true" />
+              <Button onClick={() => document.getElementById('open-shifts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                <HandHelping className="h-4 w-4" aria-hidden="true" />
                 {t('sched.pickUpOpen')}
               </Button>
             )}
-            <NotifyMeButton variant={hasOpen ? 'outline' : 'secondary'} />
+            <NotifyMeButton size="md" variant="secondary" />
           </div>
-        </div>
-      </div>
-    </section>
+        }
+      />
+    </div>
   );
 }
 

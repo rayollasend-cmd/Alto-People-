@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient, OpsPeriod, OpsResponseType } from '@prisma/client';
-import { RETIRED_V1_NAMES, WALMART_METRIC_LABEL, WALMART_TEMPLATES } from './opsSopsWalmart.js';
+import { RETIRED_V1_NAMES, WALMART_FORMER_NAMES, WALMART_METRIC_LABEL, WALMART_TEMPLATES } from './opsSopsWalmart.js';
 import { tenantIdForWrite } from './tenant.js';
 
 /**
@@ -284,6 +284,16 @@ function createTemplate(db: Db, tpl: SeedTemplate) {
 }
 
 const WALMART_NAMES = WALMART_TEMPLATES.map((tpl) => tpl.name);
+/**
+ * Names that prove the Walmart manual is installed. Without its hours a
+ * Walmart name can equal a first-generation one ("Frozen & Dairy —
+ * Morning"), so only the names the first library never used count — those,
+ * and the manual's former names (with hours) a library seeded earlier holds.
+ */
+const WALMART_MARKERS = [
+  ...WALMART_NAMES.filter((n) => !(n in RETIRED_V1_NAMES)),
+  ...Object.keys(WALMART_FORMER_NAMES),
+];
 
 /**
  * Idempotent lazy seed: inserts the library when it's empty, and brings a
@@ -292,9 +302,10 @@ const WALMART_NAMES = WALMART_TEMPLATES.map((tpl) => tpl.name);
  * must not seed twice.
  */
 export async function ensureOpsSeed(prisma: PrismaClient): Promise<void> {
-  const [total, walmart] = await Promise.all([
+  const [total, walmart, formerNames] = await Promise.all([
     prisma.opsSopTemplate.count(),
-    prisma.opsSopTemplate.count({ where: { name: { in: WALMART_NAMES } } }),
+    prisma.opsSopTemplate.count({ where: { name: { in: WALMART_MARKERS } } }),
+    prisma.opsSopTemplate.count({ where: { name: { in: Object.keys(WALMART_FORMER_NAMES) } } }),
   ]);
   if (total === 0 || walmart === 0) {
     await prisma.$transaction(
@@ -309,6 +320,13 @@ export async function ensureOpsSeed(prisma: PrismaClient): Promise<void> {
       { timeout: 60_000 },
     );
   }
+  // A library seeded with the hours in its names ("… — Evening (2–11 PM)")
+  // takes the plain ones once; the store's shift windows say the hours.
+  if (formerNames > 0) {
+    for (const [from, to] of Object.entries(WALMART_FORMER_NAMES)) {
+      await prisma.opsSopTemplate.updateMany({ where: { name: from }, data: { name: to } });
+    }
+  }
   await ensureOpsEnrichment(prisma);
 }
 
@@ -320,14 +338,15 @@ export async function ensureOpsSeed(prisma: PrismaClient): Promise<void> {
  * Walmart SOP exists, even a retired one: an admin who retired it meant it.
  */
 async function ensureWalmartLibrary(tx: Prisma.TransactionClient): Promise<void> {
-  if ((await tx.opsSopTemplate.count({ where: { name: { in: WALMART_NAMES } } })) > 0) return;
+  if ((await tx.opsSopTemplate.count({ where: { name: { in: WALMART_MARKERS } } })) > 0) return;
   const successor = new Map<string, string>();
   for (const tpl of WALMART_TEMPLATES) {
     const row = await createTemplate(tx, tpl);
     successor.set(`${tpl.department}|${tpl.period}`, row.id);
   }
   const old = await tx.opsSopTemplate.findMany({
-    where: { name: { in: Object.keys(RETIRED_V1_NAMES) }, retiredAt: null },
+    // Not the manual's own checklists, which can share a first-generation name.
+    where: { name: { in: Object.keys(RETIRED_V1_NAMES) }, retiredAt: null, id: { notIn: [...successor.values()] } },
     select: { id: true, name: true },
   });
   for (const o of old) {

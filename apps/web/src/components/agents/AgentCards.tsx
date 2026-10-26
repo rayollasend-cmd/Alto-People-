@@ -47,15 +47,19 @@ function AgentCard({ agent: a }: { agent: AgentSummary }) {
       <div className="flex items-start gap-3">
         <AgentGlyph family={a.profile.family} status={a.status} />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
+          {/* The badge keeps the top-right corner on every card; a long name
+              wraps under itself (two lines at most) instead of pushing the
+              badge onto a line of its own (F500 2026-10-26). */}
+          <div className="flex items-start justify-between gap-2">
             <Link
               to={`/agents/${a.id}`}
               aria-label={`Open ${a.name}`}
-              className="truncate font-medium text-ink after:absolute after:inset-0 after:rounded-lg after:content-[''] group-hover:text-accent focus:outline-none"
+              title={a.name}
+              className="line-clamp-2 min-w-0 font-medium text-ink after:absolute after:inset-0 after:rounded-lg after:content-[''] group-hover:text-accent focus:outline-none"
             >
               {a.name}
             </Link>
-            <Badge variant={STATUS_VARIANT[a.status]} size="sm">
+            <Badge variant={STATUS_VARIANT[a.status]} size="sm" className="mt-0.5 shrink-0">
               {WORKER_STATUS_LABELS[a.status]}
             </Badge>
           </div>

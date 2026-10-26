@@ -5,6 +5,7 @@ import { TENANT_SCOPED_MODELS, resetTenantObservations, tenancyMode, tenantObser
 import { BUSINESS_MODELS, TENANT_MODULES, TENANT_MODULE_LABEL, TERM_KEYS, defaultModulesFor, defaultTerminologyFor } from '@alto-people/shared';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile, setTenantProfile } from '../lib/tenantProfile.js';
+import { planLabel } from '../lib/billing.js';
 import { workStatusCounts } from '../lib/peopleStatus.js';
 
 /**
@@ -55,6 +56,8 @@ tenancyRouter.get('/admin/tenant/profile', requireCapability('view:hr-admin'), a
     facts: {
       name: tenant?.name ?? null,
       plan: tenant?.plan ?? null,
+      // The plan in words ("Internal" for the operator's own account, "Not invoiced" elsewhere): never a plan code.
+      planLabel: tenant ? planLabel(tenant.plan, tenantId) : null,
       createdAt: tenant?.createdAt.toISOString() ?? null,
       onTheBooks: people.onTheBooks,
       sites,

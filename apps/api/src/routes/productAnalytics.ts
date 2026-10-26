@@ -1,6 +1,9 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import { PLATFORM_OPERATOR_TENANT_ID } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
+import { HttpError } from '../middleware/error.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import {
   addHistograms,
   emptyHistogram,
@@ -9,7 +12,7 @@ import {
   WEB_VITAL_METRICS,
   type WebVitalMetric,
 } from '../lib/webVitals.js';
-import { computeReliability } from '../lib/reliability.js';
+import { computeReliability, isLongLivedRoute } from '../lib/reliability.js';
 import { productEventsReport } from '../lib/productEvents.js';
 
 export const productAnalyticsRouter = Router();
@@ -32,6 +35,21 @@ export const productAnalyticsRouter = Router();
  * the query string — an unbounded `days` is how a dashboard becomes an
  * outage.
  */
+
+/**
+ * The platform's own telemetry — every organization's traffic, sign-ins
+ * and errors folded together — so it is the platform operator's alone. A
+ * customer's HR admin holds view:product-analytics through their role,
+ * and for them these routes do not exist (404, like the other
+ * operator-only surfaces: compliance evidence, the support inbox).
+ */
+export function platformOperatorOnly(_req: Request, _res: Response, next: NextFunction): void {
+  if (tenantIdForWrite() !== PLATFORM_OPERATOR_TENANT_ID) {
+    next(new HttpError(404, 'not_found', 'Not found.'));
+    return;
+  }
+  next();
+}
 
 const VIEW = requireCapability('view:product-analytics');
 // Same gate; a separate name so the route above reads as what it is.
@@ -60,7 +78,7 @@ function parseDays(raw: unknown): number {
  * kiosk punch success, ride completion, and restarts. Capped at 90 days —
  * it is a health page, not a history page.
  */
-productAnalyticsRouter.get('/reliability', VIEW_RELIABILITY, async (req, res, next) => {
+productAnalyticsRouter.get('/reliability', VIEW_RELIABILITY, platformOperatorOnly, async (req, res, next) => {
   try {
     const days = Math.min(parseDaysWithDefault(req.query.days, 7), 90);
     res.json(await computeReliability(days));
@@ -85,7 +103,7 @@ const dayKey = (d: Date) => d.toISOString().slice(0, 10);
  * queries — the shape people usually get wrong when they compute a
  * trailing window per point.
  */
-productAnalyticsRouter.get('/active-users', VIEW, async (req, res, next) => {
+productAnalyticsRouter.get('/active-users', VIEW, platformOperatorOnly, async (req, res, next) => {
   try {
     const days = parseDays(req.query.days);
     const from = windowStart(days);
@@ -138,7 +156,7 @@ productAnalyticsRouter.get('/active-users', VIEW, async (req, res, next) => {
  *
  * Requests and error rates per day, from the route rollup.
  */
-productAnalyticsRouter.get('/traffic', VIEW, async (req, res, next) => {
+productAnalyticsRouter.get('/traffic', VIEW, platformOperatorOnly, async (req, res, next) => {
   try {
     const days = parseDays(req.query.days);
     const from = windowStart(days);
@@ -181,7 +199,7 @@ productAnalyticsRouter.get('/traffic', VIEW, async (req, res, next) => {
  * What the product is actually used for, busiest first, and the routes
  * failing most often. Keys are Express patterns — no entity ids.
  */
-productAnalyticsRouter.get('/routes', VIEW, async (req, res, next) => {
+productAnalyticsRouter.get('/routes', VIEW, platformOperatorOnly, async (req, res, next) => {
   try {
     const days = parseDays(req.query.days);
     const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
@@ -209,7 +227,9 @@ productAnalyticsRouter.get('/routes', VIEW, async (req, res, next) => {
     });
 
     res.json({
-      busiest: [...shaped].sort((a, b) => b.requests - a.requests).slice(0, limit),
+      // The event stream is a connection held open for a whole visit; its
+      // "average time" is the visit's length, so it stays out of the table.
+      busiest: shaped.filter((r) => !isLongLivedRoute(r.method, r.route)).sort((a, b) => b.requests - a.requests).slice(0, limit),
       // Needs a floor: one 500 out of one call is a 100% error rate and
       // tells nobody anything.
       failing: shaped
@@ -229,7 +249,7 @@ productAnalyticsRouter.get('/routes', VIEW, async (req, res, next) => {
  * many ever signed in, and who has gone quiet. The last one is the number
  * that usually starts a conversation.
  */
-productAnalyticsRouter.get('/adoption', VIEW, async (req, res, next) => {
+productAnalyticsRouter.get('/adoption', VIEW, platformOperatorOnly, async (req, res, next) => {
   try {
     const days = parseDays(req.query.days);
     const from = windowStart(days);
@@ -306,7 +326,7 @@ productAnalyticsRouter.get('/adoption', VIEW, async (req, res, next) => {
  * page costs the same whether the window holds a hundred samples or a
  * million.
  */
-productAnalyticsRouter.get('/web-vitals', VIEW, async (req, res, next) => {
+productAnalyticsRouter.get('/web-vitals', VIEW, platformOperatorOnly, async (req, res, next) => {
   try {
     const days = parseDays(req.query.days);
     const limit = Math.min(Math.max(Number(req.query.limit) || 15, 1), 100);
@@ -384,7 +404,7 @@ productAnalyticsRouter.get('/web-vitals', VIEW, async (req, res, next) => {
  * sign-in to the first decision, decisions per session by role, and palette
  * searches that ended on a settings page. Served from the daily rollup.
  */
-productAnalyticsRouter.get('/product-events', VIEW, async (req, res, next) => {
+productAnalyticsRouter.get('/product-events', VIEW, platformOperatorOnly, async (req, res, next) => {
   try {
     res.json(await productEventsReport(parseDays(req.query.days)));
   } catch (err) {

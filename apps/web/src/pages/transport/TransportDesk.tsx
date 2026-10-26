@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useConfirm, usePrompt } from '@/lib/confirm';
-import { fmtDate, fmtDateTime, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtDateTime, fmtMoney, fmtRelativeDayTz, fmtTimeTz, localInputToUtcIso, ymdLocal } from '@/lib/format';
 import { useChargesRange } from '@/lib/transportRange';
 import {
   ackSos,
@@ -40,6 +40,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { DateField } from '@/components/ui/DateField';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { Select } from '@/components/ui/Select';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -92,7 +93,7 @@ export function TransportNeedsYou() {
               className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-navy-secondary/40 coarse:min-h-11"
             >
               <span
-                className={cn('h-2 w-2 shrink-0 rounded-full', i.tone === 'alert' ? 'bg-alert' : i.tone === 'warning' ? 'bg-warning' : 'bg-gold')}
+                className={cn('h-2 w-2 shrink-0 rounded-full', i.tone === 'alert' ? 'bg-alert' : i.tone === 'warning' ? 'bg-warning' : 'bg-info')}
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1 truncate text-sm text-ink">{i.label}</span>
@@ -175,15 +176,15 @@ function CredentialChip({ d, onAdd }: { d: DeskDriver; onAdd?: () => void }) {
   // without one is refused at dispatch.
   if (!tracked) {
     return onAdd ? (
-      <Button size="xs" variant="outline" onClick={onAdd} aria-label={`Add ${d.name}'s licence`}>
+      <Button size="xs" variant="outline" onClick={onAdd} aria-label={`Add ${d.name}'s license`}>
         <IdCard className="h-3 w-3" />
-        Add licence
+        Add license
       </Button>
     ) : (
-      <Badge size="sm" variant="pending">No licence on file</Badge>
+      <Badge size="sm" variant="pending">No license on file</Badge>
     );
   }
-  if (lapsed) return <Badge size="sm" variant="destructive">Licence lapsed</Badge>;
+  if (lapsed) return <Badge size="sm" variant="destructive">License lapsed</Badge>;
   if (!d.credentials.ok) return <Badge size="sm" variant="pending">Missing a document</Badge>;
   if (d.credentials.dueSoon.length > 0) return <Badge size="sm" variant="pending">Renew soon</Badge>;
   return <Badge size="sm" variant="success">Current</Badge>;
@@ -215,7 +216,7 @@ export function DriversTab({ manage }: { manage: boolean }) {
           icon={CalendarClock}
           trailing={
             <div className="flex items-center gap-2">
-              <Input size="sm" type="date" aria-label="Day" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className="w-40" />
+              <DateField size="sm" aria-label="Day" value={date} clearable={false} onChange={(v) => v && setDate(v)} />
               {manage && (
                 <Button size="sm" onClick={() => setAdding(true)}>
                   <Plus className="h-3.5 w-3.5" />
@@ -279,7 +280,7 @@ export function DriversTab({ manage }: { manage: boolean }) {
                         {d.today.length > 0 ? ` · on shift ${d.today.map((s) => `${fmtTimeTz(s.startsAt, tz)}–${fmtTimeTz(s.endsAt, tz)}`).join(', ')}` : ''}
                       </div>
                       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                        <dt className="text-silver">Licence</dt>
+                        <dt className="text-silver">License</dt>
                         <dd className="text-ink">
                           {d.profile.licenceClass ? `Class ${d.profile.licenceClass} · ` : ''}
                           {d.profile.licenceState ? `${d.profile.licenceState} · ` : ''}
@@ -318,7 +319,7 @@ export function DriversTab({ manage }: { manage: boolean }) {
           </div>
         )}
         <p className="text-xs text-silver">
-          A lapsed licence or DOT card refuses dispatch and drops the driver from Plan runs. Dates also land on the person’s credentials, so the expirations desk sees them.
+          A lapsed license or DOT card refuses dispatch and drops the driver from Plan runs. Dates also land on the person’s credentials, so the expirations desk sees them.
         </p>
       </section>
       {editing && <DriverProfileDialog driver={editing} onClose={() => setEditing(null)} />}
@@ -372,13 +373,13 @@ function DriverProfileDialog({ driver, onClose }: { driver: DeskDriver; onClose:
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{driver.name}</DialogTitle>
-          <DialogDescription>Licence, DOT medical card, safety training and the last MVR pull. A lapsed licence, card or training refuses dispatch; an MVR older than a year is flagged.</DialogDescription>
+          <DialogDescription>License, DOT medical card, safety training and the last MVR pull. A lapsed license, card or training refuses dispatch; an MVR older than a year is flagged.</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Licence number">{(p) => <Input {...p} value={f.licenceNumber} maxLength={40} onChange={(e) => setF({ ...f, licenceNumber: e.target.value })} />}</Field>
+          <Field label="License number">{(p) => <Input {...p} value={f.licenceNumber} maxLength={40} onChange={(e) => setF({ ...f, licenceNumber: e.target.value })} />}</Field>
           <Field label="State">{(p) => <Input {...p} value={f.licenceState} maxLength={2} onChange={(e) => setF({ ...f, licenceState: e.target.value.toUpperCase() })} placeholder="FL" />}</Field>
           <Field label="Class">{(p) => <Input {...p} value={f.licenceClass} maxLength={10} onChange={(e) => setF({ ...f, licenceClass: e.target.value })} placeholder="E" />}</Field>
-          <Field label="Licence expires">{(p) => <Input {...p} type="date" value={f.licenceExpiresAt} onChange={(e) => setF({ ...f, licenceExpiresAt: e.target.value })} />}</Field>
+          <Field label="License expires">{(p) => <Input {...p} type="date" value={f.licenceExpiresAt} onChange={(e) => setF({ ...f, licenceExpiresAt: e.target.value })} />}</Field>
           <label className="col-span-2 flex items-center gap-2 text-sm text-ink coarse:min-h-11">
             <input type="checkbox" className="h-4 w-4 coarse:h-6 coarse:w-6" checked={f.dotMedicalRequired} onChange={(e) => setF({ ...f, dotMedicalRequired: e.target.checked })} />
             Needs a DOT medical card (vans seating 9–15 for pay, or as the state requires)
@@ -595,7 +596,7 @@ export function VanRecordDrawer({ vanId, manage, onClose }: { vanId: string; man
             )}
             <section aria-label="Papers" className="space-y-2">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-silver">Papers & odometer</h3>
+                <h3 className="text-sm font-medium text-ink">Papers & odometer</h3>
                 {manage && !edit && (
                   <Button
                     size="xs"
@@ -656,7 +657,7 @@ export function VanRecordDrawer({ vanId, manage, onClose }: { vanId: string; man
 
             <section aria-label="Service log" className="space-y-2">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-silver">Service log</h3>
+                <h3 className="text-sm font-medium text-ink">Service log</h3>
                 {manage && !svc && (
                   <Button size="xs" variant="ghost" onClick={() => setSvc({ kind: 'FUEL', occurredAt: ymdLocal(), cost: '', odometer: '', vendor: '' })}>
                     <Plus className="h-3.5 w-3.5" />
@@ -718,7 +719,7 @@ export function VanRecordDrawer({ vanId, manage, onClose }: { vanId: string; man
             </section>
 
             <section aria-label="Pre-trip checks" className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-silver">Pre-trip checks</h3>
+              <h3 className="text-sm font-medium text-ink">Pre-trip checks</h3>
               {q.data!.checks.length === 0 ? (
                 <EmptyState icon={Check} title="No pre-trip checks" description="Drivers walk around the van before each run; every check lands here." />
               ) : (
@@ -747,7 +748,7 @@ export function VanRecordDrawer({ vanId, manage, onClose }: { vanId: string; man
 
             {q.data!.incidents.length > 0 && (
               <section aria-label="Incidents" className="space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-silver">Incidents</h3>
+                <h3 className="text-sm font-medium text-ink">Incidents</h3>
                 <ul className="space-y-2">
                   {q.data!.incidents.map((i) => (
                     <li key={i.id} className="rounded-md border border-navy-secondary p-2.5 text-sm">
@@ -954,7 +955,7 @@ export function FeedbackSection() {
           </div>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div>
-              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-silver">By driver — lowest first</h3>
+              <h3 className="mb-1 text-sm font-medium text-ink">By driver — lowest first</h3>
               <ul className="divide-y divide-navy-secondary/60 rounded-lg border border-navy-secondary">
                 {q.data.byDriver.map((d) => (
                   <li key={d.userId} className="flex items-center gap-3 px-3 py-2 text-sm">
@@ -969,7 +970,7 @@ export function FeedbackSection() {
               </ul>
             </div>
             <div>
-              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-silver">By route — lowest first</h3>
+              <h3 className="mb-1 text-sm font-medium text-ink">By route — lowest first</h3>
               <ul className="divide-y divide-navy-secondary/60 rounded-lg border border-navy-secondary">
                 {q.data.byRoute.map((r) => (
                   <li key={`${r.locationId}-${r.direction}`} className="flex items-center gap-3 px-3 py-2 text-sm">
@@ -985,7 +986,7 @@ export function FeedbackSection() {
           </div>
           {q.data.notes.length > 0 && (
             <div>
-              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-silver">What riders wrote</h3>
+              <h3 className="mb-1 text-sm font-medium text-ink">What riders wrote</h3>
               <ul className="space-y-1.5">
                 {q.data.notes.slice(0, 10).map((n, i) => (
                   <li key={i} className="flex gap-2 text-sm">
@@ -1008,20 +1009,14 @@ export function FeedbackSection() {
 
 export function CostsSection() {
   // Transport walk 13: the same range as the charges table above, from the URL.
-  const { from, to, setFrom, setTo } = useChargesRange();
+  // One range for the tab: it is picked once, above the charges — a second
+  // pair of date boxes here set the very same dates.
+  const { from, to } = useChargesRange();
   const q = useQuery({ queryKey: ['transport', 'costs', from, to], queryFn: () => getTransportCosts(from, to) });
   const t = q.data?.totals;
   return (
     <section aria-label="Cost per seat" className="space-y-3">
-      <SectionTitle
-        title="Cost per seat, by client"
-        trailing={
-          <div className="flex items-center gap-2">
-            <Input size="sm" type="date" aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36 coarse:w-44" />
-            <Input size="sm" type="date" aria-label="To" value={to} onChange={(e) => setTo(e.target.value)} className="w-36 coarse:w-44" />
-          </div>
-        }
-      />
+      <SectionTitle title="Cost per seat, by client" description={`${fmtDateOnlyRange(from, to)} · the dates chosen above`} />
       {q.isError ? (
         <QueryError what="the costs" query={q} />
       ) : !q.data ? (

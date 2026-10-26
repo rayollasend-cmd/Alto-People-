@@ -24,6 +24,7 @@ import { downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
+import { DateField } from '@/components/ui/DateField';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
@@ -158,7 +159,7 @@ export function PortalToday() {
   if (needsStore) {
     return (
       <ListTemplate
-        className="mx-auto max-w-5xl space-y-4"
+        className="space-y-4"
         title={t('portal.todayNav')}
         topbarTitle={t('portal.todayNav')}
         breadcrumbs={[{ label: t('region.title'), to: '/region' }, { label: t('portal.todayNav') }]}
@@ -198,7 +199,7 @@ export function PortalToday() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className={cn('mx-auto max-w-5xl space-y-4 print-area', switching && 'opacity-70 transition-opacity')}
+        className={cn('space-y-4 print-area', switching && 'opacity-70 transition-opacity')}
         title={dayLabel}
         topbarTitle={t('portal.todayNav')}
         subtitle={
@@ -210,7 +211,7 @@ export function PortalToday() {
         }
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
-        breadcrumbs={[{ label: isFloorLead ? t('floor.title') : isRegion ? t('region.title') : t('portal.title'), to: homeTo }, { label: t('portal.todayNav') }]}
+        breadcrumbs={[{ label: isFloorLead ? t('floor.title') : isRegion ? t('region.title') : t('portal.homeCrumb'), to: homeTo }, { label: t('portal.todayNav') }]}
         // One action list (PageHeader): on a phone everything sits behind one
         // "More" sheet; the row of Service report, CSV, Print and Full schedule
         // ran off a 390px screen (F500 G5).
@@ -269,16 +270,14 @@ export function PortalToday() {
           >
             {t('portal.yesterday')}
           </Button>
-          <label className="ml-1 flex min-w-0 flex-1 items-center gap-1.5 text-xs text-silver/70 sm:flex-none">
-            <span className="sr-only">{t('portal.pickDate')}</span>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => e.target.value && goDay(e.target.value)}
-              className="h-8 w-full min-w-0 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-11 coarse:text-base sm:w-auto"
-              aria-label={t('portal.pickDate')}
-            />
-          </label>
+          <DateField
+            size="sm"
+            clearable={false}
+            value={date}
+            onChange={(v) => v && goDay(v)}
+            className="ml-1 min-w-0 flex-1 sm:flex-none"
+            aria-label={t('portal.pickDate')}
+          />
         </div>
         <Button
           size="sm"
@@ -352,7 +351,7 @@ export function PortalToday() {
                           ['subject', t('portal.coverageFor', { date: fmtDate(parseYmd(date)) })],
                         ]).toString()}`}
                       >
-                        {t('portal.requestStaff')}
+                        {t('portal.reqNew')}
                       </Link>
                     </Button>
                   )}

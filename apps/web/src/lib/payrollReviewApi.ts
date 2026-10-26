@@ -72,6 +72,9 @@ export interface PayrollReviewReport {
     storedGross?: number;
     /** The net stored on the run; with totalsAgree, the check against its paychecks (apps/api/src/lib/payrollRunTotals.ts). */
     storedNet?: number;
+    /** Taxes withheld and employer taxes as stored on the run (the run record's header). */
+    storedTax?: number;
+    storedEmployerTax?: number;
     totalsAgree?: boolean;
   };
   totals: {

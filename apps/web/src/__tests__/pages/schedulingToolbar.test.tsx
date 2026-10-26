@@ -79,15 +79,17 @@ describe('<SchedulingToolbar>', () => {
       />,
     );
     const btn = screen.getByRole('button', { name: 'Edit filters' });
-    expect(btn.parentElement).toBe(screen.getByTestId('scheduling-toolbar'));
+    // Outside the chips' scroller: in the toolbar's own group of controls, not inside the chips.
+    expect(btn.closest('[data-testid="scheduling-toolbar"]')).toBe(screen.getByTestId('scheduling-toolbar'));
+    expect(btn.parentElement!.className).not.toMatch(/overflow-x-auto/);
     expect(btn.className).toMatch(/whitespace-nowrap/);
     expect(btn.className).toMatch(/shrink-0/);
   });
 
   it('kpiLine reads as one line, with upcoming and unfilled apart, and the forecast beside the hours', () => {
-    expect(kpiLine(kpis, null)).toBe('18% filled · 4 open · 5 unfilled · 77h · $1.1k');
-    expect(kpiLine(kpis, 66)).toBe('18% filled · 4 open · 5 unfilled · 77h scheduled · 66h forecast · $1.1k');
+    expect(kpiLine(kpis, null)).toBe('18% filled · 4 open · 5 unfilled · 77.0h · $1,100');
+    expect(kpiLine(kpis, 66)).toBe('18% filled · 4 open · 5 unfilled · 77.0h scheduled · 66.0h forecast · $1,100');
     // A client-bound role never sees the dollars.
-    expect(kpiLine({ ...kpis, projectedLaborCost: null, wentUnfilled: 0 }, null)).toBe('18% filled · 4 open · 77h');
+    expect(kpiLine({ ...kpis, projectedLaborCost: null, wentUnfilled: 0 }, null)).toBe('18% filled · 4 open · 77.0h');
   });
 });

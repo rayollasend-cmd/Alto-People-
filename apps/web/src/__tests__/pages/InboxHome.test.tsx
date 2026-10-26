@@ -223,7 +223,8 @@ describe('InboxHome', () => {
         ],
       } satisfies InboxResponse);
       renderPage();
-      expect(await screen.findByTestId('inbox-due')).toHaveTextContent('Jan 31, 2026');
+      // Its own day (Jan 31, never Jan 30); the year only when it is not this one.
+      expect(await screen.findByTestId('inbox-due')).toHaveTextContent(/Jan 31(, 2026)?$/);
     } finally {
       process.env.TZ = tz;
     }

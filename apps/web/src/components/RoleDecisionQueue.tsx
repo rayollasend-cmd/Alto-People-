@@ -64,6 +64,8 @@ interface RoleDecision {
   note: string | null;
   escalated: boolean;
   nextStep: { text: string; ownerName: string | null; dueDay: string | null } | null;
+  /** Set when the label already says "was due … · N days overdue" / "due … · in N days" — no second age chip then. */
+  dueDay?: string | null;
 }
 
 interface Colleague {
@@ -90,13 +92,26 @@ function ageTone(ageDays: number | null): string {
   return 'text-silver/60';
 }
 
+/** The age chip, in words ("waiting 8 days") — or nothing when the label already carries the deadline and its distance. */
+export function ageChip(d: { ageDays: number | null; dueDay?: string | null }): number | null {
+  if (d.dueDay) return null;
+  return d.ageDays !== null && d.ageDays > 0 ? d.ageDays : null;
+}
+
 export function RoleDecisionQueue({
   title: titleProp,
   hideWhenEmpty = false,
   scopeLabel,
   excludeKeyPrefix,
   footer,
+  footerRows,
 }: {
+  /**
+   * The footer's rows by urgency, so the one-line summary counts every row
+   * the section lists — the home's "Needs you 9" over "7 critical · 1
+   * routine" (8) used to leave its ninth row out.
+   */
+  footerRows?: { urgent: number; soon: number; later: number };
   /**
    * The page's own "needs you" rows (a home's counted cards), drawn inside
    * the queue's card under its rows — one list, not a card grid beside it.
@@ -303,9 +318,11 @@ export function RoleDecisionQueue({
   const focus = rows && rows.length > 0 ? rows[Math.min(focusIdx, rows.length - 1)] : null;
   const rest = rows ? rows.filter((_, i) => i !== Math.min(focusIdx, rows.length - 1)) : [];
   const visibleRest = showAll ? rest : rest.slice(0, 3);
-  const nCritical = (rows ?? []).filter((d) => d.severity === 'critical').length;
-  const nHigh = (rows ?? []).filter((d) => d.severity === 'high').length;
-  const nNormal = (rows ?? []).filter((d) => d.severity === 'normal').length;
+  // The summary counts every row listed here, the footer's too (plain words:
+  // urgent, due soon, can wait — not "critical / routine").
+  const nCritical = (rows ?? []).filter((d) => d.severity === 'critical').length + (footer ? (footerRows?.urgent ?? 0) : 0);
+  const nHigh = (rows ?? []).filter((d) => d.severity === 'high').length + (footer ? (footerRows?.soon ?? 0) : 0);
+  const nNormal = (rows ?? []).filter((d) => d.severity === 'normal').length + (footer ? (footerRows?.later ?? 0) : 0);
   const totalStakes = (rows ?? []).reduce((n, d) => n + (d.stakes ?? 0), 0);
   const roomItem = rows?.find((d) => d.key === roomKey) ?? null;
 
@@ -368,8 +385,8 @@ export function RoleDecisionQueue({
                   {t('rdq.atStake', { amount: fmtMoney(focus.stakes) })}
                 </span>
               )}
-              {focus.ageDays !== null && focus.ageDays > 0 && (
-                <span className={ageTone(focus.ageDays)}>{t('rdq.waitingDays', { n: focus.ageDays })}</span>
+              {ageChip(focus) !== null && (
+                <span className={ageTone(focus.ageDays)}>{t('rdq.waitingDays', { count: ageChip(focus)! })}</span>
               )}
               {focus.escalated && <span className="text-warning">{t('rdq.escalatedTag')}</span>}
               {focus.claimedBy && (
@@ -387,8 +404,11 @@ export function RoleDecisionQueue({
               </div>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              {/* Secondary, not gold: the home has its own one primary (Clock in,
+                  the hero's action) — one gold button per screen. */}
               <Button
                 size="sm"
+                variant="secondary"
                 loading={busyKey?.startsWith(focus.key) ?? false}
                 disabled={busyKey !== null}
                 onClick={primaryFor(focus).run}
@@ -463,8 +483,8 @@ export function RoleDecisionQueue({
                   <span className="flex w-full items-center justify-end gap-2 pl-[18px] sm:w-auto sm:pl-0">
                   <span className="flex shrink-0 items-center gap-2 text-2xs tabular-nums">
                     {d.stakes !== null && <span className="text-silver">{fmtMoney(d.stakes)}</span>}
-                    {d.ageDays !== null && d.ageDays > 0 && (
-                      <span className={ageTone(d.ageDays)}>{t('rdq.ageDays', { n: d.ageDays })}</span>
+                    {ageChip(d) !== null && (
+                      <span className={ageTone(d.ageDays)}>{t('rdq.waitingDays', { count: ageChip(d)! })}</span>
                     )}
                     {d.claimedBy && (
                       <Avatar
@@ -486,7 +506,7 @@ export function RoleDecisionQueue({
                   )}
                   <Button
                     size="xs"
-                    variant={d.quickAction && !(d.claimedBy && !d.claimedByMe) ? 'primary' : 'ghost'}
+                    variant={d.quickAction && !(d.claimedBy && !d.claimedByMe) ? 'secondary' : 'ghost'}
                     className="shrink-0"
                     loading={busyKey?.startsWith(d.key) ?? false}
                     disabled={busyKey !== null}
@@ -506,7 +526,7 @@ export function RoleDecisionQueue({
             className="mt-2 min-h-6 w-full text-center text-2xs text-silver/70 hover:text-gold"
             onClick={() => setShowAll((s) => !s)}
           >
-            {showAll ? t('rdq.showLess') : t('rdq.showAll', { n: rows?.length ?? 0 })}
+            {showAll ? t('rdq.showLess') : t('rdq.showMore', { count: rest.length - 3 })}
           </button>
         )}
         {footer && <div className="mt-3 border-t border-line pt-3">{footer}</div>}

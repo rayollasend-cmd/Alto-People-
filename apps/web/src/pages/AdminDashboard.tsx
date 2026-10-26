@@ -436,6 +436,12 @@ function NeedsYou({
         title={null}
         hideWhenEmpty={total > 0 || loading}
         footer={total > 0 ? <ActionRows items={items} /> : undefined}
+        // Its summary line counts these rows too, so it adds up to the number above.
+        footerRows={{
+          urgent: items.filter((i) => i.severity === 'urgent').length,
+          soon: items.filter((i) => i.severity === 'attention').length,
+          later: items.filter((i) => i.severity === 'info').length,
+        }}
       />
       {loading && (
         <Card aria-busy="true">
@@ -576,13 +582,10 @@ function KpiSection({
   );
 }
 
-/** Attach a deltaLabel only when the API sent that series. */
-function withLabel(
-  trend: KpiTrend | undefined,
-  deltaLabel: string,
-): Kpi['trend'] {
-  // The API's last bucket is this week so far.
-  return trend ? { ...trend, deltaLabel, lastIsPartial: true } : undefined;
+/** New applications this week, from the weekly series (the API's last bucket is this week so far). */
+function newAppsThisWeek(k: DashboardKPIs): number {
+  const series = k.trends?.applications?.series ?? [];
+  return series.length > 0 ? (series[series.length - 1] ?? 0) : 0;
 }
 
 function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => string): Kpi[] {
@@ -648,8 +651,12 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
       // ACTIVE = the in-flight working set the tile counts — beats a
       // persisted "Archived" chip from a previous visit.
       to: linkTo('/onboarding?status=ACTIVE', 'view:onboarding'),
-      // Series is new applications per week.
-      trend: withLabel(k.trends?.applications, 'new vs last wk'),
+      // No trend line: the weekly series the API has is NEW applications, not
+      // the in-flight count — "↑10 new vs last wk" under "2" measured
+      // something else (F500 2026-10-26). New this week is said in words.
+      ...(newAppsThisWeek(k) > 0
+        ? { hint: `${newAppsThisWeek(k)} started this week · ${k.pendingI9Section2 > 0 ? `${k.pendingI9Section2} I-9 Section 2 pending` : 'I-9s up to date'}` }
+        : {}),
     });
   }
   // Money tiles (net paid + pending disbursement) only for payroll-capable
@@ -689,23 +696,23 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
 /* =========================== Onboarding funnel =========================== */
 
 const PIPELINE_ORDER = ['DRAFT', 'SUBMITTED', 'IN_REVIEW', 'APPROVED', 'REJECTED'] as const;
-const PIPELINE_LABEL: Record<(typeof PIPELINE_ORDER)[number], string> = {
-  DRAFT: 'Draft',
-  SUBMITTED: 'Submitted',
-  IN_REVIEW: 'In review',
-  APPROVED: 'Approved',
-  REJECTED: 'Rejected',
-};
-const PIPELINE_TONE: Record<(typeof PIPELINE_ORDER)[number], string> = {
-  DRAFT: 'text-silver',
-  SUBMITTED: 'text-warning',
-  IN_REVIEW: 'text-warning',
-  APPROVED: 'text-success',
-  REJECTED: 'text-alert',
-};
-/** A stage's colour: only a non-zero count wears one ("Rejected 0" in red read as a problem). */
-const pipelineTone = (status: (typeof PIPELINE_ORDER)[number], count: number): string =>
-  count === 0 ? 'text-silver' : PIPELINE_TONE[status];
+/**
+ * The pipeline in the Onboarding page's own words (F500 2026-10-26: the home
+ * said "Approved 18" where the list calls the same 18 "Archived"): Draft, To
+ * review (submitted + in review, the Inbox's count), Archived (approved and
+ * rejected, said beneath). Each opens the list on that chip.
+ */
+type FunnelStage = { key: 'DRAFT' | 'TO_REVIEW' | 'ARCHIVED'; label: string; count: number; sub?: string; bar: string };
+function funnelStages(counts: Partial<Record<(typeof PIPELINE_ORDER)[number], number>>): FunnelStage[] {
+  const n = (k: (typeof PIPELINE_ORDER)[number]) => counts[k] ?? 0;
+  const approved = n('APPROVED');
+  const rejected = n('REJECTED');
+  return [
+    { key: 'DRAFT', label: 'Draft', count: n('DRAFT'), bar: 'bg-steel/70' },
+    { key: 'TO_REVIEW', label: 'To review', count: n('SUBMITTED') + n('IN_REVIEW'), bar: 'bg-warning/70' },
+    { key: 'ARCHIVED', label: 'Archived', count: approved + rejected, sub: `${approved} approved · ${rejected} rejected`, bar: 'bg-success/60' },
+  ];
+}
 
 function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
   const { t } = useI18n();
@@ -768,55 +775,25 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
       </div>
       <Card>
         <CardContent className="py-5">
-          {/* Two rows on a phone (three stages, then two), one row from md. */}
-          <div className="grid grid-cols-6 md:grid-cols-5 gap-4">
-            {PIPELINE_ORDER.map((status, i) => {
-              const count = counts[status] ?? 0;
-              const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+          <div className="grid grid-cols-3 gap-4">
+            {funnelStages(counts).map((stage) => {
+              const pct = total > 0 ? Math.round((stage.count / total) * 100) : 0;
               return (
                 <Link
-                  key={status}
-                  // APPROVED/REJECTED aren't standalone filters in the list —
-                  // they live under the "Archived" view; the in-flight states
-                  // map straight through.
-                  to={`/onboarding?status=${
-                    status === 'APPROVED' || status === 'REJECTED'
-                      ? 'ARCHIVED'
-                      : status
-                  }`}
-                  className={cn(
-                    'min-w-0 block rounded-md -m-1 p-1 hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                    i < 3 ? 'col-span-2 md:col-span-1' : 'col-span-3 md:col-span-1',
-                  )}
-                  title={`View ${PIPELINE_LABEL[status].toLowerCase()} applications`}
+                  key={stage.key}
+                  to={`/onboarding?status=${stage.key}`}
+                  className="min-w-0 block rounded-md -m-1 p-1 hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                  title={`View ${stage.label.toLowerCase()} applications`}
                 >
-                  <div className="text-2xs uppercase tracking-widest text-silver">
-                    {PIPELINE_LABEL[status]}
-                  </div>
-                  <div
-                    className={cn(
-                      'font-display text-3xl mt-1 tabular-nums',
-                      pipelineTone(status, count),
-                    )}
-                  >
-                    {count}
-                  </div>
+                  <div className="text-2xs uppercase tracking-[0.18em] text-ink-muted">{stage.label}</div>
+                  {/* Counts are ink, in the sans (design system §3): the bar carries the stage. */}
+                  <div className="mt-1 text-2xl font-semibold tabular-nums text-ink">{stage.count}</div>
                   {/* Inline funnel bar — width relative to total. */}
                   <div className="mt-2 h-1.5 rounded-full bg-navy-secondary/60 overflow-hidden">
-                    <div
-                      className={cn(
-                        'h-full rounded-full',
-                        status === 'APPROVED'
-                          ? 'bg-success/70'
-                          : status === 'REJECTED'
-                            ? 'bg-alert/70'
-                            : 'bg-gold/70',
-                      )}
-                      style={{ width: `${pct}%` }}
-                    />
+                    <div className={cn('h-full rounded-full', stage.bar)} style={{ width: `${pct}%` }} />
                   </div>
-                  <div className="text-2xs text-silver/70 mt-1 tabular-nums">
-                    {pct}% of pipeline
+                  <div className="text-2xs text-ink-muted mt-1 tabular-nums">
+                    {stage.sub ?? `${pct}% of pipeline`}
                   </div>
                 </Link>
               );

@@ -193,6 +193,8 @@ describe('90-day retention', () => {
   it('by the source they came from and by who hired them', async () => {
     const { a, rec } = await setup();
     const { user: other } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    // A named account reads by its name; one with no name on file falls back to its address.
+    await prisma.user.update({ where: { id: other.id }, data: { displayName: 'Sam Rivera' } });
     const hire = async (source: string, hiredBy: string, separatedAfterDays: number | null, hiredDaysAgo = 200) => {
       const assoc = await createAssociate();
       const hireDate = ago(hiredDaysAgo);
@@ -220,7 +222,7 @@ describe('90-day retention', () => {
     ]);
     const byRec = Object.fromEntries(ret.byRecruiter.map((x: { key: string }) => [x.key, x]));
     expect(byRec[rec.id]).toMatchObject({ label: rec.email, hires: 2, stayedPct: 50 });
-    expect(byRec[other.id]).toMatchObject({ label: other.email, hires: 2, stayedPct: 100 });
+    expect(byRec[other.id]).toMatchObject({ label: 'Sam Rivera', hires: 2, stayedPct: 100 });
   });
 });
 

@@ -64,6 +64,20 @@ const KIND_KEY: Record<ReqKind, MessageKey> = {
   ISSUE: 'portal.reqKindIssue',
   BILLING: 'portal.reqKindBilling',
 };
+/** The badge: the kind in a word ("Staffing"), not the form's full option label. */
+const KIND_SHORT: Record<ReqKind, MessageKey> = {
+  STAFFING: 'portal.reqKindShortStaffing',
+  FEEDBACK: 'portal.reqKindShortFeedback',
+  ISSUE: 'portal.reqKindShortIssue',
+  BILLING: 'portal.reqKindShortBilling',
+};
+/** Who answers, in the client's words: the tenant's own team, never an internal desk name ("Workforce desk"). */
+const TEAM_KEY: Record<ReqKind, MessageKey> = {
+  STAFFING: 'portal.reqTeamStaffing',
+  FEEDBACK: 'portal.reqTeamHr',
+  ISSUE: 'portal.reqTeamHr',
+  BILLING: 'portal.reqTeamBilling',
+};
 const STATUS_KEY: Record<ReqStatus, MessageKey> = {
   RECEIVED: 'portal.reqReceived',
   IN_PROGRESS: 'portal.reqInProgress',
@@ -202,7 +216,8 @@ export function PortalRequests({
             className="mb-0"
             title={t('portal.reqTitle')}
             trailing={
-              <Button size="md" className="w-full sm:w-auto" onClick={() => setOpen(true)}>
+              // Secondary here: the page's one gold action is in its header (or its hero).
+              <Button size="md" variant="outline" className="w-full sm:w-auto" onClick={() => setOpen(true)}>
                 <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
                 {t('portal.reqNew')}
               </Button>
@@ -255,7 +270,7 @@ export function PortalRequests({
                     badges and collapsed to "T" on a phone (F500 G5). */}
                 <p className="line-clamp-2 break-words text-sm font-medium text-white">{r.subject}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  <Badge variant="outline">{t(KIND_KEY[r.kind])}</Badge>
+                  <Badge variant="outline">{t(KIND_SHORT[r.kind])}</Badge>
                   {/* The status always shows; a late reply is Alto's lateness, said as such. */}
                   <Badge variant={STATUS_VARIANT[r.status]}>{t(STATUS_KEY[r.status])}</Badge>
                   {r.overdue && r.dueAt && (
@@ -276,8 +291,8 @@ export function PortalRequests({
                   {fmtDate(r.createdAt)}
                   {' · '}
                   {r.owner
-                    ? t('portal.reqOwner', { name: r.owner, desk: r.desk })
-                    : t('portal.reqDesk', { desk: r.desk })}
+                    ? t('portal.reqOwner', { name: r.owner, desk: t(TEAM_KEY[r.kind]) })
+                    : t('portal.reqDesk', { desk: t(TEAM_KEY[r.kind]) })}
                   {r.status !== 'RESOLVED' && r.dueAt && (
                     <>
                       {' · '}
@@ -303,7 +318,7 @@ export function PortalRequests({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('portal.reqNew')}</DialogTitle>
-            <DialogDescription>{t('portal.reqDialogHint')}</DialogDescription>
+            <DialogDescription>{t('portal.reqHintTeam')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <Select

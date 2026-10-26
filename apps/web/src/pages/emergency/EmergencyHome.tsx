@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bus, CheckCircle2, LifeBuoy, MapPin, Phone, Siren, Users } from '@/components/ui/icons';
+import { AlertTriangle, Bus, CheckCircle2, History, LifeBuoy, MapPin, Phone, Siren, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type { EmergencyBoardRow, EmergencyDeclareInput, EmergencySiteRef, EmergencySummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -68,9 +68,16 @@ export function ReadinessStrip({ r }: { r: EmergencyReadiness }) {
   const missing = r.reach - r.withPhone;
   return (
     <section aria-labelledby="emergency-readiness" className="space-y-2">
-      <h2 id="emergency-readiness" className="text-sm font-medium text-ink">
-        If you declared for every site now
-      </h2>
+      <div>
+        <h2 id="emergency-readiness" className="text-sm font-medium text-ink">
+          If you declared for every site now
+        </h2>
+        {/* Who a declaration reaches is not the roster's "on the books":
+            say which people these numbers count (F500 audit — 40 here, 45 there). */}
+        <p className="text-xs text-ink-muted">
+          {r.reach === 1 ? '1 person' : `${r.reach} people`} would be told: everyone placed at a site or on a shift in the next two weeks.
+        </p>
+      </div>
       <MetricStrip label="Readiness">
         <MetricCard
           label="Reachable by text"
@@ -155,7 +162,12 @@ export function EmergencyHome() {
         </CardHeader>
         <CardContent className="overflow-x-auto">
           {past.length === 0 ? (
-            <EmptyState size="sm" title={"Nothing yet."} />
+            <EmptyState
+              size="sm"
+              icon={History}
+              title="No past emergencies"
+              description="Each declaration is recorded here once it ends, with its scope and check-ins."
+            />
           ) : (
             <DataGrid<EmergencySummary>
               id="emergency-history"

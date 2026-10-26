@@ -4,6 +4,7 @@ import { enqueueAudit } from './audit.js';
 import { notifyAssociate, notifyManager } from './notify.js';
 import { setRateCard, type RateCard } from './rateCards.js';
 import { issuePayNoticeInBackground } from './payNotices.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Every pay change on one path, with its own audit row. Finance reads
@@ -87,7 +88,7 @@ export async function applyPayRateChange(db: Db, change: PayRateChange): Promise
   const associate = await db.associate.findUnique({ where: { id: change.associateId }, select: { firstName: true, lastName: true } });
   void notifyAssociate(change.associateId, {
     subject: 'Your pay rate was updated',
-    body: `New rate effective ${effectiveDate}. Open your profile for details.`,
+    body: `New rate effective ${fmtDay(effectiveDate)}. Open your profile for details.`,
     category: 'compensation',
     linkUrl: '/me',
     emailFallback: true,
@@ -95,7 +96,7 @@ export async function applyPayRateChange(db: Db, change: PayRateChange): Promise
   if (associate) {
     void notifyManager(change.associateId, {
       subject: 'Pay rate updated on your team',
-      body: `${associate.firstName} ${associate.lastName} has a new rate effective ${effectiveDate}.`,
+      body: `${associate.firstName} ${associate.lastName} has a new rate effective ${fmtDay(effectiveDate)}.`,
       category: 'compensation',
       linkUrl: `/people?associateId=${change.associateId}`,
     });

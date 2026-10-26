@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { round2 } from './payroll.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Tier-1 — federal tax deposit accrual (Pub 15 §11).
@@ -118,7 +119,7 @@ export async function accrueDepositsForRun(
       create: {
         kind: 'FED_941',
         scheduleUsed: schedule,
-        periodLabel: `${payday.toISOString().slice(0, 10)} payday`,
+        periodLabel: `${fmtDay(payday)} payday`,
         payrollRunId: run.id,
         liabilityDate: payday,
         dueDate,

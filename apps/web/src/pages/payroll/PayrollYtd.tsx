@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Printer } from '@/components/ui/icons';
 import { getPayrollYtd, type PayrollYtdMonth, type PayrollYtdResponse } from '@/lib/payrollApi';
@@ -9,7 +10,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { QueryError } from '@/components/ui/QueryError';
 import { TaxYearSelect } from '@/components/ui/TaxYearSelect';
-import { fmtDateOnlyRange, fmtMoney, fmtMoneyCompact, fmtMonthShortYear } from '@/lib/format';
+import { fmtDateOnlyRange, fmtMoney, fmtMonthShortYear } from '@/lib/format';
 import { useTerm } from '@/lib/auth';
 import { urlNumber, useUrlState } from '@/lib/useUrlState';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -178,7 +179,7 @@ function MonthlyChart({ months, year }: { months: PayrollYtdMonth[]; year: numbe
             { key: 'tax', name: 'Taxes withheld' },
             { key: 'deductions', name: 'Other deductions' },
           ]}
-          format={fmtMoneyCompact}
+          format={fmtMoneyAxis}
           yLabel="Dollars"
         />
       </ChartFrame>

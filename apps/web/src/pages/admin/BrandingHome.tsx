@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImagePlus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
-  ASSISTANT_NAME_PROMPT,
   ASSISTANT_PLATFORM_NAME,
   HEX_COLOR_REGEX,
   ORG_LOGO_ALLOWED_TYPES,
@@ -59,6 +57,15 @@ function identityOf(b: OrgBranding): Identity {
  * Finance; the second-person rules on Approval rules; the workweek and the
  * company time zone on Organization.
  */
+/** "1 MB", "512 KB" — a size as a person says it (it read "1024 KB"). */
+export function fmtFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    const mb = bytes / (1024 * 1024);
+    return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
+  }
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
 export function BrandingHome() {
   const { can, refreshUser } = useAuth();
   const canManage = can('manage:org');
@@ -84,7 +91,7 @@ export function BrandingHome() {
   const onSave = async () => {
     if (!draft) return;
     if (!nameValid) return void toast.error("Enter your organization's name.");
-    if (!colorValid) return void toast.error('The colour is a #RRGGBB hex value.');
+    if (!colorValid) return void toast.error('The color is a #RRGGBB hex value.');
     if (!emailValid) return void toast.error('The support email is a bare address like info@example.com.');
     setSaving(true);
     try {
@@ -107,7 +114,7 @@ export function BrandingHome() {
   };
 
   const onUpload = async (file: File) => {
-    if (file.size > ORG_LOGO_MAX_BYTES) return void toast.error(`The logo is at most ${Math.round(ORG_LOGO_MAX_BYTES / 1024)} KB.`);
+    if (file.size > ORG_LOGO_MAX_BYTES) return void toast.error(`The logo is at most ${fmtFileSize(ORG_LOGO_MAX_BYTES)}.`);
     if (!ORG_LOGO_ALLOWED_TYPES.includes(file.type as never)) return void toast.error('The logo is a PNG, JPEG, WebP or SVG file.');
     setLogoBusy(true);
     try {
@@ -145,31 +152,12 @@ export function BrandingHome() {
     <div className="space-y-5">
       <PageHeader
         title="Branding"
-        subtitle="The name, sender, support address, colour and logo on every email, and what your team calls the assistant."
+        subtitle="The name, sender, support address, color and logo on every email, and what your team calls the assistant."
         related={[
           { label: 'Organization', to: '/admin/organization' },
           { label: 'Communications', to: '/admin/communications' },
         ]}
       />
-      <p className="text-sm text-ink-muted">
-        Looking for something that used to be here? Two-step sign-in is on{' '}
-        <Link to="/admin/sign-in" className="text-accent underline underline-offset-2">
-          Sign-in
-        </Link>
-        , the finance mailbox and remit-to on{' '}
-        <Link to="/admin/finance" className="text-accent underline underline-offset-2">
-          Finance
-        </Link>
-        , second-person rules on{' '}
-        <Link to="/admin/approvals" className="text-accent underline underline-offset-2">
-          Approval rules
-        </Link>
-        , and the workweek and time zone on{' '}
-        <Link to="/admin/organization" className="text-accent underline underline-offset-2">
-          Organization
-        </Link>
-        .
-      </p>
 
       {q.isError ? (
         <QueryError what="branding" query={q} />
@@ -187,8 +175,8 @@ export function BrandingHome() {
                   {(p) => <Input {...p} value={draft.orgName} onChange={(e) => set('orgName', e.target.value)} maxLength={120} placeholder="Your organization's name" disabled={off} />}
                 </Field>
                 <Field
-                  label={ASSISTANT_NAME_PROMPT}
-                  hint={`I'm the AI assistant in ${PRODUCT_NAME}. This is the name your team sees on WhatsApp and in every message I send; I always say I'm an AI assistant and who answers for me.`}
+                  label="Assistant’s name"
+                  hint={`What your team calls the AI assistant in ${PRODUCT_NAME}, on WhatsApp and in every message it sends. It always says it is an AI assistant and who answers for it.`}
                 >
                   {(p) => <Input {...p} value={draft.assistantName} onChange={(e) => set('assistantName', e.target.value)} maxLength={60} placeholder={ASSISTANT_PLATFORM_NAME} disabled={off} />}
                 </Field>
@@ -214,7 +202,7 @@ export function BrandingHome() {
                   )}
                 </Field>
                 <Field
-                  label="Primary colour"
+                  label="Primary color"
                   hint="The email header band and its button. A hex value: #RRGGBB."
                   error={touched.primaryColor && !colorValid ? `Use a hex value like ${DEFAULT_BRAND_PRIMARY}.` : undefined}
                 >
@@ -241,7 +229,7 @@ export function BrandingHome() {
               </div>
             </SettingsSection>
 
-            <SettingsSection title="Logo" description={`PNG, JPEG, WebP or SVG, up to ${Math.round(ORG_LOGO_MAX_BYTES / 1024)} KB. It shows even when the reader blocks images.`}>
+            <SettingsSection title="Logo" description={`PNG, JPEG, WebP or SVG, up to ${fmtFileSize(ORG_LOGO_MAX_BYTES)}. It shows even when the reader blocks images.`}>
               <div className="flex min-h-[140px] items-center justify-center rounded-lg border border-line bg-surface-raised/40 p-6">
                 {logoUrl ? <img src={logoUrl} alt="Current logo" className="max-h-24 max-w-full" /> : <div className="text-sm text-ink-muted">No logo on file.</div>}
               </div>

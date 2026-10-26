@@ -6,6 +6,7 @@ import { BookUser, Bot, Plus, Users } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import {
   WORK_STATUSES,
+  isOnTheBooks,
   WORKER_CAPABILITIES,
   WORKER_STATUS_LABELS,
   WORKER_TYPE_LABELS,
@@ -143,8 +144,13 @@ function Person({ name, email, photo, to }: { name: string; email?: string | nul
 
 const TYPE_KEYS = ['PERSON', 'AGENT', 'ROBOT', 'ALL'] as const satisfies readonly TypeFilter[];
 const GROUP_KEYS = ['store', 'client', 'type', 'none'] as const satisfies readonly GroupBy[];
-/** One `?status=` param: a person's work status on People, an account status on Agents / Robots / All. */
-const STATUS_KEYS: readonly string[] = [...new Set<string>([...WORK_STATUSES, ...STATUSES])];
+/**
+ * One `?status=` param: a person's work status on People, an account status on Agents / Robots / All.
+ * On People no status means "on the books" — the tile's number, so the tile and the list agree
+ * (they read 45 and 49: the list also held onboarding and separated people) — and ANY is everyone.
+ */
+const ANY_STATUS = 'ANY';
+const STATUS_KEYS: readonly string[] = [...new Set<string>([...WORK_STATUSES, ...STATUSES, ANY_STATUS])];
 
 /**
  * "0 working · 8 paused" — the part of "on the books" worth a glance, in the
@@ -193,7 +199,7 @@ export function WorkerTypesAdmin() {
     });
   const personView = typeFilter === 'PERSON';
   const statusFilter = personView
-    ? ((WORK_STATUSES as readonly string[]).includes(statusParam) ? (statusParam as WorkStatus) : '')
+    ? ((WORK_STATUSES as readonly string[]).includes(statusParam) || statusParam === ANY_STATUS ? (statusParam as WorkStatus | typeof ANY_STATUS) : '')
     : ((STATUSES as readonly string[]).includes(statusParam) ? (statusParam as WorkerStatus) : '');
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -222,8 +228,16 @@ export function WorkerTypesAdmin() {
     () =>
       (allRows ?? []).filter((w) => {
         if (typeFilter !== 'ALL' && w.type !== typeFilter) return false;
+        if (personView) {
+          if (statusFilter === ANY_STATUS) return true;
+          // The default: on the books (hired, not separated), as the tile counts —
+          // a person row with no standing (no person record behind it) is not.
+          // An older API without the field lists everyone.
+          if (!statusFilter) return w.workStatus === undefined || (isWorkStatus(w.workStatus) && isOnTheBooks(w.workStatus));
+          return w.workStatus === statusFilter;
+        }
         if (!statusFilter) return true;
-        return personView ? w.workStatus === statusFilter : w.status === statusFilter;
+        return w.status === statusFilter;
       }),
     [allRows, typeFilter, statusFilter, personView],
   );
@@ -375,7 +389,17 @@ export function WorkerTypesAdmin() {
               },
             } satisfies GridColumn<WorkerSummary>,
           ]),
-      { key: 'upcoming', header: 'Upcoming shifts', accessor: (w) => w.upcomingShifts, sortable: true, align: 'right', width: '9rem', className: 'tabular-nums' },
+      {
+        key: 'upcoming',
+        header: 'Upcoming shifts',
+        accessor: (w) => w.upcomingShifts,
+        sortable: true,
+        align: 'right',
+        width: '9rem',
+        className: 'tabular-nums',
+        // A zero is no news: quiet, so the people who do have shifts stand out.
+        cell: (w) => (w.upcomingShifts > 0 ? w.upcomingShifts : <span className="text-ink-muted">0</span>),
+      },
       // An agent's last seven days — only where agents are listed.
       ...(showsAgents && hasAgents
         ? [
@@ -552,12 +576,13 @@ export function WorkerTypesAdmin() {
             <label className="flex items-center gap-2 text-sm text-silver">
               <span className="sr-only">Status</span>
               <Select size="sm" value={statusFilter} onChange={(e) => setStatusParam(e.target.value)} aria-label="Status">
-                <option value="">Any status</option>
+                <option value="">{personView ? 'On the books' : 'Any status'}</option>
                 {statusOptions.map((s) => (
                   <option key={s.value} value={s.value}>
                     {s.label}
                   </option>
                 ))}
+                {personView && <option value={ANY_STATUS}>Everyone (with onboarding and separated)</option>}
               </Select>
             </label>
             <label className="flex items-center gap-2 text-sm text-silver">

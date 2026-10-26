@@ -70,6 +70,17 @@ describe('GET /product-analytics/active-users', () => {
     expect((await f.get('/product-analytics/active-users')).status).toBe(403);
   });
 
+  it("is the platform operator's alone: a customer tenant's HR admin finds nothing there", async () => {
+    const T2 = '55555555-5555-4555-8555-555555555555';
+    await prisma.tenant.create({ data: { id: T2, slug: 'acme-usage', name: 'Acme', plan: 'standard' } });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    await prisma.user.update({ where: { id: hr.id }, data: { tenantId: T2 } });
+    const a = await loginAs(hr.email);
+    for (const path of ['active-users', 'traffic', 'routes', 'adoption', 'web-vitals', 'product-events', 'reliability']) {
+      expect((await a.get(`/product-analytics/${path}`)).status, path).toBe(404);
+    }
+  });
+
   it('bounds the window itself rather than trusting the caller', async () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);

@@ -16,6 +16,7 @@ import { notifyUser } from './notify.js';
 import { osha300aLine, osha300aSummary } from './osha300a.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { toWaLang } from './whatsappContent.js';
+import { fmtDayInZone } from './humanDates.js';
 
 /**
  * The Compliance agent's `incident.loop` (agent families step 5;
@@ -160,7 +161,7 @@ export async function runIncidentLoop(db: Db = defaultPrisma, now: Date = new Da
         await notifyUser(u.id, {
           subject: `Safety incident open ${days} days: ${severityWords(i.severity)} at ${incidentWhere(i)}`,
           body: disclose!(
-            `${who(i)}, reported ${i.reportedAt.toISOString().slice(0, 10)}: ${i.description.slice(0, 200)}\n${closable(i, now) ? 'Nothing recordable here: close it if the reporter has nothing to add.' : 'Update it or resolve it on the OSHA page.'}\n${i.client.name}, ${lines.get(i.clientId)}`,
+            `${who(i)}, reported ${fmtDayInZone(i.reportedAt)}: ${i.description.slice(0, 200)}\n${closable(i, now) ? 'Nothing recordable here: close it if the reporter has nothing to add.' : 'Update it or resolve it on the OSHA page.'}\n${i.client.name}, ${lines.get(i.clientId)}`,
             toWaLang(u.language),
           ),
           category: CHASE_CATEGORY,

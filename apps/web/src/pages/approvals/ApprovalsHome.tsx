@@ -79,6 +79,8 @@ import { listMyProposals, MY_PROPOSALS_KEY } from '@/lib/agentProposalsApi';
 import { listApprovalRequests, MY_REQUESTS_KEY } from '@/lib/approvalRequestsApi';
 import { ApprovalRequestList } from '@/components/approvals/ApprovalRequestCard';
 import { DelegationDialog } from '@/components/approvals/DelegationDialog';
+import { useInbox } from '@/lib/inboxApi';
+import { INBOX_QUERY_KEY, inboxCountFor } from '@/lib/inboxCounts';
 import '@/lib/i18n/en/appr';
 import '@/lib/i18n/en/tabs';
 
@@ -334,7 +336,20 @@ export function ApprovalsHome() {
   // say "No decisions waiting — 6 timesheets to review" over a page whose only
   // work was those 6 decisions.
   const sheets = timesheetCount ?? 0;
-  const waiting = decisions + sheets;
+  // THE COUNT RULE (lib/inboxApi.ts): the header's "N waiting" is the page's
+  // inbox count — the same number as the Approvals badge in the sidebar and
+  // the phone's tab. The page's own lists are what it draws; when they and
+  // the inbox disagree (a decision just made here, a new request), the inbox
+  // is re-read so the badge catches up instead of the two drifting apart.
+  const inboxWaiting = inboxCountFor(useInbox().data, '/approvals');
+  const ownWaiting = decisions + sheets;
+  const waiting = inboxWaiting ?? ownWaiting;
+  const ownSettled = loaded && !anyError && !timesheetFailed && timesheetCount !== null;
+  useEffect(() => {
+    if (ownSettled && inboxWaiting !== null && inboxWaiting !== ownWaiting) {
+      void queryClient.invalidateQueries({ queryKey: INBOX_QUERY_KEY });
+    }
+  }, [ownSettled, ownWaiting, inboxWaiting, queryClient]);
   const subtitle = !loaded
     ? t('appr.subtitle')
     : waiting === 0
@@ -416,19 +431,19 @@ export function ApprovalsHome() {
   }, [picked, openCount, decisionsInFlight]);
 
   // What has work first, in desk order; still loading or failed next (a
-  // count nobody knows is not "clear"); the zeros fold into one row of
-  // chips under "All clear" (role walk HR 16, floor 7) — still named, still
-  // a tap away, no longer a wall of tiles above the one queue with work.
+  // count nobody knows is not "clear"); EVERY empty queue folds into one
+  // "N queues clear" line of chips (F500 2026-10-26: a full card with a big
+  // "0" beside folded ones read as two rules) — still named, still a tap
+  // away. The role's own queues lead the chips.
   const primary = primaryQueuesFor(role);
   const withWork = queues.filter((q) => typeof q.value === 'number' && q.value > 0);
   const unknown = queues.filter((q) => q.value === null || q.value === undefined);
-  // This role's own queues stay rows at zero (their state is news); the
-  // others' zeros fold behind one "N queues clear" line, as on the Inbox.
-  const primaryZero = queues.filter((q) => q.value === 0 && primary.includes(q.key));
-  const quiet = queues.filter((q) => q.value === 0 && !primary.includes(q.key));
+  const quiet = queues
+    .filter((q) => q.value === 0)
+    .sort((a, b) => Number(primary.includes(b.key)) - Number(primary.includes(a.key)));
   const queue = (
     <div className="space-y-3 animate-enter">
-      {[...withWork, ...unknown, ...primaryZero].map((q) =>
+      {[...withWork, ...unknown].map((q) =>
         q.key === 'timesheets' && timesheetFailed ? (
           <div key={q.key} className="rounded-lg border border-alert/40 bg-surface px-4 py-3">
             <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-ink-muted">{q.label}</div>
@@ -521,8 +536,8 @@ export function ApprovalsHome() {
           setFocusProposal(null);
           toast.info('That proposal is no longer waiting — it may already be decided.');
         }}
-        emptyTitle="No agent proposals waiting"
-        emptyDescription="When an agent proposes a shift fill, a case or another action that needs a person, it lands here with its reasons."
+        emptyTitle={t('appr.proposalsEmptyTitle')}
+        emptyDescription={t('appr.proposalsEmptyBody')}
       />
     ) : (
       <AdminUnconfirmedPanel

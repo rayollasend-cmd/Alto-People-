@@ -141,8 +141,10 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
   const seedStores: Array<{ id: string; clientId: string | null }> = [];
   // A site's type is set in Sites, a client's store included (its name and address edit through the client).
   const siteRoute = (s: { id: string }) => `/admin/sites/${s.id}`;
-  // What the walk creates, retired at the end so the shared dev database doesn't grow a new hotel each run.
-  const created: { regionId?: string; siteId?: string; associateId?: string } = {};
+  // What the walk creates, removed (or, where the API only retires, retired) at the end so the shared
+  // dev database doesn't grow a new hotel each run. Anything a killed run leaves behind, the demo
+  // refresh (npm -w apps/api run db:seed:refresh) deletes by its "Tess Member…" / "The Grand Hotel" names.
+  const created: { regionId?: string; siteId?: string; associateId?: string; applicationId?: string; shiftId?: string; templateId?: string } = {};
 
   // The rule's boundaries, proven before the walk: a word inside another is not a hit.
   expect(forbiddenHits('x', 'admin@altohr.com relevant advance restore')).toEqual([]);
@@ -180,6 +182,7 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
         tasks: [{ kind: 'PROFILE_INFO', title: 'Profile', order: 0 }],
       });
       templateId = made.id;
+      created.templateId = made.id;
     }
 
     // The hire: invited with no client, placed by the property, every checklist task skipped by HR, approved.
@@ -191,6 +194,7 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
       locationId: site.site.id,
       position: 'Housekeeper',
     });
+    created.applicationId = invite.id;
     const detail = await call<{ associateId: string; tasks: Array<{ id: string; status: string }> }>(api, 'GET', `/onboarding/applications/${invite.id}`);
     created.associateId = detail.associateId;
     for (const task of detail.tasks) {
@@ -202,13 +206,14 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
     // A shift at the property, no client named.
     const startsAt = new Date(Date.now() + 2 * 86_400_000);
     startsAt.setUTCHours(14, 0, 0, 0);
-    await call(api, 'POST', '/scheduling/shifts', {
+    const shift = await call<{ id?: string; shift?: { id: string } }>(api, 'POST', '/scheduling/shifts', {
       locationId: site.site.id,
       position: 'Housekeeper',
       startsAt: startsAt.toISOString(),
       endsAt: new Date(startsAt.getTime() + 8 * 3_600_000).toISOString(),
       status: 'OPEN',
     });
+    created.shiftId = shift?.shift?.id ?? shift?.id;
 
     const routes = [
       '/',
@@ -261,6 +266,9 @@ test('the hotel sees no client, bill rate, housing, van, store, associate or Alt
     await api.fetch('/api/admin/tenant/profile', { method: 'PUT', data: { businessModel: 'WORKFORCE_PROVIDER', resetToDefaults: true }, timeout: 30_000 });
     for (const s of seedStores) await api.fetch(`/api${siteRoute(s)}`, { method: 'PATCH', data: { type: 'STORE' }, timeout: 30_000 });
     await api.fetch('/api/admin/org/settings', { method: 'PATCH', data: { orgName: 'Alto HR' }, timeout: 30_000 });
+    // The open shift goes for good; the hire, its site and region are retired (the API keeps people's records).
+    if (created.shiftId) await api.fetch(`/api/scheduling/shifts/${created.shiftId}`, { method: 'DELETE', timeout: 30_000 });
+    if (created.templateId) await api.fetch(`/api/onboarding/templates/${created.templateId}`, { method: 'DELETE', timeout: 30_000 });
     if (created.associateId) await api.fetch(`/api/org/associates/${created.associateId}/deactivate`, { method: 'POST', data: { reason: 'Hotel journey test hire' }, timeout: 30_000 });
     if (created.siteId) await api.fetch(`/api/admin/sites/${created.siteId}`, { method: 'PATCH', data: { isActive: false }, timeout: 30_000 });
     if (created.regionId) await api.fetch(`/api/admin/org-units/${created.regionId}`, { method: 'PATCH', data: { isActive: false }, timeout: 30_000 });

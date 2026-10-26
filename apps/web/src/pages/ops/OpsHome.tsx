@@ -40,7 +40,7 @@ export function OpsHome() {
         canRun ? { key: 'shift', label: 'My shift' } : null,
         canStore ? { key: 'store', label: 'Store today' } : null,
         canBoard ? { key: 'board', label: 'Board' } : null,
-        canLibrary ? { key: 'library', label: 'SOP library' } : null,
+        canLibrary ? { key: 'library', label: 'Checklist library' } : null,
       ].filter((t): t is { key: string; label: string } => t !== null),
     [canRun, canStore, canBoard, canLibrary],
   );

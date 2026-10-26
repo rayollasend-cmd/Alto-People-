@@ -38,6 +38,16 @@ const WEEKS_SHOWN = 8;
 /** A p95 over fewer requests than this is noise, not a slow route. */
 const MIN_REQUESTS_FOR_SLOWEST = 20;
 
+/**
+ * Connections held open on purpose — the per-user event stream lives for
+ * as long as the tab does — so their "latency" is the length of a visit,
+ * not a slow answer. They stay in the request and error totals, and out
+ * of every speed ranking.
+ */
+const LONG_LIVED_ROUTES = new Set(['GET /events/stream']);
+export const isLongLivedRoute = (method: string, route: string): boolean => LONG_LIVED_ROUTES.has(`${method} ${route}`);
+const timed = (r: { method: string; route: string }) => !isLongLivedRoute(r.method, r.route);
+
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 const utcDay = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
 
@@ -158,7 +168,7 @@ export async function computeWeekFacts(db: Db, weekStart: Date, now: Date): Prom
     weekEnd,
     serverErrors: routes.reduce((s, r) => s + r.serverError, 0),
     requests: routes.reduce((s, r) => s + r.requests, 0),
-    busiest: [...routes].sort((a, b) => b.requests - a.requests).slice(0, 10),
+    busiest: routes.filter(timed).sort((a, b) => b.requests - a.requests).slice(0, 10),
     punchTotal: punches.total,
     punchAccepted: punches.accepted,
     rideTotal: rides.total,
@@ -293,9 +303,9 @@ export async function computeReliability(
       consecutiveWeeksUnderBudget: consecutiveWeeksUnderBudget(weeks),
     },
     routes: {
-      busiest: [...routes].sort((a, b) => b.requests - a.requests).slice(0, 10),
+      busiest: routes.filter(timed).sort((a, b) => b.requests - a.requests).slice(0, 10),
       slowest: routes
-        .filter((r) => r.requests >= MIN_REQUESTS_FOR_SLOWEST && r.p95Ms !== null)
+        .filter((r) => timed(r) && r.requests >= MIN_REQUESTS_FOR_SLOWEST && r.p95Ms !== null)
         .sort((a, b) => (b.p95Ms ?? 0) - (a.p95Ms ?? 0))
         .slice(0, 5),
     },

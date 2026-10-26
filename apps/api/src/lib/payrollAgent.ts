@@ -19,6 +19,7 @@ import { cardOn, loadRateCards } from './rateCards.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { moduleOn } from './tenantProfile.js';
 import { tenantJob } from './tenantJobs.js';
+import { fmtDay, fmtDayRange } from './humanDates.js';
 
 /**
  * The Payroll agent's `payroll.prep` (BEYOND).
@@ -170,7 +171,7 @@ async function rateSuggestions(db: Db, associateIds: string[], periodStart: Date
 const money = (v: number) => `$${v.toFixed(2)}`;
 
 function proposalText(item: PrepItem, run: { periodStart: Date; periodEnd: Date }): { summary: string; evidence: ProposalEvidence } {
-  const period = `${run.periodStart.toISOString().slice(0, 10)} to ${run.periodEnd.toISOString().slice(0, 10)}`;
+  const period = fmtDayRange(run.periodStart, run.periodEnd);
   const who = item.associateName ?? 'this payroll';
   const person = item.associateId && item.associateName ? [{ kind: 'person' as const, id: item.associateId, name: item.associateName }] : [];
   switch (item.action) {
@@ -187,7 +188,7 @@ function proposalText(item: PrepItem, run: { periodStart: Date; periodEnd: Date 
       };
     case 'SET_RATE':
       return {
-        summary: `Set ${who}'s hourly rate to ${money(item.rate!.amount)} from the ${item.rate!.position} rate card${item.rate!.clientName ? ` at ${item.rate!.clientName}` : ''}, from ${item.rate!.effectiveFrom}.`,
+        summary: `Set ${who}'s hourly rate to ${money(item.rate!.amount)} from the ${item.rate!.position} rate card${item.rate!.clientName ? ` at ${item.rate!.clientName}` : ''}, from ${fmtDay(item.rate!.effectiveFrom)}.`,
         evidence: {
           why: `${who} has no pay record, so the ${period} payroll would pay the default hourly rate. The rate card in force for ${item.rate!.position}${item.rate!.clientName ? ` at ${item.rate!.clientName}` : ''} — the role they worked most this period — pays ${money(item.rate!.amount)} an hour.`,
           alternatives: [

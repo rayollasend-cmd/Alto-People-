@@ -9,6 +9,8 @@ export const enTimeHome = {
   'timeHome.notClockedIn': 'Not clocked in',
   'timeHome.clockNotSetUp': 'Your clock is not set up yet',
   'timeHome.clockNotSetUpBody': 'Clocking in from the app needs your person record in People under this email: {email}. Ask HR to add it or fix the email; your clock appears here the next time you sign in.',
+  'timeHome.clockNotSetUpShort': 'Your own clock is not set up yet.',
+  'timeHome.setUpClock': 'Set up your clock-in',
 } as const;
 
 registerEnglish(enTimeHome);

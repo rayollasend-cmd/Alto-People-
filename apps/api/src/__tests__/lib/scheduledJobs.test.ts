@@ -106,4 +106,17 @@ describe('GET /admin/jobs', () => {
     await b.post('/auth/login').send({ email: assoc.email, password: DEFAULT_TEST_PASSWORD });
     expect((await b.get('/admin/jobs')).status).toBe(403);
   });
+
+  it("does not exist for a customer tenant's admin — the jobs are the platform's", async () => {
+    armJob({ name: 'demo', label: 'Demo job', intervalSeconds: 3600, immediate: false, run: () => undefined });
+    const T2 = '44444444-4444-4444-8444-444444444444';
+    await prisma.tenant.create({ data: { id: T2, slug: 'acme-jobs', name: 'Acme', plan: 'standard' } });
+    const { user: admin } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    await prisma.user.update({ where: { id: admin.id }, data: { tenantId: T2 } });
+    const a = request.agent(createApp());
+    expect((await a.post('/auth/login').send({ email: admin.email, password: DEFAULT_TEST_PASSWORD })).status).toBe(200);
+    expect((await a.get('/admin/jobs')).status).toBe(404);
+    expect((await a.post('/admin/jobs/demo/run')).status).toBe(404);
+    expect(listJobs().find((j) => j.name === 'demo')).toMatchObject({ runs: 0 });
+  });
 });

@@ -145,13 +145,13 @@ describe('/onboarding — the desk list', () => {
     expect(tile(/^Starting in 7 days/)).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('one primary and one beside it; Import and Export in More; siblings are the section strip', async () => {
+  it('the primary leads; Bulk invite, Import and Export in More; siblings are the section strip', async () => {
     list(<ApplicationsList />);
     await screen.findByText('Dana Draft');
     const row_ = screen.getByTestId('page-actions');
     expect(within(row_).getByRole('button', { name: /New application/ })).toBeInTheDocument();
-    expect(within(row_).getByRole('button', { name: /Bulk invite/ })).toBeInTheDocument();
-    expect(within(row_).queryByRole('button', { name: /Import CSV|Export CSV/ })).toBeNull();
+    // F500 2026-10-26: the primary sat between Bulk invite and More — now it leads, alone.
+    expect(within(row_).queryByRole('button', { name: /Bulk invite|Import CSV|Export CSV/ })).toBeNull();
     expect(within(row_).queryByRole('link', { name: /Analytics|Templates/ })).toBeNull();
     // The siblings are a section strip (checked before the menu opens — an
     // open menu hides the rest of the page from the accessibility tree).
@@ -161,6 +161,7 @@ describe('/onboarding — the desk list', () => {
     expect(within(sections).getByRole('link', { name: 'Analytics' })).toHaveAttribute('href', '/onboarding/analytics');
     await userEvent.click(within(row_).getByRole('button', { name: 'More actions' }));
     const menu = await screen.findByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: /Bulk invite/ })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: /Import CSV/ })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: /Export CSV/ })).toBeInTheDocument();
   });

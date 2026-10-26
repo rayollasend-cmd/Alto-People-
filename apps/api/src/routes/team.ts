@@ -21,6 +21,14 @@ import { runWithConcurrency } from '../lib/concurrency.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { teamNumbers, teamNumbersSummary } from '../lib/teamNumbers.js';
+import { fmtDay, fmtDayInZone, fmtDayRange } from '../lib/humanDates.js';
+
+/** A time-off category the way a sentence says it ("sick time", "PTO"); `title` capitalizes it for a list line. */
+const TIME_OFF_WORDS: Record<string, string> = { SICK: 'sick time', VACATION: 'vacation', PTO: 'PTO', BEREAVEMENT: 'bereavement', JURY_DUTY: 'jury duty', OTHER: 'time off' };
+const timeOffWords = (c: string, title = false) => {
+  const w = TIME_OFF_WORDS[c] ?? c.toLowerCase().replace(/_/g, ' ');
+  return title ? w[0]!.toUpperCase() + w.slice(1) : w;
+};
 
 /**
  * Phase 79 — Manager-scoped routes.
@@ -482,7 +490,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
       kind: 'TIMESHEET',
       associateId: t.associateId,
       associateName: `${t.associate.firstName} ${t.associate.lastName}`,
-      summary: `Shift on ${t.clockInAt.toISOString().slice(0, 10)}${anomalyNote}`,
+      summary: `Shift on ${fmtDayInZone(t.clockInAt, undefined, { weekday: true })}${anomalyNote}`,
       link: '/team?tab=timesheets',
       pendingSince: pending.toISOString(),
       ageDays: Math.floor((now - pending.getTime()) / dayMs),
@@ -494,7 +502,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
       kind: 'TIME_OFF',
       associateId: r.associateId,
       associateName: `${r.associate.firstName} ${r.associate.lastName}`,
-      summary: `${r.category} ${r.startDate.toISOString().slice(0, 10)} → ${r.endDate.toISOString().slice(0, 10)}`,
+      summary: `${timeOffWords(r.category, true)} · ${fmtDayRange(r.startDate, r.endDate)}`,
       link: '/team?tab=timeoff',
       pendingSince: r.createdAt.toISOString(),
       ageDays: Math.floor((now - r.createdAt.getTime()) / dayMs),
@@ -521,7 +529,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
       kind: 'GOAL_AT_RISK',
       associateId: g.associateId,
       associateName: `${g.associate.firstName} ${g.associate.lastName}`,
-      summary: `${g.title} (${g.progressPct}% · due ${g.periodEnd.toISOString().slice(0, 10)})`,
+      summary: `${g.title} (${g.progressPct}% · due ${fmtDay(g.periodEnd)})`,
       link: `/performance?goalId=${g.id}`,
       pendingSince: g.updatedAt.toISOString(),
       ageDays: Math.floor((now - g.updatedAt.getTime()) / dayMs),
@@ -656,7 +664,7 @@ teamRouter.post(
     });
     void notifyAssociate(updated.associateId, {
       subject: 'Your timesheet was approved',
-      body: `Your time entry for ${updated.clockInAt.toISOString().slice(0, 10)} was approved by your manager.`,
+      body: `Your time entry for ${fmtDayInZone(updated.clockInAt, undefined, { weekday: true })} was approved by your manager.`,
       category: 'team',
       // The entry on their timesheet — /me (their profile) shows no time.
       linkUrl: `/time-attendance?entry=${updated.id}`,
@@ -712,7 +720,7 @@ teamRouter.post(
     });
     void notifyAssociate(entry.associateId, {
       subject: 'Your timesheet was rejected',
-      body: `Your time entry for ${entry.clockInAt.toISOString().slice(0, 10)} was rejected. Reason: ${reason}`,
+      body: `Your time entry for ${fmtDayInZone(entry.clockInAt, undefined, { weekday: true })} was rejected. Reason: ${reason}`,
       category: 'team',
       linkUrl: `/time-attendance?entry=${entry.id}`,
       emailFallback: true,
@@ -795,7 +803,7 @@ teamRouter.post(
         });
         void notifyAssociate(updated.associateId, {
           subject: 'Your timesheet was approved',
-          body: `Your time entry for ${updated.clockInAt.toISOString().slice(0, 10)} was approved by your manager.`,
+          body: `Your time entry for ${fmtDayInZone(updated.clockInAt, undefined, { weekday: true })} was approved by your manager.`,
           category: 'team',
           linkUrl: `/time-attendance?entry=${updated.id}`,
           emailFallback: true,
@@ -884,8 +892,8 @@ teamRouter.post(
     void notifyAssociate(reqRow.associateId, {
       subject: 'Your time off was approved',
       body:
-        `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
-        `${reqRow.endDate.toISOString().slice(0, 10)}) was approved.` +
+        `Your ${timeOffWords(reqRow.category)} request (` +
+        `${fmtDayRange(reqRow.startDate, reqRow.endDate)}) was approved.` +
         (note ? ` Note: ${note}` : ''),
       category: 'team',
       linkUrl: '/time-off',
@@ -937,8 +945,8 @@ teamRouter.post(
         void notifyAssociate(reqRow.associateId, {
           subject: 'Your time off was approved',
           body:
-            `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
-            `${reqRow.endDate.toISOString().slice(0, 10)}) was approved.`,
+            `Your ${timeOffWords(reqRow.category)} request (` +
+            `${fmtDayRange(reqRow.startDate, reqRow.endDate)}) was approved.`,
           category: 'team',
           linkUrl: '/time-off',
           emailFallback: true,
@@ -1007,8 +1015,8 @@ teamRouter.post(
     void notifyAssociate(reqRow.associateId, {
       subject: 'Your time off was denied',
       body:
-        `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
-        `${reqRow.endDate.toISOString().slice(0, 10)}) was denied. Reason: ${note}`,
+        `Your ${timeOffWords(reqRow.category)} request (` +
+        `${fmtDayRange(reqRow.startDate, reqRow.endDate)}) was denied. Reason: ${note}`,
       category: 'team',
       linkUrl: '/time-off',
       emailFallback: true,

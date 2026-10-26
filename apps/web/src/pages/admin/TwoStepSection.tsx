@@ -11,6 +11,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SettingsSection } from '@/components/templates';
+import { LearnMore } from '@/pages/settings/LearnMore';
 
 const LABELS: Record<MfaRequirement, string> = { OFF: 'Off', ADMINS: 'Admins', ALL: 'Everyone' };
 const STATUS: Record<MfaRequirement, string> = { OFF: 'Optional', ADMINS: 'Required for admins', ALL: 'Required for everyone' };
@@ -49,9 +50,11 @@ export function TwoStepSection() {
       title="Two-step sign-in"
       description={
         <>
-          Who must set up an authenticator app before a password sign-in completes. “Admins” covers every role that can manage other people’s data (including finance and shift
-          supervisors); {term('workers').toLowerCase()}
-          {hasClients ? ' and client portal accounts are' : ' are'} exempt. Passkeys already count as strong sign-in and are never blocked.
+          Who must set up an authenticator app before a password sign-in completes.
+          <LearnMore>
+            “Admins” covers every role that can manage other people’s data (including finance and shift supervisors); {term('workers').toLowerCase()}
+            {hasClients ? ' and client portal accounts are' : ' are'} exempt. Passkeys already count as strong sign-in and are never blocked.
+          </LearnMore>
         </>
       }
       status={q.data ? <Badge variant={current === 'OFF' ? 'default' : 'success'}>{STATUS[current]}</Badge> : undefined}
@@ -61,12 +64,16 @@ export function TwoStepSection() {
       ) : !q.data ? (
         <Skeleton className="h-9 w-64" />
       ) : (
-        <SegmentedControl<MfaRequirement>
-          options={MFA_REQUIREMENT_VALUES.map((v) => ({ value: v, label: LABELS[v] }))}
-          value={current}
-          onChange={(v) => can('manage:org') && void change(v)}
-          ariaLabel="Require two-step sign-in"
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <SegmentedControl<MfaRequirement>
+            options={MFA_REQUIREMENT_VALUES.map((v) => ({ value: v, label: LABELS[v] }))}
+            value={current}
+            onChange={(v) => can('manage:org') && void change(v)}
+            ariaLabel="Require two-step sign-in"
+          />
+          {/* One save model (F500 polish): a choice like this applies at once and says so. */}
+          {can('manage:org') && <span className="text-xs text-ink-muted">{saving ? 'Saving…' : 'Applies as soon as you choose.'}</span>}
+        </div>
       )}
     </SettingsSection>
   );

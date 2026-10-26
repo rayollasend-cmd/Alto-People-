@@ -77,7 +77,7 @@ describe('<OpsRunner> — starting a shift', () => {
     await screen.findByText('Pool Attendant');
     // No picker in the grid until someone opens that position.
     expect(screen.queryByLabelText('Department for Pool Attendant')).not.toBeInTheDocument();
-    expect(screen.getByText('No SOP department yet')).toBeInTheDocument();
+    expect(screen.getByText('No checklist department yet')).toBeInTheDocument();
 
     const opens = screen.getAllByRole('button', { name: /open shift/i });
     await user.click(opens[1]!);

@@ -176,7 +176,8 @@ export function RideHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        className="mx-auto max-w-3xl"
+        // A rider reads at 16px on a phone (helper lines at 14px).
+        className="mx-auto max-w-3xl max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm"
         title={t('ride.title')}
         subtitle={riding ? undefined : t('ride.subtitle')}
         headerClassName={riding ? 'mb-3 md:mb-5' : undefined}

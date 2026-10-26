@@ -505,7 +505,7 @@ export function WorkforceDashboard() {
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {chips.length === 0 ? (
-                        <span className="text-xs text-success">{t('wf.tileQuiet')}</span>
+                        <span className="text-xs text-ink-muted">{t('wf.tileQuiet')}</span>
                       ) : (
                         chips.map((c) =>
                           c.to ? (
@@ -599,7 +599,7 @@ export function WorkforceDashboard() {
                 )}
               </div>
               {data.readyToSchedule.count === 0 ? (
-                <p className="mt-2 text-sm text-success">{t('wf.readyNone')}</p>
+                <p className="mt-2 text-sm text-ink-muted">{t('wf.readyNone')}</p>
               ) : (
                 <ul className="mt-2 divide-y divide-navy-secondary/60">
                   {data.readyToSchedule.rows.map((r) => (
@@ -652,7 +652,7 @@ export function WorkforceDashboard() {
                 {t('wf.wire')}
               </h2>
               {data.wire.length === 0 ? (
-                <p className="mt-3 text-sm text-success">{t('wf.wireQuiet')}</p>
+                <p className="mt-3 text-sm text-ink-muted">{t('wf.wireQuiet')}</p>
               ) : (
                 <ul className="mt-3 space-y-2.5">
                   {data.wire.map((w, i) => (
@@ -787,7 +787,7 @@ export function WorkforceDashboard() {
                 {t('wf.dispatchTitle')}
               </h2>
               {data.dispatch.upcoming.length === 0 ? (
-                <p className="mt-3 text-sm text-success">{t('wf.dispatchNone')}</p>
+                <p className="mt-3 text-sm text-ink-muted">{t('wf.dispatchNone')}</p>
               ) : (
                 <>
                   <ul className="mt-3 divide-y divide-navy-secondary/60">

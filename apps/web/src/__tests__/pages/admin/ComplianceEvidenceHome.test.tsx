@@ -89,7 +89,7 @@ describe('Compliance evidence', () => {
     expect(screen.queryByText(/Collected from step/)).not.toBeInTheDocument();
     expect(screen.getAllByText('Not collected yet').length).toBe(COMPLIANCE_CONTROLS.length - 2);
     expect(screen.getByText('The app talks to its database over an encrypted connection.')).toBeInTheDocument();
-    const row = screen.getByRole('row', { name: 'Open TLS to the database' });
+    const row = screen.getByRole('row', { name: 'Open Encrypted connection to the database' });
     await user.click(within(row).getByRole('button', { name: /What to do/ }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/Require SSL on the database connection/)).toBeInTheDocument();

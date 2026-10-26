@@ -21,7 +21,11 @@ import '@/lib/i18n/en/whatsnew';
  * greeting, not page chrome, so it shouldn't trail the user onto every
  * route and overlap their work.
  *
- * Deliberately not a modal: release notes should never block work.
+ * Deliberately not a modal: release notes should never block work. And
+ * not a floating card either: pinned bottom-right it covered the Hugo
+ * card's suggestions, the finance home's Labor costs link and, on a
+ * phone, Hugo's own button (F500 audit 2026-10-26). It sits in the page,
+ * under the home's title (HomeTemplate), and the page flows around it.
  */
 
 const SEEN_KEY = 'alto.whatsnew.seen.v2';
@@ -41,7 +45,7 @@ export function WhatsNew() {
   const { t, lang } = useI18n();
   const location = useLocation();
   const [dismissed, setDismissed] = useState<string | null>(() => readSeen(SEEN_KEY));
-  const onHome = location.pathname === '/';
+  const onHome = location.pathname === '/' || location.pathname === '/portal' || location.pathname === '/region';
 
   const latest = useQuery({
     queryKey: ['release-notes', 'latest'],
@@ -81,51 +85,38 @@ export function WhatsNew() {
   };
 
   return (
-    <div
+    <section
       role="status"
       aria-label={t('whatsnew.title')}
-      // Phones: full-width, clear of the tab bar AND the home indicator
-      // (bottom-20 alone sat on the tab bar on notched iPhones), the list
-      // capped so the card never covers half the screen. The supervisor's
-      // and store manager's tab bar stays through iPad, hence lg: for the
-      // desktop corner.
-      className="fixed inset-x-4 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 rounded-lg border border-gold/40 bg-navy elev-2 p-4 animate-fade-in sm:inset-x-auto sm:right-4 sm:w-80 lg:bottom-6"
+      data-testid="whats-new"
+      className="relative rounded-lg border border-accent/40 bg-accent-fill/[0.06] px-4 py-3 animate-fade-in"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-2xs uppercase tracking-widest text-gold">
-          <Sparkles className="h-3 w-3" aria-hidden="true" />
-          {t('whatsnew.title')}
+      <div className="flex items-start gap-3">
+        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-ink">{t('whatsnew.title')}</p>
+          <ul className="mt-1 space-y-1 text-sm text-ink-muted">
+            {note.items.slice(0, 3).map((item, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="text-accent" aria-hidden="true">
+                  ·
+                </span>
+                <span>{lang === 'es' && item.es ? item.es : item.en}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Button size="sm" variant="link" className="h-auto px-0" asChild>
+              <Link to="/whats-new" onClick={dismiss}>
+                {t('whatsnew.seeAll')}
+              </Link>
+            </Button>
+          </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={dismiss}
-          aria-label={t('whatsnew.dismiss')}
-          className="-mt-1.5 -mr-1.5"
-        >
+        <Button variant="ghost" size="icon-sm" onClick={dismiss} aria-label={t('whatsnew.dismiss')} className="-mr-1.5 -mt-1 shrink-0">
           <X className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
-      <ul className="mt-2 max-h-[32dvh] space-y-1.5 overflow-y-auto overscroll-contain text-sm text-silver sm:max-h-none">
-        {note.items.map((item, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="text-gold" aria-hidden="true">
-              ·
-            </span>
-            <span>{lang === 'es' && item.es ? item.es : item.en}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" variant="secondary" className="flex-1" onClick={dismiss}>
-          {t('common.gotIt')}
-        </Button>
-        <Button size="sm" variant="ghost" asChild>
-          <Link to="/whats-new" onClick={dismiss}>
-            {t('whatsnew.seeAll')}
-          </Link>
-        </Button>
-      </div>
-    </div>
+    </section>
   );
 }

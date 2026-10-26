@@ -525,10 +525,19 @@ export function PageHeader({
       {returnLink && <ReturnLink className="mb-2" />}
       {/* Phones read like an app's large-title header: no breadcrumb trail
           (the top bar names the page and carries Back). */}
-      {trail && (
+      {trail ? (
         <div className="hidden md:block">
           <Breadcrumb segments={trail.segments} current={trail.current} />
         </div>
+      ) : (
+        breadcrumbs === undefined && (
+          // A section's own page has no way up, so no trail — but its title
+          // sits where every other page's does: the trail's row is kept
+          // (the titles of Payroll, Support and What's new rode 24px
+          // higher than their neighbours' — F500 audit 2026-10-26). A home
+          // passes breadcrumbs={[]} and starts at the top.
+          <div className="mb-2 hidden h-4 md:block" aria-hidden="true" />
+        )
       )}
       <div className="flex items-end justify-between gap-4 flex-wrap">
         {/* min-w-[16rem] (not min-w-0): with a long action row, flex-1 +

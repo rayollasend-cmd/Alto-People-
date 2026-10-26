@@ -59,3 +59,18 @@ describe('SupportPage (F500)', () => {
     expect(screen.queryByRole('option', { name: 'Billing' })).toBeNull();
   });
 });
+
+describe('SupportPage — one help destination, no bare "None yet" (F500 2026-10-26)', () => {
+  it('links its article search to the help center and says what fills My requests', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+      if (path === '/support/config') return { statusPageUrl: null } as never;
+      if (path === '/support/mine') return { requests: [], typicalResolveHours: null } as never;
+      return {} as never;
+    });
+    renderAs('MANAGER', <SupportPage />, '/support');
+    expect(screen.getByTestId('support-help-center')).toHaveAttribute('href', '/help-center');
+    expect(screen.getByTestId('support-articles-hint')).toBeInTheDocument();
+    expect(await screen.findByText('No requests yet')).toBeInTheDocument();
+    expect(screen.queryByText('None yet.')).toBeNull();
+  });
+});

@@ -191,6 +191,8 @@ export function AssociatePayrollView() {
       <ListTemplate
         title={t('pay.title')}
         subtitle={t('pay.subtitle')}
+        // A worker reads at 16px on a phone (helper lines at 14px).
+        className="max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm"
       >
 
       <NextPaydayCard />

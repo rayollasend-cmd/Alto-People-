@@ -182,7 +182,6 @@ export { Image as ImagePlus } from './glyphs/image';
 export { Tray as Inbox } from './glyphs/tray';
 export { Info as Info } from './glyphs/info';
 export { Kanban as Kanban } from './glyphs/kanban';
-export { Kanban as KanbanSquare } from './glyphs/kanban';
 export { Key as Key } from './glyphs/key';
 export { Key as KeyRound } from './glyphs/key';
 export { Keyboard as Keyboard } from './glyphs/keyboard';

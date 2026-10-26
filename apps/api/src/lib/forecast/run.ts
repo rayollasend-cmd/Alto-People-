@@ -18,7 +18,7 @@ import { createPlan, defaultDemandFor, seasonWeeks } from '../seasonPlanner.js';
 import { dateKeyInZone, startOfWeekForSite } from '../timeAnomalies.js';
 import { DEFAULT_TIMEZONE } from '../timezone.js';
 import { ALTO_TENANT_ID, currentTenantId } from '../tenant.js';
-import { addWeeks, backtest, DEFAULT_WEIGHTS, forecastSite, weeksBetween, type SignalRow, type WeekSeries, type Weights } from './model.js';
+import { addWeeks, backtest, DEFAULT_WEIGHTS, forecastSite, weeksBetween, type ForecastPoint, type SignalRow, type WeekSeries, type Weights } from './model.js';
 
 /**
  * Brief 3-4 — the forecast against the database: verified hours by site and
@@ -244,7 +244,6 @@ type RunRow = Prisma.ForecastRunGetPayload<{ select: typeof RUN_SELECT }>;
 
 function shapeRun(r: RunRow | null): ForecastResponse['run'] {
   if (!r) return null;
-  const w = (r.weights ?? {}) as Partial<Weights>;
   return {
     id: r.id,
     method: r.method,
@@ -252,24 +251,60 @@ function shapeRun(r: RunRow | null): ForecastResponse['run'] {
     anchorWeek: keyOf(r.anchorWeek),
     horizonWeeks: r.horizonWeeks,
     trigger: r.trigger,
-    weights: { lastYearWeight: w.lastYearWeight ?? DEFAULT_WEIGHTS.lastYearWeight, bandLow: w.bandLow ?? DEFAULT_WEIGHTS.bandLow, bandHigh: w.bandHigh ?? DEFAULT_WEIGHTS.bandHigh },
+    weights: weightsOf(r),
   };
+}
+
+/** The weights a stored run picked (its back-test), with the defaults for a run that predates a field. */
+function weightsOf(r: RunRow): Weights {
+  const w = (r.weights ?? {}) as Partial<Weights>;
+  return { lastYearWeight: w.lastYearWeight ?? DEFAULT_WEIGHTS.lastYearWeight, bandLow: w.bandLow ?? DEFAULT_WEIGHTS.bandLow, bandHigh: w.bandHigh ?? DEFAULT_WEIGHTS.bandHigh };
+}
+
+/**
+ * What the page shows: each site's twenty-six weeks forecast from the SAME
+ * verified hours the chart draws, with the latest run's weights and band
+ * and the signals on file today (F500 audit 2026-10-26). The stored run is
+ * a snapshot — what the model said that day, kept for the monthly scoring —
+ * and the hours behind it move after it: late approvals, corrections, a
+ * re-import. Drawing that snapshot beside today's history put a flat 66 h
+ * forecast after weeks of 450–700 h ("recent 83 h") with nothing to say the
+ * two stood on different numbers. One series, one forecast: a signal or a
+ * late approval shows at once, and the run still picks how the model
+ * weighs last year and how wide its band is.
+ */
+async function liveForecasts(
+  db: Db,
+  tenantId: string,
+  sites: readonly SiteRow[],
+  run: RunRow | null,
+  now: Date,
+): Promise<{ history: Map<string, Map<string, number>>; points: Map<string, ForecastPoint[]> }> {
+  const since = new Date(now.getTime() - (HISTORY_WEEKS + 1) * 7 * DAY_MS);
+  const history = await verifiedHoursBySite(db, sites, since, now);
+  const points = new Map<string, ForecastPoint[]>();
+  if (!run || !sites.length) return { history, points };
+  const weights = weightsOf(run);
+  const signals = await signalsFor(db, tenantId, sites.map((s) => s.id));
+  for (const s of sites) {
+    const anchor = anchorWeekFor(now, s.timezone);
+    points.set(s.id, forecastSite(completedOnly(history.get(s.id)!, anchor), { anchor, horizonWeeks: FORECAST_HORIZON_WEEKS, weights, signals: signals.get(s.id) ?? [] }));
+  }
+  return { history, points };
 }
 
 async function latestRun(db: Db, tenantId: string): Promise<RunRow | null> {
   return db.forecastRun.findFirst({ where: { tenantId, trigger: { not: 'backtest' } }, orderBy: { generatedAt: 'desc' }, select: RUN_SELECT });
 }
 
-async function siteSummaries(db: Db, tenantId: string, sites: readonly SiteRow[], run: RunRow | null, now: Date): Promise<ForecastSiteSummary[]> {
+async function siteSummaries(
+  db: Db,
+  tenantId: string,
+  sites: readonly SiteRow[],
+  live: { history: Map<string, Map<string, number>>; points: Map<string, ForecastPoint[]> },
+  now: Date,
+): Promise<ForecastSiteSummary[]> {
   const ids = sites.map((s) => s.id);
-  const next4 = new Map<string, number>();
-  if (run && ids.length) {
-    const rows = await db.forecastSiteWeek.findMany({ where: { runId: run.id, locationId: { in: ids } }, select: { locationId: true, weekStart: true, p50: true, drivers: true } });
-    for (const r of rows) {
-      const lead = Number((r.drivers as Partial<ForecastDrivers> | null)?.leadWeeks ?? 99);
-      if (lead <= 4) next4.set(r.locationId, (next4.get(r.locationId) ?? 0) + r.p50);
-    }
-  }
   const mape = new Map<string, { sum: number; n: number }>();
   if (ids.length) {
     const acc = await db.forecastAccuracy.findMany({ where: { tenantId, locationId: { in: ids }, leadWeeks: 4 }, select: { locationId: true, absPctError: true } });
@@ -280,20 +315,20 @@ async function siteSummaries(db: Db, tenantId: string, sites: readonly SiteRow[]
       mape.set(a.locationId, m);
     }
   }
-  const since = new Date(now.getTime() - (HISTORY_WEEKS + 1) * 7 * DAY_MS);
-  const history = await verifiedHoursBySite(db, sites, since, now);
   return sites.map((s) => {
     const m = mape.get(s.id);
-    const series = history.get(s.id)!;
+    const series = live.history.get(s.id)!;
     const anchor = anchorWeekFor(now, s.timezone);
     let historyWeeks = 0;
     for (const [k, v] of series) if (k < anchor && v > 0) historyWeeks += 1;
+    // The next four weeks are the first four the chart draws ahead — the same numbers.
+    const next4 = (live.points.get(s.id) ?? []).slice(0, 4).reduce((a, p) => a + p.p50, 0);
     return {
       locationId: s.id,
       siteName: s.name,
       clientName: s.client?.name ?? null,
       timezone: s.timezone ?? DEFAULT_TIMEZONE,
-      next4WeeksHours: Math.round((next4.get(s.id) ?? 0) * 10) / 10,
+      next4WeeksHours: Math.round(next4 * 10) / 10,
       mapePct: m && m.n ? Math.round((m.sum / m.n) * 10) / 10 : null,
       historyWeeks,
     };
@@ -305,7 +340,8 @@ export async function forecastSites(db: Db, opts: { tenantId?: string; now?: Dat
   const now = opts.now ?? new Date();
   const sites = await activeSites(db, tenantId);
   const run = await latestRun(db, tenantId);
-  return { run: shapeRun(run), sites: await siteSummaries(db, tenantId, sites, run, now) };
+  const live = await liveForecasts(db, tenantId, sites, run, now);
+  return { run: shapeRun(run), sites: await siteSummaries(db, tenantId, sites, live, now) };
 }
 
 export async function forecastForSite(db: Db, locationId: string, opts: { tenantId?: string; now?: Date } = {}): Promise<ForecastResponse> {
@@ -315,10 +351,11 @@ export async function forecastForSite(db: Db, locationId: string, opts: { tenant
   if (!site) throw new HttpError(404, 'site_not_found', 'That site does not exist.');
   const run = await latestRun(db, tenantId);
   const anchor = anchorWeekFor(now, site.timezone);
-  const since = new Date(now.getTime() - (FORECAST_HORIZON_WEEKS + 1) * 7 * DAY_MS);
-  const history = (await verifiedHoursBySite(db, [site], since, now)).get(site.id)!;
+  const live = await liveForecasts(db, tenantId, [site], run, now);
+  const history = live.history.get(site.id)!;
+  // What the run said about the weeks that have since been worked — the past weeks' forecast columns.
   const forecastRows = run
-    ? await db.forecastSiteWeek.findMany({ where: { runId: run.id, locationId: site.id }, orderBy: { weekStart: 'asc' }, select: { weekStart: true, p10: true, p50: true, p90: true, drivers: true } })
+    ? await db.forecastSiteWeek.findMany({ where: { runId: run.id, locationId: site.id, weekStart: { lt: atUtc(anchor) } }, orderBy: { weekStart: 'asc' }, select: { weekStart: true, p10: true, p50: true, p90: true, drivers: true } })
     : [];
   const weeks: ForecastWeek[] = [];
   // The chart starts where the site's history does: weeks before its first
@@ -331,15 +368,14 @@ export async function forecastForSite(db: Db, locationId: string, opts: { tenant
     const f = forecastByWeek.get(k);
     weeks.push({ weekStart: k, p10: f?.p10 ?? 0, p50: f?.p50 ?? 0, p90: f?.p90 ?? 0, actualHours: Math.round(history.get(k)! * 10) / 10, drivers: (f?.drivers as unknown as ForecastDrivers | null) ?? emptyDrivers });
   }
-  for (const r of forecastRows) {
-    const k = keyOf(r.weekStart);
-    if (k < anchor) continue;
-    weeks.push({ weekStart: k, p10: r.p10, p50: r.p50, p90: r.p90, actualHours: null, drivers: r.drivers as unknown as ForecastDrivers });
+  // Ahead: forecast from the series drawn behind it.
+  for (const p of live.points.get(site.id) ?? []) {
+    weeks.push({ weekStart: p.weekStart, p10: p.p10, p50: p.p50, p90: p.p90, actualHours: null, drivers: p.drivers });
   }
   const accuracyRows = await db.forecastAccuracy.findMany({ where: { tenantId, locationId: site.id }, orderBy: [{ weekStart: 'desc' }, { leadWeeks: 'asc' }], take: 60, select: { weekStart: true, leadWeeks: true, forecastP50: true, actualHours: true, absPctError: true } });
   const accuracy: ForecastAccuracyRow[] = accuracyRows.map((a) => ({ weekStart: keyOf(a.weekStart), leadWeeks: a.leadWeeks, forecastP50: a.forecastP50, actualHours: Math.round(a.actualHours * 10) / 10, absPctError: a.absPctError }));
   const signalRows = await db.forecastSignal.findMany({ where: { tenantId, locationId: site.id }, orderBy: { weekStart: 'asc' }, select: { id: true, weekStart: true, kind: true, factor: true, source: true, note: true } });
-  const [summary] = await siteSummaries(db, tenantId, [site], run, now);
+  const [summary] = await siteSummaries(db, tenantId, [site], live, now);
   return {
     run: shapeRun(run),
     site: summary ?? null,
@@ -367,13 +403,10 @@ export async function planFromForecast(db: Db, input: ForecastPlanInput, actorUs
   if (!sites.length) throw new HttpError(400, 'no_sites', 'No active client site to plan for.');
   const weeks = seasonWeeks(input.seasonStart, input.seasonEnd);
   const shares = await defaultDemandFor(db, sites.map((s) => s.id), weeks.slice(0, 1));
-  const rows = await db.forecastSiteWeek.findMany({ where: { runId: run.id, locationId: { in: sites.map((s) => s.id) } }, select: { locationId: true, weekStart: true, p50: true }, orderBy: { weekStart: 'asc' } });
+  // The forecast the page shows (liveForecasts): the plan starts from the numbers the person just read.
+  const live = await liveForecasts(db, tenantId, sites, run, now);
   const bySite = new Map<string, Array<{ week: string; p50: number }>>();
-  for (const r of rows) {
-    const list = bySite.get(r.locationId) ?? [];
-    list.push({ week: keyOf(r.weekStart), p50: r.p50 });
-    bySite.set(r.locationId, list);
-  }
+  for (const s of sites) bySite.set(s.id, (live.points.get(s.id) ?? []).map((p) => ({ week: p.weekStart, p50: p.p50 })));
   let beyondHorizon = 0;
   const planSites = sites.map((s) => {
     const fc = bySite.get(s.id) ?? [];

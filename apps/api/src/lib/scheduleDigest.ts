@@ -88,7 +88,7 @@ function buildBody(shifts: DigestShift[], todayLabel: string): {
     `${filled} filled`,
     ...(open > 0 ? [`${open} open`] : []),
     ...(unconfirmed > 0 ? [`${unconfirmed} unconfirmed`] : []),
-    `${hours.toFixed(1)}h scheduled`,
+    `${hours.toFixed(1)} hours scheduled`,
   ].join(' · ');
 
   // Group by client so multi-site admins can scan one site at a time.
@@ -108,7 +108,7 @@ function buildBody(shifts: DigestShift[], todayLabel: string): {
       const range = `${formatTimeInZone(s.startsAt, s.timezone)}–${formatTimeInZone(s.endsAt, s.timezone)}`;
       const who =
         s.status === 'OPEN'
-          ? 'OPEN — needs someone'
+          ? 'Open — no one assigned yet'
           : (s.associateName ?? '—') + (s.unconfirmed ? ' (unconfirmed)' : '');
       lines.push(`  ${range} · ${s.position} · ${who}`);
       listed++;

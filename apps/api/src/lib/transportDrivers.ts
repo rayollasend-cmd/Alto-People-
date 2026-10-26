@@ -5,6 +5,7 @@ import { DEFAULT_TIMEZONE } from './timezone.js';
 import { dateKeyInZone } from './timeAnomalies.js';
 import { tenantIdForWrite } from './tenant.js';
 import { actsAsAny } from './roleScope.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * The driver as a worker, not only a login.
@@ -366,7 +367,7 @@ export async function assertDriverFit(driverUserId: string, departAt: Date, opts
     throw new HttpError(
       409,
       'hours_of_service',
-      `${name} would be over ${settings.driverMaxHoursPerDay} hours on ${date} (${already.toFixed(1)}h planned). Hours of service — pick another driver or shorten the day.`,
+      `${name} would be over ${settings.driverMaxHoursPerDay} hours on ${fmtDay(date, { weekday: true })} (${already.toFixed(1)} hours planned). Hours of service — pick another driver or shorten the day.`,
     );
   }
 }
@@ -419,7 +420,7 @@ export async function assertShiftWithinHos(
   });
   const total = span + hours(sameDay.reduce((t, s) => t + (s.endsAt.getTime() - s.startsAt.getTime()), 0));
   if (total > settings.driverMaxHoursPerDay + 1e-9) {
-    throw new HttpError(409, 'hours_of_service', `That puts the driver over ${settings.driverMaxHoursPerDay} hours on ${date}.`);
+    throw new HttpError(409, 'hours_of_service', `That puts the driver over ${settings.driverMaxHoursPerDay} hours on ${fmtDay(date, { weekday: true })}.`);
   }
 }
 

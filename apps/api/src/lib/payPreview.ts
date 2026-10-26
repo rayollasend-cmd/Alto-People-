@@ -12,6 +12,7 @@ import { computePaycheckTaxes, type PayFrequency } from './payrollTax.js';
 import { computeYtdWages } from './payrollYtd.js';
 import { submitCorrection } from './timeCorrections.js';
 import { tenantIdForWrite } from './tenant.js';
+import { fmtDay, fmtDayRange } from './humanDates.js';
 
 /**
  * "Check my pay before payday" (PAYEXP §4, Paycom Beti style).
@@ -298,11 +299,11 @@ export async function flagPayPreview(
         associateId: ctx.associateId,
         category,
         priority,
-        subject: `Pay before payday: ${lineLabel(input.line)} (${p.payDate})`,
+        subject: `Pay before payday: ${lineLabel(input.line)} (${fmtDay(p.payDate)})`,
         description: [
           note,
           '',
-          `Pay date ${p.payDate}, period ${p.periodStart}–${p.periodEnd}. Preview take-home $${p.net.toFixed(2)} (${p.source === 'RUN' ? 'from the run' : 'estimate'}).`,
+          `Pay date ${fmtDay(p.payDate)}, period ${fmtDayRange(p.periodStart, p.periodEnd)}. Preview take-home $${p.net.toFixed(2)} (${p.source === 'RUN' ? 'from the run' : 'estimate'}).`,
           input.timeEntryId ? `Shift: ${input.timeEntryId}` : null,
           input.proposedClockIn || input.proposedClockOut ? `Times they gave: ${input.proposedClockIn ?? '—'} to ${input.proposedClockOut ?? '—'}` : null,
           input.language && input.language !== 'en' ? `Written in: ${input.language}` : null,
@@ -315,7 +316,7 @@ export async function flagPayPreview(
     caseId = c.id;
     void notifyAllAdmins({
       subject: 'A worker flagged their pay before payday',
-      body: `${lineLabel(input.line)} on the ${p.payDate} check: “${note.slice(0, 140)}”.`,
+      body: `${lineLabel(input.line)} on the ${fmtDay(p.payDate)} check: “${note.slice(0, 140)}”.`,
       category: 'hr-cases',
       linkUrl: `/hr-cases?case=${c.id}`,
       excludeUserId: ctx.userId,
@@ -324,7 +325,7 @@ export async function flagPayPreview(
     // Their lead hears too — they usually know what happened on the floor.
     void notifyManager(ctx.associateId, {
       subject: 'Someone on your team flagged their pay',
-      body: `${lineLabel(input.line)} on the ${p.payDate} check. Payroll has the case.`,
+      body: `${lineLabel(input.line)} on the ${fmtDay(p.payDate)} check. Payroll has the case.`,
       category: 'hr-cases',
       linkUrl: `/hr-cases?case=${c.id}`,
     });

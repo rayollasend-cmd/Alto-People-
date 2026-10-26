@@ -76,7 +76,8 @@ describe('floor screens in Spanish', () => {
     // The rows arrive through the shared decisions query (a tick after the heading).
     expect(await screen.findByRole('button', { name: 'Yo me encargo' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Ir a ello' })).toBeInTheDocument();
-    expect(screen.getByText('esperando 2 d')).toBeInTheDocument();
+    // The age in words (F500 2026-10-26: "268d" read as a code).
+    expect(screen.getByText('esperando 2 días')).toBeInTheDocument();
   });
 
   it('who isn’t in yet reads in Spanish, lateness included', async () => {

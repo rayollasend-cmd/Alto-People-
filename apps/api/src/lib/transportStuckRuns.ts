@@ -4,6 +4,7 @@ import { enqueueAudit } from './audit.js';
 import { tenantJob } from './tenantJobs.js';
 import { notifyUser, trackNotificationWork } from './notify.js';
 import { actsAs } from './roleScope.js';
+import { fmtMomentInZone } from './humanDates.js';
 
 /**
  * Stuck runs (transport walk 4).
@@ -80,7 +81,7 @@ export async function closeStuckRuns(now = new Date(), db: Db = prisma): Promise
     const unmarked = run.rides.filter((r) => r.status === 'SCHEDULED').length;
     const hours = Math.round((now.getTime() - lastWaypointAt(run).getTime()) / 3_600_000);
     const note =
-      `Closed automatically ${now.toISOString().slice(0, 16).replace('T', ' ')}Z: left open ${hours}h past its last stop.` +
+      `Closed automatically ${fmtMomentInZone(now)}: left open ${hours} hour${hours === 1 ? '' : 's'} past its last stop.` +
       (unmarked > 0 ? ` ${unmarked} rider${unmarked === 1 ? '' : 's'} never marked — review before charging anyone.` : '');
     await db.$transaction([
       db.ride.updateMany({ where: { runId: run.id, status: 'BOARDED' }, data: { status: 'COMPLETED', completedAt: now } }),

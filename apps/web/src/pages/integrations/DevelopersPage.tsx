@@ -2,7 +2,7 @@ import { ListTemplate } from '@/components/templates';
 import { WEBHOOK_EVENTS } from '@alto-people/shared';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, Download, Key, ShieldCheck, Webhook } from '@/components/ui/icons';
+import { Download } from '@/components/ui/icons';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
@@ -33,19 +33,12 @@ export function DevelopersPage() {
       related={[{ label: 'Integrations', to: '/integrations' }]}
     >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+        {/* Words only, underlined — the tabs every other page uses (F500 2026-10-26). */}
         <TabsList>
-          <TabsTrigger value="apps">
-            <ShieldCheck className="mr-2 h-4 w-4" aria-hidden="true" /> API apps
-          </TabsTrigger>
-          <TabsTrigger value="keys">
-            <Key className="mr-2 h-4 w-4" aria-hidden="true" /> API keys
-          </TabsTrigger>
-          <TabsTrigger value="webhooks">
-            <Webhook className="mr-2 h-4 w-4" aria-hidden="true" /> Webhooks
-          </TabsTrigger>
-          <TabsTrigger value="reference">
-            <BookOpen className="mr-2 h-4 w-4" aria-hidden="true" /> Reference
-          </TabsTrigger>
+          <TabsTrigger value="apps">API apps</TabsTrigger>
+          <TabsTrigger value="keys">API keys</TabsTrigger>
+          <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
+          <TabsTrigger value="reference">Reference</TabsTrigger>
         </TabsList>
         <TabsContent value="apps"><ApiClientsTab canManage={canManage} /></TabsContent>
         <TabsContent value="keys"><KeysTab canManage={canManage} /></TabsContent>

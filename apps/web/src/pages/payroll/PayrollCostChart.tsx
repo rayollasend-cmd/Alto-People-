@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { useQuery } from '@tanstack/react-query';
 import type { PayrollRunSummary } from '@alto-people/shared';
 import { listPayrollRuns } from '@/lib/payrollApi';
-import { fmtDateTz, fmtMoney, fmtMoneyCompact, parseYmd } from '@/lib/format';
+import { fmtDateTz, fmtMoney, parseYmd } from '@/lib/format';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { StackedBarChart } from '@/components/ui/charts';
 
@@ -91,7 +92,7 @@ export function PayrollCostChart({ onOpenRun }: { onOpenRun: (id: string) => voi
             { key: 'deductions', name: 'Other deductions' },
             { key: 'employerTax', name: 'Employer taxes' },
           ]}
-          format={fmtMoneyCompact}
+          format={fmtMoneyAxis}
           yLabel="Dollars"
           heading={(x) => `Period ending ${x}`}
           onBarClick={(row) => (Number(row.runs) === 1 ? onOpenRun(String(row.id)) : undefined)}

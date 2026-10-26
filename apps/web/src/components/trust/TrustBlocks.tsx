@@ -4,7 +4,7 @@ import { ShieldAlert, ShieldCheck, ShieldQuestion } from '@/components/ui/icons'
 import { toast } from 'sonner';
 import { CONTROL_STATUS_LABELS, SOC2_STAGE_LABELS, TRUST_DOCUMENT_KINDS, TRUST_DOCUMENT_LABELS, type ControlStatus, type Soc2Progress, type Soc2Stage, type TrustControlPublic, type TrustDocumentKind, type TrustDownloadRequestInput, type TrustStatus, type TrustSummaryPublic } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtDateTime } from '@/lib/format';
+import { fmtDateOnly, fmtDateTime } from '@/lib/format';
 import { requestTrustDocument } from '@/lib/trustApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -223,7 +223,16 @@ export function Soc2Block({ soc2, publicView = false }: { soc2: Soc2Progress; pu
             {!(publicView && soc2.stage !== 'audited' && !soc2.observationSince) && (
             <div>
               <dt className="text-ink-muted">{soc2.stage === 'audited' ? 'Report issued' : 'Observation since'}</dt>
-              <dd className="font-medium tabular-nums text-ink">{soc2.stage === 'audited' ? (soc2.reportIssuedOn ?? '—') : (soc2.observationSince ?? 'Not yet: every control must have current evidence first')}</dd>
+              {/* A day, said the app's way ("Oct 26"; the year only when it isn't this one) — never "2026-10-26". */}
+              <dd className="font-medium tabular-nums text-ink">
+                {soc2.stage === 'audited'
+                  ? soc2.reportIssuedOn
+                    ? fmtDateOnly(soc2.reportIssuedOn, { year: 'auto' })
+                    : '—'
+                  : soc2.observationSince
+                    ? fmtDateOnly(soc2.observationSince, { year: 'auto' })
+                    : 'Not yet: every control must have current evidence first'}
+              </dd>
             </div>
             )}
           </dl>

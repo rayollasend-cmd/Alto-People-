@@ -14,6 +14,7 @@ import { scopeAssociatesIncludingFormer, scopeWhere } from '../lib/scope.js';
 import { enqueueAudit, recordComplianceEvent } from '../lib/audit.js';
 import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { notifyAssociate, notifyUser } from '../lib/notify.js';
+import { fmtDayRange } from '../lib/humanDates.js';
 
 export const performanceRouter = Router();
 
@@ -278,7 +279,7 @@ performanceRouter.post('/reviews/:id/submit', MANAGE, async (req, res, next) => 
     // Fire-and-forget: the review is shared regardless of inbox delivery.
     void notifyAssociate(updated.associateId, {
       subject: 'Your performance review is ready',
-      body: `Your review for ${ymd(updated.periodStart)} – ${ymd(updated.periodEnd)} has been shared with you.`,
+      body: `Your review for ${fmtDayRange(updated.periodStart, updated.periodEnd)} has been shared with you.`,
       category: 'performance',
       linkUrl: '/performance',
       emailFallback: true,
@@ -576,7 +577,7 @@ performanceRouter.post('/me/reviews/:id/acknowledge', async (req, res, next) => 
     if (updated.reviewerUserId) {
       void notifyUser(updated.reviewerUserId, {
         subject: 'Review acknowledged',
-        body: `${updated.associate.firstName} ${updated.associate.lastName} acknowledged their performance review for ${ymd(updated.periodStart)} – ${ymd(updated.periodEnd)}.`,
+        body: `${updated.associate.firstName} ${updated.associate.lastName} acknowledged their performance review for ${fmtDayRange(updated.periodStart, updated.periodEnd)}.`,
         category: 'performance',
         linkUrl: '/performance',
       });

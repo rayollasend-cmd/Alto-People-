@@ -19,6 +19,7 @@ import type {
   TimeOffBalance,
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
+import { cn } from '@/lib/cn';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
 import { getActiveTimeEntry, listMyTimeEntries } from '@/lib/timeApi';
@@ -199,6 +200,10 @@ export function AssociateDashboard() {
           hero, then what needs them, their numbers, their pay and week,
           Hugo, and the shortcuts. */}
       <HomeTemplate
+        // One readable column, centred: at 1440 the stretched column put the
+        // clock-in number ~1,000px from its label and "Open →" ~1,050px from
+        // its task (F500 audit). Body text is 16px on a phone (worker pages).
+        className={cn('mx-auto max-w-3xl', WORKER_TEXT)}
         title={greetingName ? t('dash.greeting', { name: greetingName }) : t('dash.greetingNoName')}
         topbarTitle={t('tabs.home')}
         subtitle={
@@ -266,6 +271,13 @@ export function AssociateDashboard() {
 }
 
 /* ---------------------------- helpers / cards ----------------------------- */
+
+/**
+ * A worker's page reads at 16px on a phone (helper lines at 14px): the kit's
+ * body is 14px and its captions 12px, sized for the office. Applied to the
+ * page's root so every card inside follows; desktop is unchanged.
+ */
+const WORKER_TEXT = 'max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm';
 
 const PUSH_DISMISS_KEY = 'alto:pushCard.dismissed.v1';
 
@@ -381,7 +393,9 @@ function EmployeeNumberLine() {
   const { data } = useQuery(employeeNumberQuery);
   if (!data?.employeeNumber) return null;
   return (
-    <div className="mt-3 flex items-center justify-between gap-2">
+    // Label and number side by side: on a wide screen justify-between put
+    // the number a screen's width from what it was.
+    <div className="mt-3 flex items-center gap-3">
       <span className="text-xs text-silver/70">{t('dash.myNumber')}</span>
       <button
         type="button"

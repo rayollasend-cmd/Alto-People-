@@ -208,8 +208,8 @@ describe('<ComplianceScorecard> Open actions', () => {
     expect(group).toHaveAttribute('aria-expanded', 'false');
     expect(within(list).queryByText('Aaliyah Brooks')).not.toBeInTheDocument();
     expect(within(list).getByRole('link', { name: 'Fix: Background check on file' })).toHaveAttribute('href', '/compliance?tab=background');
-    // "11 actions in 2 rows": the fold is honest about what it holds.
-    expect(screen.getByText(/11 actions in 2 rows/)).toBeInTheDocument();
+    // "11 actions, grouped into 2 rows": the fold is honest about what it holds.
+    expect(screen.getByText(/11 actions, grouped into 2 rows/)).toBeInTheDocument();
     await user.click(group);
     expect(group).toHaveAttribute('aria-expanded', 'true');
     expect(within(list).getByText('Aaliyah Brooks')).toBeInTheDocument();
@@ -257,9 +257,50 @@ describe('<ComplianceScorecard> tiles', () => {
     const tile = heading.closest('[class*="border"]')!.parentElement as HTMLElement;
     const attHeading = await within(tile).findByText('Insurance attestations');
     expect(within(attHeading.parentElement!).getByText('Critical')).toBeInTheDocument();
-    // The tile's own badge (first in its header row) reads OK.
+    // The tile's own badge says nothing is expiring — neutral, never a
+    // green "OK" over three empty buckets (F500 audit 2026-10-26).
     const headerRow = heading.parentElement!.parentElement!;
-    expect(within(headerRow).getByText('OK')).toBeInTheDocument();
+    expect(within(headerRow).getByText('Nothing expiring')).toBeInTheDocument();
+    expect(within(headerRow).queryByText('OK')).not.toBeInTheDocument();
+  });
+
+  it('an empty expiry bucket is a plain zero, not red, amber or green', async () => {
+    renderScorecard();
+    const bucket = await screen.findByRole('button', { name: 'Open the full 0–30 days list' });
+    const tile = bucket.firstElementChild as HTMLElement;
+    expect(tile).toHaveTextContent('0');
+    expect(tile.className).not.toMatch(/alert|warning|success/);
+  });
+
+  it('a bill-rate check that matched no job does not pass', async () => {
+    vi.mocked(api.getScorecardBilling).mockResolvedValue({
+      rateChecks: [{ jobId: uuid(1), jobName: 'Housekeeper', clientId: uuid(2), clientName: 'Coastal', billRate: 21, expectedRate: null, match: true }],
+      atRiskStatements: [],
+      unpaidFinalCount: 0,
+      attestations: [],
+      severity: 'ok',
+      ...GEN,
+    } as never);
+    renderScorecard();
+    expect(await screen.findByText('No active job matches a SOW rate pattern, so no bill rate was checked.')).toBeInTheDocument();
+    expect(screen.queryByText(/matched jobs bill at the contracted rate/)).not.toBeInTheDocument();
+  });
+
+  it('training with no course linked is "Not tracked", not a green OK', async () => {
+    renderScorecard();
+    await screen.findByText('Food handler certification');
+    const heading = screen.getByText('Training completeness');
+    const headerRow = heading.parentElement!.parentElement!;
+    expect(within(headerRow).getByText('Not tracked')).toBeInTheDocument();
+    expect(within(headerRow).queryByText('OK')).not.toBeInTheDocument();
+  });
+
+  it('a truncated list says it shows 200 of the total, and All counts the total', async () => {
+    const many = Array.from({ length: 200 }, (_, i) => shiftAction(i));
+    vi.mocked(api.getScorecardActions).mockResolvedValue({ ...actionsResponse(many), truncated: true, totalActionCount: 235, warnCount: 235 });
+    renderScorecard();
+    expect(await screen.findByTestId('actions-truncated')).toHaveTextContent('Showing 200 of 235 open actions');
+    expect(screen.getByRole('button', { name: /^All/ })).toHaveTextContent('235');
   });
 
   it('shows the case count, not a TRIR of 322.95, on 1,239 hours', async () => {

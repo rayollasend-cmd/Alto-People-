@@ -28,6 +28,7 @@ import { getBrandingSync } from './branding.js';
 import { appLink } from './emailLayout.js';
 import { defaultTenantProfile, termsIn, type TermKey } from '@alto-people/shared';
 import { tenantProfileSync } from './tenantProfile.js';
+import { fmtDay, fmtDayRange } from './humanDates.js';
 
 /* ============================================================== */
 /* Types                                                          */
@@ -416,7 +417,7 @@ export function inviteTemplate(opts: InviteOpts): EmailTemplate {
   const intro = `You have been invited to complete pre-employment onboarding for ${opts.clientName}. The process takes approximately 15 minutes and must be finished before your scheduled start date.`;
   const dataBlock: DataRow[] = [];
   if (opts.position) dataBlock.push({ label: 'Position', value: opts.position });
-  if (opts.hireDate) dataBlock.push({ label: 'Start date', value: opts.hireDate });
+  if (opts.hireDate) dataBlock.push({ label: 'Start date', value: fmtDay(opts.hireDate, { weekday: true, year: true }) });
   dataBlock.push({ label: 'Estimated time', value: '15 minutes' });
   dataBlock.push({ label: 'Link expires', value: opts.linkExpiresAt });
   const text = composeText({
@@ -460,7 +461,7 @@ export function applicationApprovedTemplate(opts: ApplicationApprovedOpts): Emai
   const intro = `Great news: your onboarding is complete and approved. We're excited to have you on the team at ${opts.clientName}. Here's everything you need for day one.`;
   const dataBlock: DataRow[] = [];
   if (opts.position) dataBlock.push({ label: 'Position', value: opts.position });
-  dataBlock.push({ label: 'Start date', value: opts.hireDate });
+  dataBlock.push({ label: 'Start date', value: fmtDay(opts.hireDate, { weekday: true, year: true }) });
   if (opts.managerName) dataBlock.push({ label: 'Reporting to', value: opts.managerName });
   if (opts.location) dataBlock.push({ label: 'Work location', value: opts.location });
   const followUp = `Your dashboard has your schedule, time clock, and pay details — take a look before your first shift. Questions? Your manager and the HR team are happy to help.`;
@@ -471,7 +472,7 @@ export function applicationApprovedTemplate(opts: ApplicationApprovedOpts): Emai
       intro,
       dataBlock,
       cta: { label: 'Explore your dashboard', url: opts.appUrl },
-      body: [followUp, `See you on ${opts.hireDate}!`],
+      body: [followUp, `See you on ${fmtDay(opts.hireDate, { weekday: true })}!`],
       signatory: { kind: 'system' },
       refId,
     }),
@@ -480,10 +481,10 @@ export function applicationApprovedTemplate(opts: ApplicationApprovedOpts): Emai
       intro: escapeHtml(intro),
       dataBlock,
       cta: { label: 'Explore your dashboard', url: opts.appUrl },
-      body: [escapeHtml(followUp), `<strong>See you on ${escapeHtml(opts.hireDate)}!</strong>`],
+      body: [escapeHtml(followUp), `<strong>See you on ${escapeHtml(fmtDay(opts.hireDate, { weekday: true }))}!</strong>`],
       signatory: { kind: 'system' },
       refId,
-      preheader: `Your onboarding is approved — you start ${opts.hireDate}.`,
+      preheader: `Your onboarding is approved — you start ${fmtDay(opts.hireDate, { weekday: true })}.`,
     }),
   };
 }
@@ -582,7 +583,7 @@ export function i9Section2Template(opts: I9Section2Opts): EmailTemplate {
   const compliance = `USCIS regulations require Section 2 to be completed within three (3) business days of the associate's first day of work for pay. Late completion is a recordable compliance violation.`;
   const dataBlock: DataRow[] = [{ label: terms().worker, value: opts.associateName }];
   if (opts.clientName) dataBlock.push({ label: 'Client', value: opts.clientName });
-  if (opts.hireDate) dataBlock.push({ label: 'Start date', value: opts.hireDate });
+  if (opts.hireDate) dataBlock.push({ label: 'Start date', value: fmtDay(opts.hireDate, { weekday: true, year: true }) });
   if (opts.section2DueDate) dataBlock.push({ label: 'Section 2 due', value: opts.section2DueDate });
   return {
     subject,
@@ -845,7 +846,7 @@ export function shiftSwapManagerTemplate(opts: ShiftSwapManagerOpts): EmailTempl
     { label: 'Proposed assignee', value: opts.counterpartyName },
     { label: 'Position', value: opts.position },
     { label: 'Client', value: opts.clientName },
-    { label: 'Shift', value: `${opts.shiftDate}, ${opts.startsAt} — ${opts.endsAt}` },
+    { label: 'Shift', value: `${fmtDay(opts.shiftDate, { weekday: true })}, ${opts.startsAt} — ${opts.endsAt}` },
     { label: 'Status', value: 'Awaiting peer response' },
   ];
   const tail = `You will receive a separate notification when the peer accepts and your approval is required.`;
@@ -1030,7 +1031,7 @@ export function probationAssociateTemplate(opts: ProbationAssociateOpts): EmailT
   const heading = `Probationary period commenced`;
   const intro = `This is to confirm that you have been placed on a formal probationary period.`;
   const dataBlock: DataRow[] = [
-    { label: 'Period', value: `${opts.startDate} — ${opts.endDate}` },
+    { label: 'Period', value: fmtDayRange(opts.startDate, opts.endDate, { year: true }) },
     { label: 'Duration', value: `${opts.durationDays} days` },
     { label: 'Established by', value: `${opts.actor.name}, ${opts.actor.role}` },
   ];
@@ -1070,7 +1071,7 @@ export function probationManagerTemplate(opts: ProbationManagerOpts): EmailTempl
   const intro = `A probationary period has been opened on one of your direct reports.`;
   const dataBlock: DataRow[] = [
     { label: 'Associate', value: opts.associateName },
-    { label: 'Period', value: `${opts.startDate} — ${opts.endDate}` },
+    { label: 'Period', value: fmtDayRange(opts.startDate, opts.endDate, { year: true }) },
     { label: 'Established by', value: `${opts.actor.name}, ${opts.actor.role}` },
   ];
   const ask =
@@ -1288,7 +1289,7 @@ export function onboardingReminderTemplate(opts: OnboardingReminderOpts): EmailT
   const dataBlock: DataRow[] = [
     { label: 'Status', value: `${opts.percentComplete}% complete` },
   ];
-  if (opts.hireDate) dataBlock.push({ label: 'Start date', value: opts.hireDate });
+  if (opts.hireDate) dataBlock.push({ label: 'Start date', value: fmtDay(opts.hireDate, { weekday: true, year: true }) });
   if (opts.daysRemaining !== null && opts.daysRemaining !== undefined) {
     dataBlock.push({ label: 'Days until start', value: String(opts.daysRemaining) });
   }
@@ -1333,9 +1334,9 @@ export interface ScheduledReportOpts {
 }
 export function scheduledReportTemplate(opts: ScheduledReportOpts): EmailTemplate {
   const refId = formatRef();
-  const subject = `[Report] ${opts.reportName} — ${opts.runDate}`;
+  const subject = `[Report] ${opts.reportName} — ${fmtDay(opts.runDate, { year: true })}`;
   const heading = `Scheduled report: ${opts.reportName}`;
-  const intro = `Your ${opts.cadence.toLowerCase()} scheduled report "${opts.reportName}" ran on ${opts.runDate}. The results are attached as a CSV file.`;
+  const intro = `Your ${opts.cadence.toLowerCase()} scheduled report "${opts.reportName}" ran on ${fmtDay(opts.runDate, { year: true })}. The results are attached as a CSV file.`;
   const dataBlock: DataRow[] = [
     { label: 'Report', value: opts.reportName },
     { label: 'Cadence', value: opts.cadence },

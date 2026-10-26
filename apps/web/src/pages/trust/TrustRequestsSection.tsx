@@ -118,7 +118,7 @@ export function TrustRequestsSection({ reportIssuedOn }: { reportIssuedOn: strin
                         <span className="block font-medium text-ink">{TRUST_DOCUMENT_LABELS[k]}</span>
                         <span className="block truncate text-xs2 text-ink-muted">
                           {d ? `${d.title} · ${Math.round(d.bytes / 1024)} KB · ${fmtDateTime(d.updatedAt)}` : 'Not on file'}
-                          {k === 'SOC2_REPORT' && reportIssuedOn ? ` · issued ${fmtDateOnly(reportIssuedOn)}` : ''}
+                          {k === 'SOC2_REPORT' && reportIssuedOn ? ` · issued ${fmtDateOnly(reportIssuedOn, { year: 'auto' })}` : ''}
                         </span>
                       </span>
                       <span className="flex items-center gap-2">

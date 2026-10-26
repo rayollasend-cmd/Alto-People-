@@ -26,7 +26,7 @@ vi.mock('@/lib/whatsappApi', () => ({ getWhatsAppOverview: vi.fn(), listWhatsApp
 
 import { listAdmin, listMyInbox, markAllRead, markRead } from '@/lib/communicationsApi';
 import { markBroadcastRead, myBroadcasts } from '@/lib/dirCommsApi';
-import { AssociateInboxView, INBOX_PAGE, previewOf } from '@/pages/communications/AssociateInboxView';
+import { AssociateInboxView, INBOX_PAGE, collapseRepeats, previewOf, type InboxEntry } from '@/pages/communications/AssociateInboxView';
 import { CommunicationsHome } from '@/pages/communications/CommunicationsHome';
 import { AdminCommsView, deliveryOf, groupSends, statusLabelOf } from '@/pages/communications/AdminCommsView';
 import { DirCommsHome, directoryRedirectTarget } from '@/pages/dirComms/DirCommsHome';
@@ -228,5 +228,40 @@ describe('/directory is retired', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText('at /communications?tab=sends&view=broadcasts&broadcast=b1')).toBeInTheDocument();
+  });
+});
+
+describe('repeated notifications (F500 2026-10-26)', () => {
+  const e = (key: string, over: Partial<InboxEntry> = {}): InboxEntry => ({
+    key,
+    kind: 'message',
+    sourceId: key,
+    subject: 'Escalated: Coastal Resort Holdings is still waiting',
+    body: 'Workforce was reminded yesterday.',
+    createdAt: '2026-10-25T21:06:00.000Z',
+    readAt: null,
+    senderEmail: null,
+    linkUrl: null,
+    category: 'relay.escalation',
+    ...over,
+  });
+
+  it('collapses identical copies into one row that counts them, newest first, unread while any copy is', () => {
+    const rows = collapseRepeats([
+      e('a'),
+      e('b', { readAt: '2026-10-25T22:00:00.000Z' }),
+      e('c', { subject: 'Onboarding stalled' }),
+      e('d'),
+    ]);
+    expect(rows.map((r) => r.key)).toEqual(['a', 'c']);
+    expect(rows[0]!.copies.map((c) => c.key)).toEqual(['a', 'b', 'd']);
+    expect(rows[0]!.readAt).toBeNull();
+    expect(rows[1]!.copies).toHaveLength(1);
+  });
+
+  it('a repeat whose text moved on ("847h past", then "828h past") is still the same alert', () => {
+    const rows = collapseRepeats([e('a', { body: 'Still open, 847h past its reply-by.' }), e('b', { body: 'Still open, 828h past its reply-by.' })]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.body).toBe('Still open, 847h past its reply-by.');
   });
 });

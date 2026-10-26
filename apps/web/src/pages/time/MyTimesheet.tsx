@@ -10,7 +10,7 @@ import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import {
   fmtDateTz,
-  fmtHours,
+  displayLocale,
   fmtMoney,
   fmtMoneyEst,
   fmtWeekdayTz,
@@ -98,7 +98,8 @@ function weekStartMs(input: string | Date): number {
 // The app-wide hours dialect ("38.5h", locale-aware) — this page used to
 // print Fieldglass-style "38.50h"; that convention belongs on the admin
 // export, not an associate's phone.
-const fmtH = (minutes: number) => fmtHours(minutes / 60);
+/** Hours with one decimal, like every hours figure in the app ("7.7h" sat beside "7.53h"). */
+const fmtH = (minutes: number) => `${(Math.round(minutes / 6) / 10).toLocaleString(displayLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h`;
 
 /** "Wed, Jul 2" — the punch's day on its site's clock (display zone when
  *  the entry has no site), so the day and the times below it agree. */
@@ -240,6 +241,16 @@ export function MyTimesheet() {
     if (weekMs === lastWeekMs) return t('time.lastWeek');
     return t('time.weekOf', { date: fmtDateTz(new Date(weekMs)) });
   };
+
+  // Nothing yet: the empty state on its own, never inside a bordered card.
+  if (entries && entries.length === 0 && !query.isError) {
+    return (
+      <section className="mt-6" aria-label={t('time.myTimesheet')}>
+        <PullToRefreshIndicator state={pullState} />
+        <EmptyState icon={History} title={t('time.noEntries')} description={t('time.noEntriesDesc')} />
+      </section>
+    );
+  }
 
   return (
     <Card className="mt-6">

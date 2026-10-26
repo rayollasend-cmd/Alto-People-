@@ -68,10 +68,16 @@ export function flowOption(nodes: FlowNode[], links: FlowLink[], c: EChartColors
         // A band wears where it goes: onward in the next step's colour,
         // out in the outcome's — red to Rejected, amber to Withdrew.
         lineStyle: { color: 'target', opacity: 0.38, curveness: 0.5 },
+        // Every node says what it is on a chip of the card's own colour: drawn bare, a
+        // step's name sat on the band leaving it and the first column read as an
+        // unlabelled bar (F500 audit 2026-10-26).
         label: {
           color: c.ink,
           fontSize: 12,
           fontFamily: c.font,
+          backgroundColor: c.surface,
+          padding: [2, 6],
+          borderRadius: 4,
           formatter: (p: { name: string; value: number }) => `${label.get(p.name) ?? p.name}  {v|${format(p.value)}}`,
           rich: { v: { color: c.muted, fontSize: 12, fontFamily: c.font } },
         },

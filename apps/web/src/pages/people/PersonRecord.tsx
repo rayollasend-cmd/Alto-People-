@@ -29,7 +29,7 @@ import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useAssistantRecord } from '@/lib/assistantContext';
 import { getDirectoryEntry, personOverviewQuery } from '@/lib/directoryApi';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
-import { fmtDate, fmtDateTz, fmtHours, fmtMinutes, fmtRelativeDayTz, fmtShiftRangeTz, parseYmd, ymdLocal, ymdToIsoStart } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtDateTz, fmtHours, fmtMinutes, fmtPhone, fmtRelativeDayTz, fmtShiftRangeTz, parseYmd, phoneHref, ymdLocal, ymdToIsoStart } from '@/lib/format';
 import { useUrlParam } from '@/lib/useUrlState';
 import { fmtPunchTime } from '@/pages/time/punchFormat';
 
@@ -274,7 +274,7 @@ export function PersonRecord() {
   const next = ov?.work.nextShift ?? null;
   const nextDay = next ? fmtRelativeDayTz(next.startsAt, next.timezone) : null;
   const nextTimes = next ? fmtShiftRangeTz(next.startsAt, next.endsAt, next.timezone) : null;
-  const hoursText = ov ? fmtHours(Math.round((ov.work.minutes / 60) * 10) / 10) : '…';
+  const hoursText = ov ? hoursOneDecimal(ov.work.minutes / 60) : '…';
   const lastWorked = ov?.work.lastWorkedAt ?? a.lastWorkedAt ?? null;
 
   return (
@@ -285,7 +285,7 @@ export function PersonRecord() {
       subtitle={subtitle || `No position on record for this ${workerWord}`}
       status={
         <span className="inline-flex flex-wrap items-center gap-2">
-          <PeopleStatusBadge status={status} windowDays={windowDays} size="lg" />
+          <PeopleStatusBadge status={status} windowDays={windowDays} size="lg" withDot />
           {a.j1Status && <Badge variant="default">J-1</Badge>}
           <ProtectedLeaveFlag associateId={associateId} />
           {statusWhy && <span className="text-xs text-ink-muted">{statusWhy}</span>}
@@ -353,10 +353,11 @@ export function PersonRecord() {
                 href={canSeeTime ? tabHref('time') : undefined}
                 compact
               />
+              {/* One phrase for one fact: "No clock-ins yet" (it read "Never" in one place and that in another). */}
               <MetricCard
                 label="Last worked"
-                value={lastWorked ? fmtDate(lastWorked) : 'Never'}
-                nothing={lastWorked ? undefined : 'No clock-ins yet'}
+                value={lastWorked ? fmtDate(lastWorked) : NO_CLOCK_INS}
+                nothing={lastWorked ? undefined : NO_CLOCK_INS}
                 compact
               />
               <MetricCard
@@ -516,6 +517,14 @@ const TONE_ICON: Record<AttentionItem['tone'], string> = {
   info: 'text-ink-muted',
 };
 
+/** One phrase for "never clocked in", wherever the record says it. */
+const NO_CLOCK_INS = 'No clock-ins yet';
+
+/** Hours with one decimal, tabular: "45.0h". */
+function hoursOneDecimal(hours: number): string {
+  return `${(Math.round(hours * 10) / 10).toFixed(1)}h`;
+}
+
 function OverviewTab({
   associate: a,
   overview,
@@ -553,7 +562,6 @@ function OverviewTab({
     onTransfer,
     onReactivate,
   });
-  const next = ov?.work.nextShift ?? null;
   const openCases = cases?.data ? cases.data.cases.filter((c) => c.status !== 'RESOLVED' && c.status !== 'CLOSED').length : null;
   const hasPay = canSeePay || ov?.pay !== undefined;
 
@@ -594,39 +602,39 @@ function OverviewTab({
       </Card>
 
       <div className="space-y-[var(--d-stack)]">
+        {/* The facts a record opens on (F500 2026-10-26: no title, hire date or
+            contact on the overview). Hours, last worked and the next shift
+            are the strip above — said once, not twice. */}
         <Card>
           <CardContent className="space-y-3 py-4">
-            <SectionTitle title="Work" size="sm" className="mb-0" />
-            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-              <dt className="text-ink-muted">Hours ({windowDays} days)</dt>
-              <dd className="tabular-nums text-ink">
-                {ov ? (
-                  canSeeTime ? (
-                    <Link to={tabHref('time')} className="hover:text-gold-bright">
-                      {fmtHours(Math.round((ov.work.minutes / 60) * 10) / 10)}
-                    </Link>
-                  ) : (
-                    fmtHours(Math.round((ov.work.minutes / 60) * 10) / 10)
-                  )
-                ) : (
-                  '…'
-                )}
+            <SectionTitle title="Details" size="sm" className="mb-0" />
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm" data-testid="person-facts">
+              <dt className="text-ink-muted">Job title</dt>
+              <dd className="text-ink">{a.jobProfileTitle ?? a.position ?? <span className="text-ink-muted">Not on record</span>}</dd>
+              {a.departmentName && (
+                <>
+                  <dt className="text-ink-muted">Department</dt>
+                  <dd className="text-ink">{a.departmentName}</dd>
+                </>
+              )}
+              <dt className="text-ink-muted">Hired</dt>
+              <dd className="tabular-nums text-ink">{a.startDate ? fmtDateOnly(a.startDate) : <span className="text-ink-muted">No start date on record</span>}</dd>
+              <dt className="text-ink-muted">Type</dt>
+              <dd className="text-ink">{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</dd>
+              <dt className="text-ink-muted">Email</dt>
+              <dd className="min-w-0 truncate">
+                <a href={`mailto:${a.email}`} className="text-ink hover:text-gold-bright" title={a.email}>
+                  {a.email}
+                </a>
               </dd>
-              <dt className="text-ink-muted">Last worked</dt>
-              <dd className="text-ink">{ov ? (ov.work.lastWorkedAt ? fmtDate(ov.work.lastWorkedAt) : 'Never') : '…'}</dd>
-              <dt className="text-ink-muted">Next shift</dt>
-              <dd className="text-ink">
-                {ov ? (
-                  next ? (
-                    <>
-                      {fmtRelativeDayTz(next.startsAt, next.timezone)} · {fmtShiftRangeTz(next.startsAt, next.endsAt, next.timezone)}
-                      <span className="block text-xs text-ink-muted">{[next.position, next.locationName].filter(Boolean).join(' · ')}</span>
-                    </>
-                  ) : (
-                    <span className="text-ink-muted">None scheduled</span>
-                  )
+              <dt className="text-ink-muted">Phone</dt>
+              <dd className="tabular-nums">
+                {phoneHref(a.phone) ? (
+                  <a href={phoneHref(a.phone)!} className="text-ink hover:text-gold-bright">
+                    {fmtPhone(a.phone)}
+                  </a>
                 ) : (
-                  '…'
+                  <span className="text-ink-muted">No phone on record</span>
                 )}
               </dd>
               {canSeeTime && (
@@ -757,7 +765,7 @@ function TimeTab({ associateId, query }: { associateId: string; query: ReturnTyp
     <div className="space-y-4">
       <PunchPhotoCard associateId={associateId} />
       <div className="grid gap-[var(--d-stack)] sm:grid-cols-3">
-        <MetricCard label={`Hours · ${TIME_WINDOW_DAYS} days`} value={fmtHours(totalMinutes / 60)} hint="Net of breaks" />
+        <MetricCard label={`Hours · ${TIME_WINDOW_DAYS} days`} value={hoursOneDecimal(totalMinutes / 60)} hint="Net of breaks" />
         <MetricCard label="Entries" value={String(entries.length)} hint={query.data.truncated ? 'The list was cut at the server cap' : `Since ${fmtDate(parseYmd(windowStartYmd()) ?? windowStartYmd())}`} />
         <MetricCard label="Awaiting review" value={String(awaiting)} accent={awaiting > 0} hint={awaiting > 0 ? 'Clocked out, not yet approved' : 'Everything reviewed'} />
       </div>

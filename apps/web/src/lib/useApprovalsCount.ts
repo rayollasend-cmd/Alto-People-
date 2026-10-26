@@ -1,59 +1,23 @@
-import { useEffect } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from './api';
 import { useAuth } from './auth';
-import { onLiveEvent } from './liveEvents';
-
-interface ApprovalsCount {
-  swaps: number;
-  pickups: number;
-  timeOff: number;
-  timesheets: number;
-  /** Walk-in clock-ins parked by the kiosk schedule gate. */
-  clockIns: number;
-  /** Agent proposals this person may decide. */
-  proposals: number;
-  total: number;
-}
-
-const POLL_MS = 60_000;
-const KEY = ['approvals', 'count'] as const;
+import { useInbox } from './inboxApi';
+import { inboxCountFor } from './inboxCounts';
 
 /**
- * Pending-approvals total for the nav badge. Fetches only for users who
- * can manage scheduling (everyone else gets null and no request), then
- * refreshes every minute while the tab is visible and on tab refocus —
- * same cadence family as the notifications bell. A failed refresh keeps
- * the last known value on screen (the query layer retains data through an
- * error): a nav badge must never surface an error state, and a
- * wrong-but-stale count beats a flickering one.
+ * What waits on the Approvals page, for a nav badge (the phone tab bar, the
+ * scheduling header's link). It is the Approvals page's inbox count — the
+ * count rule in lib/inboxApi.ts — so the tab, the sidebar row and the
+ * page's own "N waiting" are one number. It used to read /approvals/count,
+ * whose total also held the timesheets (31 on the admin's tab over a page
+ * whose sidebar badge said 1). Timesheets are counted on Time & attendance.
+ *
+ * Null for people who do not work the scheduling desk (no request), and
+ * while the inbox loads. The inbox refreshes every minute and on the live
+ * nudge (Layout invalidates it), and a failed refresh keeps the last value.
  */
 export function useApprovalsCount(): number | null {
   const { can } = useAuth();
   const allowed = can('manage:scheduling');
-  const queryClient = useQueryClient();
-
-  const query = useQuery({
-    queryKey: KEY,
-    queryFn: () => apiFetch<ApprovalsCount>('/approvals/count'),
-    enabled: allowed,
-    // Polls pause while the tab is hidden (refetchIntervalInBackground is
-    // off by default); the SSE nudge and the focus refetch cover "something
-    // changed while I was away".
-    refetchInterval: POLL_MS,
-    refetchOnWindowFocus: true,
-    retry: false,
-    select: (res) => res.total,
-  });
-
-  // New pending items notify admins in-app, so the same live nudge that
-  // refreshes the bell also refreshes this count instantly.
-  useEffect(() => {
-    if (!allowed) return;
-    return onLiveEvent('notification', () => {
-      void queryClient.invalidateQueries({ queryKey: KEY });
-    });
-  }, [allowed, queryClient]);
-
-  return allowed ? (query.data ?? null) : null;
+  // The one inbox request every nav surface already shares — no request of its own.
+  const data = useInbox().data;
+  return allowed ? inboxCountFor(data, '/approvals') : null;
 }

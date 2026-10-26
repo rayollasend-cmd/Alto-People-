@@ -4,8 +4,10 @@ import { cn } from '@/lib/cn';
 
 /**
  * Form field label. Pairs with Input/Textarea/Select via htmlFor or
- * by wrapping the input. Uppercase tracking-widest matches the existing
- * Alto form aesthetic.
+ * by wrapping the input. Sentence case at body size, as Okta and Rippling
+ * label fields: the spaced capitals read as eyebrows over every field and
+ * made long labels ("WHAT WOULD YOU LIKE YOUR TEAM TO CALL ME?") shout
+ * (F500 audit 2026-10-26). Eyebrows stay for section headings.
  */
 export const Label = React.forwardRef<
   React.ElementRef<typeof LabelPrimitive.Root>,
@@ -17,7 +19,7 @@ export const Label = React.forwardRef<
   <LabelPrimitive.Root
     ref={ref}
     className={cn(
-      'block text-xs font-medium uppercase tracking-widest text-silver mb-1.5',
+      'block text-sm font-medium text-ink mb-1.5',
       'peer-disabled:cursor-not-allowed peer-disabled:opacity-70',
       className
     )}

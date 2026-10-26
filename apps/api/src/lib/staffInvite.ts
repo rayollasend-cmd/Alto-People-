@@ -15,6 +15,7 @@ import { assertRoleOffered, tenantOf, type Actor } from './tenantRoles.js';
 import { loadApprovalPolicy, secondPersonExists } from './approvalPolicy.js';
 import { createApprovalRequest } from './approvalRequests.js';
 import { isElevation } from './accessChanges.js';
+import { fmtDayInZone } from './humanDates.js';
 
 /**
  * Users & access → "Invite user": an account for someone on staff who is
@@ -78,7 +79,7 @@ export async function sendStaffInvite(
   const name = user.displayName?.trim() || user.email.split('@')[0] || 'there';
   const template = genericNotificationTemplate({
     subject: `Your ${org} account is ready`,
-    body: `${name}, ${org} has given you an account as ${ROLE_LABELS[user.role as Role]}.\n\nOpen the link to set your password. It works once and expires on ${expiresAt.toISOString().slice(0, 10)}; do not forward it.`,
+    body: `${name}, ${org} has given you an account as ${ROLE_LABELS[user.role as Role]}.\n\nOpen the link to set your password. It works once and expires on ${fmtDayInZone(expiresAt)}; do not forward it.`,
     linkUrl: `${publicBaseUrl()}/accept-invite/${invite.raw}`,
     linkLabel: 'Set my password',
   });

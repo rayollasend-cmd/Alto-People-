@@ -8,6 +8,6 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src", "prisma/seed.ts", "scripts/seed-demo.ts", "scripts/seed-demo-shifts.ts", "scripts/seed-demo-analytics.ts"],
+  "include": ["src", "prisma/seed.ts", "scripts/seed-demo.ts", "scripts/seed-demo-shifts.ts", "scripts/seed-demo-analytics.ts", "scripts/seed-demo-refresh.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

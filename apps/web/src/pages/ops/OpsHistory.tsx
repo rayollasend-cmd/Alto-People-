@@ -1,3 +1,4 @@
+import { midSentence } from '@/pages/portal/words';
 import { useQuery } from '@tanstack/react-query';
 import { Download, History as HistoryIcon } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
@@ -105,13 +106,13 @@ export function OpsHistory({
     {
       key: 'shift',
       header: 'Shift',
-      accessor: (s) => `${PERIOD_LABEL[s.period] ?? s.period} ${s.department}`,
+      accessor: (s) => `${s.windowLabel ?? PERIOD_LABEL[s.period] ?? s.period} ${s.department}`,
       sortable: true,
       cardMeta: true,
       className: 'text-silver',
       cell: (s) => (
         <>
-          <span className="text-gold">{PERIOD_LABEL[s.period] ?? s.period}</span> {s.department}
+          <span className="text-gold">{s.windowLabel ?? PERIOD_LABEL[s.period] ?? s.period}</span> {s.department}
           {s.departments && s.departments.length > 1 && (
             <span className="text-2xs text-silver/60"> +{s.departments.length - 1}</span>
           )}
@@ -243,8 +244,8 @@ export function OpsHistory({
           rel="noreferrer"
           download
           onClick={(e) => e.stopPropagation()}
-          aria-label={`Download the SOP packet for the ${
-            PERIOD_LABEL[s.period] ?? s.period
+          aria-label={`Download the checklist packet for the ${
+            s.windowLabel ? midSentence(s.windowLabel) : (PERIOD_LABEL[s.period] ?? s.period).toLowerCase()
           } shift at ${storeOf(s)} on ${fmtDayKey(s.dateKey)}`}
           className="inline-flex h-8 w-8 items-center justify-center rounded text-silver/60 transition-colors hover:bg-navy-secondary/40 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
@@ -276,7 +277,7 @@ export function OpsHistory({
           footnote={data?.truncated ? 'capped at 500, narrow the dates' : undefined}
           onRowClick={(s) => onOpenRecord(s.id)}
           rowActionLabel={(s) =>
-            `Open the ${PERIOD_LABEL[s.period] ?? s.period} ${s.department} shift at ${storeOf(s)} on ${fmtDayKey(
+            `Open the ${s.windowLabel ? midSentence(s.windowLabel) : (PERIOD_LABEL[s.period] ?? s.period).toLowerCase()} ${s.department} shift at ${storeOf(s)} on ${fmtDayKey(
               s.dateKey,
             )}`
           }

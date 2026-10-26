@@ -72,8 +72,11 @@ export function FillRateTrendPlot({
           dot={(props: { cx?: number; cy?: number; index?: number; payload?: { noShifts?: number | null } }) => {
             const { cx, cy, index, payload } = props;
             if (cx === undefined || cy === undefined || payload?.noShifts == null) return <g key={`ns-${index ?? 0}`} />;
+            // The first and last weeks sit on the plot's edges: anchor their
+            // mark inward so it is never cut ("no shif").
+            const anchor = index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle';
             return (
-              <text key={`ns-${index ?? 0}`} data-testid="fill-no-shifts" x={cx} y={cy - 6} textAnchor="middle" fontSize={10} fill={TICK.fill}>
+              <text key={`ns-${index ?? 0}`} data-testid="fill-no-shifts" x={cx} y={cy - 6} textAnchor={anchor} fontSize={10} fill={TICK.fill}>
                 {noShiftsText}
               </text>
             );

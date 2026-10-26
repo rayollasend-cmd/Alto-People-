@@ -166,7 +166,7 @@ export function OpsLibrary() {
             </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-x-8 gap-y-3">
-            <HeroStat label="Active SOPs" value={<CountUpValue value={stats.sops} />} />
+            <HeroStat label="Active checklists" value={<CountUpValue value={stats.sops} />} />
             <HeroStat label="Standard tasks" value={<CountUpValue value={stats.tasks} />} />
             <HeroStat
               label="Temp checks"
@@ -186,12 +186,12 @@ export function OpsLibrary() {
           </div>
           <Button onClick={() => setNewOpen(true)}>
             <Plus className="h-4 w-4" />
-            New SOP
+            New checklist
           </Button>
         </div>
       </div>
 
-      {/* ===== Which SOP each store shift runs at clock-in ===== */}
+      {/* ===== Which checklist each store shift runs at clock-in ===== */}
       <StoreShiftSops canEdit={can('manage:ops-library')} />
 
       {/* ===== Coverage matrix — where the standard reaches ===== */}
@@ -247,7 +247,7 @@ export function OpsLibrary() {
                         title={
                           tpl
                             ? `${tpl.name} · ${tpl.taskCount} tasks${tpl.runs28d > 0 ? ` · ${tpl.runs28d} runs, ${tpl.avgSopPct ?? '—'}% avg` : ' · not run yet'}`
-                            : `${dept} has no ${p.short.toLowerCase()} SOP — add one if this period is worked.`
+                            : `${dept} has no ${p.short.toLowerCase()} checklist — add one if this period is worked.`
                         }
                       >
                         {tpl
@@ -282,7 +282,7 @@ export function OpsLibrary() {
                   />
                   {department}
                   <span className="ml-2 text-xs font-normal text-silver/60 tabular-nums">
-                    {templates.length} SOP{templates.length === 1 ? '' : 's'} · {deptTasks}{' '}
+                    {templates.length} checklist{templates.length === 1 ? '' : 's'} · {deptTasks}{' '}
                     tasks{deptRuns > 0 ? ` · ${deptRuns} runs in 28d` : ''}
                   </span>
                 </CardTitle>
@@ -700,7 +700,7 @@ function TemplateTasks({
                       <button
                         type="button"
                         className="rounded p-1 coarse:p-1.5 text-silver/40 hover:text-alert focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-                        aria-label={`Remove "${task.title}" from this SOP`}
+                        aria-label={`Remove "${task.title}" from this checklist`}
                         title="Remove from the standard (past shifts keep it)."
                         onClick={async () => {
                           try {
@@ -1041,7 +1041,7 @@ function NewTemplateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>New SOP</DialogTitle>
+          <DialogTitle>New checklist</DialogTitle>
           <DialogDescription>
             A reusable checklist for one department and shift period. Add its
             tasks after creating.
@@ -1090,7 +1090,7 @@ function NewTemplateDialog({
                   department,
                   period,
                 });
-                toast.success('SOP created — add its tasks.');
+                toast.success('Checklist created — add its tasks.');
                 onOpenChange(false);
                 onCreated(created.id);
               } catch (err) {
@@ -1100,7 +1100,7 @@ function NewTemplateDialog({
               }
             }}
           >
-            Create SOP
+            Create checklist
           </Button>
         </DialogFooter>
       </DialogContent>

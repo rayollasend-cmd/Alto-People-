@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { termizeText } from '@/lib/modules';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -116,11 +116,14 @@ export function HeadcountHome() {
           href="/people"
         />
         <MetricCard label="Scheduled this week" value={loading || !o ? '—' : n(o.scheduledThisWeek)} hint="On an assigned shift in the current workweek" />
+        {/* "Last payroll run 0" read as zero of nothing: it is the paychecks in that run. */}
         <MetricCard
-          label="Last payroll run"
-          value={loading || !o ? '—' : run ? n(run.count) : '—'}
-          hint={o ? (run ? `Paid ${fmtDateOnlyRange(run.periodStart, run.periodEnd)}${run.finalizedOn ? ` · finalized ${fmtDateOnly(run.finalizedOn)}` : ''}` : undefined) : undefined}
-          nothing={o && !run ? 'No payroll run yet' : undefined}
+          label="Paid in the last payroll"
+          value={loading || !o ? '—' : run ? n(run.count) : ''}
+          unit={run ? (run.count === 1 ? 'paycheck' : 'paychecks') : undefined}
+          hint={o && run ? `${fmtDateOnlyRange(run.periodStart, run.periodEnd)}${run.finalizedOn ? ` · finalized ${fmtDateOnly(run.finalizedOn, { year: 'auto' })}` : ''}` : undefined}
+          nothing={o && !run ? 'No payroll run yet' : o && run && run.count === 0 ? `No paychecks in the ${fmtDateOnlyRange(run.periodStart, run.periodEnd)} run` : undefined}
+          href={run ? '/payroll' : undefined}
         />
         {/* Shown once housing is linked: a dash and "No housing link yet" in prime space said nothing (and a hotel tenant has no housing). */}
         {typeof o?.inHousing === 'number' && <MetricCard label="In housing" value={loading ? '—' : n(o.inHousing)} />}
@@ -181,7 +184,7 @@ export function HeadcountHome() {
           <SectionTitle as="h2" title={<span id="headcount-turnover">Turnover</span>} description="Hires and separations over the active base." />
           <SegmentedControl
             ariaLabel="Turnover window"
-            options={([30, 90, 365] as const).map((d) => ({ value: d, label: `${d}d` }))}
+            options={([30, 90, 365] as const).map((d) => ({ value: d, label: `${d} days` }))}
             value={days}
             onChange={(d) => setDays(d)}
           />
@@ -402,7 +405,7 @@ function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: 
   const term = useTerm();
   // A tenant with no clients cuts by site only.
   const hasClients = useTenant().moduleOn('clientPortal');
-  const tz = (t: string) => termizeText(t, term);
+  const tz = useCallback((t: string) => termizeText(t, term), [term]);
   const rows = cut === 'store' ? overview?.byStore : overview?.byClient;
   const hasRate = (rows ?? []).some((r) => r.withoutRate !== null);
 
@@ -435,7 +438,9 @@ function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: 
     if (hasRate) {
       cols.push({
         key: 'withoutRate',
-        header: 'Without rate',
+        // Everyone placed here with no bill rate for their role, working or not — so it can
+        // be more than Active (it read "Without rate 22" beside "Active 13" with no word why).
+        header: 'Placed, no bill rate',
         accessor: (r) => r.withoutRate,
         sortable: true,
         align: 'right',
@@ -444,7 +449,7 @@ function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: 
       });
     }
     return cols;
-  }, [cut, hasRate]);
+  }, [cut, hasRate, hasClients, tz]);
 
   return (
     <DataGrid
@@ -462,6 +467,7 @@ function CutGrid({ overview, cut, onCut, loading, error, onRetry }: { overview: 
       defaultSort={{ key: 'active', direction: 'desc' }}
       filters={hasClients ? <SegmentedControl ariaLabel="Cut" options={[{ value: 'store', label: tz('By store') }, { value: 'client', label: tz('By client') }]} value={cut} onChange={onCut} /> : undefined}
       empty={{ title: 'Nobody active', description: 'No one is placed with recent work or an upcoming shift.' }}
+      footnote={hasRate ? 'Active counts people placed here with recent work or a shift ahead. Placed, no bill rate counts everyone placed here whose role has no bill rate, working or not, so it can be the larger number.' : undefined}
     />
   );
 }

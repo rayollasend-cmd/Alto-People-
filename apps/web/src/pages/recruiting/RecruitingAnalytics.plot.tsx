@@ -8,7 +8,7 @@ import { PALETTE, TICK, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from '@/components/
 export function FunnelPlot({ rows }: { rows: Array<{ step: string; reached: number; label: string }> }) {
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 96, bottom: 0, left: 0 }}>
+      <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 132, bottom: 0, left: 0 }}>
         <XAxis type="number" hide domain={[0, 'dataMax']} />
         <YAxis type="category" dataKey="step" width={92} tick={TICK} tickLine={false} axisLine={false} />
         <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} cursor={{ fill: PALETTE.cursor }} />

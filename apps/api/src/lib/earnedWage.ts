@@ -14,6 +14,7 @@ import { tenantIdForWrite } from './tenant.js';
 import { tryDecryptString } from './crypto.js';
 import { readRoutingNumber } from './payoutMethod.js';
 import { booksAfterWageAdvance } from './books/posting/hooks.js';
+import { fmtDay, fmtDayRange } from './humanDates.js';
 
 /**
  * Earned-wage access: pay before payday.
@@ -292,7 +293,7 @@ export async function requestEarnedWageAdvance(
     body:
       status === 'FAILED'
         ? `${fullName} asked for ${amount}; the payout failed: ${result.failureReason ?? 'unknown'}.`
-        : `${fullName} drew ${amount} of ${avail.periodStart}–${avail.periodEnd} pay${avail.feeCents ? ` (fee $${(avail.feeCents / 100).toFixed(2)})` : ''}. It is recovered on their next check.`,
+        : `${fullName} drew ${amount} of ${fmtDayRange(avail.periodStart, avail.periodEnd)} pay${avail.feeCents ? ` (fee $${(avail.feeCents / 100).toFixed(2)})` : ''}. It is recovered on their next check.`,
     linkUrl: '/payroll/earned-wage',
     category: 'finance.ewa',
   }).catch(() => undefined);
@@ -303,7 +304,7 @@ export async function requestEarnedWageAdvance(
       body:
         status === 'FAILED'
           ? 'The payment did not go through. Nothing was taken from your pay. Payroll has been told.'
-          : `${amount} is being sent to your pay account now. It comes off your ${avail.payDate} check${avail.feeCents ? ` with a $${(avail.feeCents / 100).toFixed(2)} fee` : ''}.`,
+          : `${amount} is being sent to your pay account now. It comes off your ${fmtDay(avail.payDate)} check${avail.feeCents ? ` with a $${(avail.feeCents / 100).toFixed(2)} fee` : ''}.`,
       category: 'pay.ewa',
       linkUrl: '/payroll',
     }).catch(() => undefined);

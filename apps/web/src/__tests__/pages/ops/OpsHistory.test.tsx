@@ -122,7 +122,7 @@ describe('the Store Ops record', () => {
     // jsdom applies no CSS, so the grid's phone card and its table row
     // both exist; the table is the one being asked about.
     await userEvent.click(
-      within(await screen.findByRole('table')).getByRole('row', { name: /Overnight.*Destin/ }),
+      within(await screen.findByRole('table')).getByRole('row', { name: /overnight.*Destin/i }),
     );
     expect(onOpen).toHaveBeenCalledWith('s1');
   });

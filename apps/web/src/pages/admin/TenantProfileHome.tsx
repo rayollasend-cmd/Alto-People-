@@ -9,7 +9,6 @@ import {
   ROLE_LABELS,
   ROLE_MODULE,
   TENANT_MODULES,
-  TENANT_MODULE_LABEL,
   TERM_KEYS,
   type BusinessModel,
   type Role,
@@ -29,6 +28,8 @@ import { ORG_SETTINGS_KEY } from '@/lib/orgSettingsKey';
 import { fmtDate, fmtTimeZone } from '@/lib/format';
 import { SettingsSection } from '@/components/templates';
 import { SettingsSaveBar } from '@/pages/settings/SettingsSaveBar';
+import { LearnMore } from '@/pages/settings/LearnMore';
+import { SettingsSwitch } from '@/components/settings/SettingsSwitch';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
@@ -46,7 +47,8 @@ const MODULE_REACH: Record<TenantModule, { pages: string[]; roles: string[] }> =
   TENANT_MODULES.map((m) => [
     m,
     {
-      pages: MODULES.filter((x) => MODULE_GATE[x.key] === m).map((x) => x.label),
+      // One name once: two menu entries open Time & attendance.
+      pages: [...new Set(MODULES.filter((x) => MODULE_GATE[x.key] === m).map((x) => x.label))],
       roles: (Object.entries(ROLE_MODULE) as Array<[Role, string]>).filter(([, g]) => g === m).map(([r]) => ROLE_LABELS[r]),
     },
   ]),
@@ -59,9 +61,32 @@ const MODULE_REACH: Record<TenantModule, { pages: string[]; roles: string[] }> =
  * app reads.
  */
 
+/**
+ * A short title per module, in the menu's own words ("Time & attendance",
+ * not "Time and attendance"); what it covers is the line under it, not a
+ * parenthesis in the title (F500 polish, 2026-10-26).
+ */
+const MODULE_TITLE: Record<TenantModule, string> = {
+  scheduling: 'Scheduling',
+  time: 'Time & attendance',
+  hrCases: 'HR cases',
+  compliance: 'Compliance',
+  payrollSync: 'Payroll sync',
+  housingLink: 'Housing link',
+  transportation: 'Transportation',
+  programs: 'Programs',
+  billRates: 'Bill rates & margin',
+  clientPortal: 'Client portal',
+  robotics: 'Robotics',
+  agentBuilder: 'Agent builder',
+  talent: 'Talent programs',
+  perks: 'Perks',
+  earnedWage: 'Earned-wage access',
+};
+
 const MODULE_NOTE: Record<TenantModule, string> = {
   scheduling: 'Shifts, the marketplace, approvals and holidays.',
-  time: 'Time and attendance, timesheets, the kiosk and time off.',
+  time: 'Timesheets, the kiosk and time off.',
   hrCases: 'HR cases, discipline and the hotline.',
   compliance: 'The compliance scorecard, documents, expirations, agreements and the audit packet.',
   payrollSync: 'The payroll integrations: Fieldglass, QuickBooks, external payments and the API. Payroll itself is always on.',
@@ -72,7 +97,7 @@ const MODULE_NOTE: Record<TenantModule, string> = {
   clientPortal: 'Clients, regions, the store and market portals and their digests.',
   robotics: 'The robot worker type and its page.',
   agentBuilder: 'Registering new agents from the Agents page.',
-  talent: 'Skills, career ladders, mentorship, succession, probation, 30/60/90 plans, learning paths, internal jobs and pulse — off, they leave the menu and answer not found.',
+  talent: 'Skills, career ladders, mentorship, succession, probation, 30/60/90 plans, learning paths, internal jobs and pulse.',
   perks: 'Tuition reimbursement, equity grants and volunteer match.',
   earnedWage: 'Pay before payday: associates draw part of what they have earned, recovered on the next check. Finance sets the cap, fee and limit.',
 };
@@ -251,7 +276,8 @@ export function TenantProfileHome() {
         subtitle={`What kind of organization this is, which modules it runs, what it calls things, and its workweek. The words here reach the navigation, the roles and ${assistantName}.`}
         facts={[
           { label: 'Name', value: facts?.name ?? null },
-          { label: 'Plan', value: facts?.plan ? facts.plan.charAt(0).toUpperCase() + facts.plan.slice(1) : null, to: can('manage:org') ? '/admin/billing' : undefined },
+          // The plan in the API's words, never its code; an older API without them falls back to the code, capitalized.
+          { label: 'Plan', value: facts?.planLabel ?? (facts?.plan ? facts.plan.charAt(0).toUpperCase() + facts.plan.slice(1) : null), to: can('manage:org') ? '/admin/billing' : undefined },
           { label: 'People on the books', value: facts ? facts.onTheBooks.toLocaleString() : null, to: '/people', hint: 'Hired and not separated: the count People and Headcount show.' },
           { label: term('sites'), value: facts ? facts.sites.toLocaleString() : null, to: can('view:org') ? '/admin/sites' : undefined, hint: 'Active places' },
           { label: 'Since', value: facts?.createdAt ? fmtDate(facts.createdAt) : null },
@@ -331,36 +357,38 @@ export function TenantProfileHome() {
               <CardTitle>Modules</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="mb-3 text-sm text-silver">Off, a module leaves the menu and its pages answer not found. Nothing is deleted — switch it back on and everything is where it was.</p>
+              <p className="mb-3 text-sm text-ink-muted">
+                A module that is off leaves everyone’s menu.
+                <LearnMore>Its pages can’t be opened while it is off. Nothing is deleted — turn it back on and everything is where it was.</LearnMore>
+              </p>
               <ul className="grid gap-3 md:grid-cols-2" data-testid="module-switches">
                 {TENANT_MODULES.map((key) => {
                   const reach = MODULE_REACH[key];
                   const changed = profile.modules[key] !== modules[key];
                   return (
-                    <li key={key} className={cn('rounded-lg border p-3', modules[key] ? 'border-accent/40 bg-accent-fill/5' : 'border-line', changed && 'ring-1 ring-warning/50')}>
+                    <li key={key} className={cn('rounded-lg border border-line p-3', changed && 'ring-1 ring-warning/50')}>
                       <div className="flex items-start gap-3">
-                        <input
-                          id={`module-${key}`}
-                          type="checkbox"
-                          className="mt-1 h-5 w-5 shrink-0 accent-gold"
-                          checked={modules[key]}
-                          disabled={!canManage || save.isPending}
-                          onChange={(e) => setModuleDraft((d) => ({ ...d, [key]: e.target.checked }))}
-                        />
                         <label htmlFor={`module-${key}`} className="min-w-0 flex-1 cursor-pointer">
                           <span className="flex items-center gap-2 text-sm font-medium text-ink">
-                            {TENANT_MODULE_LABEL[key]}
-                            <span className={cn('text-2xs font-normal', modules[key] ? 'text-success' : 'text-silver/70')}>{modules[key] ? 'On' : 'Off'}</span>
-                            {changed && <span className="text-2xs font-normal text-warning">unsaved</span>}
+                            {MODULE_TITLE[key]}
+                            {changed && <span className="text-2xs font-normal text-warning">Unsaved</span>}
                           </span>
-                          <span className="block text-xs text-silver">{MODULE_NOTE[key]}</span>
+                          <span className="block text-xs text-ink-muted">{MODULE_NOTE[key]}</span>
                           {(reach.pages.length > 0 || reach.roles.length > 0) && (
-                            <span className="mt-1.5 block text-2xs text-silver/80">
+                            <span className="mt-1.5 block text-2xs text-ink-muted">
                               {reach.pages.length > 0 && <>Menu: {reach.pages.slice(0, 6).join(', ')}{reach.pages.length > 6 ? ` and ${reach.pages.length - 6} more` : ''}.</>}
                               {reach.roles.length > 0 && <> Roles: {reach.roles.join(', ')}.</>}
                             </span>
                           )}
                         </label>
+                        {/* A switch, not a checkbox with "On" beside it: the state is the control. */}
+                        <SettingsSwitch
+                          id={`module-${key}`}
+                          aria-label={MODULE_TITLE[key]}
+                          checked={modules[key]}
+                          disabled={!canManage || save.isPending}
+                          onCheckedChange={(on) => setModuleDraft((d) => ({ ...d, [key]: on }))}
+                        />
                       </div>
                     </li>
                   );

@@ -92,6 +92,7 @@ import { parseFieldglassList, workerKey } from '../lib/fieldglassDesk.js';
 import multer from 'multer';
 import { renderTimesheetXlsx, timesheetFilename } from '../lib/timesheetXlsx.js';
 import { emitTimeEntryApproved } from '../lib/webhookEvents.js';
+import { fmtDayRange } from '../lib/humanDates.js';
 
 export const timeRouter = Router();
 
@@ -151,7 +152,7 @@ function notifyEntryDecision(
     // Rejections below still email: they need action.
     void notifyAssociate(entry.associateId, {
       subject: 'Hours approved',
-      body: `Your ${day} time entry (${range}) was approved — ${(decision.minutes / 60).toFixed(1)}h.`,
+      body: `Your ${day} time entry (${range}) was approved — ${(decision.minutes / 60).toFixed(1)} hours.`,
       category: 'time_entry',
       linkUrl: `/time-attendance?entry=${entry.id}`,
       quiet: true,
@@ -1855,7 +1856,7 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
       }`;
       void notifyAssociate(updated.associateId, {
         subject: 'Approved hours adjusted',
-        body: `Your approved ${day} time entry was corrected by an admin — it now reads ${range} (${(netWorkedMinutes(updated, updated.breaks) / 60).toFixed(1)}h). Talk to your manager if this looks wrong.`,
+        body: `Your approved ${day} time entry was corrected by an admin — it now reads ${range} (${(netWorkedMinutes(updated, updated.breaks) / 60).toFixed(1)} hours). Talk to your manager if this looks wrong.`,
         category: 'time_entry',
         linkUrl: `/time-attendance?entry=${updated.id}`,
       });
@@ -3179,7 +3180,7 @@ async function loadExternalSheet(
     body: `${data.rows.length} employee${data.rows.length === 1 ? '' : 's'}, ${data.changes.length} change${data.changes.length === 1 ? '' : 's'} listed${ackNow.length ? `, ${ackNow.length} unverified acknowledged` : ''}. ${download.watermark}`,
     text: [
       `${downloaderName} downloaded the external payroll packet (${format.toUpperCase()}).`,
-      `Scope: ${scope}, ${data.from.toISOString().slice(0, 10)} to ${new Date(data.to.getTime() - 1).toISOString().slice(0, 10)}.`,
+      `Scope: ${scope}, ${fmtDayRange(data.from, new Date(data.to.getTime() - 1), { year: true })}.`,
       `Employees: ${data.rows.length}. Changes since last packet: ${data.changes.length}. Unverified changes acknowledged: ${ackNow.length}.`,
       `From ${req.ip ?? 'unknown IP'}.`,
       download.watermark,

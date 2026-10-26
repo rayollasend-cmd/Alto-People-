@@ -3,6 +3,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { attendanceScore } from './attendance.js';
 import { renderFormPdf, fmtDay } from './claimsPdf.js';
 import { employerNameFor } from './leaveOfAbsence.js';
+import { fmtDay as sayDay } from './humanDates.js';
 
 /**
  * Unemployment claims — what the employer says back to the state, and why.
@@ -238,17 +239,17 @@ export async function responsePacketPdf(
         bullets: e.workOffers.length
           ? e.workOffers.map(
               (o) =>
-                `${o.offeredAt.slice(0, 10)}: ${o.description}${o.payRate ? ` at $${o.payRate.toFixed(2)}/h` : ''} — ${o.response.toLowerCase().replace('_', ' ')}${o.declineReason ? ` (${o.declineReason})` : ''}`,
+                `${sayDay(o.offeredAt.slice(0, 10), { year: true })}: ${o.description}${o.payRate ? ` at $${o.payRate.toFixed(2)}/h` : ''} — ${o.response.toLowerCase().replace('_', ' ')}${o.declineReason ? ` (${o.declineReason})` : ''}`,
             )
           : ['None recorded.'],
       },
       {
         heading: 'Discipline in the 12 months before separation',
-        bullets: e.discipline.length ? e.discipline.map((d) => `${d.incidentDate} · ${d.label}${d.acknowledged ? ' (acknowledged)' : ''}: ${d.description}`) : ['None.'],
+        bullets: e.discipline.length ? e.discipline.map((d) => `${sayDay(d.incidentDate, { year: true })} · ${d.label}${d.acknowledged ? ' (acknowledged)' : ''}: ${d.description}`) : ['None.'],
       },
       {
         heading: `Attendance (points on last day: ${e.attendance.score})`,
-        bullets: e.attendance.events.length ? e.attendance.events.map((a) => `${a.date} · ${a.label} · ${a.points} pt${a.excused ? ' (excused)' : ''}`) : ['No attendance events in the last 90 days.'],
+        bullets: e.attendance.events.length ? e.attendance.events.map((a) => `${sayDay(a.date, { year: true })} · ${a.label} · ${a.points} point${a.points === 1 ? '' : 's'}${a.excused ? ' (excused)' : ''}`) : ['No attendance events in the last 90 days.'],
       },
       {
         heading: 'Policies acknowledged',

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
+import { fmtMoney } from '@/lib/format';
 import { StackedBarChart } from '@/components/ui/charts';
 import { getRunTaxLines } from '@/lib/taxJurisdictionsApi';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -33,7 +34,7 @@ export function RunTaxBreakdown({ runId }: { runId: string }) {
             x="name"
             layout="horizontal"
             series={[{ key: 'amount', name: 'Tax' }]}
-            format={fmtMoneyCompact}
+            format={fmtMoneyAxis}
           />
         </div>
       )}

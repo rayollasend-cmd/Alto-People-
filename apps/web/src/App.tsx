@@ -13,6 +13,7 @@ import { NotFound } from '@/pages/NotFound';
 import { Dashboard, preloadDashboard } from '@/pages/Dashboard';
 import { RequireAuth } from '@/lib/auth';
 import { RequireCapability } from '@/lib/RequireCapability';
+import { OperatorOnly } from '@/lib/OperatorOnly';
 import { registerPrefetch, registerDataPrefetch } from '@/lib/prefetch';
 import { queryClient } from '@/lib/queryClient';
 import { trackChunk } from '@/lib/chunkLoading';
@@ -612,9 +613,9 @@ const LAYOUT_ROUTES = [
   {
     element: <SettingsArea />,
     children: [
-    { path: 'product-analytics', element: <RequireCapability cap="view:product-analytics"><ProductAnalytics /></RequireCapability> },
-    { path: 'design-system', element: <RequireCapability cap="view:product-analytics"><DesignSystemPage /></RequireCapability> },
-    { path: 'reliability', element: <RequireCapability cap="view:product-analytics"><ReliabilityHome /></RequireCapability> },
+    { path: 'product-analytics', element: <RequireCapability cap="view:product-analytics"><OperatorOnly><ProductAnalytics /></OperatorOnly></RequireCapability> },
+    { path: 'design-system', element: <RequireCapability cap="view:product-analytics"><OperatorOnly><DesignSystemPage /></OperatorOnly></RequireCapability> },
+    { path: 'reliability', element: <RequireCapability cap="view:product-analytics"><OperatorOnly><ReliabilityHome /></OperatorOnly></RequireCapability> },
     // Settings & trust — the one door to the admin pages below (SettingsHome).
     // The hub admits everyone its sidebar door is shown to (a workforce
     // manager holds manage:org, not view:hr-admin); its cards are each gated.

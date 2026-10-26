@@ -107,3 +107,18 @@ describe('Standards', () => {
     expect(screen.getByText(/No shifts were submitted in this window/i)).toBeInTheDocument();
   });
 });
+
+describe('Standards — a trend needs two points', () => {
+  it('says when the week-by-week chart will appear instead of drawing one dot and one bar', () => {
+    const oneWeek = SCORECARD.weekly.map((w, i) => (i === 3 ? w : { ...w, shifts: 0 }));
+    render(<OpsStandards scorecard={{ ...SCORECARD, weekly: oneWeek }} onPickStore={vi.fn()} />);
+    expect(screen.getByTestId('ops-weekly-too-few')).toHaveTextContent('two weeks');
+  });
+
+  it('keeps the legend behind "How to read this"', () => {
+    render(<OpsStandards scorecard={SCORECARD} onPickStore={vi.fn()} />);
+    const howto = screen.getByTestId('ops-standards-howto');
+    expect(howto.tagName).toBe('DETAILS');
+    expect(within(howto).getByText('How to read this')).toBeInTheDocument();
+  });
+});

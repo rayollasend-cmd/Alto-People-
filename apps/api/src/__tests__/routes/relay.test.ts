@@ -254,6 +254,21 @@ describe('relay escalation sweep — chain of command', () => {
     });
     expect(climbed).not.toBeNull();
     expect(climbed?.subject).toContain('Escalated');
+
+    // The next day, still overdue: the same bells do not ring again (one
+    // per item, a reminder a week later — not a copy every day).
+    await prisma.notification.updateMany({
+      where: { category: 'relay.escalation' },
+      data: { createdAt: new Date(now.getTime() - DAY) },
+    });
+    expect(await runRelayEscalationSweep(prisma, now)).toBe(0);
+
+    // A week on and still overdue: one reminder.
+    await prisma.notification.updateMany({
+      where: { category: 'relay.escalation' },
+      data: { createdAt: new Date(now.getTime() - 8 * DAY) },
+    });
+    expect(await runRelayEscalationSweep(prisma, now)).toBeGreaterThan(0);
   });
 });
 

@@ -17,6 +17,7 @@ import { notifyUser } from './notify.js';
 import { currentAlerts } from './programs.js';
 import { emitProgramAlert } from './webhookEvents.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
+import { fmtDay } from './humanDates.js';
 
 export const PROGRAM_DIGEST_CATEGORY = 'program_digest';
 const SEND_AFTER_HOUR = 8;
@@ -51,7 +52,7 @@ export function programDigestBody(alerts: ProgramAlert[]): string {
   for (const [label, list] of groups) {
     lines.push(`${label} (${list.length})`);
     for (const a of list.slice(0, 25)) {
-      lines.push(`  • ${a.associateName} — ${PROGRAM_TYPE_LABELS[a.programType]}${a.siteName ? `, ${a.siteName}` : ''}: ${a.dueOn} (${when(a)})`);
+      lines.push(`  • ${a.associateName} — ${PROGRAM_TYPE_LABELS[a.programType]}${a.siteName ? `, ${a.siteName}` : ''}: ${fmtDay(a.dueOn, { weekday: true })} (${when(a)})`);
     }
     if (list.length > 25) lines.push(`  …and ${list.length - 25} more.`);
     lines.push('');

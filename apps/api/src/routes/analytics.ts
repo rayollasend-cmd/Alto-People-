@@ -11,7 +11,7 @@ import {
 } from '@alto-people/shared';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
-import { activeAssociateIds, activeHeadcount, activeWindowDays } from '../lib/activeDefinition.js';
+import { activeAssociateIds, activeHeadcount, activeWindowDays, placements } from '../lib/activeDefinition.js';
 import { peopleStandings, workStatusCounts } from '../lib/peopleStatus.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -219,11 +219,7 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       }),
       // I-9s aren't client-attributable — bounded callers see 0 rather
       // than the org count.
-      isBounded
-        ? Promise.resolve(0)
-        : prisma.i9Verification.count({
-            where: { tenantId: T, section2CompletedAt: null, associate: { AND: [{ deletedAt: null }, scopeAssociates(req.user!)] } },
-          }),
+      isBounded ? Promise.resolve(0) : i9Section2Backlog(T, req.user!),
       prisma.documentRecord.count({
         where: { AND: [{ tenantId: T, deletedAt: null, status: 'UPLOADED' }, clientClamp, { associate: scopeAssociates(req.user!) }] },
       }),
@@ -704,3 +700,25 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * People whose I-9 Section 2 is still owed — the same count as the
+ * Compliance I-9 tab's "Section 2 pending" tile: records without Section 2,
+ * plus the placed people with no I-9 record at all (their Section 2 clock
+ * runs from their hire date). This tile read 0 while the tab listed 33
+ * "Section 2 due" rows (F500 audit 2026-10-26).
+ */
+async function i9Section2Backlog(tenantId: string, user: SessionUser): Promise<number> {
+  const reach = { AND: [{ deletedAt: null }, scopeAssociates(user)] };
+  const [pending, placed] = await Promise.all([
+    prisma.i9Verification.count({ where: { tenantId, section2CompletedAt: null, associate: reach } }),
+    placements({ tenantId }, prisma),
+  ]);
+  if (placed.size === 0) return pending;
+  const withRecord = await prisma.i9Verification.findMany({ where: { tenantId, associateId: { in: [...placed.keys()] } }, select: { associateId: true } });
+  const has = new Set(withRecord.map((r) => r.associateId));
+  const missing = [...placed.keys()].filter((id) => !has.has(id));
+  if (missing.length === 0) return pending;
+  const notStarted = await prisma.associate.count({ where: { AND: [{ id: { in: missing } }, { tenantId }, reach] } });
+  return pending + notStarted;
+}

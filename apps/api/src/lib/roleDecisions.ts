@@ -21,6 +21,7 @@ import { addBusinessDays } from './everifyReadiness.js';
 import { overdueContractDuties } from './contractDuties.js';
 import { stuckWhere } from './applicationFilters.js';
 import type { SessionUser } from '../types/express.js';
+import { fmtDay } from './humanDates.js';
 
 const DAY_MS = 24 * 3600_000;
 /** Company-local "YYYY-MM-DD" (the company's own zone, the same one its
@@ -40,6 +41,30 @@ export function dayWords(day: string | Date, now: Date = new Date()): string {
   const at = new Date(`${key}T12:00:00.000Z`);
   if (Number.isNaN(at.getTime())) return key;
   return (key.slice(0, 4) === String(now.getUTCFullYear()) ? DAY_WORDS : DAY_WORDS_YEAR).format(at);
+}
+
+const SHORT_DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+const SHORT_DAY_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
+/**
+ * A deadline in words with how far it is (F500 2026-10-26: "due Sat, Jan 31"
+ * beside a red "268d", and "by Fri, Oct 23" three days after it passed):
+ *   "was due Oct 23 · 3 days overdue" · "due today" · "due tomorrow" ·
+ *   "due Oct 30 · in 4 days" · "due Jan 31, 2027 · in 97 days".
+ * The year only when it isn't this one. Takes a calendar day ('YYYY-MM-DD'
+ * or a date-only column); `today` is the company's own day.
+ */
+export function dueWords(day: string | Date, now: Date = new Date()): string {
+  const key = typeof day === 'string' ? day.slice(0, 10) : day.toISOString().slice(0, 10);
+  const at = new Date(`${key}T12:00:00.000Z`);
+  if (Number.isNaN(at.getTime())) return `due ${key}`;
+  const today = ymd(now);
+  const diff = Math.round((at.getTime() - new Date(`${today}T12:00:00.000Z`).getTime()) / DAY_MS);
+  const words = (key.slice(0, 4) === today.slice(0, 4) ? SHORT_DAY : SHORT_DAY_YEAR).format(at);
+  if (diff < 0) return `was due ${words} · ${-diff} day${diff === -1 ? '' : 's'} overdue`;
+  if (diff === 0) return 'due today';
+  if (diff === 1) return 'due tomorrow';
+  return `due ${words} · in ${diff} days`;
 }
 
 /**
@@ -79,6 +104,12 @@ export interface RoleDecision {
   quickAction?: string;
   /** The item's "no" beside its quick action (an agent's proposal: Reject). POST /me/decisions/quick with decline. */
   declineAction?: string;
+  /**
+   * The calendar day ('YYYY-MM-DD', the company's) the item is due, when its
+   * label already says "was due … · N days overdue" / "due … · in N days" —
+   * the queue then draws no second age chip beside it.
+   */
+  dueDay?: string;
 }
 
 const SEVERITY_RANK = { critical: 0, high: 1, normal: 2 } as const;
@@ -433,7 +464,8 @@ export async function computeRoleDecisions(
           key: `i9:section2:${h.associateId}`,
           domain: 'hiring',
           severity: !due ? 'high' : due < today ? 'critical' : due === today ? 'high' : 'normal',
-          label: due ? `I-9 Section 2 for ${h.name}: ${due < today ? 'late, was due' : 'due'} ${due}` : `I-9 Section 2 for ${h.name}: no start date on file`,
+          label: due ? `I-9 Section 2 for ${h.name} — ${dueWords(due, now)}` : `I-9 Section 2 for ${h.name}: no start date on file`,
+          ...(due ? { dueDay: due } : {}),
           detail: h.blockers.length ? `E-Verify cannot open yet: ${h.blockers.map(blockerWords).join(', ')}.` : 'E-Verify can open once Section 2 is done.',
           stakes: null,
           ageDays: null,
@@ -446,7 +478,7 @@ export async function computeRoleDecisions(
         key: 'i9:section2',
         domain: 'hiring',
         severity: 'high',
-        label: `${hires.length} I-9 Section 2 verifications pending${first.dueBy ? `, the first due ${first.dueBy.toISOString().slice(0, 10)}` : ''}`,
+        label: `${hires.length} I-9 Section 2 verifications pending${first.dueBy ? `, the first due ${fmtDay(first.dueBy, { weekday: true, now })}` : ''}`,
         detail: 'Federal deadline: Section 2 within 3 business days of the start date. Earliest first on the I-9 tab.',
         stakes: null,
         ageDays: null,
@@ -543,7 +575,7 @@ export async function computeRoleDecisions(
           key: `compliance:expired:${c.id}`,
           domain: 'compliance',
           severity: 'critical',
-          label: `${c.associate.firstName} ${c.associate.lastName}: ${c.label} expired ${c.expiresAt.toISOString().slice(0, 10)}`,
+          label: `${c.associate.firstName} ${c.associate.lastName}: ${c.label} expired ${fmtDay(c.expiresAt, { now })}`,
           detail: `The Compliance agent asked them ${c.stage} time${c.stage === 1 ? '' : 's'}; nothing newer is on file. Collect the renewal, or waive it on the scorecard.`,
           stakes: null,
           ageDays: Math.max(0, Math.floor((now.getTime() - c.expiresAt.getTime()) / DAY_MS)),
@@ -866,11 +898,12 @@ async function pushContractDuties(prisma: PrismaClient, user: QueueUser, out: Ro
       key: `compliance:contract-duty:${d.key}:${d.periodStart}`,
       domain: 'compliance',
       severity: d.daysOverdue > 7 ? 'critical' : 'high',
-      // The age chip says how overdue; the title names the duty and its day.
-      label: `${d.label} — due ${dayWords(d.dueDate, now)}`,
+      // The title names the duty, its day and how overdue — one phrase, no second chip.
+      label: `${d.label} — ${dueWords(d.dueDate, now)}`,
       detail: 'Overdue under the contract. Do it as the contract asks, then confirm it on the scorecard.',
       stakes: null,
       ageDays: d.daysOverdue,
+      dueDay: d.dueDate.slice(0, 10),
       linkUrl: '/compliance?tab=scorecard',
     });
   }
@@ -962,11 +995,12 @@ async function pushLegalDeadlines(
           key: `claims:ui:${c.id}`,
           domain: 'compliance',
           severity: late || c.responseDueAt.getTime() <= now.getTime() + 2 * DAY_MS ? 'critical' : 'high',
-          // Action + record; the day in words (F500 SH-4).
-          label: `Answer ${c.associate.firstName} ${c.associate.lastName}’s ${c.state} unemployment claim — ${late ? 'was due' : 'due'} ${day(c.responseDueAt)}`,
+          // Action + record; the day in words and how far it is (F500 SH-4, 2026-10-26).
+          label: `Answer ${c.associate.firstName} ${c.associate.lastName}’s ${c.state} unemployment claim — ${dueWords(c.responseDueAt, now)}`,
           detail: 'A late response loses the right to contest and can charge the claim to your account.',
           stakes: null,
           ageDays: null,
+          dueDay: c.responseDueAt.toISOString().slice(0, 10),
           linkUrl: `/claims/unemployment?claim=${c.id}`,
         });
       }
@@ -1014,10 +1048,12 @@ async function pushLegalDeadlines(
           key: `leave:notice:${c.id}`,
           domain: 'compliance',
           severity: due.getTime() < now.getTime() ? 'critical' : 'high',
+          // A deadline that passed reads "was due … · N days overdue", never "by Fri, Oct 23" three days later.
           label:
             c.status === 'REQUESTED'
-              ? `Send ${who} the leave notice by ${day(due, c.status !== 'REQUESTED')}`
-              : `${who}’s medical certification is due ${day(due)}`,
+              ? `Send ${who} the leave notice — ${dueWords(ymd(due), now)}`
+              : `Get ${who}’s medical certification — ${dueWords(due, now)}`,
+          dueDay: c.status === 'REQUESTED' ? ymd(due) : due.toISOString().slice(0, 10),
           detail:
             c.status === 'REQUESTED'
               ? 'The eligibility and rights notice is owed within 5 business days of the request.'

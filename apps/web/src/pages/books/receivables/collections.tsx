@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { HandCoins, Pause, Play, Send } from '@/components/ui/icons';
@@ -6,7 +7,7 @@ import { AGING_BUCKET_KEYS, AGING_BUCKET_LABELS, type ReceivablesAgingRow } from
 import { ApiError } from '@/lib/api';
 import { usePrompt } from '@/lib/confirm';
 import { pauseClientDunning, resumeClientDunning } from '@/lib/clientsApi';
-import { fmtDate, fmtMoney, fmtMoneyCompact, fmtStatementNo, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtStatementNo, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   RECEIVABLES_KEY,
@@ -271,7 +272,7 @@ export function AgingByClientChart({ rows }: { rows: ReceivablesAgingRow[] }) {
         x="client"
         layout="horizontal"
         series={AGING_BUCKET_KEYS.map((k) => ({ key: k, name: AGING_BUCKET_LABELS[k], color: AGING_COLORS[k] }))}
-        format={(v) => fmtMoneyCompact(v)}
+        format={fmtMoneyAxis}
       />
     </ChartFrame>
   );

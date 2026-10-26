@@ -25,6 +25,24 @@ export interface RunTotalsCheckProps {
   /** Non-voided paychecks. */
   paychecks?: number | null;
   totalsAgree?: boolean | null;
+  /** The run's status: a paid run is told what not to file, not what not to pay. */
+  status?: string | null;
+}
+
+/**
+ * The run is on hold because its totals and paychecks disagree: no next step
+ * that moves money or files taxes is offered from it (the run record once led
+ * with "Create the tax deposit" under this very alert — F500 audit 2026-10-26).
+ */
+export function totalsOnHold(run: { status?: string | null; totalsAgree?: boolean | null } | null | undefined): boolean {
+  return !!run && run.status !== 'CANCELLED' && run.totalsAgree === false;
+}
+
+/** The run's next step, or null while its totals are on hold (or it has none left). */
+export function liveNextStep<N extends { key: string }>(run: { status?: string | null; totalsAgree?: boolean | null; nextStep?: N | null } | null | undefined): N | null {
+  if (!run || totalsOnHold(run)) return null;
+  const n = run.nextStep ?? null;
+  return n && n.key !== 'done' && n.key !== 'cancelled' ? n : null;
 }
 
 export function RunTotalsMismatch({ check, compact = false, className }: { check: RunTotalsCheckProps | null | undefined; compact?: boolean; className?: string }) {
@@ -41,7 +59,7 @@ export function RunTotalsMismatch({ check, compact = false, className }: { check
     <div role="alert" data-testid="run-totals-mismatch" className={cn('flex items-start gap-2 rounded-md border border-alert/40 bg-alert/10 text-alert', compact ? 'p-2 text-xs' : 'p-3 text-sm', className)}>
       <AlertTriangle className={cn('shrink-0', compact ? 'mt-px h-3.5 w-3.5' : 'mt-0.5 h-4 w-4')} aria-hidden="true" />
       <p className="min-w-0">
-        <span className="font-medium">{t('runTotals.title')}</span> {body} {!compact && t('runTotals.next')}
+        <span className="font-medium">{t('runTotals.title')}</span> {body} {!compact && t(check.status === 'DISBURSED' ? 'runTotals.nextPaid' : 'runTotals.next')}
       </p>
     </div>
   );

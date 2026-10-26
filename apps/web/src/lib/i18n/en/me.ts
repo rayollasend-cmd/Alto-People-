@@ -98,7 +98,7 @@ export const enMe = {
   'me.face.askHint': 'The kiosk will ask you once at your next punch. You can also decide here.',
   'me.face.turnOn': 'Turn on',
   'me.face.turnOff': 'Turn off',
-  'me.num.title': 'Employee number',
+  'me.num.title': 'Clock-in number',
   'me.num.hint': 'Use this number to clock in and out at the kiosk. Issued {date}.',
   'me.num.none':
     'Not yet issued. HR will assign you a 4-digit number after your onboarding is approved.',
@@ -218,6 +218,14 @@ export const enMe = {
   'me.mgr.call': 'Call',
   'me.mgr.text': 'Text',
   'me.mgr.email': 'Email',
+  'me.noPerson.title': 'Your sign-in isn’t linked to an employee record',
+  'me.noPerson.body': 'My profile holds an employee’s own details — contacts, dependents and tax forms. Your name, password and notifications are in Account settings.',
+  'me.noPerson.cta': 'Account settings',
+  'me.empType.employee': 'Employee',
+  'me.empType.contractor': 'Independent contractor',
+  'me.empType.business': 'Contractor (business)',
+  'me.empType.employeeHint': 'Taxes are taken out of each paycheck.',
+  'me.empType.contractorHint': 'No taxes are taken out — you file them yourself.',
 } as const;
 
 registerEnglish(enMe);

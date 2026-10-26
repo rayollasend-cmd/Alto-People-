@@ -60,6 +60,7 @@ import {
 import { enqueueAudit } from '../lib/audit.js';
 import { ReportPdf } from '../lib/reportPdf.js';
 import { formatRef } from '../lib/emailTemplates.js';
+import { fmtDayInZone } from '../lib/humanDates.js';
 
 export const complianceScorecardRouter = Router();
 
@@ -101,52 +102,68 @@ complianceScorecardRouter.use(async (req, _res, next) => {
 const VIEW = requireCapability('view:compliance');
 const MANAGE_COMPLIANCE = requireCapability('manage:compliance');
 
-// Walmart SOW expected bill rates. Per-position; matched against Job.name
+// The org-standard bill rates (the default contract's). Per-position; matched against Job.name
 // (case-insensitive substring). Anything not matching falls through as "no
 // expectation set" rather than a failure. Rates come from the same env
 // knobs the labor-cost engine uses (DEFAULT_*_BILL_RATE, SOW defaults
 // $21.21 / $24.24) so a contract amendment is one env change everywhere —
 // this tile used to hardcode them and would have silently disagreed.
-const WALMART_BILL_RATES: ReadonlyArray<{ pattern: RegExp; rate: number }> = [
+const STANDARD_BILL_RATES: ReadonlyArray<{ pattern: RegExp; rate: number }> = [
   { pattern: /shift\s*lead/i, rate: env.DEFAULT_LEAD_BILL_RATE },
   { pattern: /(associate|stocker|nexus)/i, rate: env.DEFAULT_ASSOCIATE_BILL_RATE },
 ];
 
-// Contract-clause labels surfaced on every tooltip. Source of truth for what
-// each signal maps to in our agreements.
-const CLAUSE = {
-  AGE_18: 'Walmart MSP — 18+ associate requirement',
-  DRUG_TEST: 'Walmart SOW Exhibit E — drug test within 60 days',
-  BACKGROUND: 'FCRA + Walmart MSA — background check on file',
-  I9: 'IRCA — I-9 Section 1 + Section 2 completed',
-  E_VERIFY: 'IRCA + Walmart MSA — E-Verify case cleared',
-  W4: 'IRS — W-4 on file before first paycheck',
-  OFFER: 'Walmart MSA — signed offer letter',
-  POLICY: 'Walmart MSA — signed policy acknowledgment',
-  WC: 'Walmart MSA Section 7 — Workers Comp insurance',
-  GL: 'Walmart MSA Section 7 — General Liability insurance',
-  DRUG_EXPIRY: 'Walmart SOW Exhibit E — drug test 60-day validity',
-  WORK_AUTH: 'IRCA — I-9 work authorization re-verification',
-  J1: 'J-1 program end date',
-  TRAINING_EXPIRY: 'Training certification re-validation',
-  DOC_EXPIRY: 'Document validity — expiring credential on file',
-  VAX_EXPIRY: 'Client site requirement — vaccination validity',
-  AGREEMENT_EXPIRY: 'Alto People agreement — expiring term',
-  FILL_RATE: 'Walmart SOW — 97% shift fill rate target',
-  NO_SHOW: 'Walmart SOW — sub-2% no-show rate target',
-  SHIFT_LEAD: 'Walmart SOW — 100% Shift Lead presence',
-  TEMP_LOG: 'FSMA 204 — temperature log with photo',
-  MOD_SIGNOFF: 'Walmart SOW — 100% MOD sign-off',
-  FIELDGLASS: 'Walmart SOW — Fieldglass timesheet by Mon 2pm PST',
-  INVOICE: 'Walmart MSA — 90-day invoice forfeiture window',
-  MONTHLY_REPORT: 'Walmart SOW — monthly compliance report',
-  EEO: 'Walmart MTSA Section 5a — EEO + harassment training',
-  OSHA_TRAIN: 'Walmart MTSA Section 5b — OSHA safety training',
-  CADE: 'Walmart MTSA Exhibit D — CADE system training',
-  FOOD_HANDLER: 'Local food code — food handler certification',
-  BILL_RATE: `Walmart SOW — bill rates $${env.DEFAULT_ASSOCIATE_BILL_RATE.toFixed(2)} / $${env.DEFAULT_LEAD_BILL_RATE.toFixed(2)}`,
-  OSHA_LOG: 'OSHA 1904 — injury & illness recordkeeping (Form 300)',
-} as const;
+// Contract-clause labels surfaced on every tooltip: what each signal is
+// cited to. F500 audit 2026-10-26: these were hard-coded to one customer's
+// agreements ("Walmart SOW", "FCRA + Walmart MSA", "Walmart CADE training")
+// and every tenant read them. Now a client-facing requirement cites the
+// scoped client's own contract ("<Client> contract"), the all-clients view
+// says "Client contract", and the rest cite the law or company policy.
+export const NEUTRAL_CONTRACT = 'Client contract';
+
+export function clausesFor(contract: string = NEUTRAL_CONTRACT) {
+  return {
+    AGE_18: `${contract} — associates 18 or older`,
+    DRUG_TEST: `${contract} — drug test within 60 days`,
+    BACKGROUND: 'FCRA — background check on file',
+    I9: 'IRCA — I-9 Section 1 + Section 2 completed',
+    E_VERIFY: 'IRCA — E-Verify case cleared',
+    W4: 'IRS — W-4 on file before first paycheck',
+    OFFER: 'Company policy — signed offer letter',
+    POLICY: 'Company policy — signed policy acknowledgment',
+    WC: `${contract} — workers’ compensation insurance`,
+    GL: `${contract} — general liability insurance`,
+    DRUG_EXPIRY: `${contract} — drug test valid for 60 days`,
+    WORK_AUTH: 'IRCA — I-9 work authorization re-verification',
+    J1: 'J-1 program end date',
+    TRAINING_EXPIRY: 'Training certification renewal',
+    DOC_EXPIRY: 'Document validity — expiring credential on file',
+    VAX_EXPIRY: 'Client site requirement — vaccination validity',
+    AGREEMENT_EXPIRY: 'Signed agreement — expiring term',
+    FILL_RATE: `${contract} — 97% shift fill rate target`,
+    NO_SHOW: `${contract} — no-show rate under 2%`,
+    SHIFT_LEAD: `${contract} — a shift lead on every shift`,
+    TEMP_LOG: 'FSMA 204 — temperature log with photo',
+    MOD_SIGNOFF: `${contract} — manager-on-duty sign-off on every shift`,
+    FIELDGLASS: `${contract} — Fieldglass timesheet by Monday 2 PM Pacific`,
+    INVOICE: `${contract} — invoices submitted within 90 days`,
+    MONTHLY_REPORT: `${contract} — monthly compliance report`,
+    EEO: `${contract} — EEO and harassment training`,
+    OSHA_TRAIN: `${contract} — OSHA safety training`,
+    CADE: `${contract} — CADE system training`,
+    FOOD_HANDLER: 'Local food code — food handler certification',
+    BILL_RATE: `${contract} — bill rates $${env.DEFAULT_ASSOCIATE_BILL_RATE.toFixed(2)} / $${env.DEFAULT_LEAD_BILL_RATE.toFixed(2)}`,
+    OSHA_LOG: 'OSHA 1904 — injury and illness records (Form 300)',
+  } as const;
+}
+type Clauses = ReturnType<typeof clausesFor>;
+
+/** The contract a client-facing requirement cites: the scoped client's own, else the neutral word. */
+async function clausesForScope(clientId?: string | null): Promise<Clauses> {
+  if (!clientId) return clausesFor(NEUTRAL_CONTRACT);
+  const client = await prisma.client.findFirst({ where: { id: clientId, tenantId: tenantIdForWrite() }, select: { name: true } });
+  return clausesFor(client?.name ? `${client.name} contract` : NEUTRAL_CONTRACT);
+}
 
 // Returns the union of associate ids whose most-recent active Application is
 // APPROVED. Reused by tiles 1 + 5. Includes Application.clientId so every
@@ -384,7 +401,7 @@ async function computeOnboardingSets(clientId?: string | null) {
 export async function buildOnboardingTile(
   clientId?: string | null,
 ): Promise<ScorecardOnboardingResponse> {
-  const { ids, subjectByid, sets } = await computeOnboardingSets(clientId);
+  const [{ ids, subjectByid, sets }, CLAUSE] = await Promise.all([computeOnboardingSets(clientId), clausesForScope(clientId)]);
   const total = ids.length;
 
   // Empty fast-path so every downstream query gets `WHERE id IN ()` skipped.
@@ -869,9 +886,15 @@ export async function buildExpirationsTile(
     });
   }
 
-  const red = items.filter((i) => i.daysUntil >= 0 && i.daysUntil <= 30);
-  const amber = items.filter((i) => i.daysUntil > 30 && i.daysUntil <= 60);
-  const green = items.filter((i) => i.daysUntil > 60 && i.daysUntil <= 90);
+  // The 30/60/90-day windows suit credentials that last a year or more. A
+  // drug test is only good for 60 days, so on those windows every fresh
+  // result sat in amber for a month and red for the next — 38 warnings
+  // for tests that were all in date. Its windows scale to its life: red
+  // in the last week, amber in the two before.
+  const window = (i: (typeof items)[number]) => (i.kind === 'DRUG_TEST' ? { red: 7, amber: 21, green: 30 } : { red: 30, amber: 60, green: 90 });
+  const red = items.filter((i) => i.daysUntil >= 0 && i.daysUntil <= window(i).red);
+  const amber = items.filter((i) => i.daysUntil > window(i).red && i.daysUntil <= window(i).amber);
+  const green = items.filter((i) => i.daysUntil > window(i).amber && i.daysUntil <= window(i).green);
 
   // Sort each bucket nearest-first.
   for (const arr of [red, amber, green]) {
@@ -972,6 +995,7 @@ export async function buildShiftsTile(
   clientId?: string | null,
 ): Promise<ScorecardShiftsResponse> {
   const windowDays = 30;
+  const CLAUSE = await clausesForScope(clientId);
 
   // ASN Nexus is the source of truth for shift events. If the integration
   // is configured (env vars set + endpoint reachable), every signal comes
@@ -999,10 +1023,10 @@ export async function buildShiftsTile(
     const signals: ScorecardShiftsResponse['signals'] = [
       asnSignal('FILL_RATE', 'Shift fill rate', CLAUSE.FILL_RATE, asn.metrics.fillRate),
       asnSignal('NO_SHOW_RATE', 'No-show rate', CLAUSE.NO_SHOW, asn.metrics.noShowRate),
-      asnSignal('SHIFT_LEAD_PRESENT', 'Shift Lead present', CLAUSE.SHIFT_LEAD, asn.metrics.shiftLeadPresent),
+      asnSignal('SHIFT_LEAD_PRESENT', 'Shift lead present', CLAUSE.SHIFT_LEAD, asn.metrics.shiftLeadPresent),
       asnSignal('TEMPERATURE_LOGS', 'Temperature logs with photos', CLAUSE.TEMP_LOG, asn.metrics.temperatureLogs),
-      asnSignal('MOD_SIGNOFF', 'MOD sign-off captured', CLAUSE.MOD_SIGNOFF, asn.metrics.modSignoff),
-      asnSignal('FIELDGLASS_TIMESHEETS', 'Fieldglass timesheet by Mon 2pm PST', CLAUSE.FIELDGLASS, asn.metrics.fieldglassTimesheetsOnTime),
+      asnSignal('MOD_SIGNOFF', 'Manager-on-duty sign-off captured', CLAUSE.MOD_SIGNOFF, asn.metrics.modSignoff),
+      asnSignal('FIELDGLASS_TIMESHEETS', 'Fieldglass timesheet by Monday 2 PM Pacific', CLAUSE.FIELDGLASS, asn.metrics.fieldglassTimesheetsOnTime),
     ];
 
     return ScorecardShiftsResponseSchema.parse({
@@ -1051,7 +1075,7 @@ export async function buildShiftsTile(
   const signals: ScorecardShiftsResponse['signals'] = [
     {
       key: 'FILL_RATE',
-      label: 'Shift fill rate (local — last 30 days)',
+      label: 'Shift fill rate (last 30 days)',
       contractClause: CLAUSE.FILL_RATE,
       status: 'live',
       value: fillRate,
@@ -1059,9 +1083,9 @@ export async function buildShiftsTile(
       reason: null,
     },
     { key: 'NO_SHOW_RATE', label: 'No-show rate', contractClause: CLAUSE.NO_SHOW, status: 'live', value: noShowRate, target: 2, reason: null },
-    { key: 'SHIFT_LEAD_PRESENT', label: 'Shift Lead present', contractClause: CLAUSE.SHIFT_LEAD, status: 'live', value: shiftLeadPresent, target: 100, reason: null },
+    { key: 'SHIFT_LEAD_PRESENT', label: 'Shift lead present', contractClause: CLAUSE.SHIFT_LEAD, status: 'live', value: shiftLeadPresent, target: 100, reason: null },
     { key: 'TEMPERATURE_LOGS', label: 'Temperature logs with photos', contractClause: CLAUSE.TEMP_LOG, status: 'live', value: temperatureLogs, target: 100, reason: null },
-    { key: 'FIELDGLASS_TIMESHEETS', label: 'Fieldglass timesheet by Mon 2pm PST', contractClause: CLAUSE.FIELDGLASS, status: 'live', value: fieldglassOnTime, target: 100, reason: null },
+    { key: 'FIELDGLASS_TIMESHEETS', label: 'Fieldglass timesheet by Monday 2 PM Pacific', contractClause: CLAUSE.FIELDGLASS, status: 'live', value: fieldglassOnTime, target: 100, reason: null },
   ];
 
   const severity = worstSeverity(fillSeverity, shiftsSeverity(signals));
@@ -1227,15 +1251,25 @@ function asnSignal(
 
 // Tile severity from the ASN-driven signal mix. NO_SHOW_RATE is the only
 // signal where lower is better — invert it before scoring.
+/**
+ * One shift signal against its target. A no-show rate is a ceiling (lower
+ * is better); every other signal is a floor. Both the tile and the action
+ * list read this — the action list used to treat every signal as a floor,
+ * so a 0.5% no-show rate under a 2% ceiling was filed as critical.
+ */
+function shiftSignalSeverity(s: ScorecardShiftsResponse['signals'][number]): ScorecardSeverity {
+  if (s.status !== 'live' || s.value === null || s.target === null) return 'ok';
+  const ceiling = s.key === 'NO_SHOW_RATE';
+  const passes = ceiling ? s.value <= s.target : s.value >= s.target;
+  if (passes) return 'ok';
+  const ratio = ceiling ? s.target / Math.max(s.value, 0.01) : s.value / s.target;
+  return ratio >= 0.93 ? 'warn' : 'critical';
+}
+
 function shiftsSeverity(signals: ScorecardShiftsResponse['signals']): ScorecardSeverity {
   let worst: ScorecardSeverity = 'ok';
   for (const s of signals) {
-    if (s.status !== 'live' || s.value === null || s.target === null) continue;
-    const isNoShow = s.key === 'NO_SHOW_RATE';
-    const passes = isNoShow ? s.value <= s.target : s.value >= s.target;
-    if (passes) continue;
-    const ratio = isNoShow ? s.target / Math.max(s.value, 0.01) : s.value / s.target;
-    const severity: ScorecardSeverity = ratio >= 0.93 ? 'warn' : 'critical';
+    const severity = shiftSignalSeverity(s);
     if (severity === 'critical') return 'critical';
     if (severity === 'warn') worst = 'warn';
   }
@@ -1278,7 +1312,7 @@ export async function buildBillingTile(
   const rateChecks: ScorecardBillingResponse['rateChecks'] = jobs.map((j) => {
     // Brief 1A-2: the client's rate card for this role, else the org standard by name.
     const card = cardOn(rateCards, j.client.id, j.name, new Date());
-    const expected = card?.billRate != null ? { rate: card.billRate } : WALMART_BILL_RATES.find((r) => r.pattern.test(j.name));
+    const expected = card?.billRate != null ? { rate: card.billRate } : STANDARD_BILL_RATES.find((r) => r.pattern.test(j.name));
     const billRate = Number(j.billRate);
     return {
       clientId: j.client.id,
@@ -1628,7 +1662,7 @@ complianceScorecardRouter.get('/training', VIEW, async (req, res) => {
 export async function buildTrainingTile(
   clientId?: string | null,
 ): Promise<ScorecardTrainingResponse> {
-  const active = await getActiveAssociates(clientId);
+  const [active, CLAUSE] = await Promise.all([getActiveAssociates(clientId), clausesForScope(clientId)]);
   const activeIds = active.map((a) => a.associateId);
   const subjectById = new Map(active.map((a) => [a.associateId, a]));
   const total = active.length;
@@ -1640,7 +1674,7 @@ export async function buildTrainingTile(
   }> = [
     { tag: 'EEO_HARASSMENT', label: 'EEO + harassment training', contractClause: CLAUSE.EEO },
     { tag: 'OSHA_SAFETY', label: 'OSHA safety training', contractClause: CLAUSE.OSHA_TRAIN },
-    { tag: 'WALMART_CADE', label: 'Walmart CADE training', contractClause: CLAUSE.CADE },
+    { tag: 'WALMART_CADE', label: 'CADE system training', contractClause: CLAUSE.CADE },
     { tag: 'FOOD_HANDLER', label: 'Food handler certification', contractClause: CLAUSE.FOOD_HANDLER },
   ];
 
@@ -2010,12 +2044,15 @@ export function computeWeightedScore(bundle: ScorecardBundle, openCriticalCount 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
+/** The open-actions list's bound (totalActionCount is always the true total). */
+export const ACTIONS_LIST_CAP = 1_000;
+
 export async function buildActionsTile(
   clientId?: string | null,
   prebuilt?: ScorecardBundle,
 ): Promise<ScorecardActionsResponse> {
   // Run the live tiles in parallel and synthesize an action per failure.
-  const bundle = prebuilt ?? (await buildScorecardBundle(clientId));
+  const [bundle, CLAUSE] = await Promise.all([prebuilt ?? buildScorecardBundle(clientId), clausesForScope(clientId)]);
   const { onboarding, expirations, shifts, billing, training, safety } = bundle;
 
   const actions: ScorecardAction[] = [];
@@ -2048,8 +2085,8 @@ export async function buildActionsTile(
     actions.push({
       id: `exp:${item.kind}:${item.subject.associateId ?? 'global'}:${item.expiresAt}`,
       severity: 'critical',
-      title: `${item.subject.associateName ?? 'Item'} — ${item.label} expires in ${item.daysUntil}d`,
-      contractClause: getExpirationClause(item.kind),
+      title: `${item.subject.associateName ?? 'Item'} — ${item.label} ${expiresIn(item.daysUntil)}`,
+      contractClause: getExpirationClause(item.kind, CLAUSE),
       subject: item.subject,
       link: expirationFixLink(item.kind, item.subject.associateId),
     });
@@ -2058,8 +2095,8 @@ export async function buildActionsTile(
     actions.push({
       id: `exp:${item.kind}:${item.subject.associateId ?? 'global'}:${item.expiresAt}`,
       severity: 'warn',
-      title: `${item.subject.associateName ?? 'Item'} — ${item.label} expires in ${item.daysUntil}d`,
-      contractClause: getExpirationClause(item.kind),
+      title: `${item.subject.associateName ?? 'Item'} — ${item.label} ${expiresIn(item.daysUntil)}`,
+      contractClause: getExpirationClause(item.kind, CLAUSE),
       subject: item.subject,
       link: expirationFixLink(item.kind, item.subject.associateId),
     });
@@ -2068,11 +2105,11 @@ export async function buildActionsTile(
   // Tile 3 — only the live one (fill rate) can fail; "coming soon" tiles
   // don't generate actions.
   for (const s of shifts.signals) {
-    if (s.status !== 'live' || s.value === null || s.target === null) continue;
-    if (s.value >= s.target) continue;
+    const severity = shiftSignalSeverity(s);
+    if (severity === 'ok') continue;
     actions.push({
       id: `shf:${s.key}`,
-      severity: s.value >= s.target * 0.93 ? 'warn' : 'critical',
+      severity,
       title: `${s.label}: ${s.value}% (target ${s.target}%)`,
       contractClause: s.contractClause,
       subject: { associateId: null, associateName: null, clientId: null, clientName: null },
@@ -2086,7 +2123,7 @@ export async function buildActionsTile(
     actions.push({
       id: `bil:${r.jobId}`,
       severity: 'warn',
-      title: `${r.clientName} / ${r.jobName} — bill rate $${r.billRate.toFixed(2)} ≠ SOW $${r.expectedRate.toFixed(2)}`,
+      title: `${r.clientName} / ${r.jobName} — bill rate $${r.billRate.toFixed(2)}, contract rate $${r.expectedRate.toFixed(2)}`,
       contractClause: CLAUSE.BILL_RATE,
       subject: {
         associateId: null,
@@ -2189,14 +2226,16 @@ export async function buildActionsTile(
   const warnCount = withState.filter((a) => a.severity === 'warn').length;
 
   return ScorecardActionsResponseSchema.parse({
-    // Cap total list at 200 to keep the response bounded; the page is a
-    // dashboard, not an issue tracker. truncated + totalActionCount let the
-    // UI and CSV say so instead of passing a page off as the world.
-    actions: withState.slice(0, 200),
+    // Cap the list to keep the response bounded; the page is a dashboard,
+    // not an issue tracker. truncated + totalActionCount let the UI and CSV
+    // say so instead of passing a page off as the world. F500 audit
+    // 2026-10-26: at 200 the header read "235 open actions" over an "All 200"
+    // list; at ACTIONS_LIST_CAP a normal desk's list is the whole count.
+    actions: withState.slice(0, ACTIONS_LIST_CAP),
     criticalCount,
     warnCount,
     score: computeWeightedScore(bundle, criticalCount),
-    truncated: withState.length > 200,
+    truncated: withState.length > ACTIONS_LIST_CAP,
     totalActionCount: withState.length,
     generatedAt: new Date().toISOString(),
   });
@@ -2380,7 +2419,7 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
 
     const pdf = new ReportPdf({
       title: 'Compliance Scorecard — Executive Summary',
-      subtitle: `Scope: ${scopeLabel} · Generated ${new Date().toISOString().slice(0, 10)}`,
+      subtitle: `Scope: ${scopeLabel} · Generated ${fmtDayInZone(new Date(), undefined, { year: true })}`,
       reference: formatRef(),
       facts: [
         { label: 'Score', value: `${score} / 100 (${grade})` },
@@ -2594,7 +2633,14 @@ function expirationFixLink(
   }
 }
 
-function getExpirationClause(kind: ScorecardExpiringItem['kind']): string {
+/** "expires today", "expires tomorrow", "expires in 14 days" — never "14d". */
+function expiresIn(days: number): string {
+  if (days <= 0) return 'expires today';
+  if (days === 1) return 'expires tomorrow';
+  return `expires in ${days} days`;
+}
+
+function getExpirationClause(kind: ScorecardExpiringItem['kind'], CLAUSE: Clauses): string {
   switch (kind) {
     case 'WORKERS_COMP': return CLAUSE.WC;
     case 'GENERAL_LIABILITY': return CLAUSE.GL;

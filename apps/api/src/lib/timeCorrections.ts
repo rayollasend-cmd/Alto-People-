@@ -4,6 +4,7 @@ import { enqueueAudit } from './audit.js';
 import { notifyAssociate, notifyClientSupervisors } from './notify.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
 import { loadLiveRules } from './laborRules/live.js';
+import { fmtDayInZone, fmtMomentInZone } from './humanDates.js';
 
 /**
  * Timekeeping corrections, attested.
@@ -176,7 +177,7 @@ export async function decideCorrection(db: Db, id: string, decider: { id: string
           clockOutAt,
           status,
           ...(status === 'APPROVED' ? { approvedById: decider.id, approvedAt: now } : {}),
-          notes: [entry.notes, `Corrected ${now.toISOString().slice(0, 10)} at the worker’s attested request.`].filter(Boolean).join(' ').slice(0, 1000),
+          notes: [entry.notes, `Corrected ${fmtDayInZone(now)} at the worker’s attested request.`].filter(Boolean).join(' ').slice(0, 1000),
         },
       });
       after = { clockInAt: iso(clockInAt), clockOutAt: iso(clockOutAt), status };
@@ -249,7 +250,7 @@ export async function recordBreakAttestation(db: Db, ctx: { tenantId: string; as
   if (flagged) {
     void notifyClientSupervisors(ctx.entry.clientId, {
       subject: 'A worker reported a missed break',
-      body: `${input.meal === 'NO' ? 'No meal break' : 'A rest break was missed'} on the shift that started ${ctx.entry.clockInAt.toISOString().slice(0, 16).replace('T', ' ')} UTC.${input.note ? ` “${input.note.slice(0, 140)}”` : ''}`,
+      body: `${input.meal === 'NO' ? 'No meal break' : 'A rest break was missed'} on the shift that started ${fmtMomentInZone(ctx.entry.clockInAt)}.${input.note ? ` “${input.note.slice(0, 140)}”` : ''}`,
       category: 'time',
       linkUrl: '/time-attendance?tab=breaks',
       at: { locationId: ctx.entry.locationId, startsAt: ctx.entry.clockInAt },

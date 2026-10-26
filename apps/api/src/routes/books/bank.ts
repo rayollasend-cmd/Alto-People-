@@ -53,6 +53,7 @@ import {
   updateFeedAccount,
   updateRule,
 } from '../../lib/books/bank/service.js';
+import { fmtDay } from '../../lib/humanDates.js';
 
 /**
  * /books/bank — bank and card accounts in the books: feeds, imports,
@@ -272,9 +273,9 @@ booksBankRouter.get('/reconciliations/:id/report.xlsx', async (req, res) => {
   const fmt = (n: number) => n.toFixed(2);
   tableSheet(wb, {
     name: 'Reconciliation',
-    title: `${d.accountName} — reconciliation through ${d.statementEndDate}`,
+    title: `${d.accountName} — reconciliation through ${fmtDay(d.statementEndDate, { year: true })}`,
     subtitle: `${company} · statement balance ${fmt(d.statementBalance)} · beginning ${fmt(d.beginningBalance)} · cleared ${fmt(d.clearedBalance)} · difference ${fmt(d.difference)}`,
-    note: d.status === 'COMPLETED' ? `Completed ${d.completedAt?.slice(0, 10) ?? ''}${d.completedByName ? ` by ${d.completedByName}` : ''}.` : 'In progress — not yet complete.',
+    note: d.status === 'COMPLETED' ? `Completed${d.completedAt ? ` ${fmtDay(d.completedAt.slice(0, 10), { year: true })}` : ''}${d.completedByName ? ` by ${d.completedByName}` : ''}.` : 'In progress — not yet complete.',
     columns: [
       { header: 'Date', key: 'date', width: 12 },
       { header: 'Entry', key: 'entryNumber', type: 'number', width: 9 },

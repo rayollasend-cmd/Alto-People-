@@ -170,6 +170,20 @@ describe('GET /me/inbox', () => {
     expect(body.total).toBe(0);
   });
 
+  it('unread notices are listed but never counted — they are the bell’s number (F500 2026-10-26)', async () => {
+    const associate = await createAssociate();
+    await prisma.associateAvailability.create({ data: { associateId: associate.id, dayOfWeek: 1, startMinute: 480, endMinute: 1020 } });
+    const { user } = await createUser({ role: 'ASSOCIATE', email: associate.email, associateId: associate.id });
+    await prisma.notification.createMany({
+      data: Array.from({ length: 3 }, (_, i) => ({ channel: 'IN_APP' as const, status: 'SENT' as const, recipientUserId: user.id, body: `Note ${i}` })),
+    });
+    const body = await inboxFor(user.email);
+    expect(body.sources.find((s) => s.key === 'my-notifications')).toMatchObject({ count: 3 });
+    // The Inbox badge counts tasks, not the notes the bell already counts.
+    expect(body.total).toBe(body.sources.filter((s) => s.key !== 'my-notifications').reduce((n, s) => n + s.count, 0));
+    expect(body.total).toBe(0);
+  });
+
   it('reimbursements: the manager counts the claims to approve, Finance counts the ones to settle', async () => {
     const worker = await createAssociate({ firstName: 'Exp', lastName: 'Ense' });
     const { user: manager } = await createUser({ role: 'MANAGER' });

@@ -4,6 +4,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { listJobs, runJobNow } from '../lib/jobs.js';
+import { platformOperatorOnly } from './productAnalytics.js';
 
 /**
  * The scheduled-jobs panel (Settings & Trust → Reliability). What each
@@ -13,17 +14,20 @@ import { listJobs, runJobNow } from '../lib/jobs.js';
  *
  *   GET  /admin/jobs            every registered job with its status
  *   POST /admin/jobs/:name/run  run one now (audited)
+ *
+ * The jobs are the platform's, run for every organization at once, so
+ * both routes are the platform operator's alone (404 elsewhere).
  */
 export const scheduledJobsRouter = Router();
 
 const VIEW = requireCapability('view:product-analytics');
 const MANAGE = requireCapability('manage:org');
 
-scheduledJobsRouter.get('/', VIEW, (_req, res) => {
+scheduledJobsRouter.get('/', VIEW, platformOperatorOnly, (_req, res) => {
   res.json({ jobs: listJobs(), now: new Date().toISOString() });
 });
 
-scheduledJobsRouter.post('/:name/run', MANAGE, async (req, res) => {
+scheduledJobsRouter.post('/:name/run', MANAGE, platformOperatorOnly, async (req, res) => {
   const name = z.string().min(1).max(80).parse(req.params.name);
   const status = await runJobNow(name);
   if (!status) throw new HttpError(404, 'not_found', 'No scheduled job by that name.');

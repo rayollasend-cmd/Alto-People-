@@ -438,20 +438,21 @@ function CandidateCard({
         <div className="flex items-start gap-2 pr-6">
           {!compact && <Avatar src={associatePhotoUrl(candidate.hiredAssociateId)} name={fullName} email={candidate.email} size="sm" />}
           <div className="min-w-0 flex-1">
-            <div className="truncate font-medium text-white">{fullName}</div>
+            {/* Two lines before an ellipsis: "Jasmine Thom…" was cut with room to spare. */}
+            <div className="line-clamp-2 break-words font-medium leading-snug text-white" title={fullName}>{fullName}</div>
             {compact ? (
               <div className="truncate text-2xs text-silver/70">
                 {candidate.position ? `${candidate.position} · ` : ''}
                 {fmtDate(candidate.stageChangedAt)}
               </div>
             ) : (
-              candidate.position && <div className="truncate text-xs2 text-gold/90">{candidate.position}</div>
+              candidate.position && <div className="truncate text-xs2 text-ink-muted" title={candidate.position}>{candidate.position}</div>
             )}
           </div>
         </div>
         {!compact && (
           <div className="mt-2 flex items-center justify-between gap-2">
-            <span className="truncate text-2xs uppercase tracking-wider text-silver/70">
+            <span className="truncate text-2xs text-silver/70">
               {source ?? 'No source'}
             </span>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -485,14 +486,15 @@ function CandidateCard({
                   <Link2 className="h-3.5 w-3.5" />
                 </a>
               )}
+              {/* The age in words ("23 days", not "23d"); the stage is in the title. */}
               <span
                 title={`${inStage} day${inStage === 1 ? '' : 's'} in ${STAGE_LABEL[candidate.stage]}`}
                 className={cn(
-                  'rounded px-1 text-2xs tabular-nums',
+                  'whitespace-nowrap rounded px-1 text-2xs tabular-nums',
                   inStage >= 7 ? 'bg-warning/15 text-warning' : 'text-silver/70',
                 )}
               >
-                {inStage}d
+                {inStage} {inStage === 1 ? 'day' : 'days'}
               </span>
             </div>
           </div>

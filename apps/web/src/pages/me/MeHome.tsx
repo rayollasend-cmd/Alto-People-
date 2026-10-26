@@ -187,6 +187,25 @@ function fulfilled<T>(r: PromiseSettledResult<T> | undefined): T | null {
   return r && r.status === 'fulfilled' ? r.value : null;
 }
 
+/**
+ * The sign-in has no person record behind it (an administrator, a store's
+ * portal login): there is no personal profile to show, and nothing to
+ * retry. The API says so with `no_person_record`; older builds sent a 403
+ * about "associate-linked accounts".
+ */
+export function isNoPersonRecord(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  if (err.code === 'no_person_record' || err.code === 'not_an_associate') return true;
+  return err.status === 403 && /associate-linked|person record/i.test(err.message);
+}
+
+/** How a person is employed, in words (the enum's "W-2" is a tax form, not a word). */
+const EMPLOYMENT_WORDS: Record<string, { label: MessageKey; hint: MessageKey }> = {
+  W2_EMPLOYEE: { label: 'me.empType.employee', hint: 'me.empType.employeeHint' },
+  CONTRACTOR_1099_INDIVIDUAL: { label: 'me.empType.contractor', hint: 'me.empType.contractorHint' },
+  CONTRACTOR_1099_BUSINESS: { label: 'me.empType.business', hint: 'me.empType.contractorHint' },
+};
+
 export function MeHome() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -252,6 +271,26 @@ export function MeHome() {
   // The personal-details drawer: opened from the Profile tab, the "what's
   // missing" row, Life events (moving is an address change), or ?edit=1.
   const [editing, setEditing] = useState(() => searchParams.get('edit') === 'address');
+  // No person behind this sign-in: one designed state, not the API's
+  // sentence twice with a Retry that can never work (F500 audit).
+  const noPerson = !!p && p.status === 'rejected' && isNoPersonRecord(p.reason);
+
+  if (noPerson) {
+    return (
+      <ListTemplate title={t('me.title')}>
+        <EmptyState
+          icon={UserRound}
+          title={t('me.noPerson.title')}
+          description={t('me.noPerson.body')}
+          action={
+            <Button asChild>
+              <Link to="/settings">{t('me.noPerson.cta')}</Link>
+            </Button>
+          }
+        />
+      </ListTemplate>
+    );
+  }
 
   return (
     <>
@@ -260,6 +299,8 @@ export function MeHome() {
       <ListTemplate
         title={t('me.title')}
         subtitle={t('me.subtitle')}
+        // A worker reads at 16px on a phone (helper lines at 14px).
+        className="max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm"
         // No breadcrumb: one crumb repeating the title said nothing (F500 G5).
         secondaryActions={
           <Button asChild variant="outline" size="sm">
@@ -543,18 +584,20 @@ function ProfilePanel({
           </dl>
         </section>
 
+        {/* Only what is on file: a column of "—" under Department, Manager
+            and Job profile read as broken, not as "none" (F500 audit). */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ReadonlyField label={t('me.fld.workEmail')} value={profile.email} />
-          <ReadonlyField
-            label={t('me.fld.department')}
-            value={profile.department?.name ?? '—'}
-          />
+          {profile.department?.name && (
+            <ReadonlyField label={t('me.fld.department')} value={profile.department.name} />
+          )}
           {/* The manager is a person you can REACH, not an inert string —
               associates have no directory access, so tel:/mailto: here is
               their only in-app route to their boss (running late, sick,
               lost at a new site). */}
+          {profile.managerName && (
           <div>
-            <ReadonlyField label={t('me.fld.manager')} value={profile.managerName ?? '—'} />
+            <ReadonlyField label={t('me.fld.manager')} value={profile.managerName} />
             {(profile.managerPhone || profile.managerEmail) && (
               <div className="mt-1.5 flex flex-wrap gap-2">
                 {profile.managerPhone && (
@@ -584,14 +627,19 @@ function ProfilePanel({
               </div>
             )}
           </div>
-          <ReadonlyField
-            label={t('me.fld.jobProfile')}
-            value={profile.jobProfile?.title ?? '—'}
-          />
-          <ReadonlyField
-            label={t('me.fld.employmentType')}
-            value={EMPLOYMENT_LABEL[profile.employmentType] ?? profile.employmentType}
-          />
+          )}
+          {profile.jobProfile?.title && (
+            <ReadonlyField label={t('me.fld.jobProfile')} value={profile.jobProfile.title} />
+          )}
+          {EMPLOYMENT_WORDS[profile.employmentType] ? (
+            <ReadonlyField
+              label={t('me.fld.employmentType')}
+              value={t(EMPLOYMENT_WORDS[profile.employmentType]!.label)}
+              hint={t(EMPLOYMENT_WORDS[profile.employmentType]!.hint)}
+            />
+          ) : (
+            <ReadonlyField label={t('me.fld.employmentType')} value={EMPLOYMENT_LABEL[profile.employmentType] ?? profile.employmentType} />
+          )}
         </div>
       </CardContent>
       <Drawer open={editing} onOpenChange={(o) => !o && setEditing(false)}>
@@ -899,11 +947,12 @@ function EmployeeNumberRow({
   );
 }
 
-function ReadonlyField({ label, value }: { label: string; value: string }) {
+function ReadonlyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div>
       <Label>{label}</Label>
-      <div className="mt-1 text-sm text-white">{value}</div>
+      <div className="mt-1 text-sm text-ink">{value}</div>
+      {hint && <div className="mt-0.5 text-xs text-ink-muted">{hint}</div>}
     </div>
   );
 }

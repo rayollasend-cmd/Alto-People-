@@ -56,6 +56,36 @@ export function previewOf(body: string): string {
   return lines.find((l) => !GREETING.test(l)) ?? lines[0] ?? '';
 }
 
+/** One row in the list: the newest of a run of identical notifications, and every copy (itself first). */
+export type InboxRowEntry = InboxEntry & { copies: InboxEntry[] };
+
+/**
+ * The same notification sent again and again (an escalation repeated
+ * seventeen times) is one row with a count, not seventeen rows (F500
+ * 2026-10-26). The same means the same kind, category and subject — a
+ * repeat's text changes only in its count ("847h past", then "828h past") —
+ * or, with no subject, the same text. The newest copy stands for the run
+ * and is the one the reader opens. Order is kept (newest first).
+ */
+export function collapseRepeats(entries: InboxEntry[]): InboxRowEntry[] {
+  const out: InboxRowEntry[] = [];
+  const at = new Map<string, InboxRowEntry>();
+  for (const e of entries) {
+    const k = `${e.kind}|${e.category ?? ''}|${e.subject ?? `body:${e.body}`}`;
+    const row = at.get(k);
+    if (row) {
+      row.copies.push(e);
+      // A run is unread while any copy is.
+      if (!e.readAt) row.readAt = null;
+      continue;
+    }
+    const fresh: InboxRowEntry = { ...e, copies: [e] };
+    at.set(k, fresh);
+    out.push(fresh);
+  }
+  return out;
+}
+
 /** Rows shown before "Show more": 87 unread used to render as a 9,000px page of open cards. */
 export const INBOX_PAGE = 50;
 
@@ -140,11 +170,16 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
     await refetch();
   }, [refetch]);
 
-  const markOne = async (entry: InboxEntry) => {
+  const markOne = async (entry: InboxEntry | InboxRowEntry) => {
     if (entry.readAt) return;
     try {
-      if (entry.kind === 'broadcast') await markBroadcastRead(entry.sourceId);
-      else await markRead(entry.sourceId);
+      // A collapsed run is read as one: every unread copy of it.
+      const copies = 'copies' in entry ? entry.copies.filter((c) => !c.readAt) : [entry];
+      const ids = copies.filter((c) => c.kind === 'message').map((c) => c.sourceId);
+      const calls: Array<Promise<unknown>> = copies.filter((c) => c.kind === 'broadcast').map((c) => markBroadcastRead(c.sourceId));
+      if (ids.length === 1) calls.push(markRead(ids[0]!));
+      else if (ids.length > 1) calls.push(markAllInboxRead(ids));
+      await Promise.all(calls);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t('inbox.markFailed'));
@@ -152,7 +187,7 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
   };
 
   /** Opening a row reads it; on a phone a second tap folds it away again. */
-  const openEntry = (entry: InboxEntry) => {
+  const openEntry = (entry: InboxRowEntry) => {
     setOpenKey((cur) => (cur === entry.key && !wide ? null : entry.key));
     void markOne(entry);
   };
@@ -181,11 +216,15 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
     }
   };
 
-  const togglePick = (key: string) =>
+  // Picking a collapsed run picks every copy of it.
+  const togglePick = (row: InboxRowEntry) =>
     setPicked((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      const on = !next.has(row.key);
+      for (const c of row.copies) {
+        if (on) next.add(c.key);
+        else next.delete(c.key);
+      }
       return next;
     });
 
@@ -251,10 +290,11 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
       );
     });
   }, [items, unreadOnly, q]);
-  const shown = visible?.slice(0, limit) ?? null;
-  const more = visible ? visible.length - (shown?.length ?? 0) : 0;
+  const rows = useMemo(() => (visible ? collapseRepeats(visible) : null), [visible]);
+  const shown = rows?.slice(0, limit) ?? null;
+  const more = rows ? rows.length - (shown?.length ?? 0) : 0;
   // On a wide screen the reading pane shows the row that was opened.
-  const reading = wide ? (items?.find((i) => i.key === openKey) ?? null) : null;
+  const reading = wide ? (rows?.find((i) => i.key === openKey) ?? null) : null;
 
   const pickedUnread = items?.filter((i) => picked.has(i.key) && !i.readAt).length ?? 0;
 
@@ -336,7 +376,9 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
         <div className={cn(wide && 'grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]')}>
           <div className="min-w-0 overflow-hidden rounded-lg border border-line bg-surface">
             {groupByDay(shown).map((group) => {
-              const unreadInGroup = group.entries.filter((n) => !n.readAt).length;
+              // Every copy counts, so a "13×" row and the tab's unread number agree.
+              const inGroup = group.entries.reduce((n, r) => n + r.copies.length, 0);
+              const unreadInGroup = group.entries.reduce((n, r) => n + r.copies.filter((c) => !c.readAt).length, 0);
               return (
                 <section key={group.key} aria-label={dayHeading(group.key)}>
                   <div className="flex items-center gap-2 border-b border-line bg-surface-raised px-3 py-1.5 text-xs">
@@ -344,7 +386,7 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
                       {dayHeading(group.key)}
                     </span>
                     <span className="ml-auto text-ink-muted">
-                      {t(group.entries.length === 1 ? 'inbox.message' : 'inbox.messages', { count: group.entries.length })}
+                      {t(inGroup === 1 ? 'inbox.message' : 'inbox.messages', { count: inGroup })}
                       {unreadInGroup > 0 && <span className="ml-1 text-accent">{t('inbox.unreadInGroup', { count: unreadInGroup })}</span>}
                     </span>
                   </div>
@@ -356,7 +398,7 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
                         open={openKey === n.key}
                         inlineBody={!wide && openKey === n.key}
                         picked={picked.has(n.key)}
-                        onPick={() => togglePick(n.key)}
+                        onPick={() => togglePick(n)}
                         onOpen={() => openEntry(n)}
                         onFollow={() => openLink(n)}
                       />
@@ -374,11 +416,17 @@ export function AssociateInboxView({ embedded = false }: AssociateInboxViewProps
             )}
           </div>
           {wide && (
-            <aside className="min-w-0 rounded-lg border border-line bg-surface p-5 lg:sticky lg:top-20" aria-live="polite">
+            // A reader the height of the screen that stays put while the list
+            // scrolls — it was a 140px box beside a 3,000px list (F500 2026-10-26).
+            <aside
+              className="flex min-w-0 flex-col overflow-y-auto rounded-lg border border-line bg-surface p-5 lg:sticky lg:top-4 lg:h-[calc(100dvh-8rem)] lg:min-h-[24rem]"
+              aria-live="polite"
+              data-testid="inbox-reader"
+            >
               {reading ? (
                 <MessageView entry={reading} onFollow={() => openLink(reading)} />
               ) : (
-                <p className="py-10 text-center text-sm text-ink-muted">{t('inbox.readerEmpty')}</p>
+                <EmptyState icon={Inbox} title={t('inbox.readerEmpty')} className="flex-1 border-0 bg-transparent" />
               )}
             </aside>
           )}
@@ -420,7 +468,7 @@ function InboxRow({
   onOpen,
   onFollow,
 }: {
-  entry: InboxEntry;
+  entry: InboxRowEntry;
   open: boolean;
   inlineBody: boolean;
   picked: boolean;
@@ -455,6 +503,11 @@ function InboxRow({
             <span className={cn('min-w-0 flex-1 truncate text-sm text-ink', unread && 'font-semibold')} data-message-content>
               {subject}
             </span>
+            {n.copies.length > 1 && (
+              <Badge size="sm" variant="outline" withDot={false} className="shrink-0 tabular-nums" title={t('inbox.repeatsTitle', { count: n.copies.length })}>
+                {t('inbox.repeats', { count: n.copies.length })}
+              </Badge>
+            )}
             <span className="shrink-0 text-xs tabular-nums text-ink-muted" title={fmtDateTime(n.createdAt)}>
               {fmtTimeOnly(n.createdAt)}
             </span>

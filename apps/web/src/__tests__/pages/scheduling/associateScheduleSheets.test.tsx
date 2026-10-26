@@ -167,6 +167,20 @@ describe('<AssociateScheduleView> — no next shift', () => {
     await waitFor(() => expect(patchNotificationPreference).toHaveBeenCalledWith('scheduling', { inAppEnabled: true, emailEnabled: true, pushEnabled: true }));
   });
 
+  it('the view switcher sits above the empty state, and the header has one labelled action — no lone "More"', async () => {
+    vi.mocked(listMyShifts).mockResolvedValue({ shifts: [past()] as never });
+    vi.mocked(listMyOpenShifts).mockResolvedValue({ shifts: [] as never });
+    renderView();
+    const hero = await screen.findByTestId('no-next-shift');
+    const toolbar = screen.getByTestId('schedule-toolbar');
+    expect(toolbar.compareDocumentPosition(hero) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(toolbar).getByRole('radiogroup', { name: /view/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'My availability' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /more actions/i })).toBeNull();
+    // Adding the shifts to a calendar is beside the switcher.
+    expect(within(toolbar).getByRole('button', { name: 'Add to calendar' })).toBeInTheDocument();
+  });
+
   it('a next shift is the hero; no empty card', async () => {
     renderView();
     expect(await screen.findAllByText('F&D Morning Shift')).not.toHaveLength(0);

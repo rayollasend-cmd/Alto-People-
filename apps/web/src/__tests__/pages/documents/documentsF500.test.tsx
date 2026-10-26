@@ -106,12 +106,14 @@ describe('the document vault (admin)', () => {
     expect(within(strip).getByText('Expiring in 30 days').closest('button')).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('has one primary action, Request document, and the sibling pages as links', async () => {
+  it('has one primary action, Request a document, and the sibling pages as links', async () => {
     routes();
     renderVault();
     expect(await screen.findByRole('link', { name: 'Verification letters' })).toHaveAttribute('href', '/documents?tab=letters');
     expect(screen.getByRole('link', { name: 'Document templates' })).toHaveAttribute('href', '/templates');
-    expect(screen.getAllByRole('button', { name: /Request document/ }).length).toBeGreaterThan(0);
+    // One request button, one label (it read "Request document" here and "Request a document" below it).
+    expect(screen.getAllByRole('button', { name: /Request a document/ })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /Request document/ })).not.toBeInTheDocument();
   });
 
   it('says an empty vault is empty — not "switch the filter" — and offers to request a document', async () => {
@@ -122,7 +124,7 @@ describe('the document vault (admin)', () => {
     expect(screen.queryByRole('group', { name: 'Documents at a glance' })).not.toBeInTheDocument();
     // No filters over an empty vault.
     expect(screen.queryByRole('button', { name: /Awaiting review/ })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /Request a document/ }));
+    await userEvent.click(screen.getAllByRole('button', { name: /Request a document/ })[0]!);
     expect(await screen.findByRole('dialog', { name: 'Request a document' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send request' })).toBeDisabled();
   });

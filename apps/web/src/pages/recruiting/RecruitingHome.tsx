@@ -733,10 +733,11 @@ export function RecruitingHome() {
       ) : (
         // Each number opens the candidates behind it.
         <MetricStrip label="Pipeline at a glance">
-          <MetricCard icon={Users} label="In funnel" value={kpis ? kpis.inFunnel : '—'} hint="Applied through offer" href="/recruiting?view=board" />
-          <MetricCard icon={Briefcase} label="Interviewing" value={kpis ? kpis.interviewing : '—'} href="/recruiting?view=list&stage=INTERVIEW" />
-          <MetricCard icon={Award} label="Open offers" value={kpis ? kpis.outstandingOffers : '—'} href="/recruiting?view=list&stage=OFFER" />
-          <MetricCard icon={CheckCircle2} label="Hired this month" value={kpis ? kpis.hiredThisMonth : '—'} href="/recruiting?view=list&stage=HIRED" />
+          {/* Every tile says what it counts (three had no caption). */}
+          <MetricCard icon={Users} label="In funnel" value={kpis ? kpis.inFunnel : '—'} hint="Applied, in screening, interviewing or offered" href="/recruiting?view=board" />
+          <MetricCard icon={Briefcase} label="Interviewing" value={kpis ? kpis.interviewing : '—'} hint="Candidates in the interview stage" href="/recruiting?view=list&stage=INTERVIEW" />
+          <MetricCard icon={Award} label="Open offers" value={kpis ? kpis.outstandingOffers : '—'} hint="Offers sent, waiting on an answer" href="/recruiting?view=list&stage=OFFER" />
+          <MetricCard icon={CheckCircle2} label="Hired this month" value={kpis ? kpis.hiredThisMonth : '—'} hint="Moved to hired since the 1st" href="/recruiting?view=list&stage=HIRED" />
         </MetricStrip>
       )}
 

@@ -23,7 +23,7 @@ import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { Activity } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
-import { CopyValue, HEALTH_BADGE, WHAT_TO_DO, kindLook, environmentLabel, healthLine, useSafeConfirm } from './providerShared';
+import { CopyValue, HEALTH_BADGE, TechnicalDetail, WHAT_TO_DO, apiErrorDetail, kindLook, environmentLabel, healthLine, useSafeConfirm } from './providerShared';
 
 /**
  * One connection: how it is doing (and what to do when it isn't), a test
@@ -77,15 +77,21 @@ export function ProviderManageDrawer({
 
   const events = useQuery({ queryKey: ['providers', 'events', c?.id], queryFn: () => providerEvents(c!.id), enabled: !!c });
 
+  // The last test's technical text, for the "Technical details" fold — the toast says the plain sentence.
+  const [testDetail, setTestDetail] = useState<string | null>(null);
   const test = useMutation({
     mutationFn: () => testProviderConnection(c!.id),
     onSuccess: (r) => {
       onChanged();
       void events.refetch();
+      setTestDetail(r.ok ? null : (r.detail ?? null));
       if (r.ok) toast.success('The provider answered. The connection works.');
       else toast.error(r.message ?? 'The test didn’t pass.');
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : 'The test couldn’t run.'),
+    onError: (e) => {
+      setTestDetail(apiErrorDetail(e));
+      toast.error(e instanceof ApiError ? e.message : 'The test couldn’t run.');
+    },
   });
   const patch = useMutation({
     mutationFn: (body: Parameters<typeof patchProviderConnection>[1]) => patchProviderConnection(c!.id, body),
@@ -132,7 +138,8 @@ export function ProviderManageDrawer({
               {badge.label}
             </Badge>
           </div>
-          <p className={cn('mt-2 text-sm', c.health === 'failing' ? 'text-alert' : 'text-ink-muted')}>{healthLine(c)}</p>
+          <p className={cn('mt-2 text-sm', c.health === 'failing' ? 'text-ink' : 'text-ink-muted')}>{healthLine(c)}</p>
+          {(c.health === 'failing' || testDetail) && <TechnicalDetail detail={testDetail ?? c.lastErrorDetail} className="mt-1" />}
           {c.health === 'failing' && <p className="mt-2 text-sm text-ink-muted">{WHAT_TO_DO}</p>}
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
             <dt className="text-ink-muted">Last success</dt>

@@ -20,6 +20,7 @@ import { drugTestAdapter } from '../lib/providers/drugTesting.js';
 import { taxFilingAdapter } from '../lib/providers/taxFiling.js';
 import { testWiseConnection } from '../lib/providers/payouts.js';
 import { ProviderError } from '../lib/providers/http.js';
+import { providerFailureText } from '../lib/providers/failureText.js';
 import { testPlaidConnection } from '../lib/books/bank/plaid.js';
 
 /**
@@ -64,6 +65,8 @@ function healthOf(c: ProviderConnection): Health {
 function view(c: ProviderConnection) {
   const info = providerInfo(c.provider);
   const ctx = contextFor(c);
+  // The card reads a plain sentence; the vendor's own words ride in lastErrorDetail.
+  const failure = providerFailureText(c.lastError, { label: info?.label ?? c.provider, kind: c.kind });
   return {
     id: c.id,
     kind: c.kind,
@@ -75,7 +78,8 @@ function view(c: ProviderConnection) {
     health: healthOf(c),
     lastSuccessAt: c.lastSuccessAt?.toISOString() ?? null,
     lastErrorAt: c.lastErrorAt?.toISOString() ?? null,
-    lastError: c.lastError,
+    lastError: failure?.message ?? null,
+    lastErrorDetail: failure?.detail ?? null,
     lastTestAt: c.lastTestAt?.toISOString() ?? null,
     lastTestOk: c.lastTestOk,
     // Which credential fields are filled — never their values.
@@ -226,6 +230,8 @@ providerConnectionsRouter.post('/:id/test', canManage, async (req, res) => {
   } catch (err) {
     ok = false;
     message = err instanceof ProviderError || err instanceof Error ? err.message : 'The test failed.';
+    // Keep the vendor's status with its words: the card's plain sentence is read from it.
+    if (err instanceof ProviderError && err.status && !/\b\d{3}\b/.test(message)) message = `${message} (HTTP ${err.status})`;
   }
   const now = new Date();
   await prisma.providerConnection.update({ where: { id: row.id }, data: { lastTestAt: now, lastTestOk: ok } });
@@ -233,7 +239,8 @@ providerConnectionsRouter.post('/:id/test', canManage, async (req, res) => {
   else await recordFailure(row.id, message ?? 'The test failed.');
   await recordOutboundEvent({ connection: ctx, kind: row.kind, eventType: 'connection.test', ok, error: message });
   audit(req, 'provider.tested', row.id, { ok });
-  res.json({ ok, message, connection: view(await load(row.id)) });
+  const failure = ok ? null : providerFailureText(message, { label: providerInfo(row.provider)?.label ?? row.provider, kind: row.kind });
+  res.json({ ok, message: failure?.message ?? message, detail: failure?.detail ?? null, connection: view(await load(row.id)) });
 });
 
 providerConnectionsRouter.post('/:id/rotate-secret', canManage, async (req, res) => {

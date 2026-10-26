@@ -5,7 +5,7 @@ import { env } from '../config/env.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { recordCriticalAudit } from '../lib/audit.js';
-import { WORKER_TYPES, applyStripeEvent, billingContact, invoiceMonth, localToday, saveBillingContact, stripeMode, verifyStripeSignature } from '../lib/billing.js';
+import { WORKER_TYPES, applyStripeEvent, billingContact, invoiceMonth, localToday, planLabel, saveBillingContact, stripeMode, usageCountLabel, verifyStripeSignature } from '../lib/billing.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
 
 /**
@@ -25,6 +25,14 @@ const MonthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
 
 function operatorOnly(): void {
   if (tenantIdForWrite() !== ALTO_TENANT_ID) throw new HttpError(404, 'not_found', 'Not found.');
+}
+
+/** Each invoice line with its count in words ("1 AI agent"), so no page lower-cases an acronym. */
+function withLineLabels(lines: unknown): unknown {
+  if (!Array.isArray(lines)) return lines;
+  return lines.map((l) => (l && typeof l === 'object' && typeof (l as { type?: unknown }).type === 'string' && typeof (l as { quantity?: unknown }).quantity === 'number'
+    ? { ...l, label: usageCountLabel((l as { type: string }).type, (l as { quantity: number }).quantity) }
+    : l));
 }
 
 billingRouter.get('/', VIEW, async (_req, res) => {
@@ -55,13 +63,15 @@ billingRouter.get('/', VIEW, async (_req, res) => {
   res.json({
     contact,
     plan: tenant?.plan ?? 'internal',
+    // The plan in words: never the platform's own code on a customer's page.
+    planLabel: planLabel(tenant?.plan, tenantId),
     invoiced: tenant?.plan !== 'internal',
     stripe: stripeMode() ?? 'off',
     month,
     daysCounted: new Set(snaps.map((s) => s.day.toISOString())).size,
     running,
     history,
-    invoices: invoices.map((i) => ({ id: i.id, month: i.month, status: i.status, totalCents: i.totalCents, lines: i.lines, holdReason: i.holdReason, hostedUrl: i.hostedUrl, lastPaymentError: i.lastPaymentError, paidAt: i.paidAt?.toISOString() ?? null })),
+    invoices: invoices.map((i) => ({ id: i.id, month: i.month, status: i.status, totalCents: i.totalCents, lines: withLineLabels(i.lines), holdReason: i.holdReason, hostedUrl: i.hostedUrl, lastPaymentError: i.lastPaymentError, paidAt: i.paidAt?.toISOString() ?? null })),
   });
 });
 

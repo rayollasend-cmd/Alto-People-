@@ -80,9 +80,11 @@ describe('HeadcountHome', () => {
     // The companions beside the hero.
     expect(screen.getByText('980')).toBeInTheDocument();
     // The last payroll run, named and dated — not "last period" (F500 G1).
-    expect(screen.getByText('Last payroll run')).toBeInTheDocument();
+    // Paychecks in that run, said with their unit ("Last payroll run 0" read as zero of nothing).
+    expect(screen.getByText('Paid in the last payroll')).toBeInTheDocument();
     expect(screen.getByText('1,210')).toBeInTheDocument();
-    expect(screen.getByText('Paid Sep 26 – Oct 2, 2026 · finalized Oct 5, 2026')).toBeInTheDocument();
+    expect(screen.getByText('paychecks')).toBeInTheDocument();
+    expect(screen.getByText('Sep 26 – Oct 2, 2026 · finalized Oct 5')).toBeInTheDocument();
     // Headcount plan is a sibling page, not a button.
     expect(screen.getByRole('link', { name: 'Headcount plan' })).toHaveAttribute('href', '/headcount/plan');
     // No housing link: no "In housing" tile at all (a dash said nothing; F500 G1).

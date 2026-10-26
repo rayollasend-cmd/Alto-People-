@@ -49,6 +49,7 @@ import { promptShiftHandover } from '../lib/floorLeads.js';
 import { repairAfterTimeOff } from '../lib/scheduleRepair.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
+import { fmtMomentInZone } from '../lib/humanDates.js';
 
 export const timeOffRouter = Router();
 
@@ -306,7 +307,7 @@ timeOffRouter.post('/me/requests', idempotent, async (req, res, next) => {
       hours: input.hours,
       dateRange: range,
       reason: input.reason ?? null,
-      submittedAt: new Date(created.createdAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+      submittedAt: fmtMomentInZone(new Date(created.createdAt)),
       // The row itself, same as the bell — /admin/time-off was never a route.
       timeOffUrl: `${publicBaseUrl()}/approvals?request=${created.id}`,
     });

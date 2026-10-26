@@ -63,6 +63,16 @@ describe('the weekly split pay has always used', () => {
     expect(splitWeeklyOvertime(entries.map((e) => ({ status: 'APPROVED', clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: [], location: { timezone: e.site!.timezone! } })))).toEqual({ regularHours: 40, overtimeHours: 5 });
   });
 
+  it('a minute well inside the 40 carries exactly zero overtime — no float residue to read as "Overtime unlocked"', () => {
+    // Maria's week on 2026-10-26: a Sunday with a half-hour meal, a punch running since 5:49 AM, and the one-minute probe the earnings card prices.
+    const sunday: HoursEntry = { clockInAt: new Date('2026-10-25T11:20:00Z'), clockOutAt: new Date('2026-10-25T19:04:00Z'), site: FL, breaks: [{ type: 'MEAL', startedAt: new Date('2026-10-25T15:00:00Z'), endedAt: new Date('2026-10-25T15:30:00Z') }] };
+    const now = new Date('2026-10-26T15:34:03.017Z');
+    const running: HoursEntry = { clockInAt: new Date('2026-10-26T10:49:00Z'), clockOutAt: now, site: FL, breaks: [] };
+    const s = splitHours(NO_LIVE_RULES, [sunday, running, plannedEntry({ startsAt: now, endsAt: new Date(now.getTime() + 60_000), site: FL })]);
+    expect(s.entries.map((e) => e.overtimeHours)).toEqual([0, 0, 0]);
+    expect(s.overtimeHours).toBe(0);
+  });
+
   it('a California 10-hour day is straight time while California is not live — exactly what the paycheck pays', () => {
     const s = splitHours(NO_LIVE_RULES, [day(CA, '2026-09-28', 6, 16)]);
     expect([s.regularHours, s.overtimeHours, s.doubleTimeHours]).toEqual([10, 0, 0]);

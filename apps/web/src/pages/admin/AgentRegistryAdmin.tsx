@@ -1,3 +1,5 @@
+// Mid-sentence, a label loses only its first capital: "open an HR case", never "open an hr case".
+import { midSentence } from '@/pages/portal/words';
 import { useEffect, useMemo, useState } from 'react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -742,10 +744,10 @@ export function AgentRegistryAdmin() {
         )}
         <ul className="grid gap-1 text-xs2 text-ink-muted sm:grid-cols-2" aria-label="Who carries out what">
           <li>
-            <span className="font-medium text-ink">Always a person:</span> {HUMAN_ONLY_ACTIONS.map((a) => AGENT_GATED_ACTION_LABELS[a].toLowerCase()).join(', ')}. The approver does these in the app; the agent only asks.
+            <span className="font-medium text-ink">Always a person:</span> {HUMAN_ONLY_ACTIONS.map((a) => midSentence(AGENT_GATED_ACTION_LABELS[a])).join(', ')}. The approver does these in the app; the agent only asks.
           </li>
           <li>
-            <span className="font-medium text-ink">Needs approval first:</span> {AGENT_EXECUTABLE_ACTIONS.filter((a) => hasClients || a !== 'CLIENT_MESSAGE').map((a) => AGENT_GATED_ACTION_LABELS[a].toLowerCase()).join(', ')}. The agent carries these out once a person approves.
+            <span className="font-medium text-ink">Needs approval first:</span> {AGENT_EXECUTABLE_ACTIONS.filter((a) => hasClients || a !== 'CLIENT_MESSAGE').map((a) => midSentence(AGENT_GATED_ACTION_LABELS[a])).join(', ')}. The agent carries these out once a person approves.
           </li>
         </ul>
       </section>
@@ -1583,7 +1585,8 @@ export function CertificationSection({ agent, canManage, onChanged }: { agent: A
                 {running ? 'Running…' : 'Run scenarios'}
               </Button>
             )}
-            <Button size="sm" onClick={certify} disabled={!canCertify || certifying}>
+            {/* The record's header carries the gold Certify when it is the next step; here it is the tab's own, quieter. */}
+            <Button size="sm" variant="outline" onClick={certify} disabled={!canCertify || certifying}>
               {certifying ? 'Certifying…' : 'Certify'}
             </Button>
           </div>

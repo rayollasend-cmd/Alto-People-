@@ -383,12 +383,13 @@ describe('<TransportHome> — the day in the link, and fees waived together', ()
     renderAs('TRANSPORTATION_DIRECTOR', '/transport?date=2026-11-03');
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/transport/board?date=2026-11-03'));
     expect(screen.getByLabelText('Day')).toHaveValue('2026-11-03');
-    await userEvent.click(screen.getByRole('button', { name: 'Tomorrow' }));
+    // Today / Tomorrow is a view toggle (the kit's SegmentedControl), on every width.
+    await userEvent.click(screen.getByRole('radio', { name: 'Tomorrow' }));
     const d = new Date();
     d.setDate(d.getDate() + 1);
     const tomorrow = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(`/transport/board?date=${tomorrow}`));
-    expect(screen.getByRole('button', { name: 'Tomorrow' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('radio', { name: 'Tomorrow' })).toHaveAttribute('aria-checked', 'true');
   });
 
   const localYmd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

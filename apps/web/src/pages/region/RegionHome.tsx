@@ -39,12 +39,12 @@ import '@/lib/i18n/en/region';
  * away; the full numbers table sits behind Details.
  */
 
-const GRADE_STYLE: Record<NonNullable<StoreSnapshot['reliability']['grade']>, string> = {
-  A: 'text-success',
-  B: 'text-success',
-  C: 'text-warning',
-  D: 'text-alert',
-  F: 'text-alert',
+/** Stores on the strip's desktop row: a lone store fills its row instead of a third of it. */
+const STORE_COLS: Record<number, string> = {
+  1: 'grid-cols-1',
+  2: 'grid-cols-1 sm:grid-cols-2',
+  3: 'grid-cols-2 md:grid-cols-3',
+  4: 'grid-cols-2 md:grid-cols-4',
 };
 
 type SortKey = 'rank' | 'name' | 'grade' | 'floor' | 'today' | 'tomorrow' | 'requests';
@@ -148,6 +148,9 @@ export function RegionHome() {
 
   // The store furthest below contract leads (the list is ranked that way).
   const worst = data.stores[0] ?? null;
+  // Stores with a delivered figure, and how many sit under the 88% line.
+  const graded = Object.values(tot.gradeCounts).reduce((a, n) => a + n, 0);
+  const belowTarget = graded - (tot.gradeCounts.A ?? 0);
   const headerActions: PageAction[] = [
     {
       key: 'report',
@@ -162,10 +165,9 @@ export function RegionHome() {
   ];
   const exportCsv = () =>
     downloadCsv(`${data.region.name.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-stores-${ymdLocal()}.csv`, [
-      [t('region.colStore'), t('region.colGrade'), t('portal.chartShowed'), t('region.colFloor'), t('portal.chartContracted'), t('region.colToday'), t('region.colTomorrow'), t('region.colRequests'), t('region.colLeads')],
+      [t('region.colStore'), t('region.colDelivered'), t('region.colFloor'), t('portal.chartContracted'), t('region.colToday'), t('region.colTomorrow'), t('region.colRequests'), t('region.colLeads')],
       ...stores.map((s) => [
         s.name,
-        s.reliability.grade ?? '',
         s.reliability.score ?? '',
         s.now.onFloor,
         s.now.target ?? '',
@@ -254,17 +256,14 @@ export function RegionHome() {
                     ? t('region.heroShort', { missing: tot.target - tot.onFloor, count: tot.shortNow })
                     : t('region.heroMet')}
               </p>
-              <dl className="mt-4 grid grid-cols-3 gap-3 text-center">
-                <div className="rounded-lg border border-navy-secondary/60 bg-navy/40 px-2 py-2">
-                  <dt className="text-2xs uppercase tracking-wider text-silver/60">{t('region.kpiShort')}</dt>
-                  <dd className={cn('mt-0.5 text-xl font-bold tabular-nums', tot.shortNow > 0 ? 'text-warning' : 'text-white')}>{tot.shortNow}</dd>
-                </div>
+              {/* "Stores below contract" is the KPI strip's first tile — said once. */}
+              <dl className="mt-4 grid grid-cols-2 gap-3 text-center">
                 <div className="rounded-lg border border-navy-secondary/60 bg-navy/40 px-2 py-2">
                   <dt className="text-2xs uppercase tracking-wider text-silver/60">{t('portal.chartOpen')}</dt>
                   <dd className={cn('mt-0.5 text-xl font-bold tabular-nums', tot.openToday > 0 ? 'text-alert' : 'text-white')}>{tot.openToday}</dd>
                 </div>
                 <div className="rounded-lg border border-navy-secondary/60 bg-navy/40 px-2 py-2">
-                  <dt className="text-2xs uppercase tracking-wider text-silver/60">{t('region.kpiAlerts')}</dt>
+                  <dt className="text-2xs uppercase tracking-wider text-silver/60">{t('region.kpiLateNotIn')}</dt>
                   <dd className={cn('mt-0.5 text-xl font-bold tabular-nums', tot.alerts > 0 ? 'text-alert' : 'text-white')}>{tot.alerts}</dd>
                 </div>
               </dl>
@@ -352,7 +351,7 @@ export function RegionHome() {
                       {(
                         [
                           ['name', t('region.colStore')],
-                          ['grade', t('region.colGrade')],
+                          ['grade', t('region.colDelivered')],
                           ['floor', t('region.colFloor')],
                           ['today', t('region.colToday')],
                           ['tomorrow', t('region.colTomorrow')],
@@ -382,10 +381,7 @@ export function RegionHome() {
                           </Link>
                         </td>
                         <td className="py-2.5 pr-3">
-                          <span className={cn('text-lg font-bold leading-none', s.reliability.grade ? GRADE_STYLE[s.reliability.grade] : 'text-silver/40')}>
-                            {s.reliability.grade ?? '—'}
-                          </span>
-                          {s.reliability.score !== null && <span className="ml-1.5 text-xs tabular-nums text-silver/60">{s.reliability.score}%</span>}
+                          <span className="tabular-nums text-ink">{s.reliability.score !== null ? `${s.reliability.score}%` : '—'}</span>
                         </td>
                         <td className={cn('py-2.5 pr-3 tabular-nums', s.now.short > 0 ? 'text-warning' : 'text-white')}>
                           {s.now.onFloor}
@@ -424,8 +420,8 @@ export function RegionHome() {
         ) : (
           <ul
             className={cn(
-              'mt-2 grid grid-cols-2 gap-3 md:grid-cols-3',
-              data.stores.length >= 5 ? 'xl:grid-cols-5' : data.stores.length === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3',
+              'mt-2 grid gap-3',
+              STORE_COLS[data.stores.length] ?? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-5',
             )}
           >
             {data.stores.map((s) => {
@@ -443,12 +439,10 @@ export function RegionHome() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <span className="min-w-0 truncate text-sm font-medium text-white">{s.name}</span>
-                      <span
-                        className={cn('shrink-0 text-base font-bold leading-none', s.reliability.grade ? GRADE_STYLE[s.reliability.grade] : 'text-silver/40')}
-                        title={s.reliability.score !== null ? `${s.reliability.score}%` : undefined}
-                      >
-                        {s.reliability.grade ?? '—'}
-                      </span>
+                      {/* Contracted hours delivered, 4 weeks — a figure, not a red letter. */}
+                      {s.reliability.score !== null && (
+                        <span className="shrink-0 text-xs tabular-nums text-ink-muted">{t('region.cardDelivered', { pct: s.reliability.score })}</span>
+                      )}
                     </div>
                     <div className="mt-3 flex items-center gap-3">
                       <RingMeter percent={pct} tone={TONE_RING[st.tone]} size={64} label={t('region.ringOfContract')}>
@@ -482,19 +476,27 @@ export function RegionHome() {
       {/* ---- KPI strip: the numbers that go upward ------------------------------ */}
       <MetricStrip label={t('region.title')}>
         <StatTile
-          label={t('region.kpiGrade')}
+          label={t('region.kpiDelivered')}
           value={tot.score === null ? '—' : `${tot.score}%`}
-          delta={tot.gradeCounts.F > 0 ? t('region.kpiGradeF', { count: tot.gradeCounts.F }) : t('region.kpiGradeA', { count: tot.gradeCounts.A })}
-          deltaTone={tot.gradeCounts.F > 0 ? 'bad' : 'good'}
-          meter={tot.score !== null ? { percent: tot.score, tone: tot.score >= 88 ? 'good' : tot.score >= 70 ? 'primary' : 'bad' } : null}
-          sub={t('region.kpiGradeSub', { a: tot.gradeCounts.A, b: tot.gradeCounts.B, f: tot.gradeCounts.F })}
+          // In words, not "A0·B0·F1": how many stores sit below the 88% line.
+          delta={
+            tot.score === null
+              ? null
+              : belowTarget === 0
+                ? t('region.kpiAllAtTarget')
+                : t(belowTarget === 1 ? 'region.kpiBelowTargetOne' : 'region.kpiBelowTarget', { count: belowTarget })
+          }
+          deltaTone={belowTarget > 0 ? 'bad' : 'good'}
+          meter={tot.score !== null ? { percent: tot.score, tone: tot.score >= 88 ? 'good' : 'warn' } : null}
+          sub={graded > 0 ? t('region.kpiAtTarget', { n: graded - belowTarget, total: graded }) : undefined}
         />
         <StatTile
           label={t('region.kpiShort')}
           value={tot.shortNow}
           unit={t('region.kpiShortUnit', { total: tot.stores })}
           deltaTone={tot.shortNow > 0 ? 'bad' : 'good'}
-          sub={tot.shortNow > 0 ? t('region.kpiBelowContractSub', { count: tot.shortNow }) : tot.alerts > 0 ? t('region.kpiShortAlerts', { count: tot.alerts }) : t('region.kpiFloorOk')}
+          // The label already says "below contract": the line under it adds, never repeats.
+          sub={tot.alerts > 0 ? t('region.kpiShortAlerts', { count: tot.alerts }) : tot.shortNow > 0 ? undefined : t('region.kpiFloorOk')}
         />
         <StatTile
           label={t('region.kpiOpen')}
@@ -528,8 +530,8 @@ export function RegionHome() {
             </div>
             <DetailsTable
               label={t('portal.details')}
-              columns={[t('region.colStore'), t('region.colGrade'), t('portal.chartShowed')]}
-              rows={data.stores.map((s) => [s.name, s.reliability.grade ?? '—', s.reliability.score === null ? '—' : `${s.reliability.score}%`])}
+              columns={[t('region.colStore'), t('portal.chartShowed')]}
+              rows={data.stores.map((s) => [s.name, s.reliability.score === null ? '—' : `${s.reliability.score}%`])}
             />
           </CardContent>
         </Card>

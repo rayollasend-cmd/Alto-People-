@@ -23,6 +23,7 @@ import {
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins } from '../lib/notify.js';
 import { readyToWorkForAssociate } from '../lib/readyToWork.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
+import { fmtDay, sentenceFromCode } from '../lib/humanDates.js';
 
 /**
  * Phase 82 — Self-service post-onboarding.
@@ -45,10 +46,12 @@ export const selfServiceRouter = Router();
 function requireAssociate(req: Request): string {
   const associateId = req.user?.associateId;
   if (!associateId) {
+    // A stable code the page turns into its own designed state (an admin
+    // with no person record has no personal profile — not an error to retry).
     throw new HttpError(
       403,
-      'not_an_associate',
-      'This route is only available to associate-linked accounts.',
+      'no_person_record',
+      'Your account isn’t linked to a person record, so there’s no personal profile to show.',
     );
   }
   return associateId;
@@ -596,8 +599,8 @@ selfServiceRouter.post('/me/life-events', async (req, res) => {
     ? `${created.associate.firstName} ${created.associate.lastName}`
     : associateId;
   void notifyAllAdmins({
-    subject: `Life event reported: ${input.kind.replace(/_/g, ' ')}`,
-    body: `${who} reported ${input.kind} effective ${input.eventDate} — review benefits eligibility.`,
+    subject: `Life event reported: ${sentenceFromCode(input.kind).toLowerCase()}`,
+    body: `${who} reported a ${sentenceFromCode(input.kind).toLowerCase()}, effective ${fmtDay(input.eventDate)} — review benefits eligibility.`,
     category: 'benefits',
     linkUrl: `/people?associateId=${associateId}`, // the person, not the directory
     emailRoles: ADMIN_EMAIL_HR_ONLY,

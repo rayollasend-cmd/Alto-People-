@@ -23,6 +23,7 @@ import { deskMayDecide } from '../lib/agentCapabilities.js';
 import { decideApproval } from '../lib/agents.js';
 import { formatTimeInZone } from '../lib/timezone.js';
 import { companyWorkweek } from '../lib/timeAnomalies.js';
+import { fmtDayRange } from '../lib/humanDates.js';
 
 /**
  * The collaborative work layer under every dashboard:
@@ -206,7 +207,7 @@ async function computeItemFacts(
         { label: 'Statement', value: `#${s.number ?? '—'}` },
         {
           label: 'Period',
-          value: `${s.periodStart.toISOString().slice(0, 10)} → ${s.periodEnd.toISOString().slice(0, 10)}`,
+          value: fmtDayRange(s.periodStart, s.periodEnd),
         },
         { label: 'Amount', value: money(amount) },
         {

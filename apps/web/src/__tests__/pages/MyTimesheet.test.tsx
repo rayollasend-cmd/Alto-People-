@@ -86,12 +86,12 @@ describe('<MyTimesheet>', () => {
     // approved hours + pending folded into the one sentence under it.
     expect(await screen.findByText('$150.67')).toBeInTheDocument();
     expect(
-      screen.getByText(/7\.53h approved — estimated gross, before taxes/),
+      screen.getByText(/7\.5h approved — estimated gross, before taxes/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/4h awaiting review/)).toBeInTheDocument();
-    // Rows: net hours in the shared dialect ("4h", not "4.00h") + badges.
-    expect(screen.getByText('7.53h')).toBeInTheDocument();
-    expect(screen.getByText('4h')).toBeInTheDocument();
+    expect(screen.getByText(/4\.0h awaiting review/)).toBeInTheDocument();
+    // Rows: hours with one decimal, like every hours figure (F500 2026-10-26) + badges.
+    expect(screen.getByText('7.5h')).toBeInTheDocument();
+    expect(screen.getByText('4.0h')).toBeInTheDocument();
     expect(screen.getByText('Approved')).toBeInTheDocument();
     expect(screen.getByText('Pending review')).toBeInTheDocument();
     expect(screen.getByText(/0\.5h break/)).toBeInTheDocument();
@@ -119,8 +119,8 @@ describe('<MyTimesheet>', () => {
       ],
     });
     renderSheet();
-    expect(await screen.findByText('includes 4h overtime')).toBeInTheDocument();
-    expect(screen.getByText('and 1h double time')).toBeInTheDocument();
+    expect(await screen.findByText('includes 4.0h overtime')).toBeInTheDocument();
+    expect(screen.getByText('and 1.0h double time')).toBeInTheDocument();
     // 8 × $20 + 4 × $30 + 1 × $40 = $320 — what the paycheck pays, not 13 × $20.
     expect(screen.getAllByText('$320.00').length).toBeGreaterThan(0);
   });
@@ -133,7 +133,7 @@ describe('<MyTimesheet>', () => {
     });
     renderSheet();
     await waitFor(() => expect(listMyTimeEntries).toHaveBeenCalled());
-    await screen.findAllByText('9h');
+    await screen.findAllByText('9.0h');
     expect(screen.queryByText(/overtime/)).not.toBeInTheDocument();
   });
 

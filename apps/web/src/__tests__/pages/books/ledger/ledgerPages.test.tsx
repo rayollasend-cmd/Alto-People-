@@ -87,7 +87,7 @@ describe('the Books overview', () => {
     expect(screen.getByRole('link', { name: 'Connect QuickBooks' })).toHaveAttribute('href', '/books/quickbooks');
     expect(screen.getByRole('link', { name: /Journal entry/ })).toBeInTheDocument();
     // The profit chart says what it shows.
-    expect(screen.getByRole('img', { name: 'Income and net income, the last month. Best: Oct 2026, $900.00 kept.' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Income and net income, the last month. Best: Oct 2026, $900.00 net income.' })).toBeInTheDocument();
     // Dates go through fmtDate, never a raw 2026-07-01.
     expect(screen.queryByText(/oldest due 2026-07-01/)).toBeNull();
     expect(screen.getByText('1 account connected to the bank')).toBeInTheDocument();
@@ -108,7 +108,7 @@ describe('the Books overview', () => {
     const { container } = renderAs('FINANCE_ACCOUNTANT', <BooksHome />, '/books');
     const kpi = (await screen.findByText('Clients owe')).parentElement!;
     expect(kpi).toHaveTextContent('$5,760.00');
-    expect(kpi).toHaveTextContent('$0.00 in the ledger — post history to match');
+    expect(kpi).toHaveTextContent('The ledger shows $0.00: some older statements aren’t in it yet');
     // The card shows the same total, and its buckets add up to it.
     expect(screen.getByText('$5,760.00 on finalized statements, by how late it is')).toBeInTheDocument();
     expect(Object.values(aging).reduce((a, b) => a + b, 0)).toBe(5760);

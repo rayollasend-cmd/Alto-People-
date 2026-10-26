@@ -38,6 +38,24 @@ const statementName = (number: number | null, periodEnd: Date) => (number !== nu
 const clip = (s: string, n = 80) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
 type Meta = Record<string, unknown>;
+
+/**
+ * A person as people say them: their display name, else their worker
+ * record's name, else their address's name part made readable
+ * ("priya.shah@…" → "Priya Shah") — never a raw email in a sentence.
+ */
+export function personName(u: { email: string; displayName?: string | null; associate?: { firstName: string; lastName: string } | null }): string {
+  const display = u.displayName?.trim();
+  if (display) return display;
+  const worker = u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : '';
+  if (worker) return worker;
+  const local = u.email.split('@')[0] ?? u.email;
+  return local
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ') || u.email;
+}
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
@@ -182,10 +200,24 @@ export async function clientActivity(
   drafts.sort((x, y) => y.at.localeCompare(x.at) || x.id.localeCompare(y.id));
   const top = drafts.slice(0, limit);
 
-  const ids = [...new Set(top.map((d) => d.actorId).filter((x): x is string => !!x))];
+  // People by name, never by address (F500 2026-10-26: "Account owner set to
+  // manager@altohr.com"): the actors, and the owner an owner change names —
+  // read now, so a name added since reads too.
+  const ownerIds = new Map<string, string>();
+  for (const a of audits) {
+    const to = str(((a.metadata ?? {}) as Meta).to);
+    if (a.action === 'client.owner_changed' && to) ownerIds.set(`audit-${a.id}`, to);
+  }
+  const ids = [...new Set([...top.map((d) => d.actorId), ...top.map((d) => ownerIds.get(d.id) ?? null)].filter((x): x is string => !!x))];
   const users = ids.length
     ? await db.user.findMany({ where: { id: { in: ids } }, select: { id: true, email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } })
     : [];
-  const names = new Map(users.map((u) => [u.id, u.displayName?.trim() || (u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : '') || u.email]));
-  return top.map(({ actorId, ...d }) => ({ ...d, actor: actorId ? (names.get(actorId) ?? null) : null }));
+  // Who did it keeps the address when there is no name (it identifies the login); the owner reads as a person.
+  const actors = new Map(users.map((u) => [u.id, u.displayName?.trim() || (u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : '') || u.email]));
+  const names = new Map(users.map((u) => [u.id, personName(u)]));
+  return top.map(({ actorId, ...d }) => {
+    const owner = ownerIds.get(d.id);
+    const text = owner && names.get(owner) ? `Account owner set to ${names.get(owner)}` : d.text;
+    return { ...d, text, actor: actorId ? (actors.get(actorId) ?? null) : null };
+  });
 }

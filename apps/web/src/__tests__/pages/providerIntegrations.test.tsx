@@ -113,7 +113,7 @@ beforeEach(() => {
 describe('Integrations → Screening, filing and payouts', () => {
   it('says what happens today when nothing is connected, and how a failing connection is doing', async () => {
     api.listProviderConnections.mockResolvedValue(
-      kinds({ PAYOUT: conn({ id: 'w', kind: 'PAYOUT', provider: 'WISE', providerLabel: 'Wise', environment: 'PRODUCTION', health: 'failing', lastErrorAt: '2026-10-17T14:14:00Z', lastError: 'Bad token' }) }),
+      kinds({ PAYOUT: conn({ id: 'w', kind: 'PAYOUT', provider: 'WISE', providerLabel: 'Wise', environment: 'PRODUCTION', health: 'failing', lastErrorAt: '2026-10-17T14:14:00Z', lastError: 'Wise rejected the saved credentials — reconnect to resume payouts.', lastErrorDetail: 'wise_profiles_failed (HTTP 401): Invalid token' }) }),
     );
     renderAs('HR_ADMINISTRATOR', <ProvidersSection canManage />, '/integrations');
     const list = await screen.findByRole('list', { name: 'Provider kinds' });
@@ -123,7 +123,12 @@ describe('Integrations → Screening, filing and payouts', () => {
     // One vocabulary (F500 G4): Working · Needs attention · Failing · Not connected.
     expect(within(list).getByText('Failing')).toBeInTheDocument();
     expect(within(list).getAllByText('Not connected')).toHaveLength(4);
-    expect(within(list).getByText(/Failing since .*: Bad token/)).toBeInTheDocument();
+    // The plain sentence on the card (F500 2026-10-26); the provider's own words behind "Technical details".
+    expect(within(list).getByText(/^Wise rejected the saved credentials — reconnect to resume payouts\. Failing since /)).toBeInTheDocument();
+    const detail = within(list).getByTestId('provider-error-detail');
+    expect(detail.tagName).toBe('DETAILS');
+    expect(within(detail).getByText('Technical details')).toBeInTheDocument();
+    expect(within(detail).getByText('wise_profiles_failed (HTTP 401): Invalid token')).toBeInTheDocument();
     // The failing card's fix is the one gold button; every "Set up" is an outline.
     const reconnect = within(list).getByRole('button', { name: 'Reconnect Wise' });
     expect(reconnect.className).toMatch(/btn-gold/);

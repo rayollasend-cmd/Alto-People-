@@ -198,12 +198,12 @@ export function PortalSchedule() {
         }
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
-        breadcrumbs={[{ label: t('portal.title'), to: `/portal${homeQs}` }, { label: t('portal.schedule') }]}
+        breadcrumbs={[{ label: t('portal.homeCrumb'), to: `/portal${homeQs}` }, { label: t('portal.schedule') }]}
         // A week with gaps wants coverage, not a printout: Request coverage leads (F500 G5).
         actions={[
           {
             key: 'request',
-            label: t('portal.requestCoverage'),
+            label: t('portal.reqNew'),
             icon: UserPlus,
             primary: true,
             hidden: !isPortal,

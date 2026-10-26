@@ -18,7 +18,7 @@ import { Settings } from '@/pages/Settings';
 describe('<Settings> Profile section', () => {
   it('an associate reads where their personal data lives, with no name form here', () => {
     renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
-    const profile = screen.getByRole('region', { name: 'Profile' });
+    const profile = screen.getByRole('tabpanel', { name: 'Profile' });
     const card = within(profile).getByTestId('settings-profile-on-me');
     expect(card).toHaveTextContent('Your name, photo, phone and address are on My profile.');
     expect(within(card).getByRole('link', { name: 'Open My profile' })).toHaveAttribute('href', '/me');
@@ -27,7 +27,7 @@ describe('<Settings> Profile section', () => {
 
   it('a staff account keeps its photo in Settings', () => {
     renderAs('HR_ADMINISTRATOR', <Settings />, '/settings');
-    const profile = screen.getByRole('region', { name: 'Profile' });
+    const profile = screen.getByRole('tabpanel', { name: 'Profile' });
     expect(within(profile).queryByTestId('settings-profile-on-me')).not.toBeInTheDocument();
   });
 });

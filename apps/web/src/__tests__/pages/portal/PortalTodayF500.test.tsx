@@ -90,7 +90,7 @@ describe('<PortalToday> F500', () => {
     expect(screen.queryByText("Couldn't load your store view.")).not.toBeInTheDocument();
   });
 
-  it('a day with nothing scheduled names the next shift and offers Request staff and Full schedule', async () => {
+  it('a day with nothing scheduled names the next shift and offers Make a request and Full schedule', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path: string) => {
       if (path === '/me/shift-windows') return { windows: [] };
       return day({ nextShift: { startsAt: '2026-10-24T19:00:00.000Z', endsAt: '2026-10-25T03:00:00.000Z', position: 'Stocker', timezone: tz } });
@@ -99,7 +99,7 @@ describe('<PortalToday> F500', () => {
     expect(await screen.findByText('No shifts scheduled today.')).toBeInTheDocument();
     expect(screen.getByText(/^The next shift is .*Oct 24.* · Stocker\.$/)).toBeInTheDocument();
     // The request opens filled in with the day (F500 G5).
-    const req = screen.getByRole('link', { name: 'Request staff' }).getAttribute('href')!;
+    const req = screen.getByRole('link', { name: 'Make a request' }).getAttribute('href')!;
     expect(req.startsWith('/portal/requests?new=STAFFING&subject=Coverage+for+')).toBe(true);
     expect(screen.getAllByRole('link', { name: 'Full schedule' }).length).toBeGreaterThan(0);
   });

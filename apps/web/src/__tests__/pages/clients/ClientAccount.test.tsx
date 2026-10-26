@@ -163,7 +163,7 @@ describe('the Overview tab', () => {
     expect(screen.getByTestId('kpi-people').closest('a')).toHaveAttribute('href', `/people?client=${ID}&status=ACTIVE`);
     expect(screen.getByTestId('kpi-people')).toHaveTextContent('22 at North Tower, the busiest');
     expect(within(screen.getByTestId('kpi-hours')).getByText('312.5h')).toBeInTheDocument();
-    expect(within(screen.getByTestId('kpi-hours')).getByText(/by now last week/)).toHaveTextContent('vs 250h by now last week');
+    expect(within(screen.getByTestId('kpi-hours')).getByText(/by now last week/)).toHaveTextContent('vs 250.0h by now last week');
     expect(within(screen.getByTestId('kpi-fill')).getByText('92.5%')).toBeInTheDocument();
     expect(within(screen.getByTestId('kpi-fill')).getByText('37 of 40 shifts filled')).toBeInTheDocument();
     expect(screen.getByTestId('kpi-fill').closest('a')).toHaveAttribute('href', `/scheduling?client=${ID}&open=1`);
@@ -268,33 +268,45 @@ describe('the Overview tab', () => {
 });
 
 describe('header actions by capability', () => {
-  it('a manager: Edit, Post open shifts, New statement, Email the primary contact, and Archive under More', async () => {
+  it('a manager: ONE primary (Post open shifts); Edit, New statement, Email the primary contact and Archive under More', async () => {
+    const user = userEvent.setup();
     renderRecord('HR_ADMINISTRATOR');
     const bar = await screen.findByTestId('client-record-actions');
-    expect(within(bar).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    // F500 2026-10-26: four equal outline buttons and no primary → one primary + More.
     expect(within(bar).getByRole('link', { name: /Post open shifts/ })).toHaveAttribute('href', `/scheduling?client=${ID}&new=shift`);
-    expect(within(bar).getByRole('button', { name: /New statement/ })).toBeInTheDocument();
-    expect(await within(bar).findByRole('link', { name: /Email Dana/ })).toHaveAttribute('href', 'mailto:dana@gulf.example');
-    expect(within(bar).getByRole('button', { name: 'More actions' })).toBeInTheDocument();
-    expect(within(bar).queryByRole('button', { name: /Archive/ })).not.toBeInTheDocument();
+    expect(within(bar).queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(within(bar).queryByRole('button', { name: /New statement/ })).not.toBeInTheDocument();
+    await screen.findByTestId('client-kpis');
+    await user.click(within(bar).getByRole('button', { name: 'More actions' }));
+    expect(await screen.findByRole('menuitem', { name: /Edit basics/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /New statement/ })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: /Email Dana/ })).toHaveAttribute('href', 'mailto:dana@gulf.example');
+    expect(screen.getByRole('menuitem', { name: /Archive client/ })).toBeInTheDocument();
   });
 
   it('finance: shifts and statements, no Edit or Archive', async () => {
+    const user = userEvent.setup();
     renderRecord('FINANCE_ACCOUNTANT');
     const bar = await screen.findByTestId('client-record-actions');
     expect(within(bar).queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
-    expect(within(bar).getByRole('button', { name: /New statement/ })).toBeInTheDocument();
     expect(within(bar).getByRole('link', { name: /Post open shifts/ })).toBeInTheDocument();
-    expect(within(bar).queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument();
+    await user.click(within(bar).getByRole('button', { name: 'More actions' }));
+    expect(await screen.findByRole('menuitem', { name: /New statement/ })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Edit basics|Archive/ })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
     // Finance reads the account but does not edit it.
     await screen.findByTestId('client-account');
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
   });
 
   it('the chairman reads: only the email to the primary contact', async () => {
+    const user = userEvent.setup();
     renderRecord('EXECUTIVE_CHAIRMAN');
     const bar = await screen.findByTestId('client-record-actions');
-    expect(await within(bar).findByRole('link', { name: /Email Dana/ })).toBeInTheDocument();
+    await screen.findByTestId('client-kpis');
+    await user.click(await within(bar).findByRole('button', { name: 'More actions' }));
+    expect(await screen.findByRole('menuitem', { name: /Email Dana/ })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
     expect(screen.queryByRole('button', { name: /New statement/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Post open shifts/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
@@ -304,8 +316,10 @@ describe('header actions by capability', () => {
     const user = userEvent.setup();
     clients.upsertClientStatement.mockResolvedValue({});
     renderRecord('HR_ADMINISTRATOR');
-    await user.click(await screen.findByRole('button', { name: /New statement/ }));
-    await user.click(screen.getByRole('button', { name: 'Draft statement' }));
+    await screen.findByTestId('client-kpis');
+    await user.click(within(await screen.findByTestId('client-record-actions')).getByRole('button', { name: 'More actions' }));
+    await user.click(await screen.findByRole('menuitem', { name: /New statement/ }));
+    await user.click(await screen.findByRole('button', { name: 'Draft statement' }));
     await waitFor(() => expect(clients.upsertClientStatement).toHaveBeenCalledWith(ID, expect.stringMatching(/^\d{4}-\d{2}-01$/), expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/)));
     expect(await screen.findByTestId('statements-tab')).toBeInTheDocument();
   });
@@ -362,7 +376,8 @@ describe('Basics, read first', () => {
     const user = userEvent.setup();
     renderRecord('HR_ADMINISTRATOR');
     await screen.findByTestId('client-kpis');
-    await user.click(within(screen.getByTestId('client-record-actions')).getByRole('button', { name: 'Edit' }));
+    await user.click(within(screen.getByTestId('client-record-actions')).getByRole('button', { name: 'More actions' }));
+    await user.click(await screen.findByRole('menuitem', { name: /Edit basics/ }));
     expect(await screen.findByLabelText('Legal name')).toHaveValue('Gulf Front Hospitality LLC');
     expect(screen.getByRole('tab', { name: 'Basics' })).toHaveAttribute('aria-selected', 'true');
   });

@@ -29,14 +29,16 @@ import {
 
 const STAGES: StageKey[] = ['approved', 'scheduled', 'fieldglass', 'firstShift', 'hoursApproved', 'paycheck'];
 const DAY_MS = 86_400_000;
+/** Ages in words ('3 days late', never '3d late'). */
+const days$ = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 
 export function dueText(dueAt: string | null, overdue: boolean): string | null {
   if (!dueAt) return null;
   const days = Math.round((Date.parse(dueAt) - Date.now()) / DAY_MS);
-  if (overdue) return days === 0 ? 'late today' : `${Math.max(1, -days)}d late`;
+  if (overdue) return days === 0 ? 'late today' : `${days$(Math.max(1, -days))} late`;
   if (days <= 0) return 'due today';
   if (days === 1) return 'due tomorrow';
-  return `due in ${days}d`;
+  return `due in ${days$(days)}`;
 }
 
 export function RelayPipeline({
@@ -88,8 +90,8 @@ export function RelayPipeline({
     <section aria-labelledby="relay-pipeline">
       <SectionHead
         icon={Waypoints}
-        title="First-paycheck pipeline"
-        meta={data.lanes.length === 0 ? 'no lanes open' : `${data.lanes.length} in flight${stalled ? ` · ${stalled} stalled` : ''}`}
+        title="New hires on the way to a first paycheck"
+        meta={data.lanes.length === 0 ? 'none in progress' : `${data.lanes.length} in progress${stalled ? ` · ${stalled} stalled` : ''}`}
         id="relay-pipeline"
       >
         <span
@@ -98,7 +100,7 @@ export function RelayPipeline({
         >
           <Trophy className="h-3.5 w-3.5" aria-hidden="true" />
           {p.keptPct !== null ? `First paycheck on time: ${p.keptPct}%` : 'First paycheck on time: no checks yet'}
-          {p.medianDays !== null && <span className="text-gold/70">· median {p.medianDays}d</span>}
+          {p.medianDays !== null && <span className="text-gold/70">· median {days$(p.medianDays)}</span>}
           <span className="text-gold/80">· last {p.windowDays} days</span>
         </span>
       </SectionHead>
@@ -163,26 +165,27 @@ export function RelayPipeline({
             </Button>
           )}
           {lens !== 'ALL' && onClearLens && (
-            <Button size="xs" variant="secondary" onClick={onClearLens} aria-label={`Show every desk's lanes, not just ${DESK_LABELS[lens]}'s`}>
-              {DESK_LABELS[lens]}’s lanes ✕
+            <Button size="xs" variant="secondary" onClick={onClearLens} aria-label={`Show every team's new hires, not just ${DESK_LABELS[lens]}'s`}>
+              {DESK_LABELS[lens]}’s new hires ✕
             </Button>
           )}
         </div>
         {lanes.length === 0 ? (
           <p className="px-4 py-4 text-sm text-silver">
             {data.lanes.length === 0 ? (
-              'No first-paycheck lanes in flight — every recent hire has been paid.'
+              'No new hires on the way — every recent hire has been paid.'
             ) : lens !== 'ALL' && !stage && !stalledOnly && !search.trim() ? (
               <>
-                None of the {data.lanes.length} lanes is at a {DESK_LABELS[lens]} stage right now.{' '}
+                {/* No article to get wrong ("a HR stage"): the team is named as the subject. */}
+                {DESK_LABELS[lens]} has none of the {data.lanes.length} new hires right now.{' '}
                 {onClearLens && (
                   <button type="button" className="text-gold underline underline-offset-2" onClick={onClearLens}>
-                    Show every desk
+                    Show every team
                   </button>
                 )}
               </>
             ) : (
-              'No lanes match — clear a filter to see the rest.'
+              'No new hires match — clear a filter to see the rest.'
             )}
           </p>
         ) : (
@@ -196,7 +199,7 @@ export function RelayPipeline({
                     type="button"
                     onClick={() => onOpenLane(l.associateId)}
                     className="group flex min-w-0 flex-1 items-center gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
-                    aria-label={`Open ${l.name}’s lane`}
+                    aria-label={`Open ${l.name}’s progress`}
                   >
                     <Avatar src={`/api/associates/${l.associateId}/photo`} name={l.name} size="sm" />
                     <span className="min-w-0 flex-1">
@@ -247,7 +250,7 @@ export function RelayPipeline({
                   <OwnerControl
                     subjectType="LANE"
                     subjectKey={l.associateId}
-                    what={`${l.name}’s lane`}
+                    what={`${l.name}’s progress`}
                     claim={claims[claimKey('LANE', l.associateId)]}
                     desks={desks}
                     meId={meId}
@@ -266,7 +269,7 @@ export function RelayPipeline({
           Recently paid:
           {data.recentKept.map((k) => (
             <button key={k.associateId} type="button" onClick={() => onOpenLane(k.associateId)} className="tabular-nums hover:text-white">
-              {k.name} ({k.days}d{k.kept ? '' : ' · late'})
+              {k.name} ({days$(k.days)}{k.kept ? '' : ' · late'})
             </button>
           ))}
         </p>

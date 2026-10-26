@@ -7,6 +7,7 @@ import { getBrandingSync } from './branding.js';
 import { hashSignedPdf, renderSignedAgreement } from './esign.js';
 import { RIDE_AUTHORIZATION_VERSION, rideAuthorizationBody, rideAuthorizationTitle, toRideAuthLang, type RideAuthLang } from './rideAuthorizationContent.js';
 import { tenantIdForWrite } from './tenant.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Van ride charge authorization (Brief 1A-3).
@@ -71,7 +72,7 @@ export async function setRideRate(db: Db, input: { fareCents: number; noShowFeeC
   const from = input.effectiveFrom ?? ymd(now);
   const current = await db.transportRate.findFirst({ where: { effectiveTo: null }, orderBy: { effectiveFrom: 'desc' } });
   if (current && ymd(current.effectiveFrom) > from) {
-    throw new HttpError(409, 'rate_history', `A rate already starts ${ymd(current.effectiveFrom)}; a new rate cannot start before it.`);
+    throw new HttpError(409, 'rate_history', `A rate already starts ${fmtDay(current.effectiveFrom, { year: true })}; a new rate cannot start before it.`);
   }
   let row;
   if (current && ymd(current.effectiveFrom) === from) {
@@ -124,7 +125,7 @@ export function authorizationCovers(
   on: Date,
 ): { ok: boolean; reason: string | null } {
   if (!c || !c.signatureId) return { ok: false, reason: 'No signed authorization on file.' };
-  if (c.withdrawnAt && c.withdrawnAt <= on) return { ok: false, reason: `Authorization withdrawn ${ymd(c.withdrawnAt)}.` };
+  if (c.withdrawnAt && c.withdrawnAt <= on) return { ok: false, reason: `Authorization withdrawn ${fmtDay(c.withdrawnAt, { year: true })}.` };
   if (c.version !== RIDE_AUTHORIZATION_VERSION) return { ok: false, reason: 'The authorization wording changed; a new signature is needed.' };
   if (c.acceptedAt > on) return { ok: false, reason: 'Signed after the ride.' };
   if (!rate) return { ok: false, reason: 'No ride rate is set.' };

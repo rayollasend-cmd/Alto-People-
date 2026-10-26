@@ -48,7 +48,7 @@ describe('store ops', () => {
     expect(detail.status).toBe(200);
     expect(detail.body.shift.department).toBe('Frozen & Dairy');
     expect(detail.body.shift.period).toBe('OVERNIGHT');
-    expect(detail.body.shift.templateName).toBe('Frozen & Dairy — Overnight (10 PM–7 AM)');
+    expect(detail.body.shift.templateName).toBe('Frozen & Dairy — Overnight');
     // The seeded overnight checklist came along as real task rows.
     const titles = detail.body.tasks.map((t: { title: string }) => t.title);
     expect(titles).toContain('Frozen, Dairy and Dept 97 stocked, cold chain kept');

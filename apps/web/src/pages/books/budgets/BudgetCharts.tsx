@@ -1,5 +1,6 @@
 import type { BudgetVsActual } from '@alto-people/shared';
-import { fmtMoneyCompact, fmtMoneyWhole } from '@/lib/format';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
+import { fmtMoneyWhole } from '@/lib/format';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, StackedBarChart } from '@/components/ui/charts';
 
@@ -54,7 +55,7 @@ export function BudgetCharts({ report: r }: { report: BudgetVsActual }) {
             { key: 'budget', name: 'Budget', color: PALETTE.other },
             { key: 'actual', name: 'Actual' },
           ]}
-          format={(v) => fmtMoneyCompact(v)}
+          format={fmtMoneyAxis}
         />
       </ChartFrame>
       <ChartFrame
@@ -74,7 +75,7 @@ export function BudgetCharts({ report: r }: { report: BudgetVsActual }) {
             { key: 'budget', name: 'Budget', color: PALETTE.other },
             { key: 'actual', name: 'Actual' },
           ]}
-          format={(v) => fmtMoneyCompact(v)}
+          format={fmtMoneyAxis}
         />
       </ChartFrame>
     </div>

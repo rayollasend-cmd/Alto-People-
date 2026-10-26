@@ -220,77 +220,80 @@ export function OpsFloorFeed({
               : 'Nothing of that kind in this window.'}
           </p>
         ) : (
-          <ul
+          // The scroller is the region; the list inside keeps its list semantics.
+          <div
             tabIndex={0}
             role="region"
             aria-label="Floor feed, newest first"
-            className="relative max-h-[560px] space-y-0 overflow-y-auto pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="relative max-h-[560px] overflow-y-auto pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
-            {shown.map((e) => {
-              const Icon = KIND_ICON[e.kind];
-              return (
-                <li
-                  key={`${e.shiftId}-${e.kind}-${e.at}-${e.headline}`}
-                  className="border-b border-navy-secondary/40 last:border-0"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onOpenRecord(e.shiftId)}
-                    aria-label={`${e.headline} — ${e.store}, ${
-                      PERIOD_LABEL[e.period] ?? e.period
-                    } ${e.department}, ${fmtFull(e.at)}. Open the shift record.`}
-                    className="flex w-full items-start gap-2.5 rounded py-2 text-left transition-colors hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            <ul className="space-y-0">
+              {shown.map((e) => {
+                const Icon = KIND_ICON[e.kind];
+                return (
+                  <li
+                    key={`${e.shiftId}-${e.kind}-${e.at}-${e.headline}`}
+                    className="border-b border-navy-secondary/40 last:border-0"
                   >
-                    <span
-                      className={cn(
-                        'mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full',
-                        e.alert ? 'bg-alert/15 text-alert' : 'bg-navy-secondary/60 text-silver',
-                      )}
+                    <button
+                      type="button"
+                      onClick={() => onOpenRecord(e.shiftId)}
+                      aria-label={`${e.headline} — ${e.store}, ${
+                        PERIOD_LABEL[e.period] ?? e.period
+                      } ${e.department}, ${fmtFull(e.at)}. Open the shift record.`}
+                      className="flex w-full items-start gap-2.5 rounded py-2 text-left transition-colors hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                     >
-                      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="line-clamp-2 block text-sm text-white" title={e.headline}>
-                        {e.headline}
+                      <span
+                        className={cn(
+                          'mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full',
+                          e.alert ? 'bg-alert/15 text-alert' : 'bg-navy-secondary/60 text-silver',
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
                       </span>
-                      <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-2xs text-silver/70">
-                        <span className="font-medium text-silver">{e.store}</span>
-                        <span className="text-gold">{PERIOD_LABEL[e.period] ?? e.period}</span>
-                        <span>{e.department}</span>
-                        <span className="tabular-nums" title={fmtFull(e.at)}>
-                          {fmtClock(e.at)} · {fmtAgo(e.at)}
+                      <span className="min-w-0 flex-1">
+                        <span className="line-clamp-2 block text-sm text-white" title={e.headline}>
+                          {e.headline}
                         </span>
+                        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-2xs text-silver/70">
+                          <span className="font-medium text-silver">{e.store}</span>
+                          <span className="text-gold">{PERIOD_LABEL[e.period] ?? e.period}</span>
+                          <span>{e.department}</span>
+                          <span className="tabular-nums" title={fmtFull(e.at)}>
+                            {fmtClock(e.at)} · {fmtAgo(e.at)}
+                          </span>
+                        </span>
+                        {e.detail && (
+                          <span
+                            className={cn(
+                              'mt-0.5 block truncate text-2xs',
+                              e.alert ? 'text-alert' : 'text-silver/60',
+                            )}
+                          >
+                            {e.detail}
+                          </span>
+                        )}
                       </span>
-                      {e.detail && (
-                        <span
-                          className={cn(
-                            'mt-0.5 block truncate text-2xs',
-                            e.alert ? 'text-alert' : 'text-silver/60',
-                          )}
-                        >
-                          {e.detail}
-                        </span>
+                      {e.alert && (
+                        <Badge variant="destructive" size="sm" className="shrink-0">
+                          <AlertTriangle className="mr-1 h-3 w-3" aria-hidden="true" />
+                          Alert
+                        </Badge>
                       )}
-                    </span>
-                    {e.alert && (
-                      <Badge variant="destructive" size="sm" className="shrink-0">
-                        <AlertTriangle className="mr-1 h-3 w-3" aria-hidden="true" />
-                        Alert
-                      </Badge>
-                    )}
-                    {e.photoId && (
-                      <img
-                        src={opsPhotoUrl(e.photoId)}
-                        alt=""
-                        loading="lazy"
-                        className="h-9 w-9 shrink-0 rounded object-cover"
-                      />
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                      {e.photoId && (
+                        <img
+                          src={opsPhotoUrl(e.photoId)}
+                          alt=""
+                          loading="lazy"
+                          className="h-9 w-9 shrink-0 rounded object-cover"
+                        />
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
       </CardContent>
     </Card>

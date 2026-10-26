@@ -50,9 +50,8 @@ export function RobotsHome() {
         searchable: true,
         cell: (r) => (
           <span className="flex flex-col">
-            <Link to={`/robots/${r.id}`} className="inline-block py-0.5 font-medium text-ink underline decoration-line underline-offset-2 hover:text-accent">
-              {r.name}
-            </Link>
+            {/* The grid links the primary cell to the robot (rowHref): a second link inside would nest. */}
+            <span className="inline-block py-0.5 font-medium text-ink underline decoration-line underline-offset-2">{r.name}</span>
             <span className="text-xs2 text-ink-muted">{r.profile ? `${r.profile.manufacturer} ${r.profile.model} · ${r.profile.serial}` : 'No profile yet'}</span>
           </span>
         ),
@@ -122,14 +121,15 @@ export function RobotsHome() {
   // in the subtitle ("Connected to Simulated fleet").
   const provider = q.data?.provider;
   const fleetWords = !provider || provider === 'SIMULATED' ? 'demo (simulated)' : (FLEET_PROVIDERS.find((p) => p.key === provider)?.label ?? provider);
-  const addRobot = canManage ? (
-    <Button asChild>
-      <Link to="/workers?type=ROBOT&add=1">
-        <Cpu className="h-4 w-4" />
-        Add a robot
-      </Link>
-    </Button>
-  ) : undefined;
+  const addRobot = (variant: 'primary' | 'outline') =>
+    canManage ? (
+      <Button asChild variant={variant}>
+        <Link to="/workers?type=ROBOT&add=1">
+          <Cpu className="h-4 w-4" />
+          Add a robot
+        </Link>
+      </Button>
+    ) : undefined;
   const hasRobots = (q.data?.robots.length ?? 0) > 0;
 
   return (
@@ -160,7 +160,7 @@ export function RobotsHome() {
           )}
         </span>
       }
-      primaryAction={addRobot}
+      primaryAction={addRobot('primary')}
       summary={
         // Six tiles of "0" and "—" above "No robots yet" said nothing six
         // times: the numbers appear with the first robot (F500 G2).
@@ -185,7 +185,8 @@ export function RobotsHome() {
           icon={Cpu}
           title="No robots yet"
           description="A robot's profile, commissioning and checklist live here once it is added."
-          action={addRobot}
+          // The header's Add a robot is the page's one gold action; its twin here is outline.
+          action={addRobot('outline')}
         />
       ) : (
         <DataGrid id="robots" caption="Robots" rows={q.data.robots} rowKey={(r) => r.id} columns={columns} rowHref={(r) => `/robots/${r.id}`} rowActionLabel={(r) => `Open ${r.name}`} />

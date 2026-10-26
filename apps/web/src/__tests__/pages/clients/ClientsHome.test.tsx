@@ -130,10 +130,10 @@ describe('the clients list', () => {
     expect(harbor).toHaveTextContent('12');
     expect(harbor).toHaveTextContent('94%');
     expect(harbor).toHaveTextContent('47 of 50');
-    expect(harbor).toHaveTextContent('413h');
-    expect(harbor).toHaveTextContent('$5.8k');
+    expect(harbor).toHaveTextContent('412.5h');
+    expect(harbor).toHaveTextContent('$5,760.00');
     expect(harbor).toHaveTextContent('At risk');
-    expect(within(harbor).getByRole('link', { name: '$5.8k' })).toHaveAttribute('href', `/clients/${HARBOR.id}?section=statements`);
+    expect(within(harbor).getByRole('link', { name: '$5,760.00' })).toHaveAttribute('href', `/clients/${HARBOR.id}?section=statements`);
     expect(within(harbor).getByRole('link', { name: /94%/ })).toHaveAttribute('href', `/scheduling?client=${HARBOR.id}`);
     expect(within(harbor).getByRole('link', { name: '12' })).toHaveAttribute('href', `/people?client=${HARBOR.id}&status=ACTIVE`);
     expect(within(harbor).getByRole('button', { name: 'At risk: $5,760 is 34 days past due' })).toBeInTheDocument();
@@ -165,9 +165,9 @@ describe('the clients list', () => {
     const pipeline = await screen.findByRole('link', { name: /Pipeline/ });
     expect(pipeline).toHaveAttribute('href', '/clients/pipeline');
     await waitFor(() => expect(pipeline).toHaveTextContent('4'));
-    // Status chips: All / Active / Inactive; Prospect only when an account has that status.
-    const status = screen.getByRole('group', { name: 'Status' });
-    expect(within(status).getAllByRole('button').map((b) => b.textContent)).toEqual(['All', 'Active', 'Inactive']);
+    // One filter row (F500 2026-10-26): "Inactive" is a view, not also a Status chip.
+    expect(screen.queryByRole('group', { name: 'Status' })).toBeNull();
+    expect(within(screen.getByRole('group', { name: 'Views' })).getByRole('button', { name: /Inactive/ })).toBeInTheDocument();
   });
 
   it('narrows to the built-in views, each with its count', async () => {
@@ -230,8 +230,8 @@ describe('the clients list', () => {
     expect(card).toHaveTextContent('On assignment');
     expect(card).toHaveTextContent('12');
     expect(card).toHaveTextContent('94%');
-    expect(card).toHaveTextContent('413h');
-    expect(card).toHaveTextContent('$5.8k');
+    expect(card).toHaveTextContent('412.5h');
+    expect(card).toHaveTextContent('$5,760.00');
     expect(card).not.toHaveTextContent(/\bActive\b.*\b12\b/);
   });
 
@@ -243,7 +243,7 @@ describe('the clients list', () => {
     const items = within(list).getAllByRole('listitem');
     expect(items).toHaveLength(3);
     expect(items[0]).toHaveTextContent('Harbor Hotel');
-    expect(items[0]).toHaveTextContent('12 on assignment · 94% filled · $5.8k due');
+    expect(items[0]).toHaveTextContent('12 on assignment · 94% filled · $5,760.00 due');
     expect(within(items[0]!).getByText(/At risk: \$5,760 is 34 days past due/)).toBeInTheDocument();
     expect(items[2]).toHaveTextContent('Inactive');
     expect(screen.queryByRole('table')).toBeNull();

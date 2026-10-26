@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import { ReportPdf } from './reportPdf.js';
 import { executiveNarrative, type ExecutiveSummary } from './executiveSummary.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * The executive board pack as bytes — one page per topic, drawn live from
@@ -56,7 +57,7 @@ export async function buildBoardPack(s: ExecutiveSummary, refId: string): Promis
     ],
     [
       [
-        `${s.lastWeek.start.slice(0, 10)} (complete)`,
+        `Week of ${fmtDay(s.lastWeek.start.slice(0, 10), { year: true })} (complete)`,
         s.lastWeek.workedHours.toFixed(2),
         s.lastWeek.otHours.toFixed(2),
         s.lastWeek.headsWorked,
@@ -65,7 +66,7 @@ export async function buildBoardPack(s: ExecutiveSummary, refId: string): Promis
         money(s.lastWeek.estMargin),
       ],
       [
-        `${s.thisWeek.start.slice(0, 10)} (in progress)`,
+        `Week of ${fmtDay(s.thisWeek.start.slice(0, 10), { year: true })} (in progress)`,
         s.thisWeek.workedHours.toFixed(2),
         s.thisWeek.otHours.toFixed(2),
         s.thisWeek.headsWorked,

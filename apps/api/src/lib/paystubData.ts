@@ -5,6 +5,7 @@ import { decryptString } from './crypto.js';
 import type { PaystubData, PaystubEarningLine, PaystubLine } from './paystub.js';
 import { emptyDeferrals, readDeferrals, type DeferralRecord } from './retirementDeferrals.js';
 import { LEGACY_DEDUCTION_SELECT, deriveLegacyDeductionLines } from './deductionBackfill.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Single source of truth for turning a PayrollItem into the PaystubData
@@ -185,7 +186,7 @@ function payDistribution(item: PaystubItem): PaystubData['payDistribution'] {
   if (reroute?.to) {
     return {
       label: `Re-sent to ${reroute.to}`,
-      detail: `The original deposit was returned on ${reroute.returnedAt.slice(0, 10)} (${reroute.returnedReason}) and re-sent on ${reroute.reroutedAt.slice(0, 10)}.`,
+      detail: `The original deposit was returned on ${fmtDay(reroute.returnedAt, { year: true })} (${reroute.returnedReason}) and re-sent on ${fmtDay(reroute.reroutedAt, { year: true })}.`,
     };
   }
   const pm = item.associate.payoutMethods[0];

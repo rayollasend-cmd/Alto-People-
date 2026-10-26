@@ -50,7 +50,9 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
-  SegmentedControl,
+  Tabs,
+  TabsList,
+  TabsTrigger,
   Select,
   Skeleton,
   SkeletonRows,
@@ -205,6 +207,14 @@ export function KbHome() {
     <ListTemplate
         title={t('kb.title')}
         subtitle={t('kb.subtitle')}
+        // One gold action, in the header on both views (it sat beside the switch, and again in the empty state).
+        primaryAction={
+          canManage ? (
+            <Button onClick={startCreate}>
+              <Plus className="mr-2 h-4 w-4" aria-hidden="true" /> {t('kb.newArticle')}
+            </Button>
+          ) : undefined
+        }
     >
 
       {/* Browse / Manage only for the people who manage articles: a
@@ -212,22 +222,13 @@ export function KbHome() {
           trail comes from the nav (Me › Help center), not a hand-written
           "Workforce" crumb. */}
       {canManage && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <SegmentedControl
-            ariaLabel={t('kb.viewAria')}
-            value={tab}
-            onChange={(v) => setTab(v)}
-            options={[
-              { value: 'browse' as const, label: t('kb.tab.browse') },
-              { value: 'admin' as const, label: t('kb.tab.admin') },
-            ]}
-          />
-          {tab === 'admin' && (
-            <Button onClick={() => setEditing('new')}>
-              <Plus className="mr-2 h-4 w-4" /> {t('kb.newArticle')}
-            </Button>
-          )}
-        </div>
+        // Two views of one help center, as the kit's tabs (they were chips).
+        <Tabs value={tab} onValueChange={(v) => setTab(v as 'browse' | 'admin')}>
+          <TabsList aria-label={t('kb.viewAria')}>
+            <TabsTrigger value="browse">{t('kb.tab.browse')}</TabsTrigger>
+            <TabsTrigger value="admin">{t('kb.tab.admin')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
       )}
 
       {tab === 'browse' ? (
@@ -262,74 +263,78 @@ export function KbHome() {
           {articlesError && (
             <RetryBanner message={articlesError} onRetry={loadBrowse} />
           )}
-          <Card>
-            <CardContent className="p-0">
-              {articlesError ? null : articles === null ? (
-                <div className="p-6">
-                  <SkeletonRows count={4} />
-                </div>
-              ) : articles.length === 0 ? (
-                <EmptyState
-                  icon={BookOpen}
-                  title={q ? t('kb.noMatches') : t('kb.noArticlesYet')}
-                  description={
-                    q
-                      ? t('kb.noMatchesDesc')
-                      : canManage
-                        ? t('kb.writeFirstDesc')
-                        : t('kb.noArticlesDesc')
-                  }
-                  action={
-                    q ? undefined : canManage ? (
-                      <Button onClick={startCreate}>
-                        <Plus className="mr-2 h-4 w-4" /> {t('kb.newArticle')}
+          {/* Nothing to list: the kit's empty state on its own — inside the
+              card it read as a solid box (F500 2026-10-26). */}
+          {articlesError ? null : articles !== null && articles.length === 0 ? (
+            <EmptyState
+              icon={BookOpen}
+              title={q ? t('kb.noMatches') : t('kb.noArticlesYet')}
+              description={
+                q
+                  ? t('kb.noMatchesDesc')
+                  : canManage
+                    ? t('kb.writeFirstDesc')
+                    : t('kb.noArticlesDesc')
+              }
+              action={
+                q ? undefined : canManage ? (
+                  <Button variant="outline" onClick={startCreate}>
+                    <Plus className="mr-2 h-4 w-4" /> {t('kb.newArticle')}
+                  </Button>
+                ) : (
+                  // Nothing published: the next step is a person to ask.
+                  <span className="flex flex-wrap justify-center gap-2">
+                    {assistant.available && (
+                      <Button onClick={() => assistant.setOpen(true)}>
+                        <MessageSquare className="mr-2 h-4 w-4" /> {t('kb.askHugo')}
                       </Button>
-                    ) : (
-                      // Nothing published: the next step is a person to ask.
-                      <span className="flex flex-wrap justify-center gap-2">
-                        {assistant.available && (
-                          <Button onClick={() => assistant.setOpen(true)}>
-                            <MessageSquare className="mr-2 h-4 w-4" /> {t('kb.askHugo')}
-                          </Button>
-                        )}
-                        <Button asChild variant={assistant.available ? 'outline' : 'primary'}>
-                          <Link to="/hr-cases">{t('kb.askHr')}</Link>
-                        </Button>
-                      </span>
-                    )
-                  }
-                />
-              ) : (
-                <div className="divide-y divide-navy-secondary">
-                  {articles.map((a) => (
-                    <button
-                      key={a.id}
-                      onClick={() => setOpenSlug(a.slug)}
-                      className="w-full p-4 text-left hover:bg-navy-tertiary transition"
-                    >
-                      <div className="text-sm font-medium text-white">
-                        {a.title}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-silver">
-                        <Badge variant="outline">{a.category}</Badge>
-                        {a.tags.slice(0, 4).map((t) => (
-                          <span key={t}>#{t}</span>
-                        ))}
-                        <span className="flex items-center gap-1">
-                          <Eye className="h-3 w-3" /> {a.views}
-                        </span>
-                        {a.helpful > 0 && (
-                          <span className="flex items-center gap-1 text-success">
-                            <ThumbsUp className="h-3 w-3" /> {a.helpful}
+                    )}
+                    <Button asChild variant={assistant.available ? 'outline' : 'primary'}>
+                      <Link to="/hr-cases">{t('kb.askHr')}</Link>
+                    </Button>
+                  </span>
+                )
+              }
+            />
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                {articles === null ? (
+                  <div className="p-6">
+                    <SkeletonRows count={4} />
+                  </div>
+                ) : (
+                  <div className="divide-y divide-navy-secondary">
+                    {articles.map((a) => (
+                      <button
+                        key={a.id}
+                        onClick={() => setOpenSlug(a.slug)}
+                        className="w-full p-4 text-left hover:bg-navy-tertiary transition"
+                      >
+                        <div className="text-sm font-medium text-white">
+                          {a.title}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap text-xs text-silver">
+                          <Badge variant="outline">{a.category}</Badge>
+                          {a.tags.slice(0, 4).map((t) => (
+                            <span key={t}>#{t}</span>
+                          ))}
+                          <span className="flex items-center gap-1">
+                            <Eye className="h-3 w-3" /> {a.views}
                           </span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                          {a.helpful > 0 && (
+                            <span className="flex items-center gap-1 text-success">
+                              <ThumbsUp className="h-3 w-3" /> {a.helpful}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </>
       ) : (
         <>

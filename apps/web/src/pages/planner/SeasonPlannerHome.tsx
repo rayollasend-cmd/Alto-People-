@@ -155,6 +155,35 @@ function PlansList() {
 
       {q.isError ? (
         <QueryError what="season plans" query={q} />
+      ) : noPlans ? (
+        // No plan yet: the kit's empty state is the page — not a titled card
+        // around one (F500 2026-10-26). Its gold button is the page's only one.
+        <div className="space-y-2">
+          <EmptyState
+            icon={CalendarRange}
+            title="No season plan yet"
+            description="Start from the 26-week forecast, or a blank plan from every store's current staffing targets, one row per week of the season."
+            action={
+              canManage ? (
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button onClick={() => navigate('/forecast?plan=1')}>
+                    <TrendingUp className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Start from the forecast
+                  </Button>
+                  <Button variant="outline" onClick={() => setCreating(true)}>
+                    <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Blank plan
+                  </Button>
+                </div>
+              ) : undefined
+            }
+          />
+          <div className="flex justify-end">
+            <Button variant="ghost" size="sm" onClick={() => setShowArchived(true)}>
+              Show archived plans
+            </Button>
+          </div>
+        </div>
       ) : (
         <Card>
           <CardHeader>

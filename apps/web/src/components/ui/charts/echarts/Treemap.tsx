@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { EChart } from './EChart';
 import { esc, mix, tooltipBase, type EChartColors } from './colors';
 import type { EChartsCoreOption } from './engine';
@@ -24,6 +24,33 @@ export interface TreemapProps {
   rootName?: string;
   format?: (n: number) => string;
   height?: number;
+  /**
+   * What to show instead when there are fewer than TREEMAP_MIN_ITEMS blocks:
+   * one $105 block filling an 880×320 card said nothing a sentence couldn't
+   * (F500 audit 2026-10-26). Gets the blocks; left out, a short list of them.
+   */
+  few?: (leaves: TreeLeaf[]) => ReactNode;
+}
+
+/** One block of the map: its path from the top level down, and its value. */
+export interface TreeLeaf {
+  path: string[];
+  value: number;
+}
+
+/** Below this many blocks a treemap is a sentence, not a picture. */
+export const TREEMAP_MIN_ITEMS = 3;
+
+/** Every block with a value, deepest level, largest first. */
+export function treemapLeaves(nodes: TreeNode[], prefix: string[] = []): TreeLeaf[] {
+  const out: TreeLeaf[] = [];
+  for (const n of nodes) {
+    if (!(n.value > 0)) continue;
+    const kids = (n.children ?? []).filter((ch) => ch.value > 0);
+    if (kids.length === 0) out.push({ path: [...prefix, n.name], value: n.value });
+    else out.push(...treemapLeaves(kids, [...prefix, n.name]));
+  }
+  return out.sort((a, b) => b.value - a.value);
 }
 
 const plain = (n: number) => n.toLocaleString();
@@ -97,7 +124,9 @@ export function treemapOption(data: TreeNode[], c: EChartColors, format: (n: num
         // "… › Deli associate" on a one-pixel difference in layout.
         leafDepth: Math.max(1, ...sorted.map(depthOf)),
         squareRatio: 0.5 * (1 + Math.sqrt(5)),
-        data: sorted.map((n, i) => paint(n, c.series[i] ?? c.other, 0)),
+        // From the second series colour on: gold is punctuation, never a fill
+        // the size of the card (docs/design-system.md §2).
+        data: sorted.map((n, i) => paint(n, c.series[i + 1] ?? c.other, 0)),
         label: {
           show: true,
           fontSize: 12,
@@ -127,7 +156,26 @@ export function treemapOption(data: TreeNode[], c: EChartColors, format: (n: num
   };
 }
 
-export function Treemap({ data, rootName, format, height }: TreemapProps) {
+export function Treemap({ data, rootName, format, height, few }: TreemapProps) {
   const build = useCallback((c: EChartColors) => treemapOption(data, c, format, rootName), [data, format, rootName]);
+  const leaves = treemapLeaves(data);
+  if (leaves.length < TREEMAP_MIN_ITEMS) {
+    if (few) return <>{few(leaves)}</>;
+    const fmt = format ?? plain;
+    const sum = leaves.reduce((s, l) => s + l.value, 0);
+    return (
+      <ul className="space-y-1.5 text-sm" data-testid="treemap-few">
+        {leaves.map((l) => (
+          <li key={l.path.join('|')} className="flex flex-wrap items-baseline justify-between gap-x-3">
+            <span className="min-w-0 text-ink">{l.path.join(' › ')}</span>
+            <span className="tabular-nums text-ink-muted">
+              {fmt(l.value)}
+              {sum > 0 && leaves.length > 1 && ` · ${Math.round((l.value / sum) * 100)}%`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return <EChart build={build} height={height} />;
 }

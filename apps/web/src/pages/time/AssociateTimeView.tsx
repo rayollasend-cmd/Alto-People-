@@ -309,7 +309,7 @@ export function AssociateTimeView({
           {active ? (
             <div className="text-sm text-white">
               On the clock since {fmtPunchTime(active.clockInAt, active.locationTimezone)} ·{' '}
-              <span className="font-semibold tabular-nums text-gold">{formatHM(liveMinutes)}</span>
+              <span className="font-semibold tabular-nums text-ink">{formatHM(liveMinutes)}</span>
               {onBreak && <span className="text-warning"> · on break</span>}
             </div>
           ) : (
@@ -333,11 +333,16 @@ export function AssociateTimeView({
               </Button>
             </>
           ) : (
-            <Button size="sm" onClick={handleClockIn} loading={busy} disabled={busy}>
+            // The strip sits on a page with its own primary (Add entry): one
+            // gold button per screen, so the personal clock is secondary here.
+            <Button size="sm" variant="secondary" onClick={handleClockIn} loading={busy} disabled={busy}>
               Clock in
             </Button>
           )}
-          <Link to="/time-attendance?mine=1" className="text-xs text-gold underline-offset-2 hover:underline">
+          <Link
+            to="/time-attendance?mine=1"
+            className="inline-flex min-h-8 items-center px-1 text-xs text-gold underline-offset-2 hover:underline coarse:min-h-11 coarse:text-sm"
+          >
             My time →
           </Link>
         </div>

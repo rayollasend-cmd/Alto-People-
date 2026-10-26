@@ -7,6 +7,7 @@ import { filingMode, withProvider } from './embeddedPayroll/index.js';
 import { depositDue, isDepositFrequency, quarterLabel, type DepositFrequency } from './payrollTaxCalendar.js';
 import { tenantIdForWrite } from './tenant.js';
 import { booksAfterTaxPayment } from './books/posting/hooks.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * The payroll-tax liability ledger.
@@ -334,7 +335,7 @@ export async function createPayment(db: PrismaClient, actor: PaymentActor, liabi
       subjectType: 'TaxPayment',
       subjectId: payment.id,
       title,
-      summary: `Due ${dueDate.toISOString().slice(0, 10)} · ${KIND_LABEL[payment.kind]} · ${rows.length} payroll${rows.length === 1 ? '' : 's'}`,
+      summary: `Due ${fmtDay(dueDate, { year: true })} · ${KIND_LABEL[payment.kind]} · ${rows.length} payroll${rows.length === 1 ? '' : 's'}`,
       proposed: { paymentId: payment.id, amount },
       requesterUserId: actor.id,
       approver: { capability: 'process:payroll' },

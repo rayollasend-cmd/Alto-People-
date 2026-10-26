@@ -75,6 +75,13 @@ export const inboxRouter = Router();
 type SessionUser = NonNullable<Request['user']>;
 
 const CAP = 999;
+/**
+ * Sources listed for the reader but never counted in `total` or a nav badge:
+ * the unread-notices count is the bell's (components/NotificationsBell), and
+ * counting it again in the Inbox made two numbers for one thing. The web's
+ * count rule (apps/web/src/lib/inboxApi.ts) skips the same keys.
+ */
+export const NOT_A_QUEUE: ReadonlySet<string> = new Set(['my-notifications']);
 const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
 const DAY_MS = 86_400_000;
 
@@ -1366,8 +1373,10 @@ inboxRouter.get('/inbox', requireAuth, async (req, res, next) => {
     );
     // Which source is slow, visible in any browser's network panel.
     res.setHeader('Server-Timing', timings.join(', '));
-    // The badge: only the queues this person owns.
-    const total = sources.reduce((sum, s) => sum + (s.watching ? 0 : s.count), 0);
+    // The badge: only the queues this person owns — and never the unread
+    // notices, which are the bell's number (one meaning per badge, F500
+    // 2026-10-26: an associate's bell said 6 and the rail 7 for the same notes).
+    const total = sources.reduce((sum, s) => sum + (s.watching || NOT_A_QUEUE.has(s.key) ? 0 : s.count), 0);
     res.json(InboxResponseSchema.parse({ total, sources }));
   } catch (err) {
     next(err);

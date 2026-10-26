@@ -46,6 +46,14 @@ import {
 import { renderOpsStoreReportPdf } from '../lib/opsStoreReportPdf.js';
 import { send } from '../lib/notifications.js';
 import { genericNotificationTemplate } from '../lib/emailTemplates.js';
+import { fmtDay } from '../lib/humanDates.js';
+
+/** A store's window name mid-sentence: "your swing checklist" ("AM" keeps its case). */
+function midSentence(label: string): string {
+  if (label.length < 2) return label;
+  const second = label[1]!;
+  return second === second.toLowerCase() ? label[0]!.toLowerCase() + label.slice(1) : label;
+}
 
 /**
  * Store Operations — the shift supervisor's floor tool and the leadership
@@ -1685,9 +1693,9 @@ opsRouter.post('/shifts/:id/handover', RUN_OR_ASSIST, async (req, res, next) => 
         subject: `Floor escalation — ${client?.name ?? 'store'} · ${shift.department}`,
         body:
           urgent
-            .map((i) => `${kindLabel[i.kind]}${i.priority === 'HIGH' ? ' (HIGH)' : ''}: ${i.body}`)
+            .map((i) => `${kindLabel[i.kind]}${i.priority === 'HIGH' ? ' (high priority)' : ''}: ${i.body}`)
             .join('\n') +
-          `\n\nLogged by ${req.user!.email} on the ${shift.position} shift (${shift.dateKey}). Also queued for the next shift's handover.`,
+          `\n\nLogged by ${req.user!.email} on the ${shift.position} shift (${fmtDay(shift.dateKey, { weekday: true })}). Also queued for the next shift's handover.`,
         category: 'ops.handover_alert',
         linkUrl: `/ops?tab=board&record=${shift.id}`,
       });
@@ -2139,9 +2147,9 @@ opsRouter.post('/shifts/:id/cancel', LIB, async (req, res, next) => {
     // what to do next — otherwise the gate simply vanishes and they never
     // open the right one.
     void notifyUser(cancelled.openedById, {
-      subject: 'Your shift SOP was cancelled',
+      subject: 'Your shift checklist was cancelled',
       body:
-        `The ${cancelled.windowLabel ?? cancelled.position} SOP you opened was cancelled: ` +
+        `The ${cancelled.windowLabel ? midSentence(cancelled.windowLabel) : cancelled.position} checklist you opened was cancelled: ` +
         `${parsed.data.reason}. Open the standard for the shift you are actually working ` +
         `from the Store ops page — you can clock out once that one is submitted.`,
       category: 'ops.sop',
@@ -2339,17 +2347,17 @@ opsRouter.post('/shifts/:id/close', RUN_OR_ASSIST, async (req, res, next) => {
     if (closedIncomplete) {
       await notifyAllAdmins({
         subject: `Ops shift closed incomplete — ${shift.position}`,
-        body: `${shift.windowLabel ? `${shift.windowLabel} SOP` : shift.department} (${shift.dateKey}) submitted with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. SOP ${counts.sopDone}/${counts.sopTotal}, tasks ${counts.taskDone}/${counts.taskTotal}. Submitted by ${submittedBy}. Reason: ${incompleteReason}`,
+        body: `${shift.windowLabel ? `${shift.windowLabel} checklist` : shift.department} (${fmtDay(shift.dateKey, { weekday: true })}) submitted with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. Checklist ${counts.sopDone}/${counts.sopTotal}, tasks ${counts.taskDone}/${counts.taskTotal}. Submitted by ${submittedBy}. Reason: ${incompleteReason}`,
         category: 'ops.incomplete_close',
         linkUrl: `/ops?tab=board&record=${shift.id}`,
       });
     }
     if (coveredLead && coveredLead.id !== req.user!.id) {
-      const label = shift.windowLabel ? `${shift.windowLabel} SOP` : 'SOP';
+      const label = shift.windowLabel ? `${midSentence(shift.windowLabel)} checklist` : 'checklist';
       await notifyUser(coveredLead.id, {
         subject: `${submitter ? personName(submitter) : 'Your floor supervisor'} submitted your ${label}`,
         body:
-          `${shift.dateKey}: ${counts.sopDone} of ${counts.sopTotal} done` +
+          `${fmtDay(shift.dateKey, { weekday: true })}: ${counts.sopDone} of ${counts.sopTotal} done` +
           (closedIncomplete ? `, submitted incomplete — ${incompleteReason}` : '') +
           `. ${handoverCount === 0 ? 'Nothing handed over.' : `${handoverCount} note${handoverCount === 1 ? '' : 's'} handed over to the next shift.`}`,
         category: 'ops.sop',

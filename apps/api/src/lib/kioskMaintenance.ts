@@ -8,6 +8,7 @@ import { send } from './notifications.js';
 import { isEmailMuted } from './notify.js';
 import { publicBaseUrl } from './emailLayout.js';
 import { tenantIdForWrite } from './tenant.js';
+import { fmtMomentInZone } from './humanDates.js';
 
 /**
  * Hourly kiosk maintenance sweep.
@@ -274,7 +275,7 @@ export async function sendKioskFleetNotices(
       );
       silent.push({
         id: d.id,
-        line: `${label} — no punches for ~${hoursQuiet}h (last seen ${d.lastSeenAt.toISOString().slice(0, 16).replace('T', ' ')} UTC). Check the tablet's power, Wi-Fi, and that it isn't sitting on the setup screen.`,
+        line: `${label} — no punches for ~${hoursQuiet}h (last seen ${fmtMomentInZone(d.lastSeenAt)}). Check the tablet's power, Wi-Fi, and that it isn't sitting on the setup screen.`,
       });
     }
   }

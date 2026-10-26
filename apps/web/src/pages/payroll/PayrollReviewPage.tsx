@@ -1,11 +1,12 @@
 import { useState } from 'react';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle, ArrowRight, Download, FileSearch, FileSpreadsheet, ShieldAlert, ShieldCheck, ShieldQuestion } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDate, fmtDateTime, fmtHours, fmtMoney, fmtMoneyCompact, fmtPercent } from '@/lib/format';
+import { fmtDateOnlyRange, fmtDateTime, fmtHours, fmtMoney, fmtPercent } from '@/lib/format';
 import {
   FLAG_LABEL,
   SERIOUS_FLAGS,
@@ -103,6 +104,12 @@ function Review({ report, signoff, crumbs, embedded }: { report: PayrollReviewRe
   };
   const open = r.status === 'DRAFT' || r.status === 'FINALIZED';
   const flagged = report.rows.filter((x) => x.flags.length > 0);
+  // The run records totals its paychecks don't add up to (lib/payrollRunTotals): the
+  // tiles read the run's recorded totals — the same as the run record's header — and
+  // nothing below pretends the paychecks are the run (F500 audit 2026-10-26: a header
+  // of $4,054.50 gross over Review tiles and ledgers of $0.00).
+  const disagree = r.totalsAgree === false || (r.totalsAgree === undefined && report.totals.people === 0 && (r.storedGross ?? 0) > 0);
+  const nothingBehind = disagree && report.totals.people === 0;
 
   return (
     <RunPageShell
@@ -111,9 +118,7 @@ function Review({ report, signoff, crumbs, embedded }: { report: PayrollReviewRe
       topbarTitle="Review"
       subtitle={
         <span className="inline-flex flex-wrap items-center gap-2">
-          <span className="tabular-nums">
-            {fmtDate(r.periodStart)} – {fmtDate(r.periodEnd)}
-          </span>
+          <span className="tabular-nums">{fmtDateOnlyRange(r.periodStart, r.periodEnd)}</span>
           <span aria-hidden="true">·</span>
           {r.clientName ?? 'All clients'}
           <RunStatusBadge status={r.status} />
@@ -121,7 +126,7 @@ function Review({ report, signoff, crumbs, embedded }: { report: PayrollReviewRe
       }
       breadcrumbs={crumbs}
       primaryAction={
-        open && signoff.required && signoff.canSign ? (
+        open && signoff.required && signoff.canSign && !disagree ? (
           <Button asChild>
             <a href="#signoff">
               <ShieldCheck className="h-4 w-4" aria-hidden="true" />
@@ -159,33 +164,43 @@ function Review({ report, signoff, crumbs, embedded }: { report: PayrollReviewRe
               itemsGross: report.totals.gross,
               itemsNet: report.totals.net,
               paychecks: report.totals.people,
-              totalsAgree: report.run.totalsAgree ?? !(report.totals.people === 0 && (report.run.storedGross ?? 0) > 0),
+              totalsAgree: !disagree,
+              status: r.status,
             }}
           />
           <SignoffBanner signoff={signoff} status={r.status} />
-          {signoff.current && open && <PayNext runId={r.id} status={r.status} net={report.totals.net} />}
-          <Totals report={report} />
+          {signoff.current && open && !disagree && <PayNext runId={r.id} status={r.status} net={report.totals.net} />}
+          <Totals report={report} disagree={disagree} />
         </div>
       }
     >
-      <PayWaterfall report={report} />
-      <div className="grid gap-[var(--d-stack)] lg:grid-cols-2">
-        <MoneyCard
-          title="Cash required"
-          description="What leaves the bank because of this run."
-          lines={report.cash.lines}
-          totalLabel="Total cash required"
-          total={report.cash.total}
-        />
-        <TaxesCard report={report} />
-      </div>
+      {disagree && !nothingBehind && (
+        <p className="text-sm text-ink-muted" data-testid="review-paychecks-basis">
+          Below: the {report.totals.people} {report.totals.people === 1 ? 'paycheck' : 'paychecks'} in this run, which don’t add up to its recorded totals.
+        </p>
+      )}
+      {!nothingBehind && (
+        <>
+          <PayWaterfall report={report} />
+          <div className="grid gap-[var(--d-stack)] lg:grid-cols-2">
+            <MoneyCard
+              title="Cash required"
+              description="What leaves the bank because of this run."
+              lines={report.cash.lines}
+              totalLabel="Total cash required"
+              total={report.cash.total}
+            />
+            <TaxesCard report={report} />
+          </div>
 
-      {(report.payByCheck?.length ?? 0) > 0 && <PaperChecks rows={report.payByCheck!} runId={r.id} />}
+          {(report.payByCheck?.length ?? 0) > 0 && <PaperChecks rows={report.payByCheck!} runId={r.id} />}
 
-      <LookAt rows={flagged} previous={report.previous} checked={report.rows.length} />
-      <Breakdown report={report} />
-      <Register rows={report.rows} totals={report.totals} />
-      {open && <SignoffPanel report={report} signoff={signoff} />}
+          <LookAt rows={flagged} previous={report.previous} checked={report.rows.length} />
+          <Breakdown report={report} />
+        </>
+      )}
+      <Register rows={report.rows} totals={report.totals} nothingBehind={nothingBehind} />
+      {open && <SignoffPanel report={report} signoff={signoff} blocked={disagree} />}
     </RunPageShell>
   );
 }
@@ -294,8 +309,8 @@ function PayWaterfall({ report }: { report: PayrollReviewReport }) {
       height={300}
     >
       <div className="grid h-full grid-rows-2 gap-3 *:min-h-0 lg:grid-cols-[3fr_2fr] lg:grid-rows-1 lg:gap-4">
-        <Waterfall start={{ label: 'Gross', value: t.gross }} steps={pay} end={{ label: 'Net pay' }} format={fmtMoneyCompact} words={words} />
-        <Waterfall start={{ label: 'Net pay', value: t.net }} steps={cash} end={{ label: 'Cash required' }} format={fmtMoneyCompact} words={words} />
+        <Waterfall start={{ label: 'Gross', value: t.gross }} steps={pay} end={{ label: 'Net pay' }} format={fmtMoneyAxis} words={words} />
+        <Waterfall start={{ label: 'Net pay', value: t.net }} steps={cash} end={{ label: 'Cash required' }} format={fmtMoneyAxis} words={words} />
       </div>
     </ChartFrame>
   );
@@ -317,11 +332,29 @@ function vsLast(now: number, before: number | undefined, money = true): React.Re
   );
 }
 
-function Totals({ report }: { report: PayrollReviewReport }) {
+function Totals({ report, disagree = false }: { report: PayrollReviewReport; disagree?: boolean }) {
   const t = report.totals;
   const p = report.previous;
+  const r = report.run;
   // A phone has the "Cash required" card right below: the tile would say it twice (and strand a fifth tile).
   const wide = useMediaQuery('(min-width: 640px)');
+  if (disagree) {
+    // The run's recorded totals, as its header shows them; what the paychecks add up to beside each.
+    // What the paychecks add up to — beside the figures where they differ.
+    const behind = (n: number, recorded: number | undefined) => (recorded === undefined || Math.abs(recorded - n) >= 0.005 ? `Paychecks add up to ${fmtMoney(n)}` : undefined);
+    return (
+      <div className="space-y-1.5" data-testid="review-recorded-totals">
+        <MetricStrip label="Run totals as recorded">
+          <MetricCard label="Paychecks" value={String(t.people)} />
+          <MetricCard label="Gross pay" value={fmtMoney(r.storedGross ?? t.gross)} hint={behind(t.gross, r.storedGross)} />
+          <MetricCard label="Net pay" value={fmtMoney(r.storedNet ?? t.net)} hint={behind(t.net, r.storedNet)} />
+          {r.storedTax !== undefined && <MetricCard label="Taxes withheld" value={fmtMoney(r.storedTax)} hint={behind(t.employeeTaxes, r.storedTax)} />}
+          <MetricCard label="Employer taxes" value={fmtMoney(r.storedEmployerTax ?? t.employerTaxes)} hint={behind(t.employerTaxes, r.storedEmployerTax)} />
+        </MetricStrip>
+        <p className="text-xs text-ink-muted">The totals recorded on the run, as in its header.</p>
+      </div>
+    );
+  }
   return (
     <div className="space-y-1.5">
       <MetricStrip label="Run totals">
@@ -568,7 +601,7 @@ function Breakdown({ report }: { report: PayrollReviewReport }) {
 
 /* ---- The register ------------------------------------------------------ */
 
-function Register({ rows, totals }: { rows: ReviewRow[]; totals: PayrollReviewReport['totals'] }) {
+function Register({ rows, totals, nothingBehind = false }: { rows: ReviewRow[]; totals: PayrollReviewReport['totals']; nothingBehind?: boolean }) {
   const money = (pick: (r: ReviewRow) => number) => (r: ReviewRow) => fmtMoney(pick(r));
   const taxes = (r: ReviewRow) => r.federal + r.socialSecurity + r.medicare + r.stateTax + r.localTax + (r.stateProgram ?? 0);
   const deductions = (r: ReviewRow) => r.preTax + r.postTax + r.other;
@@ -628,9 +661,11 @@ function Register({ rows, totals }: { rows: ReviewRow[]; totals: PayrollReviewRe
         <h2 id="register-title" className="text-base font-medium text-ink">
           Every paycheck
         </h2>
-        <p className="text-xs tabular-nums text-ink-muted">
-          {totals.people} people · {fmtHours(totals.hours)} hours · gross {fmtMoney(totals.gross)} · net {fmtMoney(totals.net)}
-        </p>
+        {rows.length > 0 && (
+          <p className="text-xs tabular-nums text-ink-muted">
+            {totals.people} {totals.people === 1 ? 'person' : 'people'} · {fmtHours(totals.hours)} · gross {fmtMoney(totals.gross)} · net {fmtMoney(totals.net)}
+          </p>
+        )}
       </div>
       <DataGrid
         id="payroll-review-register"
@@ -640,6 +675,11 @@ function Register({ rows, totals }: { rows: ReviewRow[]; totals: PayrollReviewRe
         rowKey={(r) => r.itemId}
         noun={{ one: 'paycheck', many: 'paychecks' }}
         defaultSort={{ key: 'name', direction: 'asc' }}
+        empty={
+          nothingBehind
+            ? { title: 'No paychecks behind these totals', description: 'There is nothing to break down until the run has paychecks. See the alert above.' }
+            : { title: 'No paychecks in this run', description: 'Nothing to review: no approved time or earnings fell in its period.' }
+        }
       />
     </section>
   );
@@ -647,7 +687,7 @@ function Register({ rows, totals }: { rows: ReviewRow[]; totals: PayrollReviewRe
 
 /* ---- Sign off ---------------------------------------------------------- */
 
-function SignoffPanel({ report, signoff }: { report: PayrollReviewReport; signoff: ReviewState }) {
+function SignoffPanel({ report, signoff, blocked = false }: { report: PayrollReviewReport; signoff: ReviewState; blocked?: boolean }) {
   const qc = useQueryClient();
   const [confirmed, setConfirmed] = useState(false);
   const [note, setNote] = useState('');
@@ -687,6 +727,8 @@ function SignoffPanel({ report, signoff }: { report: PayrollReviewReport; signof
             <ShieldCheck className="h-4 w-4" aria-hidden="true" />
             Signed off by {signoff.current.signedByName ?? 'a reviewer'} · {fmtDateTime(signoff.current.signedAt)}
           </p>
+        ) : blocked ? (
+          <p className="text-sm text-ink-muted">Sign-off waits until the run’s totals and its paychecks agree.</p>
         ) : !signoff.canSign ? (
           <p className="text-sm text-ink-muted">{signoff.cannotSignReason}</p>
         ) : (

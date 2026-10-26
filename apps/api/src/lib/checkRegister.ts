@@ -1,4 +1,5 @@
 import { COLOR, createDoc, fmt, type Brand } from './docKit/index.js';
+import { fmtDayRange } from './humanDates.js';
 
 /**
  * The check register for a payroll run: every check number ever issued
@@ -31,7 +32,7 @@ export interface CheckRegisterData {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export async function renderCheckRegisterPdf(data: CheckRegisterData): Promise<Buffer> {
-  const { k } = createDoc({ title: `Check register ${data.run.periodStart} to ${data.run.periodEnd}`, author: data.company.name });
+  const { k } = createDoc({ title: `Check register ${fmtDayRange(data.run.periodStart, data.run.periodEnd, { year: true })}`, author: data.company.name });
   const rows = [...data.rows].sort((a, b) => a.checkNumber - b.checkNumber);
   const live = rows.filter((r) => !r.voided);
   const voids = rows.filter((r) => r.voided);

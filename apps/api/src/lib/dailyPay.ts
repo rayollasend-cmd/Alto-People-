@@ -12,6 +12,7 @@ import { computePaycheckTaxes, stateAwaitingReview } from './payrollTax.js';
 import { computeYtdWages } from './payrollYtd.js';
 import { tenantJob } from './tenantJobs.js';
 import { booksAfterPayrollRun } from './books/posting/hooks.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Daily / next-day pay (PAYEXP §1).
@@ -401,7 +402,7 @@ export async function runDailyPay(opts: { now?: Date; actorUserId?: string | nul
           periodStart: workDate,
           periodEnd: workDate,
           status: 'DRAFT',
-          notes: `Daily pay for ${workDay}`,
+          notes: `Daily pay for ${fmtDay(workDay, { weekday: true, year: true })}`,
           createdById: opts.actorUserId ?? null,
         },
       });

@@ -38,11 +38,11 @@ export function FillRateTrendCard({ siteId, className }: { siteId?: string; clas
       ? t('floorUi.fillNothingEight')
       : `${t(latest!.inProgress ? 'floorUi.fillSummaryThisWeek' : 'floorUi.fillSummaryLatest', { target: fillTargetPct, met, n: rows.length, fill: latest!.fill ?? '' })}${gaps > 0 ? ` ${t(gaps === 1 ? 'floorUi.fillGapOne' : 'floorUi.fillGapMany', { n: gaps })}` : ''}`;
 
-  // Nothing in eight weeks: one line, not an empty chart.
+  // Nothing in eight weeks: one quiet line, not an empty chart.
   if (rows.length === 0) {
     return (
       <div className={className}>
-        <p className="rounded-lg border border-line px-4 py-3 text-sm text-ink-muted">{t('floorUi.fillEmptyLine')}</p>
+        <EmptyState size="sm" icon={CalendarCheck} title={t('floorUi.fillTitle')} description={t('floorUi.fillEmptyLine')} />
       </div>
     );
   }

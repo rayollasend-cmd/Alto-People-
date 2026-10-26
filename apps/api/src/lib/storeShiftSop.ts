@@ -17,6 +17,7 @@ import {
   personName,
   validLead,
 } from './floorLeads.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Store-shift SOP — every supervisor completes their shift's SOP and hands
@@ -810,7 +811,7 @@ export async function submitSopAtKiosk(
     void notifyAllAdmins({
       subject: `Ops shift closed incomplete — ${shift.position}`,
       body:
-        `${label} (${shift.dateKey}${shift.location?.name ? ` · ${shift.location.name}` : ''}) was submitted at the kiosk ` +
+        `${label} (${fmtDay(shift.dateKey, { weekday: true })}${shift.location?.name ? ` · ${shift.location.name}` : ''}) was submitted at the kiosk ` +
         `with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. SOP ${counts.sopDone}/${counts.sopTotal}. ` +
         `Reason: ${reason}`,
       category: 'ops.incomplete_close',
@@ -821,7 +822,7 @@ export async function submitSopAtKiosk(
     void notifyUser(shift.coveringForId, {
       subject: `Your ${label} was submitted at the kiosk`,
       body:
-        `${shift.dateKey}: ${counts.sopDone} of ${counts.sopTotal} done` +
+        `${fmtDay(shift.dateKey, { weekday: true })}: ${counts.sopDone} of ${counts.sopTotal} done` +
         (closedIncomplete ? `, submitted incomplete — ${reason}` : '') +
         `. ${handoverCount === 0 ? 'Nothing handed over.' : `${handoverCount} note${handoverCount === 1 ? '' : 's'} handed over.`}`,
       category: 'ops.sop',
@@ -898,7 +899,7 @@ export async function runSopExpirySweep(
         'ops.shifts',
       );
       const label = s.windowLabel ? `${s.windowLabel} SOP` : `SOP for ${s.position}`;
-      const where = `${s.location?.name ?? 'the store'} · ${s.dateKey}`;
+      const where = `${s.location?.name ?? 'the store'} · ${fmtDay(s.dateKey, { weekday: true })}`;
       const who = s.openedBy.associate ? `${s.openedBy.associate.firstName} ${s.openedBy.associate.lastName}` : s.openedBy.email;
       const link = `/ops?tab=board&record=${s.id}`;
       void notifyUser(s.openedById, {

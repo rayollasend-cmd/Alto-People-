@@ -1,5 +1,5 @@
 // generated — do not edit; run npm -w apps/web run icons:build
-// Phosphor "kanban" (bold), drawn for Kanban, KanbanSquare.
+// Phosphor "kanban" (bold), drawn for Kanban.
 import { createIcon } from '../createIcon';
 
 export const Kanban = /* @__PURE__ */ createIcon('Kanban', {

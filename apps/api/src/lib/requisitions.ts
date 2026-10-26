@@ -5,6 +5,7 @@ import { emitWebhookEvent } from './webhookDispatch.js';
 import { emit as emitWorkflow } from './workflow.js';
 import { createApprovalRequest, type Decider } from './approvalRequests.js';
 import { loadApprovalPolicy, secondPersonExists } from './approvalPolicy.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Requisition → approval → posting. A position opens (status OPEN) only
@@ -59,7 +60,7 @@ export async function requestOpenPosition(db: PrismaClient, id: string, requeste
     subjectType: 'Position',
     subjectId: id,
     title: `Open ${existing.code} · ${existing.title}`,
-    summary: `${Number(existing.fteAuthorized)} FTE, ${budget}${existing.minHourlyRate || existing.maxHourlyRate ? `, $${existing.minHourlyRate ?? '—'}–$${existing.maxHourlyRate ?? '—'}/h` : ''}${existing.targetStartDate ? `, target start ${existing.targetStartDate.toISOString().slice(0, 10)}` : ''}.`,
+    summary: `${Number(existing.fteAuthorized)} FTE, ${budget}${existing.minHourlyRate || existing.maxHourlyRate ? `, $${existing.minHourlyRate ?? '—'}–$${existing.maxHourlyRate ?? '—'}/h` : ''}${existing.targetStartDate ? `, target start ${fmtDay(existing.targetStartDate, { year: true })}` : ''}.`,
     proposed: { positionId: id, status: 'OPEN', budgetAmount: existing.budgetAmount ? Number(existing.budgetAmount) : null, budgetPeriod: existing.budgetPeriod, fteAuthorized: Number(existing.fteAuthorized) },
     before: { status: existing.status },
     requesterUserId: requester.id,

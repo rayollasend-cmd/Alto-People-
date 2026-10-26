@@ -173,7 +173,8 @@ export function VanDayTimeline({
                       aria-label={`${row.name} run leaving ${run ? fmtTimeTz(run.departAt, tz) : ''}, ${b.label} seats${b.conflict ? ', double-booked' : ''}`}
                       className={cn(
                         'absolute inset-y-0.5 flex items-center overflow-hidden rounded px-1.5 text-2xs font-semibold tabular-nums',
-                        b.conflict ? 'bg-alert/80 text-navy' : b.status === 'ACTIVE' ? 'bg-success/70 text-navy' : b.status === 'COMPLETED' ? 'bg-navy-secondary text-silver' : 'bg-gold/70 text-navy',
+                        // Fills paired with their own ink tokens: 11px labels need 4.5:1 in both themes.
+                        b.conflict ? 'bg-alert text-on-alert' : b.status === 'ACTIVE' ? 'bg-success/70 text-navy' : b.status === 'COMPLETED' ? 'bg-navy-secondary text-silver' : 'bg-accent-fill text-accent-on',
                       )}
                       style={{ left: x(b.from), width: `calc(${x(b.to)} - ${x(b.from)})` }}
                     >

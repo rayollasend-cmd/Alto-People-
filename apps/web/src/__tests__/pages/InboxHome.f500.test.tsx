@@ -38,7 +38,8 @@ describe('InboxHome (F500)', () => {
     vi.mocked(apiFetch).mockResolvedValue(data as never);
     renderAs('HR_ADMINISTRATOR', <InboxHome />, '/inbox');
     const row = (await screen.findAllByTestId('inbox-row'))[0]!;
-    expect(within(row).getByTestId('inbox-due')).toHaveTextContent('Overdue · Jan 31, 2026');
+    // The year only when it is not this one (fmtDateOnly year: 'auto').
+    expect(within(row).getByTestId('inbox-due')).toHaveTextContent(new Date().getFullYear() === 2026 ? 'Overdue · Jan 31' : 'Overdue · Jan 31, 2026');
     expect(within(row).getByTestId('inbox-preview')).toHaveTextContent("Workers' comp certificate of insurance");
     // The whole row opens the queue.
     expect(row).toHaveAttribute('href', expect.stringContaining('/compliance?tab=scorecard'));
@@ -50,7 +51,9 @@ describe('InboxHome (F500)', () => {
   it('an associate sees their own tasks — no severity header, no "queues clear" footer', async () => {
     vi.mocked(apiFetch).mockResolvedValue(data as never);
     renderAs('ASSOCIATE', <InboxHome />, '/inbox');
-    expect(await screen.findByText('Unread notices')).toBeInTheDocument();
+    // Unread notices are the bell's number: one quiet line, never a counted row (F500 2026-10-26).
+    expect(await screen.findByTestId('inbox-notices')).toHaveTextContent('6 unread notifications');
+    expect(screen.queryByText('Unread notices')).toBeNull();
     expect(screen.queryByTestId('inbox-band-count')).toBeNull();
     expect(screen.queryByText(/Legal deadlines/i)).toBeNull();
     expect(screen.queryByTestId('inbox-quiet')).toBeNull();

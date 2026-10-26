@@ -1,41 +1,30 @@
-import { lazy, Suspense } from 'react';
-import { useTenant, useTerm } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
   Building2,
   Calendar,
-  ClipboardList,
   DollarSign,
   Download,
   ShieldCheck,
 } from '@/components/ui/icons';
 import type { DashboardKPIs, KpiTrend } from '@alto-people/shared';
 import { PALETTE } from '@/components/ui/charts/palette';
+import { TrendLineChart, fmtMoneyAxis } from '@/components/ui/charts';
+import { ChartFrame } from '@/components/ui/ChartFrame';
+import { apiFetch } from '@/lib/api';
+import type { FinanceOverview, MarginWeek } from '@/pages/finance/financeTypes';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { downloadCsv } from '@/lib/csv';
-import { fmtMoney, ymdLocal } from '@/lib/format';
+import { fmtDateOnly, fmtMoney, fmtMoneyCompact, ymdLocal } from '@/lib/format';
 import { urlNumber, useUrlState, type UrlCodec } from '@/lib/useUrlState';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/Card';
-import type { DonutDatum } from '@/components/ui/DonutChart';
+import { Card, CardContent } from '@/components/ui/Card';
 import { MetricCard, type MetricDelta, type TrendGood } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import { QueryError } from '@/components/ui/QueryError';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
-
-// Recharts is ~290 KB. Defer it so the page paints first and the chart
-// streams in after — most users see the metric cards above the chart
-// before the donut is even on screen.
-const DonutChart = lazy(() =>
-  import('@/components/ui/DonutChart').then((m) => ({ default: m.DonutChart })),
-);
 
 /**
  * Brand-aligned color per application status. Drives the donut chart and
@@ -63,17 +52,6 @@ const STATUS_LABELS: Record<string, string> = {
   REJECTED: 'Rejected',
   CANCELLED: 'Cancelled',
 };
-// The kit's tokens (CSS variables), so the donut follows the theme. The
-// statuses are states, so the reserved state colors carry them.
-const STATUS_COLORS: Record<string, string> = {
-  APPROVED: PALETTE.good,
-  IN_REVIEW: PALETTE.warn,
-  SUBMITTED: PALETTE.primary,
-  DRAFT: PALETTE.other,
-  REJECTED: PALETTE.bad,
-  // Called off, not a verdict — muted, never red.
-  CANCELLED: PALETTE.info,
-};
 
 const WINDOW_PRESETS = [7, 30, 60, 90] as const;
 /** ?days= is one of the presets; anything else reads as the default 30. */
@@ -94,7 +72,12 @@ const WINDOW_CODEC: UrlCodec<number> = {
  */
 export function AnalyticsHome() {
   const term = useTerm();
-  const hasClients = useTenant().moduleOn('clientPortal');
+  const { moduleOn } = useTenant();
+  const { can } = useAuth();
+  const hasClients = moduleOn('clientPortal');
+  // Revenue and margin are the Finance home's numbers, read from the same source
+  // (GET /finance/overview → lib/financeCockpit marginTrend), for the people who see that home.
+  const moneyOn = can('process:payroll') && moduleOn('billRates');
   const workers = term('workers');
   // The window lives in the URL (?days=7): Back, a reload and a shared link keep it.
   const [days, setDays] = useUrlState<number>('days', 30, WINDOW_CODEC);
@@ -142,7 +125,7 @@ export function AnalyticsHome() {
             ariaLabel="Reporting window"
             value={days}
             onChange={(d) => setDays(d)}
-            options={WINDOW_PRESETS.map((d) => ({ value: d, label: `${d}d` }))}
+            options={WINDOW_PRESETS.map((d) => ({ value: d, label: `${d} days` }))}
           />
           <span className="basis-full text-xs text-silver/80 sm:basis-auto">
             Applies to shifts and pay. Headcount and backlogs are as of now.
@@ -154,6 +137,7 @@ export function AnalyticsHome() {
         <QueryError what="analytics" query={kpisQuery} />
       ) : (
         <>
+          {/* One grid for every section: four tiles a row on a desktop (it ran 4 · 2 · 2 · 3 by section). */}
           <Section title="Workforce" icon={Building2} description="Headcount and live presence.">
             {kpis ? (
               <MetricStrip label="Workforce">
@@ -193,11 +177,13 @@ export function AnalyticsHome() {
             )}
           </Section>
 
-          <Section title="Scheduling" icon={Calendar} description="Shifts ahead.">
+          {moneyOn && <MoneySection />}
+
+          <Section title="Scheduling and pay" icon={Calendar} description="Shifts ahead, and what payroll paid and owes.">
             {kpis ? (
-              <MetricStrip label="Scheduling">
+              <MetricStrip label="Scheduling and pay">
                 <MetricCard
-                  label={`Open shifts (next ${kpis.windowDays}d)`}
+                  label={`Open shifts (next ${kpis.windowDays} days)`}
                   value={kpis.openShiftsNext30d.toString()}
                   hint={`Shifts without an assigned ${term('worker').toLowerCase()}`}
                   href="/scheduling"
@@ -211,81 +197,54 @@ export function AnalyticsHome() {
                     delta={weekly(kpis.trends.shiftsScheduled, 'vs the week before', 'neutral')}
                   />
                 )}
-              </MetricStrip>
-            ) : (
-              <SkeletonGrid count={2} />
-            )}
-          </Section>
-
-          <Section title="Payroll" icon={DollarSign} description="Money in, money out.">
-            {kpis ? (
-              <MetricStrip label="Payroll">
                 <MetricCard
-                  label={`Net paid (last ${kpis.windowDays}d)`}
+                  label={`Net paid (last ${kpis.windowDays} days)`}
                   value={fmtMoney(kpis.netPaidLast30d)}
-                  hint="Net pay on every disbursed paystub"
+                  // A $0.00 tile said nothing: say there was no payroll paid.
+                  nothing={kpis.netPaidLast30d === 0 ? `No payroll paid in the last ${kpis.windowDays} days` : undefined}
+                  hint="Net pay on every paid paycheck"
                   href="/payroll"
                 />
                 <MetricCard
-                  label="Net pending disbursement"
+                  label="Waiting to be paid"
                   value={fmtMoney(kpis.netPendingDisbursement)}
-                  hint="On draft and finalized runs"
+                  nothing={kpis.netPendingDisbursement === 0 ? 'No payroll waiting to be paid' : undefined}
+                  hint="Net pay on draft and finalized runs"
                   href="/payroll"
                 />
               </MetricStrip>
             ) : (
-              <SkeletonGrid count={2} />
+              <SkeletonGrid count={4} />
             )}
           </Section>
 
           <Section title="Onboarding & compliance" icon={ShieldCheck} description="What needs HR's attention.">
             {kpis ? (
-              <>
-                <MetricStrip label="Onboarding and compliance" className="mb-4">
-                  <MetricCard
-                    label="Pending applications"
-                    value={kpis.pendingOnboardingApplications.toString()}
-                    tone={kpis.pendingOnboardingApplications > 0 ? 'warning' : 'default'}
-                    href="/onboarding"
-                    delta={weekly(kpis.trends?.applications, 'new vs the week before', 'neutral')}
-                  />
-                  <MetricCard
-                    label="I-9 Section 2 backlog"
-                    value={kpis.pendingI9Section2.toString()}
-                    tone={kpis.pendingI9Section2 > 0 ? 'warning' : 'default'}
-                    href="/compliance"
-                  />
-                  <MetricCard
-                    label="Documents to review"
-                    value={kpis.pendingDocumentReviews.toString()}
-                    tone={kpis.pendingDocumentReviews > 0 ? 'warning' : 'default'}
-                    href="/documents"
-                  />
-                </MetricStrip>
-                {Object.keys(kpis.applicationStatusCounts).length > 0 && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2 text-base">
-                        <ClipboardList className="h-4 w-4 text-silver/80" />
-                        Application status breakdown
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <Suspense fallback={<Skeleton className="h-64" />}>
-                        <DonutChart centerSublabel="Applications" data={buildStatusBreakdown(kpis.applicationStatusCounts)} />
-                      </Suspense>
-                    </CardContent>
-                  </Card>
-                )}
-              </>
+              <MetricStrip label="Onboarding and compliance">
+                <MetricCard
+                  label="Pending applications"
+                  value={kpis.pendingOnboardingApplications.toString()}
+                  tone={kpis.pendingOnboardingApplications > 0 ? 'warning' : 'default'}
+                  href="/onboarding"
+                  delta={weekly(kpis.trends?.applications, 'new vs the week before', 'neutral')}
+                />
+                <MetricCard
+                  label="I-9 Section 2 backlog"
+                  value={kpis.pendingI9Section2.toString()}
+                  tone={kpis.pendingI9Section2 > 0 ? 'warning' : 'default'}
+                  href="/compliance?tab=i9"
+                />
+                <MetricCard
+                  label="Documents to review"
+                  value={kpis.pendingDocumentReviews.toString()}
+                  tone={kpis.pendingDocumentReviews > 0 ? 'warning' : 'default'}
+                  href="/documents"
+                />
+                {/* The status mix in one tile: a two-slice donut took a whole 290px card. */}
+                <ApplicationsTile counts={kpis.applicationStatusCounts} />
+              </MetricStrip>
             ) : (
-              // Three KPI tiles + the donut placeholder — without the
-              // chart skeleton the page height jumps ~280px when data
-              // lands and the donut renders.
-              <>
-                <SkeletonGrid count={3} />
-                <Skeleton className="h-64 mt-4 rounded-lg" />
-              </>
+              <SkeletonGrid count={4} />
             )}
           </Section>
         </>
@@ -311,9 +270,9 @@ function Section({ title, icon: Icon, description, children }: SectionProps) {
     <section className="mb-6">
       <div className="flex items-center gap-2 mb-3">
         <Icon className="h-4 w-4 text-silver/80" aria-hidden="true" />
-        <h2 className="text-xl text-white">{title}</h2>
+        <h2 className="text-xl text-ink">{title}</h2>
       </div>
-      {description && <p className="text-xs text-silver mb-3">{description}</p>}
+      {description && <p className="text-xs text-ink-muted mb-3">{description}</p>}
       {children}
     </section>
   );
@@ -340,27 +299,142 @@ function weekly(
   return t && t.series.length >= 3 ? { value: t.delta, label, good, format } : undefined;
 }
 
+/** Applications by status, in one tile: the total, the mix in words, and how many are approved. */
+function ApplicationsTile({ counts }: { counts: Record<string, number> }) {
+  const entries = [
+    ...STATUS_ORDER.filter((st) => (counts[st] ?? 0) > 0).map((st) => [st, counts[st]!] as const),
+    ...Object.entries(counts).filter(([st, n]) => !STATUS_ORDER.includes(st) && n > 0),
+  ];
+  const total = entries.reduce((sum, [, n]) => sum + n, 0);
+  const approved = counts.APPROVED ?? 0;
+  return (
+    <MetricCard
+      label="Applications"
+      value={total.toLocaleString()}
+      nothing={total === 0 ? 'No applications yet' : undefined}
+      hint={entries.map(([st, n]) => `${n.toLocaleString()} ${(STATUS_LABELS[st] ?? sentenceCase(st)).toLowerCase()}`).join(' · ')}
+      meter={total > 0 ? { percent: Math.round((approved / total) * 100), tone: 'good' } : null}
+      href="/onboarding"
+    />
+  );
+}
+
+/** "+$420", "−$1.2k": a week-over-week change in money. */
+const moneyChange = (n: number) => `${n < 0 ? '\u2212' : '+'}${fmtMoneyCompact(Math.abs(n))}`;
+
 /**
- * Map the API's status→count map into a donut-chart input. Statuses
- * listed in STATUS_ORDER come first in their declared order; any
- * unrecognized statuses get appended after with a fallback color/label
- * so a future enum addition still renders.
+ * Revenue, labor cost and margin, week by week — the Finance home's
+ * numbers (approved hours × bill rate against what payroll pays for them),
+ * from the same read, so "Revenue · last week" is one figure on both pages.
+ * Complete weeks only: the week in progress would dip every line.
  */
-function buildStatusBreakdown(counts: Record<string, number>): DonutDatum[] {
-  const out: DonutDatum[] = [];
-  const seen = new Set<string>();
-  for (const status of STATUS_ORDER) {
-    const value = counts[status] ?? 0;
-    if (value > 0) {
-      out.push({ name: STATUS_LABELS[status] ?? status, value, color: STATUS_COLORS[status] });
-      seen.add(status);
-    }
-  }
-  for (const [status, value] of Object.entries(counts)) {
-    if (seen.has(status) || value <= 0) continue;
-    out.push({ name: STATUS_LABELS[status] ?? sentenceCase(status), value });
-  }
-  return out;
+function MoneySection() {
+  const q = useQuery({ queryKey: ['finance', 'overview'], queryFn: () => apiFetch<FinanceOverview>('/finance/overview'), staleTime: 60_000, retry: false });
+  const weeks: MarginWeek[] = (q.data?.margin?.weeks ?? []).filter((w) => !w.inProgress);
+  const any = weeks.some((w) => w.hours > 0);
+  const last = weeks.at(-1);
+  const prev = weeks.at(-2);
+  const pts = (w: MarginWeek | undefined) => (w?.marginPct == null ? null : Math.round(w.marginPct * 100));
+  const rows = weeks.map((w) => ({ week: w.weekEnd, revenue: w.revenue, wages: w.wages, margin: pts(w) }));
+  const sum = (k: 'revenue' | 'wages') => weeks.reduce((s, w) => s + w[k], 0);
+  return (
+    <Section title="Revenue and margin" icon={DollarSign} description="Approved hours at the client's bill rate against what payroll pays for them, week by week.">
+      {q.isError ? (
+        <QueryError what="revenue and margin" query={q} />
+      ) : !q.data ? (
+        <SkeletonGrid count={4} />
+      ) : !any || !last ? (
+        <MetricStrip label="Revenue and margin" empty="No approved hours in the last eight weeks yet, so there is no revenue or margin to show.">
+          {null}
+        </MetricStrip>
+      ) : (
+        <div className="space-y-3">
+          <MetricStrip label="Revenue and margin">
+            <MetricCard
+              label="Revenue · last week"
+              value={fmtMoney(last.revenue)}
+              href="/labor-costs"
+              delta={prev ? { value: last.revenue - prev.revenue, label: 'vs the week before', good: 'up', format: (n) => fmtMoneyCompact(Math.abs(n)) } : undefined}
+            />
+            <MetricCard
+              label="Labor cost · last week"
+              value={fmtMoney(last.wages)}
+              href="/labor-costs"
+              delta={prev ? { value: last.wages - prev.wages, label: 'vs the week before', good: 'neutral', format: (n) => fmtMoneyCompact(Math.abs(n)) } : undefined}
+            />
+            <MetricCard
+              label="Gross margin · last week"
+              value={pts(last) === null ? '' : `${pts(last)}%`}
+              nothing={pts(last) === null ? 'No billed hours last week' : undefined}
+              tone={pts(last) !== null && pts(last)! < 0 ? 'alert' : 'default'}
+              hint={`${fmtMoney(last.margin)} after wages`}
+              deltaText={
+                pts(last) !== null && pts(prev) !== null
+                  ? { text: `${pts(last)! - pts(prev)! >= 0 ? '+' : '\u2212'}${Math.abs(pts(last)! - pts(prev)!)} pts vs the week before`, tone: pts(last)! >= pts(prev)! ? 'good' : 'bad' }
+                  : null
+              }
+            />
+            <MetricCard
+              label={`Revenue · ${weeks.length} weeks`}
+              value={fmtMoney(sum('revenue'))}
+              hint={`${moneyChange(sum('revenue') - sum('wages'))} after wages`}
+              href="/labor-costs"
+            />
+          </MetricStrip>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <ChartFrame
+              title="Revenue and labor cost by week"
+              summary={`Revenue ran ${fmtMoney(sum('revenue'))} over ${weeks.length} weeks against ${fmtMoney(sum('wages'))} in wages; last week ${fmtMoney(last.revenue)} against ${fmtMoney(last.wages)}.`}
+              columns={[
+                { key: 'week', label: 'Week ending', format: (v) => fmtDateOnly(String(v), { year: 'auto' }) },
+                { key: 'revenue', label: 'Revenue', numeric: true, format: (v) => fmtMoney(Number(v)) },
+                { key: 'wages', label: 'Labor cost', numeric: true, format: (v) => fmtMoney(Number(v)) },
+              ]}
+              rows={rows}
+              csvName="revenue-and-labor-cost"
+              height={240}
+            >
+              <TrendLineChart
+                data={rows}
+                x="week"
+                xDates="day"
+                heading={(v) => `Week ending ${fmtDateOnly(v, { year: 'auto' })}`}
+                series={[
+                  { key: 'revenue', name: 'Revenue', color: PALETTE.primary },
+                  { key: 'wages', name: 'Labor cost', color: PALETTE.secondary },
+                ]}
+                format={fmtMoneyAxis}
+              />
+            </ChartFrame>
+            <ChartFrame
+              title="Gross margin by week"
+              summary={`Gross margin was ${pts(last) ?? 0}% last week${pts(prev) !== null ? `, ${pts(prev)}% the week before` : ''}.`}
+              columns={[
+                { key: 'week', label: 'Week ending', format: (v) => fmtDateOnly(String(v), { year: 'auto' }) },
+                { key: 'margin', label: 'Margin', numeric: true, format: (v) => (v === null ? '' : `${v}%`) },
+              ]}
+              rows={rows}
+              csvName="gross-margin-by-week"
+              height={240}
+              zerosMeaningful
+            >
+              <TrendLineChart
+                data={rows}
+                x="week"
+                xDates="day"
+                heading={(v) => `Week ending ${fmtDateOnly(v, { year: 'auto' })}`}
+                series={[{ key: 'margin', name: 'Gross margin', color: PALETTE.tertiary }]}
+                format={(v) => `${v}%`}
+                zeroBased={false}
+                // The break-even line only where a week came near it: otherwise it sat on the axis, over the dates.
+                target={rows.some((r) => r.margin !== null && r.margin <= 2) ? { value: 0, label: 'Break-even' } : undefined}
+              />
+            </ChartFrame>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
 }
 
 function SkeletonGrid({ count = 2 }: { count?: number }) {

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthContext } from '@/lib/auth';
 import { I18nProvider } from '@/lib/i18n';
-import { Coachmarks, setCoachmarksArmDelayForTests } from '@/components/Coachmarks';
+import { Coachmarks, overlayOpen, setCoachmarksArmDelayForTests } from '@/components/Coachmarks';
 import { TOURS } from '@/lib/tours';
 
 function renderShell(path = '/') {
@@ -72,6 +72,28 @@ describe('coach marks', () => {
     renderShell();
     await new Promise((r) => setTimeout(r, 30));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('steps aside while the person has something open over the page — the palette, a menu — and comes back on the same step', async () => {
+    renderShell();
+    expect(await screen.findByRole('dialog', { name: 'Jump anywhere' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    // The command palette opens (a modal dialog with cmdk inside).
+    const palette = document.createElement('div');
+    palette.setAttribute('role', 'dialog');
+    palette.setAttribute('aria-modal', 'true');
+    palette.setAttribute('aria-label', 'Command palette');
+    document.body.appendChild(palette);
+    expect(overlayOpen()).toBe(true);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your modules' })).not.toBeInTheDocument());
+    palette.remove();
+    expect(await screen.findByRole('dialog', { name: 'Your modules' })).toBeInTheDocument();
+  });
+
+  it('its own card never counts as an overlay', async () => {
+    renderShell();
+    expect(await screen.findByRole('dialog', { name: 'Jump anywhere' })).toBeInTheDocument();
+    expect(overlayOpen()).toBe(false);
   });
 
   it('does not run on a route without a tour', async () => {

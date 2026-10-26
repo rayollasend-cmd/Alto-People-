@@ -12,7 +12,7 @@ import type {
   LocationSummary,
   OnboardingTemplate,
 } from '@alto-people/shared';
-import { HIREABLE_ROLES } from '@alto-people/shared';
+import { HIREABLE_ROLES, ROLE_LABELS } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
   cancelApplication,
@@ -61,16 +61,17 @@ function trackLabel(track: string, clientsOn: boolean): string {
   return TRACK_LABEL[track] ?? track;
 }
 
-// Labels for the "Hire as" picker. Order matches HIREABLE_ROLES so the
-// first option (ASSOCIATE) is the default and the management roles follow.
+// Labels for the "Hire as" picker, in the product's one set of role names
+// (ROLE_LABELS, sentence case). Order matches HIREABLE_ROLES so the first
+// option (ASSOCIATE) is the default and the management roles follow.
 const HIRE_ROLE_LABEL: Record<HireableRole, string> = {
-  ASSOCIATE: 'Associate (default)',
-  OPERATIONS_MANAGER: 'Operations Manager',
-  MANAGER: 'Manager',
-  INTERNAL_RECRUITER: 'Internal Recruiter',
-  WORKFORCE_MANAGER: 'Workforce Manager',
-  MARKETING_MANAGER: 'Marketing Manager',
-  FINANCE_ACCOUNTANT: 'Finance / Accountant',
+  ASSOCIATE: `${ROLE_LABELS.ASSOCIATE} (default)`,
+  OPERATIONS_MANAGER: ROLE_LABELS.OPERATIONS_MANAGER,
+  MANAGER: ROLE_LABELS.MANAGER,
+  INTERNAL_RECRUITER: ROLE_LABELS.INTERNAL_RECRUITER,
+  WORKFORCE_MANAGER: ROLE_LABELS.WORKFORCE_MANAGER,
+  MARKETING_MANAGER: ROLE_LABELS.MARKETING_MANAGER,
+  FINANCE_ACCOUNTANT: ROLE_LABELS.FINANCE_ACCOUNTANT,
 };
 
 // Pre-fill the Position field when HR picks a management role so the
@@ -78,12 +79,12 @@ const HIRE_ROLE_LABEL: Record<HireableRole, string> = {
 // override if they want a more specific job title.
 const HIRE_ROLE_POSITION: Record<HireableRole, string | null> = {
   ASSOCIATE: null,
-  OPERATIONS_MANAGER: 'Operations Manager',
-  MANAGER: 'Manager',
-  INTERNAL_RECRUITER: 'Internal Recruiter',
-  WORKFORCE_MANAGER: 'Workforce Manager',
-  MARKETING_MANAGER: 'Marketing Manager',
-  FINANCE_ACCOUNTANT: 'Finance / Accountant',
+  OPERATIONS_MANAGER: ROLE_LABELS.OPERATIONS_MANAGER,
+  MANAGER: ROLE_LABELS.MANAGER,
+  INTERNAL_RECRUITER: ROLE_LABELS.INTERNAL_RECRUITER,
+  WORKFORCE_MANAGER: ROLE_LABELS.WORKFORCE_MANAGER,
+  MARKETING_MANAGER: ROLE_LABELS.MARKETING_MANAGER,
+  FINANCE_ACCOUNTANT: ROLE_LABELS.FINANCE_ACCOUNTANT,
 };
 
 /**

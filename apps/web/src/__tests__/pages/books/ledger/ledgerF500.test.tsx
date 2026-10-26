@@ -341,7 +341,7 @@ describe('the Books overview', () => {
     close: { periodKey: '2026-09', status: 'OPEN', closedAt: null, tasksDone: 6, tasksTotal: 10 },
     quickbooks: { connected: false, status: null, companyName: null, lastPushAt: null, lastPullAt: null, openConflicts: 0, pending: 0, failed: 0 },
     needsYou: [
-      { key: 'ar-unposted', label: 'Receivables in the books ($0.00) don’t match open statements ($5,760.00) — post history to bring them in', count: 1, to: '/books/receivables', tone: 'warning' },
+      { key: 'ar-unposted', label: 'Clients owe $5,760.00 on their statements, but the books show $0.00: older statements haven’t been added to the books yet', count: 1, to: '/books/receivables', tone: 'warning' },
       { key: 'close', label: 'September isn’t closed yet', count: 1, to: '/books/close/2026-09', tone: 'info' },
     ],
     ...o,
@@ -353,8 +353,8 @@ describe('the Books overview', () => {
     receivables.backfillPosting.mockResolvedValue({ payrollRuns: 1, statements: 2, taxPayments: 0, taxDeposits: 0, garnishmentRemittances: 0, wageAdvances: 0, failed: [] });
     const user = userEvent.setup();
     renderAs('FINANCE_ACCOUNTANT', <BooksHome />, '/books');
-    const needs = (await screen.findByText(/post history to bring them in/)).closest('li')!;
-    await user.click(within(needs).getByRole('button', { name: 'Post history' }));
+    const needs = (await screen.findByText(/haven’t been added to the books yet/)).closest('li')!;
+    await user.click(within(needs).getByRole('button', { name: 'Add them to the books' }));
     await waitFor(() => expect(receivables.backfillPosting).toHaveBeenCalledTimes(1));
     const recent = await screen.findByRole('link', { name: /Payroll — period Oct 3–Oct 16/ });
     expect(recent).toHaveAttribute('href', '/books/journal/e12');
@@ -369,7 +369,7 @@ describe('the Books overview', () => {
     api.getBooksOverview.mockResolvedValue(overview());
     api.listJournal.mockResolvedValue({ entries: [], total: 0 });
     renderAs('EXECUTIVE_CHAIRMAN', <BooksHome />, '/books');
-    expect(await screen.findByText(/post history to bring them in/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Post history' })).toBeNull();
+    expect(await screen.findByText(/haven’t been added to the books yet/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add them to the books' })).toBeNull();
   });
 });

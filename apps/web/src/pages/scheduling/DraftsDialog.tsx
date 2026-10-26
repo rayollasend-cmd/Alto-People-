@@ -99,7 +99,7 @@ export function DraftsDialog({
           <div className="space-y-3">
             <div className="rounded-lg border border-navy-secondary p-3">
               <div className="flex items-baseline gap-2">
-                <span className="font-display text-3xl leading-none text-warning tabular-nums">
+                <span className="text-3xl font-semibold leading-none text-ink tabular-nums">
                   {total}
                 </span>
                 <span className="text-sm text-silver">

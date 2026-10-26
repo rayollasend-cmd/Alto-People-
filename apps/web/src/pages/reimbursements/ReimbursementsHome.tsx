@@ -624,7 +624,7 @@ function ReimbursementDrawer({
             )}
             {data.status === 'PAID' && (
               <div className="bg-success/10 border border-success/40 rounded-md p-3 text-sm text-white">
-                {t('rmb.paidBanner', { id: data.payrollItemId ?? '—' })}
+                {t('rmb.paidBanner')}
               </div>
             )}
             {data.rejectionReason && (

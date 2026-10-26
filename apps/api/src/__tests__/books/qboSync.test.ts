@@ -194,7 +194,7 @@ describe('site → QuickBooks', () => {
     expect(r.pushed.skipped).toBe(1);
     expect(qbo.all('JournalEntry')).toHaveLength(0);
     const c = await prisma.qboSyncConflict.findFirstOrThrow({ where: { localId: e.id } });
-    expect(c.summary).toMatch(/closed through 2026-10-31/);
+    expect(c.summary).toMatch(/closed through Oct 31, 2026/);
     expect((c.qboVersion as { reason: string }).reason).toBe('BOOKS_CLOSED');
     // Keeping the site sends it anyway.
     await resolveConflict(prisma, c.id, 'SITE', null);

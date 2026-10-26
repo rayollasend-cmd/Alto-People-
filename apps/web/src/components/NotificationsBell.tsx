@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/lib/auth';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -40,6 +40,7 @@ import {
   markRead,
 } from '@/lib/communicationsApi';
 import { onLiveEvent } from '@/lib/liveEvents';
+import { INBOX_QUERY_KEY } from '@/lib/inboxCounts';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import {
@@ -113,7 +114,6 @@ function categoryMeta(raw: string | null): {
   };
 }
 
-const SHOW_LIMIT = 50;
 
 /* ---- "Only what needs me", and grouping ------------------------------- */
 
@@ -140,11 +140,38 @@ export function needsMe(n: Notification): boolean {
 export type BellRow = { kind: 'one'; n: Notification } | { kind: 'group'; key: string; items: Notification[] };
 
 /**
+ * The kind a notice is grouped by: its category's first two parts, so the
+ * reminders of one family fold together — every
+ * `compliance.attestation.WORKERS_COMP.2026-01-01` and
+ * `compliance.attestation.GENERAL_LIABILITY.2026-01-01` is one "compliance
+ * attestation" pile, every `relay.escalation` one pile — instead of a
+ * separate group per attestation and date.
+ */
+export function notificationKind(category: string | null | undefined): string {
+  if (!category) return 'other';
+  return category.split('.').slice(0, 2).join('.');
+}
+
+/**
+ * The bell's badge — ONE meaning (the count rule, lib/inboxApi.ts): new
+ * notices that ask something of you (unseen and needsMe), "9+" past nine.
+ * Opening the panel marks everything seen, so the badge clears when looked
+ * at; the panel's "Needs me" view still lists what is unread.
+ */
+export function bellBadge(list: readonly Notification[]): { count: number; text: string | null } {
+  const count = list.filter((n) => !n.seenAt && needsMe(n)).length;
+  return { count, text: count === 0 ? null : count > 9 ? '9+' : String(count) };
+}
+
+/**
  * Three or more of the same kind fold into one row ("12 schedule changes"),
  * placed where the newest of them falls; fewer stay as they are.
  */
 export function groupNotifications(list: readonly Notification[], min = 3): BellRow[] {
-  const keyOf = (n: Notification) => n.category ?? 'other';
+  // One pile per named bucket ("Workplace & HR updates" holds the portal
+  // digests AND the compliance reminders — two piles under one title read as
+  // a mistake); kinds with no bucket (relay escalations) pile by kind.
+  const keyOf = (n: Notification) => bucketForCategory(n.category) ?? notificationKind(n.category);
   const counts = new Map<string, number>();
   for (const n of list) counts.set(keyOf(n), (counts.get(keyOf(n)) ?? 0) + 1);
   const groups = new Map<string, Notification[]>();
@@ -173,8 +200,10 @@ export function groupNotifications(list: readonly Notification[], min = 3): Bell
  * which read as a fragment of one of them (role walk floor 23).
  */
 export function groupTitle(n: number, category: string | null, bucketLabel: string | null): string {
-  if (bucketLabel) return `${n} ${bucketLabel.toLowerCase()}`;
-  const words = (category ?? '').replace(/[._-]+/g, ' ').trim().toLowerCase();
+  // Mid-sentence case, never shouting or flattening an acronym: "Workplace &
+  // HR updates" reads "4 workplace & HR updates", not "4 workplace & hr updates".
+  if (bucketLabel) return `${n} ${bucketLabel.replace(/\b([A-Z])([a-z])/g, (_m, a: string, b: string) => a.toLowerCase() + b)}`;
+  const words = (category ? notificationKind(category) : '').replace(/[._-]+/g, ' ').trim().toLowerCase();
   if (!words) return `${n} notifications`;
   if (/(reminder|alert|notice|request|update|change|message)$/.test(words)) return `${n} ${words}s`;
   return `${n} ${words} notifications`;
@@ -259,12 +288,21 @@ export function NotificationsBell() {
   const refresh = useCallback(() => void refetch(), [refetch]);
 
   // Live SSE nudge — a notification just landed for this user; refetch
-  // immediately instead of waiting out the poll interval.
-  useEffect(() => onLiveEvent('notification', refresh), [refresh]);
+  // immediately instead of waiting out the poll interval. New notices
+  // usually mean a queue moved too, so the inbox counts (the rail's badges,
+  // the Approvals tab) refresh on the same nudge.
+  const queryClient = useQueryClient();
+  const onNotice = useCallback(() => {
+    refresh();
+    void queryClient.invalidateQueries({ queryKey: INBOX_QUERY_KEY });
+  }, [refresh, queryClient]);
+  useEffect(() => onLiveEvent('notification', onNotice), [onNotice]);
 
-  // Badge = UNSEEN (not unread): it clears when the panel opens, while
-  // the per-row unread highlight persists until each item is clicked.
-  const unseenCount = (items ?? []).filter((n) => !n.seenAt).length;
+  // Badge = NEW notices that ask something of you (bellBadge): it clears when
+  // the panel opens, while the per-row unread highlight persists until each
+  // item is clicked. FYI notices never raise it.
+  const badge = bellBadge(items ?? []);
+  const unseenCount = badge.count;
   const unreadCount = (items ?? []).filter((n) => !n.readAt).length;
 
   // Screen-reader announcement when new items arrive in the background.
@@ -299,7 +337,7 @@ export function NotificationsBell() {
 
   const onOpenChange = (next: boolean) => {
     setOpen(next);
-    if (next && unseenCount > 0) {
+    if (next && (items ?? []).some((n) => !n.seenAt)) {
       // Optimistically clear the badge the instant the panel opens; the
       // server stamp is fire-and-forget (a failure self-heals on the next
       // poll, which re-reports the true unseen set).
@@ -360,13 +398,27 @@ export function NotificationsBell() {
     });
   };
 
-  const filtered = filter === 'mine' ? (items ?? []).filter(needsMe) : (items ?? []);
-  const shown = filtered.slice(0, SHOW_LIMIT);
+  // Everything loaded is listed — repeated kinds fold into one row, so the
+  // panel never needs a second cut-off ("Showing 50 of 105" over a list of
+  // ten rows). The footer appears only when the server holds more than came.
+  const shown = filter === 'mine' ? (items ?? []).filter(needsMe) : (items ?? []);
   const rows = groupNotifications(shown);
-  const needsMeCount = (items ?? []).filter(needsMe).length;
-  // The footer says how many more there are, in either view.
-  const listTotal = filter === 'mine' ? needsMeCount : total;
-  const moreHidden = listTotal > shown.length;
+  const loadedCount = items?.length ?? 0;
+  const moreHidden = total > loadedCount;
+  // The list's bottom edge fades while there is more to scroll to, so the
+  // last row never reads as cut off.
+  const [atEnd, setAtEnd] = useState(true);
+  const listRef = useRef<HTMLDivElement>(null);
+  const measureEnd = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    setAtEnd(el.scrollTop + el.clientHeight >= el.scrollHeight - 4);
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const id = window.requestAnimationFrame(measureEnd);
+    return () => window.cancelAnimationFrame(id);
+  }, [open, rows.length, openGroups, filter, measureEnd]);
 
   const renderItem = (n: Notification, nested = false) => {
     const meta = categoryMeta(n.category);
@@ -519,7 +571,7 @@ export function NotificationsBell() {
               variant="ghost"
               size="icon-sm"
               className="relative"
-              aria-label={unseenCount > 0 ? t('bell.ariaNew', { n: unseenCount }) : t('bell.title')}
+              aria-label={unseenCount > 0 ? t('bell.ariaNew', { n: badge.text ?? unseenCount }) : t('bell.title')}
             >
               <span
                 className={cn('inline-flex origin-top', swing && 'animate-bell-swing')}
@@ -538,8 +590,9 @@ export function NotificationsBell() {
                   key={unseenCount}
                   className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-gold text-navy text-2xs font-semibold flex items-center justify-center tabular-nums animate-badge-pop"
                   aria-hidden="true"
+                  data-testid="bell-badge"
                 >
-                  {unseenCount > 99 ? '99+' : unseenCount}
+                  {badge.text}
                 </span>
               )}
             </Button>
@@ -551,7 +604,7 @@ export function NotificationsBell() {
           <Tooltip>
             <TooltipTrigger asChild>{trigger}</TooltipTrigger>
             <TooltipContent side="bottom">
-              {unseenCount > 0 ? t(unseenCount === 1 ? 'bell.oneNew' : 'bell.nNew', { n: unseenCount }) : t('bell.title')}
+              {unseenCount > 0 ? t(unseenCount === 1 ? 'bell.oneNew' : 'bell.nNew', { n: badge.text ?? unseenCount }) : t('bell.title')}
             </TooltipContent>
           </Tooltip>
         );
@@ -582,7 +635,7 @@ export function NotificationsBell() {
         {items && items.length > 0 && (
           <div className="flex gap-1 px-3 pb-2" role="group" aria-label={t('bell.whichAria')}>
             <FilterChip active={filter === 'mine'} onClick={() => setFilter('mine')}>
-              {needsMeCount ? t('bell.needsMeN', { n: needsMeCount }) : t('bell.needsMe')}
+              {t('bell.needsMe')}
             </FilterChip>
             <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
               {t('bell.everything')}
@@ -597,7 +650,14 @@ export function NotificationsBell() {
             DropdownMenuLabel + safe-area inset, leaving items
             inaccessible. 100dvh, not 100vh, so the iOS address-bar
             collapse doesn't briefly let the list grow off-screen. */}
-        <div className="overflow-y-auto" style={{ maxHeight: 'min(28rem, calc(100dvh - 9rem))' }}>
+        <div className="relative">
+        <div
+          ref={listRef}
+          onScroll={measureEnd}
+          className="overflow-y-auto overscroll-contain"
+          style={{ maxHeight: 'min(28rem, calc(100dvh - 9rem))' }}
+          data-testid="bell-list"
+        >
           {!items && !loadError && (
             <div className="p-2 space-y-2">
               <Skeleton className="h-12" />
@@ -605,7 +665,8 @@ export function NotificationsBell() {
               <Skeleton className="h-12" />
             </div>
           )}
-          {loadError && (
+          {/* A failed refresh keeps what is already listed; the error shows only when there is nothing to show. */}
+          {loadError && !items && (
             <div className="p-6 text-center text-sm text-alert">
               {t('bell.failed')}
             </div>
@@ -642,11 +703,19 @@ export function NotificationsBell() {
             </div>
           )}
         </div>
+          {!atEnd && (
+            <div
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-surface to-transparent"
+              aria-hidden="true"
+              data-testid="bell-fade"
+            />
+          )}
+        </div>
         {items && moreHidden && !hasInboxPage && (
           <>
             <DropdownMenuSeparator className="m-0" />
             <p className="px-3 py-2 text-center text-2xs text-silver/60">
-              {t('bell.showingLatest', { shown: shown.length, total: listTotal })}
+              {t('bell.showingLatest', { shown: loadedCount, total })}
             </p>
           </>
         )}
@@ -661,7 +730,7 @@ export function NotificationsBell() {
               }}
               className="w-full px-3 py-2 coarse:min-h-11 text-2xs text-center text-silver/80 hover:text-gold-bright hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:bg-navy-secondary"
             >
-              {t('bell.showing', { shown: shown.length, total: listTotal })} —{' '}
+              {t('bell.showingLatest', { shown: loadedCount, total })} —{' '}
               <span className="text-gold">{t('bell.viewAll')}</span>
             </button>
           </>

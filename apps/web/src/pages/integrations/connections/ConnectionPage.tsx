@@ -1,3 +1,4 @@
+import { TechnicalDetail } from '../providers/providerShared';
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -130,12 +131,16 @@ export function ConnectionPage() {
       }
       summary={
         c ? (
+          <div className="space-y-2">
           <MetricStrip label="Connection at a glance">
             <MetricCard label="Last sync" value={c.lastSyncAt ? fmtDateTime(c.lastSyncAt) : 'Never'} hint={c.lastRun ? `${INTEGRATION_CAPABILITY_LABELS[c.lastRun.capability]} · ${runStatus(c.lastRun.status).label}` : 'No run yet'} compact />
             <MetricCard label="Next sync" value={c.nextSyncAt && c.status === 'CONNECTED' ? fmtDateTime(c.nextSyncAt) : '—'} hint={c.scheduleMinutes ? `Every ${c.scheduleMinutes >= 60 ? `${c.scheduleMinutes / 60} h` : `${c.scheduleMinutes} min`}` : c.eventDriven ? 'On events only' : 'Manual only'} compact />
             <MetricCard label="Rejected · last 10 runs" value={rejected} tone={rejected > 0 ? 'alert' : 'neutral'} hint={rejected ? 'Filter to the failed runs below' : 'Every record accepted'} onClick={rejected ? () => setRunFilter('FAILED') : undefined} compact />
             <MetricCard label="Latest error" value={c.lastError ? 'Yes' : 'None'} tone={c.lastError ? 'alert' : 'neutral'} hint={c.lastError ?? 'The last run reported no error'} compact />
           </MetricStrip>
+          {/* The plain sentence is on the tile; the system's own words sit behind "Technical details" (F500 2026-10-26). */}
+          <TechnicalDetail detail={c.lastErrorDetail} />
+          </div>
         ) : undefined
       }
       filters={

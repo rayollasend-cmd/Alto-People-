@@ -12,7 +12,7 @@ type Flow = NonNullable<Analytics['flow']>;
 type FlowExit = Flow['exits'][number];
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtMoney, fmtPercent, ymdLocal } from '@/lib/format';
+import { fmtDateOnlyRange, fmtMoney, fmtPercent, ymdLocal } from '@/lib/format';
 import {
   deleteSourceSpend,
   getRecruitingAnalytics,
@@ -105,8 +105,17 @@ const MARK = 'rgb(var(--color-chart-1))';
 const TRACK = 'rgb(var(--color-chart-1) / 0.18)';
 
 /** Sources are stored lowercased; a known one has its label, any other is capitalized. */
+/** Job boards typed in by hand, spelled the way their owners spell them. */
+const BRAND: Record<string, string> = {
+  ziprecruiter: 'ZipRecruiter',
+  glassdoor: 'Glassdoor',
+  snagajob: 'Snagajob',
+  craigslist: 'Craigslist',
+  facebook: 'Facebook',
+  'google-jobs': 'Google Jobs',
+};
 const sourceName = (s: string | null) =>
-  s === null ? 'Not recorded' : (SOURCE_LABEL[s] ?? `${s.charAt(0).toUpperCase()}${s.slice(1)}`);
+  s === null ? 'Not recorded' : (SOURCE_LABEL[s] ?? BRAND[s.toLowerCase()] ?? `${s.charAt(0).toUpperCase()}${s.slice(1)}`.replace(/-/g, ' '));
 const days = (n: number | null) =>
   n === null ? '—' : n < 1 ? '< 1 day' : `${n} day${n === 1 ? '' : 's'}`;
 
@@ -131,7 +140,7 @@ function Meter({ pct, label }: { pct: number | null; label: string }) {
 }
 
 /** A section card. Its definition sits behind an ⓘ beside the title, not in a subtitle under it. */
-function Section({ title, hint, action, children }: { title: string; hint?: ReactNode; action?: ReactNode; children: ReactNode }) {
+function Section({ title, hint, sub, action, children }: { title: string; hint?: ReactNode; sub?: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <Card>
       <CardContent>
@@ -142,6 +151,8 @@ function Section({ title, hint, action, children }: { title: string; hint?: Reac
           </div>
           {action}
         </div>
+        {/* Which people the section counts, said in the open: two sections counting different cohorts read as a contradiction. */}
+        {sub && <p className="-mt-1 mb-3 text-xs text-ink-muted">{sub}</p>}
         {children}
       </CardContent>
     </Card>
@@ -155,7 +166,7 @@ function Funnel({ funnel }: { funnel: Analytics['funnel'] }) {
       step: STAGE_LABEL[st.stage],
       reached: st.reached,
       movedOn: next && st.toNextPct !== null ? `${fmtPercent(st.toNextPct)} to ${STAGE_LABEL[next.stage].toLowerCase()}` : '',
-      label: `${st.reached}${next && st.toNextPct !== null ? ` · ${fmtPercent(st.toNextPct)} on` : ''}`,
+      label: `${st.reached}${next && st.toNextPct !== null ? ` · ${fmtPercent(st.toNextPct)} moved on` : ''}`,
     };
   });
   const hired = funnel.stages[funnel.stages.length - 1]?.reached ?? 0;
@@ -178,7 +189,7 @@ function Funnel({ funnel }: { funnel: Analytics['funnel'] }) {
         { key: 'movedOn', label: 'Moved on' },
       ]}
       rows={funnel.applicants === 0 ? [] : rows}
-      empty={<p className="text-sm text-silver/70">No one applied in this range.</p>}
+      empty={<EmptyState size="sm" icon={Waypoints} title="Nothing to chart yet" description="No one applied in this range." />}
     >
       <FunnelPlot rows={rows} />
     </ChartFrame>
@@ -513,9 +524,7 @@ export function RecruitingAnalytics() {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SegmentedControl options={PRESETS} value={preset} onChange={setPreset} ariaLabel="Date range" />
-        <span className="text-xs text-silver tabular-nums">
-          {fmtDate(range.from)} – {fmtDate(range.to)}
-        </span>
+        <span className="text-xs text-silver tabular-nums">{fmtDateOnlyRange(range.from, range.to)}</span>
       </div>
 
       {q.isError && !data ? (
@@ -537,6 +546,7 @@ export function RecruitingAnalytics() {
             <MetricCard
               label="Median time to fill"
               value={days(data.speed.medianDaysToFill)}
+              nothing={data.speed.medianDaysToFill === null ? 'No postings filled in this range' : undefined}
               hint={
                 data.speed.postingsFilled
                   ? `Posting opened to last opening filled · ${data.speed.postingsFilled} filled`
@@ -555,7 +565,8 @@ export function RecruitingAnalytics() {
             />
             <MetricCard
               label="Cost per hire"
-              value={data.costPerHire === null ? '—' : fmtMoney(data.costPerHire)}
+              value={data.costPerHire === null ? '' : fmtMoney(data.costPerHire)}
+              nothing={data.costPerHire === null ? (data.spendTotal === null ? 'No source spend recorded' : 'No hires to divide the spend by') : undefined}
               hint={data.spendTotal === null ? 'No source spend recorded' : `${fmtMoney(data.spendTotal)} spent`}
             />
             <MetricCard
@@ -589,6 +600,7 @@ export function RecruitingAnalytics() {
           <Section
             title="Where hires come from"
             hint="Spend counts every month the range touches."
+            sub={`People who applied ${fmtDateOnlyRange(range.from, range.to)}, and the hires among them.`}
             action={
               canManage ? (
                 <Button size="sm" variant="outline" onClick={() => setSpendOpen(true)}>
@@ -598,7 +610,7 @@ export function RecruitingAnalytics() {
             }
           >
             {data.sources.length === 0 ? (
-              <p className="text-sm text-silver/70">No applicants, hires or spend in this range.</p>
+              <EmptyState size="sm" title="No applicants, hires or spend in this range" />
             ) : (
               <DataGrid<SourceRow>
                 id="recruiting-sources"
@@ -636,7 +648,7 @@ export function RecruitingAnalytics() {
             hint="Offer acceptance counts declined and lapsed offers. Fill rate is hires against the openings on postings opened in the range."
           >
             {data.clients.length === 0 ? (
-              <p className="text-sm text-silver/70">No hires, offers or postings for a client in this range.</p>
+              <EmptyState size="sm" title="No hires, offers or postings for a client in this range" />
             ) : (
               <DataGrid<ClientRow>
                 id="recruiting-clients"
@@ -702,13 +714,8 @@ export function RecruitingAnalytics() {
 
           <Section
             title="Who stays 90 days"
-            hint={
-              <>
-                People hired {fmtDate(data.retention.window.from)} – {fmtDate(data.retention.window.to)}: the latest 12
-                months that have had 90 days, whatever the range above. Stayed means not separated, or separated 90 or
-                more days after their hire date.
-              </>
-            }
+            hint="Stayed means not separated, or separated 90 or more days after their hire date."
+            sub={`A different group from the sections above: people hired ${fmtDateOnlyRange(data.retention.window.from, data.retention.window.to)}, the latest 12 months that have had 90 days, whatever the range picked. So a source can show 0 hires above and hires here.`}
           >
             {data.retention.overall.hires === 0 ? (
               <EmptyState size="sm" title="No one hired through recruiting in that window has had 90 days yet." />

@@ -84,7 +84,14 @@ describe('connections', () => {
 
     mockFetch({ match: /\/account$/, reply: () => ({ status: 401, body: { error: 'Bad authentication' } }) });
     const bad = await a.post(`/provider-connections/${connection.id}/test`);
-    expect(bad.body).toMatchObject({ ok: false, message: 'Bad authentication', connection: { health: 'failing', lastError: 'Bad authentication' } });
+    // A plain sentence on the card; the vendor's own words behind it, for the details.
+    const plain = 'Checkr rejected the saved credentials — reconnect to resume background checks.';
+    expect(bad.body).toMatchObject({
+      ok: false,
+      message: plain,
+      detail: 'Bad authentication (HTTP 401)',
+      connection: { health: 'failing', lastError: plain, lastErrorDetail: 'Bad authentication (HTTP 401)' },
+    });
 
     // The Inbox says a connection is failing.
     const inbox = await a.get('/me/inbox');

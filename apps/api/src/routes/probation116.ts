@@ -86,7 +86,7 @@ probation116Router.post('/probations', MANAGE, async (req, res) => {
     const actorName = actor?.associate
       ? `${actor.associate.firstName} ${actor.associate.lastName}`
       : actor?.email ?? 'HR';
-    const actorRole = actor?.role ? ROLE_LABELS[actor.role] : 'HR Administrator';
+    const actorRole = actor?.role ? ROLE_LABELS[actor.role] : 'HR administrator';
     const durationDays = Math.max(
       1,
       Math.round(

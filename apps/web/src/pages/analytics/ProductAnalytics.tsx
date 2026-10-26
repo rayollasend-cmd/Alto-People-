@@ -13,6 +13,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard, type MetricTrend } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
+import { EndpointCell, endpointLabel, fmtMs, PageCell, pageLabel } from './usageLabels';
 import { ChartFrame } from '@/components/ui/ChartFrame';
 import { PALETTE, StackedBarChart, TrendLineChart } from '@/components/ui/charts';
 import { QueryError } from '@/components/ui/QueryError';
@@ -171,7 +173,7 @@ export function ProductAnalytics() {
       {active.isError ? (
         <QueryError what="active users" query={active} />
       ) : (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <MetricStrip label="Active users">
           <MetricCard
             label="Daily active"
             value={active.isLoading ? '—' : String(active.data?.dau ?? 0)}
@@ -193,7 +195,7 @@ export function ProductAnalytics() {
             value={active.isLoading ? '—' : pct(active.data?.stickiness ?? 0)}
             hint="Weekly ÷ monthly"
           />
-        </div>
+        </MetricStrip>
       )}
 
       {active.isLoading ? (
@@ -219,12 +221,11 @@ export function ProductAnalytics() {
       {adoption.isError ? (
         <QueryError what="adoption" query={adoption} />
       ) : (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <MetricStrip label="Adoption">
           <MetricCard
             label="Never signed in"
             value={adoption.isLoading ? '—' : String(adoption.data?.neverSignedIn ?? 0)}
             hint="Invited, never once used"
-            accent={Boolean(adoption.data && adoption.data.neverSignedIn > 0)}
           />
           <MetricCard
             label="Quiet 30 days"
@@ -242,7 +243,7 @@ export function ProductAnalytics() {
                 : 'New accounts that signed in'
             }
           />
-        </div>
+        </MetricStrip>
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -291,7 +292,7 @@ export function ProductAnalytics() {
                         style={{ width: `${Math.max(4, (r.users / top) * 60)}%` }}
                         aria-hidden="true"
                       />
-                      <span className="tabular-nums text-white">{r.users}</span>
+                      <span className="tabular-nums text-ink">{r.users}</span>
                     </li>
                   );
                 })}
@@ -359,9 +360,9 @@ export function ProductAnalytics() {
             {vitals.isLoading ? (
               <Skeleton className="h-24" />
             ) : (
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <MetricStrip label="Core Web Vitals">
                 {(vitals.data?.metrics ?? []).map((m) => (
-                  <div key={m.metric} title={VITAL_HINT[m.metric]}>
+                  <div key={m.metric} title={VITAL_HINT[m.metric]} className="h-full [&>*]:h-full">
                     <MetricCard
                       label={VITAL_LABEL[m.metric]}
                       value={fmtVital(m.metric, m.p75)}
@@ -379,7 +380,7 @@ export function ProductAnalytics() {
                     />
                   </div>
                 ))}
-              </div>
+              </MetricStrip>
             )}
             {(vitals.data?.routes ?? []).length > 0 && (
               <DataGrid<WebVitalRouteRow>
@@ -392,7 +393,8 @@ export function ProductAnalytics() {
                 exportCsv={{ filename: 'web-vitals-by-route' }}
                 columnChooser={false}
                 columns={[
-                  { key: 'route', header: 'Route', accessor: (r) => r.route, sortable: true, primary: true, className: 'font-mono text-xs' },
+                  // The page in the sidebar's words; the path stays as the quiet second line and in the CSV.
+                  { key: 'route', header: 'Page', accessor: (r) => `${pageLabel(r.route)} ${r.route}`, csv: (r) => r.route, sortable: true, primary: true, cell: (r) => <PageCell path={r.route} /> },
                   { key: 'samples', header: 'Views', accessor: (r) => r.samples, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
                   { key: 'lcp', header: 'Largest paint', accessor: (r) => r.lcpP75, csv: (r) => fmtVital('LCP', r.lcpP75), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmtVital('LCP', r.lcpP75) },
                   { key: 'inp', header: 'Tap response', accessor: (r) => r.inpP75, csv: (r) => fmtVital('INP', r.inpP75), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => fmtVital('INP', r.inpP75) },
@@ -419,10 +421,11 @@ export function ProductAnalytics() {
               <EmptyState icon={Activity} size="sm" title="No decisions or settings searches recorded in this window yet." />
             ) : (
             <>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+            <MetricStrip label="Finding things">
               <MetricCard
                 label="Time to first decision"
-                value={behaviour.isLoading ? '—' : behaviour.data?.firstDecision.avgMs == null ? 'No decisions yet' : fmtDuration(behaviour.data.firstDecision.avgMs)}
+                value={behaviour.isLoading || behaviour.data?.firstDecision.avgMs == null ? '—' : fmtDuration(behaviour.data.firstDecision.avgMs)}
+                nothing={!behaviour.isLoading && behaviour.data?.firstDecision.avgMs == null ? 'No decisions yet' : undefined}
                 hint={behaviour.data ? `Average over ${behaviour.data.firstDecision.sessions} session${behaviour.data.firstDecision.sessions === 1 ? '' : 's'} that took one` : 'From sign-in to the first approve, assign or acknowledge'}
               />
               <MetricCard
@@ -435,7 +438,7 @@ export function ProductAnalytics() {
                 value={behaviour.isLoading ? '—' : behaviour.data?.settingsSearches.perHundredSessions == null ? String(behaviour.data?.settingsSearches.count ?? 0) : `${behaviour.data.settingsSearches.perHundredSessions} per 100`}
                 hint={behaviour.data ? `${behaviour.data.settingsSearches.count} searches, ${behaviour.data.settingsSearches.sessions} sessions` : 'A ⌘K search whose result opened a settings page'}
               />
-            </div>
+            </MetricStrip>
             {behaviour.isLoading ? (
               <Skeleton className="h-32" />
             ) : (behaviour.data?.decisionsPerSession ?? []).length === 0 ? (
@@ -489,9 +492,9 @@ export function ProductAnalytics() {
                   exportCsv={{ filename: 'busiest-endpoints' }}
                   columnChooser={false}
                   columns={[
-                    { key: 'endpoint', header: 'Endpoint', accessor: (r) => `${r.method} ${r.route}`, sortable: true, primary: true, className: 'font-mono text-xs', cell: (r) => (<><span className="text-silver">{r.method}</span> {r.route}</>) },
+                    { key: 'endpoint', header: 'Endpoint', accessor: (r) => `${endpointLabel(r.route)} ${r.method} ${r.route}`, csv: (r) => `${r.method} ${r.route}`, sortable: true, primary: true, cell: (r) => <EndpointCell method={r.method} route={r.route} /> },
                     { key: 'calls', header: 'Calls', accessor: (r) => r.requests, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums', cell: (r) => r.requests.toLocaleString() },
-                    { key: 'avg', header: 'Avg', accessor: (r) => r.avgMs, csv: (r) => `${r.avgMs}ms`, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-silver', cell: (r) => `${r.avgMs}ms` },
+                    { key: 'avg', header: 'Avg', accessor: (r) => r.avgMs, csv: (r) => fmtMs(r.avgMs), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-ink-muted', cell: (r) => fmtMs(r.avgMs) },
                   ]}
                 />
               )}
@@ -525,7 +528,7 @@ export function ProductAnalytics() {
                   exportCsv={{ filename: 'failing-endpoints' }}
                   columnChooser={false}
                   columns={[
-                    { key: 'endpoint', header: 'Endpoint', accessor: (r) => `${r.method} ${r.route}`, sortable: true, primary: true, className: 'font-mono text-xs', cell: (r) => (<><span className="text-silver">{r.method}</span> {r.route}</>) },
+                    { key: 'endpoint', header: 'Endpoint', accessor: (r) => `${endpointLabel(r.route)} ${r.method} ${r.route}`, csv: (r) => `${r.method} ${r.route}`, sortable: true, primary: true, cell: (r) => <EndpointCell method={r.method} route={r.route} /> },
                     { key: 'errors', header: 'Errors', accessor: (r) => r.serverError, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums' },
                     { key: 'rate', header: 'Rate', accessor: (r) => r.errorRate, csv: (r) => pct(r.errorRate), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-alert', cell: (r) => pct(r.errorRate) },
                   ]}

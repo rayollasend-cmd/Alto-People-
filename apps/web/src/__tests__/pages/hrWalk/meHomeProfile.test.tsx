@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { renderAs } from '../hrPack/harness';
 
 /**
- * Floor walk 26 on /me: the employment type reads as words ("W-2"), not
- * the raw enum, and the clock-in number is masked like it is on the home
+ * Floor walk 26 on /me: the employment type reads as words ("Employee",
+ * with what it means — not "W-2", a tax form, and never the raw enum), and the clock-in number is masked like it is on the home
  * page — shown only on a tap.
  */
 
@@ -55,7 +55,9 @@ import { MeHome } from '@/pages/me/MeHome';
 describe('/me — profile polish (floor walk 26)', () => {
   it('names the employment type and masks the clock-in number until asked', async () => {
     renderAs('ASSOCIATE', <MeHome />, '/me', { associateId: 'a1' });
-    expect(await screen.findByText('W-2')).toBeInTheDocument();
+    expect(await screen.findByText('Employee')).toBeInTheDocument();
+    expect(screen.getByText('Taxes are taken out of each paycheck.')).toBeInTheDocument();
+    expect(screen.queryByText('W-2')).not.toBeInTheDocument();
     expect(screen.queryByText('W2_EMPLOYEE')).not.toBeInTheDocument();
 
     const number = await screen.findByTestId('me-employee-number');

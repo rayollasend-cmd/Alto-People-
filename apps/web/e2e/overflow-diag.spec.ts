@@ -30,9 +30,13 @@ async function collectOffenders(page: Page, routes: string[]): Promise<string[]>
         // primitive wraps in overflow-auto, grids use overflow-x-auto, and a
         // phone-only strip uses max-sm:overflow-x-auto — so read the
         // computed style, not the class name.
+        // Skip too what a visually-hidden box (sr-only: 1px, clipped) holds —
+        // a chart's table for screen readers is as wide as its columns but
+        // never drawn.
         for (let a = el.parentElement; a && a !== main; a = a.parentElement) {
           const ox = getComputedStyle(a).overflowX;
           if (ox === 'auto' || ox === 'scroll') return;
+          if (ox === 'hidden' && a.getBoundingClientRect().width <= 1) return;
         }
         const r = el.getBoundingClientRect();
         if (r.width > 0 && (r.right > limit + 1 || r.left < -1)) {

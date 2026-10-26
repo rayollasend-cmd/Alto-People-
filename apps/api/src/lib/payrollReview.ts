@@ -7,6 +7,7 @@ import { enqueueAudit } from './audit.js';
 import { notifyUser } from './notify.js';
 import { tenantIdForWrite } from './tenant.js';
 import { runTotalsChecks } from './payrollRunTotals.js';
+import { fmtDayRange } from './humanDates.js';
 
 /**
  * The pre-payroll review. Before a run's money moves, an accountant reads
@@ -102,6 +103,10 @@ export interface PayrollReviewReport {
     storedGross: number;
     /** The net stored on the run itself. */
     storedNet?: number;
+    /** Taxes withheld, as stored on the run (what the run record's header shows). */
+    storedTax?: number;
+    /** Employer taxes, as stored on the run. */
+    storedEmployerTax?: number;
     /** Stored totals and paycheck totals agree to the cent (lib/payrollRunTotals) — false: don't sign off. */
     totalsAgree?: boolean;
   };
@@ -385,6 +390,8 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
       finalizedAt: run.finalizedAt?.toISOString() ?? null,
       storedGross: num(run.totalGross),
       storedNet: num(run.totalNet),
+      storedTax: num(run.totalTax),
+      storedEmployerTax: num(run.totalEmployerTax),
       totalsAgree: totalsCheck.totalsAgree,
     },
     totals: {
@@ -605,7 +612,7 @@ export async function notifyReviewers(db: Db, run: Pick<PayrollRun, 'id' | 'kind
   for (const id of ring) {
     void notifyUser(id, {
       subject: 'Payroll ready for your review',
-      body: `The run for ${ymd(run.periodStart)} to ${ymd(run.periodEnd)} is finalized. Read the review report and sign off so it can pay out.`,
+      body: `The run for ${fmtDayRange(run.periodStart, run.periodEnd)} is finalized. Read the review report and sign off so it can pay out.`,
       category: 'payroll',
       linkUrl: `/payroll/runs/${run.id}/review`,
     });

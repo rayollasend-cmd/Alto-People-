@@ -57,7 +57,7 @@ describe('<NextPaydayCard> — Alto pays biweekly, the Friday after the period',
     vi.mocked(getMyNextPayday).mockResolvedValue({ nextPayday: null, notOnSchedule: true });
     renderCard();
     expect(await screen.findByText('Not on a pay schedule yet')).toBeInTheDocument();
-    expect(screen.getByText(/Payroll has been told/)).toBeInTheDocument();
+    expect(screen.getByText(/once the payroll team adds you to a pay schedule/)).toBeInTheDocument();
     expect(screen.queryByText(/Fri,/)).not.toBeInTheDocument();
   });
 

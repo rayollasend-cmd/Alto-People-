@@ -39,6 +39,7 @@ import {
   type StoreOpsTemp,
 } from '@/lib/storeOpsApi';
 import { Badge } from '@/components/ui/Badge';
+import { DateField } from '@/components/ui/DateField';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/Dialog';
@@ -126,7 +127,7 @@ export function PortalOps() {
         subtitle={t('portalOps.subtitle')}
         // The trail is the way back to the store (the phone's Back too); the
         // "← My store" button beside it was a third control for the same trip.
-        breadcrumbs={[{ label: t('portal.title'), to: `/portal${scopeQs}` }, { label: t('portalOps.title') }]}
+        breadcrumbs={[{ label: t('portal.homeCrumb'), to: `/portal${scopeQs}` }, { label: t('portalOps.title') }]}
     >
       <StoreOps />
     </ListTemplate>
@@ -516,12 +517,13 @@ function DateBar({
           <Moon className="h-3.5 w-3.5 sm:mr-1" aria-hidden="true" />
           <span className="hidden sm:inline">{t('portalOps.lastNight')}</span>
         </Button>
-        <input
-          type="date"
+        <DateField
+          size="sm"
+          clearable={false}
           value={date}
           max={today}
-          onChange={(e) => e.target.value && onDate(e.target.value)}
-          className="h-8 min-w-0 flex-1 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white print:hidden coarse:h-11 coarse:text-base sm:max-w-[10rem] sm:flex-none"
+          onChange={(v) => v && onDate(v)}
+          className="min-w-0 flex-1 print:hidden sm:flex-none"
           aria-label={t('portalOps.pickDate')}
         />
         <Button

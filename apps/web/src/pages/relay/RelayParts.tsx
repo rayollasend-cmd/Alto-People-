@@ -180,7 +180,7 @@ export function OwnerControl({
         <DropdownMenuLabel>
           {mine ? 'You hold' : `${claim.name} holds`} {what}
         </DropdownMenuLabel>
-        <DropdownMenuItem onSelect={() => void run(() => relayApi.release(subjectType, subjectKey), 'Released — it’s back on the desk.')}>
+        <DropdownMenuItem onSelect={() => void run(() => relayApi.release(subjectType, subjectKey), 'Released — it’s back with the team.')}>
           <X className="h-3.5 w-3.5" aria-hidden="true" />
           <span className="ml-2">Release</span>
         </DropdownMenuItem>

@@ -108,49 +108,71 @@ export function ClientRecordActions({
     );
   }
 
+  // ONE primary — the account's main job for this reader (staff the shifts,
+  // else bill them, else keep the record) — and everything else in More
+  // (F500 2026-10-26: four equal outline buttons and no primary).
+  const primary: 'shifts' | 'statement' | 'edit' | null = canSchedule ? 'shifts' : canBill ? 'statement' : canManage ? 'edit' : null;
+  const more = (canManage && primary !== 'edit') || (canBill && primary !== 'statement') || !!mailto || canManage;
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="client-record-actions">
-      {canManage && (
-        <Button variant="outline" size="sm" onClick={onEdit}>
-          <Pencil className="h-3.5 w-3.5" />
-          Edit
-        </Button>
-      )}
-      {canSchedule && (
-        <Button asChild variant="outline" size="sm">
+      {primary === 'shifts' && (
+        <Button asChild size="sm">
           <Link to={shiftsTo}>
             <CalendarPlus className="h-3.5 w-3.5" />
             Post open shifts
           </Link>
         </Button>
       )}
-      {canBill && (
-        <Button variant="outline" size="sm" onClick={() => setStatementOpen(true)}>
+      {primary === 'statement' && (
+        <Button size="sm" onClick={() => setStatementOpen(true)}>
           <FileText className="h-3.5 w-3.5" />
           New statement
         </Button>
       )}
-      {mailto && (
-        <Button asChild variant="outline" size="sm">
-          <a href={mailto} title={primaryEmail!.email}>
-            <Mail className="h-3.5 w-3.5" />
-            Email {primaryEmail!.name.split(' ')[0]}
-          </a>
+      {primary === 'edit' && (
+        <Button size="sm" onClick={onEdit}>
+          <Pencil className="h-3.5 w-3.5" />
+          Edit
         </Button>
       )}
-      {canManage && (
+      {more && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" aria-label="More actions">
+            <Button variant="outline" size="sm" aria-label="More actions" data-testid="client-actions-more">
               <MoreHorizontal className="h-3.5 w-3.5" />
               More
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem destructive disabled={archiving} onSelect={() => void onArchive()}>
-              <Archive className="h-3.5 w-3.5" aria-hidden="true" />
-              Archive client
-            </DropdownMenuItem>
+          <DropdownMenuContent align="end" className="min-w-[14rem]">
+            {canManage && primary !== 'edit' && (
+              <DropdownMenuItem onSelect={onEdit}>
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                Edit basics
+              </DropdownMenuItem>
+            )}
+            {canBill && primary !== 'statement' && (
+              <DropdownMenuItem onSelect={() => setStatementOpen(true)}>
+                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                New statement
+              </DropdownMenuItem>
+            )}
+            {mailto && (
+              <DropdownMenuItem asChild>
+                <a href={mailto} title={primaryEmail!.email}>
+                  <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                  Email {primaryEmail!.name}
+                </a>
+              </DropdownMenuItem>
+            )}
+            {canManage && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem destructive disabled={archiving} onSelect={() => void onArchive()}>
+                  <Archive className="h-3.5 w-3.5" aria-hidden="true" />
+                  Archive client
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

@@ -51,7 +51,7 @@ export const enRmb = {
   'rmb.managerNote': 'Manager note:',
   'rmb.settlementNote': 'Settlement note:',
   'rmb.settledBanner': 'Queued for the next regular payroll run. Will be added to net pay (after taxes) when that run is created.',
-  'rmb.paidBanner': 'Paid out on payroll item {id}.',
+  'rmb.paidBanner': 'Paid out in a paycheck.',
   'rmb.rejectionReason': 'Rejection reason:',
   'rmb.lineItems': 'Line items',
   'rmb.addLine': 'Add line',

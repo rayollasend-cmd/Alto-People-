@@ -16,6 +16,7 @@
     "db:reset": "prisma migrate reset --force",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:analytics": "tsx scripts/seed-demo-analytics.ts",
+    "db:seed:refresh": "tsx scripts/seed-demo-refresh.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "db:studio": "prisma studio",
     "typecheck": "node ../../node_modules/typescript-native/bin/tsc -p tsconfig.json --noEmit && node ../../node_modules/typescript-native/bin/tsc -p tsconfig.test.json && node ../../node_modules/typescript-native/bin/tsc -p tsconfig.scripts.json",

@@ -21,7 +21,8 @@ const shortDay = (ymd: string) => fmtDateTz(parseYmd(ymd) ?? ymd);
 
 /* ---- Cash: in above the line, out below, running total over both ------- */
 
-export const CASH_COLORS = { in: PALETTE.tertiary, out: PALETTE.series[4], run: PALETTE.primary } as const;
+// Money out in the second series token (it was chart-5's magenta, which read as an alert pink).
+export const CASH_COLORS = { in: PALETTE.tertiary, out: PALETTE.secondary, run: PALETTE.primary } as const;
 
 const CASH_SERIES = {
   inflow: { name: 'Money in', color: CASH_COLORS.in },
@@ -41,23 +42,36 @@ export function cashRows(weeks: CashWeek[]) {
  * total of movement. With a floor set, the band under it is shaded; the
  * lowest week is marked.
  */
-export function CashFlowChart({ weeks, compact = false, withBalance = false, minimumCash = null }: { weeks: CashWeek[]; compact?: boolean; withBalance?: boolean; minimumCash?: number | null }) {
+export function CashFlowChart({
+  weeks,
+  compact = false,
+  withBalance = false,
+  line = true,
+  minimumCash = null,
+}: {
+  weeks: CashWeek[];
+  compact?: boolean;
+  withBalance?: boolean;
+  /** Draw the line over the bars. Off where no bank balance is on file: a running total from $0 dipping to −$15.9k read as an overdraft. */
+  line?: boolean;
+  minimumCash?: number | null;
+}) {
   const rows = cashRows(weeks);
   const lineKey = withBalance ? 'balance' : 'cumulative';
   const lineName = withBalance ? 'Cash balance' : 'Running total';
-  const low = rows.length ? rows.reduce((m, r) => (r[lineKey] < m[lineKey] ? r : m), rows[0]!) : null;
+  const low = line && rows.length ? rows.reduce((m, r) => (r[lineKey] < m[lineKey] ? r : m), rows[0]!) : null;
   const series = { ...CASH_SERIES, [lineKey]: { name: lineName, color: CASH_COLORS.run } };
   return (
     <div className="flex h-full w-full flex-col">
       <div className="min-h-0 flex-1">
-        <CashFlowPlot rows={rows} compact={compact} lineKey={lineKey} low={low} series={series} colors={CASH_COLORS} minimumCash={minimumCash} />
+        <CashFlowPlot rows={rows} compact={compact} lineKey={line ? lineKey : null} low={low} series={series} colors={CASH_COLORS} minimumCash={minimumCash} />
       </div>
       <div className="mt-1">
         <LegendKey
           items={[
             { name: 'Money in', color: CASH_COLORS.in },
             { name: 'Money out', color: CASH_COLORS.out },
-            { name: lineName, color: CASH_COLORS.run, line: true },
+            ...(line ? [{ name: lineName, color: CASH_COLORS.run, line: true }] : []),
             ...(low && !compact ? [{ name: 'Low point', color: PALETTE.bad }] : []),
             ...(minimumCash !== null && minimumCash > 0 ? [{ name: 'Under the cash floor', color: PALETTE.warn }] : []),
           ]}
@@ -107,8 +121,19 @@ export function MarginChart({ weeks, words }: { weeks: MarginWeek[]; words: { re
 
 /* ---- Receivables by age: one bar, not yet due to 90+ ------------------- */
 
-/** The one aging definition's buckets (days past due), one color each. */
-export const AGING_COLORS = { current: PALETTE.good, days1to30: 'rgb(var(--color-warning) / 0.6)', days31to60: PALETTE.warn, days61to90: 'rgb(var(--color-alert) / 0.6)', over90: PALETTE.bad } as const;
+/**
+ * The one aging definition's buckets (days past due): not yet due in the
+ * positive colour, then ONE alert hue that deepens with age. Mixing the
+ * caution and alert tokens flipped meaning between themes — 31–60 days read
+ * amber on navy but rust (darker than 61–90) on white (F500 audit 2026-10-26).
+ */
+export const AGING_COLORS = {
+  current: PALETTE.good,
+  days1to30: 'rgb(var(--color-alert) / 0.3)',
+  days31to60: 'rgb(var(--color-alert) / 0.55)',
+  days61to90: 'rgb(var(--color-alert) / 0.8)',
+  over90: PALETTE.bad,
+} as const;
 
 export interface AgingBucket {
   key: keyof typeof AGING_COLORS;

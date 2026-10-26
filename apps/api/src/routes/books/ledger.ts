@@ -203,7 +203,8 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
     if (Math.abs(openOnStatements - arTotal) >= 1) {
       const fmt = (c: number) => fromCents(c).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
       // First: until history is posted, every other number on the page is short of it.
-      needsYou.unshift({ key: 'ar-unposted', label: `Receivables in the books (${fmt(arTotal)}) don’t match open statements (${fmt(openOnStatements)}) — post history to bring them in`, count: 1, to: '/books/receivables', tone: 'warning' });
+      // Plain words (F500 audit 2026-10-26): what differs, and why, without "receivables in the books" and "post history".
+      needsYou.unshift({ key: 'ar-unposted', label: `Clients owe ${fmt(openOnStatements)} on their statements, but the books show ${fmt(arTotal)}: older statements haven’t been added to the books yet`, count: 1, to: '/books/receivables', tone: 'warning' });
     }
     if (aging.over90 > 0) needsYou.push({ key: 'ar-90', label: `${fromCents(aging.over90).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} owed by clients for over 90 days`, count: 1, to: '/books/receivables', tone: 'alert' });
     if (period.status !== 'CLOSED' && Number(asOf.slice(8, 10)) >= 5) needsYou.push({ key: 'close', label: `${new Date(`${lastMonth}-01T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })} isn’t closed yet`, count: 1, to: `/books/close/${lastMonth}`, tone: 'info' });

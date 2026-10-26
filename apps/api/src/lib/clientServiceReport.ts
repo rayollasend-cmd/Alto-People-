@@ -6,6 +6,7 @@ import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 import { getBlobStore } from './blobStore.js';
 import { METRIC_LABEL } from './opsSops.js';
 import { paidMinutesForRange } from '@alto-people/shared';
+import { fmtDayRange } from './humanDates.js';
 
 /**
  * Weekly Client Service Report — the hand-to-the-store-manager PDF.
@@ -453,7 +454,7 @@ export function renderClientServiceReportPdf(data: ServiceReportData): Promise<B
   const { k, doc } = createDoc({
     title: `Weekly service report — ${data.clientName}`,
     author: data.orgName,
-    subject: `Service week ${data.periodStart} to ${data.periodEnd}`,
+    subject: `Service week ${fmtDayRange(data.periodStart, data.periodEnd, { year: true })}`,
   });
   const L = k.L;
   const Wd = k.width();

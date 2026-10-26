@@ -24,7 +24,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Button } from '@/components/ui/Button';
 import { FilterBar, FilterChip } from '@/components/ui/FilterBar';
-import { Input } from '@/components/ui/Input';
+import { DateRangeField } from '@/components/ui/DateField';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { NeverClosedCard } from './NeverClosedCard';
@@ -156,6 +156,7 @@ function OpsFilterBar({
   anyFilter,
   departments,
   onParam,
+  onDates,
   onRange,
   onClear,
 }: {
@@ -171,6 +172,7 @@ function OpsFilterBar({
   anyFilter: boolean;
   departments: string[];
   onParam: (key: string, value: string) => void;
+  onDates: (range: { from: string; to: string }) => void;
   onRange: (days: number) => void;
   onClear: () => void;
 }) {
@@ -248,22 +250,13 @@ function OpsFilterBar({
             </FilterChip>
           );
         })}
-        <Input
-          type="date"
-          value={from}
-          max={to || undefined}
-          onChange={(e) => onParam('from', e.target.value)}
-          className="h-9 w-[9.5rem]"
-          aria-label="Shifts on or after"
-        />
-        <span className="text-xs text-silver/60">to</span>
-        <Input
-          type="date"
-          value={to}
-          min={from || undefined}
-          onChange={(e) => onParam('to', e.target.value)}
-          className="h-9 w-[9.5rem]"
-          aria-label="Shifts on or before"
+        <DateRangeField
+          size="sm"
+          from={from}
+          to={to}
+          fromLabel="Shifts on or after"
+          toLabel="Shifts on or before"
+          onChange={onDates}
         />
       </div>
 
@@ -318,6 +311,18 @@ export function OpsBoard() {
       (prev) => {
         if (value) prev.set(key, value);
         else prev.delete(key);
+        return prev;
+      },
+      { replace: true },
+    );
+  // Both ends in one write: the range field moves "to" with "from".
+  const setDates = (range: { from: string; to: string }) =>
+    setSearchParams(
+      (prev) => {
+        for (const k of ['from', 'to'] as const) {
+          if (range[k]) prev.set(k, range[k]);
+          else prev.delete(k);
+        }
         return prev;
       },
       { replace: true },
@@ -492,6 +497,7 @@ export function OpsBoard() {
       anyFilter={anyFilter}
       departments={departments}
       onParam={setParam}
+      onDates={setDates}
       onRange={setRange}
       onClear={clearFilters}
     />
@@ -595,11 +601,20 @@ export function OpsBoard() {
                 className="ml-2"
               />
             </div>
-            <div className="mt-1 text-xl font-medium text-white">
+            <div className="mt-1 text-xl font-medium text-ink">
               {headline.live > 0
                 ? `${headline.live} shift${headline.live === 1 ? '' : 's'} running across ${headline.stores} ${termizeText(headline.stores === 1 ? 'store' : 'stores', term)}`
-                : 'All floors quiet'}
+                : anyFilter
+                  ? 'Nothing running that matches these filters'
+                  : 'All floors quiet'}
             </div>
+            {quiet && (
+              <QuietFloorLine
+                nextShift={board.nextShift ?? null}
+                closedToday={board.closedToday.length}
+                noActivity={!!insights && insightsEmpty}
+              />
+            )}
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {/* The board is a screen; the packet and the report are the
                   documents that leave the room with whoever asked for them. */}
@@ -616,10 +631,10 @@ export function OpsBoard() {
               label="On the floor"
               value={<CountUpValue value={headline.floor} />}
               icon={Users}
-              tone="text-white"
+              tone="text-ink"
             />
             <HeadlineStat
-              label="SOP today"
+              label="Checklists today"
               value={headline.sopPct == null ? '—' : <CountUpValue value={`${headline.sopPct}%`} />}
               icon={ClipboardList}
               tone={
@@ -634,13 +649,13 @@ export function OpsBoard() {
               label="Temp alerts"
               value={<CountUpValue value={headline.tempAlerts} />}
               icon={Thermometer}
-              tone={headline.tempAlerts > 0 ? 'text-alert' : 'text-success'}
+              tone={headline.tempAlerts > 0 ? 'text-alert' : 'text-ink'}
             />
             <HeadlineStat
               label="Incomplete closes"
               value={<CountUpValue value={headline.incomplete} />}
               icon={Flag}
-              tone={headline.incomplete > 0 ? 'text-warning' : 'text-success'}
+              tone={headline.incomplete > 0 ? 'text-warning' : 'text-ink'}
             />
           </div>
         </div>
@@ -660,7 +675,7 @@ export function OpsBoard() {
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0 truncate text-sm font-medium text-white">
+                <div className="min-w-0 truncate text-sm font-medium text-ink">
                   {store.name}
                 </div>
                 <span
@@ -682,7 +697,7 @@ export function OpsBoard() {
               </div>
               <div className="mt-2 flex items-end justify-between gap-2">
                 <div>
-                  <div className="text-2xl font-semibold tabular-nums text-white">
+                  <div className="text-2xl font-semibold tabular-nums text-ink">
                     {store.floor}
                   </div>
                   <div className="text-2xs uppercase tracking-wider text-silver/60">
@@ -703,7 +718,7 @@ export function OpsBoard() {
                     {store.sopPct == null ? '—' : `${store.sopPct}%`}
                   </div>
                   <div className="text-2xs uppercase tracking-wider text-silver/60">
-                    SOP today
+                    Checklists today
                   </div>
                 </div>
               </div>
@@ -730,7 +745,7 @@ export function OpsBoard() {
 
       {/* ===== The drawn picture: temps, rhythm, trend =====
           Three empty charts in a row said nothing three times: one line. */}
-      {insights && insightsEmpty && (
+      {insights && insightsEmpty && !quiet && (
         <p className="rounded-lg border border-navy-secondary bg-navy-secondary/20 px-4 py-3 text-sm text-silver" data-testid="ops-charts-empty">
           No temperature readings or checklist completions in the last 24 hours, and no shifts
           closed in the last 7 days.
@@ -780,9 +795,7 @@ export function OpsBoard() {
             </CardHeader>
             <CardContent>
               {!insights.hourly.some((h) => h.count > 0) ? (
-                <p className="py-6 text-center text-xs text-silver/60">
-                  No checklist tasks completed in the last 24 hours.
-                </p>
+                <EmptyState size="sm" title="No checklist tasks completed in the last 24 hours." />
               ) : (
               <>
               <div className="h-40">
@@ -801,7 +814,7 @@ export function OpsBoard() {
                       className="inline-flex items-center gap-1.5 rounded-full border border-navy-secondary bg-navy-secondary/30 px-2.5 py-1 text-2xs"
                       title={`${m.readings} reading${m.readings === 1 ? '' : 's'} in 24h`}
                     >
-                      <span className="font-semibold tabular-nums text-white">
+                      <span className="font-semibold tabular-nums text-ink">
                         {m.total.toLocaleString('en-US')}
                       </span>
                       <span className="text-silver/70">{metricLabel(m.metricKey)}</span>
@@ -817,14 +830,15 @@ export function OpsBoard() {
             <CardHeader className="pb-1">
               <CardTitle className="text-base">
                 <ClipboardList className="mr-1.5 inline h-4 w-4 text-success" aria-hidden="true" />
-                SOP compliance — last 7 days
+                Checklists completed — last 7 days
               </CardTitle>
             </CardHeader>
             <CardContent>
               {sopWeek.every((d) => d.pct == null) ? (
-                <p className="py-6 text-center text-xs text-silver/60">
-                  No shifts closed in the last 7 days.
-                </p>
+                <EmptyState size="sm" title="No shifts closed in the last 7 days." />
+              ) : sopWeek.filter((d) => d.pct != null).length < 2 ? (
+                // One closed day is a dot, not a trend.
+                <EmptyState size="sm" title="The trend appears once shifts close on two days." />
               ) : (
                 <div className="h-40">
                   <SopWeekPlot sopWeek={sopWeek} />
@@ -843,15 +857,9 @@ export function OpsBoard() {
           <NeverClosedCard shifts={board.neverClosed ?? []} onOpenRecord={setRecordId} />
 
           {/* ===== Live mission tiles =====
-              Nothing live: one line that says when that changes, instead of
-              three big empty cards pushing the standards below the fold. */}
-          {quiet ? (
-            <QuietFloorLine
-              nextShift={board.nextShift ?? null}
-              anyFilter={anyFilter}
-              closedToday={board.closedToday.length}
-            />
-          ) : (
+              Nothing live: the headline band says when that changes, instead
+              of three big empty cards pushing the standards below the fold. */}
+          {!quiet && (
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">
@@ -881,10 +889,11 @@ export function OpsBoard() {
                       >
                         <ProgressRing pct={pct} alert={s.tempAlerts > 0} />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-white">
+                          <div className="truncate text-sm font-medium text-ink">
                             {s.department}
                             <span className="ml-1.5 text-xs font-normal text-gold">
-                              {PERIOD_LABEL[s.period]}
+                              {/* The store's own name for the shift window, where it has one. */}
+                              {s.windowLabel ?? PERIOD_LABEL[s.period]}
                             </span>
                           </div>
                           <div className="mt-0.5 truncate text-xs text-silver">
@@ -975,11 +984,14 @@ export function OpsBoard() {
             </CardHeader>
             <CardContent>
               {board.closedToday.length === 0 ? (
-                <p className="text-sm text-silver">
-                  {anyFilter
-                    ? 'Nothing matching these filters has closed yet today.'
-                    : 'Nothing closed yet today.'}
-                </p>
+                <EmptyState
+                  size="sm"
+                  title={
+                    anyFilter
+                      ? 'Nothing matching these filters has closed yet today.'
+                      : 'Nothing closed yet today.'
+                  }
+                />
               ) : (
                 <ul className="divide-y divide-navy-secondary/60">
                   {board.closedToday.map((s) => (
@@ -991,10 +1003,10 @@ export function OpsBoard() {
                       className="flex w-full flex-wrap items-center justify-between gap-2 rounded py-2.5 text-left transition-colors hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                     >
                       <div className="min-w-0">
-                        <div className="text-sm text-white">
+                        <div className="text-sm text-ink">
                           {s.department}
                           <span className="ml-1.5 text-xs text-gold">
-                            {PERIOD_LABEL[s.period]}
+                            {s.windowLabel ?? PERIOD_LABEL[s.period]}
                           </span>
                           <span className="ml-2 text-xs text-silver/70">
                             {s.locationName ?? s.clientName}
@@ -1032,7 +1044,7 @@ export function OpsBoard() {
                           </span>
                         </span>
                         <span className="text-silver">
-                          SOP <span className="text-white">{s.sopDone}</span>/{s.sopTotal}
+                          Checklist <span className="text-ink">{s.sopDone}</span>/{s.sopTotal}
                         </span>
                         {s.tempAlerts > 0 && (
                           <Badge variant="destructive">{s.tempAlerts} temp</Badge>
@@ -1092,48 +1104,48 @@ export function OpsBoard() {
   );
 }
 
-/** The quiet board's one line: nothing is running, and when that changes. */
+/**
+ * The quiet board's one line, under "All floors quiet": when the floor
+ * wakes up, and what else is empty. "All floors quiet", "No temperature
+ * readings…" and "Nothing running right now" used to be three notices in
+ * a row saying the same thing (F500 audit 2026-10-26).
+ */
 function QuietFloorLine({
   nextShift,
-  anyFilter,
   closedToday,
+  noActivity,
 }: {
   nextShift: { startsAt: string; position: string; store: string | null } | null;
-  anyFilter: boolean;
   closedToday: number;
+  /** No readings, completions or closes in the charts' windows either. */
+  noActivity: boolean;
 }) {
   const term = useTerm();
   const inHours = nextShift
     ? Math.max(0, Math.round((new Date(nextShift.startsAt).getTime() - Date.now()) / 3_600_000))
     : null;
   return (
-    <div
-      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-navy-secondary bg-navy-secondary/20 px-4 py-3 text-sm"
-      data-testid="ops-quiet-line"
-    >
-      <ClipboardList className="h-4 w-4 shrink-0 text-silver/60" aria-hidden="true" />
-      <span className="font-medium text-ink">
-        {anyFilter ? 'Nothing running that matches these filters' : 'Nothing running right now'}
-      </span>
-      <span className="text-silver/70">
-        ·{' '}
-        {nextShift ? (
-          <>
-            next shift opens{' '}
-            <span className="tabular-nums text-silver" title={fmtFull(nextShift.startsAt)}>
-              {fmtClock(nextShift.startsAt)}
-            </span>
-            {inHours != null && inHours > 0 && ` (in ${inHours}h)`}
-            {' — '}
-            {nextShift.position}
-            {nextShift.store && ` at ${nextShift.store}`}
-          </>
-        ) : (
-          termizeText('no shift scheduled in the next 24 hours', term)
-        )}
-      </span>
-      {closedToday === 0 && <span className="text-silver/50">· nothing closed yet today</span>}
-    </div>
+    <p className="mt-1 max-w-2xl text-sm text-ink-muted" data-testid="ops-quiet-line">
+      {nextShift ? (
+        <>
+          Next shift opens{' '}
+          <span className="tabular-nums text-ink" title={fmtFull(nextShift.startsAt)}>
+            {fmtClock(nextShift.startsAt)}
+          </span>
+          {inHours != null && inHours > 0 && ` (in ${inHours} ${inHours === 1 ? 'hour' : 'hours'})`}
+          {' — '}
+          {nextShift.position}
+          {nextShift.store && ` at ${nextShift.store}`}.
+        </>
+      ) : (
+        termizeText('No shift scheduled in the next 24 hours.', term)
+      )}{' '}
+      {noActivity
+        ? 'No temperature readings or checklist completions in the last 24 hours, and no shifts closed in the last 7 days.'
+        : closedToday === 0
+          ? 'Nothing closed yet today.'
+          : null}
+    </p>
   );
 }
 

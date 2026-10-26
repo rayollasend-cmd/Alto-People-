@@ -55,7 +55,9 @@ describe('the public Trust Center', () => {
     expect(now).toHaveTextContent('Observation period');
     // F500 G5: no per-control pass count for an anonymous reader; the observation date stays.
     expect(screen.queryByText('12 / 16')).not.toBeInTheDocument();
-    expect(screen.getByText('2026-09-01')).toBeInTheDocument();
+    // A day the app's way (the year only when it isn't this one), never the ISO "2026-09-01".
+    expect(screen.getByText(/^Sep 1(, 2026)?$/)).toBeInTheDocument();
+    expect(screen.queryByText('2026-09-01')).toBeNull();
   });
 
   it('leads with what is monitored and reads by area in plain words — no "3 / 16 passing", no "Failed", no script names (F500 G5)', async () => {

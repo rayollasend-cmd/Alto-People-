@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
-import { computeRoleDecisions, dayWords, ownsContractDuties } from '../../lib/roleDecisions.js';
+import { computeRoleDecisions, dayWords, dueWords, ownsContractDuties } from '../../lib/roleDecisions.js';
 
 /**
  * The decision queue speaks plainly (F500 SH-4): days in words, one age per
@@ -24,6 +24,21 @@ describe('dayWords', () => {
     expect(dayWords('2025-12-31', now)).toBe('Wed, Dec 31, 2025');
     // A date-only column is read at UTC midnight: still its own day, never the day before.
     expect(dayWords(new Date('2026-01-31T00:00:00.000Z'), now)).toBe('Sat, Jan 31');
+  });
+});
+
+describe('dueWords — a deadline and how far it is (F500 2026-10-26)', () => {
+  const now = new Date('2026-10-26T15:00:00Z');
+  it('past deadlines read "was due … · N days overdue", never "by Fri, Oct 23"', () => {
+    expect(dueWords('2026-10-23', now)).toBe('was due Oct 23 · 3 days overdue');
+    expect(dueWords('2026-10-25', now)).toBe('was due Oct 25 · 1 day overdue');
+    expect(dueWords('2026-01-31', now)).toBe('was due Jan 31 · 268 days overdue');
+  });
+  it('today, tomorrow, and later with the distance; the year only when it is not this one', () => {
+    expect(dueWords('2026-10-26', now)).toBe('due today');
+    expect(dueWords('2026-10-27', now)).toBe('due tomorrow');
+    expect(dueWords('2026-10-30', now)).toBe('due Oct 30 · in 4 days');
+    expect(dueWords('2027-01-31', now)).toBe('due Jan 31, 2027 · in 97 days');
   });
 });
 

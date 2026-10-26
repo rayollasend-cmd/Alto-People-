@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { buildAccessReport, WORKFORCE_ROLES, type AccessFlag } from './accessCleanup.js';
 import { recordEvidence } from './evidence.js';
+import { accessReviewText } from './evidenceText.js';
 import { ALTO_TENANT_ID } from './tenant.js';
 
 /**
@@ -112,20 +113,21 @@ export async function buildAccessReview(db: Db, now: Date = new Date(), tenantId
 /** Records the review as evidence waiting for sign-off: counts and ids only. */
 export async function recordAccessReview(db: Db, collectedBy: string, now: Date = new Date()): Promise<string | null> {
   const r = await buildAccessReview(db, now);
-  const agentFlagged = r.agents.filter((a) => a.flags.length).length;
+  const details = {
+    elevatedAccounts: r.elevatedAccounts,
+    accountFlags: r.accountFlags,
+    flaggedAccounts: r.flaggedAccounts,
+    agents: r.agents.map((a) => ({ id: a.id, status: a.status, ownerId: a.owner?.id ?? null, scopes: a.scopes, capabilities: a.capabilities, gatePolicies: a.gatePolicies, liveCredentials: a.liveCredentials, oldestCredentialDays: a.oldestCredentialDays, lastUsedAt: a.lastUsedAt, flags: a.flags })),
+    agentFlags: r.agentFlags,
+  };
   return recordEvidence(
     'access-review',
     collectedBy,
     {
       status: 'WARN',
-      summary: `${r.elevatedAccounts} elevated accounts (${r.flaggedAccounts} flagged accounts in all) and ${r.agents.length} agents (${agentFlagged} flagged): waiting for sign-off.`,
-      details: {
-        elevatedAccounts: r.elevatedAccounts,
-        accountFlags: r.accountFlags,
-        flaggedAccounts: r.flaggedAccounts,
-        agents: r.agents.map((a) => ({ id: a.id, status: a.status, ownerId: a.owner?.id ?? null, scopes: a.scopes, capabilities: a.capabilities, gatePolicies: a.gatePolicies, liveCredentials: a.liveCredentials, oldestCredentialDays: a.oldestCredentialDays, lastUsedAt: a.lastUsedAt, flags: a.flags })),
-        agentFlags: r.agentFlags,
-      },
+      // Plain words with real plurals (lib/evidenceText): "1 account flagged", never "1 flagged accounts".
+      summary: accessReviewText(details, false)!.summary,
+      details,
       periodEnd: now,
     },
     db,

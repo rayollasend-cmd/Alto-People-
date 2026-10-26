@@ -292,6 +292,9 @@ export function DriverHome() {
   const setupBanner =
     noVan && noClients ? t('drive.notSetUp') : noVan ? t('drive.noVan') : noClients ? t('drive.noClients') : null;
   const requestCount = setup.data?.requests?.length;
+  // The Today card's own read (same key, one request): is the driver on the clock?
+  const todayQ = useQuery({ queryKey: ['transport', 'driver', 'today'], queryFn: getDriverToday, refetchInterval: 60_000 });
+  const offClock = todayQ.data?.hours ? !todayQ.data.hours.onClock : false;
 
   // Design system §4.1 (UX upgrade step 6, the sweep): the Home template.
   // The hero is the run that defines the driver's day: on the road, else
@@ -309,7 +312,12 @@ export function DriverHome() {
     // Once, when the link opens the page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vanReport]);
-  const hero = runs.isLoading ? (
+  // Off the clock with no run under way, the day starts with the clock: the
+  // Today card (and its "Clock in") leads, above "No runs", and "Report a
+  // problem" steps back to a secondary (F500 audit: it was the gold button
+  // while "Clock in" sat small further down).
+  const clockFirst = offClock && !heroRun;
+  const runHero = runs.isLoading ? (
     <div className="space-y-3">
       <Skeleton className="h-20" />
       <Skeleton className="h-64" />
@@ -325,13 +333,22 @@ export function DriverHome() {
   ) : (
     <EmptyState icon={Bus} title={t('drive.none')} description={t('drive.noneBody')} />
   );
+  const hero = clockFirst ? (
+    <div className="space-y-4">
+      <DriverTodayCard />
+      {runHero}
+    </div>
+  ) : (
+    runHero
+  );
 
   return (
     <SafetyContext.Provider value={{ open: (run) => setSafetyRun(run) }}>
     <PendingMarksContext.Provider value={marks}>
     <ShiftMapContext.Provider value={setShiftMap}>
       <HomeTemplate
-        className="mx-auto max-w-2xl"
+        // A driver reads at 16px on a phone (helper lines at 14px).
+        className="mx-auto max-w-2xl max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm"
         title={
           <>
             <LiveNow render={(now) => greet(now.getHours())} />
@@ -349,7 +366,7 @@ export function DriverHome() {
         // (phones too); Safety, Log fuel and the labelled sound switch go in
         // "More" / the phone sheet — the row ran off a 390px screen.
         actions={[
-          { key: 'report', label: t('ride.report'), icon: AlertTriangle, primary: true, onSelect: () => setReporting(heroRun?.id ?? heroNext?.id ?? null) },
+          { key: 'report', label: t('ride.report'), icon: AlertTriangle, primary: !clockFirst, onSelect: () => setReporting(heroRun?.id ?? heroNext?.id ?? null) },
           { key: 'safety', label: t('drive.safety'), icon: ShieldAlert, onSelect: () => setSafetyRun(heroRun ?? null) },
           { key: 'fuel', label: t('drive.logFuel'), icon: Fuel, onSelect: () => setFueling(true), hidden: !fuelVan },
           { key: 'sounds', label: soundsOn ? t('drive.soundsOnShort') : t('drive.soundsOffShort'), icon: soundsOn ? Volume2 : VolumeX, onSelect: () => setSoundsOn(!soundsOn), hint: soundsOn ? t('ride.soundsOn') : t('ride.soundsOff') },
@@ -371,7 +388,7 @@ export function DriverHome() {
         // Floor walk 19: the driver's own starters — their runs, never a rider's ride.
         assistant={<HugoSeat prompts={[t('drive.hugoNextRun'), t('drive.hugoRiders'), t('drive.hugoVanIssue')]} />}
       >
-        <DriverTodayCard />
+        {!clockFirst && <DriverTodayCard />}
         {all.length > 0 && <DayStats runs={[...active, ...planned, ...done]} />}
         {restActive.map((run) => (
           <OnTheRoad key={run.id} run={run} onReport={() => setReporting(run.id)} onRider={setRider} />

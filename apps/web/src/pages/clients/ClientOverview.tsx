@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { updateClient } from '@/lib/clientsApi';
 import { clientOverviewKey, getClientOverview, listOwnerOptions } from '@/lib/clientAccountApi';
-import { displayLocale, fmtDate, fmtHours, fmtMoney, fmtMonthYearTz, fmtPercent, fmtRelativeDate } from '@/lib/format';
+import { displayLocale, fmtDate, fmtMoney, fmtMonthYearTz, fmtPercent, fmtRelativeDate } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -135,7 +135,8 @@ function Tile(props: { to: string | { search: string } | null; label: string; va
 const NO_HOURS = 'No hours yet';
 
 /** Words in the value slot ("No hours yet") read smaller than a number. */
-const Words = ({ children }: { children: ReactNode }) => <span className="text-xl leading-tight">{children}</span>;
+/** A tile with no number says so quietly — muted and smaller than a figure ("Nothing billed" sat as large as a value). */
+const Words = ({ children }: { children: ReactNode }) => <span className="text-base font-normal leading-tight text-ink-muted">{children}</span>;
 
 const AGING = [
   { key: 'current', label: 'Not yet due', tone: 'bg-success/60' },
@@ -196,7 +197,7 @@ function KpiStrip({ o, clientId }: { o: Overview; clientId: string }) {
         value={fmtCount(k.onAssignment)}
         hint={peopleHint(k.onAssignment, o.locations)}
       />
-      <Tile to={timeTo} testId="kpi-hours" label="Hours this week" value={k.hoursThisWeek > 0 ? fmtHours(k.hoursThisWeek) : <Words>{NO_HOURS}</Words>} hint={<HoursHint k={k} />} />
+      <Tile to={timeTo} testId="kpi-hours" label="Hours this week" value={k.hoursThisWeek > 0 ? hoursText(k.hoursThisWeek) : <Words>{NO_HOURS}</Words>} hint={<HoursHint k={k} />} />
       <Tile
         to={shiftsTo}
         testId="kpi-fill"
@@ -210,7 +211,7 @@ function KpiStrip({ o, clientId }: { o: Overview; clientId: string }) {
         testId="kpi-overtime"
         label="Overtime last week"
         value={k.overtimePct !== null ? fmtPercent(k.overtimePct) : <Words>No hours</Words>}
-        hint={k.overtimePct !== null ? `Of ${fmtHours(k.hoursLastWeek)} worked` : 'None worked last week'}
+        hint={k.overtimePct !== null ? `Of ${hoursText(k.hoursLastWeek)} worked` : 'None worked last week'}
       />
     </section>
   );
@@ -233,20 +234,30 @@ function marginHint(margin: number | null, target: number | null): string {
   return `${Math.abs(diff)} pts ${diff > 0 ? 'over' : 'under'} the ${fmtPercent(target)} target`;
 }
 
+/** Hours with one decimal, tabular ("367.3h", never "367.28h"). */
+const hoursText = (h: number) => `${(Math.round(h * 10) / 10).toLocaleString(displayLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h`;
+
 function HoursHint({ k }: { k: NonNullable<Overview['kpis']> }) {
-  if (k.hoursChangePct !== null && k.hoursLastWeekToDate !== null) {
+  // A change is only said once this week has hours to compare (F500
+  // 2026-10-26: a red "↓100%" at 6 AM Monday over a week that had barely
+  // begun) — and against a base worth comparing. Otherwise the plain facts.
+  const comparable = k.hoursChangePct !== null && k.hoursLastWeekToDate !== null && k.hoursThisWeek > 0 && k.hoursLastWeekToDate >= 8;
+  if (comparable && k.hoursChangePct !== null && k.hoursLastWeekToDate !== null) {
     return (
       <span className="flex min-w-0 flex-col gap-1">
         {/* The label wraps beside the chip rather than truncating in a narrow tile. */}
         <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <DeltaChip delta={k.hoursChangePct} format={(n) => `${n}%`} good="up" />
-          <span>vs {fmtHours(k.hoursLastWeekToDate)} by now last week</span>
+          <span>vs {hoursText(k.hoursLastWeekToDate)} by now last week</span>
         </span>
-        <span>Last week in all: {fmtHours(k.hoursLastWeek)}</span>
+        <span>Last week in all: {hoursText(k.hoursLastWeek)}</span>
       </span>
     );
   }
-  return <>{k.hoursLastWeek > 0 ? `Last week: ${fmtHours(k.hoursLastWeek)}` : 'None last week either'}</>;
+  if (k.hoursLastWeekToDate !== null && k.hoursLastWeekToDate > 0 && k.hoursThisWeek === 0) {
+    return <>{`${hoursText(k.hoursLastWeekToDate)} by now last week · ${hoursText(k.hoursLastWeek)} in all`}</>;
+  }
+  return <>{k.hoursLastWeek > 0 ? `Last week: ${hoursText(k.hoursLastWeek)}` : 'None last week either'}</>;
 }
 
 function AgingBar({ m }: { m: NonNullable<NonNullable<Overview['kpis']>['money']> }) {

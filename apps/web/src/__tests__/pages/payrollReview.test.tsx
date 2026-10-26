@@ -85,8 +85,26 @@ describe('<PayrollReviewPage>', () => {
     getPayrollReview.mockResolvedValue({ report: empty, signoff: state() });
     renderReview();
     expect(await screen.findByText(/records \$4,054\.50 gross but has no paychecks/)).toBeInTheDocument();
-    expect(screen.getByText('Nothing to check')).toBeInTheDocument();
+    // The tiles read the run's recorded totals — the run record's header — not a strip of $0.00
+    // under it (F500 audit 2026-10-26); what the paychecks add up to sits beside each.
+    const totals = screen.getByTestId('review-recorded-totals');
+    expect(totals).toHaveTextContent('$4,054.50');
+    expect(totals).toHaveTextContent('Paychecks add up to $0.00');
+    // Nothing behind the totals: no $0.00 ledgers, no "all clear", and no sign-off.
+    expect(screen.queryByText('Total cash required')).not.toBeInTheDocument();
     expect(screen.queryByText('Nothing unusual')).not.toBeInTheDocument();
+    expect(screen.getByText('No paychecks behind these totals')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /sign off on these numbers/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Sign-off waits until the run’s totals and its paychecks agree.')).toBeInTheDocument();
+  });
+
+  it('a run with no paychecks and nothing on record says there is nothing to check', async () => {
+    const empty: PayrollReviewReport = { ...REPORT, run: { ...REPORT.run, storedGross: 0, storedNet: 0, totalsAgree: true }, totals: { ...REPORT.totals, people: 0, gross: 0, net: 0 }, rows: [], flagCounts: {} };
+    getPayrollReview.mockResolvedValue({ report: empty, signoff: state() });
+    renderReview();
+    expect(await screen.findByText('Nothing to check')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing unusual')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('run-totals-mismatch')).not.toBeInTheDocument();
   });
 
   it('reads like a register: totals against last payroll, cash, taxes, and the paychecks that moved', async () => {

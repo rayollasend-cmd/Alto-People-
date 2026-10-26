@@ -835,7 +835,8 @@ export function ApplicationsList() {
         ...(canManage
           ? [{ key: 'new', label: 'New application', icon: Plus, primary: true, onSelect: () => setOpenCreate(true) }]
           : []),
-        { key: 'bulk', label: 'Bulk invite', icon: Users, primary: !canManage, onSelect: () => setOpenBulkInvite(true) },
+        // The primary leads (F500 2026-10-26: it sat between Bulk invite and More); the bulk paths share More.
+        { key: 'bulk', label: 'Bulk invite', icon: Users, primary: !canManage, overflow: canManage, onSelect: () => setOpenBulkInvite(true) },
         { key: 'import', label: 'Import CSV', icon: FileUp, overflow: true, onSelect: () => setOpenCsvImport(true) },
         {
           key: 'export',
@@ -1392,15 +1393,17 @@ export function ApplicationsList() {
                         )}
                       </div>
                       <div className="min-w-0">
-                        <span className="text-white font-medium">{a.associateName}</span>
+                        <span className="whitespace-nowrap text-white font-medium">{a.associateName}</span>
                         {a.position && <div className="text-xs text-silver mt-0.5 truncate">{a.position}</div>}
                       </div>
                     </div>
                   );
                 },
               },
-              ...(clientsOn ? [{ key: 'client', header: 'Client', accessor: (a: ApplicationSummary) => a.clientName, sortable: true, cardMeta: true, className: 'text-silver' }] : []),
-              { key: 'track', header: 'Track', accessor: (a) => trackLabel(a.onboardingTrack, clientsOn), sortable: true, className: 'text-silver' },
+              // One line, the whole name on hover — "Coastal / Resort / Holdings" stacked three lines high.
+              ...(clientsOn ? [{ key: 'client', header: 'Client', accessor: (a: ApplicationSummary) => a.clientName, sortable: true, cardMeta: true, className: 'text-silver', cell: (a: ApplicationSummary) => (a.clientName ? <span className="block max-w-[11rem] truncate" title={a.clientName}>{a.clientName}</span> : <span className="text-silver/50">—</span>) }] : []),
+              // Column priority by room (DataGrid hideBelow): at 1440 with the sidebar open the list has ~1,090px.
+              { key: 'track', header: 'Track', accessor: (a) => trackLabel(a.onboardingTrack, clientsOn), sortable: true, className: 'text-silver', hideBelow: 1200 },
               {
                 key: 'invited',
                 header: 'Invited',
@@ -1408,8 +1411,9 @@ export function ApplicationsList() {
                 csv: (a) => invitedLabel(a.invitedAt, now),
                 sortable: true,
                 searchable: false,
-                className: 'text-xs tabular-nums',
-                cell: (a) => <span className={cn(invitedLabel(a.invitedAt, now) === 'Today' ? 'text-gold font-medium' : 'text-silver')}>{invitedLabel(a.invitedAt, now)}</span>,
+                className: 'text-xs tabular-nums whitespace-nowrap',
+                hideBelow: 1150,
+                cell: (a) => <span className={cn(invitedLabel(a.invitedAt, now) === 'Today' ? 'text-ink font-medium' : 'text-silver')}>{invitedLabel(a.invitedAt, now)}</span>,
               },
               {
                 key: 'status',
@@ -1439,7 +1443,7 @@ export function ApplicationsList() {
                 cell: (a) => (
                   <div className="flex items-center gap-2">
                     <ProgressBar percent={a.percentComplete} hideLabel className="flex-1" />
-                    <span className={cn('text-xs tabular-nums w-9 text-right', a.percentComplete === 100 ? 'text-success font-medium' : a.percentComplete >= 50 ? 'text-gold' : 'text-silver')}>
+                    <span className={cn('text-xs tabular-nums w-9 text-right', a.percentComplete === 100 ? 'text-success font-medium' : 'text-silver')}>
                       {a.percentComplete}%
                     </span>
                   </div>
@@ -1451,6 +1455,7 @@ export function ApplicationsList() {
                 accessor: (a) => (isTerminal(a) || a.percentComplete === 100 || !a.blockedOnTitle ? null : a.blockedOnTitle),
                 sortable: true,
                 className: 'text-xs',
+                hideBelow: 950,
                 cell: (a) => {
                   const idleDays = daysSince(lastActivityIso(a), now);
                   return isTerminal(a) || a.percentComplete === 100 || !a.blockedOnTitle ? (
@@ -1458,7 +1463,7 @@ export function ApplicationsList() {
                   ) : (
                     <span className="text-silver">
                       {a.blockedOnTitle}
-                      <span className={cn('tabular-nums', idleTone(idleDays))}> · {idleDays}d idle</span>
+                      {idleDays > 0 && <span className={cn('tabular-nums', idleTone(idleDays))}> · {idleDays} {idleDays === 1 ? 'day' : 'days'} idle</span>}
                     </span>
                   );
                 },
@@ -1499,7 +1504,8 @@ export function ApplicationsList() {
                 header: 'Owner',
                 accessor: (a) => a.ownerName ?? null,
                 sortable: true,
-                className: 'text-xs text-silver',
+                className: 'text-xs text-silver whitespace-nowrap',
+                hideBelow: 1000,
                 cell: (a) => (a.ownerName ? <span className="text-silver">{a.ownerName}</span> : <span className="text-silver/50">—</span>),
               },
               ...(canInvite

@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Building2, FileText, KanbanSquare, LayoutGrid, List, MapPin, Plus } from '@/components/ui/icons';
+import { Building2, FileText, LayoutGrid, List, MapPin, Plus } from '@/components/ui/icons';
 import type { ClientListItem } from '@alto-people/shared';
 import { clientServiceReportUrl, listClients } from '@/lib/clientsApi';
 import { listProspects, PROSPECTS_KEY } from '@/lib/prospectsApi';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtMoney, fmtMoneyCompact, fmtRelativeDate, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtRelativeDate, ymdLocal } from '@/lib/format';
 // Org-week helper — despite the name it starts weeks on SATURDAY, the
 // Sat→Fri week every payroll/report surface runs on.
 import { startOfWeekMonday } from '@/pages/scheduling/WeekCalendarView';
@@ -18,6 +18,8 @@ import { useDesktopTable, useMinWidth } from '@/lib/useViewport';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
@@ -124,8 +126,8 @@ const STATUS_CHIPS: Array<{ value: StatusFilter; label: string }> = [
 ];
 
 const pct = (v: number) => `${Math.round(v)}%`;
-/** Hours as people say them: a tenth under 10, whole hours above. */
-const hoursText = (h: number) => `${(h < 10 ? Math.round(h * 10) / 10 : Math.round(h)).toLocaleString('en-US')}h`;
+/** Hours with one decimal, like every hours figure in the app ("367.3h"). */
+const hoursText = (h: number) => `${(Math.round(h * 10) / 10).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h`;
 
 export function ClientsHome() {
   const term = useTerm();
@@ -294,7 +296,7 @@ export function ClientsHome() {
         <div className="flex items-center gap-2.5">
           <Avatar name={c.name} size="sm" />
           <div className="min-w-0">
-            <Link to={`/clients/${c.id}`} className="break-words font-medium text-ink underline-offset-4 hover:text-gold-bright hover:underline">
+            <Link to={`/clients/${c.id}`} className="block font-medium text-ink underline-offset-4 hover:text-gold-bright hover:underline [overflow-wrap:anywhere] sm:[overflow-wrap:normal]">
               {c.name}
             </Link>
             {c.state && (
@@ -398,10 +400,11 @@ export function ClientsHome() {
               c.billedInRange == null ? (
                 <span className="text-ink-muted">—</span>
               ) : c.billedInRange === 0 ? (
-                <span className="text-ink-muted">$0</span>
+                <span className="text-ink-muted">{fmtMoney(0)}</span>
               ) : (
-                <Link to={moneyHref(c)} className="text-ink hover:underline" title={fmtMoney(c.billedInRange)}>
-                  {fmtMoneyCompact(c.billedInRange)}
+                // Money in a table is the whole amount ("$5,760.00"), never "$5.8k".
+                <Link to={moneyHref(c)} className="whitespace-nowrap text-ink hover:underline">
+                  {fmtMoney(c.billedInRange)}
                 </Link>
               ),
           },
@@ -415,11 +418,11 @@ export function ClientsHome() {
             className: 'tabular-nums',
             cell: (c) => {
               if (c.outstanding == null) return <span className="text-ink-muted">—</span>;
-              if (c.outstanding === 0) return <span className="text-ink-muted">$0</span>;
+              if (c.outstanding === 0) return <span className="text-ink-muted">{fmtMoney(0)}</span>;
               const late = (c.healthReasons ?? []).some((r) => r.includes('past due'));
               return (
-                <Link to={moneyHref(c)} className={cn('hover:underline', late ? 'text-alert' : 'text-ink')} title={fmtMoney(c.outstanding)}>
-                  {fmtMoneyCompact(c.outstanding)}
+                <Link to={moneyHref(c)} className={cn('whitespace-nowrap hover:underline', late ? 'text-alert' : 'text-ink')}>
+                  {fmtMoney(c.outstanding)}
                 </Link>
               );
             },
@@ -432,6 +435,7 @@ export function ClientsHome() {
       accessor: (c) => c.contractEndDate ?? null,
       csv: (c) => c.contractEndDate ?? '',
       sortable: true,
+      hideBelow: 1000,
       cell: (c) => <ContractEnds date={c.contractEndDate ?? null} today={today} />,
     },
     {
@@ -440,6 +444,8 @@ export function ClientsHome() {
       accessor: (c) => (c.lastPayrollDisbursedAt ? Date.parse(c.lastPayrollDisbursedAt) : null),
       csv: (c) => c.lastPayrollDisbursedAt ?? '',
       sortable: true,
+      // Column priority by room: the names and money keep theirs at 1440 with the sidebar open.
+      hideBelow: 1260,
       className: 'whitespace-nowrap text-ink-muted',
       cell: (c) => (c.lastPayrollDisbursedAt ? <span title={fmtDate(c.lastPayrollDisbursedAt)}>{fmtRelativeDate(c.lastPayrollDisbursedAt)}</span> : <span className="text-ink-muted">None yet</span>),
     },
@@ -469,6 +475,7 @@ export function ClientsHome() {
             accessor: () => null,
             searchable: false,
             csv: () => '',
+            hideBelow: 1260,
             cell: (c) => (
               <Button
                 size="sm"
@@ -497,6 +504,13 @@ export function ClientsHome() {
           {all && v.key !== 'all' && <span className="ml-1 tabular-nums text-ink-muted">{counts[v.key]}</span>}
         </FilterChip>
       ))}
+      {/* A status no view names (the Active tile, a Prospect link): said here, one tap to clear. */}
+      {(state.filters.status === 'ACTIVE' || state.filters.status === 'PROSPECT') && (
+        <FilterChip active title="Clear the status filter" aria-label={`Clear status: ${state.filters.status === 'ACTIVE' ? 'Active' : 'Prospect'}`} onClick={() => setFilters({ status: 'ALL' })}>
+          {state.filters.status === 'ACTIVE' ? 'Active' : 'Prospect'}
+          <span aria-hidden="true" className="ml-1 text-ink-muted">×</span>
+        </FilterChip>
+      )}
     </div>
   );
   const savedViews = (
@@ -524,10 +538,12 @@ export function ClientsHome() {
     <SearchInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search accounts…" aria-label="Search clients" wrapperClassName={phone ? 'w-full' : 'w-64'} />
   );
   const countLine = rows ? `${rows.length.toLocaleString('en-US')} ${rows.length === 1 ? 'account' : 'accounts'}${moreOnServer ? ' shown' : ''}` : '';
+  // One filter row (F500 2026-10-26: "Inactive" was both a view chip and a
+  // Status chip): the views say which accounts; this row searches and sets
+  // the ranges. A status set elsewhere (the Active tile) shows as a chip in
+  // the views row, with its ×.
   const listControls = (
     <>
-      <span className="text-xs text-ink-muted">Status</span>
-      {statusChips}
       {searchBox}
       {rangeSelect}
       {canMoney && layout === 'table' && desktopTable && (
@@ -557,36 +573,12 @@ export function ClientsHome() {
     <ListTemplate
       title={term('nav.clients')}
       subtitle="Every account at a glance: who's working, what's billed, and what needs you."
-      breadcrumbs={[{ label: term('nav.clients') }]}
-      secondaryActions={
-        <>
-          {canMoney && (
-            <Button asChild variant="outline">
-              <Link to="/clients/statements">
-                <FileText className="h-4 w-4" />
-                Weekly statements
-              </Link>
-            </Button>
-          )}
-          {canPipeline && (
-            <Button asChild variant="outline">
-              <Link to="/clients/pipeline">
-                <KanbanSquare className="h-4 w-4" />
-                Pipeline
-                {openProspects !== null && openProspects > 0 && <span className="tabular-nums text-ink-muted">{openProspects}</span>}
-              </Link>
-            </Button>
-          )}
-        </>
-      }
-      primaryAction={
-        canManage ? (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="h-4 w-4" />
-            New client
-          </Button>
-        ) : undefined
-      }
+      // The nav trail, not a crumb of our own; sibling pages are links (related), one primary action.
+      related={[
+        ...(canMoney ? [{ label: 'Weekly statements', to: '/clients/statements' }] : []),
+        ...(canPipeline ? [{ label: openProspects ? `Pipeline (${openProspects})` : 'Pipeline', to: '/clients/pipeline' }] : []),
+      ]}
+      actions={canManage ? [{ key: 'new', label: 'New client', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
       {error && (
         <ErrorBanner>
@@ -743,7 +735,11 @@ function ContractEnds({ date, today }: { date: string | null; today: string }) {
   );
 }
 
-/** Four numbers over the whole book of accounts — two of them open the list behind them. */
+/**
+ * Four numbers over the whole book of accounts — two of them open the list
+ * behind them. The kit's MetricStrip/MetricCard (F500 2026-10-26: hand-rolled
+ * filled tiles with white numbers), ink values, money in whole dollars.
+ */
 function PortfolioStrip({ rows, canMoney, attention, onAttention, onActive }: { rows: ClientListItem[]; canMoney: boolean; attention: number; onAttention: () => void; onActive: () => void }) {
   const active = rows.filter((c) => c.status === 'ACTIVE');
   const atRisk = rows.filter((c) => c.health === 'risk').length;
@@ -751,38 +747,42 @@ function PortfolioStrip({ rows, canMoney, attention, onAttention, onActive }: { 
   const hours = rows.reduce((n, c) => n + (c.hoursThisWeek ?? 0), 0);
   const outstanding = rows.reduce((n, c) => n + (c.outstanding ?? 0), 0);
   const owing = rows.filter((c) => (c.outstanding ?? 0) > 0).length;
-  const tile = 'flex min-w-0 flex-col gap-0.5 rounded-lg border border-line bg-surface-raised px-4 py-3 text-left';
+  const shifts = rows.reduce((n, c) => n + (c.shiftsNext7?.total ?? 0), 0);
+  const stillOpen = rows.reduce((n, c) => n + (c.shiftsNext7 ? c.shiftsNext7.total - c.shiftsNext7.filled : 0), 0);
+  const accounts = (n: number) => `${n.toLocaleString('en-US')} account${n === 1 ? '' : 's'}`;
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="All accounts">
-      <button type="button" onClick={onActive} className={cn(tile, 'transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright')}>
-        <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">Active accounts</span>
-        <span className="text-2xl font-semibold tabular-nums text-ink">{active.length.toLocaleString('en-US')}</span>
-        <span className="text-2xs text-ink-muted">of {rows.length.toLocaleString('en-US')} on the list</span>
-      </button>
-      <button type="button" onClick={onAttention} className={cn(tile, 'transition-colors hover:border-gold/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright')}>
-        <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">Needs attention</span>
-        <span className={cn('text-2xl font-semibold tabular-nums', attention > 0 ? 'text-warning' : 'text-ink')}>{attention.toLocaleString('en-US')}</span>
-        <span className="text-2xs text-ink-muted">{atRisk > 0 ? `${atRisk} at risk` : attention > 0 ? 'None at risk' : 'Every account is in good shape'}</span>
-      </button>
-      <div className={tile}>
-        <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">On assignment</span>
-        <span className="text-2xl font-semibold tabular-nums text-ink">{working.toLocaleString('en-US')}</span>
-        <span className="text-2xs text-ink-muted">{hours > 0 ? `${Math.round(hours).toLocaleString('en-US')} hours worked this week` : 'No hours yet this week'}</span>
-      </div>
+    <MetricStrip label="All accounts">
+      <MetricCard
+        label="Active accounts"
+        value={active.length.toLocaleString('en-US')}
+        hint={`of ${accounts(rows.length)} on the list`}
+        onClick={onActive}
+      />
+      <MetricCard
+        label="Needs attention"
+        value={attention.toLocaleString('en-US')}
+        // Status colour only when there is something to attend to.
+        tone={attention > 0 ? 'warning' : 'default'}
+        hint={atRisk > 0 ? `${atRisk} at risk` : attention > 0 ? 'None at risk' : undefined}
+        nothing={attention === 0 ? 'Every account is in good shape' : undefined}
+        onClick={onAttention}
+      />
+      <MetricCard
+        label="On assignment"
+        value={working.toLocaleString('en-US')}
+        hint={hours > 0 ? `${hours.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} hours worked this week` : 'No hours yet this week'}
+      />
       {canMoney ? (
-        <div className={tile}>
-          <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">Outstanding</span>
-          <span className="text-2xl font-semibold tabular-nums text-ink">{fmtMoneyCompact(outstanding)}</span>
-          <span className="text-2xs text-ink-muted">{owing > 0 ? `Owed by ${owing} account${owing === 1 ? '' : 's'}` : 'Nothing owed'}</span>
-        </div>
+        <MetricCard
+          label="Outstanding"
+          value={fmtMoney(outstanding)}
+          hint={owing > 0 ? `Owed by ${accounts(owing)}` : undefined}
+          nothing={owing === 0 ? 'Nothing owed' : undefined}
+        />
       ) : (
-        <div className={tile}>
-          <span className="text-2xs font-medium uppercase tracking-wider text-ink-muted">Shifts next 7 days</span>
-          <span className="text-2xl font-semibold tabular-nums text-ink">{rows.reduce((n, c) => n + (c.shiftsNext7?.total ?? 0), 0).toLocaleString('en-US')}</span>
-          <span className="text-2xs text-ink-muted">{rows.reduce((n, c) => n + (c.shiftsNext7 ? c.shiftsNext7.total - c.shiftsNext7.filled : 0), 0).toLocaleString('en-US')} still open</span>
-        </div>
+        <MetricCard label="Shifts next 7 days" value={shifts.toLocaleString('en-US')} hint={`${stillOpen.toLocaleString('en-US')} still open`} />
       )}
-    </div>
+    </MetricStrip>
   );
 }
 
@@ -856,7 +856,7 @@ function ClientCard({ client: c, today }: { client: ClientListItem; today: strin
         <CardNumber label="Filled · next 7 days" value={c.fillRatePct == null ? 'No shifts' : pct(c.fillRatePct)} muted={c.fillRatePct == null} tone={c.fillRatePct == null ? undefined : c.fillRatePct < 80 ? 'alert' : c.fillRatePct < 95 ? 'warning' : undefined} />
         <CardNumber label="Hours this week" value={c.hoursThisWeek ? hoursText(c.hoursThisWeek) : 'No hours yet'} muted={!c.hoursThisWeek} />
         {c.outstanding !== undefined ? (
-          <CardNumber label="Outstanding" value={c.outstanding > 0 ? fmtMoneyCompact(c.outstanding) : '$0'} muted={c.outstanding === 0} />
+          <CardNumber label="Outstanding" value={fmtMoney(c.outstanding)} muted={c.outstanding === 0} />
         ) : (
           <CardNumber label="Contract ends" value={c.contractEndDate ? fmtDate(c.contractEndDate) : 'Not set'} muted={!c.contractEndDate} tone={days !== null && days <= 30 ? 'alert' : days !== null && days <= 60 ? 'warning' : undefined} />
         )}

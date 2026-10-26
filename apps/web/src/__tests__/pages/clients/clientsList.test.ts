@@ -73,8 +73,8 @@ describe('the clients list rules', () => {
   });
 
   it('puts only what is known on the phone row', () => {
-    expect(numbersLine(c({ onAssignment: 12, fillRatePct: 94.4, outstanding: 5760 }))).toBe('12 on assignment · 94% filled · $5.8k due');
-    expect(numbersLine(c({ onAssignment: 3, fillRatePct: null, hoursThisWeek: 80.4 }))).toBe('3 on assignment · 80h this week');
+    expect(numbersLine(c({ onAssignment: 12, fillRatePct: 94.4, outstanding: 5760 }))).toBe('12 on assignment · 94% filled · $5,760.00 due');
+    expect(numbersLine(c({ onAssignment: 3, fillRatePct: null, hoursThisWeek: 80.4 }))).toBe('3 on assignment · 80.4h this week');
     expect(numbersLine(c({ activeAssociateCount: 0, outstanding: 0 }))).toBe('0 on assignment');
   });
 });

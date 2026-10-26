@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { capabilitiesFor, capabilityScenarios, defaultTenantProfile, type CapabilityScenarioFixture } from '@alto-people/shared';
 import { agent, loginAs } from '../../../test/http.js';
 import { createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
-import { BUILT_IN_AGENTS, builtInAgentId, ensureBuiltInAgents, resetAgentRateLimits } from '../../lib/agents.js';
+import { BUILT_IN_AGENTS, PLATFORM_ONLY_BUILT_INS, builtInAgentId, ensureBuiltInAgents, listAgents, resetAgentRateLimits } from '../../lib/agents.js';
 import { grantCapability, registerCapabilityRunner, runCapabilityFixture, unregisterCapabilityRunnerForTests, type CapabilityFixtureContext } from '../../lib/agentCapabilities.js';
 import { runForEachTenant } from '../../lib/tenantJobs.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
@@ -129,13 +129,36 @@ describe('built-in agents per tenant (test 3)', () => {
       expect(r.created).toEqual([]);
     });
     expect(again.failed).toBe(0);
-    expect(await prisma.agentProfile.count({ where: { builtInKey: { not: null } } })).toBe(2 * BUILT_IN_AGENTS.length);
+    // The platform's own tools (the deployment workflow) are the operator's alone: a customer's registry has the rest.
+    expect(await prisma.agentProfile.count({ where: { builtInKey: { not: null } } })).toBe(2 * BUILT_IN_AGENTS.length - PLATFORM_ONLY_BUILT_INS.size);
+    expect(await prisma.agentProfile.count({ where: { tenantId: T2, builtInKey: 'claude-code-deploy' } })).toBe(0);
+    expect(await prisma.agentProfile.count({ where: { tenantId: ALTO_TENANT_ID, builtInKey: 'claude-code-deploy' } })).toBe(1);
 
     // Risk ruling 3: the partial index refuses a second built-in with the same key in a tenant.
     const w = await prisma.worker.create({ data: { type: 'AGENT', name: 'Impostor', ownerUserId: two.user.id, tenantId: T2 } });
     await expect(
       prisma.agentProfile.create({ data: { workerId: w.id, tenantId: T2, purpose: 'x', vendor: 'x', model: 'x', modelVersion: 'x', builtInKey: 'boardroom' } }),
     ).rejects.toThrow();
+  });
+
+  it("takes a platform tool an older sweep left in a customer's registry back out, and never lists it there", async () => {
+    await createUser({ role: 'HR_ADMINISTRATOR' });
+    const two = await tenantTwoAdmin();
+    // What an older sweep wrote: the deployment workflow registered in a customer's tenant.
+    const stray = await prisma.worker.create({ data: { type: 'AGENT', name: 'Claude Code deployment workflow', ownerUserId: two.user.id, tenantId: T2, status: 'ACTIVE' } });
+    await prisma.agentProfile.create({ data: { workerId: stray.id, tenantId: T2, purpose: 'x', vendor: 'Anthropic', model: 'Claude', modelVersion: '1', builtInKey: 'claude-code-deploy' } });
+    const before = await listAgents(prisma, new Date(), T2);
+    expect(before.agents.map((a) => a.name)).not.toContain('Claude Code deployment workflow');
+    expect(before.builtInMissing).not.toContain('claude-code-deploy');
+
+    await ensureBuiltInAgents(prisma, T2);
+    expect(await prisma.worker.count({ where: { id: stray.id } })).toBe(0);
+    const after = await listAgents(prisma, new Date(), T2);
+    expect(after.agents.map((a) => a.profile.builtInKey)).not.toContain('claude-code-deploy');
+    // The operator keeps it on its own record.
+    await ensureBuiltInAgents(prisma, ALTO_TENANT_ID);
+    const operator = await listAgents(prisma, new Date(), ALTO_TENANT_ID);
+    expect(operator.agents.map((a) => a.profile.builtInKey)).toContain('claude-code-deploy');
   });
 });
 

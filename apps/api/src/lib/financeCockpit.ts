@@ -274,17 +274,24 @@ export async function marginTrend(
   const work = entries.map((e) => ({ ...e, site: e.location }));
   const { byEntry, byPerson } = splitByPerson(rules, work);
 
-  // Minutes per week per client (for revenue), wages per week (for the margin).
-  const byWeek = new Map<string, { people: Map<string, number>; clients: Map<string, number>; wages: number }>();
+  // Minutes per week per person+client (for revenue), wages per week (for the margin).
+  // Revenue is billed the way the VMS bills it — each person's week at a client in
+  // hundredths of an hour (lib/timesheetWeek), times the client's rate — so "Revenue ·
+  // last week" and the billing card's dollars for the same week agree to the cent
+  // (they read $6,601.50 and $6,601.73: exact minutes against rounded rows).
+  const byWeek = new Map<string, { people: Map<string, number>; rows: Map<string, { clientId: string; min: number }>; wages: number }>();
   for (const e of work) {
     const ws = saturdayWeek(e.clockInAt, e.location?.timezone ?? DEFAULT_TIMEZONE).weekStart;
     if (!startSet.has(ws)) continue;
     const share = byEntry.get(e)!;
     const min = share.workedHours * 60;
-    const b = byWeek.get(ws) ?? { people: new Map(), clients: new Map(), wages: 0 };
+    const b = byWeek.get(ws) ?? { people: new Map(), rows: new Map(), wages: 0 };
     b.people.set(e.associateId, (b.people.get(e.associateId) ?? 0) + min);
     const ck = e.clientId ?? '';
-    b.clients.set(ck, (b.clients.get(ck) ?? 0) + min);
+    const rk = `${e.associateId}|${ck}`;
+    const row = b.rows.get(rk) ?? { clientId: ck, min: 0 };
+    row.min += min;
+    b.rows.set(rk, row);
     b.wages += payFor(share, payRate.get(e.associateId) ?? PAYROLL_DEFAULT_RATE, byPerson.get(e.associateId)!);
     byWeek.set(ws, b);
   }
@@ -296,8 +303,8 @@ export async function marginTrend(
     let revenue = 0;
     let wages = b?.wages ?? 0;
     let unpriced = 0;
-    for (const [clientId, min] of b?.clients ?? []) {
-      const h = min / 60;
+    for (const { clientId, min } of b?.rows.values() ?? []) {
+      const h = round2(min / 60);
       hours += h;
       const rate = clientId ? (billRate.get(clientId) ?? null) : null;
       if (rate === null) unpriced += h;

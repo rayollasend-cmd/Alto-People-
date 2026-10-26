@@ -11,6 +11,8 @@ import { runWithTenant } from '../../lib/tenant.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
 import { ALTO_TENANT_ID } from '../../lib/tenant.js';
 import { invalidateTenantProfile } from '../../lib/tenantProfile.js';
+import { fmtDay } from '../../lib/humanDates.js';
+import { dueWords } from '../../lib/roleDecisions.js';
 
 /**
  * Agent families step 4 — the Compliance agent: document.chase and
@@ -203,7 +205,7 @@ describe('i9.section2', () => {
     const items = (await decisions(w.hr.email)).filter((d) => d.key.startsWith('i9:section2'));
     expect(items.map((d) => d.key)).toEqual([`i9:section2:${early.id}`, `i9:section2:${recent.id}`]);
     const dueDan = addBusinessDays(utcDay(-6), 3).toISOString().slice(0, 10);
-    expect(items[0]).toMatchObject({ severity: 'critical', label: `I-9 Section 2 for Dan Hire: late, was due ${dueDan}`, linkUrl: `/onboarding/applications/${early.applicationId}` });
+    expect(items[0]).toMatchObject({ severity: 'critical', label: `I-9 Section 2 for Dan Hire — ${dueWords(dueDan)}`, linkUrl: `/onboarding/applications/${early.applicationId}` });
     expect(items[0]!.detail).toMatch(/^E-Verify cannot open yet: .*no SSN on file/);
   });
 
@@ -221,7 +223,8 @@ describe('i9.section2', () => {
     expect(await runSection2Clock(prisma, new Date(due.getTime() + DAY + 12 * 3_600_000))).toMatchObject({ late: 1 });
     await flushPendingNotifications();
     const told = await prisma.notification.findMany({ where: { recipientUserId: w.hr.id, category: 'compliance.i9', channel: 'IN_APP' }, orderBy: { createdAt: 'asc' } });
-    expect(told.map((n) => n.subject)).toEqual([`I-9 Section 2 due ${due.toISOString().slice(0, 10)}: Eve Hire`, 'I-9 Section 2 is late: Eve Hire']);
+    expect(told.map((n) => n.subject)).toEqual([`I-9 Section 2 due ${fmtDay(due, { weekday: true })}: Eve Hire`, 'I-9 Section 2 is late: Eve Hire']);
+    expect(told.every((n) => !/\d{4}-\d{2}-\d{2}/.test(`${n.subject} ${n.body}`))).toBe(true);
   });
 
   it('suspended: the desk keeps the plain count it had before', async () => {

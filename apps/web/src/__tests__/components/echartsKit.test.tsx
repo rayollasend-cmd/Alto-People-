@@ -110,16 +110,31 @@ describe('calendarOption', () => {
 });
 
 describe('treemapOption', () => {
-  it('sorts groups by size, gives each a series colour, steps its children toward the surface, and folds past the fifth', () => {
+  it('sorts groups by size, gives each a series colour (never gold), steps its children toward the surface, and folds past the fifth', () => {
     const groups = Array.from({ length: 6 }, (_, i) => ({ name: `C${i}`, value: 10 + i, children: [{ name: `S${i}`, value: 10 + i }] }));
     const s = seriesOf(treemapOption(groups, C));
     expect(s.data.map((d) => d.name)).toEqual(['C5', 'C4', 'C3', 'C2', 'C1', 'C0']);
-    expect((s.data[0]!.itemStyle as { color: string }).color).toBe(C.series[0]);
+    // Gold (chart-1) is punctuation, not a card-sized fill: the first group takes chart-2.
+    expect((s.data[0]!.itemStyle as { color: string }).color).toBe(C.series[1]);
+    expect(s.data.some((d) => (d.itemStyle as { color: string }).color === C.series[0])).toBe(false);
+    expect((s.data[4]!.itemStyle as { color: string }).color).toBe(C.other);
     expect((s.data[5]!.itemStyle as { color: string }).color).toBe(C.other);
     const child = (s.data[0]!.children as Array<{ itemStyle: { color: string; borderColor: string } }>)[0]!;
-    expect(child.itemStyle.color).toBe(mix(C.series[0]!, C.surface, 0.2));
+    expect(child.itemStyle.color).toBe(mix(C.series[1]!, C.surface, 0.2));
     // A parent's border colour is its name strip: its own shade, never the card.
-    expect((s.data[0]!.itemStyle as { borderColor: string }).borderColor).toBe(C.series[0]);
+    expect((s.data[0]!.itemStyle as { borderColor: string }).borderColor).toBe(C.series[1]);
+  });
+
+  it('lists its blocks deepest-first, largest first, and says them as a list below three', async () => {
+    const { Treemap, treemapLeaves } = await import('@/components/ui/charts');
+    const tree = [{ name: 'Coastal', value: 105, children: [{ name: 'Front Beach', value: 105, children: [{ name: 'Deli', value: 105 }] }] }];
+    expect(treemapLeaves(tree)).toEqual([{ path: ['Coastal', 'Front Beach', 'Deli'], value: 105 }]);
+    render(<Treemap data={tree} format={(n) => `$${n}`} />);
+    expect(screen.getByTestId('treemap-few')).toHaveTextContent('Coastal › Front Beach › Deli$105');
+    // A caller can say it its own way.
+    const { unmount } = render(<Treemap data={tree} few={(leaves) => <p>Only {leaves[0]!.path.at(-1)}</p>} />);
+    expect(screen.getByText('Only Deli')).toBeInTheDocument();
+    unmount();
   });
 
   it('puts navy text on light blocks and white text on dark ones', () => {

@@ -64,10 +64,10 @@ describe('the Push column', () => {
     vi.mocked(thisDevicePushStatus).mockResolvedValue('subscribed');
     reach = { web: true, native: false, devices: 1 };
     serve();
-    renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
+    renderAs('ASSOCIATE', <Settings />, '/settings#notifications', { associateId: 'a1' });
     const cols = await screen.findByTestId('notif-columns');
     expect(cols).toHaveTextContent(/Bell\s*Email\s*Push/);
-    const push = (label: string) => screen.getByRole('checkbox', { name: `Push for ${label}` });
+    const push = (label: string) => screen.getByRole('switch', { name: `Push for ${label}` });
     expect(push('Scheduling')).toBeChecked();
     expect(push('Documents')).not.toBeChecked();
     expect(push('Account security')).toBeChecked();
@@ -80,20 +80,20 @@ describe('the Push column', () => {
     vi.mocked(thisDevicePushStatus).mockResolvedValue('subscribed');
     reach = { web: true, native: false, devices: 1 };
     serve();
-    renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
-    const toggle = await screen.findByRole('checkbox', { name: 'Push for Scheduling' });
+    renderAs('ASSOCIATE', <Settings />, '/settings#notifications', { associateId: 'a1' });
+    const toggle = await screen.findByRole('switch', { name: 'Push for Scheduling' });
     await userEvent.click(toggle);
     await waitFor(() => expect(patches).toEqual([{ category: 'scheduling', pushEnabled: false }]));
     expect(toggle).not.toBeChecked();
-    expect(screen.getByRole('checkbox', { name: 'Email for Scheduling' })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: 'Bell for Scheduling' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Email for Scheduling' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Bell for Scheduling' })).toBeChecked();
   });
 
   it('this device subscribed and reachable: no note, and the device row offers to turn it off here', async () => {
     vi.mocked(thisDevicePushStatus).mockResolvedValue('subscribed');
     reach = { web: true, native: false, devices: 2 };
     serve();
-    renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
+    renderAs('ASSOCIATE', <Settings />, '/settings#notifications', { associateId: 'a1' });
     const row = await screen.findByTestId('push-this-device');
     expect(row).toHaveTextContent('Push notifications');
     expect(screen.queryByTestId('push-column-note')).toBeNull();
@@ -106,11 +106,11 @@ describe('the Push column', () => {
     vi.mocked(turnOnPushHere).mockResolvedValue('subscribed');
     reach = { web: true, native: true, devices: 0 };
     serve();
-    renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
+    renderAs('ASSOCIATE', <Settings />, '/settings#notifications', { associateId: 'a1' });
     const note = await screen.findByTestId('push-column-note');
     expect(note).toHaveTextContent('Push is off on this device. No device of yours gets push yet, so nothing arrives by push.');
     // The switches point at the note.
-    expect(screen.getByRole('checkbox', { name: 'Push for Scheduling' })).toHaveAttribute('aria-describedby', 'push-column-note');
+    expect(screen.getByRole('switch', { name: 'Push for Scheduling' })).toHaveAttribute('aria-describedby', 'push-column-note');
     expect(screen.queryByTestId('push-this-device')).toBeNull();
 
     const before = prefsLoads();
@@ -127,7 +127,7 @@ describe('the Push column', () => {
     vi.mocked(thisDevicePushStatus).mockResolvedValue('available');
     reach = { web: true, native: true, devices: 1 };
     serve();
-    renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
+    renderAs('ASSOCIATE', <Settings />, '/settings#notifications', { associateId: 'a1' });
     const note = await screen.findByTestId('push-column-note');
     expect(note).toHaveTextContent('Push is off on this device. Your other devices still get it.');
     expect(within(note).getByRole('button', { name: 'Turn on push on this device' })).toBeInTheDocument();
@@ -137,7 +137,7 @@ describe('the Push column', () => {
     vi.mocked(thisDevicePushStatus).mockResolvedValue('unsupported');
     reach = { web: true, native: true, devices: 0 };
     serve();
-    renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
+    renderAs('ASSOCIATE', <Settings />, '/settings#notifications', { associateId: 'a1' });
     const note = await screen.findByTestId('push-column-note');
     expect(note).toHaveTextContent('This browser can’t get push. On iPhone, add the app to your home screen first.');
     expect(within(note).queryByRole('button')).toBeNull();
@@ -147,7 +147,7 @@ describe('the Push column', () => {
     vi.mocked(thisDevicePushStatus).mockResolvedValue('available');
     reach = { web: false, native: false, devices: 0 };
     serve();
-    renderAs('ASSOCIATE', <Settings />, '/settings', { associateId: 'a1' });
+    renderAs('ASSOCIATE', <Settings />, '/settings#notifications', { associateId: 'a1' });
     const note = await screen.findByTestId('push-column-note');
     expect(note).toHaveTextContent('Push isn’t connected for your organization yet, so nothing goes out by push.');
     expect(within(note).queryByRole('button')).toBeNull();
@@ -159,7 +159,7 @@ describe('the Push column', () => {
       vi.mocked(thisDevicePushStatus).mockResolvedValue('available');
       reach = { web: true, native: true, devices: 0 };
       serve();
-      renderAs('ASSOCIATE', <I18nProvider><Settings /></I18nProvider>, '/settings', { associateId: 'a1' });
+      renderAs('ASSOCIATE', <I18nProvider><Settings /></I18nProvider>, '/settings#notifications', { associateId: 'a1' });
       const note = await screen.findByTestId('push-column-note');
       expect(note).toHaveTextContent('Las notificaciones push están desactivadas en este dispositivo. Ninguno de tus dispositivos recibe push todavía, así que no te llegará nada por push.');
       expect(within(note).getByRole('button', { name: 'Activar push en este dispositivo' })).toBeInTheDocument();

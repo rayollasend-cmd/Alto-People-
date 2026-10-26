@@ -302,7 +302,9 @@ export async function computeAssociateEarnings(
   const probe = plannedEntry({ startsAt: now, endsAt: new Date(now.getTime() + 60_000), site: probeSite });
   const probeSplit = splitHours(pay.rules, [...worked.filter((w) => w.clockInAt <= now), probe]);
   const nextShare = probeSplit.entries[probeSplit.entries.length - 1]!;
-  const nextMultiplier = nextShare.doubleTimeHours > 0 ? probeSplit.doubleMultiplier : nextShare.overtimeHours > 0 ? probeSplit.overtimeMultiplier : 1;
+  // A minute in overtime is 0.0167 h of it; anything under a millionth is float residue.
+  const EPS = 1e-6;
+  const nextMultiplier = nextShare.doubleTimeHours > EPS ? probeSplit.doubleMultiplier : nextShare.overtimeHours > EPS ? probeSplit.overtimeMultiplier : 1;
 
   return {
     weekStart: weekStart.toISOString(),
@@ -319,7 +321,11 @@ export async function computeAssociateEarnings(
     overtime: {
       thresholdHours: WEEKLY_THRESHOLD_HOURS,
       multiplier: workedSplit.overtimeMultiplier,
-      unlocked: nextMultiplier > 1,
+      // "Every hour now pays 1.5×" is about the hours still to work: on the
+      // clock, the next minute's rate; off it, only once the week itself is
+      // past the threshold. A probe minute appended after a long day read as
+      // "Overtime unlocked" with 0 overtime hours in the same answer.
+      unlocked: onClock ? nextMultiplier > 1 : workedHours >= WEEKLY_THRESHOLD_HOURS,
       otHoursSoFar: round2(workedSplit.overtimeHours + workedSplit.doubleTimeHours),
       projectedOtHours: round2(projSplit.overtimeHours + projSplit.doubleTimeHours),
     },

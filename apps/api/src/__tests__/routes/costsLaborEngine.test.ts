@@ -175,6 +175,23 @@ describe('live California daily overtime on the cost screens', () => {
     expect(week.wages).toBe(8 * 20 + 2 * 30);
   });
 
+  it('revenue bills each person\'s week in hundredths of an hour, as the VMS does — so it agrees with the billing card to the cent', async () => {
+    const client = await createClient('Billed Store');
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    await prisma.client.update({ where: { id: client.id }, data: { fieldglassBillRate: 25 } });
+    const ana = await createAssociate();
+    // 40 + 40 minutes: 1.3333… hours. Billed as 1.33 h × $25 = $33.25, not $33.33.
+    for (const day of ['2026-09-07', '2026-09-08']) {
+      await prisma.timeEntry.create({
+        data: { associateId: ana.id, clientId: client.id, locationId: site.id, clockInAt: pt(day, 9), clockOutAt: new Date(pt(day, 9).getTime() + 40 * 60_000), status: 'APPROVED', approvedAt: new Date() },
+      });
+    }
+    const m = await marginTrend(new Date('2026-09-16T16:00:00.000Z'), 8);
+    const week = m.weeks.find((w) => w.weekStart === '2026-09-05')!;
+    expect(week.hours).toBe(1.33);
+    expect(week.revenue).toBe(33.25);
+  });
+
   it('attendance trends count the overtime hours the paycheck pays', async () => {
     const { client, site } = await liveCaliforniaSite();
     const ana = await createAssociate();

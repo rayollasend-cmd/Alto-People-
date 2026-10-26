@@ -86,7 +86,10 @@ export interface IntegrationConnectionSummary {
   eventDriven: boolean;
   lastSyncAt: string | null;
   nextSyncAt: string | null;
+  /** The last failure as one plain sentence — what stopped and what to do. */
   lastError: string | null;
+  /** The recorded technical text behind lastError (status codes, the vendor's words), for a details disclosure; null when there is none. */
+  lastErrorDetail?: string | null;
   /** Errors across the last ten runs. */
   recentErrors: number;
   lastRun: IntegrationSyncRunSummary | null;

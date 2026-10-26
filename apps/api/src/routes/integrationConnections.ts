@@ -16,6 +16,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { encryptString } from '../lib/crypto.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { VENDOR_CATALOG, adapterFor, vendorInfo } from '../lib/integrations/registry.js';
+import { providerFailureText } from '../lib/providers/failureText.js';
 import { SyncRefused, runSync } from '../lib/integrations/sync.js';
 
 /**
@@ -74,24 +75,28 @@ async function summarize(ids: string[]): Promise<IntegrationConnectionSummary[]>
     orderBy: [{ vendor: 'asc' }, { createdAt: 'asc' }],
     include: { runs: { orderBy: { startedAt: 'desc' }, take: 10, select: { id: true, capability: true, direction: true, status: true, trigger: true, eventType: true, startedAt: true, finishedAt: true, total: true, succeeded: true, failed: true, summary: true } } },
   });
-  return rows.map((c) => ({
-    id: c.id,
-    vendor: c.vendor as IntegrationVendor,
-    name: c.name,
-    status: c.status,
-    sandbox: c.sandbox,
-    hasCredentials: !!c.credentialsEnc,
-    capabilities: c.capabilities as IntegrationCapability[],
-    mapping: (c.mapping as IntegrationConnectionSummary['mapping']) ?? {},
-    scheduleMinutes: c.scheduleMinutes,
-    eventDriven: c.eventDriven,
-    lastSyncAt: c.lastSyncAt?.toISOString() ?? null,
-    nextSyncAt: c.nextSyncAt?.toISOString() ?? null,
-    lastError: c.lastError,
-    recentErrors: c.runs.reduce((a, r) => a + r.failed, 0),
-    lastRun: c.runs[0] ? runShape(c.runs[0]) : null,
-    createdAt: c.createdAt.toISOString(),
-  }));
+  return rows.map((c) => {
+    const failure = providerFailureText(c.lastError, { label: VENDOR_CATALOG.find((v) => v.vendor === c.vendor)?.label ?? c.vendor });
+    return {
+      id: c.id,
+      vendor: c.vendor as IntegrationVendor,
+      name: c.name,
+      status: c.status,
+      sandbox: c.sandbox,
+      hasCredentials: !!c.credentialsEnc,
+      capabilities: c.capabilities as IntegrationCapability[],
+      mapping: (c.mapping as IntegrationConnectionSummary['mapping']) ?? {},
+      scheduleMinutes: c.scheduleMinutes,
+      eventDriven: c.eventDriven,
+      lastSyncAt: c.lastSyncAt?.toISOString() ?? null,
+      nextSyncAt: c.nextSyncAt?.toISOString() ?? null,
+      lastError: failure?.message ?? null,
+      lastErrorDetail: failure?.detail ?? null,
+      recentErrors: c.runs.reduce((a, r) => a + r.failed, 0),
+      lastRun: c.runs[0] ? runShape(c.runs[0]) : null,
+      createdAt: c.createdAt.toISOString(),
+    };
+  });
 }
 
 integrationConnectionsRouter.get('/vendors', canView, (_req, res) => {

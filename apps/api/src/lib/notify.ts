@@ -61,6 +61,7 @@ import {
 } from './emailTemplates.js';
 import { supervisorRecipients } from './shiftWindows.js';
 import { publicBaseUrl } from './emailLayout.js';
+import { fmtMomentInZone } from './humanDates.js';
 
 // Snapshot at module load. Drives the notifyAllAdmins recipient query.
 // Capability-based (not a hardcoded role list) so a future role gaining
@@ -796,7 +797,7 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
       const tpl = onboardingCompleteTemplate({
         associateName: who,
         clientName: app.client?.name ?? null,
-        submittedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+        submittedAt: fmtMomentInZone(new Date()),
         applicationUrl: `${publicBaseUrl()}/onboarding/applications/${app.id}`,
       });
       await notifyAllAdmins({

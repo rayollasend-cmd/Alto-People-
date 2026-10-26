@@ -169,7 +169,7 @@ describe('Manager-routed notification hooks', () => {
     });
     expect(assocInApp).toHaveLength(1);
     expect(assocInApp[0].body).toMatch(/probation/i);
-    expect(assocInApp[0].body).toMatch(/2026-05-02/);
+    expect(assocInApp[0].body).toMatch(/May 2 – Aug 2, 2026/);
 
     const mgrInApp = await prisma.notification.findMany({
       where: { recipientUserId: w.managerUser.id, category: 'probation', channel: 'IN_APP' },

@@ -8,6 +8,7 @@ import { emitBooksChange } from '../events.js';
 import { postEntry, voidEntry } from '../ledger.js';
 import { addDays, cents, daysBetween, dollars, money, todayYmd, userNames, ymd, dateOnly, type Db } from './shared.js';
 import { vendorInReach } from './vendors.js';
+import { fmtDay } from '../../humanDates.js';
 
 /**
  * Bills — what the company owes its vendors.
@@ -130,7 +131,7 @@ export async function submitBill(db: Db, bill: BillWithLines, requesterUserId: s
     subjectType: 'Bill',
     subjectId: bill.id,
     title: `${money(total)} bill from ${vendor.name}`,
-    summary: `${bill.billNumber ? `Invoice ${bill.billNumber}, ` : ''}dated ${ymd(bill.billDate)}, due ${ymd(bill.dueDate)}. ${bill.lines.length} ${bill.lines.length === 1 ? 'line' : 'lines'}${bill.memo ? ` — ${bill.memo}` : ''}. Approving puts it on the books as owed.`,
+    summary: `${bill.billNumber ? `Invoice ${bill.billNumber}, ` : ''}dated ${fmtDay(bill.billDate, { year: true })}, due ${fmtDay(bill.dueDate, { year: true })}. ${bill.lines.length} ${bill.lines.length === 1 ? 'line' : 'lines'}${bill.memo ? ` — ${bill.memo}` : ''}. Approving puts it on the books as owed.`,
     proposed: { billId: bill.id, vendorId: vendor.id, total, dueDate: ymd(bill.dueDate) },
     requesterUserId,
     approver: { capability: 'manage:books' },

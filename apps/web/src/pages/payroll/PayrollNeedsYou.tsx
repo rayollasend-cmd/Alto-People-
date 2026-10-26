@@ -9,6 +9,7 @@ import { fmtCount, fmtDate, fmtDateOnlyRange } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { isSignInFailure } from './WebhookHealthTile';
+import { totalsOnHold } from '@/components/payroll/RunTotalsMismatch';
 
 /**
  * "Needs you" on the payroll home (F500 G3, P1): the open work of this
@@ -76,6 +77,17 @@ export function payrollNeeds(input: {
   }
   const runSteps = new Set<string>();
   for (const r of input.runs ?? []) {
+    // A run whose totals and paychecks disagree is on hold: its one need is that, not its next step.
+    if (totalsOnHold(r)) {
+      out.push({
+        key: `run:${r.id}`,
+        title: 'Totals and paychecks disagree',
+        detail: `${fmtDateOnlyRange(r.periodStart, r.periodEnd)} run · nothing moves until they agree`,
+        to: `/payroll/runs/${r.id}`,
+        tone: 'alert',
+      });
+      continue;
+    }
     const n = r.nextStep;
     if (!n || n.key === 'done' || n.key === 'cancelled') continue;
     runSteps.add(n.key);

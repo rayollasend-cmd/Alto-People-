@@ -280,7 +280,9 @@ export function Login() {
     }
   };
 
-  const canSubmitPassword = !!email && password.length >= 12 && !submitting;
+  // Sign-in takes whatever password the account has — the 12-character
+  // rule is for choosing one (reset, invite), not for typing it.
+  const canSubmitPassword = !!email && password.length > 0 && !submitting;
   const formRef = useFocusFirstError<HTMLFormElement>(error);
   const expectedCodeLength = useRecovery ? 11 : 6;
   const canSubmitMfa = code.trim().length === expectedCodeLength && !submitting;
@@ -361,7 +363,6 @@ export function Login() {
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="current-password"
                   required
-                  minLength={12}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-9 pr-10"
@@ -379,7 +380,6 @@ export function Login() {
                   )}
                 </button>
               </div>
-              <FormHint>{t('login.minChars')}</FormHint>
             </div>
           </div>
 

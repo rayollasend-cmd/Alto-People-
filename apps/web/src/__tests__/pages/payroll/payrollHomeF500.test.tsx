@@ -107,20 +107,22 @@ describe('Needs you', () => {
     });
     expect(needs.map((n) => [n.key, n.count ?? null, n.title, n.to])).toEqual([
       ['payouts', null, 'Payouts can’t go out', '/payroll/banking'],
-      [`run:${RUN}`, null, 'Create the tax deposit', `/payroll/runs/${RUN}/close`],
+      // Its totals and paychecks disagree: on hold, said as that — not "Create the tax deposit" (F500 audit 2026-10-26).
+      [`run:${RUN}`, null, 'Totals and paychecks disagree', `/payroll/runs/${RUN}`],
       ['inbox:payroll-missed-paydays', 2, 'Paydays with no run', '/payroll?ledger=missed'],
       ['readiness', 10, 'People who can’t be paid yet', '/payroll/readiness'],
       ['eiwo', 1, 'e-IWO order to answer', '/payroll/garnishments?tab=eiwo'],
       ['inbox:pay-schedule-unassigned', 10, 'People on no pay schedule', '/payroll/schedules?view=unassigned'],
     ]);
     expect(needs[0]!.detail).toBe('Wise rejected our sign-in on Oct 17, 2026.');
-    expect(needs[1]!.detail).toBe('Aug 29 – Sep 11, 2026 run');
+    expect(needs[1]!.detail).toBe('Aug 29 – Sep 11, 2026 run · nothing moves until they agree');
+    expect(needs[1]!.tone).toBe('alert');
     // A queue another desk owns, a zero count and a non-payroll queue are left out.
     expect(needs.some((n) => n.key.includes('payroll-funding') || n.key.includes('financial-changes') || n.key.includes('timesheets'))).toBe(false);
   });
 
   it('is empty when nothing waits', () => {
-    expect(payrollNeeds({ payout: { ...WISE_401, health: 'healthy' }, runs: [{ ...paidRun, nextStep: { ...paidRun.nextStep, key: 'done' } } as never], inbox: [], readiness: { missingCount: 0 }, garnishments: { eiwoToReview: 0, remittancesPending: 0 } })).toEqual([]);
+    expect(payrollNeeds({ payout: { ...WISE_401, health: 'healthy' }, runs: [{ ...paidRun, totalsAgree: true, nextStep: { ...paidRun.nextStep, key: 'done' } } as never], inbox: [], readiness: { missingCount: 0 }, garnishments: { eiwoToReview: 0, remittancesPending: 0 } })).toEqual([]);
   });
 });
 
@@ -144,7 +146,8 @@ describe('Payroll home', () => {
     const card = await screen.findByTestId('payroll-needs-you');
     await waitFor(() => expect(within(card).getAllByRole('link')).toHaveLength(6));
     expect(within(card).getByRole('link', { name: /Payouts can’t go out/ })).toHaveAttribute('href', '/payroll/banking');
-    expect(within(card).getByRole('link', { name: /Create the tax deposit/ })).toHaveAttribute('href', `/payroll/runs/${RUN}/close`);
+    expect(within(card).getByRole('link', { name: /Totals and paychecks disagree/ })).toHaveAttribute('href', `/payroll/runs/${RUN}`);
+    expect(within(card).queryByRole('link', { name: /Create the tax deposit/ })).toBeNull();
   });
 
   it('one primary to run payroll: the header offers an off-cycle run, the sibling desks are links, and there are no tabs', async () => {
@@ -184,6 +187,21 @@ describe('Run status stepper', () => {
   it('a paid run with none says so instead of a tick', () => {
     renderAs('FINANCE_ACCOUNTANT', <RunStatusStepper status="DISBURSED" lifecycle={{ reviewSignedAt: null, nextStep: undefined }} signedOff={false} />);
     expect(screen.getByText('No sign-off')).toBeInTheDocument();
+  });
+
+  it('where no sign-off is required, the step says so in the quiet colour, not as a warning', () => {
+    renderAs('FINANCE_ACCOUNTANT', <RunStatusStepper status="DISBURSED" lifecycle={{ reviewSignedAt: null, nextStep: undefined }} signedOff={false} signoffRequired={false} />);
+    expect(screen.queryByText('No sign-off')).toBeNull();
+    expect(screen.getByText('Not required')).toBeInTheDocument();
+  });
+
+  it('a run whose totals and paychecks disagree is on hold: no next step that moves money or files taxes', () => {
+    renderAs(
+      'FINANCE_ACCOUNTANT',
+      <RunStatusStepper status="DISBURSED" lifecycle={{ reviewSignedAt: null, totalsAgree: false, nextStep: { key: 'deposit', label: 'Create the tax deposit', to: '/payroll', waitingOn: null } }} signedOff={false} />,
+    );
+    expect(screen.getByTestId('run-on-hold')).toHaveTextContent('On hold: the totals and the paychecks disagree.');
+    expect(screen.queryByText('Create the tax deposit')).toBeNull();
   });
 });
 

@@ -120,6 +120,7 @@ import { useStoreScope } from '@/lib/storeScope';
 import { boundedClientOf, hasCapability, isClientBoundedRole } from '@/lib/roles';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
+import { DateRangeField } from '@/components/ui/DateField';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import {
@@ -687,10 +688,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const raw = window.localStorage.getItem(VIEW_KEY);
     const stored = parseView(raw);
     if (stored !== 'list') setView(stored);
-    // A store's supervisor plans a week of their own floor — the week grid,
-    // not an org-wide list of open shifts, is where they start (once; their
-    // own pick is remembered from then on).
-    else if (raw === null && boundedClient) setView('week');
+    // A first visit opens on the week grid — the schedule itself — not on a
+    // list filtered to open shifts, which was usually an empty state (F500
+    // 2026-10-26; a store's supervisor already did). On a phone the list is
+    // the schedule. Their own pick is remembered from then on.
+    else if (raw === null && (boundedClient || window.matchMedia?.('(min-width: 768px)').matches)) setView('week');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2911,20 +2913,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <Calendar className="h-3 w-3" />
         Range
       </div>
-      <input
-        type="date"
-        value={listFrom}
-        onChange={(e) => setListFrom(e.target.value)}
-        className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-        aria-label="From date"
-      />
-      <span className="text-silver/70 text-xs">→</span>
-      <input
-        type="date"
-        value={listTo}
-        onChange={(e) => setListTo(e.target.value)}
-        className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-        aria-label="To date"
+      {/* The app's own date field (the kit's DateRangeField), not the browser's. */}
+      <DateRangeField
+        size="sm"
+        from={listFrom}
+        to={listTo}
+        fromLabel="From date"
+        toLabel="To date"
+        onChange={({ from, to }) => {
+          if (from !== listFrom) setListFrom(from);
+          if (to !== listTo) setListTo(to);
+        }}
       />
       {/* Presets: the list opens on the next two weeks; the others are a
           tap away. An emptied date field goes back to the default. */}
@@ -3040,7 +3039,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             <div className="no-print">
               {/* One line (ops 4); the tiles stay behind "Details". On a phone
                   the line scrolls sideways as chips (ops 14). */}
-              <div className="mb-2 flex items-center gap-2 overflow-x-auto text-sm text-silver [scrollbar-width:none]" data-testid="kpi-line">
+              {/* Wraps on a phone: the row scrolled sideways and cut "Details" off (362px in 358). */}
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-silver md:flex-nowrap md:overflow-x-auto md:[scrollbar-width:none]" data-testid="kpi-line">
                 {kpis ? (
                   <>
                     {/* Which window the numbers count — "This week" off the
@@ -3096,7 +3096,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                     Close out {unfilledInView} unfilled past shift{unfilledInView === 1 ? '' : 's'}
                   </Button>
                 )}
-                <button type="button" onClick={() => setKpiDetails((v) => !v)} className="ml-auto shrink-0 whitespace-nowrap text-2xs text-silver/70 underline underline-offset-2 hover:text-gold" aria-expanded={kpiDetails}>
+                <button type="button" onClick={() => setKpiDetails((v) => !v)} className="ml-auto inline-flex min-h-6 shrink-0 items-center whitespace-nowrap px-1 text-xs text-silver underline underline-offset-2 hover:text-gold coarse:min-h-11" aria-expanded={kpiDetails}>
                   {kpiDetails ? 'Hide details' : 'Details'}
                 </button>
               </div>
@@ -3343,43 +3343,26 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
-            {/* Pick the exact start and end of the range to schedule. */}
-            <label className="ml-2 inline-flex items-center gap-1 text-xs2 text-silver/70">
-              From
-              <input
-                type="date"
-                aria-label="Week start date"
-                value={ymd(weekStart)}
-                max={ymd(weekEndInclusive)}
-                onChange={(e) => {
-                  if (!e.target.value) return;
-                  const nextStart = fromYmd(e.target.value);
-                  // Keep the same end day; recompute the span (clamp 1..31).
-                  const span = Math.min(31, Math.max(1, daysBetweenLocal(nextStart, weekEndInclusive) + 1));
-                  setWeekStart(nextStart);
-                  setWeekDayCount(span);
-                }}
-                className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-              />
-            </label>
-            <label className="inline-flex items-center gap-1 text-xs2 text-silver/70">
-              To
-              <input
-                type="date"
-                aria-label="Week end date"
-                value={ymd(weekEndInclusive)}
-                min={ymd(weekStart)}
-                onChange={(e) => {
-                  if (!e.target.value) return;
-                  const end = fromYmd(e.target.value);
-                  const span = Math.min(31, Math.max(1, daysBetweenLocal(weekStart, end) + 1));
-                  setWeekDayCount(span);
-                }}
-                className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-              />
-            </label>
+            {/* Pick the exact start and end of the range to schedule (the kit's date field). */}
+            <DateRangeField
+              size="sm"
+              className="ml-2"
+              from={ymd(weekStart)}
+              to={ymd(weekEndInclusive)}
+              fromLabel="Week start date"
+              toLabel="Week end date"
+              onChange={({ from, to }) => {
+                if (!from || !to) return;
+                const nextStart = fromYmd(from);
+                const end = fromYmd(to);
+                // Keep the span within 1..31 days.
+                const span = Math.min(31, Math.max(1, daysBetweenLocal(nextStart, end) + 1));
+                if (from !== ymd(weekStart)) setWeekStart(nextStart);
+                setWeekDayCount(span);
+              }}
+            />
             <span className="text-xs2 text-silver/60 tabular-nums">
-              {weekDayCount}d
+              {weekDayCount} {weekDayCount === 1 ? 'day' : 'days'}
             </span>
             {canManage && (
               <Button
@@ -6732,7 +6715,7 @@ export function CreateShiftDialog({
               <div className="text-xs font-medium text-white">
                 Assign to employees
                 {assignIds.size > 0 && (
-                  <span className="ml-2 text-gold tabular-nums">{assignIds.size} selected</span>
+                  <span className="ml-2 text-ink-muted tabular-nums">{assignIds.size} selected</span>
                 )}
               </div>
               {scopedAssociates.length > 0 && (

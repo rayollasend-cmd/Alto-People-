@@ -242,7 +242,9 @@ describe('<FillRateTrendCard>', () => {
     unmount();
     api.getAttendanceTrends.mockResolvedValue({ ...trends(), weeks: trends().weeks.map((w) => ({ ...w, fillRatePct: null })) });
     renderAs('SHIFT_SUPERVISOR', <FillRateTrendCard />);
-    expect(await screen.findByText(/nothing scheduled yet; the line starts with the first published week/)).toBeInTheDocument();
+    // One quiet EmptyState line, not an empty chart or a bordered paragraph.
+    expect(await screen.findByText(/Nothing scheduled yet — the line starts with the first published week/)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Fill rate · 8 weeks');
     expect(screen.queryByRole('heading', { name: 'Fill rate · 8 weeks' })).toBeNull();
   });
 });

@@ -55,7 +55,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import { getAgent, listAgentCapabilities, getAgentScorecard, listAgentScenarios } from '@/lib/agentsApi';
-import { AgentRecordPage } from '@/pages/admin/AgentRecordPage';
+import { AgentRecordPage, nextStepKind } from '@/pages/admin/AgentRecordPage';
 
 const OWNER = { id: '11111111-1111-4111-8111-111111111111', name: 'Jo Park', email: 'jo@alto.example', associateId: 'assoc-jo' };
 const AGENT_ID = '22222222-2222-4222-8222-222222222222';
@@ -162,8 +162,9 @@ describe('AgentRecordPage', () => {
     expect(within(profile).getByText(/ships with the product/)).toBeInTheDocument();
     // No form yet.
     expect(screen.queryByLabelText(/Purpose/)).not.toBeInTheDocument();
-    // The subtitle says family, owner and status in words only.
-    expect(screen.getByText('Associate Self-Service · owned by Jo Park · active')).toBeInTheDocument();
+    // The subtitle says family and owner; the status is the badge beside the name, said once (F500 2026-10-26).
+    expect(screen.getByText('Associate Self-Service · owned by Jo Park')).toBeInTheDocument();
+    expect(screen.getAllByText('Active')).toHaveLength(1);
     // Breadcrumb: People › Agents › the agent.
     expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/agents');
 
@@ -231,5 +232,20 @@ describe('AgentRecordPage', () => {
     expect(screen.queryByRole('tab', { name: /Proposals/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /Spend/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /Credentials/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('the agent record’s one primary: its next step (F500 2026-10-26)', () => {
+  const cert = { modelVersion: '4.5', certifiedAt: null, certifiedModelVersion: null, current: false, scenarios: 3, passing: 3, ready: true, runnable: true };
+  it('certifies an onboarding agent whose scenarios pass, runs them when they have not, and asks for the first one', () => {
+    expect(nextStepKind({ status: 'ONBOARDING', certification: cert })).toBe('certify');
+    expect(nextStepKind({ status: 'ONBOARDING', certification: { ...cert, ready: false, passing: 1 } })).toBe('run');
+    expect(nextStepKind({ status: 'ONBOARDING', certification: { ...cert, ready: false, scenarios: 0, passing: 0 } })).toBe('add');
+  });
+
+  it('recertifies an active agent whose model moved past its certificate, and asks nothing of a current one', () => {
+    expect(nextStepKind({ status: 'ACTIVE', certification: cert })).toBe('certify');
+    expect(nextStepKind({ status: 'ACTIVE', certification: { ...cert, current: true } })).toBeNull();
+    expect(nextStepKind({ status: 'SUSPENDED', certification: cert })).toBeNull();
   });
 });

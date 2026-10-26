@@ -242,7 +242,7 @@ describe('<ApprovalsHome> agent proposals', () => {
     vi.mocked(listMyProposals).mockResolvedValue({ approvals: [proposalFixture] });
     renderPage('SHIFT_SUPERVISOR', `/approvals?tab=proposals&proposal=${proposalFixture.id}`);
     // The queue tile with its count…
-    expect(await screen.findByText('Suggested by an agent')).toBeInTheDocument();
+    expect(await screen.findByText('Suggested by an AI agent')).toBeInTheDocument();
     // Timesheets count as decisions too; the header says how many wait (F500).
     expect(await screen.findByText('1 waiting.')).toBeInTheDocument();
     // …and the open item: the card with the proposal, the evidence and the decision.
@@ -255,18 +255,27 @@ describe('<ApprovalsHome> agent proposals', () => {
 });
 
 describe('<ApprovalsHome>', () => {
-  it('with every queue empty: one clear state; the role’s own queues stay rows, the rest fold behind "N queues clear"', async () => {
+  it('with every queue empty: one clear state, and EVERY empty queue folds behind one "N queues clear" line', async () => {
     renderPage();
     expect(screen.getByText('Approvals')).toBeInTheDocument();
     expect(await screen.findByText('Nothing waiting on you')).toBeInTheDocument();
     const clear = await screen.findByTestId('approvals-clear');
-    // HR's own queues (pay & access, time off, agent suggestions, timesheets) are rows at zero…
-    expect(screen.getByRole('button', { name: /Time off.*Nothing pending.*0/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Timesheets.*Nothing pending.*0/ })).toBeInTheDocument();
-    // …the floor's queues fold behind one line.
-    expect(within(clear).getByText('4 queues clear')).toBeInTheDocument();
+    // No full card with a big "0" beside folded ones (F500 2026-10-26): one rule for every empty queue…
+    expect(screen.queryByRole('button', { name: /Time off.*Nothing pending.*0/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Timesheets.*Nothing pending.*0/ })).not.toBeInTheDocument();
+    expect(within(clear).getByText('8 queues clear')).toBeInTheDocument();
+    // …with HR's own queues (time off, AI suggestions, pay & access, timesheets) leading the chips.
     const chips = within(within(clear).getByRole('list', { name: 'Queues with nothing waiting' })).getAllByRole('button', { hidden: true });
-    expect(chips.map((c) => c.textContent)).toEqual(['Walk-ins0', 'Swaps0', 'Pickups0', 'Unconfirmed shifts (48h)0']);
+    expect(chips.map((c) => c.textContent)).toEqual([
+      'Time off0',
+      'Suggested by an AI agent0',
+      'Pay & access changes0',
+      'Timesheets0',
+      'Walk-ins0',
+      'Swaps0',
+      'Pickups0',
+      'Unconfirmed shifts (48h)0',
+    ]);
     // No tile pressed for an empty queue, and no bell while everyone has confirmed.
     expect(screen.queryByRole('button', { name: /Unconfirmed shifts \(48h\).*Next 48 hours/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /^Swaps/ })).not.toBeInTheDocument();

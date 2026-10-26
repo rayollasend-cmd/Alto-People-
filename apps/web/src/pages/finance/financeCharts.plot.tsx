@@ -1,5 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, ReferenceArea, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { fmtMoney } from '@/lib/format';
+import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { ChartTooltipContent } from '@/components/ui/charts/ChartTooltip';
 import { PALETTE, TICK } from '@/components/ui/charts/palette';
 import type { AgingBucket, CashRow, MarginRow } from './financeCharts';
@@ -20,7 +21,8 @@ export function CashFlowPlot({
 }: {
   rows: CashRow[];
   compact: boolean;
-  lineKey: 'balance' | 'cumulative';
+  /** Null: bars only (no balance on file). */
+  lineKey: 'balance' | 'cumulative' | null;
   low: CashRow | null;
   series: SeriesMap;
   colors: { in: string; out: string; run: string };
@@ -36,7 +38,7 @@ export function CashFlowPlot({
           tickLine={false}
           axisLine={false}
           width={compact ? 44 : 64}
-          tickFormatter={(v: number) => fmtMoneyCompact(v)}
+          tickFormatter={fmtMoneyAxis}
           label={compact ? undefined : { value: 'Dollars', angle: -90, position: 'insideLeft', offset: 12, style: { fill: TICK.fill, fontSize: 11, textAnchor: 'middle' } }}
         />
         <Tooltip
@@ -48,8 +50,8 @@ export function CashFlowPlot({
         <ReferenceLine y={0} stroke={PALETTE.ref} />
         <Bar dataKey="inflow" stackId="flow" fill={colors.in} radius={[4, 4, 0, 0]} maxBarSize={compact ? 20 : 32} isAnimationActive={false} />
         <Bar dataKey="outflowNeg" stackId="flow" fill={colors.out} radius={[0, 0, 4, 4]} maxBarSize={compact ? 20 : 32} isAnimationActive={false} />
-        <Line dataKey={lineKey} type="monotone" stroke={colors.run} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
-        {low && !compact && <ReferenceDot x={low.week} y={low[lineKey]} r={5} fill={PALETTE.bad} stroke={PALETTE.surface} strokeWidth={2} ifOverflow="extendDomain" />}
+        {lineKey && <Line dataKey={lineKey} type="monotone" stroke={colors.run} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />}
+        {lineKey && low && !compact && <ReferenceDot x={low.week} y={low[lineKey]} r={5} fill={PALETTE.bad} stroke={PALETTE.surface} strokeWidth={2} ifOverflow="extendDomain" />}
       </ComposedChart>
     </ResponsiveContainer>
   );
@@ -62,7 +64,7 @@ export function MarginPlot({ rows, series }: { rows: MarginRow[]; series: { reve
       <BarChart data={rows} margin={{ top: 18, right: 4, bottom: 0, left: 0 }} barCategoryGap="24%" barGap={2}>
         <CartesianGrid stroke={PALETTE.grid} vertical={false} />
         <XAxis dataKey="week" tick={{ ...TICK, fontSize: 10 }} tickLine={false} axisLine={{ stroke: PALETTE.grid }} interval={0} />
-        <YAxis tick={TICK} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => fmtMoneyCompact(v)} />
+        <YAxis tick={TICK} tickLine={false} axisLine={false} width={44} tickFormatter={fmtMoneyAxis} />
         <Tooltip cursor={{ fill: PALETTE.cursor }} content={<ChartTooltipContent series={series} format={(v) => fmtMoney(v)} />} />
         <Bar dataKey="revenue" fill={series.revenue.color} radius={[4, 4, 0, 0]} maxBarSize={18} isAnimationActive={false}>
           {rows.map((r, i) => (

@@ -198,27 +198,43 @@ export function MessagesHome() {
   // A draft (from ?to=) sits where a thread would.
   const draft = !id && draftTo ? draftTo : null;
   const threadOpen = !!id || !!draft;
+  // Nothing yet and nothing open: one empty state for the page, with the way
+  // to start — not an empty list beside a dashed "pick one" pane (F500 audit).
+  const nothingYet = !!inbox.data && rows.length === 0 && !q && !threadOpen;
+  const newMessage = (
+    <Button onClick={() => setComposeOpen(true)} data-testid="msg-new">
+      <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
+      {t('msg.new')}
+    </Button>
+  );
 
   return (
-    <div ref={fill.ref} className="mx-auto flex h-[calc(100dvh-8.5rem)] max-w-6xl flex-col md:h-[calc(100dvh-7rem)]" style={fill.height ? { height: fill.height } : undefined}>
+    <div
+      ref={fill.ref}
+      className={cn(
+        'mx-auto flex h-[calc(100dvh-8.5rem)] max-w-6xl flex-col md:h-[calc(100dvh-7rem)]',
+        // A worker reads at 16px on a phone (helper lines at 14px).
+        (voice === 'associate' || voice === 'driver') && 'max-sm:[&_.text-sm]:text-base max-sm:[&_.text-xs]:text-sm max-sm:[&_.text-xs2]:text-sm',
+      )}
+      style={fill.height ? { height: fill.height } : undefined}
+    >
       <PageHeader
         title={t('msg.title')}
-        // One line on a phone: the list starts on the first screen.
-        subtitle={<span className="line-clamp-1 sm:line-clamp-none">{totalUnread > 0 ? t('msg.unreadLine', { count: totalUnread }) : t(SUBTITLE[voice])}</span>}
+        subtitle={totalUnread > 0 ? t('msg.unreadLine', { count: totalUnread }) : t(SUBTITLE[voice])}
         className={cn('mb-3', threadOpen && 'hidden md:block')}
-        primaryAction={
-          <>
-            {/* Phone: an icon in the header row, not a full-width button. */}
-            <Button size="icon-sm" className="sm:hidden" onClick={() => setComposeOpen(true)} aria-label={t('msg.new')} title={t('msg.new')}>
-              <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
-            </Button>
-            <Button size="sm" className="hidden sm:inline-flex" onClick={() => setComposeOpen(true)}>
-              <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              {t('msg.new')}
-            </Button>
-          </>
-        }
+        // The page's one primary, labelled and full size on every screen —
+        // on a phone it was a small unlabelled icon. The empty page carries
+        // it in its empty state instead, so it is never said twice.
+        primaryAction={nothingYet ? undefined : newMessage}
       />
+      {nothingYet ? (
+        <EmptyState
+          icon={MessageSquare}
+          title={t('msg.none')}
+          description={t(voice === 'store' ? 'msg.noneHint' : 'msg.noneHintOther')}
+          action={newMessage}
+        />
+      ) : (
       <div className="flex min-h-0 flex-1 gap-4">
         {/* ---- Inbox ------------------------------------------------------ */}
         <aside
@@ -283,9 +299,8 @@ export function MessagesHome() {
                 <Skeleton className="h-12" />
               </div>
             ) : rows.length === 0 ? (
-              <div className="p-4">
-                <EmptyState icon={MessageSquare} title={t('msg.none')} description={t(voice === 'store' ? 'msg.noneHint' : 'msg.noneHintOther')} />
-              </div>
+              // Inside the inbox panel: the panel is the frame, no second box.
+              <EmptyState size="sm" icon={MessageSquare} title={t('msg.none')} className="m-2 border-transparent" />
             ) : (
               <ul className="divide-y divide-navy-secondary/60">
                 {rows.map((c) => (
@@ -345,26 +360,22 @@ export function MessagesHome() {
               }}
             />
           ) : (
-            <div className="hidden h-full items-center justify-center rounded-lg border border-dashed border-navy-secondary md:flex">
-              {rows.length === 0 && inbox.data ? (
-                // Nothing to pick: the way to start one, not "pick on the left".
+            // One frame: the empty state is the pane (a dashed pane around a
+            // dashed box read as a wireframe).
+            <div className="hidden h-full md:flex">
+              {inbox.isError && !inbox.data ? null : (
                 <EmptyState
-                  icon={MessageSquarePlus}
-                  title={t('msg.new')}
-                  description={t('msg.draftHint')}
-                  action={
-                    <Button size="sm" onClick={() => setComposeOpen(true)}>
-                      {t('msg.new')}
-                    </Button>
-                  }
+                  className="h-full w-full"
+                  icon={MessageSquare}
+                  title={t('msg.pick')}
+                  description={t(voice === 'store' ? 'msg.pickHint' : 'msg.pickHintOther')}
                 />
-              ) : (
-                <EmptyState icon={MessageSquare} title={t('msg.pick')} description={t(voice === 'store' ? 'msg.pickHint' : 'msg.pickHintOther')} />
               )}
             </div>
           )}
         </section>
       </div>
+      )}
 
       <ComposeDialog
         open={composeOpen}

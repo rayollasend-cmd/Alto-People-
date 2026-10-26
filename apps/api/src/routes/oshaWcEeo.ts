@@ -9,6 +9,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { osha300aSummary } from '../lib/osha300a.js';
+import { fmtDay, sentenceFromCode } from '../lib/humanDates.js';
 
 /**
  * Phase 88 — OSHA + WC class codes + EEO-1.
@@ -183,7 +184,7 @@ oshaWcEeoRouter.post('/osha/incidents', MANAGE_COMP, async (req, res) => {
     void notifyAllAdmins({
       subject: `Recordable safety incident — ${who}`,
       body:
-        `${created.severity.replace(/_/g, ' ').toLowerCase()} on ${created.occurredAt.toISOString().slice(0, 10)}` +
+        `${sentenceFromCode(created.severity)} on ${fmtDay(created.occurredAt)}` +
         `${created.location ? ` at ${created.location}` : ''}. ` +
         `${created.description.slice(0, 200)}${created.description.length > 200 ? '…' : ''}\n\n` +
         'Review it in the OSHA injury log; the compliance scorecard safety tile tracks it until resolved.',

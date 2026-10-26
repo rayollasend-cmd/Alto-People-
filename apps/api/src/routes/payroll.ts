@@ -114,6 +114,7 @@ import { achTimeline } from '../lib/banking/holidays.js';
 import { creditEffectiveDate } from '../lib/banking/directDeposit.js';
 import { computeFunding } from '../lib/banking/funding.js';
 import { associateSchedule, countUnassigned } from './paySchedules.js';
+import { fmtDayRange } from '../lib/humanDates.js';
 
 export const payrollRouter = Router();
 
@@ -1614,7 +1615,7 @@ export async function aggregateAndPersistRun(
         if (!item) continue;
         await tx.pendingPayrollDeduction.deleteMany({ where: { sourceAmendmentItemId: item.id, appliedRunId: null } });
         await tx.pendingPayrollDeduction.create({
-          data: { associateId, sourceAmendmentItemId: item.id, amount, note: `Deductions daily pay left no room for (${ymd(run.periodStart)}–${ymd(run.periodEnd)})` },
+          data: { associateId, sourceAmendmentItemId: item.id, amount, note: `Deductions daily pay left no room for (${fmtDayRange(run.periodStart, run.periodEnd, { year: true })})` },
         });
       }
 
@@ -2508,7 +2509,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, n
         ...paidPrevious.map((p) => `Paid to previous verified account: ${p.name}`),
       ];
       void notifyFinance({
-        subject: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}: ${heldForVerification.length} held, ${paidPrevious.length} paid to a previous account`,
+        subject: `Payroll ${fmtDayRange(run.periodStart, run.periodEnd)}: ${heldForVerification.length} held, ${paidPrevious.length} paid to a previous account`,
         body: lines.slice(0, 3).join('; ') + (lines.length > 3 ? ` (+${lines.length - 3} more)` : ''),
         text: lines.join('\n'),
         linkUrl: '/payroll/financial-changes',
@@ -5263,18 +5264,21 @@ async function disbursementHealth(): Promise<DisbursementHealth> {
     const ownPayout = await activeConnection('PAYOUT');
     if (ownPayout) {
       const failing = (ownPayout.lastErrorAt?.getTime() ?? 0) > (ownPayout.lastSuccessAt?.getTime() ?? 0);
+      // A plain sentence for the payroll person; the vendor's own words stay on the Integrations card's details.
+      const { providerFailureText } = await import('../lib/providers/failureText.js');
+      const failure = providerFailureText(ownPayout.lastError, { label: 'Wise', kind: 'PAYOUT' });
       return {
         provider: ownPayout.provider,
         health: failing ? 'erroring' : 'healthy',
         detail: failing
-          ? `Payments go out from your own Wise balance, but the connection is failing: ${ownPayout.lastError ?? 'see Integrations'}.`
+          ? `Payments go out from your own Wise balance, but the connection is failing. ${failure?.message ?? 'Open Settings › Integrations to check it.'}`
           : `Payments go out from your own Wise balance${ownPayout.environment === 'SANDBOX' ? ' (sandbox — no real money moves)' : ''}; transfer updates come back by webhook.`,
         lastEventAt: ownPayout.lastSuccessAt?.toISOString() ?? null,
         minutesSinceLastEvent: ownPayout.lastSuccessAt ? Math.floor((Date.now() - ownPayout.lastSuccessAt.getTime()) / 60_000) : null,
         eventsLast24h: 0,
         errorsLast7d: failing ? 1 : 0,
         pendingFinalizedItems: pendingFinalizedCount,
-        latestError: failing && ownPayout.lastErrorAt ? { at: ownPayout.lastErrorAt.toISOString(), eventType: 'connection', notes: ownPayout.lastError } : null,
+        latestError: failing && ownPayout.lastErrorAt ? { at: ownPayout.lastErrorAt.toISOString(), eventType: 'connection', notes: failure?.message ?? null } : null,
       };
     }
     if (provider === 'STUB') {

@@ -6,6 +6,7 @@ import { EMPLOYED_WHERE } from './activeDefinition.js';
 import { ASSOCIATE_CTX_SELECT, renderTemplateTokens, toAssociateCtx } from './offerLetters.js';
 import { tenantJob } from './tenantJobs.js';
 import { env } from '../config/env.js';
+import { fmtDay } from './humanDates.js';
 
 /**
  * Policy campaigns (HR pack 2026-10).
@@ -91,7 +92,7 @@ export async function launchCampaign(campaignId: string, db: PrismaClient = defa
   for (const a of people) {
     void notifyAssociate(a.id, {
       subject: `Please read and sign: ${campaign.name}`,
-      body: `${campaign.name} needs your signature by ${campaign.dueOn.toISOString().slice(0, 10)}. Open Agreements to read and sign it.`,
+      body: `${campaign.name} needs your signature by ${fmtDay(campaign.dueOn)}. Open Agreements to read and sign it.`,
       category: 'agreements',
       linkUrl: '/agreements?tab=policies',
       emailFallback: true,
@@ -119,7 +120,7 @@ export async function remindCampaigns(db: PrismaClient = defaultPrisma, now: Dat
     for (const p of pending) {
       void notifyAssociate(p.associateId, {
         subject: overdue ? `Overdue: sign ${c.name}` : `Reminder: sign ${c.name}`,
-        body: `${c.name} is still waiting for your signature${overdue ? ` — it was due ${c.dueOn.toISOString().slice(0, 10)}` : ` (due ${c.dueOn.toISOString().slice(0, 10)})`}. Open Agreements to read and sign it.`,
+        body: `${c.name} is still waiting for your signature${overdue ? ` — it was due ${fmtDay(c.dueOn)}` : ` (due ${fmtDay(c.dueOn)})`}. Open Agreements to read and sign it.`,
         category: 'agreements',
         linkUrl: '/agreements?tab=policies',
         emailFallback: true,

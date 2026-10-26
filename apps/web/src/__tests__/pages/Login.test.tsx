@@ -41,18 +41,16 @@ describe('<Login>', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
   });
 
-  it('disables the submit button until password is at least 12 chars', async () => {
+  it('disables the submit button until a password is typed — no sign-up length rule on sign-in', async () => {
     const user = userEvent.setup();
     renderLogin();
     const button = screen.getByRole('button', { name: /sign in/i });
     expect(button).toBeDisabled();
 
+    // An older, shorter password still signs in: the 12-character rule is for choosing one.
     await user.type(screen.getByLabelText(/^password/i), 'short');
-    expect(button).toBeDisabled();
-
-    await user.clear(screen.getByLabelText(/^password/i));
-    await user.type(screen.getByLabelText(/^password/i), 'twelve-chars');
     expect(button).not.toBeDisabled();
+    expect(screen.queryByText(/minimum 12 characters/i)).not.toBeInTheDocument();
   });
 
   it('calls signIn with the trimmed email and password on submit', async () => {

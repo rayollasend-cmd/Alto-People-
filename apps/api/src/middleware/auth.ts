@@ -39,6 +39,7 @@ export const MFA_ENROLL_COOKIE = env.NODE_ENV === 'production'
 const SESSION_USER_SELECT = {
   id: true,
   email: true,
+  displayName: true,
   role: true,
   additionalRoles: true,
   activeRole: true,
@@ -88,8 +89,11 @@ function toSessionUser(
     activeRole: _activeRole,
     orgUnit,
     tenantRole,
+    displayName: _displayName,
     ...rest
   } = user;
+  const [displayFirst = '', ...displayParts] = (user.displayName ?? '').trim().split(/\s+/).filter(Boolean);
+  const displayRest = displayParts.join(' ');
   const hat = effectiveRoleOf(user);
   // A custom role narrows the role it was made for, and only while the
   // account wears that role: another hat is that hat's built-in set.
@@ -103,8 +107,10 @@ function toSessionUser(
     primaryRole: user.role,
     availableRoles: rolesAvailableTo(user),
     associateId,
-    firstName: associate?.firstName ?? null,
-    lastName: associate?.lastName ?? null,
+    // No person record (a manager, a client's store login): the display
+    // name, split at the first space — never "Good morning." and an email.
+    firstName: associate?.firstName ?? (displayFirst || null),
+    lastName: associate?.lastName ?? (displayRest || null),
     photoUrl: accountPhotoUrlFor({ id: user.id, photoS3Key, photoUpdatedAt, associate }),
     mfaEnabled: mfaEnabledAt !== null,
     orgUnitPath: orgUnit?.path ?? null,

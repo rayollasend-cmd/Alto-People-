@@ -38,9 +38,21 @@ function payload(totals: Record<string, unknown>) {
   };
 }
 
+const OVERVIEW = {
+  statements: [
+    {
+      id: 's4', number: 4, periodStart: '2026-08-29', periodEnd: '2026-09-04', amount: 2880, hours: 128, storeHours: null,
+      storeAmount: null, paidAt: null, dueAt: '2026-10-07', daysPastDue: 19, poNumber: null, pdfUrl: '/api/x.pdf', reviewed: null,
+    },
+  ],
+  balance: { count: 1, amount: 2880, pastDue: 1 },
+};
+
 function renderPage(body: unknown) {
   vi.mocked(apiFetch).mockImplementation(async (path: string) => {
     if (path.startsWith('/client-portal/history')) return body as never;
+    // Billing reads the home's overview: the latest statements, whatever the range.
+    if (path.startsWith('/client-portal/overview')) return OVERVIEW as never;
     throw new Error(`unexpected ${path}`);
   });
   const role = 'CLIENT_PORTAL' as const;
@@ -71,10 +83,13 @@ describe('/portal/history (F500 G5)', () => {
   it('names worked hours as worked, and says the off-schedule hours in warning', async () => {
     renderPage(payload({ offScheduleHours: 387.6 }));
     expect(await screen.findByText('Hours worked · this period')).toBeInTheDocument();
-    expect(screen.getByTestId('hist-off-schedule')).toHaveTextContent('444h worked · 57h scheduled · 388h off-schedule');
+    expect(screen.getByTestId('hist-off-schedule')).toHaveTextContent('444.1h worked · 56.5h scheduled · 387.6h off-schedule');
     expect(screen.getByTestId('hist-off-schedule')).toHaveClass('text-warning');
     // "Delivered" is the grade's alone.
-    expect(screen.getByText('509 of 4800 contracted person-hours delivered')).toBeInTheDocument();
+    expect(screen.getByText('509 of 4,800 contracted person-hours delivered')).toBeInTheDocument();
+    // A percentage of contracted hours, never a letter grade (F500 2026-10-26).
+    expect(screen.getByText('Contracted hours delivered · this period')).toBeInTheDocument();
+    expect(screen.queryByText(/^[ABCDF]$/)).toBeNull();
     expect(screen.queryByText(/Hours delivered/)).not.toBeInTheDocument();
   });
 
@@ -83,5 +98,27 @@ describe('/portal/history (F500 G5)', () => {
     expect(await screen.findByText('Hours worked · this period')).toBeInTheDocument();
     expect(screen.queryByTestId('hist-off-schedule')).not.toBeInTheDocument();
     expect(screen.getByText(/^of 56\.5h scheduled$/)).toBeInTheDocument();
+  });
+
+  it('reviews only weeks that have ended, and keeps Billing apart from the range (F500 2026-10-26)', async () => {
+    const today = new Date();
+    const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const ago = (n: number) => ymd(new Date(today.getTime() - n * 86_400_000));
+    const body = {
+      ...payload({}),
+      serviceReports: [
+        { weekStart: ago(10), weekEnd: ago(4), url: '/api/r1.pdf', reviewed: null },
+        { weekStart: ago(3), weekEnd: ago(-3), url: '/api/r2.pdf', reviewed: null },
+      ],
+    };
+    renderPage(body);
+    expect(await screen.findByText('Service reports')).toBeInTheDocument();
+    // One report to review (the finished week); the week in progress is said, not offered.
+    expect(screen.getAllByRole('button', { name: /Mark reviewed/ })).toHaveLength(2); // the ended week + the unpaid statement
+    expect(screen.getByText(/Week in progress/)).toBeInTheDocument();
+    const billing = await screen.findByTestId('portal-billing');
+    expect(billing).toHaveTextContent('Billing');
+    expect(billing).toHaveTextContent('$2,880.00');
+    expect(billing).toHaveTextContent('19 days past due');
   });
 });

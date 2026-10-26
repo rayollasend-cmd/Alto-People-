@@ -9,7 +9,7 @@ import { listTasks, getTaskDay } from '@/lib/tasksApi';
 import { fmtDateTz, fmtShiftRangeTz, ymdLocal } from '@/lib/format';
 import { urlDay, urlString, useUrlParam, useUrlState } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
-import { Badge, Button, MetricCard, MetricStrip, Select } from '@/components/ui';
+import { Badge, Button, DateField, MetricCard, MetricStrip, Select } from '@/components/ui';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { cn } from '@/lib/cn';
@@ -171,14 +171,9 @@ export function TasksBoard() {
               </option>
             ))}
           </Select>
-          <input
-            type="date"
-            aria-label="Day"
-            title={dayZone ? `The day on the ${dayZone.replace(/^.*\//, '').replace(/_/g, ' ')} clock` : undefined}
-            value={day ?? ''}
-            onChange={(e) => e.target.value && setDay(e.target.value)}
-            className="h-8 coarse:h-11 rounded-md border border-line bg-surface px-2 text-xs coarse:text-base text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-          />
+          <span title={dayZone ? `The day on the ${dayZone.replace(/^.*\//, '').replace(/_/g, ' ')} clock` : undefined}>
+            <DateField size="sm" aria-label="Day" value={day ?? ''} clearable={false} onChange={(v) => v && setDay(v)} />
+          </span>
         </FilterBar>
       }
       drawer={openId ? <TaskDrawer taskId={openId} onClose={() => setOpen(null)} onChanged={refresh} canManage={canManage} /> : null}
@@ -198,8 +193,9 @@ export function TasksBoard() {
           icon: ListTodo,
           title: status === 'live' ? 'Nothing live on this day' : status === 'all' ? 'No tasks on this day' : 'Nothing in this state on this day',
           description: status === 'live' ? 'Tasks appear as they are created, and each is assigned as it arrives.' : 'Change the day or the state to see more.',
+          // The header's New task is the page's one gold action; this twin is outline.
           action: canManage ? (
-            <Button onClick={() => setCreating(true)}>
+            <Button variant="outline" onClick={() => setCreating(true)}>
               <Plus className="mr-2 h-4 w-4" /> New task
             </Button>
           ) : undefined,

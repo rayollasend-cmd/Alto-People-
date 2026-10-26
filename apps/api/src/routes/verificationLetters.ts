@@ -9,6 +9,7 @@ import { renderLetterPdf } from '../lib/letterPdf.js';
 import { getBrandingSync } from '../lib/branding.js';
 import { notifyAllAdmins, notifyAssociate, ADMIN_EMAIL_HR_ONLY } from '../lib/notify.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { fmtDay } from '../lib/humanDates.js';
 
 /**
  * Employment and income verification letters (HR pack 2026-10).
@@ -81,10 +82,10 @@ async function snapshotFor(associateId: string, includePay: boolean): Promise<Sn
 }
 
 function letterBody(kind: 'EMPLOYMENT' | 'INCOME', s: Snapshot, addressedTo: string | null, issuedOn: Date): string {
-  const date = issuedOn.toISOString().slice(0, 10);
+  const date = fmtDay(issuedOn, { year: true });
   const verb = s.person.status === 'current' ? 'is employed' : 'was employed';
-  const since = s.person.hireDate ? ` since ${s.person.hireDate}` : '';
-  const until = s.person.endDate ? ` until ${s.person.endDate}` : '';
+  const since = s.person.hireDate ? ` since ${fmtDay(s.person.hireDate, { year: true })}` : '';
+  const until = s.person.endDate ? ` until ${fmtDay(s.person.endDate, { year: true })}` : '';
   const title = s.person.title ? ` as ${s.person.title}` : '';
   const type = s.person.employmentType.replace(/_/g, ' ').toLowerCase();
   const lines = [

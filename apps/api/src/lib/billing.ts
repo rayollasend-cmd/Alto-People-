@@ -25,6 +25,27 @@ import { ALTO_TENANT_ID, runWithTenant } from './tenant.js';
 
 type Db = PrismaClient;
 export const WORKER_TYPES = ['PERSON', 'AGENT', 'ROBOT'] as const;
+
+/**
+ * A plan as the organization reads it. Plan codes ("internal", "standard")
+ * are the platform's own; a customer never sees one (F500 audit 2026-10-26).
+ * The internal plan is the operator's own account; on a customer it means
+ * the account is not invoiced.
+ */
+export function planLabel(plan: string | null | undefined, tenantId: string): string {
+  const code = (plan ?? '').trim().toLowerCase();
+  if (!code || code === 'internal') return tenantId === ALTO_TENANT_ID ? 'Internal' : 'Not invoiced';
+  const words = code.replace(/[_-]+/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const WORKER_TYPE_NOUN: Record<string, [string, string]> = { PERSON: ['person', 'people'], AGENT: ['AI agent', 'AI agents'], ROBOT: ['robot', 'robots'] };
+
+/** "1 AI agent", "3 people" — an invoice line's count in words (acronyms kept). */
+export function usageCountLabel(type: string, quantity: number): string {
+  const [one, many] = WORKER_TYPE_NOUN[type] ?? [type.toLowerCase(), `${type.toLowerCase()}s`];
+  return `${quantity.toLocaleString('en-US')} ${quantity === 1 ? one : many}`;
+}
 export type WorkerType = (typeof WORKER_TYPES)[number];
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);

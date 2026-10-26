@@ -54,15 +54,38 @@ describe('<Sidebar>', () => {
     expect(label.className).not.toContain('truncate');
   });
 
-  it('Recent never repeats a pinned row, an always-on row, a row in an open door, or the page in view', () => {
+  it('Recent never repeats a pinned row, an always-on row or the page in view — and stays put from page to page', () => {
     personal.pinned = ['messages'];
-    personal.recents = ['inbox', 'messages', 'payroll-banking', 'documents', 'payroll'];
+    personal.recents = ['inbox', 'messages', 'team', 'payroll-banking', 'documents', 'payroll'];
     rail('HR_ADMINISTRATOR', '/payroll');
     const recent = within(nav()).getByRole('button', { name: 'Recent' }).parentElement!;
     const names = within(recent).getAllByRole('link').map((l) => l.textContent);
-    // Inbox (always on), Messages (pinned), Payroll (here) and Payroll banking
-    // (the open Pay door) are already on screen; Documents is not.
-    expect(names).toEqual(['Documents']);
+    // Inbox (always on), Messages (pinned), My team (a door drawn as one row)
+    // and Payroll (here) are left out. Which doors are open no longer
+    // decides it, so the group does not appear and vanish (F500 2026-10-26).
+    expect(names).toEqual(['Payroll banking', 'Documents']);
+    // Nothing in Recent lights: the page lights in its own place only.
+    for (const l of within(recent).getAllByRole('link')) expect(l).not.toHaveAttribute('aria-current', 'page');
+  });
+
+  it('one active location: a page behind two doors lights in the door that holds it only', () => {
+    rail('HR_ADMINISTRATOR', '/audit');
+    const lit = within(nav()).getAllByRole('link').filter((l) => l.getAttribute('aria-current') === 'page');
+    expect(lit.length).toBeLessThanOrEqual(1);
+  });
+
+  it('the transport director’s home IS the Transportation desk: that row lights, not Home', () => {
+    rail('TRANSPORTATION_DIRECTOR', '/');
+    expect(within(nav()).getByRole('link', { name: /Transportation/ })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav()).getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current', 'page');
+  });
+
+  it('the account footer says the role in full, never "TRANSPORTATION DIRE…"', () => {
+    rail('TRANSPORTATION_DIRECTOR', '/transport');
+    const role = screen.getByTestId('sidebar-role');
+    expect(role.className).not.toContain('truncate');
+    expect(role.className).not.toContain('uppercase');
+    expect(role.className).toContain('line-clamp-2');
   });
 
   it('/audit/approvals lights Settings & trust — where the approval record lives — not Audit log', () => {

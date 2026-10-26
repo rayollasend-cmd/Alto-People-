@@ -469,7 +469,8 @@ describe('AgentRegistryAdmin', () => {
     expect(within(dialog).getByText('Asked: “when do I work tomorrow?”')).toBeInTheDocument();
     expect(within(dialog).getByText('May only: schedule.read')).toBeInTheDocument();
     expect(within(dialog).getByText('Pass')).toBeInTheDocument();
-    expect(within(dialog).getByText(/Jo Park$/)).toBeInTheDocument();
+    // The run names who ran it (the subtitle, "owned by Jo Park", ends the same way).
+    expect(within(dialog).getAllByText(/Jo Park$/).length).toBeGreaterThan(1);
     expect(within(dialog).getByText('Certified for 4.5')).toBeInTheDocument();
     // Built in: the API can run the scenarios itself.
     expect(within(dialog).getByRole('button', { name: 'Run scenarios' })).toBeInTheDocument();

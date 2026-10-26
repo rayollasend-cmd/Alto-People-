@@ -3,6 +3,8 @@ import { Banknote, Building2, Calculator, CalendarCheck2, Check, Copy, CreditCar
 import { toast } from 'sonner';
 import type { ProviderConnection, ProviderHealth, ProviderKind } from '@/lib/providersApi';
 import { fmtDateTime, fmtRelativeDate } from '@/lib/format';
+import { cn } from '@/lib/cn';
+import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 
@@ -123,12 +125,37 @@ export function healthLine(c: ProviderConnection): string {
     case 'healthy':
       return c.lastSuccessAt ? `Last answered ${fmtRelativeDate(c.lastSuccessAt)}.` : 'The last test worked.';
     case 'failing':
-      return `Failing since ${fmtDateTime(c.lastErrorAt)}${c.lastError ? `: ${c.lastError}` : '.'}`;
+      // The plain sentence first; the provider's own words sit behind "Technical details" (TechnicalDetail).
+      return `${c.lastError ?? 'The last call failed.'} Failing since ${fmtDateTime(c.lastErrorAt)}.`;
     case 'paused':
       return 'Paused — nothing is sent. Manual entry still works.';
     default:
       return 'Saved, but not tested. Test it before relying on it.';
   }
+}
+
+/**
+ * The provider's own words behind a failure ("Wise refused the token (HTTP
+ * 401): Invalid token") — what support needs, not what the card leads with
+ * (F500 2026-10-26). Folded; nothing when there is no detail.
+ */
+export function TechnicalDetail({ detail, className }: { detail: string | null | undefined; className?: string }) {
+  if (!detail) return null;
+  return (
+    <details className={cn('group text-xs text-ink-muted', className)} data-testid="provider-error-detail">
+      <summary className="inline-flex min-h-8 cursor-pointer list-none items-center underline-offset-2 hover:text-ink hover:underline [&::-webkit-details-marker]:hidden">
+        Technical details
+      </summary>
+      <code className="mt-1 block break-words rounded-md bg-surface-raised px-2 py-1.5 font-mono text-2xs text-ink">{detail}</code>
+    </details>
+  );
+}
+
+/** The provider's own words on a failed call (a 502's `details.detail`), or null. */
+export function apiErrorDetail(e: unknown): string | null {
+  if (!(e instanceof ApiError)) return null;
+  const d = e.details as { detail?: unknown } | null | undefined;
+  return d && typeof d.detail === 'string' && d.detail.trim() ? d.detail : null;
 }
 
 export const WHAT_TO_DO =

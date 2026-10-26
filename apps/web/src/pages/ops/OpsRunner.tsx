@@ -17,6 +17,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { isQueued } from '@/lib/offlineQueue';
 import { useAuth } from '@/lib/auth';
+import { midSentence } from '@/pages/portal/words';
 import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { cn } from '@/lib/cn';
@@ -316,7 +317,7 @@ function AssistPanel({ onOpen }: { onOpen: (shiftId: string) => void }) {
             <div className="text-2xs uppercase tracking-[0.2em] text-gold">{tr('opsRun.yourShiftSop')}</div>
             <div className="mt-1 text-lg font-medium text-white">
               {helping.locationName ? `${helping.locationName} · ` : ''}
-              {helping.windowLabel ?? helping.position}
+              {helping.windowLabel ? `${helping.windowLabel} shift` : helping.position}
             </div>
             <p className="mt-1 text-sm text-silver">
               {helping.runBy.name} is running it — {helping.sopDone} of {helping.sopTotal} done. Check items off as you
@@ -503,7 +504,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
             {options.resumeShift
               ? tr('opsRun.resumeTitle')
               : submitted
-                ? `Your ${submitted.windowLabel ?? submitted.position} SOP is submitted`
+                ? `Your ${submitted.windowLabel ? midSentence(submitted.windowLabel) : submitted.position} checklist is submitted`
                 : offClock
                   ? tr('opsRun.clockInToStart')
                   : tr('opsRun.startYourShift')}
@@ -547,7 +548,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
           <ClipboardList className="h-5 w-5 shrink-0 text-gold" aria-hidden="true" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-white">
-              Open your {options.storeShift.label} SOP
+              Open your {midSentence(options.storeShift.label)} checklist
             </div>
             <div className="mt-0.5 text-xs text-silver">
               {options.storeShift.locationName} ·{' '}
@@ -988,7 +989,7 @@ function ShiftRunner({
             {/* Whose it is, when it isn't simply the viewer's own. */}
             {helping && shift.runBy && (
               <div className="mt-1 text-xs text-silver">
-                {shift.runBy.name} is running this SOP — check items off as you walk the floor.
+                {shift.runBy.name} is running this checklist — check items off as you walk the floor.
               </div>
             )}
             {!helping && shift.coveringFor && (

@@ -24,6 +24,7 @@ import { computeRetroPay, summarizeRetro } from './retroPay.js';
 import { prevailingWageRunExceptions } from './certifiedPayroll.js';
 import { complianceRunExceptions } from './payrollComplianceChecks.js';
 import { calculateInHouse, localAwaitingReview, primeLocalAcknowledgments, unresolvedText } from './taxEngine/index.js';
+import { fmtDay, fmtDayInZone, fmtDayRange } from './humanDates.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -187,7 +188,7 @@ export async function computePayrollExceptions(
         associateName: late.name,
         kind: 'LATE_APPROVED_TIME',
         severity: SEVERITY.LATE_APPROVED_TIME,
-        message: `${late.hours.toFixed(1)}h approved for ${oldest.periodStart} – ${late.periods[late.periods.length - 1]!.periodEnd} (payday ${oldest.payDate}) are on no paystub — this run does not pay them. Pay them off-cycle from the payroll home.`,
+        message: `${late.hours.toFixed(1)}h approved for ${fmtDayRange(oldest.periodStart, late.periods[late.periods.length - 1]!.periodEnd)} (payday ${fmtDay(oldest.payDate)}) are on no paystub — this run does not pay them. Pay them off-cycle from the payroll home.`,
         detail: { hours: late.hours, periods: late.periods },
       });
     }
@@ -249,7 +250,7 @@ export async function computePayrollExceptions(
         associateName,
         kind: 'TERMINATED_IN_RUN',
         severity: SEVERITY.TERMINATED_IN_RUN,
-        message: `Terminated ${a.deletedAt.toISOString().slice(0, 10)} but has approved hours in this period.`,
+        message: `Terminated ${fmtDayInZone(a.deletedAt)} but has approved hours in this period.`,
         detail: { terminatedAt: a.deletedAt.toISOString() },
       });
     }

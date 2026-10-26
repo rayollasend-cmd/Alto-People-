@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowUpRight, ChevronRight } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
+import { getPublicStatus } from '@/lib/statusApi';
+import type { StatusState } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SearchInput } from '@/components/ui/FilterBar';
@@ -29,6 +31,14 @@ interface HealthItem {
  * that says what it is for. It renders inside the area shell
  * (pages/settings/SettingsArea), which draws the rail.
  */
+/** The platform's state on the Service health card, as its status page says it. */
+const SERVICE_STATE: Record<StatusState, { label: string; variant: 'success' | 'pending' | 'destructive' | 'default' }> = {
+  OPERATIONAL: { label: 'All systems working', variant: 'success' },
+  DEGRADED: { label: 'Degraded', variant: 'pending' },
+  OUTAGE: { label: 'Outage', variant: 'destructive' },
+  UNMEASURED: { label: 'Not measured yet', variant: 'default' },
+};
+
 export function SettingsHome() {
   const rail = useSettingsRail();
   const [q, setQ] = useState('');
@@ -41,6 +51,10 @@ export function SettingsHome() {
     retry: false,
   });
   const badge = new Map((health.data?.items ?? []).map((h) => [h.key, h]));
+  // Service health: the public status page's own answer, on its card (F500 2026-10-26).
+  const hasServiceHealth = rail.some((r) => r.key === 'service-health');
+  const service = useQuery({ queryKey: ['status', 'public'], queryFn: getPublicStatus, staleTime: 60_000, retry: false, enabled: hasServiceHealth });
+  const serviceState = service.data ? SERVICE_STATE[service.data.overall] : null;
   const term = q.trim().toLowerCase();
   // Name, line, section and the words people use for what is on the page ("two-step", "MFA").
   const shown = term ? rail.filter((i) => `${i.label} ${i.description} ${i.section ?? ''} ${i.keywords ?? ''}`.toLowerCase().includes(term)) : rail;
@@ -112,6 +126,11 @@ export function SettingsHome() {
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
                         {item.label}
+                        {item.key === 'service-health' && serviceState && (
+                          <Badge variant={serviceState.variant} size="sm" data-testid="service-health-state">
+                            {serviceState.label}
+                          </Badge>
+                        )}
                         {badge.get(item.key) && (
                           <Badge variant={badge.get(item.key)!.tone === 'bad' ? 'destructive' : 'pending'} size="sm">
                             {badge.get(item.key)!.label}

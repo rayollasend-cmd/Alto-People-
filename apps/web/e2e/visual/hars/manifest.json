@@ -3,22 +3,21 @@
   "pages": {
     "login": {
       "url": "/login",
-      "recordedAt": "2026-10-24T00:55:57.000Z",
+      "recordedAt": "2026-10-26T15:24:36.000Z",
       "localStorage": {}
     },
     "admin-home": {
       "url": "/",
-      "recordedAt": "2026-10-24T00:56:08.000Z",
+      "recordedAt": "2026-10-26T15:24:50.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
-        "alto.tour.shell-v1.59431ae2-972f-4874-8212-dca6a7ab55ca": "2026-10-24T00:56:08.000Z",
-        "alto.whatsnew.seen.v2": "7b6dd245-7847-4ea0-8c96-019f32074ed2"
+        "alto.tour.shell-v1.59431ae2-972f-4874-8212-dca6a7ab55ca": "2026-10-26T15:24:50.000Z"
       }
     },
     "clients": {
       "url": "/clients",
-      "recordedAt": "2026-10-24T00:56:20.000Z",
+      "recordedAt": "2026-10-26T15:25:02.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -27,7 +26,7 @@
     },
     "client-overview": {
       "url": "/clients/d99f639c-3a50-43fd-a9f8-cb2f4d59ea0f",
-      "recordedAt": "2026-10-24T00:56:32.000Z",
+      "recordedAt": "2026-10-26T15:25:14.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -36,7 +35,7 @@
     },
     "people": {
       "url": "/people",
-      "recordedAt": "2026-10-24T00:56:43.000Z",
+      "recordedAt": "2026-10-26T15:25:25.000Z",
       "localStorage": {
         "alto:list.people.client.v1": "\"\"",
         "alto:list.people.employmentType.v1": "\"\"",
@@ -48,7 +47,7 @@
     },
     "person-record": {
       "url": "/people/beeddd37-d7fc-460d-93d5-bc17dcddf0e1",
-      "recordedAt": "2026-10-24T00:56:55.000Z",
+      "recordedAt": "2026-10-26T15:25:37.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -57,14 +56,14 @@
     },
     "scheduling-week": {
       "url": "/scheduling?view=week",
-      "recordedAt": "2026-10-24T00:57:06.000Z",
+      "recordedAt": "2026-10-26T15:25:48.000Z",
       "localStorage": {
-        "alto:scheduling.anchors.v1": "{\"day\":\"2026-10-23\",\"month\":\"2026-10-01\"}",
-        "alto:scheduling.filters.v1": "{\"client\":\"\",\"location\":\"\",\"status\":\"OPEN\",\"position\":\"\"}",
+        "alto:scheduling.anchors.v1": "{\"day\":\"2026-10-26\",\"month\":\"2026-10-01\"}",
+        "alto:scheduling.filters.v1": "{\"client\":\"\",\"location\":\"\",\"status\":\"ALL\",\"position\":\"\"}",
         "alto:scheduling.templatesRail.v2": "collapsed",
         "alto:scheduling.tileDensity.v1": "comfortable",
         "alto:scheduling.weekLayout.v2": "compact",
-        "alto:scheduling.weekRange.v1": "{\"start\":\"2026-10-17\",\"days\":7}",
+        "alto:scheduling.weekRange.v1": "{\"start\":\"2026-10-24\",\"days\":7}",
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
         "alto.nav.recents.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[\"scheduling\"]"
@@ -72,7 +71,7 @@
     },
     "time-attendance": {
       "url": "/time-attendance",
-      "recordedAt": "2026-10-24T00:57:18.000Z",
+      "recordedAt": "2026-10-26T15:26:01.000Z",
       "localStorage": {
         "alto:form.time.recordPeriod.payOffsetDays.v1": "5",
         "alto:form.time.recordPeriod.reference.v1": "\"\"",
@@ -86,7 +85,7 @@
     },
     "payroll": {
       "url": "/payroll",
-      "recordedAt": "2026-10-24T00:57:30.000Z",
+      "recordedAt": "2026-10-26T15:26:12.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -95,7 +94,7 @@
     },
     "books": {
       "url": "/books",
-      "recordedAt": "2026-10-24T00:57:41.000Z",
+      "recordedAt": "2026-10-26T15:26:24.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -104,7 +103,7 @@
     },
     "approvals": {
       "url": "/approvals",
-      "recordedAt": "2026-10-24T00:57:52.000Z",
+      "recordedAt": "2026-10-26T15:26:35.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -113,7 +112,7 @@
     },
     "users-access": {
       "url": "/admin/users",
-      "recordedAt": "2026-10-24T00:58:04.000Z",
+      "recordedAt": "2026-10-26T15:26:46.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -122,7 +121,7 @@
     },
     "recruiting-analytics": {
       "url": "/recruiting/analytics",
-      "recordedAt": "2026-10-24T12:45:51.000Z",
+      "recordedAt": "2026-10-26T15:26:57.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -131,7 +130,7 @@
     },
     "labor-costs": {
       "url": "/labor-costs?from=2026-10-10&to=2026-10-23",
-      "recordedAt": "2026-10-24T12:46:02.000Z",
+      "recordedAt": "2026-10-26T15:27:09.000Z",
       "localStorage": {
         "alto:laborcosts.floor.open.v2": "false",
         "alto:laborcosts.otOutlook.open.v1": "true",
@@ -143,7 +142,7 @@
     },
     "call-outs": {
       "url": "/call-outs",
-      "recordedAt": "2026-10-24T12:46:14.000Z",
+      "recordedAt": "2026-10-26T15:27:21.000Z",
       "localStorage": {
         "alto.density": "compact",
         "alto.nav.pinned.v2.59431ae2-972f-4874-8212-dca6a7ab55ca": "[]",
@@ -152,14 +151,14 @@
     },
     "associate-home": {
       "url": "/",
-      "recordedAt": "2026-10-24T00:58:15.000Z",
+      "recordedAt": "2026-10-26T15:36:16.000Z",
       "localStorage": {
         "alto.nav.pinned.v2.a1d462f4-30e0-4f9d-af3f-d4f36d3f68da": "[]"
       }
     },
     "portal-home": {
       "url": "/portal",
-      "recordedAt": "2026-10-24T00:58:21.000Z",
+      "recordedAt": "2026-10-26T15:27:45.000Z",
       "localStorage": {
         "alto.nav.pinned.v2.a306c2ee-89b1-4c8e-941a-97bd8d1a4b14": "[]",
         "alto.nav.recents.v2.a306c2ee-89b1-4c8e-941a-97bd8d1a4b14": "[\"portal\"]"

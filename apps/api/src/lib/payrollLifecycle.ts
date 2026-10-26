@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { bankingProfile, ownAccount, usesOurAch } from './banking/ach.js';
 import { periodContaining, ymd, type ScheduleWithVersions } from './payScheduleMembership.js';
 import { currentFingerprint, reviewRequired } from './payrollReview.js';
+import { fmtDay } from './humanDates.js';
 
 type Db = Prisma.TransactionClient | PrismaClient;
 
@@ -106,7 +107,7 @@ export async function lifecycleForRuns(db: Db, runs: RunRow[]): Promise<Map<stri
       } else {
         const deposit = depositByRun.get(run.id);
         if (!deposit) nextStep = { key: 'deposit', label: 'Create the tax deposit', to: `/payroll/runs/${run.id}/close`, waitingOn: null };
-        else if (deposit.status !== 'PAID') nextStep = { key: 'deposit', label: `Pay the tax deposit (due ${ymd(deposit.dueDate)})`, to: `/payroll/runs/${run.id}/close`, waitingOn: null };
+        else if (deposit.status !== 'PAID') nextStep = { key: 'deposit', label: `Pay the tax deposit (due ${fmtDay(ymd(deposit.dueDate))})`, to: `/payroll/runs/${run.id}/close`, waitingOn: null };
         else if (remitOpen.has(run.id)) nextStep = { key: 'remit', label: 'Send garnishment remittances', to: `/payroll/runs/${run.id}/close`, waitingOn: null };
         else nextStep = { key: 'done', label: 'Closed', to: `/payroll/runs/${run.id}/close`, waitingOn: null };
       }

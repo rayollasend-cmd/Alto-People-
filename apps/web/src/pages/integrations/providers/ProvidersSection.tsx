@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { ProviderSetupDrawer } from './ProviderSetupDrawer';
 import { ProviderManageDrawer } from './ProviderManageDrawer';
-import { CONNECTION_BADGE, HEALTH_WORD, environmentLabel, healthLine, kindLook, titleInSentence, type ConnectionWord } from './providerShared';
+import { CONNECTION_BADGE, HEALTH_WORD, TechnicalDetail, environmentLabel, healthLine, kindLook, titleInSentence, type ConnectionWord } from './providerShared';
 
 const PAYOUT_PROVIDER: Record<DisbursementWebhookStatus['provider'], string> = { STUB: 'the platform', WISE: 'Wise', BRANCH: 'Branch' };
 
@@ -23,13 +23,22 @@ const PAYOUT_PROVIDER: Record<DisbursementWebhookStatus['provider'], string> = {
  * Payouts card, with its Reconnect (F500 G4: it used to appear twice, as
  * "Payroll disbursement · Erroring" and "Payouts · Needs attention").
  */
-export function cardState(k: ProviderKindSummary, payout: DisbursementWebhookStatus | null): { word: ConnectionWord; line: string | null; waiting: number } {
+export function cardState(
+  k: ProviderKindSummary,
+  payout: DisbursementWebhookStatus | null,
+): { word: ConnectionWord; line: string | null; detail?: string | null; waiting: number } {
   const c = k.active;
   const rail = k.kind === 'PAYOUT' && payout && payout.provider !== 'STUB' ? payout : null;
   const waiting = rail?.pendingFinalizedItems ?? 0;
-  if (c?.health === 'failing') return { word: 'Failing', line: healthLine(c), waiting };
+  // A plain sentence on the card; the provider's own words behind "Technical details" (F500 2026-10-26).
+  if (c?.health === 'failing') return { word: 'Failing', line: healthLine(c), detail: c.lastErrorDetail ?? null, waiting };
   if (rail?.health === 'erroring')
-    return { word: 'Failing', line: `Failing since ${fmtDateTime(rail.latestError?.at ?? rail.lastEventAt)}${rail.latestError?.notes ? `: ${rail.latestError.notes}` : '.'}`, waiting };
+    return {
+      word: 'Failing',
+      line: `${PAYOUT_PROVIDER[rail.provider]} reported a failed payout. Failing since ${fmtDateTime(rail.latestError?.at ?? rail.lastEventAt)}.`,
+      detail: rail.latestError?.notes ?? null,
+      waiting,
+    };
   if (rail?.health === 'stale')
     return { word: 'Needs attention', line: `No word from ${PAYOUT_PROVIDER[rail.provider]}${rail.lastEventAt ? ` since ${fmtDateTime(rail.lastEventAt)}` : ''}. Payouts may be stuck.`, waiting };
   if (c) return { word: HEALTH_WORD[c.health], line: healthLine(c), waiting };
@@ -129,7 +138,9 @@ function KindCard({ k, payout, canManage, onSetup, onManage }: { k: ProviderKind
             </div>
           </div>
           <div className="flex-1 space-y-1 text-sm">
-            <p className={failing ? 'text-alert' : 'text-ink-muted'}>{state.line ?? copy.manual}</p>
+            {/* The badge says Failing in red; the sentence is read, not shouted. */}
+            <p className={failing ? 'text-ink' : 'text-ink-muted'}>{state.line ?? copy.manual}</p>
+            <TechnicalDetail detail={state.detail} />
             {state.waiting > 0 && <p className="text-ink-muted">{fmtCount(state.waiting, 'paycheck')} waiting to pay out.</p>}
           </div>
           <div>

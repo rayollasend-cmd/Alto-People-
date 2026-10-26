@@ -75,6 +75,18 @@ describe('the evidence record', () => {
     expect(JSON.stringify(row.details)).toContain('ACCOUNT_FINGERPRINT_SECRET');
     expect(JSON.stringify(row.details)).not.toContain(process.env.PAYOUT_ENCRYPTION_KEY!);
     expect(row.tenantId).toBeNull();
+
+    // F500 audit 2026-10-26: what the page reads is plain — no variable names,
+    // rule keys or local addresses in a summary; those live in `detail`.
+    const view = await complianceEvidence(prisma);
+    for (const c of view.controls) {
+      if (!c.latest) continue;
+      expect(c.latest.summary, c.id).not.toMatch(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b|localhost|127\.0\.0\.1|[a-z]+_[a-z_]+/);
+      expect(c.latest.summary, c.id).not.toMatch(/\b1 [a-z]+s\b|All 1 /);
+      expect(c.latest).toHaveProperty('detail');
+    }
+    const secrets = view.controls.find((c) => c.id === 'job-secrets-separated')!.latest!;
+    if (secrets.status === 'WARN') expect(secrets.detail).toMatch(/_SECRET|_KEY/);
   });
 });
 
