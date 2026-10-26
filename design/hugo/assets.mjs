@@ -28,7 +28,7 @@ async function frame(pose, size, q = {}) {
   return png;
 }
 // Draw PNG frames side by side and encode the strip.
-async function encode(frames, size, file, type = 'image/webp', quality = 0.86, outDir = OUT) {
+async function encode(frames, size, file, type = 'image/webp', quality = 0.82, outDir = OUT) {
   const page = await browser.newPage();
   const urls = frames.map((b) => `data:image/png;base64,${b.toString('base64')}`);
   const dataUrl = await page.evaluate(async ({ urls, size, type, quality }) => {
@@ -43,24 +43,23 @@ async function encode(frames, size, file, type = 'image/webp', quality = 0.86, o
 }
 
 const report = [];
-const STILL = 256, SPRITE = 192;
+const STILL = 256, SPRITE = 240;
 // Stills: every pose, frame 0.
-for (const pose of ['hello', 'working', 'listening', 'thinking', 'handoff', 'celebrate', 'offline', 'coffee', 'reading', 'pointing']) {
+for (const pose of ['hello', 'working', 'listening', 'thinking', 'handoff', 'celebrate', 'offline', 'coffee', 'reading', 'pointing', 'talking']) {
   report.push([`hugo-${pose}.webp`, await encode([await frame(pose, STILL)], STILL, `hugo-${pose}.webp`)]);
 }
 report.push(['hugo-face.webp', await encode([await frame('face', 128)], 128, 'hugo-face.webp')]);
 // Loops: one strip per motion.
-const LOOPS = { hello: 12, working: 8, thinking: 8, celebrate: 8, offline: 8, coffee: 6, pointing: 8 };
+// Every state is a loop now — big enough to read at 56 px — with its blink baked in where it has one.
+const LOOPS = { hello: 12, working: 8, listening: 12, talking: 8, reading: 12, thinking: 10, celebrate: 10, handoff: 8, offline: 8, coffee: 12, pointing: 8 };
 for (const [pose, n] of Object.entries(LOOPS)) {
   const frames = [];
   for (let i = 0; i < n; i++) frames.push(await frame(pose, SPRITE, { frame: String(i), frames: String(n) }));
   report.push([`hugo-${pose}-loop.webp`, await encode(frames, SPRITE, `hugo-${pose}-loop.webp`)]);
 }
 // Blinks: eyes open, eyes closed.
-for (const pose of ['listening', 'reading', 'handoff', 'face']) {
-  const size = pose === 'face' ? 128 : SPRITE;
-  report.push([`hugo-${pose}-blink.webp`, await encode([await frame(pose, size), await frame(pose, size, { blink: '1' })], size, `hugo-${pose}-blink.webp`)]);
-}
+// The face for buttons and avatars: open and blinking.
+report.push(['hugo-face-blink.webp', await encode([await frame('face', 128), await frame('face', 128, { blink: '1' })], 128, 'hugo-face-blink.webp')]);
 // WhatsApp's profile photo: a square on navy, cropped to a circle by WhatsApp.
 report.push(['exports/hugo-whatsapp.jpg', await encode([await frame('hello', 640, { bg: '#0B1832' })], 640, 'hugo-whatsapp.jpg', 'image/jpeg', 0.92, EXPORTS)]);
 await browser.close(); server.close();

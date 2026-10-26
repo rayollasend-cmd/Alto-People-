@@ -25,6 +25,7 @@ import { startLiveEvents, stopLiveEvents } from '@/lib/liveEvents';
 import { useChunkLoading } from '@/lib/chunkLoading';
 import { cn } from '@/lib/cn';
 import { AssistantProvider, useAssistant } from '@/lib/assistantContext';
+import { HugoLauncher } from '@/components/assistant/HugoLauncher';
 import { OfflineQueueBanner } from '@/components/OfflineQueueBanner';
 import { InboxReturnBar } from '@/components/InboxReturnBar';
 import { GlobalShortcuts } from '@/lib/shortcuts';
@@ -389,6 +390,8 @@ export function Layout() {
         </div>
         {/* The assistant's column, right of the page, when open (lib/assistantContext). */}
         <ShellAssistantPane />
+        {/* On a phone, Hugo one thumb away (the top bar has him from md up). */}
+        <HugoLauncher />
         {/* Access pack: g-then-key chords (home, inbox, schedule, people…). */}
         <GlobalShortcuts />
         {paletteMounted && (

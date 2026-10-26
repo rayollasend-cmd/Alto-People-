@@ -1141,6 +1141,30 @@ input[type='radio'] {
   55% { transform: translateY(0) scale(1.05, 0.95); }
   75% { transform: translateY(-3%) scale(1, 1); }
 }
+/* "Reading your records…" — three dots that breathe. */
+.hugo-dots { display: inline-flex; gap: 3px; }
+.hugo-dots > span {
+  width: 5px; height: 5px; border-radius: 9999px;
+  background: currentColor;
+  animation: hugo-dot 1.2s ease-in-out infinite;
+}
+.hugo-dots > span:nth-child(2) { animation-delay: 0.15s; }
+.hugo-dots > span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes hugo-dot {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+/* The microphone while it listens: a ring that pulses out. */
+.hugo-mic-live { position: relative; }
+.hugo-mic-live::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  box-shadow: 0 0 0 0 rgb(var(--color-accent) / 0.55);
+  animation: hugo-mic 1.4s ease-out infinite;
+}
+@keyframes hugo-mic {
+  0% { box-shadow: 0 0 0 0 rgb(var(--color-accent) / 0.55); }
+  100% { box-shadow: 0 0 0 10px rgb(var(--color-accent) / 0); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .hugo-sprite, .hugo-bounce { animation: none !important; }
+  .hugo-sprite, .hugo-bounce, .hugo-dots > span, .hugo-mic-live::after { animation: none !important; }
 }

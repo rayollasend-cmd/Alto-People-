@@ -229,6 +229,8 @@
   "MessageSquareQuote": "quotes",
   "MessageSquareText": "chat-centered-text",
   "MessagesSquare": "chats",
+  "Mic": "microphone",
+  "MicOff": "microphone-slash",
   "Minus": "minus",
   "MinusCircle": "minus-circle",
   "Monitor": "monitor",

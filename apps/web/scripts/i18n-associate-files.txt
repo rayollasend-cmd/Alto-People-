@@ -83,3 +83,5 @@ src/components/home/HugoSeat.tsx
 src/components/InstallAppButton.tsx
 src/components/InstallPrompt.tsx
 src/components/ui/AddressAutocomplete.tsx
+src/components/assistant/AssistantPane.tsx
+src/components/assistant/HugoLauncher.tsx

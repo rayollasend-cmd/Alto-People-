@@ -2,6 +2,7 @@ export * from './roles.js';
 export * from './csv.js';
 export * from './safeUrl.js';
 export * from './scrub.js';
+export * from './sensitiveText.js';
 export * from './dateOnly.js';
 export * from './schedule.js';
 export * from './shiftWindow.js';

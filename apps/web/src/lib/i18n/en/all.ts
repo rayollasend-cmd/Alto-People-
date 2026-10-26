@@ -109,3 +109,4 @@ import './week';
 import './wf';
 import './whatsNewPage';
 import './whatsnew';
+import './hugoPane';

@@ -1,31 +1,71 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
-import { ArrowUp, Check, Sparkles, X } from '@/components/ui/icons';
-import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
+import { findSensitiveNumbers } from '@alto-people/shared';
+import {
+  ArrowRight,
+  ArrowUp,
+  BookOpen,
+  Bus,
+  CalendarDays,
+  Check,
+  Copy,
+  FileText,
+  Inbox,
+  Lock,
+  MessageSquare,
+  Mic,
+  MoreHorizontal,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  Square,
+  Users,
+  Volume2,
+  Wallet,
+  X,
+  type LucideIcon,
+} from '@/components/ui/icons';
+import { HugoMascot, isHugo, preloadHugo, type HugoPose } from '@/components/hugo/HugoMascot';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAssistant } from '@/lib/assistantContext';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/hugoPane';
 import { askHugo, decideAssistantAction, handoffToPerson, type ActionResult, type AssistantActionCard, type AssistantTable, type AssistantTurn, type HugoAnswer } from '@/lib/hugoApi';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/DropdownMenu';
 import { cn } from '@/lib/cn';
+import { useSpeechInput, useSpeechOutput } from './useSpeech';
 
 /**
- * The assistant's pane: a column at the right that stays open while the
- * person works, with one conversation that survives moving between pages
- * (and a reload — it is kept in this tab's session storage, per account).
- * Below md it is the full screen. Every question carries the page the
- * person is on and the last turns, so an answer can say "this person".
+ * Hugo's panel: a column at the right that stays open while the person
+ * works (below md, the whole screen), with one conversation that survives
+ * moving between pages and a reload (this tab's session storage, per
+ * account). Every question carries the page the person is on and the last
+ * turns, so an answer can say "this person".
  *
- * It can not act. A hand-off to a person is offered as a button under the
- * answer and sent only when the person taps it.
+ * Hugo is an agent, not a chat box, and the panel shows it:
+ *  - he acts out what he is doing, at a size you notice (status below):
+ *    listening while you type or talk, reading your records, working on a
+ *    task, talking as the answer lands, celebrating a confirmed action,
+ *    handing you to a person, a coffee break when left alone, asleep offline;
+ *  - each answer says where it came from; nothing runs until the person
+ *    confirms it (action cards); a hand-off is offered, never sent unasked;
+ *  - a microphone for asking out loud — in the person's language — and the
+ *    answer read back when they did (or always, from the menu);
+ *  - "don't share your SSN or bank details here": a message carrying one is
+ *    stopped before it is sent (shared/sensitiveText; the API strips any
+ *    that get through).
  */
 
 interface Turn {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  /** What the answer came from (the registry's intent) — the source line under it. */
+  intent?: string;
   linkUrl?: string | null;
   handoff?: { summary: string; who: string | null } | null;
   handoffSent?: boolean;
@@ -37,6 +77,7 @@ interface Turn {
 }
 
 const KEY = (userId: string) => `alto:assistant:thread:${userId}`;
+const READ_ALOUD_KEY = 'alto.hugo.readAloud';
 const MAX_TURNS = 40;
 
 function readThread(userId: string): Turn[] {
@@ -58,14 +99,76 @@ function writeThread(userId: string, turns: Turn[]): void {
   }
 }
 
+function readFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** What Hugo is doing — the status line, and the pose he shows it with. */
+type Status = 'ready' | 'listening' | 'hearing' | 'reading' | 'working' | 'answered' | 'speaking' | 'done' | 'handoff' | 'coffee' | 'offline';
+const POSE_OF: Record<Status, HugoPose> = {
+  ready: 'listening',
+  listening: 'listening',
+  hearing: 'listening',
+  reading: 'reading',
+  working: 'working',
+  answered: 'talking',
+  speaking: 'talking',
+  done: 'celebrate',
+  handoff: 'handoff',
+  coffee: 'coffee',
+  offline: 'offline',
+};
+/** Reading the records first, then working on the answer. */
+const READING_MS = 1500;
+const ANSWERED_MS = 2600;
+const DONE_MS = 3400;
+const HELLO_MS = 2600;
+/** Left alone this long, he takes a coffee break (any keystroke brings him back). */
+const COFFEE_MS = 60_000;
+
+/** The registry's intents that read the person's records — the source line under an answer. */
+const SOURCED = new Set(['PAYDAY', 'RIDE', 'SCHEDULE', 'RENEW', 'DESK', 'COVERAGE', 'HELP_CENTER', 'MODEL', 'DRIVER_NEXT_RUN', 'DRIVER_RUN_RIDERS']);
+/** A suggestion's icon, by what it asks for. */
+const ICON_OF: Record<string, LucideIcon> = {
+  PAYDAY: Wallet,
+  RIDE: Bus,
+  SCHEDULE: CalendarDays,
+  RENEW: FileText,
+  DESK: Inbox,
+  COVERAGE: Users,
+  HELP_CENTER: BookOpen,
+  DRIVER_NEXT_RUN: Bus,
+  DRIVER_RUN_RIDERS: Users,
+  HANDOFF: MessageSquare,
+};
+
+const isPhone = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches;
+
 export function AssistantPane() {
-  const { user } = useAuth();
+  const { user, isOffline } = useAuth();
+  const { t, lang } = useI18n();
   const { available, me, open, setOpen, takeQueued, page } = useAssistant();
   const userId = user?.id ?? '';
   const [turns, setTurns] = useState<Turn[]>(() => (userId ? readThread(userId) : []));
   const [text, setText] = useState('');
+  const [focused, setFocused] = useState(false);
+  const [readAloud, setReadAloud] = useState(() => readFlag(READ_ALOUD_KEY));
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  // The clock his states run on: when the panel opened, the question went, the answer landed…
+  const [now, setNow] = useState(() => Date.now());
+  const [openedAt, setOpenedAt] = useState(() => Date.now());
+  const [askedAt, setAskedAt] = useState(0);
+  const [answeredAt, setAnsweredAt] = useState(0);
+  const [doneAt, setDoneAt] = useState(0);
+  const [activeAt, setActiveAt] = useState(() => Date.now());
+  const askedByVoice = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const voiceOut = useSpeechOutput(lang);
 
   useEffect(() => {
     if (userId) writeThread(userId, turns);
@@ -73,55 +176,83 @@ export function AssistantPane() {
 
   const ask = useMutation({
     mutationFn: (q: string) => {
-      const history: AssistantTurn[] = turns.slice(-10).map((t) => ({ role: t.role, text: t.text }));
+      const history: AssistantTurn[] = turns.slice(-10).map((x) => ({ role: x.role, text: x.text }));
       return askHugo(q, { page, history });
     },
     onMutate: (q) => {
-      setTurns((t) => [...t, { id: `${Date.now()}-u`, role: 'user', text: q }]);
+      setTurns((x) => [...x, { id: `${Date.now()}-u`, role: 'user', text: q }]);
       setText('');
+      setAskedAt(Date.now());
     },
     onSuccess: (a: HugoAnswer) => {
-      setTurns((t) => [...t, { id: `${Date.now()}-a`, role: 'assistant', text: a.reply, linkUrl: a.linkUrl, handoff: a.handoff ?? null, actions: a.actions ?? [], tables: a.tables ?? [] }]);
+      setTurns((x) => [...x, { id: `${Date.now()}-a`, role: 'assistant', text: a.reply, intent: a.intent, linkUrl: a.linkUrl, handoff: a.handoff ?? null, actions: a.actions ?? [], tables: a.tables ?? [] }]);
+      setAnsweredAt(Date.now());
+      setActiveAt(Date.now());
+      if (askedByVoice.current || readAloud) voiceOut.speak(a.reply);
     },
     onError: (err) => {
-      const msg = err instanceof ApiError ? err.message : "I couldn't answer that just now. Try again in a moment.";
-      setTurns((t) => [...t, { id: `${Date.now()}-e`, role: 'assistant', text: msg }]);
+      const msg = err instanceof ApiError ? err.message : t('hugoPane.error.answer');
+      setTurns((x) => [...x, { id: `${Date.now()}-e`, role: 'assistant', text: msg }]);
     },
   });
 
   const handoff = useMutation({
     mutationFn: (summary: string) => handoffToPerson(summary),
-    onSuccess: (r, _summary, _ctx) => {
-      setTurns((t) => t.map((x) => (x.handoff && !x.handoffSent ? { ...x, handoffSent: true } : x)).concat({ id: `${Date.now()}-h`, role: 'assistant', text: r.reply, linkUrl: r.linkUrl }));
+    onSuccess: (r) => {
+      setTurns((x) => x.map((y) => (y.handoff && !y.handoffSent ? { ...y, handoffSent: true } : y)).concat({ id: `${Date.now()}-h`, role: 'assistant', text: r.reply, linkUrl: r.linkUrl }));
+      if (r.sent) setDoneAt(Date.now());
     },
   });
 
   const decide = useMutation({
     mutationFn: ({ card, decision }: { turnId: string; card: AssistantActionCard; decision: 'confirm' | 'cancel' }) => decideAssistantAction(card.token, decision),
-    onSuccess: (r, v) => setTurns((t) => t.map((x) => (x.id === v.turnId ? { ...x, results: { ...(x.results ?? {}), [v.card.id]: r } } : x))),
+    onSuccess: (r, v) => {
+      setTurns((x) => x.map((y) => (y.id === v.turnId ? { ...y, results: { ...(y.results ?? {}), [v.card.id]: r } } : y)));
+      if (r.status === 'done' || r.status === 'pending_approval') setDoneAt(Date.now());
+    },
     onError: (err, v) => {
-      const message = err instanceof ApiError ? err.message : 'That didn’t go through. Try again.';
-      setTurns((t) => t.map((x) => (x.id === v.turnId ? { ...x, results: { ...(x.results ?? {}), [v.card.id]: { status: 'failed', title: v.card.title, message, linkUrl: null } } } : x)));
+      const message = err instanceof ApiError ? err.message : t('hugoPane.error.action');
+      setTurns((x) => x.map((y) => (y.id === v.turnId ? { ...y, results: { ...(y.results ?? {}), [v.card.id]: { status: 'failed', title: v.card.title, message, linkUrl: null } } } : y)));
     },
   });
 
-  const send = (q: string) => {
+  const send = (q: string, opts: { voice?: boolean } = {}) => {
     const trimmed = q.trim();
-    if (!trimmed || ask.isPending) return;
+    if (!trimmed || ask.isPending || findSensitiveNumbers(trimmed).length) return;
+    askedByVoice.current = Boolean(opts.voice);
+    voiceOut.stop();
     ask.mutate(trimmed);
   };
+
+  const voiceIn = useSpeechInput(lang, (said) => {
+    setActiveAt(Date.now());
+    // Said aloud, it goes at once — unless it carries a number Hugo must not see; then it waits, with the warning.
+    if (findSensitiveNumbers(said).length) setText(said);
+    else send(said, { voice: true });
+  });
 
   // A question handed in from a seat, the palette or a chip.
   useEffect(() => {
     if (!open) return;
+    setOpenedAt(Date.now());
+    setActiveAt(Date.now());
+    preloadHugo(['hello', 'listening', 'reading', 'working', 'talking', 'face']);
     const q = takeQueued();
     if (q) send(q);
-    else inputRef.current?.focus();
+    // A phone's keyboard would cover his greeting; a mouse user starts typing.
+    else if (!isPhone()) inputRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // His clock: twice a second while the panel is open.
   useEffect(() => {
-    listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight });
+    if (!open) return;
+    const id = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(id);
+  }, [open]);
+
+  useEffect(() => {
+    listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [turns, ask.isPending]);
 
   useEffect(() => {
@@ -133,104 +264,261 @@ export function AssistantPane() {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, setOpen]);
 
+  // The panel closing stops him talking.
+  useEffect(() => {
+    if (!open) voiceOut.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   if (!available || !open || !me) return null;
   const name = me.name;
   const hugo = isHugo(name);
+  const lastTurn = turns[turns.length - 1];
+  const handoffOpen = Boolean(lastTurn?.handoff && !lastTurn.handoffSent);
+  const draft = voiceIn.listening ? voiceIn.interim : text;
+  const sensitive = findSensitiveNumbers(text).length > 0;
+
+  const status: Status = isOffline
+    ? 'offline'
+    : voiceIn.listening
+      ? 'hearing'
+      : voiceOut.speaking
+        ? 'speaking'
+        : ask.isPending || handoff.isPending || decide.isPending
+          ? now - askedAt < READING_MS && ask.isPending
+            ? 'reading'
+            : 'working'
+          : now - doneAt < DONE_MS
+            ? 'done'
+            : now - answeredAt < ANSWERED_MS
+              ? 'answered'
+              : handoffOpen
+                ? 'handoff'
+                : text || focused
+                  ? 'listening'
+                  : now - activeAt > COFFEE_MS
+                    ? 'coffee'
+                    : 'ready';
+  const pose = POSE_OF[status];
+  const heroPose: HugoPose = status === 'ready' && now - openedAt < HELLO_MS ? 'hello' : pose;
+  const statusText = t(`hugoPane.status.${status}` as MessageKey);
+  const hour = new Date(now).getHours();
+  const greeting = user?.firstName
+    ? t(hour < 12 ? 'hugoPane.greeting.morning' : hour < 18 ? 'hugoPane.greeting.afternoon' : 'hugoPane.greeting.evening', { name: user.firstName })
+    : t('hugoPane.greeting.anon');
+  const closeOnPhone = () => isPhone() && setOpen(false);
+  const wake = () => setActiveAt(Date.now());
+
+  const toggleReadAloud = (on: boolean) => {
+    setReadAloud(on);
+    try {
+      window.localStorage.setItem(READ_ALOUD_KEY, on ? '1' : '0');
+    } catch {
+      /* a convenience */
+    }
+    if (!on) voiceOut.stop();
+  };
+
+  const copy = (turn: Turn) => {
+    void navigator.clipboard?.writeText(turn.text).then(() => {
+      setCopiedId(turn.id);
+      window.setTimeout(() => setCopiedId((c) => (c === turn.id ? null : c)), 1600);
+    });
+  };
 
   return (
     <aside
       role="complementary"
-      aria-label={`${name}, the assistant`}
+      aria-label={`${name} · ${t('hugoPane.agent')}`}
       data-testid="assistant-pane"
+      data-hugo-status={status}
       className={cn(
-        'fixed inset-0 z-40 flex flex-col bg-surface text-ink',
-        'md:static md:inset-auto md:z-auto md:w-[22rem] lg:w-[24rem] md:shrink-0 md:border-l md:border-line',
+        'fixed inset-0 z-40 flex h-[100dvh] flex-col bg-surface text-ink',
+        'md:static md:inset-auto md:z-auto md:h-auto md:w-[23rem] lg:w-[26rem] md:shrink-0 md:border-l md:border-line',
       )}
     >
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-4">
+      {/* Who he is and what he is doing, live. */}
+      <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         {hugo ? (
-          <HugoMascot pose="face" size={36} />
+          <HugoMascot pose={turns.length ? pose : 'face'} size={52} eager className="-my-1" />
         ) : (
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
-            <Sparkles className="h-4 w-4" />
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
+            <Sparkles className="h-5 w-5" />
           </span>
         )}
-        <div className="min-w-0 flex-1 leading-tight">
-          <div className="truncate text-sm font-medium">{name}</div>
-          <div className="truncate text-2xs text-ink-muted">AI assistant · answers from your records · acts only when you confirm</div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-base font-semibold">{name}</span>
+            <span className="shrink-0 rounded-full border border-accent/40 bg-accent-fill/10 px-2 py-px text-xs font-medium text-accent">{t('hugoPane.agent')}</span>
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-muted" aria-live="polite">
+            <span
+              className={cn('h-2 w-2 shrink-0 rounded-full', status === 'offline' ? 'bg-negative' : status === 'coffee' ? 'bg-caution' : 'bg-positive', status !== 'ready' && status !== 'coffee' && status !== 'offline' && 'animate-pulse')}
+              aria-hidden="true"
+            />
+            <span className="truncate" data-testid="hugo-status">
+              {statusText}
+            </span>
+          </div>
         </div>
-        <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} aria-label="Close the assistant">
-          <X className="h-4 w-4" aria-hidden="true" />
+        {voiceOut.speaking && (
+          <Button variant="ghost" size="sm" onClick={voiceOut.stop}>
+            <Square className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('hugoPane.stop')}
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label={t('hugoPane.more')}>
+              <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[13rem]">
+            {voiceOut.supported && (
+              <DropdownMenuCheckboxItem checked={readAloud} onCheckedChange={(v) => toggleReadAloud(Boolean(v))}>
+                {t('hugoPane.readAloud')}
+              </DropdownMenuCheckboxItem>
+            )}
+            <DropdownMenuItem disabled={!turns.length} onSelect={() => setTurns([])}>
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
+              {t('hugoPane.startOver')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} aria-label={t('hugoPane.close', { name })}>
+          <X className="h-5 w-5" aria-hidden="true" />
         </Button>
       </header>
+      {/* The promise an agent has to keep, always in view. */}
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-line bg-surface-sunken px-4 py-1.5 text-xs text-ink-muted">
+        <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-positive" aria-hidden="true" />
+        <span className="truncate">{t('hugoPane.promise')}</span>
+      </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3" aria-live="polite">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4" aria-live="polite">
         {turns.length === 0 && (
-          <div className="space-y-3">
-            {hugo && <HugoMascot pose="hello" size={112} play={2} className="mx-auto block" />}
-            <p className="text-sm text-ink-muted">{me.intro}</p>
+          <div className="space-y-5">
+            <div className="flex flex-col items-center gap-2 text-center">
+              {hugo && <HugoMascot pose={heroPose} size={128} eager />}
+              <p className="font-display text-2xl text-ink">{greeting}</p>
+              <p className="max-w-[34ch] text-sm leading-relaxed text-ink-muted">{me.intro}</p>
+            </div>
             {page.record && (
-              <p className="text-xs2 text-ink-muted">
-                You&rsquo;re on {page.record.name}&rsquo;s record — ask about them as &ldquo;this {page.record.type}&rdquo;.
+              <p className="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-ink-muted">
+                {t('hugoPane.onRecord', { name: page.record.name, type: page.record.type })}
               </p>
             )}
             {me.can.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {me.can.map((c) => (
-                  <Button key={c.key} size="sm" variant="secondary" onClick={() => send(c.example)} disabled={ask.isPending}>
-                    {c.example}
-                  </Button>
-                ))}
+              <div>
+                <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-ink-muted">{t('hugoPane.tryAsking')}</h3>
+                <ul className="space-y-2">
+                  {me.can.map((c) => {
+                    const Icon = ICON_OF[c.key] ?? Sparkles;
+                    return (
+                      <li key={c.key}>
+                        <button
+                          type="button"
+                          onClick={() => send(c.example)}
+                          disabled={ask.isPending}
+                          className="group flex min-h-12 w-full items-center gap-3 rounded-xl border border-line bg-surface-raised px-3 py-2 text-left text-sm text-ink transition-colors hover:border-accent/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-60"
+                        >
+                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent-fill/15 text-accent" aria-hidden="true">
+                            <Icon className="h-4 w-4" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1">{c.example}</span>
+                          <ArrowRight className="h-4 w-4 shrink-0 text-ink-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
           </div>
         )}
-        <ol className="space-y-3">
-          {turns.map((t) => (
-            <li key={t.id} className={cn('flex', t.role === 'user' ? 'justify-end' : 'justify-start')}>
-              <div
-                className={cn(
-                  'max-w-[88%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
-                  t.role === 'user' ? 'rounded-br-md bg-accent-fill/15 text-ink' : 'rounded-bl-md bg-surface-raised text-ink',
+        <ol className="space-y-4">
+          {turns.map((turn, i) => {
+            const mine = turn.role === 'user';
+            const firstOfRun = !mine && turns[i - 1]?.role !== 'assistant';
+            return (
+              <li key={turn.id} className={cn('flex gap-2', mine ? 'justify-end' : 'justify-start')}>
+                {!mine && (
+                  <span className="w-7 shrink-0 pt-0.5" aria-hidden="true">
+                    {firstOfRun && (hugo ? <HugoMascot pose="face" size={28} play="still" /> : <Sparkles className="h-5 w-5 text-accent" />)}
+                  </span>
                 )}
-              >
-                <p className="whitespace-pre-wrap">{t.text}</p>
-                {t.linkUrl && (
-                  <Button asChild size="sm" variant="link" className="mt-1 px-0">
-                    <Link to={t.linkUrl} onClick={() => window.matchMedia('(max-width: 767px)').matches && setOpen(false)}>
-                      Open
-                    </Link>
-                  </Button>
-                )}
-                {(t.tables ?? []).map((tb) => (
-                  <AnswerTable key={tb.linkUrl} table={tb} onNavigate={() => window.matchMedia('(max-width: 767px)').matches && setOpen(false)} />
-                ))}
-                {(t.actions ?? []).map((card) => (
-                  <ActionCard
-                    key={card.id}
-                    card={card}
-                    result={t.results?.[card.id] ?? null}
-                    busy={decide.isPending && decide.variables?.card.id === card.id}
-                    onDecide={(decision) => decide.mutate({ turnId: t.id, card, decision })}
-                    onNavigate={() => window.matchMedia('(max-width: 767px)').matches && setOpen(false)}
-                  />
-                ))}
-                {t.handoff && !t.handoffSent && (
-                  <div className="mt-2">
-                    <Button size="sm" variant="outline" loading={handoff.isPending} onClick={() => handoff.mutate(t.handoff!.summary)}>
-                      Send to {t.handoff.who ?? 'my supervisor'}
-                    </Button>
+                <div className={cn('flex max-w-[86%] flex-col', mine ? 'items-end' : 'items-start')}>
+                  <div
+                    className={cn(
+                      'rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
+                      mine ? 'rounded-br-md bg-accent-fill/15 text-ink' : 'rounded-bl-md border border-line bg-surface-raised text-ink',
+                    )}
+                  >
+                    <p className="whitespace-pre-wrap">{turn.text}</p>
+                    {turn.linkUrl && (
+                      <Button asChild size="sm" variant="secondary" className="mt-2 h-8">
+                        <Link to={turn.linkUrl} onClick={closeOnPhone}>
+                          {t('hugoPane.open')}
+                          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Link>
+                      </Button>
+                    )}
+                    {(turn.tables ?? []).map((tb) => (
+                      <AnswerTable key={tb.linkUrl} table={tb} onNavigate={closeOnPhone} />
+                    ))}
+                    {(turn.actions ?? []).map((card) => (
+                      <ActionCard
+                        key={card.id}
+                        card={card}
+                        result={turn.results?.[card.id] ?? null}
+                        busy={decide.isPending && decide.variables?.card.id === card.id}
+                        onDecide={(decision) => decide.mutate({ turnId: turn.id, card, decision })}
+                        onNavigate={closeOnPhone}
+                      />
+                    ))}
+                    {turn.handoff && !turn.handoffSent && (
+                      <div className="mt-2">
+                        <Button size="sm" variant="outline" loading={handoff.isPending} onClick={() => handoff.mutate(turn.handoff!.summary)}>
+                          {turn.handoff.who ? t('hugoPane.sendTo', { who: turn.handoff.who }) : t('hugoPane.sendToSupervisor')}
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </li>
-          ))}
+                  {!mine && (
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-1 text-xs text-ink-muted">
+                      {turn.intent && SOURCED.has(turn.intent) && (
+                        <span className="inline-flex items-center gap-1">
+                          <ShieldCheck className="h-3.5 w-3.5 text-positive" aria-hidden="true" />
+                          {t(`hugoPane.source.${turn.intent}` as MessageKey)}
+                        </span>
+                      )}
+                      {voiceOut.supported && (
+                        <button type="button" className="inline-flex min-h-8 items-center gap-1 rounded px-1 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" onClick={() => voiceOut.speak(turn.text)}>
+                          <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          {t('hugoPane.listen')}
+                        </button>
+                      )}
+                      <button type="button" className="inline-flex min-h-8 items-center gap-1 rounded px-1 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright" onClick={() => copy(turn)}>
+                        {copiedId === turn.id ? <Check className="h-3.5 w-3.5 text-positive" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                        {copiedId === turn.id ? t('hugoPane.copied') : t('hugoPane.copy')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
           {ask.isPending && (
-            <li className="flex justify-start">
-              <div className="flex items-center gap-2 rounded-2xl rounded-bl-md bg-surface-raised px-3.5 py-2 text-sm text-ink-muted">
-                <span className="sr-only">{name} is thinking</span>
-                {hugo && <HugoMascot pose="working" size={40} />}
-                <span aria-hidden="true">…</span>
+            <li className="flex justify-start gap-2">
+              <span className="w-7 shrink-0" aria-hidden="true" />
+              <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-line bg-surface-raised px-3.5 py-2.5 text-sm text-ink-muted">
+                <span className="sr-only">{t('hugoPane.thinking', { name })}</span>
+                <span aria-hidden="true">{statusText}</span>
+                <span className="hugo-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
               </div>
             </li>
           )}
@@ -238,25 +526,54 @@ export function AssistantPane() {
       </div>
 
       <form
-        className="shrink-0 border-t border-line p-3"
+        className="shrink-0 border-t border-line px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
         onSubmit={(e) => {
           e.preventDefault();
           send(text);
         }}
       >
+        {sensitive && (
+          <p role="alert" className="mb-2 flex items-start gap-1.5 rounded-lg border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-ink">
+            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-negative" aria-hidden="true" />
+            {t('hugoPane.privacy.blocked', { name })}
+          </p>
+        )}
+        {voiceIn.error && (
+          <p role="status" className="mb-2 text-sm text-ink-muted">
+            {t(voiceIn.error === 'denied' ? 'hugoPane.mic.denied' : 'hugoPane.mic.noSpeech')}
+          </p>
+        )}
         <label htmlFor="assistant-ask" className="sr-only">
-          Ask {name}
+          {t('hugoPane.ask', { name })}
         </label>
-        <div className="flex items-end gap-2">
+        <div
+          className={cn(
+            'flex items-end gap-1.5 rounded-2xl border bg-surface-raised p-1.5 transition-colors',
+            voiceIn.listening ? 'border-accent' : sensitive ? 'border-negative' : 'border-line focus-within:border-accent',
+          )}
+        >
           <Textarea
             ref={inputRef}
             id="assistant-ask"
-            value={text}
+            value={draft}
             rows={1}
             maxLength={500}
-            placeholder={`Ask ${name}`}
-            className="min-h-11 max-h-40 flex-1 resize-none"
-            onChange={(e) => setText(e.target.value)}
+            readOnly={voiceIn.listening}
+            placeholder={voiceIn.listening ? t('hugoPane.askAloud') : t('hugoPane.ask', { name })}
+            className="min-h-10 max-h-40 flex-1 resize-none rounded-xl border-0 border-transparent bg-transparent px-2.5 py-2 shadow-none hover:border-transparent focus:border-transparent focus:ring-0 focus:ring-offset-0"
+            onFocus={() => {
+              setFocused(true);
+              wake();
+              preloadHugo(['celebrate', 'handoff', 'coffee']);
+            }}
+            onBlur={() => setFocused(false)}
+            onChange={(e) => {
+              setText(e.target.value);
+              wake();
+              // Grow with the words, up to the cap.
+              e.target.style.height = 'auto';
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -264,19 +581,37 @@ export function AssistantPane() {
               }
             }}
           />
-          <Button type="submit" size="icon" aria-label="Send" disabled={!text.trim() || ask.isPending}>
-            <ArrowUp className="h-4 w-4" aria-hidden="true" />
+          {voiceIn.supported && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn('shrink-0 rounded-xl', voiceIn.listening && 'hugo-mic-live text-accent')}
+              aria-pressed={voiceIn.listening}
+              aria-label={voiceIn.listening ? t('hugoPane.mic.stop') : t('hugoPane.mic.start')}
+              title={t('hugoPane.mic.note')}
+              onClick={() => {
+                wake();
+                voiceIn.clearError();
+                if (voiceIn.listening) voiceIn.stop();
+                else {
+                  voiceOut.stop();
+                  voiceIn.start();
+                }
+              }}
+              disabled={ask.isPending}
+            >
+              <Mic className="h-5 w-5" aria-hidden="true" />
+            </Button>
+          )}
+          <Button type="submit" size="icon" className="shrink-0 rounded-xl" aria-label={t('hugoPane.send')} disabled={!text.trim() || ask.isPending || sensitive || voiceIn.listening}>
+            <ArrowUp className="h-5 w-5" aria-hidden="true" />
           </Button>
         </div>
-        {turns.length > 0 && (
-          <button
-            type="button"
-            className="mt-2 text-2xs text-ink-muted underline-offset-2 hover:underline"
-            onClick={() => setTurns([])}
-          >
-            Start over
-          </button>
-        )}
+        <p className="mt-2 flex items-center gap-1.5 px-1 text-xs text-ink-muted">
+          <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {t('hugoPane.privacy')}
+        </p>
       </form>
     </aside>
   );
@@ -300,32 +635,33 @@ function ActionCard({
   onDecide: (d: 'confirm' | 'cancel') => void;
   onNavigate: () => void;
 }) {
+  const { t } = useI18n();
   const expired = !result && new Date(card.expiresAt).getTime() < Date.now();
   return (
-    <div className="mt-2 rounded-xl border border-line bg-surface p-3" role="group" aria-label={`Proposed: ${card.title}`}>
+    <div className="mt-2 rounded-xl border border-line bg-surface p-3" role="group" aria-label={t('hugoPane.proposed', { title: card.title })}>
       <div className="text-sm font-medium text-ink">{card.title}</div>
       {card.detail && <div className="mt-0.5 text-xs text-ink-muted">{card.detail}</div>}
       {result ? (
-        <div className={cn('mt-2 text-sm', result.status === 'failed' ? 'text-alert' : 'text-ink-muted')} role="status">
-          {result.status === 'done' && <Check className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-success" aria-hidden="true" />}
+        <div className={cn('mt-2 text-sm', result.status === 'failed' ? 'text-negative' : 'text-ink-muted')} role="status">
+          {result.status === 'done' && <Check className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-positive" aria-hidden="true" />}
           {result.message}
           {result.linkUrl && (
             <Button asChild size="sm" variant="link" className="ml-1 h-auto px-0">
               <Link to={result.linkUrl} onClick={onNavigate}>
-                Open
+                {t('hugoPane.open')}
               </Link>
             </Button>
           )}
         </div>
       ) : expired ? (
-        <div className="mt-2 text-xs text-ink-muted">This expired — ask again and I’ll set it up fresh.</div>
+        <div className="mt-2 text-xs text-ink-muted">{t('hugoPane.expired')}</div>
       ) : (
         <div className="mt-2.5 flex flex-wrap gap-2">
           <Button size="sm" onClick={() => onDecide('confirm')} loading={busy}>
             {card.confirmLabel}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => onDecide('cancel')} disabled={busy}>
-            Cancel
+            {t('hugoPane.cancel')}
           </Button>
         </div>
       )}
@@ -335,13 +671,14 @@ function ActionCard({
 
 /** A numbers answer: the first rows, and the report builder one tap away. */
 function AnswerTable({ table, onNavigate }: { table: AssistantTable; onNavigate: () => void }) {
+  const { t } = useI18n();
   const cols = table.columns.slice(0, 5);
   const rows = table.rows.slice(0, 8);
   return (
     <div className="mt-2 rounded-xl border border-line bg-surface p-3">
       <div className="text-sm font-medium text-ink">{table.title}</div>
       {rows.length === 0 ? (
-        <div className="mt-1 text-xs text-ink-muted">No rows match.</div>
+        <div className="mt-1 text-xs text-ink-muted">{t('hugoPane.noRows')}</div>
       ) : (
         <div className="mt-2 overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -371,7 +708,7 @@ function AnswerTable({ table, onNavigate }: { table: AssistantTable; onNavigate:
       )}
       <Button asChild size="sm" variant="link" className="mt-1 h-auto px-0">
         <Link to={table.linkUrl} onClick={onNavigate}>
-          Open in the report builder
+          {t('hugoPane.reportBuilder')}
         </Link>
       </Button>
     </div>

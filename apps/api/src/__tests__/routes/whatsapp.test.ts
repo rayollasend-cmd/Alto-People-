@@ -283,13 +283,20 @@ describe('the assistant', () => {
     const parts = await prisma.conversationParticipant.findMany({ where: { conversationId: handoff!.conversationId! } });
     expect(parts.map((p) => p.userId).sort()).toEqual([w.mariaUser.id, w.sup.id].sort());
 
+    // An SSN sent on WhatsApp is never stored, answered on or handed off.
+    await webhook(inbound('18505550101', 'mi seguro social es 123-45-6789'));
+    await new Promise((r) => setTimeout(r, 300));
+    const ssnRow = await prisma.whatsAppMessage.findFirst({ where: { associateId: w.maria.id, direction: 'INBOUND' }, orderBy: { createdAt: 'desc' } });
+    expect(ssnRow?.body).toBe('mi seguro social es [number removed]');
+    expect(await prisma.message.count({ where: { body: { contains: '123-45-6789' } } })).toBe(0);
+
     // Every question is on the record, and a replayed webhook is a no-op.
     const id = 'wamid.in.replay';
     await webhook(inbound('18505550101', 'mi horario', id));
     await webhook(inbound('18505550101', 'mi horario', id));
     await new Promise((r) => setTimeout(r, 300));
     expect(await prisma.whatsAppMessage.count({ where: { waMessageId: id } })).toBe(1);
-    expect(await prisma.whatsAppMessage.count({ where: { associateId: w.maria.id, direction: 'INBOUND' } })).toBe(5);
+    expect(await prisma.whatsAppMessage.count({ where: { associateId: w.maria.id, direction: 'INBOUND' } })).toBe(6);
     expect(mariaShift.id).toBeTruthy();
   });
 

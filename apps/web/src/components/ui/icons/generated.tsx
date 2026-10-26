@@ -230,6 +230,7 @@ export { ChatCenteredDots as MessageSquarePlus } from './glyphs/chat-centered-do
 export { Quotes as MessageSquareQuote } from './glyphs/quotes';
 export { ChatCenteredText as MessageSquareText } from './glyphs/chat-centered-text';
 export { Chats as MessagesSquare } from './glyphs/chats';
+export { Microphone as Mic } from './glyphs/microphone';
 export { Minus as Minus } from './glyphs/minus';
 export { MinusCircle as MinusCircle } from './glyphs/minus-circle';
 export { Monitor as Monitor } from './glyphs/monitor';

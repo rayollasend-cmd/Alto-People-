@@ -9,17 +9,19 @@ import coffeeLoop from '@/assets/hugo/hugo-coffee-loop.webp';
 import face from '@/assets/hugo/hugo-face.webp';
 import faceBlink from '@/assets/hugo/hugo-face-blink.webp';
 import handoff from '@/assets/hugo/hugo-handoff.webp';
-import handoffBlink from '@/assets/hugo/hugo-handoff-blink.webp';
+import handoffLoop from '@/assets/hugo/hugo-handoff-loop.webp';
 import hello from '@/assets/hugo/hugo-hello.webp';
 import helloLoop from '@/assets/hugo/hugo-hello-loop.webp';
 import listening from '@/assets/hugo/hugo-listening.webp';
-import listeningBlink from '@/assets/hugo/hugo-listening-blink.webp';
+import listeningLoop from '@/assets/hugo/hugo-listening-loop.webp';
 import offline from '@/assets/hugo/hugo-offline.webp';
 import offlineLoop from '@/assets/hugo/hugo-offline-loop.webp';
 import pointing from '@/assets/hugo/hugo-pointing.webp';
 import pointingLoop from '@/assets/hugo/hugo-pointing-loop.webp';
 import reading from '@/assets/hugo/hugo-reading.webp';
-import readingBlink from '@/assets/hugo/hugo-reading-blink.webp';
+import readingLoop from '@/assets/hugo/hugo-reading-loop.webp';
+import talking from '@/assets/hugo/hugo-talking.webp';
+import talkingLoop from '@/assets/hugo/hugo-talking-loop.webp';
 import thinking from '@/assets/hugo/hugo-thinking.webp';
 import thinkingLoop from '@/assets/hugo/hugo-thinking-loop.webp';
 import working from '@/assets/hugo/hugo-working.webp';
@@ -41,24 +43,52 @@ import workingLoop from '@/assets/hugo/hugo-working-loop.webp';
  * Only the platform's own assistant is Hugo: a tenant that renamed its
  * assistant gets its own words and no Alto mascot (isHugo).
  */
-export type HugoPose = 'hello' | 'working' | 'listening' | 'thinking' | 'handoff' | 'celebrate' | 'offline' | 'coffee' | 'reading' | 'pointing' | 'face';
+export type HugoPose = 'hello' | 'working' | 'listening' | 'thinking' | 'handoff' | 'celebrate' | 'offline' | 'coffee' | 'reading' | 'pointing' | 'talking' | 'face';
 
-const STILL: Record<HugoPose, string> = { hello, working, listening, thinking, handoff, celebrate, offline, coffee, reading, pointing, face };
+const STILL: Record<HugoPose, string> = { hello, working, listening, thinking, handoff, celebrate, offline, coffee, reading, pointing, talking, face };
 
 /** Each pose's motion: a strip of frames, played as a loop or as an occasional blink. */
 const MOTION: Partial<Record<HugoPose, { strip: string; frames: number; kind: 'loop' | 'blink'; seconds: number }>> = {
-  hello: { strip: helloLoop, frames: 12, kind: 'loop', seconds: 1.1 },
-  working: { strip: workingLoop, frames: 8, kind: 'loop', seconds: 0.9 },
-  thinking: { strip: thinkingLoop, frames: 8, kind: 'loop', seconds: 1.6 },
-  celebrate: { strip: celebrateLoop, frames: 8, kind: 'loop', seconds: 1 },
+  hello: { strip: helloLoop, frames: 12, kind: 'loop', seconds: 1.2 },
+  working: { strip: workingLoop, frames: 8, kind: 'loop', seconds: 0.8 },
+  listening: { strip: listeningLoop, frames: 12, kind: 'loop', seconds: 2.4 },
+  talking: { strip: talkingLoop, frames: 8, kind: 'loop', seconds: 0.9 },
+  reading: { strip: readingLoop, frames: 12, kind: 'loop', seconds: 2.4 },
+  thinking: { strip: thinkingLoop, frames: 10, kind: 'loop', seconds: 1.8 },
+  celebrate: { strip: celebrateLoop, frames: 10, kind: 'loop', seconds: 1 },
+  handoff: { strip: handoffLoop, frames: 8, kind: 'loop', seconds: 1.4 },
   offline: { strip: offlineLoop, frames: 8, kind: 'loop', seconds: 2.4 },
-  coffee: { strip: coffeeLoop, frames: 6, kind: 'loop', seconds: 1.5 },
+  coffee: { strip: coffeeLoop, frames: 12, kind: 'loop', seconds: 2.6 },
   pointing: { strip: pointingLoop, frames: 8, kind: 'loop', seconds: 1.2 },
-  listening: { strip: listeningBlink, frames: 2, kind: 'blink', seconds: 4.6 },
-  reading: { strip: readingBlink, frames: 2, kind: 'blink', seconds: 5.2 },
-  handoff: { strip: handoffBlink, frames: 2, kind: 'blink', seconds: 4.8 },
   face: { strip: faceBlink, frames: 2, kind: 'blink', seconds: 5.6 },
 };
+
+/** Strips already decoded on this page: a pose switches to one with no flash of the still. */
+const decoded = new Set<string>();
+function decode(url: string): Promise<void> {
+  if (decoded.has(url)) return Promise.resolve();
+  const img = new Image();
+  img.src = url;
+  // decode() where the browser has it (older Safari, jsdom: just the load).
+  return (img.decode ? img.decode() : Promise.resolve()).then(() => {
+    decoded.add(url);
+  });
+}
+
+/**
+ * Fetch these poses' stills and strips ahead of need — the assistant panel
+ * warms the states it is about to show (typing → reading, working, talking).
+ * Nothing for people who prefer reduced motion beyond the stills.
+ */
+export function preloadHugo(poses: HugoPose[]): void {
+  if (typeof window === 'undefined') return;
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  for (const pose of poses) {
+    void decode(STILL[pose]).catch(() => undefined);
+    const motion = MOTION[pose];
+    if (motion && !reduced) void decode(motion.strip).catch(() => undefined);
+  }
+}
 
 /** Whether the assistant with this name is Hugo (the platform's own), not a tenant's renamed assistant. */
 export function isHugo(assistantName: string | null | undefined): boolean {
@@ -73,6 +103,8 @@ interface HugoMascotProps {
   play?: 'loop' | number | 'still';
   /** A short celebratory bounce on arrival. */
   bounce?: boolean;
+  /** Start the motion now, not when the page goes idle — for the assistant panel, where he is the point. */
+  eager?: boolean;
   className?: string;
 }
 
@@ -86,30 +118,32 @@ const whenIdle = (fn: () => void): (() => void) => {
   return () => window.clearTimeout(t);
 };
 
-export function HugoMascot({ pose, size, play = 'loop', bounce = false, className }: HugoMascotProps) {
+export function HugoMascot({ pose, size, play = 'loop', bounce = false, eager = false, className }: HugoMascotProps) {
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   const motion = play === 'still' || reduced ? undefined : MOTION[pose];
-  const [ready, setReady] = useState<string | null>(null);
+  const [ready, setReady] = useState<string | null>(() => (motion && decoded.has(motion.strip) ? motion.strip : null));
 
   useEffect(() => {
     if (!motion) return;
+    if (decoded.has(motion.strip)) {
+      setReady(motion.strip);
+      return;
+    }
     let live = true;
-    const cancel = whenIdle(() => {
-      const img = new Image();
-      img.src = motion.strip;
-      // decode() where the browser has it (older Safari, jsdom: just the load).
-      (img.decode ? img.decode() : Promise.resolve()).then(
+    const warm = () =>
+      decode(motion.strip).then(
         () => live && setReady(motion.strip),
         () => undefined, // stays the still image
       );
-    });
+    const cancel = eager ? (void warm(), () => undefined) : whenIdle(() => void warm());
     return () => {
       live = false;
       cancel();
     };
-  }, [motion]);
+  }, [motion, eager]);
 
-  const playing = motion && ready === motion.strip;
+  // A strip decoded earlier plays at once — a pose change shows no flash of the still.
+  const playing = motion && (ready === motion.strip || decoded.has(motion.strip));
   const style = playing
     ? ({
         '--hugo-end': `-${motion.frames * size}px`,
@@ -129,7 +163,7 @@ export function HugoMascot({ pose, size, play = 'loop', bounce = false, classNam
       data-hugo={pose}
     >
       <img src={STILL[pose]} width={size} height={size} alt="" decoding="async" draggable={false} className={cn('h-full w-full', playing && 'invisible')} />
-      {playing && <span className="hugo-sprite absolute inset-0" data-kind={motion.kind} style={style} />}
+      {playing && <span key={motion.strip} className="hugo-sprite absolute inset-0" data-kind={motion.kind} style={style} />}
     </span>
   );
 }

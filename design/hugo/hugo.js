@@ -155,7 +155,16 @@ const P = {
   reading: { phones: 'on', mic: false, eyes: 'open', look: [0.03, -0.05], mouth: 'smile', armL: 'holdL', armR: 'holdR', extra: 'document' },
   pointing: { phones: 'on', mic: false, eyes: 'open', look: [0.06, 0.01], mouth: 'open', armL: 'rest', armR: 'point' },
   face: { phones: 'on', mic: false, eyes: 'open', look: [0.01, 0.0], mouth: 'smile', armL: null, armR: null },
+  talking: { phones: 'on', mic: true, eyes: 'open', look: [0.0, 0.01], mouth: 'talk', armL: 'rest', armR: 'gesture' },
 }[POSE];
+// Motion that reads at 56 px: each loop names its blink frame and its eyes' path.
+const F = (n) => FRAMES > 1 && FRAME === n;
+if (POSE === 'listening' && F(8)) P.eyes = 'closed';
+if (POSE === 'talking') { P.mouth = FRAME % 2 === 0 ? 'talk' : 'smile'; if (F(6)) P.eyes = 'closed'; }
+if (POSE === 'reading' && FRAMES > 1) { const line = Math.floor(PH * 3); const x = ((PH * 3) % 1) * 0.09 - 0.045; P.look = [x, -0.035 - line * 0.012]; if (F(9)) P.eyes = 'closed'; }
+if (POSE === 'thinking' && FRAMES > 1) P.look = [Math.sin(PH * TAU) * 0.05, 0.045];
+if (POSE === 'coffee' && FRAMES > 1) { const sip = Math.sin(PH * Math.PI); P.sip = sip; P.eyes = sip > 0.45 ? 'happy' : 'open'; P.look = [0.03, 0.02]; }
+if (POSE === 'face' && F(1)) P.eyes = 'closed';
 if (params.get('blink') === '1') P.eyes = 'closed';
 
 // Eyes.
@@ -185,6 +194,10 @@ if (P.mouth === 'open') {
 }
 if (P.mouth === 'hmm') { place(tube([[-0.07, 0, 0], [0.02, 0.008, 0], [0.09, 0.03, 0]], 0.022, M.line), 0.04, -0.15, 0.015); }
 if (P.mouth === 'o') { place(arc(0.045, 0.02, Math.PI * 2, M.line), 0, -0.15, 0.012); }
+if (P.mouth === 'talk') {
+  place(ellipsoid(0.11, 0.085, 0.02, M.mouth), 0, -0.15, 0.006);
+  place(ellipsoid(0.05, 0.022, 0.012, M.tongue), 0, -0.185, 0.02);
+}
 
 // Headphones.
 if (P.phones === 'on') {
@@ -196,7 +209,7 @@ if (P.phones === 'on') {
   }
   add(tube([[-1.05, -0.18, 0.18], [-0.95, -0.46, 0.5], [-0.62, -0.5, 0.78], [-0.4, -0.38, 0.86]], 0.026, M.silver));
   const mic = add(cap([-0.37, -0.37, 0.88], 0.075, P.mic ? M.teal : M.micOff));
-  if (P.mic) { const glow = new THREE.PointLight(0x2dd4bf, 0.5, 1.4); glow.position.set(-0.45, -0.45, 1.2); scene.add(glow); }
+  if (P.mic) { const pulse = 0.6 + 0.4 * Math.sin(PH * TAU * 2); M.teal.emissiveIntensity = 1.4 + pulse * 1.6; const glow = new THREE.PointLight(0x2dd4bf, 0.3 + pulse * 0.6, 1.5); glow.position.set(-0.45, -0.45, 1.2); scene.add(glow); }
 } else {
   // Around the neck (as in the 2D Hugo): the band hangs under his chin, the cups up by his jaw.
   add(tube([[-0.74, -0.36, 0.66], [-0.5, -0.62, 0.86], [0, -0.72, 0.98], [0.5, -0.62, 0.86], [0.74, -0.36, 0.66]], 0.05, M.silver));
@@ -223,14 +236,18 @@ const ARMS = {
   holdL: (s) => [[s * 1.05, -0.66, 0.6], [s * 0.42, -0.62, 1.22]],
   holdR: (s) => [[s * 1.05, -0.66, 0.6], [s * 0.42, -0.62, 1.22]],
   point: (s) => [[s * 1.35, -0.2, 0.5], [s * 1.72, 0.1, 0.62]],
+  gesture: (s) => [[s * 1.3, -0.45, 0.55], [s * 1.36, -0.12, 0.72]],
 };
 // Animation: the wave swings, typing hands bob in turn, celebrating arms pump.
 function animate(name, side, pts) {
   const [mid, hand] = pts;
-  if (name === 'wave') { const a = Math.sin(PH * TAU) * 0.22; return [[mid[0] + a * 0.3, mid[1], mid[2]], [hand[0] + a, hand[1] - Math.abs(a) * 0.25, hand[2]]]; }
+  if (name === 'wave') { const a = Math.sin(PH * TAU) * 0.38; return [[mid[0] + a * 0.35, mid[1], mid[2]], [hand[0] + a, hand[1] - Math.abs(a) * 0.3, hand[2]]]; }
+  if (name === 'gesture') { const d = Math.sin(PH * TAU * 2) * 0.1; return [mid, [hand[0] + d * 0.4, hand[1] + d, hand[2]]]; }
+  if (name === 'mug' && P.sip !== undefined) { const k = P.sip; return [[mid[0], mid[1] + k * 0.12, mid[2]], [hand[0] - k * 0.12, hand[1] + k * 0.2, hand[2] + k * 0.06]]; }
+  if (name === 'give') { const d = Math.sin(PH * TAU) * 0.14; return [mid, [hand[0] + Math.max(0, d), hand[1], hand[2]]]; }
   if (name === 'typeL' || name === 'typeR') { const d = Math.sin(PH * TAU * 2 + (side < 0 ? 0 : Math.PI)) * 0.05; return [mid, [hand[0], hand[1] + Math.max(0, d), hand[2]]]; }
-  if (name === 'up') { const d = Math.sin(PH * TAU) * 0.08; return [[mid[0], mid[1] + d, mid[2]], [hand[0], hand[1] + d * 1.6, hand[2]]]; }
-  if (name === 'point') { const d = Math.sin(PH * TAU) * 0.05; return [mid, [hand[0] + d, hand[1] + d * 0.5, hand[2]]]; }
+  if (name === 'up') { const d = Math.sin(PH * TAU) * 0.14; return [[mid[0], mid[1] + d, mid[2]], [hand[0], hand[1] + d * 1.6, hand[2]]]; }
+  if (name === 'point') { const d = Math.max(0, Math.sin(PH * TAU)) * 0.14; return [mid, [hand[0] + d, hand[1] + d * 0.4, hand[2]]]; }
   return pts;
 }
 for (const [name, side] of [['armL', -1], ['armR', 1]]) {
@@ -259,14 +276,15 @@ if (P.laptop) {
   const lidBox = add(new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.8, 0.045), M.alu), lid); lidBox.position.set(0, 0.4, 0);
   const screen = add(new THREE.Mesh(new THREE.PlaneGeometry(1.04, 0.68), M.screen), lid); screen.position.set(0, 0.41, -0.024); screen.rotation.y = Math.PI;
   const emblem = altoEmblem(); emblem.scale.setScalar(0.0082); emblem.position.set(0, 0.41, 0.024); lid.add(emblem);
-  const screenGlow = new THREE.PointLight(0x2dd4bf, 1.3, 1.9); screenGlow.position.set(0, -0.42, 1.25); scene.add(screenGlow);
+  const screenGlow = new THREE.PointLight(0x2dd4bf, 1.1 + 0.35 * Math.sin(PH * TAU * 4), 1.9); screenGlow.position.set(0, -0.42, 1.25); scene.add(screenGlow);
 }
 if (P.extra === 'thought') [[0.95, 0.95, 0.06], [1.2, 1.2, 0.085], [1.5, 1.48, 0.11]].forEach(([x, y, r], i) => {
   const bob = Math.sin((PH + i * 0.22) * TAU) * 0.05;
   add(cap([x, y + bob, 0.3], r * (1 + 0.12 * Math.sin((PH + i * 0.3) * TAU)), M.gold));
 });
 if (P.extra === 'coffee') {
-  const mug = new THREE.Group(); mug.position.set(0.58, -0.36, 1.18); mug.rotation.set(0.1, -0.3, 0); mug.scale.setScalar(1.3); add(mug);
+  const sip = P.sip ?? 0;
+  const mug = new THREE.Group(); mug.position.set(0.58 - sip * 0.18, -0.36 + sip * 0.2, 1.18 + sip * 0.05); mug.rotation.set(0.1, -0.3, sip * 0.5); mug.scale.setScalar(1.3); add(mug);
   const cup = add(new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.14, 0.32, 40, 1, true), M.paper), mug); cup.material.side = THREE.DoubleSide;
   add(new THREE.Mesh(new THREE.CircleGeometry(0.15, 32), new THREE.MeshPhysicalMaterial({ color: 0x5b3a22, roughness: 0.3 })), mug).rotation.x = -Math.PI / 2;
   mug.children[mug.children.length - 1].position.y = 0.13;
@@ -284,9 +302,15 @@ if (P.extra === 'document') {
   [0.3, 0.18, 0.06, -0.06, -0.18].forEach((y, i) => { const l = add(new THREE.Mesh(new THREE.BoxGeometry(i === 0 ? 0.42 : 0.56, 0.028, 0.005), i === 0 ? M.gold : new THREE.MeshPhysicalMaterial({ color: 0xb6c3d3, roughness: 0.6 })), doc); l.position.set(i === 0 ? -0.05 : 0, y, 0.012); });
   const seal = add(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.02, 32), M.gold), doc); seal.rotation.x = Math.PI / 2; seal.position.set(0.22, -0.34, 0.015);
 }
-if (POSE === 'working') hugo.position.y = Math.abs(Math.sin(PH * TAU * 2)) * 0.012;
+if (POSE === 'working') { hugo.position.y = Math.abs(Math.sin(PH * TAU * 2)) * 0.035; hugo.rotation.x = Math.sin(PH * TAU * 2) * 0.03; }
+if (POSE === 'celebrate') hugo.position.y = Math.abs(Math.sin(PH * TAU)) * 0.16;
+if (POSE === 'listening') hugo.rotation.z = Math.sin(PH * TAU) * 0.05;
+if (POSE === 'talking') { hugo.position.y = Math.abs(Math.sin(PH * TAU * 2)) * 0.025; hugo.rotation.z = Math.sin(PH * TAU) * 0.03; }
+if (POSE === 'hello') hugo.position.y = Math.abs(Math.sin(PH * TAU)) * 0.03;
+if (POSE === 'offline') hugo.scale.setScalar(1 + Math.sin(PH * TAU) * 0.015);
 if (P.extra === 'envelope') {
-  const env = new THREE.Group(); env.position.set(1.72, -0.12, 0.8); env.rotation.set(0.1, -0.5, -0.15); add(env);
+  const out = Math.max(0, Math.sin(PH * TAU)) * 0.14;
+  const env = new THREE.Group(); env.position.set(1.72 + out, -0.12 + Math.sin(PH * TAU * 2) * 0.03, 0.8); env.rotation.set(0.1, -0.5, -0.15 + Math.sin(PH * TAU * 2) * 0.08); add(env);
   add(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.03), M.paper), env);
   add(tube([[-0.21, 0.14, 0.02], [0, -0.02, 0.02], [0.21, 0.14, 0.02]], 0.012, M.gold), env);
 }

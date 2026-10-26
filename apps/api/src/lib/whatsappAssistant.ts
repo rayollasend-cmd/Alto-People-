@@ -1,3 +1,4 @@
+import { redactSensitiveNumbers } from '@alto-people/shared';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { loadTenantProfile } from './tenantProfile.js';
 import { detectConfirmAnswer, detectHugoIntent, type HugoIntentKey } from './hugo.js';
@@ -148,7 +149,9 @@ export interface HandledInbound {
   duplicate?: boolean;
 }
 
-export async function handleInbound(msg: InboundMessage, db: Db = defaultPrisma, now: Date = new Date()): Promise<HandledInbound> {
+export async function handleInbound(received: InboundMessage, db: Db = defaultPrisma, now: Date = new Date()): Promise<HandledInbound> {
+  // An SSN or account number is never stored, answered on or handed off (shared/sensitiveText).
+  const msg = { ...received, text: redactSensitiveNumbers(received.text) };
   const phone = msg.from.replace(/\D/g, '');
   const consent = await db.whatsAppConsent.findFirst({ where: { phone }, orderBy: { updatedAt: 'desc' } });
   const associateId = consent?.associateId ?? null;

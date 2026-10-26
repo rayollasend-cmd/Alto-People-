@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { internalSites } from '../lib/scope.js';
 import type { SessionUser } from '../types/express.js';
 import { z } from 'zod';
-import { ROLE_LABELS, termsIn, type Role, can } from '@alto-people/shared';
+import { ROLE_LABELS, termsIn, type Role, can, redactSensitiveNumbers } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -296,7 +296,12 @@ hugoRouter.get('/', requireAuth, async (req, res) => {
 
 hugoRouter.post('/ask', requireAuth, async (req, res) => {
   const user = req.user! as Asker;
-  const { text, page, history } = AskSchema.parse(req.body);
+  const parsed = AskSchema.parse(req.body);
+  // An SSN or account number never reaches the model, a hand-off or a log
+  // (the app stops them first; this is the backstop — shared/sensitiveText).
+  const text = redactSensitiveNumbers(parsed.text);
+  const page = parsed.page;
+  const history = parsed.history?.map((h) => ({ ...h, text: redactSensitiveNumbers(h.text) }));
   const { tenantId, audience, ctx, lang, name, profile } = await contextFor(user);
   const now = new Date();
   const terms = termsIn(profile, lang);
@@ -419,7 +424,7 @@ async function rulesAnswer(
 /** The confirmed hand-off: the associate's question, as a thread with their supervisor. */
 hugoRouter.post('/handoff', requireAuth, async (req, res) => {
   const user = req.user! as Asker;
-  const { text } = HandoffSchema.parse(req.body);
+  const text = redactSensitiveNumbers(HandoffSchema.parse(req.body).text);
   const { lang, name } = await contextFor(user);
   if (!user.associateId) throw new HttpError(403, 'no_handoff', 'Only a worker\'s question can be passed to their supervisor.');
   const hand = await handoff(prisma, user.associateId, user.id, text, new Date(), name);

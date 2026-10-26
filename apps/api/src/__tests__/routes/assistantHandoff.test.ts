@@ -106,6 +106,29 @@ describe('the assistant without a model', () => {
     expect(await prisma.conversation.count()).toBe(0);
   });
 
+  it('an SSN or account number typed to Hugo never reaches the offer, the thread or the supervisor', async () => {
+    const client = await createClient('Walmart 1234');
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    const ana = await createAssociate({ firstName: 'Ana', lastName: 'Lopez' });
+    await prisma.application.create({ data: { associateId: ana.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date() } });
+    await prisma.associateAssignment.create({ data: { associateId: ana.id, locationId: site.id, startedAt: new Date() } });
+    const dana = await createAssociate({ firstName: 'Dana', lastName: 'Reyes' });
+    await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id, associateId: dana.id });
+    const { user } = await createUser({ role: 'ASSOCIATE', associateId: ana.id });
+    const agent = await loginAs(user.email);
+
+    const asked = await agent.post('/hugo/ask').send({ text: 'my w2 shows ssn 123-45-6789 but it is wrong' });
+    expect(asked.status).toBe(200);
+    expect(JSON.stringify(asked.body)).not.toContain('123-45-6789');
+    expect(asked.body.handoff?.summary).toBe('my w2 shows ssn [number removed] but it is wrong');
+
+    const sent = await agent.post('/hugo/handoff').send({ text: 'deposit to account 000123456789 please' });
+    expect(sent.body.sent).toBe(true);
+    const msg = await prisma.message.findFirstOrThrow({ orderBy: { createdAt: 'desc' } });
+    expect(msg.body).toContain('[number removed]');
+    expect(msg.body).not.toContain('000123456789');
+  });
+
   it('a staff account gets no hand-off offer', async () => {
     const agent = await loginAs('owner@example.com');
     const asked = await agent.post('/hugo/ask').send({ text: 'tell me a joke' });
