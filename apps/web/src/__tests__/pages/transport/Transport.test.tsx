@@ -457,31 +457,42 @@ describe('<TransportHome> — the command center', () => {
   });
 
   it('says "needs a van" once (the section, not a tile too), and a quiet day is one empty state (F500 polish)', async () => {
-    // A day with bookings: the five tiles, and "Needs a van" only as the section.
-    routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
-    const first = renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    const kpis = await screen.findByTestId('transport-kpis');
-    expect(within(kpis).getByText('Booked')).toBeTruthy();
-    expect(within(kpis).queryByText('Needs a van')).toBeNull();
-    // No run planned yet: "Vans out" says so instead of "0 of 0".
-    expect(within(kpis).getByText('No runs yet')).toBeTruthy();
-    first.unmount();
+    // Midday: after 6 PM a quiet board moves to tomorrow (TransportDirector's
+    // evening tests), two fetches in a row that outran findBy's second on a
+    // loaded CI runner at 20:00 UTC.
+    const noon = new Date();
+    noon.setHours(12, 0, 0, 0);
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['Date'] });
+    vi.setSystemTime(noon);
+    try {
+      // A day with bookings: the five tiles, and "Needs a van" only as the section.
+      routes((path) => (path.startsWith('/transport/board') ? board() : undefined));
+      const first = renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
+      const kpis = await screen.findByTestId('transport-kpis');
+      expect(within(kpis).getByText('Booked')).toBeTruthy();
+      expect(within(kpis).queryByText('Needs a van')).toBeNull();
+      // No run planned yet: "Vans out" says so instead of "0 of 0".
+      expect(within(kpis).getByText('No runs yet')).toBeTruthy();
+      first.unmount();
 
-    // Nothing booked, nothing planned: one quiet state — no zero tiles, no
-    // green "all clear", no two "nothing here" boxes.
-    routes((path) => {
-      // Answer for the day asked (after 6 PM a quiet board opens on tomorrow).
-      if (path.startsWith('/transport/board')) {
-        const asked = new URL(`http://x${path}`).searchParams.get('date');
-        return { ...board(), ...(asked ? { date: asked } : {}), rides: [], kpis: { ...board().kpis, booked: 0, needsVan: 0, openIssues: 0 } };
-      }
-    });
-    renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
-    expect(await screen.findByText(/^No rides booked for /)).toBeInTheDocument();
-    expect(screen.queryByTestId('transport-kpis')).toBeNull();
-    expect(screen.queryByTestId('needs-van-none')).toBeNull();
-    expect(screen.queryByTestId('runs-none')).toBeNull();
-    expect(screen.queryByText(/All clear/)).toBeNull();
+      // Nothing booked, nothing planned: one quiet state — no zero tiles, no
+      // green "all clear", no two "nothing here" boxes.
+      routes((path) => {
+        // Answer for the day asked (after 6 PM a quiet board opens on tomorrow).
+        if (path.startsWith('/transport/board')) {
+          const asked = new URL(`http://x${path}`).searchParams.get('date');
+          return { ...board(), ...(asked ? { date: asked } : {}), rides: [], kpis: { ...board().kpis, booked: 0, needsVan: 0, openIssues: 0 } };
+        }
+      });
+      renderAs('TRANSPORTATION_DIRECTOR', <TransportHome />);
+      expect(await screen.findByText(/^No rides booked for /)).toBeInTheDocument();
+      expect(screen.queryByTestId('transport-kpis')).toBeNull();
+      expect(screen.queryByTestId('needs-van-none')).toBeNull();
+      expect(screen.queryByTestId('runs-none')).toBeNull();
+      expect(screen.queryByText(/All clear/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('the rides list tells a manager’s waiver from a ride nobody could charge, and flags rides that still need a signature', async () => {
