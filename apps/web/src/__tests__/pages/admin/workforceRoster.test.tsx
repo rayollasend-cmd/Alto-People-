@@ -112,7 +112,7 @@ describe('the roster’s agent scorecard column', () => {
     expect(within(good).getByText('2% errors')).toBeInTheDocument();
     // Over ten percent reads as a problem; nothing measured says so.
     const noisy = await screen.findByRole('link', { name: /11 tasks/ });
-    expect(within(noisy).getByText('15% errors').closest('[class*="alert"]')).not.toBeNull();
+    expect(within(noisy).getByText('15% errors').closest('[class*="negative"]')).not.toBeNull();
     expect(within(await screen.findByRole('link', { name: /0 tasks/ })).getByText('no errors measured')).toBeInTheDocument();
     // One read per live agent, for seven days — none for the person, none for the offboarded agent.
     const reads = calls.filter((c) => c.path.includes('/scorecard')).map((c) => c.path);

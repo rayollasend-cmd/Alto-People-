@@ -474,7 +474,7 @@ export function CommandPalette({
         <Command
           label="Command palette"
           shouldFilter={false}
-          className="bg-navy w-full min-w-0 overflow-hidden"
+          className="bg-surface-overlay w-full min-w-0 overflow-hidden"
         >
           <div className="flex items-center border-b border-navy-secondary px-3">
             <Search className="h-4 w-4 text-silver/70 mr-2 shrink-0" aria-hidden="true" />

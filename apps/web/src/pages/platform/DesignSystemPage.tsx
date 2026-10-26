@@ -26,7 +26,10 @@ const TOKENS: Array<{ job: string; cssVar: string; cls: string; use: string }> =
   { job: 'App background', cssVar: '--color-surface-sunken', cls: 'bg-surface-sunken', use: 'the page behind cards' },
   { job: 'Surface', cssVar: '--color-surface', cls: 'bg-surface', use: 'cards, panels, sheets' },
   { job: 'Raised', cssVar: '--color-surface-raised', cls: 'bg-surface-raised', use: 'hover, selected row' },
-  { job: 'Line', cssVar: '--color-line', cls: 'border-line', use: 'borders, dividers' },
+  { job: 'Overlay', cssVar: '--color-surface-overlay', cls: 'bg-surface-overlay', use: 'menus, popovers, dialogs, drawers' },
+  { job: 'Line', cssVar: '--color-line', cls: 'border-line', use: 'card edges' },
+  { job: 'Line subtle', cssVar: '--color-line-subtle', cls: 'divide-line', use: 'dividers between rows' },
+  { job: 'Line strong', cssVar: '--color-line-strong', cls: 'border-line-strong', use: 'form controls (3:1)' },
   { job: 'Ink', cssVar: '--color-ink', cls: 'text-ink', use: 'primary text' },
   { job: 'Ink muted', cssVar: '--color-ink-muted', cls: 'text-ink-muted', use: 'secondary text' },
   { job: 'Ink subtle', cssVar: '--color-ink-subtle', cls: 'text-ink-subtle', use: 'placeholders, disabled' },
@@ -37,6 +40,17 @@ const TOKENS: Array<{ job: string; cssVar: string; cls: string; use: string }> =
   { job: 'Negative', cssVar: '--color-negative', cls: 'text-negative', use: 'failed, late, danger' },
   { job: 'Info', cssVar: '--color-info', cls: 'text-info', use: 'links, informational' },
 ];
+
+/** The palette's families (scripts/palette.mjs): 50 faintest … 950 strongest, in the current theme. */
+const FAMILIES: Array<{ name: string; label: string }> = [
+  { name: 'neutral', label: 'Neutral' },
+  { name: 'accent', label: 'Accent (gold)' },
+  { name: 'positive', label: 'Positive' },
+  { name: 'caution', label: 'Caution' },
+  { name: 'negative', label: 'Negative' },
+  { name: 'info', label: 'Info' },
+];
+const STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
 
 const SCALE: Array<{ job: string; cls: string; sample: string; where: string }> = [
   { job: 'Hero', cls: 'font-display text-hero md:text-hero-lg leading-[1.1] tracking-tight text-ink', sample: 'Good morning, Maria', where: 'PageHeader; a home greeting' },
@@ -143,6 +157,29 @@ export function DesignSystemPage() {
               </tbody>
             </table>
             </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section aria-labelledby="ds-scales">
+        <SectionTitle
+          id="ds-scales"
+          title="Scales"
+          description="Six families, eleven steps each. In both themes 50 is the faintest step off the surface and 950 the strongest ink, so a chip is a 100 wash, a 200 edge and 800 ink, at 4.5:1 or better by construction."
+        />
+        <Card>
+          <CardContent className="space-y-2 overflow-x-auto">
+            {FAMILIES.map((f) => (
+              <div key={f.name} className="flex min-w-[40rem] items-center gap-1.5">
+                <div className="w-28 shrink-0 text-xs2 font-medium text-ink">{f.label}</div>
+                {STEPS.map((step) => (
+                  <div key={step} className="flex-1">
+                    <div className="h-8 rounded-md" style={{ background: `rgb(var(--color-${f.name}-${step}))` }} title={`${f.name}-${step} ${rgbOf(`--color-${f.name}-${step}`)}`} />
+                    <div className="mt-0.5 text-center font-mono text-3xs tabular-nums text-ink-muted">{step}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
           </CardContent>
         </Card>
       </section>

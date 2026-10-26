@@ -128,7 +128,7 @@ export function Drawer({
             // 1px gold/15 accent on the left edge picks up the brand
             // accent so the drawer reads as a floating panel rather
             // than a darker stripe of the page.
-            'bg-navy border-l border-gold/15 elev-3',
+            'bg-surface-overlay border-l border-gold/15 elev-3',
             'flex flex-col',
             'focus:outline-none',
             'data-[state=open]:animate-slide-in-from-right data-[state=closed]:animate-slide-out-to-right',

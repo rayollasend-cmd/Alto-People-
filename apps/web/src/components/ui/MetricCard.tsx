@@ -306,8 +306,8 @@ const ICON_TONE: Record<MetricTone, string> = {
   alert: 'text-alert',
 };
 const BORDER_TONE: Partial<Record<MetricTone, string>> = {
-  warning: 'border-warning/30',
-  alert: 'border-alert/40',
+  warning: 'border-caution-300',
+  alert: 'border-negative-300',
 };
 
 /**

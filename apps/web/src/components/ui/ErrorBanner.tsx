@@ -27,15 +27,15 @@ const SEVERITY: Record<
 > = {
   error: {
     icon: AlertCircle,
-    className: 'border-alert/60 bg-alert/15 text-alert',
+    className: 'border-negative-300 bg-negative-50 text-negative-800',
   },
   warning: {
     icon: AlertTriangle,
-    className: 'border-warning/60 bg-warning/15 text-warning',
+    className: 'border-caution-300 bg-caution-50 text-caution-800',
   },
   info: {
     icon: Info,
-    className: 'border-steel/60 bg-steel/15 text-sky',
+    className: 'border-info-300 bg-info-50 text-info-800',
   },
 };
 

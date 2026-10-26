@@ -36,7 +36,7 @@ const DEFAULT_PREFERENCE: ThemePreference = 'system';
 // strip on Android). Mirrors --color-midnight in index.css.
 const THEME_COLOR: Record<Theme, string> = {
   dark: '#0B1832',
-  light: '#F8FAFC',
+  light: '#F8FAFF',
 };
 
 interface ThemeContextValue {

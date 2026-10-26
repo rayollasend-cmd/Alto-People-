@@ -38,140 +38,220 @@
 
 :root {
   /* Brand tokens — RGB triplets so Tailwind can apply <alpha-value>.
-     Source: Alto HR brand palette.
 
-     Phase 27: bumped --color-gold from #C9A84C (≈4.0:1 on navy) to
-     #D9B967 (≈4.7:1 on navy) so primary-action text + status pills meet
-     WCAG AA. The brighter --color-gold-bright stays for accents/hover.
-
-     Phase 68: tokens are now theme-aware. The names ("navy", "silver"…)
-     are kept for class-name compatibility with the existing 100+ pages,
-     even though the resolved colors flip in light mode (so `bg-navy`
-     becomes white surface in light mode, etc.). The brand foreground
-     text (`text-fg`) is a new semantic token that swaps with theme — use
-     it on new code; existing `text-white` is overridden in light mode
-     via the .text-white rule below. */
-
-  /* Default = dark theme (current Alto navy + gold). */
-  --color-navy:            11  24  50;  /* #0B1832 */
-  --color-navy-secondary:  20  43  82;  /* #142B52 — bumped from #0E2244 so
-                                          card borders + dividers register at
-                                          arm's length on dark surfaces. */
-  --color-midnight:         8  15  32;  /* #080F20 */
-  --color-gold:           217 185 103;  /* #D9B967 — AA-compliant on navy */
-  --color-gold-bright:    240 216 120;  /* #F0D878 */
-  /* Gold as a FILL under dark `on-accent` ink (primary button gradient,
-     toast action, drawer active row). In dark mode these match the text
-     tier exactly — the split only matters in light mode. */
-  --color-gold-fill:      217 185 103;  /* #D9B967 */
-  --color-gold-fill-bright: 240 216 120; /* #F0D878 */
-  --color-silver:         192 208 224;  /* #C0D0E0 — bumped from #A8B8C8 so
-                                          fractional opacities (silver/60,
-                                          /70) clear WCAG AA on navy. */
-  /* #185FA5 was a light-mode blue left in the dark palette: 2.70:1 as
-     text on navy and 2.41:1 on its own tint, so every steel badge/tone
-     was unreadable here. blue-400 is the dark-surface equivalent. The
-     only solid `bg-steel` uses are a dot and a progress fill (no ink on
-     them), so lightening the token is safe. */
-  --color-steel:           96 165 250;  /* #60A5FA — 6.9:1 on navy (AA) */
-  --color-sky:            230 241 251;  /* #E6F1FB */
-  --color-teal:            15 110  86;  /* #0F6E56 */
-  /* Chart-only third categorical hue: --color-teal is tuned as a subtle
-     surface tint and reads gray (chroma 0.09) / sub-3:1 as a data mark on
-     navy. This step passes the chart checks (chroma, CVD pairs vs gold +
-     steel, contrast) in both themes. Not for text or UI chrome. */
-  --color-chart-teal:      45 212 191;  /* #2DD4BF */
-  /* Portal chart marks — validated categorical trio for the DARK surface
-     (OKLCH L 0.48–0.67 band, CVD ΔE ≥ 15, ≥ 3:1 on navy): gold step, steel,
-     teal. Marks only; text keeps its text tokens. */
-  --color-chart-1:        176 140  46;  /* #B08C2E */
-  --color-chart-2:         59 130 246;  /* #3B82F6 */
-  --color-chart-3:         13 148 136;  /* #0D9488 */
-  /* Slots 4–5 of the one categorical order (components/ui/charts/palette):
-     violet and magenta, validated with 1–3 on navy (adjacent CVD ΔE ≥ 13). */
-  --color-chart-4:        144 133 233;  /* #9085E9 */
-  --color-chart-5:        213  81 129;  /* #D55181 */
-  /* "Other" and comparison series: silver at 45% over navy, made solid. */
-  --color-chart-other:     93 107 128;  /* #5D6B80 */
-  --color-alert:          233  98  85;  /* #E96255 — brightened for safer AA margin on navy (≈5.3:1) */
-  --color-success:         52 168 116;  /* #34A874 */
-  --color-warning:        237 178  60;  /* #EDB23C */
-  --color-muted:          102 102 102;  /* #666666 */
-  --color-fg:             255 255 255;  /* primary text, swaps in light */
-  /* Theme-STABLE ink for colored fills. These do NOT flip with theme:
-     gold buttons always carry dark ink, saturated fills (alert/steel/
-     success) always carry white. Using text-navy/text-white on fills
-     broke in light mode because those vars are remapped. */
-  --color-on-accent:       11  24  50;  /* dark ink on gold */
-  --color-on-solid:       255 255 255;  /* white on saturated fills */
-  /* The alert fill is the one saturated fill white fails on in the dark
-     theme (#E96255 : white = 3.3), so it carries dark ink there and white
-     on the deeper light-theme red. */
-  --color-on-alert:        11  24  50;
+     Navy and gold are the brand and are written as they are. Everything
+     else — greys, status colours, surfaces, lines and the 50–950 scales — is
+     generated from six OKLCH families by scripts/palette.mjs, which holds the
+     rationale and refuses to write a pairing below its contrast floor. The
+     names ("navy", "silver"…) are kept for class-name compatibility; they
+     resolve to light-theme values under [data-theme='light'] below. */
+  /* @palette dark — generated by scripts/palette.mjs; edit there, then run it. */
+  --color-navy:              11  24  50;  /* #0B1832 — card surface */
+  --color-navy-secondary:    20  43  82;  /* #142B52 — raised: hover, selected row */
+  --color-midnight:           8  15  32;  /* #080F20 — page */
+  --color-surface-overlay:   15  32  63;  /* #0F203F — menus, popovers, dialogs, tooltips — one step above a card */
+  --color-gold:             217 185 103;  /* #D9B967 — brand gold */
+  --color-gold-bright:      240 216 120;  /* #F0D878 — gold hover, focus */
+  --color-gold-fill:        217 185 103;  /* #D9B967 — gold as a fill under on-accent ink */
+  --color-gold-fill-bright: 240 216 120;  /* #F0D878 */
+  --color-line:              42  74 126;  /* #2A4A7E — 2.0:1 — card edges */
+  --color-line-subtle:       31  53  90;  /* #1F355A — row dividers */
+  --color-line-strong:       85 115 165;  /* #5573A5 — 3.7:1 — form controls */
+  --color-fg:               255 255 255;  /* #FFFFFF — primary text */
+  --color-silver:           196 207 224;  /* #C4CFE0 — secondary text */
+  --color-silver-floor:     121 134 157;  /* #79869D — silver/30–/50, floored */
+  --color-muted:             90 103 126;  /* #5A677E — placeholders, disabled */
+  --color-steel:            103 163 253;  /* #67A3FD — info */
+  --color-sky:              231 241 255;  /* #E7F1FF — info badge text */
+  --color-alert:            235  96  88;  /* #EB6058 — negative */
+  --color-success:           56 167 113;  /* #38A771 — positive */
+  --color-warning:          255 169  79;  /* #FFA94F — caution */
+  --color-success-raised:    81 187 132;  /* #51BB84 */
+  --color-alert-raised:     255 125 116;  /* #FF7D74 */
+  --color-steel-raised:     125 177 255;  /* #7DB1FF */
+  --color-teal:              15 110  86;  /* #0F6E56 — surface tint */
+  --color-chart-teal:        45 212 191;  /* #2DD4BF */
+  --color-chart-1:          176 141  42;  /* #B08D2A */
+  --color-chart-2:           72 134 223;  /* #4886DF */
+  --color-chart-3:           13 148 136;  /* #0D9488 */
+  --color-chart-4:          144 133 233;  /* #9085E9 */
+  --color-chart-5:          213  81 129;  /* #D55181 */
+  --color-chart-other:       94 107 130;  /* #5E6B82 */
+  --color-on-accent:         11  24  50;  /* #0B1832 — dark ink on gold */
+  --color-on-solid:         255 255 255;  /* #FFFFFF — white on a saturated fill */
+  --color-on-alert:          11  24  50;  /* #0B1832 — the alert fill carries dark ink here */
+  /* Scales: 50 faintest … 950 strongest, in this theme (scripts/palette.mjs). */
+  --color-neutral-50:  21  34  60;  /* #15223C */
+  --color-neutral-100:  28  41  67;  /* #1C2943 */
+  --color-neutral-200:  38  52  77;  /* #26344D */
+  --color-neutral-300:  53  67  92;  /* #35435C */
+  --color-neutral-400:  70  83 105;  /* #465369 */
+  --color-neutral-500:  91 103 127;  /* #5B677F */
+  --color-neutral-600: 112 126 149;  /* #707E95 */
+  --color-neutral-700: 136 148 171;  /* #8894AB */
+  --color-neutral-800: 161 174 195;  /* #A1AEC3 */
+  --color-neutral-900: 190 200 219;  /* #BEC8DB */
+  --color-neutral-950: 220 228 241;  /* #DCE4F1 */
+  --color-accent-50:  25  34  48;  /* #192230 */
+  --color-accent-100:  35  40  46;  /* #23282E */
+  --color-accent-200:  49  50  44;  /* #31322C */
+  --color-accent-300:  71  65  40;  /* #474128 */
+  --color-accent-400: 103  80  11;  /* #67500B */
+  --color-accent-500: 127  99  14;  /* #7F630E */
+  --color-accent-600: 153 121  26;  /* #99791A */
+  --color-accent-700: 179 144  44;  /* #B3902C */
+  --color-accent-800: 205 168  68;  /* #CDA844 */
+  --color-accent-900: 234 195  98;  /* #EAC362 */
+  --color-accent-950: 255 224 151;  /* #FFE097 */
+  --color-positive-50:  13  36  54;  /* #0D2436 */
+  --color-positive-100:  14  44  57;  /* #0E2C39 */
+  --color-positive-200:  15  56  61;  /* #0F383D */
+  --color-positive-300:  17  74  67;  /* #114A43 */
+  --color-positive-400:   1  96  58;  /* #01603A */
+  --color-positive-500:   0 118  73;  /* #007649 */
+  --color-positive-600:  26 142  91;  /* #1A8E5B */
+  --color-positive-700:  55 166 112;  /* #37A670 */
+  --color-positive-800:  86 192 137;  /* #56C089 */
+  --color-positive-900: 123 218 165;  /* #7BDAA5 */
+  --color-positive-950: 165 244 198;  /* #A5F4C6 */
+  --color-caution-50:  28  32  45;  /* #1C202D */
+  --color-caution-100:  40  38  42;  /* #28262A */
+  --color-caution-200:  57  46  37;  /* #392E25 */
+  --color-caution-300:  83  59  29;  /* #533B1D */
+  --color-caution-400: 122  70   0;  /* #7A4600 */
+  --color-caution-500: 151  87   0;  /* #975700 */
+  --color-caution-600: 182 107   1;  /* #B66B01 */
+  --color-caution-700: 214 127   1;  /* #D67F01 */
+  --color-caution-800: 242 151  47;  /* #F2972F */
+  --color-caution-900: 255 186 119;  /* #FFBA77 */
+  --color-caution-950: 255 222 192;  /* #FFDEC0 */
+  --color-negative-50:  32  29  52;  /* #201D34 */
+  --color-negative-100:  46  33  54;  /* #2E2136 */
+  --color-negative-200:  66  39  56;  /* #422738 */
+  --color-negative-300:  97  47  59;  /* #612F3B */
+  --color-negative-400: 158  34  34;  /* #9E2222 */
+  --color-negative-500: 187  54  51;  /* #BB3633 */
+  --color-negative-600: 216  78  72;  /* #D84E48 */
+  --color-negative-700: 242 103  95;  /* #F2675F */
+  --color-negative-800: 255 139 130;  /* #FF8B82 */
+  --color-negative-900: 255 182 174;  /* #FFB6AE */
+  --color-negative-950: 255 219 215;  /* #FFDBD7 */
+  --color-info-50:  16  34  66;  /* #102242 */
+  --color-info-100:  20  41  78;  /* #14294E */
+  --color-info-200:  25  51  94;  /* #19335E */
+  --color-info-300:  33  66 118;  /* #214276 */
+  --color-info-400:  27  81 156;  /* #1B519C */
+  --color-info-500:  44 101 185;  /* #2C65B9 */
+  --color-info-600:  64 125 213;  /* #407DD5 */
+  --color-info-700:  87 149 239;  /* #5795EF */
+  --color-info-800: 120 174 255;  /* #78AEFF */
+  --color-info-900: 165 202 255;  /* #A5CAFF */
+  --color-info-950: 211 229 255;  /* #D3E5FF */
+  /* @palette dark end */
 }
 
 :root[data-theme='light'] {
-  /* "navy" → light surface (cards, panels) */
-  --color-navy:           255 255 255;  /* #FFFFFF */
-  --color-navy-secondary: 226 232 240;  /* #E2E8F0 — borders / subtle hover */
-  --color-midnight:       248 250 252;  /* #F8FAFC — app background */
-  /* Gold darkened further so SMALL gold text (links, eyebrow labels, the
-     active nav tab) clears WCAG AA on white — the earlier #B8860B was only
-     ~3.25:1 (large-text-only), which failed every small gold link in light
-     mode. #87680C ≈ 5.2:1 on white / 5.0:1 on the #F8FAFC app bg. */
-  --color-gold:           135 104  12;  /* #87680C — ≈5.2:1 on white (AA) */
-  /* gold-bright is NOT display-only — 33 of its 77 uses are text-sm or
-     smaller, and it is the hover fill under `bg-gold hover:bg-gold-bright
-     text-navy`. Both jobs need 4.5:1, so it lands DARKER than base gold
-     here: in light mode "brighter" has to mean "more emphatic", which on
-     white means more ink, not less. 6.4:1 as text and under white ink. */
-  --color-gold-bright:    122  89   6;  /* #7A5906 — ≈6.4:1 on white (AA) */
-  /* Fill tier stays at the LIGHTER golds so dark `on-accent` ink keeps
-     clearing AA on top of it: #D49E24 → 7.3:1 and #B8860B → 5.4:1 against
-     the #0B1832 ink. Darkening these with the text tier would have taken
-     the primary button's label to 3.4:1 — the one thing the gold change
-     could not afford to break. */
-  --color-gold-fill:      184 134  11;  /* #B8860B — 5.4:1 under on-accent ink */
-  --color-gold-fill-bright: 212 158 36; /* #D49E24 — 7.3:1 under on-accent ink */
-  /* "silver" (secondary text) becomes a dark slate. Slate-700 keeps the
-     high alphas (/80, /90, full) clear of AA on their own; everything at
-     /70 and below is floored by an explicit rule further down, because
-     alpha compositing — not the base colour — is what breaks them. */
-  --color-silver:          51  65  85;  /* #334155 — slate-700 */
-  --color-steel:           37  99 235;  /* #2563EB — 5.2:1 as link text on white */
-  /* "sky" is a pale tint that only ever works as text on a DARK surface.
-     Left at #DBEAFE it rendered pale-blue-on-pale-blue in light mode —
-     the `info` badge and ErrorBanner info tone measured 1.01:1, i.e.
-     invisible. In light mode it has to be the ink, not the wash. */
-  --color-sky:             29  78 216;  /* #1D4ED8 — 5.4:1 on a steel/8 tint */
-  --color-teal:            15 118 110;  /* #0F766E — teal-700, 4.8:1 on white */
-  --color-chart-teal:      13 148 136;  /* #0D9488 — chart mark step, see dark block */
-  --color-chart-1:        184 134  11;  /* #B8860B — validated on white */
-  --color-chart-2:         37  99 235;  /* #2563EB */
-  --color-chart-3:         13 148 136;  /* #0D9488 */
-  --color-chart-4:         74  58 167;  /* #4A3AA7 — validated with 1–3 on white */
-  --color-chart-5:        213  81 129;  /* #D55181 */
-  --color-chart-other:    124 135 151;  /* #7C8797 — 3.6:1 on white */
-  /* red-600 was 4.83:1 bare and only 3.82:1 once it sat on its own tint
-     (every destructive badge). red-700 clears both. */
-  --color-alert:          185  28  28;  /* #B91C1C — 6.5:1 on white (AA) */
-  /* success + warning sit two steps down from the emerald-600 / amber-600
-     tier (~3.2-3.8:1 on white, large-text-only). One step (emerald-700 /
-     amber-700) cleared white but not a status chip on a tinted card: the
-     chip paints its text on an 8% wash of itself, and on a
-     bg-navy-secondary/20 panel that pair measured warning 4.18 and
-     success 4.55 — the full-stack axe sweep's last light-mode finding.
-     emerald-800 / amber-800 clear every surface the chips sit on: 6.3 /
-     6.8 on white, 5.1 / 5.5 on solid navy-secondary. */
-  --color-success:          6  95  70;  /* #065F46 — emerald-800 */
-  --color-warning:        146  64  14;  /* #92400E — amber-800 */
-  --color-muted:          148 163 184;  /* #94A3B8 */
-  /* Primary text in light mode. */
-  --color-fg:              15  23  42;  /* #0F172A — slate-900 */
-  /* Same values as dark — that is the point (see above). */
-  --color-on-accent:       11  24  50;
-  --color-on-solid:       255 255 255;
-  --color-on-alert:       255 255 255;
+  /* @palette light — generated by scripts/palette.mjs; edit there, then run it. */
+  --color-navy:             255 255 255;  /* #FFFFFF — card surface */
+  --color-navy-secondary:   225 231 243;  /* #E1E7F3 — raised: hover, selected row */
+  --color-midnight:         248 250 255;  /* #F8FAFF — page */
+  --color-surface-overlay:  255 255 255;  /* #FFFFFF — menus, popovers, dialogs — lifted by shadow */
+  --color-gold:             135 104  12;  /* #87680C — brand gold as text, 5.2:1 */
+  --color-gold-bright:      122  89   6;  /* #7A5906 — the more emphatic step on white */
+  --color-gold-fill:        173 138  40;  /* #AD8A28 — gold fill under on-accent ink */
+  --color-gold-fill-bright: 200 163  63;  /* #C8A33F */
+  --color-line:             175 186 207;  /* #AFBACF — card edges */
+  --color-line-subtle:      219 226 240;  /* #DBE2F0 — row dividers */
+  --color-line-strong:      126 140 163;  /* #7E8CA3 — form controls */
+  --color-line-hover:       102 115 139;  /* #66738B — form controls on hover */
+  --color-fg:                16  24  38;  /* #101826 — primary text */
+  --color-silver:            53  65  85;  /* #354155 — secondary text */
+  --color-silver-floor:      91 103 126;  /* #5B677E — silver/30–/70, floored */
+  --color-muted:            150 162 185;  /* #96A2B9 — placeholders, disabled */
+  --color-steel:             50 109 194;  /* #326DC2 — info */
+  --color-sky:               35  90 170;  /* #235AAA — info badge text */
+  --color-alert:            176  45  44;  /* #B02D2C — negative */
+  --color-success:            1  96  58;  /* #01603A — positive */
+  --color-warning:          131  75   0;  /* #834B00 — caution */
+  --color-teal:              15 118 110;  /* #0F766E */
+  --color-chart-teal:        13 148 136;  /* #0D9488 */
+  --color-chart-1:          173 138  40;  /* #AD8A28 */
+  --color-chart-2:           50 109 194;  /* #326DC2 */
+  --color-chart-3:           13 148 136;  /* #0D9488 */
+  --color-chart-4:           74  58 167;  /* #4A3AA7 */
+  --color-chart-5:          213  81 129;  /* #D55181 */
+  --color-chart-other:      121 134 158;  /* #79869E */
+  --color-on-accent:         11  24  50;  /* #0B1832 */
+  --color-on-solid:         255 255 255;  /* #FFFFFF */
+  --color-on-alert:         255 255 255;  /* #FFFFFF */
+  /* Scales: 50 faintest … 950 strongest, in this theme (scripts/palette.mjs). */
+  --color-neutral-50: 246 247 249;  /* #F6F7F9 */
+  --color-neutral-100: 239 241 243;  /* #EFF1F3 */
+  --color-neutral-200: 226 229 234;  /* #E2E5EA */
+  --color-neutral-300: 203 208 216;  /* #CBD0D8 */
+  --color-neutral-400: 162 174 196;  /* #A2AEC4 */
+  --color-neutral-500: 135 147 170;  /* #8793AA */
+  --color-neutral-600: 111 125 148;  /* #6F7D94 */
+  --color-neutral-700:  92 105 129;  /* #5C6981 */
+  --color-neutral-800:  75  87 110;  /* #4B576E */
+  --color-neutral-900:  59  71  91;  /* #3B475B */
+  --color-neutral-950:  43  54  73;  /* #2B3649 */
+  --color-accent-50: 249 247 241;  /* #F9F7F1 */
+  --color-accent-100: 244 240 230;  /* #F4F0E6 */
+  --color-accent-200: 234 228 209;  /* #EAE4D1 */
+  --color-accent-300: 218 206 172;  /* #DACEAC */
+  --color-accent-400: 206 169  69;  /* #CEA945 */
+  --color-accent-500: 178 142  43;  /* #B28E2B */
+  --color-accent-600: 152 120  25;  /* #987819 */
+  --color-accent-700: 129 100  14;  /* #81640E */
+  --color-accent-800: 108  84  11;  /* #6C540B */
+  --color-accent-900:  88  68  13;  /* #58440D */
+  --color-accent-950:  65  51  16;  /* #413310 */
+  --color-positive-50: 241 248 245;  /* #F1F8F5 */
+  --color-positive-100: 230 243 237;  /* #E6F3ED */
+  --color-positive-200: 209 232 222;  /* #D1E8DE */
+  --color-positive-300: 172 214 196;  /* #ACD6C4 */
+  --color-positive-400:  87 193 137;  /* #57C189 */
+  --color-positive-500:  54 166 111;  /* #36A66F */
+  --color-positive-600:  24 142  90;  /* #188E5A */
+  --color-positive-700:   0 121  74;  /* #00794A */
+  --color-positive-800:   0 100  61;  /* #00643D */
+  --color-positive-900:   0  81  48;  /* #005130 */
+  --color-positive-950:   0  62  36;  /* #003E24 */
+  --color-caution-50: 251 246 240;  /* #FBF6F0 */
+  --color-caution-100: 247 239 227;  /* #F7EFE3 */
+  --color-caution-200: 240 225 204;  /* #F0E1CC */
+  --color-caution-300: 228 201 163;  /* #E4C9A3 */
+  --color-caution-400: 243 153  49;  /* #F39931 */
+  --color-caution-500: 212 126   0;  /* #D47E00 */
+  --color-caution-600: 180 105   0;  /* #B46900 */
+  --color-caution-700: 154  89   0;  /* #9A5900 */
+  --color-caution-800: 128  74   0;  /* #804A00 */
+  --color-caution-900: 105  59   0;  /* #693B00 */
+  --color-caution-950:  81  44   0;  /* #512C00 */
+  --color-negative-50: 253 244 244;  /* #FDF4F4 */
+  --color-negative-100: 250 235 235;  /* #FAEBEB */
+  --color-negative-200: 247 219 218;  /* #F7DBDA */
+  --color-negative-300: 240 191 189;  /* #F0BFBD */
+  --color-negative-400: 255 141 132;  /* #FF8D84 */
+  --color-negative-500: 240 102  94;  /* #F0665E */
+  --color-negative-600: 214  76  71;  /* #D64C47 */
+  --color-negative-700: 190  55  53;  /* #BE3735 */
+  --color-negative-800: 165  38  38;  /* #A52626 */
+  --color-negative-900: 140  23  26;  /* #8C171A */
+  --color-negative-950: 111   8  14;  /* #6F080E */
+  --color-info-50: 243 247 252;  /* #F3F7FC */
+  --color-info-100: 234 240 250;  /* #EAF0FA */
+  --color-info-200: 217 229 246;  /* #D9E5F6 */
+  --color-info-300: 186 207 240;  /* #BACFF0 */
+  --color-info-400: 122 175 255;  /* #7AAFFF */
+  --color-info-500:  86 147 237;  /* #5693ED */
+  --color-info-600:  63 123 212;  /* #3F7BD4 */
+  --color-info-700:  45 103 187;  /* #2D67BB */
+  --color-info-800:  31  86 163;  /* #1F56A3 */
+  --color-info-900:  19  69 138;  /* #13458A */
+  --color-info-950:   9  51 109;  /* #09336D */
+  /* @palette light end */
 }
 
 /* Design system step 1 (2026-10-15, docs/design-system.md): tokens named
@@ -195,7 +275,6 @@
   --color-surface-sunken: var(--color-midnight);
   --color-surface:        var(--color-navy);
   --color-surface-raised: var(--color-navy-secondary);
-  --color-line:           var(--color-navy-secondary);
   --color-ink:            var(--color-fg);
   --color-ink-muted:      var(--color-silver);
   --color-ink-subtle:     var(--color-muted);
@@ -338,7 +417,7 @@
    ladder's own light-mode shadows at equal specificity (which previously
    won or lost purely on source order). */
 :root[data-theme='light'] .bg-navy:not([class*='elev-']) {
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 2px rgba(11, 24, 50, 0.06);
 }
 
 /* ---------------------------------------------------------------------------
@@ -358,20 +437,20 @@
  * decorative, a control boundary is not.
  * ------------------------------------------------------------------------- */
 :root[data-theme='light'] .border-navy-secondary {
-  border-color: rgb(176 187 201); /* 1.94:1 on white, 1.86:1 on the page */
+  border-color: rgb(var(--color-line)); /* 1.94:1 on white, 1.86:1 on the page */
 }
 /* Dark was left at 1.26:1 — the same number light sat at when users called
    the margins unclear. It reads better there (a LIGHTER border on a dark
    surface catches the eye more than pale grey on white), but it was the
    weakest edge left in either theme. Brought to parity with light. */
 :root:not([data-theme='light']) .border-navy-secondary {
-  border-color: rgb(42 74 126); /* 2.00:1 on navy, 2.16:1 on midnight */
+  border-color: rgb(var(--color-line)); /* 2.00:1 on navy, 2.16:1 on midnight */
 }
 :root[data-theme='light'] .border-navy-secondary\/60 {
-  border-color: rgb(176 187 201 / 0.75);
+  border-color: rgb(var(--color-line) / 0.75);
 }
 :root[data-theme='light'] .border-navy-secondary\/50 {
-  border-color: rgb(176 187 201 / 0.65);
+  border-color: rgb(var(--color-line) / 0.65);
 }
 
 /* `bg-black/30` and `bg-black/40` show up across the payroll views as
@@ -380,10 +459,10 @@
    Remap to a soft slate tint so the secondary surface is still visible
    but doesn't fight the white page. */
 :root[data-theme='light'] .bg-black\/30 {
-  background-color: rgba(15, 23, 42, 0.04);
+  background-color: rgba(11, 24, 50, 0.04);
 }
 :root[data-theme='light'] .bg-black\/40 {
-  background-color: rgba(15, 23, 42, 0.06);
+  background-color: rgba(11, 24, 50, 0.06);
 }
 
 /* Floor the tertiary silver alphas. Alpha compositing, not the base
@@ -407,7 +486,7 @@
 :root[data-theme='light'] .text-silver\/50,
 :root[data-theme='light'] .text-silver\/60,
 :root[data-theme='light'] .text-silver\/70 {
-  color: rgb(90 105 127); /* #5A697F — 5.58:1 on white, 4.53:1 on navy-secondary */
+  color: rgb(var(--color-silver-floor)); /* 5.7:1 on white, 4.5:1 on navy-secondary */
 }
 
 /* Gold in light mode is tuned to 5.2:1 on white (see --color-gold), which
@@ -454,7 +533,7 @@
 :root:not([data-theme='light']) .text-silver\/30,
 :root:not([data-theme='light']) .text-silver\/40,
 :root:not([data-theme='light']) .text-silver\/50 {
-  color: rgb(120 134 154); /* 4.78:1 on navy, 5.19:1 on midnight */
+  color: rgb(var(--color-silver-floor)); /* 4.8:1 on navy */
 }
 
 /* Dark mode's twin of the light gold rule above. The status hues are
@@ -469,19 +548,19 @@
 :root:not([data-theme='light']) .bg-surface-raised .text-positive,
 :root:not([data-theme='light']) .bg-navy-secondary .text-success,
 :root:not([data-theme='light']) .bg-navy-secondary .text-positive {
-  color: rgb(93 185 144); /* #5DB990 — 4.74:1 on a success/15 wash over navy-secondary */
+  color: rgb(var(--color-success-raised)); /* clears 4.5 on a success/15 wash over navy-secondary */
 }
 :root:not([data-theme='light']) .bg-surface-raised .text-alert,
 :root:not([data-theme='light']) .bg-surface-raised .text-negative,
 :root:not([data-theme='light']) .bg-navy-secondary .text-alert,
 :root:not([data-theme='light']) .bg-navy-secondary .text-negative {
-  color: rgb(238 136 126); /* #EE887E — 4.84:1 on an alert/15 wash over navy-secondary */
+  color: rgb(var(--color-alert-raised)); /* clears 4.5 on an alert/15 wash over navy-secondary */
 }
 :root:not([data-theme='light']) .bg-surface-raised .text-steel,
 :root:not([data-theme='light']) .bg-surface-raised .text-info,
 :root:not([data-theme='light']) .bg-navy-secondary .text-steel,
 :root:not([data-theme='light']) .bg-navy-secondary .text-info {
-  color: rgb(121 179 251); /* #79B3FB — 4.98:1 on a steel/15 wash over navy-secondary */
+  color: rgb(var(--color-steel-raised)); /* clears 4.5 on a steel/15 wash over navy-secondary */
 }
 
 /* recharts' stock tooltip paints each row in its series colour as an
@@ -566,7 +645,7 @@
   background-color: rgba(8, 15, 32, 0.6); /* navy at 60% — works on dark + light */
 }
 :root[data-theme='light'] .bg-backdrop {
-  background-color: rgba(15, 23, 42, 0.5); /* slate-900 at 50% — softer for light UI */
+  background-color: rgba(11, 24, 50, 0.5); /* slate-900 at 50% — softer for light UI */
 }
 
 /* ---------------------------------------------------------------------------
@@ -600,13 +679,13 @@
     0 16px 40px rgba(0, 0, 0, 0.55);
 }
 :root[data-theme='light'] .elev-1 {
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 1px 2px rgba(11, 24, 50, 0.05);
 }
 :root[data-theme='light'] .elev-2 {
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 6px 14px rgba(11, 24, 50, 0.08);
 }
 :root[data-theme='light'] .elev-3 {
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+  box-shadow: 0 24px 60px rgba(11, 24, 50, 0.18);
 }
 
 /* ---------------------------------------------------------------------------
@@ -630,8 +709,8 @@
   );
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.25) inset,
-    0 0 0 1px rgba(217, 185, 103, 0.35),
-    0 6px 16px rgba(217, 185, 103, 0.18);
+    0 0 0 1px rgb(var(--color-gold-fill) / 0.35),
+    0 6px 16px rgb(var(--color-gold-fill) / 0.18);
 }
 .btn-gold:hover:not(:disabled) {
   background-image: linear-gradient(
@@ -641,8 +720,8 @@
   );
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.35) inset,
-    0 0 0 1px rgba(240, 216, 120, 0.55),
-    0 8px 22px rgba(240, 216, 120, 0.28);
+    0 0 0 1px rgb(var(--color-gold-fill-bright) / 0.55),
+    0 8px 22px rgb(var(--color-gold-fill-bright) / 0.28);
 }
 .btn-gold:active:not(:disabled) {
   background-image: linear-gradient(
@@ -652,7 +731,7 @@
   );
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.25) inset,
-    0 0 0 1px rgba(217, 185, 103, 0.5);
+    0 0 0 1px rgb(var(--color-gold-fill) / 0.5);
 }
 /* Disabled state: drop the gradient and draw the button as an outline
    with its label still readable. A flat navy fill at the base's half
@@ -677,8 +756,8 @@
 :root[data-theme='light'] .btn-gold {
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.5) inset,
-    0 0 0 1px rgba(184, 134, 11, 0.35),
-    0 6px 16px rgba(184, 134, 11, 0.18);
+    0 0 0 1px rgb(var(--color-gold-fill) / 0.35),
+    0 6px 16px rgb(var(--color-gold-fill) / 0.18);
 }
 
 /* ---------------------------------------------------------------------------
@@ -708,8 +787,8 @@
 :root[data-theme='light'] .bg-login-aurora {
   background-color: #ffffff;
   background-image:
-    radial-gradient(60rem 40rem at 15% -10%, rgb(184 134 11 / 0.10), transparent 60%),
-    radial-gradient(50rem 36rem at 95% 110%, rgb(37 99 235 / 0.08), transparent 62%),
+    radial-gradient(60rem 40rem at 15% -10%, rgb(var(--color-gold-fill) / 0.10), transparent 60%),
+    radial-gradient(50rem 36rem at 95% 110%, rgb(var(--color-steel) / 0.08), transparent 62%),
     linear-gradient(
       135deg,
       #F8F4E8 0%,    /* warm cream */
@@ -756,12 +835,12 @@ select.border-navy-secondary:focus {
 :root:not([data-theme='light']) input.border-navy-secondary,
 :root:not([data-theme='light']) select.border-navy-secondary,
 :root:not([data-theme='light']) textarea.border-navy-secondary {
-  border-color: rgb(85 115 165); /* 3.68:1 on navy, 3.39:1 on the field fill */
+  border-color: rgb(var(--color-line-strong)); /* 3.68:1 on navy, 3.39:1 on the field fill */
 }
 :root[data-theme='light'] input.border-navy-secondary,
 :root[data-theme='light'] select.border-navy-secondary,
 :root[data-theme='light'] textarea.border-navy-secondary {
-  border-color: rgb(130 140 150); /* 3.42:1 on white, 3.15:1 on the field fill */
+  border-color: rgb(var(--color-line-strong)); /* 3.42:1 on white, 3.15:1 on the field fill */
 }
 /* Hover must not read as WEAKER than rest. Both themes ship a
    `hover:border-silver/40` on these controls, which composites to 2.2:1 on
@@ -770,7 +849,7 @@ select.border-navy-secondary:focus {
 :root[data-theme='light'] input.border-navy-secondary:hover:not(:disabled):not(:focus),
 :root[data-theme='light'] select.border-navy-secondary:hover:not(:disabled):not(:focus),
 :root[data-theme='light'] textarea.border-navy-secondary:hover:not(:disabled):not(:focus) {
-  border-color: rgb(100 116 139); /* 4.76:1 — a clear step up from 3.42 resting */
+  border-color: rgb(var(--color-line-hover)); /* 4.76:1 — a clear step up from 3.42 resting */
 }
 :root:not([data-theme='light']) input.border-navy-secondary:hover:not(:disabled):not(:focus),
 :root:not([data-theme='light']) select.border-navy-secondary:hover:not(:disabled):not(:focus),
@@ -1154,18 +1233,20 @@ input[type='checkbox']:disabled {
    Unlayered and prefixed with :root: sonner injects its own unlayered
    rules at runtime, and a rule inside @layer would always lose to them. */
 :root [data-sonner-toaster][data-sonner-theme] {
-  --success-bg: rgb(var(--color-navy));
-  --success-border: rgb(var(--color-success) / 0.45);
-  --success-text: rgb(var(--color-success));
-  --error-bg: rgb(var(--color-navy));
-  --error-border: rgb(var(--color-alert) / 0.45);
-  --error-text: rgb(var(--color-alert));
-  --warning-bg: rgb(var(--color-navy));
-  --warning-border: rgb(var(--color-warning) / 0.45);
-  --warning-text: rgb(var(--color-warning));
-  --info-bg: rgb(var(--color-navy));
-  --info-border: rgb(var(--color-steel) / 0.45);
-  --info-text: rgb(var(--color-steel));
+  /* The overlay surface, a family's 300 edge and its 800 ink (scripts/palette.mjs
+     floors 800 at 4.5 on the overlay in both themes). */
+  --success-bg: rgb(var(--color-surface-overlay));
+  --success-border: rgb(var(--color-positive-300));
+  --success-text: rgb(var(--color-positive-800));
+  --error-bg: rgb(var(--color-surface-overlay));
+  --error-border: rgb(var(--color-negative-300));
+  --error-text: rgb(var(--color-negative-800));
+  --warning-bg: rgb(var(--color-surface-overlay));
+  --warning-border: rgb(var(--color-caution-300));
+  --warning-text: rgb(var(--color-caution-800));
+  --info-bg: rgb(var(--color-surface-overlay));
+  --info-border: rgb(var(--color-info-300));
+  --info-text: rgb(var(--color-info-800));
 }
 
 /* Hugo's motion (components/hugo/HugoMascot): a strip of frames played in

@@ -77,7 +77,7 @@ try {
   document.documentElement.dataset.theme = resolved;
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute('content', resolved === 'dark' ? '#0B1832' : '#F8FAFC');
+    ?.setAttribute('content', resolved === 'dark' ? '#0B1832' : '#F8FAFF');
 } catch {
   document.documentElement.dataset.theme = 'dark';
 }

@@ -1,3 +1,12 @@
+// The 50–950 scales scripts/palette.mjs writes into index.css, one per family.
+// Theme-aware: 50 is the faintest step off the surface, 950 the strongest ink,
+// in both themes — so `bg-positive-100 text-positive-800` is a chip anywhere.
+const STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+const scale = (name, named = {}) => ({
+  ...named,
+  ...Object.fromEntries(STEPS.map((s) => [s, `rgb(var(--color-${name}-${s}) / <alpha-value>)`])),
+});
+
 /** @type {import('tailwindcss').Config} */
 export default {
   // Stories (Storybook, *.stories.tsx) are left out: a class only a story
@@ -53,22 +62,35 @@ export default {
           DEFAULT: 'rgb(var(--color-surface) / <alpha-value>)',
           sunken: 'rgb(var(--color-surface-sunken) / <alpha-value>)',
           raised: 'rgb(var(--color-surface-raised) / <alpha-value>)',
+          // Menus, popovers, dialogs, tooltips: one step above a card in dark,
+          // white lifted by shadow in light.
+          overlay: 'rgb(var(--color-surface-overlay) / <alpha-value>)',
         },
-        line: 'rgb(var(--color-line) / <alpha-value>)',
+        // Card edges (DEFAULT, 2:1), row dividers (subtle), control boundaries (strong, 3:1+).
+        line: {
+          DEFAULT: 'rgb(var(--color-line) / <alpha-value>)',
+          subtle: 'rgb(var(--color-line-subtle) / <alpha-value>)',
+          strong: 'rgb(var(--color-line-strong) / <alpha-value>)',
+        },
         ink: {
           DEFAULT: 'rgb(var(--color-ink) / <alpha-value>)',
           muted: 'rgb(var(--color-ink-muted) / <alpha-value>)',
           subtle: 'rgb(var(--color-ink-subtle) / <alpha-value>)',
         },
-        accent: {
+        accent: scale('accent', {
           DEFAULT: 'rgb(var(--color-accent) / <alpha-value>)',
           fill: 'rgb(var(--color-accent-fill) / <alpha-value>)',
           on: 'rgb(var(--color-accent-on) / <alpha-value>)',
-        },
-        positive: 'rgb(var(--color-positive) / <alpha-value>)',
-        caution: 'rgb(var(--color-caution) / <alpha-value>)',
-        negative: 'rgb(var(--color-negative) / <alpha-value>)',
-        info: 'rgb(var(--color-info) / <alpha-value>)',
+        }),
+        positive: scale('positive', { DEFAULT: 'rgb(var(--color-positive) / <alpha-value>)' }),
+        caution: scale('caution', { DEFAULT: 'rgb(var(--color-caution) / <alpha-value>)' }),
+        negative: scale('negative', { DEFAULT: 'rgb(var(--color-negative) / <alpha-value>)' }),
+        info: scale('info', { DEFAULT: 'rgb(var(--color-info) / <alpha-value>)' }),
+        neutral: scale('neutral'),
+      },
+      // A divider between rows is the quieter line; a card's edge is `border-line`.
+      divideColor: {
+        line: 'rgb(var(--color-line-subtle) / <alpha-value>)',
       },
       fontFamily: {
         // Variable fonts loaded from @fontsource-variable/*. The "Variable"

@@ -19,20 +19,23 @@ const badgeVariants = cva(
         true: 'uppercase tracking-wider',
         false: '',
       },
+      // Status chips draw from the palette's scales (scripts/palette.mjs): a
+      // 100 wash, a 200 edge and 800 ink — 4.5:1 or better by construction, on
+      // any surface, in both themes, with no alpha over an unknown background.
       variant: {
         // Neutral / informational.
         default: 'bg-navy-secondary text-silver border border-navy-secondary',
         // Successful state — APPROVED, DONE, ACTIVE, VERIFIED.
-        success: 'bg-success/15 text-success border border-success/30',
+        success: 'bg-positive-100 text-positive-800 border border-positive-200',
         // In-progress / awaiting — PENDING, IN_REVIEW, DRAFT.
-        pending: 'bg-warning/15 text-warning border border-warning/30',
+        pending: 'bg-caution-100 text-caution-800 border border-caution-200',
         // Negative — REJECTED, FAILED, CANCELLED.
-        destructive: 'bg-alert/15 text-alert border border-alert/30',
+        destructive: 'bg-negative-100 text-negative-800 border border-negative-200',
         // Premium / featured — gold accent. Also: in-flight/being-worked
         // states (INVESTIGATING, IN_PROGRESS) per the status contract.
-        accent: 'bg-gold/15 text-gold border border-gold/40',
+        accent: 'bg-accent-100 text-accent-800 border border-accent-200',
         // Informational — steel blue. "Out today", scheduled, info chips.
-        info: 'bg-steel/15 text-sky border border-steel/40',
+        info: 'bg-info-100 text-info-800 border border-info-200',
         // Outline-only, used for filter chips.
         outline: 'border border-silver/30 text-silver',
       },
@@ -94,11 +97,11 @@ function warnLong(text: string) {
 
 const DOT_COLOR: Record<NonNullable<BadgeProps['variant']>, string> = {
   default: 'bg-silver',
-  success: 'bg-success',
-  pending: 'bg-warning',
-  destructive: 'bg-alert',
-  accent: 'bg-gold',
-  info: 'bg-steel',
+  success: 'bg-positive-700',
+  pending: 'bg-caution-700',
+  destructive: 'bg-negative-700',
+  accent: 'bg-accent-700',
+  info: 'bg-info-700',
   outline: 'bg-silver',
 };
 

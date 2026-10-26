@@ -49,7 +49,7 @@ export function DiscardConfirm({
         <DialogPrimitive.Content
           className={cn(
             'fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-            'w-[calc(100vw-2rem)] max-w-sm rounded-lg border border-navy-secondary bg-navy elev-3 p-6 grid gap-3 focus:outline-none',
+            'w-[calc(100vw-2rem)] max-w-sm rounded-lg border border-navy-secondary bg-surface-overlay elev-3 p-6 grid gap-3 focus:outline-none',
             'data-[state=open]:animate-zoom-in data-[state=closed]:animate-zoom-out'
           )}
         >
@@ -227,7 +227,7 @@ export const DialogContent = React.forwardRef<
         if (!e.defaultPrevented) discardGuard?.onUserDismiss(e);
       }}
       className={cn(
-        'fixed z-50 bg-navy elev-3 p-6 grid gap-4 focus:outline-none overflow-y-auto overscroll-contain',
+        'fixed z-50 bg-surface-overlay elev-3 p-6 grid gap-4 focus:outline-none overflow-y-auto overscroll-contain',
         // One column that is never wider than the dialog. A bare `grid`
         // column grows to its widest unbreakable line, so one long
         // truncate-styled value — a picked address, "382 Flamingo Drive,
@@ -323,7 +323,7 @@ export function DialogFooter({
       className={cn(
         'flex flex-col-reverse sm:flex-row sm:justify-end sm:gap-2 gap-2 pt-2',
         sticky && [
-          'sticky z-10 -mx-6 border-t border-navy-secondary bg-navy px-6 pt-3',
+          'sticky z-10 -mx-6 border-t border-navy-secondary bg-surface-overlay px-6 pt-3',
           '-bottom-[max(1.5rem,env(safe-area-inset-bottom))] -mb-[max(1.5rem,env(safe-area-inset-bottom))] pb-[max(1.5rem,env(safe-area-inset-bottom))]',
           'sm:-bottom-6 sm:-mb-6 sm:pb-6',
         ],

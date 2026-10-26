@@ -63,11 +63,12 @@ const AA = 4.5;
 const AA_LARGE = 3;
 
 /**
- * The floors index.css applies on top of raw token math. Kept in sync by
- * hand — if you change a floor rule over there, change it here too.
+ * The floors index.css applies on top of raw token math are tokens too
+ * (scripts/palette.mjs): silver-floor for the faint silver alphas, line-strong
+ * and line-hover for controls, line for card edges.
  */
-const LIGHT_SILVER_FLOOR: RGB = [100, 116, 139]; // /70 and below
-const DARK_SILVER_FLOOR: RGB = [120, 134, 154]; // /50 and below
+const LIGHT_SILVER_FLOOR: RGB = LIGHT['silver-floor']; // /70 and below
+const DARK_SILVER_FLOOR: RGB = DARK['silver-floor']; // /50 and below
 const LIGHT_TINT_CAP = 0.08; // faint status tints capped in light mode
 
 describe.each([
@@ -137,7 +138,7 @@ describe.each([
    * alongside them — the raw navy-secondary token still fails on its own,
    * which is exactly why the overrides exist.
    */
-  const CONTROL_BORDER: RGB = isLight ? [130, 140, 150] : [85, 115, 165];
+  const CONTROL_BORDER: RGB = T['line-strong'];
   const CONTROL_FILL = over(T['navy-secondary'], card, 0.4);
 
   it('form control border clears 3:1 against the card', () => {
@@ -162,7 +163,7 @@ describe.each([
   // Card / divider edge. Not a 1.4.11 requirement (a card boundary is
   // decorative), but it is what "the margins aren't clear" meant, and the
   // two themes drifted apart once light was fixed on its own.
-  const CARD_EDGE: RGB = isLight ? [176, 187, 201] : [42, 74, 126];
+  const CARD_EDGE: RGB = T.line;
 
   it('card edge is visible against the surface, at parity across themes', () => {
     expect(ratio(CARD_EDGE, card)).toBeGreaterThanOrEqual(1.9);
@@ -170,17 +171,20 @@ describe.each([
 
   // Hover must never read as weaker than rest.
   it('control hover border is at least as strong as resting', () => {
-    const hover: RGB = isLight ? [100, 116, 139] : over(T.silver, card, 0.6);
+    const hover: RGB = isLight ? T['line-hover'] : over(T.silver, card, 0.6);
     expect(ratio(hover, card)).toBeGreaterThanOrEqual(ratio(CONTROL_BORDER, card));
   });
 });
 
 /** The colour a rule in index.css sets — read from the file, so the test follows the CSS. */
-function ruleColor(selector: string): RGB {
+function ruleColor(selector: string, theme: Record<string, RGB> = DARK): RGB {
   const at = css.indexOf(selector);
   if (at === -1) throw new Error(`rule not found in index.css: ${selector}`);
   const open = css.indexOf('{', at);
-  const m = css.slice(open, css.indexOf('}', open)).match(/color:\s*rgb\((\d+)\s+(\d+)\s+(\d+)\)/);
+  const body = css.slice(open, css.indexOf('}', open));
+  const v = body.match(/color:\s*rgb\(var\(--color-([a-z-]+)\)\)/);
+  if (v) return theme[v[1]];
+  const m = body.match(/color:\s*rgb\((\d+)\s+(\d+)\s+(\d+)\)/);
   if (!m) throw new Error(`no rgb() colour in the rule for ${selector}`);
   return [Number(m[1]), Number(m[2]), Number(m[3])];
 }

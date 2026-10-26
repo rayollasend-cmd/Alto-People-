@@ -17,21 +17,28 @@ Tokens are named for their **job**. They are defined in `apps/web/src/index.css`
 
 | Job | Class | Dark | Light | Use |
 |---|---|---|---|---|
-| App background | `bg-surface-sunken` | #080F20 | #F8FAFC | the page behind cards |
+| App background | `bg-surface-sunken` | #080F20 | #F8FAFF | the page behind cards |
 | Surface | `bg-surface` | #0B1832 | #FFFFFF | cards, panels, sheets |
-| Raised | `bg-surface-raised` | #142B52 | #E2E8F0 | hover, selected row, rail active |
-| Line | `border-line` | #142B52 | #E2E8F0 | borders, dividers |
-| Ink | `text-ink` | #FFFFFF | #0F172A | primary text |
-| Ink muted | `text-ink-muted` | #C0D0E0 | #334155 | secondary text, captions |
-| Ink subtle | `text-ink-subtle` | #666666 | #94A3B8 | placeholders, disabled |
+| Overlay | `bg-surface-overlay` | #0F203F | #FFFFFF | menus, popovers, dialogs, drawers, toasts (lifted by shadow in light) |
+| Raised | `bg-surface-raised` | #142B52 | #E1E7F3 | hover, selected row, rail active, tooltips |
+| Line | `border-line` | #2A4A7E | #AFBACF | card edges (2:1) |
+| Line subtle | `divide-line` / `border-line-subtle` | #1F355A | #DBE2F0 | dividers between rows |
+| Line strong | `border-line-strong` | #5573A5 | #7E8CA3 | form-control boundaries (3:1, WCAG 1.4.11) |
+| Ink | `text-ink` | #FFFFFF | #101826 | primary text |
+| Ink muted | `text-ink-muted` | #C4CFE0 | #354155 | secondary text, captions |
+| Ink subtle | `text-ink-subtle` | #5A677E | #96A2B9 | placeholders, disabled |
 | Accent | `text-accent` | #D9B967 | #87680C | the one accent, as text and icon |
-| Accent fill | `bg-accent-fill` + `text-accent-on` | #D9B967 / #0B1832 | #B8860B / #0B1832 | the primary button, the one highlighted thing |
-| Positive | `positive` | #34A874 | #065F46 | done, healthy, paid |
-| Caution | `caution` | #EDB23C | #92400E | waiting, due soon |
-| Negative | `negative` | #E96255 | #B91C1C | failed, late, refused, danger |
-| Info | `info` | #60A5FA | #2563EB | links, informational |
+| Accent fill | `bg-accent-fill` + `text-accent-on` | #D9B967 / #0B1832 | #AD8A28 / #0B1832 | the primary button, the one highlighted thing |
+| Positive | `positive` | #38A771 | #01603A | done, healthy, paid |
+| Caution | `caution` | #FFA94F | #834B00 | waiting, due soon — amber, never the gold |
+| Negative | `negative` | #EB6058 | #B02D2C | failed, late, refused, danger |
+| Info | `info` | #67A3FD | #326DC2 | links, informational |
 | On solid | `text-on-solid` | #FFFFFF | #FFFFFF | ink on a saturated fill |
-| Chart 1/2/3 | `chart-1/2/3` | #B08C2E / #3B82F6 / #0D9488 | #B8860B / #2563EB / #0D9488 | marks only, never text |
+| Chart 1/2/3 | `chart-1/2/3` | #B08D2A / #4886DF / #0D9488 | #AD8A28 / #326DC2 / #0D9488 | marks only, never text |
+
+**The palette is generated** (2026-10-26). Navy and gold are the brand and are written as they are; everything else comes from six OKLCH families in `apps/web/scripts/palette.mjs` — neutral (navy-tinted greys, hue 262), accent (gold, 88), positive (jade, 158), caution (amber, 64), negative (brick, 26), info (navy-family blue, 258). The script writes both token blocks in `index.css` and refuses to write a pairing below its contrast floor; `npm run lint:design` fails if the CSS is edited by hand. A retuned token keeps the WCAG luminance it had, so every pairing the contrast work settled on measures the same.
+
+**Scales.** Each family has eleven steps, `50…950`, as classes (`bg-positive-100`, `text-caution-800`, `border-info-300`, `bg-neutral-50`…). They are theme-aware: 50 is the faintest step off the surface and 950 the strongest ink in both themes, so one class pair works in light and dark. 50–300 are washes (the family laid over the card, so a tint carries the surface's hue); 400 up are spaced by luminance, so a step has the same contrast in every family. The kit's recipes: a chip is a 100 wash, a 200 edge and 800 ink (`Badge`); a banner is a 50 wash, a 300 edge and 800 ink (`ErrorBanner`, toasts); a status dot is 700. Prefer a scale step to an alpha (`bg-success/15`): an alpha's contrast depends on whatever is behind it.
 
 Rules: no inline hex in page code; status colours mean status (never decoration); gold never fills an area larger than a button; every pair in this table clears WCAG AA in both themes (`src/__tests__/a11y/tokenContrast.test.ts`).
 

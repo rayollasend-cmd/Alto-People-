@@ -56,7 +56,7 @@ export function Toaster() {
       toastOptions={{
         classNames: {
           toast:
-            'group toast group-[.toaster]:bg-navy group-[.toaster]:text-white group-[.toaster]:border-navy-secondary group-[.toaster]:elev-2',
+            'group toast group-[.toaster]:bg-surface-overlay group-[.toaster]:text-white group-[.toaster]:border-navy-secondary group-[.toaster]:elev-2',
           description: 'group-[.toast]:text-silver',
           // on-accent: theme-stable dark ink on gold (text-navy flips to
           // white in light mode and broke contrast).
