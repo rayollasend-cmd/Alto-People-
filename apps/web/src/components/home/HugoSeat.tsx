@@ -3,6 +3,7 @@ import { useI18n } from '@/lib/i18n';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Sparkles } from '@/components/ui/icons';
+import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
 import { ApiError } from '@/lib/api';
 import { askHugo, getHugo, type HugoAnswer } from '@/lib/hugoApi';
 import { Button } from '@/components/ui/Button';
@@ -99,9 +100,13 @@ export function HugoSeat({ className, prompts }: { className?: string; /** Page-
       <CardContent className="space-y-3 p-[var(--d-card)]">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-6">
           <div className="flex min-w-0 items-center gap-2 lg:w-80 lg:shrink-0">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
-              <Sparkles className="h-4 w-4" />
-            </span>
+            {isHugo(me.data.name) ? (
+              <HugoMascot pose="hello" size={56} play={2} />
+            ) : (
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
+                <Sparkles className="h-4 w-4" />
+              </span>
+            )}
             <div className="min-w-0">
               <div className="text-base font-medium text-ink">{me.data.name}</div>
               {/* Two lines, then the rest on hover — it was cut mid-word ("I'm not a p…"). */}

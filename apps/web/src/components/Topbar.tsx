@@ -24,6 +24,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip
 import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
 import { useAssistant } from '@/lib/assistantContext';
+import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
 import { InstallAppButton } from './InstallAppButton';
 import { RoleSwitchItem, RoleSwitchSheet } from './RoleSwitcher';
 import { Logo } from '@/components/Logo';
@@ -450,7 +451,7 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                     assistant.toggle();
                   }}
                 >
-                  <Sparkles className="h-4 w-4" />
+                  {isHugo(assistant.me.name) ? <HugoMascot pose="face" size={18} play="still" /> : <Sparkles className="h-4 w-4" />}
                   {t('top.askAssistant', { name: assistant.me.name })}
                 </DropdownMenuItem>
               )}
@@ -543,7 +544,14 @@ function AssistantButton() {
           data-tour="assistant"
           className={open ? 'text-accent' : undefined}
         >
-          <Sparkles className="h-5 w-5" aria-hidden="true" />
+          {isHugo(me.name) ? (
+            // On a soft gold disc: navy on the navy bar needs the lift.
+            <span className="grid h-7 w-7 place-items-center rounded-full bg-accent-fill/20">
+              <HugoMascot pose="face" size={24} play="still" />
+            </span>
+          ) : (
+            <Sparkles className="h-5 w-5" aria-hidden="true" />
+          )}
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom">

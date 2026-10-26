@@ -1108,3 +1108,39 @@ input[type='radio'] {
   --info-border: rgb(var(--color-steel) / 0.45);
   --info-text: rgb(var(--color-steel));
 }
+
+/* Hugo's motion (components/hugo/HugoMascot): a strip of frames played in
+   steps — the loop runs through every frame; the blink sits on frame one and
+   shows frame two for a moment. The still image underneath is what people
+   who prefer reduced motion see; the strip never loads for them. */
+.hugo-sprite {
+  background-repeat: no-repeat;
+  background-size: auto 100%;
+}
+.hugo-sprite[data-kind='loop'] {
+  animation: hugo-loop var(--hugo-seconds) steps(var(--hugo-frames)) var(--hugo-iterations);
+}
+.hugo-sprite[data-kind='blink'] {
+  animation: hugo-blink var(--hugo-seconds) step-end infinite;
+}
+@keyframes hugo-loop {
+  from { background-position: 0 0; }
+  to { background-position: var(--hugo-end) 0; }
+}
+@keyframes hugo-blink {
+  0%, 93%, 97%, 100% { background-position: 0 0; }
+  94% { background-position: var(--hugo-blink) 0; }
+}
+.hugo-bounce {
+  animation: hugo-bounce 0.9s cubic-bezier(0.3, 0, 0.3, 1) 3;
+  transform-origin: 50% 100%;
+}
+@keyframes hugo-bounce {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  30% { transform: translateY(-12%) scale(0.96, 1.04); }
+  55% { transform: translateY(0) scale(1.05, 0.95); }
+  75% { transform: translateY(-3%) scale(1, 1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hugo-sprite, .hugo-bounce { animation: none !important; }
+}

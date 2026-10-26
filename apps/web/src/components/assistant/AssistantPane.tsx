@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { ArrowUp, Check, Sparkles, X } from '@/components/ui/icons';
+import { HugoMascot, isHugo } from '@/components/hugo/HugoMascot';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useAssistant } from '@/lib/assistantContext';
@@ -134,6 +135,7 @@ export function AssistantPane() {
 
   if (!available || !open || !me) return null;
   const name = me.name;
+  const hugo = isHugo(name);
 
   return (
     <aside
@@ -146,9 +148,13 @@ export function AssistantPane() {
       )}
     >
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-4">
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
-          <Sparkles className="h-4 w-4" />
-        </span>
+        {hugo ? (
+          <HugoMascot pose="face" size={36} />
+        ) : (
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-accent-fill/15 text-accent" aria-hidden="true">
+            <Sparkles className="h-4 w-4" />
+          </span>
+        )}
         <div className="min-w-0 flex-1 leading-tight">
           <div className="truncate text-sm font-medium">{name}</div>
           <div className="truncate text-2xs text-ink-muted">AI assistant · answers from your records · acts only when you confirm</div>
@@ -161,6 +167,7 @@ export function AssistantPane() {
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3" aria-live="polite">
         {turns.length === 0 && (
           <div className="space-y-3">
+            {hugo && <HugoMascot pose="hello" size={112} play={2} className="mx-auto block" />}
             <p className="text-sm text-ink-muted">{me.intro}</p>
             {page.record && (
               <p className="text-xs2 text-ink-muted">
@@ -220,8 +227,9 @@ export function AssistantPane() {
           ))}
           {ask.isPending && (
             <li className="flex justify-start">
-              <div className="rounded-2xl rounded-bl-md bg-surface-raised px-3.5 py-2 text-sm text-ink-muted">
+              <div className="flex items-center gap-2 rounded-2xl rounded-bl-md bg-surface-raised px-3.5 py-2 text-sm text-ink-muted">
                 <span className="sr-only">{name} is thinking</span>
+                {hugo && <HugoMascot pose="working" size={40} />}
                 <span aria-hidden="true">…</span>
               </div>
             </li>
