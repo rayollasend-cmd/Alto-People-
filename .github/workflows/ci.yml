@@ -53,7 +53,7 @@ jobs:
       # Saved under this commit; restored from the newest earlier save. No
       # remote cache (that needs a Vercel account; the doc says how).
       - name: Restore the Turborepo cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .turbo/cache
           key: turbo-${{ runner.os }}-${{ github.sha }}
