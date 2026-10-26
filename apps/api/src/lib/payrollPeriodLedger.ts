@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import type { SessionUser } from '../types/express.js';
 import { scopeAssociates, scopePayrollSchedules } from './scope.js';
 import { tenantIdForWrite } from './tenant.js';
-import { addDaysYmd, dateOnly, membershipWindows, periodContaining, todayYmd, ymd, type ScheduleWithVersions } from './payScheduleMembership.js';
+import { addDaysYmd, dateOnly, membershipWindowsFor, periodContaining, todayYmd, ymd, type ScheduleWithVersions } from './payScheduleMembership.js';
 import { inWindows, workDayOf, type PeriodWindow } from './payrollSchedule.js';
 import { sumApprovedHours } from './payroll.js';
 
@@ -144,7 +144,7 @@ export async function ledgerForSchedules(db: Db, schedules: ScheduleRow[], opts:
       },
       take: 50_000,
     }),
-    Promise.all(schedules.map(async (s) => [s.id, await membershipWindows(db, s.id, minStart, maxEnd)] as const)),
+    membershipWindowsFor(db, schedules.map((s) => ({ scheduleId: s.id, from: minStart, to: maxEnd }))),
   ]);
   const membersBySchedule = new Map(members);
 

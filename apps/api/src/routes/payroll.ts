@@ -41,7 +41,7 @@ import { renderPayrollReviewXlsx } from '../lib/payrollReviewXlsx.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules, scopeTimeEntries, scopeWhere } from '../lib/scope.js';
-import { membershipWindows, nextPaydayOn, PAY_RUN_POPULATION_WHERE, periodAfter, scheduleFilterFor, scheduleMembershipFor, todayYmd } from '../lib/payScheduleMembership.js';
+import { membershipWindows, membershipWindowsFor, nextPaydayOn, PAY_RUN_POPULATION_WHERE, periodAfter, scheduleFilterFor, scheduleMembershipFor, todayYmd } from '../lib/payScheduleMembership.js';
 import { assignPeople } from './paySchedules.js';
 import { anyLiveSchedule, nextPaydayFor } from '../lib/associatePayday.js';
 import { runTotalsCheck, runTotalsChecks } from '../lib/payrollRunTotals.js';
@@ -1065,14 +1065,18 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
         }
       : null;
 
-    // Every schedule's next due period, with how many people it pays.
-    const bySchedule: NonNullable<PayrollUpcomingSummary['bySchedule']> = [];
-    for (const s of schedules) {
+    // Every schedule's next due period, with how many people it pays — the
+    // head counts in one batch (membershipWindowsFor), not two queries a schedule.
+    const due = schedules.map((s) => {
       const cur = currentBySchedule.get(s.id)!;
       const existing = findExistingRun(s.clientId, new Date(`${cur.periodStart}T00:00:00.000Z`).getTime(), s.id);
       const done = existing && (existing.status === 'FINALIZED' || existing.status === 'DISBURSED');
-      const w = done ? periodAfter(s, cur) : cur;
-      const people = (await membershipWindows(prisma, s.id, w.periodStart, w.periodEnd)).size;
+      return { s, existing, done, w: done ? periodAfter(s, cur) : cur };
+    });
+    const membersBySchedule = await membershipWindowsFor(prisma, due.map(({ s, w }) => ({ scheduleId: s.id, from: w.periodStart, to: w.periodEnd })));
+    const bySchedule: NonNullable<PayrollUpcomingSummary['bySchedule']> = [];
+    for (const { s, existing, done, w } of due) {
+      const people = membersBySchedule.get(s.id)!.size;
       bySchedule.push({
         scheduleId: s.id,
         scheduleName: s.name,

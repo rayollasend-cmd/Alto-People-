@@ -684,22 +684,45 @@ export interface Window {
  * the legacy mirror (no assignment history) are on it for the whole period.
  */
 export async function membershipWindows(db: Db, scheduleId: string, from: string, to: string): Promise<Map<string, Window[]>> {
-  const rows = await db.payrollScheduleAssignment.findMany({
-    where: { scheduleId, effectiveFrom: { lte: dateOnly(to) }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: dateOnly(from) } }] },
-    select: { associateId: true, effectiveFrom: true, effectiveTo: true },
-  });
-  const out = new Map<string, Window[]>();
+  return (await membershipWindowsFor(db, [{ scheduleId, from, to }])).get(scheduleId)!;
+}
+
+/**
+ * membershipWindows for several schedules (one range each) in two queries,
+ * however many schedules there are. Asked one schedule at a time it was the
+ * /me/inbox N+1 (Sentry ALTO-PEOPLE-API-13): two queries per schedule, 16
+ * for eight schedules, about 2 s of a 3.5 s request behind every nav badge.
+ */
+export async function membershipWindowsFor(db: Db, ranges: ReadonlyArray<{ scheduleId: string; from: string; to: string }>): Promise<Map<string, Map<string, Window[]>>> {
+  const out = new Map<string, Map<string, Window[]>>(ranges.map((r) => [r.scheduleId, new Map()]));
+  if (ranges.length === 0) return out;
+  const byId = new Map(ranges.map((r) => [r.scheduleId, r]));
+  const ids = [...byId.keys()];
+  const minFrom = ranges.reduce((m, r) => (r.from < m ? r.from : m), ranges[0]!.from);
+  const maxTo = ranges.reduce((m, r) => (r.to > m ? r.to : m), ranges[0]!.to);
+  const [rows, legacy] = await Promise.all([
+    db.payrollScheduleAssignment.findMany({
+      where: { scheduleId: { in: ids }, effectiveFrom: { lte: dateOnly(maxTo) }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: dateOnly(minFrom) } }] },
+      select: { scheduleId: true, associateId: true, effectiveFrom: true, effectiveTo: true },
+    }),
+    db.associate.findMany({
+      where: { payrollScheduleId: { in: ids }, deletedAt: null, payScheduleAssignments: { none: {} } },
+      select: { id: true, payrollScheduleId: true },
+    }),
+  ]);
   for (const r of rows) {
+    const { from, to } = byId.get(r.scheduleId)!;
     const start = ymd(r.effectiveFrom) > from ? ymd(r.effectiveFrom) : from;
     const end = r.effectiveTo && ymd(r.effectiveTo) < to ? ymd(r.effectiveTo) : to;
     if (start > end) continue;
-    out.set(r.associateId, [...(out.get(r.associateId) ?? []), { start, end }]);
+    const m = out.get(r.scheduleId)!;
+    m.set(r.associateId, [...(m.get(r.associateId) ?? []), { start, end }]);
   }
-  const legacy = await db.associate.findMany({
-    where: { payrollScheduleId: scheduleId, deletedAt: null, payScheduleAssignments: { none: {} } },
-    select: { id: true },
-  });
-  for (const l of legacy) if (!out.has(l.id)) out.set(l.id, [{ start: from, end: to }]);
+  for (const l of legacy) {
+    const range = byId.get(l.payrollScheduleId!)!;
+    const m = out.get(range.scheduleId)!;
+    if (!m.has(l.id)) m.set(l.id, [{ start: range.from, end: range.to }]);
+  }
   return out;
 }
 

@@ -1,8 +1,8 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agent, loginAs } from '../../../test/http.js';
 import { createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { nextPaydayFor } from '../../lib/associatePayday.js';
-import { scheduleMembershipFor } from '../../lib/payScheduleMembership.js';
+import { membershipWindows, membershipWindowsFor, scheduleMembershipFor } from '../../lib/payScheduleMembership.js';
 
 /**
  * One definition of "on a pay schedule" (F500 SH-4).
@@ -116,5 +116,31 @@ describe('one definition of "on a pay schedule"', () => {
     const { user } = await createUser({ role: 'ASSOCIATE', associateId: s.nobody.id });
     const a = await loginAs(agent(), user.email);
     expect((await a.get('/payroll/me/next-payday')).body).toEqual({ nextPayday: null, notOnSchedule: true });
+  });
+
+  it('who a run pays, for every schedule at once: the same answer one schedule at a time gives, in two queries (Sentry API-13)', async () => {
+    const s = await seed();
+    const weekly = await prisma.payrollSchedule.create({ data: { name: 'Weekly', frequency: 'WEEKLY', anchorDate: new Date('2026-09-12'), payDateOffsetDays: 6 } });
+    await prisma.payrollScheduleAssignment.create({ data: { associateId: s.nobody.id, scheduleId: weekly.id, effectiveFrom: new Date('2026-10-01'), effectiveTo: new Date('2026-10-14'), source: 'RULE' } });
+    const ranges = [
+      { scheduleId: s.live.id, from: ymd(new Date(Date.now() - 20 * DAY)), to: ymd(new Date(Date.now() + 30 * DAY)) },
+      { scheduleId: weekly.id, from: '2026-10-08', to: '2026-10-20' },
+    ];
+    const assignments = vi.spyOn(prisma.payrollScheduleAssignment, 'findMany');
+    const people = vi.spyOn(prisma.associate, 'findMany');
+    const batch = await membershipWindowsFor(prisma, ranges);
+    expect(assignments).toHaveBeenCalledTimes(1);
+    expect(people).toHaveBeenCalledTimes(1);
+    assignments.mockRestore();
+    people.mockRestore();
+    for (const r of ranges) {
+      const one = await membershipWindows(prisma, r.scheduleId, r.from, r.to);
+      expect(Object.fromEntries(batch.get(r.scheduleId)!)).toEqual(Object.fromEntries(one));
+    }
+    // The weekly range clips Nobody's two weeks to the days it asks about.
+    expect(batch.get(weekly.id)!.get(s.nobody.id)).toEqual([{ start: '2026-10-08', end: '2026-10-14' }]);
+    // The legacy member is on the live schedule for the whole range; an assignment that ended before it is not.
+    expect(batch.get(s.live.id)!.get(s.legacy.id)).toEqual([{ start: ranges[0]!.from, end: ranges[0]!.to }]);
+    expect(batch.get(s.live.id)!.has(s.stale.id)).toBe(false);
   });
 });
