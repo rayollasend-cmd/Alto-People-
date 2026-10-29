@@ -148,7 +148,7 @@ export function WhatIfClientCard({
             {marketLine && (
               <p className="col-span-full text-xs2 text-ink-muted">
                 {marketLine}{' '}
-                <Link to="/market-rates" className="text-accent hover:underline">
+                <Link to="/market-rates" className="text-accent underline underline-offset-2">
                   {t('execPortal.scen.marketLink')}
                 </Link>
               </p>
@@ -174,7 +174,7 @@ export function WhatIfClientCard({
         )}
         <p className="text-2xs text-ink-muted">
           {t('execPortal.scen.whatIfFoot')}{' '}
-          <Link to="/executive/clients" className="text-accent hover:underline">
+          <Link to="/executive/clients" className="text-accent underline underline-offset-2">
             {t('execPortal.scen.whatIfFootLink')}
           </Link>
         </p>

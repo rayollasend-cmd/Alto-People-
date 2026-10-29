@@ -63,7 +63,7 @@ export function TurnoverCard({ data }: { data: Pick<ExecPeople, 'turnover' | 'kp
           </div>
           <p className="mt-1 text-xs2 text-ink-muted">
             {t('execPortal.people.turnoverCostSub', { count: separations90d })}{' '}
-            <Link to="/reports/people" className="text-accent hover:underline">
+            <Link to="/reports/people" className="text-accent underline underline-offset-2">
               {t('execPortal.people.turnoverOpen')}
             </Link>
           </p>
