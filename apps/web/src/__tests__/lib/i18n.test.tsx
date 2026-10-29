@@ -1,6 +1,8 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { I18nProvider, useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/execPortal';
+import { es } from '@/lib/i18n/es';
 
 function Probe() {
   const { lang, setLang, t } = useI18n();
@@ -55,5 +57,27 @@ describe('i18n', () => {
   it('works without a provider (English fallback)', () => {
     render(<Probe />);
     expect(screen.getByTestId('greeting').textContent).toBe('Hey Maria');
+  });
+
+  it('the executive portal carries its own Spanish — the associate’s pack does not', () => {
+    function ExecProbe() {
+      const { setLang, t } = useI18n();
+      return (
+        <div>
+          <span data-testid="quarter">{t('execPortal.period.quarter')}</span>
+          <button onClick={() => setLang('es')}>es</button>
+        </div>
+      );
+    }
+    render(
+      <I18nProvider>
+        <ExecProbe />
+      </I18nProvider>
+    );
+    expect(screen.getByTestId('quarter').textContent).toBe('Quarter');
+    fireEvent.click(screen.getByText('es'));
+    expect(screen.getByTestId('quarter').textContent).toBe('Trimestre');
+    // Registered by the executive pages' own chunk (es/execPortal.ts), never shipped in es.ts.
+    expect(Object.keys(es).some((k) => k.startsWith('execPortal.'))).toBe(false);
   });
 });

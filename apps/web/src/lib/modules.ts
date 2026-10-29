@@ -155,6 +155,14 @@ export type ModuleKey =
   // The office pack (2026-10-17): marketing's hub and the client NPS results.
   | 'marketing'
   | 'client-nps'
+  // The executive portal (2026-10-27): the chairman's drill-downs.
+  | 'exec-financials'
+  | 'exec-people'
+  | 'exec-clients'
+  | 'exec-risk'
+  | 'exec-scenarios'
+  | 'exec-board-packs'
+  | 'exec-operations'
   // The Clients rebuild (2026-10-22): the new-business pipeline.
   | 'client-pipeline';
 
@@ -214,6 +222,14 @@ export interface ModuleNav {
  * just not in their nav.
  */
 export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  // The executive portal's pages lead the chairman's menu (ROLE_LEAD below).
+  'exec-financials',
+  'exec-people',
+  'exec-clients',
+  'exec-risk',
+  'exec-scenarios',
+  'exec-board-packs',
+  'exec-operations',
   'me',
   'messages',
   'inbox',
@@ -522,6 +538,8 @@ const DRIVER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  * follows docs/tenant-profiles-investigation.md §5.2.
  */
 export const MODULE_GATE: Partial<Record<ModuleKey, TenantModule>> = {
+  // A company with no clients has no client book to read (a hotel's chairman).
+  'exec-clients': 'clientPortal',
   scheduling: 'scheduling',
   'call-outs': 'scheduling',
   marketplace: 'scheduling',
@@ -1287,6 +1305,64 @@ export const MODULES: ModuleNav[] = [
       'CRM, contracts, SOW renewals, and client portal access.',
     requires: 'view:clients',
     group: 'client-services',
+  },
+  // The executive portal (2026-10-27): one page per board topic, each read in
+  // the same frame (period × comparison) as the chairman's scorecard.
+  {
+    key: 'exec-financials',
+    path: '/executive/financials',
+    label: 'Financials',
+    description: 'Revenue, margin and where the money goes; cash, its 13-week low and what is owed to the company.',
+    requires: 'view:executive',
+    group: 'core',
+  },
+  {
+    key: 'exec-people',
+    path: '/executive/people',
+    label: 'Workforce',
+    description: 'Headcount, hires and separations, turnover against plan, overtime and attendance by site.',
+    requires: 'view:executive',
+    group: 'core',
+  },
+  {
+    key: 'exec-clients',
+    path: '/executive/clients',
+    label: 'Client portfolio',
+    description: 'Each client’s revenue, margin and health, how concentrated the book is, and the weighted pipeline.',
+    requires: 'view:executive',
+    group: 'core',
+  },
+  {
+    key: 'exec-risk',
+    path: '/executive/risk',
+    label: 'Risk',
+    description: 'The risk register: what could hurt the company, how serious, who owns it, and which way it is moving.',
+    requires: 'view:executive',
+    group: 'core',
+  },
+  {
+    key: 'exec-scenarios',
+    path: '/executive/scenarios',
+    label: 'Scenarios',
+    description: 'Try a rate change, or a change in the work, on the real volume before the conversation.',
+    requires: 'view:executive',
+    group: 'core',
+  },
+  {
+    key: 'exec-board-packs',
+    path: '/executive/board-packs',
+    label: 'Board packs',
+    description: 'The board pack for any period, what is in it, and when it is sent.',
+    requires: 'view:executive',
+    group: 'core',
+  },
+  {
+    key: 'exec-operations',
+    path: '/executive/operations',
+    label: 'Operations pulse',
+    description: 'Today on the floor: coverage, live shifts, work moving between teams and attendance.',
+    requires: 'view:executive',
+    group: 'core',
   },
   {
     key: 'client-nps',
@@ -2226,6 +2302,13 @@ export type DoorKey =
   | 'my-schedule'
   | 'my-pay'
   | 'my-records'
+  | 'exec-financials'
+  | 'exec-people'
+  | 'exec-clients'
+  | 'exec-risk'
+  | 'exec-scenarios'
+  | 'exec-board-packs'
+  | 'exec-operations'
   | 'more';
 
 export interface NavDoor {
@@ -2284,7 +2367,13 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   // "Directory & comms" retired (F500 G4): the directory is People, broadcasts are under Notifications, surveys are Pulse.
   comms: { key: 'comms', label: 'Communications', children: ['communications', 'pulse'] },
   marketing: { key: 'marketing', label: 'Marketing', children: ['marketing'] },
-  insights: { key: 'insights', label: 'Insights', children: ['analytics', 'reports', 'people-analytics'] },
+  // The executive pages sit in Insights for the other roles that read them;
+  // the chairman's own rail leads with them as rows (ROLE_LEAD).
+  insights: {
+    key: 'insights',
+    label: 'Insights',
+    children: ['analytics', 'reports', 'people-analytics', 'exec-financials', 'exec-people', 'exec-clients', 'exec-risk', 'exec-scenarios', 'exec-board-packs', 'exec-operations'],
+  },
   settings: {
     key: 'settings',
     label: 'Settings & trust',
@@ -2296,6 +2385,14 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   'my-schedule': { key: 'my-schedule', label: 'My schedule', children: ['scheduling', 'marketplace', 'time-off', 'time-attendance'] },
   'my-pay': { key: 'my-pay', label: 'My pay', children: ['payroll', 'benefits', 'reimbursements'] },
   'my-records': { key: 'my-records', label: 'My records', children: ['documents', 'agreements', 'hr-cases', 'leave', 'communications', 'my-discipline'] },
+  // The chairman's rows, one page each (ROLE_LEAD).
+  'exec-financials': { key: 'exec-financials', label: 'Financials', children: ['exec-financials'] },
+  'exec-people': { key: 'exec-people', label: 'Workforce', children: ['exec-people'] },
+  'exec-clients': { key: 'exec-clients', label: 'Client portfolio', children: ['exec-clients'] },
+  'exec-risk': { key: 'exec-risk', label: 'Risk', children: ['exec-risk'] },
+  'exec-scenarios': { key: 'exec-scenarios', label: 'Scenarios', children: ['exec-scenarios'] },
+  'exec-board-packs': { key: 'exec-board-packs', label: 'Board packs', children: ['exec-board-packs'] },
+  'exec-operations': { key: 'exec-operations', label: 'Operations pulse', children: ['exec-operations'] },
   more: { key: 'more', label: 'More', children: [] },
 };
 
@@ -2310,6 +2407,18 @@ const DEFAULT_RAIL: readonly DoorKey[] = ['me', 'team', 'people', 'hire', 'time'
  * what the doors don't name is left out of the menu (reachable by URL and
  * the palette, as always) instead of piling into "More".
  */
+/** The executive portal's rows, in board order, ahead of the default rail. */
+const EXEC_LEAD: readonly DoorKey[] = ['exec-financials', 'exec-people', 'exec-clients', 'exec-risk', 'exec-scenarios', 'exec-board-packs', 'exec-operations', 'me'];
+
+/**
+ * Doors a role takes BEFORE the default rail, keeping the rest of it (unlike
+ * ROLE_RAIL, which replaces it): the chairman's board topics lead, and the
+ * default doors follow to be folded (ROLE_FOLD).
+ */
+const ROLE_LEAD: Partial<Record<Role, readonly DoorKey[]>> = {
+  EXECUTIVE_CHAIRMAN: EXEC_LEAD,
+};
+
 const ROLE_RAIL: Partial<Record<Role, readonly DoorKey[]>> = {
   ASSOCIATE: ['me', 'my-schedule', 'my-pay', 'my-records'],
   // Marketing's own job first (2026-10-17): the funnel, then the pipeline it
@@ -2326,6 +2435,9 @@ const ROLE_RAIL: Partial<Record<Role, readonly DoorKey[]>> = {
  */
 const ROLE_FOLD: Partial<Record<Role, { keep: readonly DoorKey[]; label: string }>> = {
   MANAGER: { keep: ['me', 'team', 'time', 'people'], label: 'Company admin' },
+  // The chairman reads the company by board topic; every module stays one
+  // fold away, door by door (2026-10-27).
+  EXECUTIVE_CHAIRMAN: { keep: [...EXEC_LEAD], label: 'All modules' },
 };
 
 export interface NavDoorView {
@@ -2377,7 +2489,8 @@ export function navShapeFor(
     }
   }
   const own = ROLE_RAIL[role as Role];
-  const rail = own ?? DEFAULT_RAIL;
+  const lead = ROLE_LEAD[role as Role] ?? [];
+  const rail = own ?? [...lead, ...DEFAULT_RAIL.filter((d) => !lead.includes(d))];
   const doors: NavDoorView[] = [];
   for (const doorKey of rail) {
     const door = DOORS[doorKey];

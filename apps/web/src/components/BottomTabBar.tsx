@@ -163,11 +163,13 @@ const MARKETING_TABS: TabDef[] = [
 ];
 
 /** Executive loop: numbers, clients, compliance — never a punch clock. */
+// The chairman's board topics (2026-10-27): the scorecard, the money, the
+// client book and the risk register — the rest is one tap into More.
 const EXEC_TABS: TabDef[] = [
   HOME_TAB,
-  { path: '/analytics', label: 'Analytics', icon: BarChart3, requires: 'view:analytics' },
-  { path: '/clients', label: 'Clients', icon: Building2, requires: 'view:clients' },
-  { path: '/compliance', label: 'Compliance', icon: ShieldCheck, requires: 'view:compliance' },
+  { path: '/executive/financials', label: 'Financials', icon: BarChart3, requires: 'view:executive' },
+  { path: '/executive/clients', label: 'Clients', icon: Building2, requires: 'view:executive' },
+  { path: '/executive/risk', label: 'Risk', icon: ShieldCheck, requires: 'view:executive' },
 ];
 
 /** The floor supervisor: the shift supervisor's floor, watch-only — their

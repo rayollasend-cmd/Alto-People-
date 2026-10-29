@@ -144,8 +144,23 @@ describe('the sidebar stays a dozen rows, not a hundred', () => {
   });
 
   it('the chairman reaches client NPS, the Trust center and the season planner from the nav', () => {
-    const visible = shapeFor('EXECUTIVE_CHAIRMAN').doors.flatMap((d) => [d.target.key, ...d.children.map((c) => c.key)]);
+    const shape = shapeFor('EXECUTIVE_CHAIRMAN');
+    const visible = [...shape.doors, ...(shape.folded?.doors ?? [])].flatMap((d) => [d.target.key, ...d.children.map((c) => c.key)]);
     expect(visible).toEqual(expect.arrayContaining(['client-nps', 'trust-center', 'season-planner']));
+  });
+
+  it('the chairman’s menu leads with the board topics; every other door is kept whole under All modules', () => {
+    const shape = shapeFor('EXECUTIVE_CHAIRMAN');
+    expect(shape.doors.map((d) => d.label)).toEqual(['Financials', 'Workforce', 'Client portfolio', 'Risk', 'Scenarios', 'Board packs', 'Operations pulse', 'Me']);
+    expect(shape.folded?.label).toBe('All modules');
+    expect(shape.folded?.doors.map((d) => d.key)).toEqual(expect.arrayContaining(['people', 'clients', 'insights', 'compliance']));
+    // The executive pages are in the lead, not repeated inside Insights.
+    const insights = shape.folded!.doors.find((d) => d.key === 'insights')!;
+    expect(insights.children.map((c) => c.key).some((k) => k.startsWith('exec-'))).toBe(false);
+    // An admin, who reads the same numbers, finds them in Insights.
+    const admin = shapeFor('HR_ADMINISTRATOR');
+    const adminInsights = admin.doors.find((d) => d.key === 'insights')!;
+    expect(adminInsights.children.map((c) => c.key)).toEqual(expect.arrayContaining(['exec-financials', 'exec-risk']));
   });
 
   it('the associate\u2019s doors speak in the first person, and leave nothing out', () => {

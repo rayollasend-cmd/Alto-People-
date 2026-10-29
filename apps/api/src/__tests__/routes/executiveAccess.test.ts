@@ -154,12 +154,13 @@ describe('executive read unlocks', () => {
     expect(recv2.body.totals.outstandingCount).toBe(0);
     expect(recv2.body.totals.avgDaysToPay).toBeGreaterThan(0);
 
-    // Targets: exec reads, cannot write; admin sets, pace shows up.
+    // Targets: the board sets the plan — the chairman (set:exec-targets) and
+    // the admins (manage:org) both write it; pace shows up.
     const q = `${new Date().getUTCFullYear()}-Q${Math.floor(new Date().getUTCMonth() / 3) + 1}`;
     expect(
-      (await execAgent.put('/executive/targets').send({ quarter: q, revenueTarget: 100000 }))
+      (await execAgent.put('/executive/targets').send({ quarter: q, revenueTarget: 90000 }))
         .status,
-    ).toBe(403);
+    ).toBe(200);
     expect(
       (await hrAgent.put('/executive/targets').send({ quarter: q, revenueTarget: 100000, marginTarget: 25000 }))
         .status,

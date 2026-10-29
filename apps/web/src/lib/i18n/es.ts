@@ -1,11 +1,14 @@
 import type { MessageKey } from '../i18n';
+import type { enExecPortal } from './en/execPortal';
 
 /**
  * Spanish — every key in English, reviewed. Loaded when a person picks
  * Spanish (or their saved language is Spanish, preloaded before first
  * paint in main.tsx), so English readers don't download it.
  */
-export const es: Record<MessageKey, string> = {
+// Every key but the executive portal's, which carries its own Spanish
+// (es/execPortal.ts, loaded with the executive pages).
+export const es: Record<Exclude<MessageKey, keyof typeof enExecPortal>, string> = {
   'tabs.home': 'Inicio',
   'tabs.people': 'Personas',
   'tabs.schedule': 'Horario',
@@ -970,43 +973,6 @@ export const es: Record<MessageKey, string> = {
   'adminHome.ssnsRecollect': 'Hay que volver a recoger SSN',
   'adminHome.ssnHint': 'SSN del W-4 que ya no se pueden leer, o fotos de la tarjeta que faltan: bloquea el reporte de nuevas contrataciones y los W-2.',
   'adminHome.openCampaign': 'Abrir campaña',
-  'execHome.subtitle': 'La postura de la empresa de un vistazo, lista para el consejo.',
-  'execHome.boardPack': 'Descargar paquete del consejo',
-  'execHome.queueNotLoaded': 'No se cargó nada por decidir',
-  'execHome.queueNotLoadedBody': 'La cola del presidente no se cargó. Reintenta arriba.',
-  'execHome.estimatedMargin': 'Margen estimado',
-  'execHome.laborCost': 'Costo laboral',
-  'execHome.summaryNotLoaded': 'El resumen no se cargó. Reintenta arriba.',
-  'execHome.batons': 'Relevos en curso',
-  'execHome.batonsHint': 'trabajo en movimiento entre departamentos',
-  'execHome.today': 'Hoy',
-  'execHome.estBilledToday': 'facturación est. de hoy',
-  'execHome.noShiftsToday': 'Hoy no hay turnos publicados',
-  'execHome.noShiftsTodayBody': 'Publica el horario y la cobertura aparecerá aquí.',
-  'execHome.openScheduling': 'Abrir horarios',
-  'execHome.hiresSeparations': 'Altas / bajas (30 d)',
-  'execHome.onFloorNow': 'En el piso ahora',
-  'execHome.otRisk': 'Riesgo de horas extra esta semana',
-  'execHome.hoursLastWeek': 'Horas la semana pasada',
-  'execHome.estBilledLastWeek': 'Facturación est. semana pasada',
-  'execHome.laborCostLastWeek': 'Costo laboral semana pasada',
-  'execHome.thisWeekSoFar': 'Esta semana hasta ahora',
-  'execHome.receivablesOutstanding': 'Cuentas por cobrar pendientes',
-  'execHome.turnoverCost': 'Costo de rotación (90 d)',
-  'execHome.receivablesAging': 'Antigüedad de cuentas por cobrar',
-  'execHome.concentration': 'Concentración y pipeline',
-  'execHome.portalEngagement': 'Uso del portal',
-  'execHome.clientHealth': 'Salud de los clientes',
-  'execHome.capacityJ1': 'Capacidad y el precipicio J-1',
-  'execHome.peopleToKnow': 'Personas que conocer esta semana',
-  'execHome.hoursOvertime': 'Horas y horas extra: ocho semanas',
-  'execHome.workforceComposition': 'Composición de la plantilla',
-  'execHome.liveFloor': 'Piso en vivo',
-  'execHome.clientPlacements': 'Colocaciones por cliente',
-  'execHome.attendance30': 'Asistencia: últimos 30 días',
-  'execHome.otOutlook': 'Perspectiva de horas extra: esta semana',
-  'execHome.needsYourDecision': 'Necesita tu decisión',
-  'execHome.rateModel': 'Modelo de negociación de tarifas',
   'payrollHome.title': 'Nómina',
   'payrollHome.subProcess': 'Paga a las personas por el tiempo aprobado: revisa, aprueba, paga.',
   'payrollHome.subReadOnly': 'Vista de solo lectura de las corridas de nómina.',

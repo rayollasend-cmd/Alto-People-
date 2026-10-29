@@ -1,4 +1,4 @@
-import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, CartesianGrid, ComposedChart, Line, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ChartTooltipContent } from './ChartTooltip';
 import { AXIS, Y_AXIS_WIDTH, xAxisLabel, yAxisLabel } from './axes';
 import { PALETTE, TICK } from './palette';
@@ -26,7 +26,8 @@ export function TrendLinePlot({
   zeroBased,
   xTick,
   head,
-}: Pick<TrendLineChartProps, 'data' | 'x' | 'yLabel' | 'xLabel' | 'target'> & {
+  mark,
+}: Pick<TrendLineChartProps, 'data' | 'x' | 'yLabel' | 'xLabel' | 'target' | 'mark'> & {
   colored: Array<TrendSeries & { color: string }>;
   lookup: Record<string, { name: string; color: string }>;
   lastIdx: number;
@@ -37,6 +38,10 @@ export function TrendLinePlot({
 }) {
   const few = data.length < FEW_POINTS;
   const curve = few ? 'linear' : 'monotone';
+  // The marked point sits on the first series, at its own value.
+  const first = colored[0];
+  const markRow = mark && first ? data.find((r) => String(r[x]) === mark.x) : undefined;
+  const markY = markRow && first && typeof markRow[first.key] === 'number' ? (markRow[first.key] as number) : null;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart accessibilityLayer={false} data={data} margin={{ top: 12, right: 12, bottom: xLabel ? 14 : 0, left: yLabel ? 8 : 0 }}>
@@ -85,6 +90,18 @@ export function TrendLinePlot({
               activeDot={{ r: 4, stroke: PALETTE.surface, strokeWidth: 2 }}
             />
           ),
+        )}
+        {mark && first && markY !== null && (
+          <ReferenceDot
+            x={mark.x}
+            y={markY}
+            r={5}
+            fill={PALETTE.surface}
+            stroke={first.color}
+            strokeWidth={2}
+            ifOverflow="extendDomain"
+            label={{ value: mark.label, position: 'bottom', offset: 10, fill: TICK.fill, fontSize: 11 }}
+          />
         )}
       </ComposedChart>
     </ResponsiveContainer>

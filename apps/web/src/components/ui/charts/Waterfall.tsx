@@ -59,7 +59,11 @@ export function waterfallRows(start: WaterfallProps['start'], steps: WaterfallSt
   return rows;
 }
 
-const COLOR = { total: PALETTE.primary, up: PALETTE.tertiary, down: PALETTE.series[4], flat: PALETTE.other } as const;
+// A bridge reads the board's way (IBCS): the totals solid in the navy-family
+// blue, what adds in the positive hue, what takes away in the negative one.
+// Gold was the totals (punctuation as a block) and magenta the costs — a
+// series colour, not a meaning (2026-10-28).
+const COLOR = { total: PALETTE.secondary, up: PALETTE.good, down: PALETTE.bad, flat: PALETTE.other } as const;
 
 export function Waterfall({ start, steps, end, format = (v) => v.toLocaleString(), yLabel, words, height }: WaterfallProps) {
   const h = useChartHeight(height, 240);

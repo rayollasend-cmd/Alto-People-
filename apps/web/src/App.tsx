@@ -355,6 +355,14 @@ const NpsSurveyPage = lazyNamed(() => import('@/pages/nps/NpsSurveyPage'), 'NpsS
 const MarketingHome = lazyNamed(() => import('@/pages/marketing/MarketingHome'), 'MarketingHome');
 const ReferralBonusDesk = lazyNamed(() => import('@/pages/marketing/ReferralBonusDesk'), 'ReferralBonusDesk');
 const ClientNpsPage = lazyNamed(() => import('@/pages/clients/ClientNpsPage'), 'ClientNpsPage');
+// The executive portal (2026-10-27): the chairman's drill-downs, one per board topic.
+const ExecFinancialsPage = lazyNamed(() => import('@/pages/executive/FinancialsPage'), 'ExecFinancialsPage');
+const ExecClientsPage = lazyNamed(() => import('@/pages/executive/ClientsPage'), 'ExecClientsPage');
+const ExecPeoplePage = lazyNamed(() => import('@/pages/executive/PeoplePage'), 'ExecPeoplePage');
+const ExecRiskPage = lazyNamed(() => import('@/pages/executive/RiskPage'), 'ExecRiskPage');
+const ExecScenariosPage = lazyNamed(() => import('@/pages/executive/ScenariosPage'), 'ExecScenariosPage');
+const ExecBoardPacksPage = lazyNamed(() => import('@/pages/executive/BoardPacksPage'), 'ExecBoardPacksPage');
+const ExecOperationsPage = lazyNamed(() => import('@/pages/executive/OperationsPage'), 'ExecOperationsPage');
 
 // Hover-prefetch registry. The Sidebar (and any other navigator) looks
 // up the user's hovered link here and fires the chunk loader before the
@@ -548,6 +556,14 @@ const LAYOUT_ROUTES = [
   // payroll finalizes, executives read. Static segment outranks `clients/:id`.
   { path: 'clients/statements', element: <RequireCapability cap="process:payroll" anyOf={['view:executive']}><ClientStatementsRollup /></RequireCapability> },
   { path: 'clients/nps', element: <RequireCapability cap="view:executive" anyOf={['view:marketing']}><ClientNpsPage /></RequireCapability> },
+  // The executive portal's drill-downs: whoever reads the executive numbers.
+  { path: 'executive/financials', element: <RequireCapability cap="view:executive"><ExecFinancialsPage /></RequireCapability> },
+  { path: 'executive/clients', element: <RequireCapability cap="view:executive"><ExecClientsPage /></RequireCapability> },
+  { path: 'executive/people', element: <RequireCapability cap="view:executive"><ExecPeoplePage /></RequireCapability> },
+  { path: 'executive/risk', element: <RequireCapability cap="view:executive"><ExecRiskPage /></RequireCapability> },
+  { path: 'executive/scenarios', element: <RequireCapability cap="view:executive"><ExecScenariosPage /></RequireCapability> },
+  { path: 'executive/board-packs', element: <RequireCapability cap="view:executive"><ExecBoardPacksPage /></RequireCapability> },
+  { path: 'executive/operations', element: <RequireCapability cap="view:executive"><ExecOperationsPage /></RequireCapability> },
   // The new-business pipeline: whoever works it (manage:clients) and the executives who read it.
   { path: 'clients/pipeline', element: <RequireCapability cap="manage:clients" anyOf={['view:executive']} notClientBounded><PipelinePage /></RequireCapability> },
   { path: 'clients/:id', element: <RequireCapability cap="view:clients"><ClientDetail /></RequireCapability> },

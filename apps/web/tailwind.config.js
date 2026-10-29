@@ -89,8 +89,12 @@ export default {
         neutral: scale('neutral'),
       },
       // A divider between rows is the quieter line; a card's edge is `border-line`.
+      // Extending divideColor replaces the `line` object here, so the named
+      // tiers are listed too (divide-line-subtle drew nothing without them).
       divideColor: {
         line: 'rgb(var(--color-line-subtle) / <alpha-value>)',
+        'line-subtle': 'rgb(var(--color-line-subtle) / <alpha-value>)',
+        'line-strong': 'rgb(var(--color-line-strong) / <alpha-value>)',
       },
       fontFamily: {
         // Variable fonts loaded from @fontsource-variable/*. The "Variable"

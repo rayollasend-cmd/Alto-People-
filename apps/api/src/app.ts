@@ -99,6 +99,7 @@ import { opsRouter } from './routes/opsShifts.js';
 import { auditPacketRouter } from './routes/auditPacket.js';
 import { directoryRouter } from './routes/directory.js';
 import { executiveRouter } from './routes/executive.js';
+import { executivePortalRouter } from './routes/executivePortal.js';
 import { clientProspectsRouter } from './routes/clientProspects.js';
 import { roleDecisionsRouter } from './routes/roleDecisions.js';
 import { inboxRouter } from './routes/inbox.js';
@@ -691,6 +692,7 @@ export function createApp() {
   app.use('/org', orgRouter);
   app.use('/people', directoryRouter);
   app.use('/executive', executiveRouter);
+  app.use('/executive', executivePortalRouter);
   app.use('/me', roleDecisionsRouter);
   // Every decision waiting on the signed-in person, as counts with links.
   app.use('/me', inboxRouter);

@@ -189,6 +189,10 @@ export type Capability =
   | 'assist:ops-shifts'
   | 'view:ops'
   | 'manage:ops-library'
+  // The company plan — the quarter's revenue, margin, headcount, turnover
+  // and fill-rate targets the executive scorecard measures against. The
+  // board sets the plan, so the chairman holds it beside manage:org.
+  | 'set:exec-targets'
   // Transportation — the Alto vans:
   //  - ride:transport     book my own seat on a van (to or from work)
   //  - drive:transport    run my van runs: pickups, on board / no-show
@@ -289,6 +293,7 @@ const FULL_ADMIN: Capability[] = [
   'run:ops-shifts',
   'assist:ops-shifts',
   'manage:ops-library',
+  'set:exec-targets',
   // The admin roles hold every transport capability, so they can staff
   // the Transportation Director and drivers (a role can only be granted
   // by someone who holds all of its capabilities).
@@ -327,9 +332,12 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = /* @__PU
     // which the chairman does not hold.
     'view:payroll-documents',
     'view:time-live',
-    // Store-ops oversight + the chairman's ONE write: the SOP standard.
+    // Store-ops oversight + the chairman's two writes, both standards rather
+    // than records: the SOP standard and the company plan (the quarter's
+    // targets the executive scorecard measures against).
     'view:ops',
     'manage:ops-library',
+    'set:exec-targets',
     'view:transport',
     // The board during a storm, never the switch (read-only everywhere).
     'view:emergency',
@@ -914,6 +922,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   'assist:ops-shifts': 'Help on store shifts',
   'view:ops': 'See store operations',
   'manage:ops-library': 'Edit the store standards',
+  'set:exec-targets': 'Set the company plan (quarterly targets)',
   'ride:transport': 'Book a van seat',
   'drive:transport': 'Drive van runs',
   'view:transport': 'See transportation',

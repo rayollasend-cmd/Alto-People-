@@ -3,6 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { startOfWeekUTC } from '../../lib/timeAnomalies.js';
+import { pinMidweekNoon } from '../../../test/clock.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createApplicationWithChecklist,
@@ -268,6 +269,40 @@ describe('GET /analytics/dashboard', () => {
     // which the delta intentionally ignores.
     expect(trends.hires.series[7]).toBe(1);
     expect(trends.hires.delta).toBe(0);
+  });
+
+  it('hours worked are PAID hours — breaks out, rejected and open punches left out — and last week is the executive summary’s', async () => {
+    const now = pinMidweekNoon();
+    const client = await createClient();
+    const associate = await createAssociate();
+    const lastWeek = startOfWeekUTC(new Date(startOfWeekUTC(now).getTime() - 36 * 60 * 60 * 1000));
+    const at = (day: number) => new Date(lastWeek.getTime() + day * 24 * 60 * 60 * 1000 + 13 * 60 * 60 * 1000);
+    // Five 9-hour days with a 30-minute lunch: 42.5 paid (the old line read 45).
+    for (let d = 0; d < 5; d++) {
+      await prisma.timeEntry.create({
+        data: {
+          associateId: associate.id,
+          clientId: client.id,
+          clockInAt: at(d),
+          clockOutAt: new Date(at(d).getTime() + 9 * 60 * 60 * 1000),
+          status: 'APPROVED',
+          breaks: { create: [{ type: 'MEAL', startedAt: new Date(at(d).getTime() + 4 * 60 * 60 * 1000), endedAt: new Date(at(d).getTime() + 4.5 * 60 * 60 * 1000) }] },
+        },
+      });
+    }
+    // A rejected punch pays nothing (the old line counted it).
+    await prisma.timeEntry.create({
+      data: { associateId: associate.id, clientId: client.id, clockInAt: at(5), clockOutAt: new Date(at(5).getTime() + 8 * 60 * 60 * 1000), status: 'REJECTED' },
+    });
+
+    const { user: exec } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
+    const agent = await loginAs(exec.email);
+    const [dash, summary] = await Promise.all([agent.get('/analytics/dashboard'), agent.get('/executive/summary')]);
+    expect(dash.status).toBe(200);
+    const series = dash.body.trends.hoursWorked.series as number[];
+    expect(series[6]).toBe(42.5);
+    expect(series[6]).toBe(summary.body.lastWeek.workedHours);
+    expect(series[7]).toBe(summary.body.thisWeek.workedHours);
   });
 
   it('returns 401 unauthenticated', async () => {

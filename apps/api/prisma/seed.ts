@@ -30,6 +30,8 @@ const MANAGEMENT_USERS: ReadonlyArray<{
   { email: 'workforce@altohr.com', password: 'workforce-dev-2026!', role: 'WORKFORCE_MANAGER', label: 'Workforce Manager', displayName: 'Casey Brooks' },
   { email: 'marketing@altohr.com', password: 'marketing-dev-2026!', role: 'MARKETING_MANAGER', label: 'Marketing Manager', displayName: 'Riley Park' },
   { email: 'finance@altohr.com', password: 'finance-dev-2026!', role: 'FINANCE_ACCOUNTANT', label: 'Finance / Accountant', displayName: 'Morgan Lee' },
+  // The executive portal's reader (2026-10-27): the chairman's scorecard and board pack.
+  { email: 'exec@altohr.com', password: 'exec-dev-2026!', role: 'EXECUTIVE_CHAIRMAN', label: 'Executive / chairman', displayName: 'Victoria Hale' },
 ];
 
 // Transportation logins carry a person (the driver's name is what riders

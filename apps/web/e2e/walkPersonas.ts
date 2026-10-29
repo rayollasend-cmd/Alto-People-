@@ -63,6 +63,18 @@ export const ADMIN_ROUTES: Array<[string, string]> = [
   ['/trust', 'trust'],
 ];
 
+/** The executive chairman (2026-10-27): the scorecard and every board-topic drill-down. */
+export const EXECUTIVE_ROUTES: Array<[string, string]> = [
+  ['/', 'home'],
+  ['/executive/financials', 'financials'],
+  ['/executive/clients', 'clients'],
+  ['/executive/people', 'workforce'],
+  ['/executive/risk', 'risk'],
+  ['/executive/scenarios', 'scenarios'],
+  ['/executive/board-packs', 'board-packs'],
+  ['/executive/operations', 'operations'],
+];
+
 export const WALK_PERSONAS: WalkPersona[] = [
   { key: 'admin', email: 'admin@altohr.com', pass: 'alto-admin-dev', routes: ADMIN_ROUTES },
   { key: 'ops-manager', email: 'ops@altohr.com', pass: 'ops-dev-2026!', routes: [['/', 'home'], ['/approvals', 'approvals'], ['/people', 'people']] },
@@ -74,7 +86,9 @@ export const WALK_PERSONAS: WalkPersona[] = [
   { key: 'supervisor', email: 'dana.reyes@altohr.com', pass: 'supervisor-dev-2026!', routes: [['/', 'home'], ['/scheduling', 'scheduling'], ['/time-attendance', 'time'], ['/ops', 'store-ops'], ['/approvals', 'approvals']] },
   { key: 'portal-store', email: 'portal@coastalresort.example', pass: 'portal-dev-2026!', routes: [['/portal', 'home'], ['/portal/today', 'today'], ['/portal/schedule', 'schedule'], ['/portal/requests', 'requests'], ['/portal/ops', 'ops'], ['/portal/history', 'history']] },
   { key: 'portal-region', email: 'region@coastalresort.example', pass: 'portal-dev-2026!', routes: [['/region', 'command-center']] },
+  { key: 'executive', email: 'exec@altohr.com', pass: 'exec-dev-2026!', routes: EXECUTIVE_ROUTES },
 ];
+
 
 export const ASSOCIATE: WalkPersona = {
   key: 'associate',

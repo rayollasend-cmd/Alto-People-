@@ -12,6 +12,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { activeAssociateIds, activeHeadcount, activeWindowDays, placements } from '../lib/activeDefinition.js';
+import { paidHoursByWeek, weekStartsEndingWith } from '../lib/paidHours.js';
 import { peopleStandings, workStatusCounts } from '../lib/peopleStatus.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
@@ -241,26 +242,22 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
         where: { AND: [{ tenantId: T, deletedAt: null }, clientClamp, appReach] },
         _count: { _all: true },
       }),
-      // Trend feeds. Hours + shifts are aggregated in SQL — these two
-      // used to pull 10–20k timestamp rows through the app per dashboard
-      // load to produce 8 weekly numbers. The week index matches
-      // trendBucket exactly: floor((t − trendStart) / 1 week).
-      prisma.$queryRaw<{ wk: number; hours: number }[]>(Prisma.sql`
-        SELECT
-          FLOOR(EXTRACT(EPOCH FROM ("clockInAt" - ${trendStart})) / 604800)::int AS wk,
-          COALESCE(SUM(
-            CASE WHEN "clockOutAt" > "clockInAt"
-              THEN EXTRACT(EPOCH FROM ("clockOutAt" - "clockInAt")) / 3600
-              ELSE 0 END
-          ), 0)::float8 AS hours
-        FROM "TimeEntry"
-        WHERE "clockInAt" >= ${trendStart} AND "clockInAt" < ${trendEnd}
-          AND "clockOutAt" IS NOT NULL
-          AND "tenantId" = ${T}::uuid
-          ${boundedClientId ? Prisma.sql`AND "clientId" = ${boundedClientId}::uuid` : Prisma.empty}
-          ${sqlSites}
-        GROUP BY 1
-      `),
+      // Trend feeds. Hours worked are PAID hours (lib/paidHours): approved
+      // or completed punches, every break out, punch rounding as pay rounds
+      // it — the executive summary's definition, so this line and the
+      // chairman's "hours last week" are one number. Bucketed by company
+      // week (the last bucket is this week so far); summed in SQL unless a
+      // live jurisdiction or a rounding policy needs the engine.
+      paidHoursByWeek(prisma, {
+        tenantId: T,
+        weekStarts: weekStartsEndingWith(now, TREND_WEEKS),
+        end: now,
+        clientId: boundedClientId || null,
+        siteIds: reach ? reach.ids : null,
+      }),
+      // Shifts are counted in SQL — this used to pull 10–20k timestamp rows
+      // through the app per dashboard load to produce 8 weekly numbers. The
+      // week index matches trendBucket exactly: floor((t − trendStart) / 1 week).
       prisma.$queryRaw<{ wk: number; n: bigint }[]>(Prisma.sql`
         SELECT
           FLOOR(EXTRACT(EPOCH FROM ("startsAt" - ${trendStart})) / 604800)::int AS wk,
@@ -290,13 +287,8 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       applicationStatusCounts[g.status] = g._count._all;
     }
 
-    // Hours worked per week, bucketed by clock-in and rounded to 0.1h.
-    const hoursSeries = new Array<number>(TREND_WEEKS).fill(0);
-    for (const g of trendTimeEntries) {
-      if (g.wk >= 0 && g.wk < TREND_WEEKS) {
-        hoursSeries[g.wk] = Math.round(g.hours * 10) / 10;
-      }
-    }
+    // Paid hours per company week, to the hundredth (as the summary rounds a week).
+    const hoursSeries = trendTimeEntries;
     const shiftsSeries = new Array<number>(TREND_WEEKS).fill(0);
     for (const g of trendShifts) {
       if (g.wk >= 0 && g.wk < TREND_WEEKS) {
@@ -312,7 +304,7 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       trendStart
     );
     const trends: DashboardKPIs['trends'] = {
-      hoursWorked: { series: hoursSeries, delta: Math.round(trendDelta(hoursSeries) * 10) / 10 },
+      hoursWorked: { series: hoursSeries, delta: Math.round(trendDelta(hoursSeries) * 100) / 100 },
       shiftsScheduled: { series: shiftsSeries, delta: trendDelta(shiftsSeries) },
       applications: { series: applicationsSeries, delta: trendDelta(applicationsSeries) },
       hires: { series: hiresSeries, delta: trendDelta(hiresSeries) },

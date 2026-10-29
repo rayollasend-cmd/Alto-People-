@@ -9,10 +9,14 @@
  * read, and these figures stay well under the size where canvas wins.
  */
 import * as echarts from 'echarts/core';
-import { HeatmapChart, SankeyChart, TreemapChart } from 'echarts/charts';
-import { CalendarComponent, TooltipComponent, VisualMapComponent } from 'echarts/components';
+import { HeatmapChart, SankeyChart, ScatterChart, TreemapChart } from 'echarts/charts';
+import { CalendarComponent, GridComponent, TooltipComponent, VisualMapComponent } from 'echarts/components';
 import { SVGRenderer } from 'echarts/renderers';
 
-echarts.use([SankeyChart, HeatmapChart, TreemapChart, CalendarComponent, TooltipComponent, VisualMapComponent, SVGRenderer]);
+// ScatterMatrix (2026-10-27) adds only the scatter and the cartesian grid it
+// sits on (+12 KB gz). Its quadrant lines are HTML over the grid, not
+// markLine, and it places its own names instead of the label-layout module:
+// those two were another 10 KB, and the chunk's budget is 205.
+echarts.use([SankeyChart, HeatmapChart, TreemapChart, ScatterChart, CalendarComponent, GridComponent, TooltipComponent, VisualMapComponent, SVGRenderer]);
 
 export { echarts };

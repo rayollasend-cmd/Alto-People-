@@ -53,7 +53,14 @@ const enCore = readDictionary(readFileSync(join(EN_DIR, 'core.ts'), 'utf8'), 'en
 const enByPack = new Map(areaPacks.map((f) => [f.slice(0, -3), readDictionary(readFileSync(join(EN_DIR, f), 'utf8'), packName(f))]));
 const dictionaries = {
   en: new Set([enCore, ...enByPack.values()].flatMap((s) => [...s])),
-  es: readDictionary(readFileSync(join(root, 'src/lib/i18n/es.ts'), 'utf8'), 'es'),
+  // Spanish: the associate's pack (es.ts) plus the area packs that ride with
+  // their pages (src/lib/i18n/es/<area>.ts, e.g. the executive portal's).
+  es: new Set([
+    ...readDictionary(readFileSync(join(root, 'src/lib/i18n/es.ts'), 'utf8'), 'es'),
+    ...readdirSync(join(root, 'src/lib/i18n/es'))
+      .filter((f) => f.endsWith('.ts'))
+      .flatMap((f) => [...readDictionary(readFileSync(join(root, 'src/lib/i18n/es', f), 'utf8'), 'es' + f[0].toUpperCase() + f.slice(1, -3))]),
+  ]),
   tr: new Set([...readDictionary(readFileSync(join(root, 'src/lib/i18n/trStaff.ts'), 'utf8'), 'tr'), ...readDictionary(readFileSync(join(root, 'src/lib/i18n/tr.ts'), 'utf8'), 'tr')]),
   ht: readDictionary(readFileSync(join(root, 'src/lib/i18n/ht.ts'), 'utf8'), 'ht'),
   pt: readDictionary(readFileSync(join(root, 'src/lib/i18n/pt.ts'), 'utf8'), 'pt'),

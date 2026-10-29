@@ -3,37 +3,42 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/lib/auth';
 import { getMarketRates } from '@/lib/marketRatesApi';
-import { ArrowDownRight, ArrowUpRight } from '@/components/ui/icons';
 import { fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { fmtExecExact, fmtExecMoney } from '@/lib/executiveFormat';
 import { whatIfBaseline, whatIfLose, whatIfWin, type WhatIfLeagueRow, type WhatIfOutcome, type WhatIfRates } from '@/lib/execWhatIf';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/execPortal';
+import { Card, CardContent } from '@/components/ui/Card';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { SectionTitle } from '@/components/ui/SectionTitle';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 
 /**
- * "What if we lose this client / win this one", on the executive's hero
- * numbers: margin, hours, headcount and concentration move together. The
- * rate negotiation model beside it answers the price question; this one
- * answers the portfolio question.
+ * "What if we lose a client / win one", on the same numbers the scorecard
+ * shows: margin, billing, hours, people and concentration move together.
+ * The rate model beside it answers the price question; this one answers
+ * the portfolio question. Money is rounded (the exact figure is the
+ * tooltip's); only money is coloured — more margin is good news, less is
+ * bad — hours and people are facts, in ink.
  */
 
 type Mode = 'lose' | 'win';
 
-function Delta({ label, value, money, suffix, good }: { label: string; value: number; money?: boolean; suffix?: string; good?: boolean }) {
-  const up = value > 0;
-  const Icon = up ? ArrowUpRight : ArrowDownRight;
-  const isGood = good ?? up;
+function Delta({ label, value, money, unit, toned }: { label: string; value: number; money?: boolean; unit?: string; toned?: boolean }) {
+  const sign = value > 0 ? '+' : value < 0 ? '−' : '';
+  const shown = money ? fmtExecMoney(Math.abs(value)) : Math.round(Math.abs(value)).toLocaleString('en-US');
+  const tone = !toned || Math.round(value) === 0 ? 'text-ink' : value > 0 ? 'text-positive-800' : 'text-negative-800';
   return (
-    <div className="min-w-[7rem]">
-      <div className="text-xs text-ink-muted">{label}</div>
-      <div className={cn('mt-0.5 inline-flex items-center gap-1 text-lg font-semibold tabular-nums', value === 0 ? 'text-ink' : isGood ? 'text-success' : 'text-alert')}>
-        {value !== 0 && <Icon className="h-4 w-4" aria-hidden="true" />}
-        {value > 0 ? '+' : value < 0 ? '−' : ''}
-        {money ? fmtMoney(Math.abs(value)) : Math.abs(value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
-        {suffix}
-      </div>
+    <div className="min-w-0">
+      <dt className="text-xs2 text-ink-muted">{label}</dt>
+      <dd className={cn('mt-0.5 text-lg font-medium tabular-nums', tone)} title={money ? fmtExecExact(value, 'money') : undefined}>
+        {sign}
+        {shown}
+        {unit}
+      </dd>
     </div>
   );
 }
@@ -47,130 +52,131 @@ export function WhatIfClientCard({
   clients: Array<{ clientId: string; clientName: string; activeAssociates: number }>;
   rates: WhatIfRates;
 }) {
+  const { t } = useI18n();
   const base = useMemo(() => whatIfBaseline(league, clients), [league, clients]);
   const [mode, setMode] = useState<Mode>('lose');
   const [clientId, setClientId] = useState<string>(base.clients[0]?.clientId ?? '');
   const [name, setName] = useState('');
   const [stores, setStores] = useState('3');
   const [hours, setHours] = useState('160');
-  const [bill, setBill] = useState(String(rates.billRate));
-  const [pay, setPay] = useState(String(rates.payRate));
+  const [bill, setBill] = useState(rates.billRate.toFixed(2));
+  const [pay, setPay] = useState(rates.payRate.toFixed(2));
   const num = (v: string, fallback: number) => {
     const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : fallback;
+    return v.trim() !== '' && Number.isFinite(n) && n >= 0 ? n : fallback;
   };
   // The local market, for a hypothetical pay rate: the typical metro median
-  // across the roles you benchmark (the market rates desk).
+  // across the roles the market rates desk benchmarks.
   const { can } = useAuth();
   const market = useQuery({ queryKey: ['market', 'rates', ''], queryFn: () => getMarketRates(), enabled: mode === 'win' && can('view:clients'), staleTime: 5 * 60_000 });
+  const p = num(pay, rates.payRate);
   const marketLine = useMemo(() => {
     const medians = (market.data?.rows ?? []).map((r) => r.market?.median).filter((m): m is number => typeof m === 'number').sort((a, b) => a - b);
     if (medians.length === 0) return null;
     const mid = medians[Math.floor(medians.length / 2)]!;
-    const p = num(pay, rates.payRate);
     const diff = p - mid;
-    return `Typical market median across your metros: ${fmtMoney(mid)}/h — ${Math.abs(diff) < 0.25 ? 'this pay sits right at it' : `this pay is ${fmtMoney(Math.abs(diff))} ${diff > 0 ? 'above' : 'below'} it`}.`;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [market.data, pay]);
+    if (Math.abs(diff) < 0.25) return t('execPortal.scen.marketAt', { median: fmtMoney(mid) });
+    return t(diff > 0 ? 'execPortal.scen.marketAbove' : 'execPortal.scen.marketBelow', { median: fmtMoney(mid), diff: fmtMoney(Math.abs(diff)) });
+  }, [market.data, p, t]);
   const outcome: WhatIfOutcome | null =
     mode === 'lose'
       ? clientId
         ? whatIfLose(base, clientId)
         : null
-      : whatIfWin(base, rates, { name, stores: num(stores, 0), hoursPerStoreWeek: num(hours, 0), billRate: num(bill, rates.billRate), payRate: num(pay, rates.payRate) });
+      : whatIfWin(base, rates, { name: name.trim() || t('execPortal.scen.newClient'), stores: num(stores, 0), hoursPerStoreWeek: num(hours, 0), billRate: num(bill, rates.billRate), payRate: p });
+
+  const shareLine = (() => {
+    if (!outcome || outcome.topSharePct === null) return null;
+    const after = Math.round(outcome.topSharePct);
+    const before = outcome.topShareBeforePct === null ? null : Math.round(outcome.topShareBeforePct);
+    if (before === null || before === after) return t('execPortal.scen.shareSame', { pct: after });
+    return t(after > before ? 'execPortal.scen.shareRise' : 'execPortal.scen.shareFall', { before, after });
+  })();
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-base">What if we lose this client / win this one</CardTitle>
-          <SegmentedControl<Mode>
-            ariaLabel="Scenario"
-            options={[
-              { value: 'lose', label: 'Lose one' },
-              { value: 'win', label: 'Win one' },
-            ]}
-            value={mode}
-            onChange={setMode}
-          />
-        </div>
-        <p className="text-xs text-ink-muted">
-          On the last four weeks: {fmtMoney(base.weeklyBilled)} billed and {fmtMoney(base.weeklyMargin)} margin a week across {base.clients.length} client{base.clients.length === 1 ? '' : 's'}.
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <Card className="min-w-0" data-testid="exec-whatif">
+      <CardContent className="space-y-4 p-4 md:p-5">
+        <SectionTitle
+          wrap
+          title={t('execPortal.scen.whatIfTitle')}
+          description={t('execPortal.scen.whatIfBase', { billed: fmtExecMoney(base.weeklyBilled), margin: fmtExecMoney(base.weeklyMargin), count: base.clients.length })}
+          trailing={
+            <SegmentedControl<Mode>
+              ariaLabel={t('execPortal.scen.modeAria')}
+              options={[
+                { value: 'lose', label: t('execPortal.scen.modeLose') },
+                { value: 'win', label: t('execPortal.scen.modeWin') },
+              ]}
+              value={mode}
+              onChange={setMode}
+            />
+          }
+        />
         {mode === 'lose' ? (
           base.clients.length === 0 ? (
-            <p className="text-sm text-ink-muted">Worked time against a client over the last four weeks puts it in this picker.</p>
+            <p className="text-sm text-ink-muted">{t('execPortal.scen.loseNone')}</p>
           ) : (
-            <label className="block text-xs text-ink-muted">
-              Client
-              <Select size="sm" className="mt-1 max-w-xs" value={clientId} onChange={(e) => setClientId(e.target.value)}>
-                {base.clients.map((c) => (
-                  <option key={c.clientId} value={c.clientId}>
-                    {c.clientName} · {fmtMoney(c.weeklyBilled)}/wk
-                  </option>
-                ))}
-              </Select>
-            </label>
+            <Field label={t('execPortal.scen.client')} className="max-w-sm">
+              {(f) => (
+                <Select {...f} value={clientId} onChange={(e) => setClientId(e.target.value)}>
+                  {base.clients.map((c) => (
+                    <option key={c.clientId} value={c.clientId}>
+                      {t('execPortal.scen.clientOption', { name: c.clientName, billed: fmtExecMoney(c.weeklyBilled) })}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           )
         ) : (
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="text-xs text-ink-muted">
-              Client
-              <Input size="sm" className="mt-1 w-36" value={name} placeholder="New client" onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className="text-xs text-ink-muted">
-              Stores
-              <Input size="sm" type="number" min="0" className="mt-1 w-20 tabular-nums" value={stores} onChange={(e) => setStores(e.target.value)} />
-            </label>
-            <label className="text-xs text-ink-muted">
-              Hours / store / week
-              <Input size="sm" type="number" min="0" className="mt-1 w-24 tabular-nums" value={hours} onChange={(e) => setHours(e.target.value)} />
-            </label>
-            <label className="text-xs text-ink-muted">
-              Bill rate ($/h)
-              <Input size="sm" type="number" min="0" step="0.25" className="mt-1 w-24 tabular-nums" value={bill} onChange={(e) => setBill(e.target.value)} />
-            </label>
-            <label className="text-xs text-ink-muted">
-              Pay rate ($/h)
-              <Input size="sm" type="number" min="0" step="0.25" className="mt-1 w-24 tabular-nums" value={pay} onChange={(e) => setPay(e.target.value)} />
-            </label>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <Field label={t('execPortal.scen.client')} className="col-span-2 sm:col-span-1">
+              {(f) => <Input {...f} value={name} placeholder={t('execPortal.scen.newClient')} onChange={(e) => setName(e.target.value)} />}
+            </Field>
+            <Field label={t('execPortal.scen.stores')}>
+              {(f) => <Input {...f} type="number" inputMode="numeric" min="0" value={stores} onChange={(e) => setStores(e.target.value)} className="tabular-nums" />}
+            </Field>
+            <Field label={t('execPortal.scen.hoursPerStore')}>
+              {(f) => <Input {...f} type="number" inputMode="numeric" min="0" value={hours} onChange={(e) => setHours(e.target.value)} className="tabular-nums" />}
+            </Field>
+            <Field label={t('execPortal.scen.billRate')}>
+              {(f) => <Input {...f} type="number" inputMode="decimal" min="0" step="0.25" value={bill} onChange={(e) => setBill(e.target.value)} className="tabular-nums" />}
+            </Field>
+            <Field label={t('execPortal.scen.payRate')}>
+              {(f) => <Input {...f} type="number" inputMode="decimal" min="0" step="0.25" value={pay} onChange={(e) => setPay(e.target.value)} className="tabular-nums" />}
+            </Field>
             {marketLine && (
-              <p className="w-full text-xs text-ink-muted">
+              <p className="col-span-full text-xs2 text-ink-muted">
                 {marketLine}{' '}
                 <Link to="/market-rates" className="text-accent hover:underline">
-                  Market rates
+                  {t('execPortal.scen.marketLink')}
                 </Link>
               </p>
             )}
           </div>
         )}
         {outcome && (
-          <div className="flex flex-wrap gap-x-6 gap-y-3" aria-live="polite">
-            <Delta label="Margin / week" value={Math.round(outcome.weeklyMargin)} money />
-            <Delta label="Margin / year" value={Math.round(outcome.annualMargin)} money />
-            <Delta label="Billed / week" value={Math.round(outcome.weeklyBilled)} money />
-            <Delta label="Hours / week" value={Math.round(outcome.weeklyHours)} suffix="h" />
-            <Delta label="People" value={outcome.headcount} good={mode === 'win'} />
-            <div className="min-w-[9rem]">
-              <div className="text-xs text-ink-muted">Largest client&rsquo;s share</div>
-              <div className="mt-0.5 text-lg font-semibold tabular-nums text-ink">
-                {outcome.topSharePct === null ? '—' : `${outcome.topSharePct.toFixed(0)}%`}
-                {outcome.topShareBeforePct !== null && outcome.topSharePct !== null && outcome.topShareBeforePct !== outcome.topSharePct && (
-                  <span className="ml-1 text-xs font-normal text-ink-muted">from {outcome.topShareBeforePct.toFixed(0)}%</span>
-                )}
-              </div>
-              {outcome.topClientName && <div className="truncate text-2xs text-ink-muted">{outcome.topClientName}</div>}
-            </div>
+          <div className="space-y-3 border-t border-line-subtle pt-4" aria-live="polite" data-testid="exec-whatif-outcome">
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-5">
+              <Delta label={t('execPortal.scen.marginYear')} value={outcome.annualMargin} money toned />
+              <Delta label={t('execPortal.scen.marginWeek')} value={outcome.weeklyMargin} money toned />
+              <Delta label={t('execPortal.scen.billedWeek')} value={outcome.weeklyBilled} money toned />
+              <Delta label={t('execPortal.scen.hoursWeek')} value={outcome.weeklyHours} unit="h" />
+              <Delta label={mode === 'lose' ? t('execPortal.scen.peoplePlaced') : t('execPortal.scen.peopleNeeded')} value={outcome.headcount} />
+            </dl>
+            {shareLine && (
+              <p className="text-sm text-ink">
+                {shareLine}
+                {outcome.topClientName && <span className="text-ink-muted"> {t('execPortal.scen.shareWho', { name: outcome.topClientName })}</span>}
+              </p>
+            )}
           </div>
         )}
         <p className="text-2xs text-ink-muted">
-          Estimates at standard rates and burden, like the hero. Statements are the invoice-grade truth —{' '}
-          <Link to="/clients" className="text-accent hover:underline">
-            the pipeline lives on Clients
+          {t('execPortal.scen.whatIfFoot')}{' '}
+          <Link to="/executive/clients" className="text-accent hover:underline">
+            {t('execPortal.scen.whatIfFootLink')}
           </Link>
-          .
         </p>
       </CardContent>
     </Card>

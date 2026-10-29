@@ -151,6 +151,14 @@ import {
   Rocket as MarketingIcon,
   ThumbsUp as ClientNpsIcon,
   Handshake as ClientPipelineIcon,
+  // The executive portal (2026-10-27) — each its own glyph (moduleIcons.test).
+  DollarSign as ExecFinancialsIcon,
+  User as ExecWorkforceIcon,
+  Globe as ExecClientsIcon,
+  AlertTriangle as ExecRiskIcon,
+  SlidersHorizontal as ExecScenariosIcon,
+  FileStack as ExecBoardPacksIcon,
+  Radio as ExecOperationsIcon,
 } from '@/components/ui/icons';
 import {
   UserRound as MeDoorIcon,
@@ -236,6 +244,13 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   // The office pack (2026-10-17): marketing's hub and the client NPS results.
   marketing: MarketingIcon,
   'client-nps': ClientNpsIcon,
+  'exec-financials': ExecFinancialsIcon,
+  'exec-people': ExecWorkforceIcon,
+  'exec-clients': ExecClientsIcon,
+  'exec-risk': ExecRiskIcon,
+  'exec-scenarios': ExecScenariosIcon,
+  'exec-board-packs': ExecBoardPacksIcon,
+  'exec-operations': ExecOperationsIcon,
   'client-pipeline': ClientPipelineIcon,
   'celebrations': CelebrationsIcon,
   'assets': AssetsIcon,
@@ -400,5 +415,12 @@ export const DOOR_ICONS: Record<DoorKey, LucideIcon> = {
   'my-schedule': MyScheduleIcon,
   'my-pay': MyPayIcon,
   'my-records': MyRecordsIcon,
+  'exec-financials': ExecFinancialsIcon,
+  'exec-people': ExecWorkforceIcon,
+  'exec-clients': ExecClientsIcon,
+  'exec-risk': ExecRiskIcon,
+  'exec-scenarios': ExecScenariosIcon,
+  'exec-board-packs': ExecBoardPacksIcon,
+  'exec-operations': ExecOperationsIcon,
   more: MoreDoorIcon,
 };

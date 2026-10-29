@@ -43,7 +43,7 @@ export function isLang(value: unknown): value is Lang {
 }
 
 import { defaultTenantProfile, termsIn, type TermKey } from '@alto-people/shared';
-import { en } from './i18n/english';
+import { en, pageTranslations } from './i18n/english';
 import type { EnglishKey } from './i18n/en/keys';
 
 const STORAGE_KEY = 'alto.lang';
@@ -238,7 +238,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const t = useCallback<Translate>(
     (key, vars) =>
       format(
-        resolveMessage(lang, (k) => packCache.get(lang)?.[k as MessageKey] ?? MESSAGES[lang]?.[k as MessageKey], key, vars),
+        resolveMessage(lang, (k) => packCache.get(lang)?.[k as MessageKey] ?? MESSAGES[lang]?.[k as MessageKey] ?? pageTranslations[lang]?.[k], key, vars),
         vars,
         termVars,
       ),

@@ -44,6 +44,9 @@ describe('hasCapability', () => {
   it('EXECUTIVE_CHAIRMAN has every view, no manage', () => {
     for (const v of ALL_VIEWS) expect(hasCapability('EXECUTIVE_CHAIRMAN', v)).toBe(true);
     for (const m of ALL_MANAGE) expect(hasCapability('EXECUTIVE_CHAIRMAN', m)).toBe(false);
+    // The board sets the plan: the quarter's targets, a standard rather than a record.
+    expect(hasCapability('EXECUTIVE_CHAIRMAN', 'set:exec-targets')).toBe(true);
+    expect(hasCapability('HR_ADMINISTRATOR', 'set:exec-targets')).toBe(true);
   });
 
   it('HR_ADMINISTRATOR has every capability', () => {

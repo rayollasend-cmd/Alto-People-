@@ -50,7 +50,6 @@ import { PaySummaryCard } from '@/components/payroll/PaySummaryCard';
 import { FederalW4Card } from '@/components/payroll/FederalW4Card';
 import { PayChangeContextPanel } from '@/components/payroll/PayChangeContextPanel';
 import { PayrollReadiness } from '@/pages/payroll/PayrollReadiness';
-import { MoneyBand } from '@/pages/executive/MoneyBand';
 
 beforeEach(() => {
   for (const f of Object.values(desk)) f.mockReset();
@@ -271,23 +270,3 @@ describe('readiness: one request to many people', () => {
   });
 });
 
-describe('the executive money band', () => {
-  it('shows cash, the low point, profit against budget and the last run, each linked to its desk', async () => {
-    desk.getExecutiveMoney.mockResolvedValue({
-      asOf: '2026-10-21',
-      cash: { total: 48210.5, accounts: 2 },
-      lowPoint: { weekStart: '2026-11-09', balance: 6120, belowMinimum: true, minimumCash: 10000 },
-      profit: { month: '2026-10', mtdNetIncome: 3120, ytd: { actual: 41000, budget: 38000, variance: 3000 }, budgetName: 'FY26' },
-      dso: [{ month: '2026-05', days: 31, paid: 4 }, { month: '2026-06', days: 28, paid: 5 }],
-      payrollRuns: [{ runId: 'r1', periodStart: '2026-09-12', periodEnd: '2026-09-25', people: 22, gross: 9000, employerTaxes: 820, cost: 9820, costPerPerson: 446.36 }],
-    });
-    renderAs('EXECUTIVE_CHAIRMAN', <MoneyBand />);
-    expect(await screen.findByText('$48,210.50')).toBeInTheDocument();
-    expect(screen.getByText('$6,120.00')).toBeInTheDocument();
-    expect(screen.getByText(/below the minimum/)).toBeInTheDocument();
-    expect(screen.getByText('$3,120.00')).toBeInTheDocument();
-    expect(screen.getByText('$9,820.00')).toBeInTheDocument();
-    expect(screen.getByText('$48,210.50').closest('a')).toHaveAttribute('href', '/books');
-    expect(screen.getByText('$6,120.00').closest('a')).toHaveAttribute('href', '/finance/cash-forecast');
-  });
-});

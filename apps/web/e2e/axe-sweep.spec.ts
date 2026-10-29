@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
 import axe from 'axe-core';
-import { ADMIN_ROUTES, ASSOCIATE, DRIVER, PUBLIC_ROUTES, WALK_PERSONAS, settleWalk, setWalkTheme, walkLogin, type WalkPersona } from './walkPersonas';
+import { ADMIN_ROUTES, ASSOCIATE, DRIVER, EXECUTIVE_ROUTES, PUBLIC_ROUTES, WALK_PERSONAS, settleWalk, setWalkTheme, walkLogin, type WalkPersona } from './walkPersonas';
 
 /**
  * Accessibility sweep on the real, running app — the CI gate behind the
@@ -159,7 +159,8 @@ test.describe('desktop', () => {
   });
 
   for (const persona of WALK_PERSONAS) {
-    const themes: Array<'dark' | 'light'> = persona.key === 'admin' ? ['dark', 'light'] : ['dark'];
+    // The admin and the chairman read their pages in both themes; the board pack's readers print in light.
+    const themes: Array<'dark' | 'light'> = persona.key === 'admin' || persona.key === 'executive' ? ['dark', 'light'] : ['dark'];
     test(`${persona.key} (${themes.join(', ')})`, async ({ page }, testInfo) => {
       test.setTimeout(persona.routes.length * themes.length * 10_000 + 60_000);
       await walkLogin(page, persona.email, persona.pass);
@@ -192,8 +193,16 @@ test.describe('phone', () => {
     expect(await phoneOverflowSweep(page, routes), 'phone overflow as admin').toEqual([]);
   });
 
+  test('the chairman on the go (dark)', async ({ page }, testInfo) => {
+    test.setTimeout(EXECUTIVE_ROUTES.length * 2 * 10_000 + 60_000);
+    await walkLogin(page, 'exec@altohr.com', 'exec-dev-2026!');
+    const onTheGo: WalkPersona = { key: 'executive-phone', email: '', pass: '', routes: EXECUTIVE_ROUTES };
+    report(await sweep(page, onTheGo, ['dark']), 'executive-phone', testInfo);
+    expect(await phoneOverflowSweep(page, EXECUTIVE_ROUTES.map(([r]) => r)), 'phone overflow as the chairman').toEqual([]);
+  });
+
   test('every phone-overflow allowlist line names a page the sweep opens', () => {
-    const swept = new Set([...ASSOCIATE.routes.map(([r]) => r), ...DRIVER.routes.map(([r]) => r), '/', '/approvals', '/people', '/scheduling', '/time-attendance', '/agents', '/audit', '/admin/users', '/settings', ...PHONE_OVERFLOW_EXTRA]);
+    const swept = new Set([...ASSOCIATE.routes.map(([r]) => r), ...DRIVER.routes.map(([r]) => r), ...EXECUTIVE_ROUTES.map(([r]) => r), '/', '/approvals', '/people', '/scheduling', '/time-attendance', '/agents', '/audit', '/admin/users', '/settings', ...PHONE_OVERFLOW_EXTRA]);
     expect(Object.keys(PHONE_OVERFLOW_ALLOWLIST).filter((r) => !swept.has(r))).toEqual([]);
   });
 });

@@ -24,17 +24,26 @@ import { loadLiveRules } from '../lib/laborRules/live.js';
 import { payFor, splitByPerson } from '../lib/laborRules/hours.js';
 import { env } from '../config/env.js';
 import { executiveMoney } from '../lib/executiveMoney.js';
+import { parseExecQuery, quarterOf } from '../lib/execPeriods.js';
+import { loadExecContext } from '../lib/execFinanceContext.js';
+import { computeExecOverview, execCashForecast } from '../lib/execOverview.js';
+import { computeExecFinancials } from '../lib/execFinancials.js';
+import { computeExecRisks } from '../lib/execRisks.js';
 
 /**
  * Executive surfaces — the chairman's read-only layer.
  *
- * GET /executive/summary        → the numbers behind the executive dashboard
- * GET /executive/board-pack.pdf → a letterheaded board pack of the same
- *                                 numbers, ready to table at a meeting
+ * GET /executive/overview       → the chairman's scorecard for a period
+ *                                 against a comparison (lib/execOverview)
+ * GET /executive/financials     → the money drill-down (lib/execFinancials)
+ * GET /executive/summary        → the numbers behind the older dashboard
+ *                                 and the Saturday digest
+ * GET /executive/board-pack.pdf → the board pack for a period, ready to
+ *                                 table at a meeting (lib/executiveBoardPack)
  *
- * Both gated on view:executive (EXECUTIVE_CHAIRMAN + the FULL_ADMIN
- * family). All dollar figures are estimates at org standard rates; client
- * statements remain the invoice-grade artifact.
+ * All gated on view:executive (EXECUTIVE_CHAIRMAN + the FULL_ADMIN
+ * family). Dollar figures marked as estimates are at the org standard
+ * rates; client statements remain the invoice-grade artifact.
  */
 
 export const executiveRouter = Router();
@@ -53,6 +62,39 @@ executiveRouter.use((req, _res, next) => {
     return;
   }
   next();
+});
+
+/* ===== The portal frame: overview + financials (2026-10-27) ============= */
+//
+// ?period=week|month|quarter|year&compare=plan|prior|year (defaults: the
+// quarter to date against the prior quarter's same days). One reading of
+// the punches for the widest span the answer needs (lib/execFinanceContext).
+
+/** The top high-severity risk, for the overview's "what changed"; never fails the scorecard. */
+async function topRisk(now: Date) {
+  try {
+    const { risks } = await computeExecRisks(prisma, now);
+    return risks.find((r) => r.severity === 'high') ?? null;
+  } catch {
+    return null;
+  }
+}
+
+executiveRouter.get('/overview', EXEC, async (req: Request, res: Response) => {
+  const now = new Date();
+  const tenantId = tenantIdForWrite();
+  // The cash forecast and the risks are the slow reads: they start beside the context.
+  const forecast = execCashForecast(now, tenantId);
+  const [ctx, risk] = await Promise.all([loadExecContext(prisma, { tenantId, now, ...parseExecQuery(req.query) }), topRisk(now)]);
+  res.json((await computeExecOverview(prisma, ctx, { risk, forecast })).overview);
+});
+
+executiveRouter.get('/financials', EXEC, async (req: Request, res: Response) => {
+  const now = new Date();
+  const tenantId = tenantIdForWrite();
+  const forecast = execCashForecast(now, tenantId);
+  const ctx = await loadExecContext(prisma, { tenantId, now, ...parseExecQuery(req.query) });
+  res.json(await computeExecFinancials(prisma, ctx, { forecast }));
 });
 
 executiveRouter.get('/summary', EXEC, async (_req: Request, res: Response) => {
@@ -397,14 +439,11 @@ const TargetsInputSchema = z.object({
   fillRatePctTarget: z.number().nonnegative().max(100).nullable().optional(),
 });
 
+/** The quarter containing `now` in the company calendar — the same quarter
+ *  the scorecard's plan comparison reads (lib/execPeriods), not the UTC one
+ *  (an evening on Dec 31 Eastern was already "next quarter" in UTC). */
 function currentQuarter(now: Date): { key: string; start: Date; end: Date } {
-  const y = now.getUTCFullYear();
-  const q = Math.floor(now.getUTCMonth() / 3);
-  return {
-    key: `${y}-Q${q + 1}`,
-    start: new Date(Date.UTC(y, q * 3, 1)),
-    end: new Date(Date.UTC(y, q * 3 + 3, 1)),
-  };
+  return quarterOf(now);
 }
 
 executiveRouter.get('/targets', EXEC, async (_req: Request, res: Response) => {
@@ -504,10 +543,12 @@ executiveRouter.get('/targets', EXEC, async (_req: Request, res: Response) => {
   });
 });
 
-// Setting targets is a WRITE — admins only, never the read-only chairman.
+// The plan is the board's: the chairman sets the quarter's targets
+// (set:exec-targets), as do the org admins (manage:org). It is a standard,
+// not a record, and every change is audited.
 executiveRouter.put(
   '/targets',
-  requireCapability('manage:org'),
+  requireAnyCapability('manage:org', 'set:exec-targets'),
   async (req: Request, res: Response) => {
     const input = TargetsInputSchema.parse(req.body);
     const { quarter, ...fields } = input;
@@ -578,8 +619,12 @@ executiveRouter.delete('/prospects/:id', PROSPECT_WRITE, async (req: Request, re
 });
 
 
+// The board pack for a frame (?period=&compare=, the portal's defaults):
+// the scorecard, financials, clients, workforce, risks and an appendix,
+// drawn as a document (lib/executiveBoardPack). Audited: it leaves the building.
 executiveRouter.get('/board-pack.pdf', EXEC, async (req: Request, res: Response) => {
-  const s = await computeExecutiveSummary(prisma, new Date(), { tenantId: tenantIdForWrite() });
+  const frame = parseExecQuery(req.query);
+  const now = new Date();
   const refId = formatRef();
   enqueueAudit(
     {
@@ -587,17 +632,14 @@ executiveRouter.get('/board-pack.pdf', EXEC, async (req: Request, res: Response)
       action: 'executive.board_pack_generated',
       entityType: 'Organization',
       entityId: 'BOARD_PACK',
-      metadata: { reference: refId },
+      metadata: { reference: refId, period: frame.period, compare: frame.compare },
     },
     'executive.board_pack',
   );
 
-  const buf = await buildBoardPack(s, refId);
+  const buf = await buildBoardPack({ tenantId: tenantIdForWrite(), now, ...frame }, refId);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader(
-    'Content-Disposition',
-    `attachment; filename="board-pack-${s.generatedAt.slice(0, 10)}.pdf"`,
-  );
+  res.setHeader('Content-Disposition', `attachment; filename="board-pack-${frame.period}-${now.toISOString().slice(0, 10)}.pdf"`);
   res.setHeader('Cache-Control', 'private, no-store');
   res.end(buf);
 });

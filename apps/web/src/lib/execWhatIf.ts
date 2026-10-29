@@ -162,3 +162,20 @@ export function rateWhatIfAnnualMargin(
   const cost = (hours + premium) * pay * (1 + rates.burdenPct / 100) + hours * rates.overheadPerHour;
   return (billed - cost) * 52;
 }
+
+/**
+ * The pay-rate model for a company that bills no one (a direct employer):
+ * a year's fully loaded labor cost at a pay rate on the recent weeks'
+ * average volume — overtime priced as the paycheck prices it, burden and
+ * overhead on top. "What does a dollar more an hour cost us?"
+ */
+export function rateWhatIfAnnualLaborCost(
+  weeks: Array<{ workedHours: number; otHours: number; premiumHours?: number }>,
+  pay: number,
+  rates: Pick<WhatIfRates, 'burdenPct' | 'overheadPerHour'>,
+): number {
+  if (weeks.length === 0) return 0;
+  const hours = weeks.reduce((n, w) => n + w.workedHours, 0) / weeks.length;
+  const premium = weeks.reduce((n, w) => n + (w.premiumHours ?? w.otHours * 0.5), 0) / weeks.length;
+  return ((hours + premium) * pay * (1 + rates.burdenPct / 100) + hours * rates.overheadPerHour) * 52;
+}

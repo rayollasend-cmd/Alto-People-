@@ -1981,6 +1981,53 @@ async function ensureModules(stores: StoreRow[], people: Person[], todayKey: str
 }
 
 // ---------------------------------------------------------------------------
+// The company plan (executive portal, 2026-10-27)
+// ---------------------------------------------------------------------------
+
+/**
+ * This quarter's and last quarter's targets, when none is set, so the
+ * chairman's scorecard reads "vs plan" out of the box. A plan someone set is
+ * never touched.
+ *
+ *   revenue    the quarter's pace × 1.05: last quarter's est. billing, and
+ *              this quarter's to date run out to the quarter's end — the
+ *              portal's own revenue measure (lib/paidHours, standard rates)
+ *   margin     21% of the revenue target
+ *   headcount  today's active workforce + 2 (the one definition of active)
+ *   turnover   30% a year · fill rate 97%
+ */
+async function ensureExecTargets(): Promise<void> {
+  const { quarterOf } = await import('../src/lib/execPeriods.js');
+  const { loadPaidHours, totalPaid } = await import('../src/lib/paidHours.js');
+  const { activeHeadcount } = await import('../src/lib/activeDefinition.js');
+  const current = quarterOf(NOW);
+  const previous = quarterOf(new Date(current.start.getTime() - DAY));
+  const active = await activeHeadcount({ tenantId: ALTO_TENANT_ID }, NOW, db);
+  for (const q of [previous, current]) {
+    if (await db.execTarget.findFirst({ where: { tenantId: ALTO_TENANT_ID, quarter: q.key }, select: { id: true } })) continue;
+    const to = q.end.getTime() < NOW.getTime() ? q.end : NOW;
+    const elapsed = (to.getTime() - q.start.getTime()) / (q.end.getTime() - q.start.getTime());
+    const billed = totalPaid(await loadPaidHours(db, { tenantId: ALTO_TENANT_ID, from: q.start, to })).billed;
+    if (billed <= 0 || elapsed <= 0) continue;
+    // To the hundred dollars, as a plan is written.
+    const revenue = Math.round(((billed / elapsed) * 1.05) / 100) * 100;
+    await db.execTarget.create({
+      data: {
+        id: sid(`exec-target|${q.key}`),
+        tenantId: ALTO_TENANT_ID,
+        quarter: q.key,
+        revenueTarget: revenue,
+        marginTarget: Math.round((revenue * 0.21) / 100) * 100,
+        headcountTarget: active + 2,
+        turnoverPctTarget: 30,
+        fillRatePctTarget: 97,
+      },
+    });
+    count('execTargets');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -2015,6 +2062,7 @@ async function main(): Promise<void> {
   await ensureModules(stores, people, todayKey, admin.id);
   await ensureTeamAsks(people, todayKey);
   await ensureOnboardingPipeline(stores, todayKey);
+  await ensureExecTargets();
   // Anything the books have not seen yet (statements, tax payments) is posted the way the nightly catch-up does.
   const { backfillPosting } = await import('../src/lib/books/posting/gaps.js');
   const posted = await backfillPosting(db, { since: new Date(NOW.getTime() - 120 * DAY) });

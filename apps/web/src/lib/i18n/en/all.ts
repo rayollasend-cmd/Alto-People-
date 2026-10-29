@@ -26,7 +26,7 @@ import './earn';
 import './earned';
 import './emergency';
 import './ewa';
-import './execHome';
+import './execPortal';
 import './filters';
 import './fin';
 import './floor';
