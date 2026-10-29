@@ -58,3 +58,26 @@ describe('HugoMascot', () => {
     expect(container.querySelector('.hugo-sprite')).toBeNull();
   });
 });
+
+describe('his colourway follows the theme', () => {
+  afterEach(() => {
+    delete document.documentElement.dataset.theme;
+  });
+
+  it('blue on light, gold on dark — switching live with <html data-theme>, and a fixed one when asked', async () => {
+    document.documentElement.dataset.theme = 'light';
+    const { container } = render(<HugoMascot pose="face" size={26} play="still" />);
+    const span = () => container.querySelector<HTMLElement>('[data-hugo]')!;
+    expect(span().dataset.hugoVariant).toBe('blue');
+    expect(container.querySelector('img')!.getAttribute('src')).toContain('blue');
+
+    await act(async () => {
+      document.documentElement.dataset.theme = 'dark';
+    });
+    expect(span().dataset.hugoVariant).toBe('gold');
+    expect(container.querySelector('img')!.getAttribute('src')).toContain('gold');
+
+    const fixed = render(<HugoMascot pose="hello" size={56} variant="blue" />);
+    expect(fixed.container.querySelector<HTMLElement>('[data-hugo]')!.dataset.hugoVariant).toBe('blue');
+  });
+});

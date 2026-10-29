@@ -53,10 +53,7 @@ export function HugoLauncher() {
     >
       <span className="relative grid h-12 w-12 place-items-center">
         {hugo ? (
-          // On a soft gold disc, like the top bar's: navy on navy needs the lift.
-          <span className="grid h-12 w-12 place-items-center rounded-full bg-accent-fill/25">
-            <HugoMascot pose="face" size={42} />
-          </span>
+          <HugoMascot pose="face" size={44} />
         ) : (
           <Sparkles className="h-6 w-6 text-accent" aria-hidden="true" />
         )}

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { HugoMascot, type HugoPose } from './HugoMascot';
+import { HugoMascot, type HugoPose, type HugoVariant } from './HugoMascot';
 
 const meta = {
   title: 'Brand/Hugo',
@@ -13,7 +13,7 @@ type Story = StoryObj<typeof meta>;
 export const Hello: Story = {};
 
 const POSES: Array<[HugoPose, string]> = [
-  ['hello', 'Say hi · not working'],
+  ['hello', 'Say hi · off duty'],
   ['working', 'Working · typing'],
   ['listening', 'Listening'],
   ['thinking', 'Thinking'],
@@ -26,7 +26,7 @@ const POSES: Array<[HugoPose, string]> = [
   ['face', 'Face (buttons, avatars)'],
 ];
 
-/** Every pose: headphones on when he's working, around his neck when he isn't, greyed out offline. */
+/** Every pose: the Alto lanyard when he's at work, none off duty, greyed out offline. Blue on light, gold on dark. */
 export const AllPoses: Story = {
   render: () => (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -49,6 +49,24 @@ export const Sizes: Story = {
       <HugoMascot pose="working" size={40} />
       <HugoMascot pose="hello" size={56} />
       <HugoMascot pose="hello" size={112} />
+    </div>
+  ),
+};
+
+/** The two colourways side by side, each on the background it's made for. */
+export const Colourways: Story = {
+  render: () => (
+    <div className="flex flex-wrap gap-4">
+      {([['blue', 'bg-white', 'Light mode'], ['gold', 'bg-on-accent', 'Dark mode']] as Array<[HugoVariant, string, string]>).map(([variant, bg, label]) => (
+        <figure key={variant} className={`flex flex-col items-center gap-2 rounded-lg p-4 ${bg}`}>
+          <div className="flex items-end gap-3">
+            <HugoMascot variant={variant} pose="face" size={26} play="still" />
+            <HugoMascot variant={variant} pose="hello" size={112} />
+            <HugoMascot variant={variant} pose="working" size={112} />
+          </div>
+          <figcaption className={variant === 'blue' ? 'text-xs text-on-accent' : 'text-xs text-on-solid'}>{label}</figcaption>
+        </figure>
+      ))}
     </div>
   ),
 };

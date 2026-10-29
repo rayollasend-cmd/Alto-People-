@@ -548,10 +548,8 @@ function AssistantButton() {
         >
           <span className="relative grid h-7 w-7 place-items-center">
             {isHugo(me.name) ? (
-              // On a soft gold disc: navy on the navy bar needs the lift.
-              <span className="grid h-7 w-7 place-items-center rounded-full bg-accent-fill/20">
-                <HugoMascot pose="face" size={24} play="still" />
-              </span>
+              // His colourway follows the theme, so he stands out on the bar as he is.
+              <HugoMascot pose="face" size={26} play="still" />
             ) : (
               <Sparkles className="h-5 w-5" aria-hidden="true" />
             )}

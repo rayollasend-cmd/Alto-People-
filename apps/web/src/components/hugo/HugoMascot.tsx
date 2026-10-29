@@ -1,39 +1,17 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { ASSISTANT_PLATFORM_NAME } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { useMediaQuery } from '@/lib/useViewport';
-import celebrate from '@/assets/hugo/hugo-celebrate.webp';
-import celebrateLoop from '@/assets/hugo/hugo-celebrate-loop.webp';
-import coffee from '@/assets/hugo/hugo-coffee.webp';
-import coffeeLoop from '@/assets/hugo/hugo-coffee-loop.webp';
-import face from '@/assets/hugo/hugo-face.webp';
-import faceBlink from '@/assets/hugo/hugo-face-blink.webp';
-import handoff from '@/assets/hugo/hugo-handoff.webp';
-import handoffLoop from '@/assets/hugo/hugo-handoff-loop.webp';
-import hello from '@/assets/hugo/hugo-hello.webp';
-import helloLoop from '@/assets/hugo/hugo-hello-loop.webp';
-import listening from '@/assets/hugo/hugo-listening.webp';
-import listeningLoop from '@/assets/hugo/hugo-listening-loop.webp';
-import offline from '@/assets/hugo/hugo-offline.webp';
-import offlineLoop from '@/assets/hugo/hugo-offline-loop.webp';
-import pointing from '@/assets/hugo/hugo-pointing.webp';
-import pointingLoop from '@/assets/hugo/hugo-pointing-loop.webp';
-import reading from '@/assets/hugo/hugo-reading.webp';
-import readingLoop from '@/assets/hugo/hugo-reading-loop.webp';
-import talking from '@/assets/hugo/hugo-talking.webp';
-import talkingLoop from '@/assets/hugo/hugo-talking-loop.webp';
-import thinking from '@/assets/hugo/hugo-thinking.webp';
-import thinkingLoop from '@/assets/hugo/hugo-thinking-loop.webp';
-import working from '@/assets/hugo/hugo-working.webp';
-import workingLoop from '@/assets/hugo/hugo-working-loop.webp';
 
 /**
- * Hugo, the assistant's mascot — a 3D character rendered to images
+ * Hugo, the assistant's mascot — a plush 3D character rendered to images
  * (design/hugo has the model and the script that renders these).
  *
- * His headphones say what he's doing: around his neck when he isn't working
- * (hello, celebrate, coffee), on his ears when he is (working, listening,
- * thinking, reading, handoff, pointing), greyed out when offline.
+ * Two colourways, one per theme: blue with a gold collar on light, gold with
+ * a navy collar on dark — each the one that stands out on its background.
+ * The Alto lanyard says what he's doing: he wears it at work (working,
+ * listening, thinking, reading, handoff, pointing, talking), not off duty
+ * (hello, celebrate, coffee); greyed out when offline.
  *
  * A still image paints first — sized, so nothing moves — and the motion strip
  * is fetched only once the page is idle, then played as CSS steps over the
@@ -44,24 +22,55 @@ import workingLoop from '@/assets/hugo/hugo-working-loop.webp';
  * assistant gets its own words and no Alto mascot (isHugo).
  */
 export type HugoPose = 'hello' | 'working' | 'listening' | 'thinking' | 'handoff' | 'celebrate' | 'offline' | 'coffee' | 'reading' | 'pointing' | 'talking' | 'face';
+export type HugoVariant = 'blue' | 'gold';
 
-const STILL: Record<HugoPose, string> = { hello, working, listening, thinking, handoff, celebrate, offline, coffee, reading, pointing, talking, face };
+const POSES: HugoPose[] = ['hello', 'working', 'listening', 'thinking', 'handoff', 'celebrate', 'offline', 'coffee', 'reading', 'pointing', 'talking', 'face'];
+
+// Every image in both colourways: assets/hugo/<variant>/hugo-<pose>[-loop|-blink].webp.
+const FILES = import.meta.glob<string>('../../assets/hugo/*/hugo-*.webp', { eager: true, import: 'default' });
+const file = (variant: HugoVariant, name: string): string => FILES[`../../assets/hugo/${variant}/hugo-${name}.webp`];
 
 /** Each pose's motion: a strip of frames, played as a loop or as an occasional blink. */
-const MOTION: Partial<Record<HugoPose, { strip: string; frames: number; kind: 'loop' | 'blink'; seconds: number }>> = {
-  hello: { strip: helloLoop, frames: 12, kind: 'loop', seconds: 1.2 },
-  working: { strip: workingLoop, frames: 8, kind: 'loop', seconds: 0.8 },
-  listening: { strip: listeningLoop, frames: 12, kind: 'loop', seconds: 2.4 },
-  talking: { strip: talkingLoop, frames: 8, kind: 'loop', seconds: 0.9 },
-  reading: { strip: readingLoop, frames: 12, kind: 'loop', seconds: 2.4 },
-  thinking: { strip: thinkingLoop, frames: 10, kind: 'loop', seconds: 1.8 },
-  celebrate: { strip: celebrateLoop, frames: 10, kind: 'loop', seconds: 1 },
-  handoff: { strip: handoffLoop, frames: 8, kind: 'loop', seconds: 1.4 },
-  offline: { strip: offlineLoop, frames: 8, kind: 'loop', seconds: 2.4 },
-  coffee: { strip: coffeeLoop, frames: 12, kind: 'loop', seconds: 2.6 },
-  pointing: { strip: pointingLoop, frames: 8, kind: 'loop', seconds: 1.2 },
-  face: { strip: faceBlink, frames: 2, kind: 'blink', seconds: 5.6 },
+const MOTION_SPEC: Partial<Record<HugoPose, { name: string; frames: number; kind: 'loop' | 'blink'; seconds: number }>> = {
+  hello: { name: 'hello-loop', frames: 12, kind: 'loop', seconds: 1.2 },
+  working: { name: 'working-loop', frames: 8, kind: 'loop', seconds: 0.8 },
+  listening: { name: 'listening-loop', frames: 12, kind: 'loop', seconds: 2.4 },
+  talking: { name: 'talking-loop', frames: 8, kind: 'loop', seconds: 0.9 },
+  reading: { name: 'reading-loop', frames: 12, kind: 'loop', seconds: 2.4 },
+  thinking: { name: 'thinking-loop', frames: 10, kind: 'loop', seconds: 1.8 },
+  celebrate: { name: 'celebrate-loop', frames: 10, kind: 'loop', seconds: 1 },
+  handoff: { name: 'handoff-loop', frames: 8, kind: 'loop', seconds: 1.4 },
+  offline: { name: 'offline-loop', frames: 8, kind: 'loop', seconds: 2.4 },
+  coffee: { name: 'coffee-loop', frames: 12, kind: 'loop', seconds: 2.6 },
+  pointing: { name: 'pointing-loop', frames: 8, kind: 'loop', seconds: 1.2 },
+  face: { name: 'face-blink', frames: 2, kind: 'blink', seconds: 5.6 },
 };
+
+type Motion = { strip: string; frames: number; kind: 'loop' | 'blink'; seconds: number };
+const build = (variant: HugoVariant) => ({
+  still: Object.fromEntries(POSES.map((p) => [p, file(variant, p)])) as Record<HugoPose, string>,
+  motion: Object.fromEntries(
+    Object.entries(MOTION_SPEC).map(([p, m]) => [p, { strip: file(variant, m.name), frames: m.frames, kind: m.kind, seconds: m.seconds }]),
+  ) as Partial<Record<HugoPose, Motion>>,
+});
+const ASSETS: Record<HugoVariant, ReturnType<typeof build>> = { blue: build('blue'), gold: build('gold') };
+
+/** The colourway for the theme on <html data-theme>: blue on light, gold on dark (the app's default). */
+function readVariant(): HugoVariant {
+  if (typeof document === 'undefined') return 'gold';
+  return document.documentElement.dataset.theme === 'light' ? 'blue' : 'gold';
+}
+// Watched on the element itself: the theme provider sets the attribute in its own effect, and
+// Hugo also shows outside it (Storybook, tests).
+function subscribeTheme(onChange: () => void): () => void {
+  if (typeof MutationObserver === 'undefined' || typeof document === 'undefined') return () => undefined;
+  const mo = new MutationObserver(onChange);
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  return () => mo.disconnect();
+}
+export function useHugoVariant(): HugoVariant {
+  return useSyncExternalStore(subscribeTheme, readVariant, () => 'gold');
+}
 
 /** Strips already decoded on this page: a pose switches to one with no flash of the still. */
 const decoded = new Set<string>();
@@ -83,9 +92,10 @@ function decode(url: string): Promise<void> {
 export function preloadHugo(poses: HugoPose[]): void {
   if (typeof window === 'undefined') return;
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const { still, motion: motions } = ASSETS[readVariant()];
   for (const pose of poses) {
-    void decode(STILL[pose]).catch(() => undefined);
-    const motion = MOTION[pose];
+    void decode(still[pose]).catch(() => undefined);
+    const motion = motions[pose];
     if (motion && !reduced) void decode(motion.strip).catch(() => undefined);
   }
 }
@@ -105,6 +115,8 @@ interface HugoMascotProps {
   bounce?: boolean;
   /** Start the motion now, not when the page goes idle — for the assistant panel, where he is the point. */
   eager?: boolean;
+  /** A fixed colourway, for a background that doesn't follow the theme; else the theme's. */
+  variant?: HugoVariant;
   className?: string;
 }
 
@@ -118,9 +130,11 @@ const whenIdle = (fn: () => void): (() => void) => {
   return () => window.clearTimeout(t);
 };
 
-export function HugoMascot({ pose, size, play = 'loop', bounce = false, eager = false, className }: HugoMascotProps) {
+export function HugoMascot({ pose, size, play = 'loop', bounce = false, eager = false, variant, className }: HugoMascotProps) {
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
-  const motion = play === 'still' || reduced ? undefined : MOTION[pose];
+  const themed = useHugoVariant();
+  const assets = ASSETS[variant ?? themed];
+  const motion = play === 'still' || reduced ? undefined : assets.motion[pose];
   const [ready, setReady] = useState<string | null>(() => (motion && decoded.has(motion.strip) ? motion.strip : null));
 
   useEffect(() => {
@@ -161,8 +175,9 @@ export function HugoMascot({ pose, size, play = 'loop', bounce = false, eager = 
       style={{ width: size, height: size }}
       aria-hidden="true"
       data-hugo={pose}
+      data-hugo-variant={variant ?? themed}
     >
-      <img src={STILL[pose]} width={size} height={size} alt="" decoding="async" draggable={false} className={cn('h-full w-full', playing && 'invisible')} />
+      <img src={assets.still[pose]} width={size} height={size} alt="" decoding="async" draggable={false} className={cn('h-full w-full', playing && 'invisible')} />
       {playing && <span key={motion.strip} className="hugo-sprite absolute inset-0" data-kind={motion.kind} style={style} />}
     </span>
   );
