@@ -3763,4 +3763,5 @@ export const ht: Partial<Record<MessageKey, string>> = {
   'drive.status.APPROVED': 'Apwouve',
   'drive.status.REQUESTED': 'N ap tann',
   'drive.status.DENIED': 'Refize',
+  'ride.owe.stripSplit': 'Ou dwe {amount} pou vwayaj · {due} nan peman {date}',
 };

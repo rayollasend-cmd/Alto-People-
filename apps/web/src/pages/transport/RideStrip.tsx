@@ -47,12 +47,18 @@ export function RideStrip() {
   return <RideStripInner />;
 }
 
-/** "You owe $15.00 for rides · from your pay Fri, Nov 6" — only above zero. */
+/**
+ * "You owe $15.00 for rides · from your pay Fri, Nov 6" — only above zero.
+ * When part of it falls to the payday after, it says how much comes out
+ * first ("You owe $65.00 for rides · $40.00 from your pay Fri, Oct 30"),
+ * the Ride page's own split (owedSummary).
+ */
 function OwedLine({ data, framed }: { data: MyTransport; framed: boolean }) {
   const { t } = useI18n();
   const s = owedSummary(data);
   if (s.cents <= 0) return null;
   const amount = fmtMoney(s.cents / 100);
+  const date = s.payDate ? paydayText(s.payDate) : null;
   return (
     <Link
       to="/rides?view=charges"
@@ -64,7 +70,11 @@ function OwedLine({ data, framed }: { data: MyTransport; framed: boolean }) {
     >
       <Wallet className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1 tabular-nums">
-        {s.payDate ? t('ride.owe.strip', { amount, date: paydayText(s.payDate) }) : t('ride.owe.stripNoDate', { amount })}
+        {!date
+          ? t('ride.owe.stripNoDate', { amount })
+          : s.laterCents > 0
+            ? t('ride.owe.stripSplit', { amount, due: fmtMoney((s.cents - s.laterCents) / 100), date })
+            : t('ride.owe.strip', { amount, date })}
       </span>
       <ChevronRight className="h-4 w-4 shrink-0" aria-hidden="true" />
     </Link>

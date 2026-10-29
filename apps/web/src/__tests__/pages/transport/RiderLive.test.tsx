@@ -512,6 +512,19 @@ describe('the Home card, in miniature', () => {
     expect(owed).toHaveTextContent(/^You owe \$15\.00 for rides · from your pay \w{3}, Nov 13$/);
     expect(owed).toHaveAttribute('href', '/rides?view=charges');
   });
+
+  it('part of it falls to the payday after: the line says how much comes out first, as the Ride page does', async () => {
+    const payday = { payDate: '2026-10-30', periodStart: '2026-10-10', periodEnd: '2026-10-23' };
+    serveTrip('onWay', {}, {
+      rides: [
+        ride({ id: 'in', status: 'COMPLETED', serviceDate: '2026-10-20', owedCents: 4000 }),
+        ride({ id: 'after', status: 'COMPLETED', serviceDate: '2026-10-27', owedCents: 2500 }),
+      ],
+      charges: { pendingCents: 6500, rides: 13, noShows: 0, nextPayday: payday },
+    });
+    renderAs(<RideStrip />);
+    expect(await screen.findByTestId('home-owed')).toHaveTextContent(/^You owe \$65\.00 for rides · \$40\.00 from your pay \w{3}, Oct 30$/);
+  });
 });
 
 describe('what they owe, and the ledger', () => {

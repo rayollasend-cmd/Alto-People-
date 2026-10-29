@@ -3763,4 +3763,5 @@ export const pt: Partial<Record<MessageKey, string>> = {
   'drive.status.APPROVED': 'Aprovado',
   'drive.status.REQUESTED': 'Aguardando',
   'drive.status.DENIED': 'Negado',
+  'ride.owe.stripSplit': 'Você deve {amount} de viagens · {due} do pagamento de {date}',
 };

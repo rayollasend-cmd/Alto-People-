@@ -3761,4 +3761,5 @@ export const tr: Partial<Record<MessageKey, string>> = {
   'drive.status.APPROVED': 'Onaylandı',
   'drive.status.REQUESTED': 'Bekliyor',
   'drive.status.DENIED': 'Reddedildi',
+  'ride.owe.stripSplit': 'Yolculuklar için {amount} borcunuz var · {due} {date} maaşından',
 };

@@ -365,6 +365,7 @@ export const enRide = {
   'ride.track.errorTitle': 'The trip didn’t load',
   'ride.track.errorBody': 'Check your connection and try again in a moment.',
   'ride.fare.withWords': '{amount} — {words}',
+  'ride.owe.stripSplit': 'You owe {amount} for rides · {due} from your pay {date}',
 } as const;
 
 registerEnglish(enRide);

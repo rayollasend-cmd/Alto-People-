@@ -6111,4 +6111,5 @@ export const es: Record<Exclude<MessageKey, keyof typeof enExecPortal | keyof ty
   'ride.track.errorTitle': 'El viaje no cargó',
   'ride.track.errorBody': 'Revisa tu conexión e inténtalo de nuevo en un momento.',
   'ride.fare.withWords': '{amount} — {words}',
+  'ride.owe.stripSplit': 'Debes {amount} de viajes · {due} de tu pago del {date}',
 };

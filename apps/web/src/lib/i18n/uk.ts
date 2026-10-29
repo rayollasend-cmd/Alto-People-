@@ -3757,4 +3757,5 @@ export const uk: Partial<Record<MessageKey, string>> = {
   'drive.status.APPROVED': 'Погоджено',
   'drive.status.REQUESTED': 'Очікує',
   'drive.status.DENIED': 'Відхилено',
+  'ride.owe.stripSplit': 'Ви винні {amount} за поїздки · {due} із зарплати {date}',
 };
