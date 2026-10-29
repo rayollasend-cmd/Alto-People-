@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { EMAIL_LANGUAGES, type EmailLanguage } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { isLang, useI18n } from '@/lib/i18n';
 import { updateLanguage } from '@/lib/settingsApi';
@@ -38,10 +39,10 @@ export function LanguageSync() {
     if (!user || appliedFor.current !== user.id) return;
     if (lastSynced.current === lang) return;
     lastSynced.current = lang;
-    // The account language (emails, WhatsApp) speaks EN/ES/TR; the app
-    // speaks three more. A choice the server cannot hold stays local.
-    if (lang !== 'en' && lang !== 'es' && lang !== 'tr') return;
-    void updateLanguage(lang).catch(() => {
+    // The account holds all six (EMAIL_LANGUAGES); messages the server can't write in
+    // a language (some emails) fall back to English there.
+    if (!(EMAIL_LANGUAGES as readonly string[]).includes(lang)) return;
+    void updateLanguage(lang as EmailLanguage).catch(() => {
       /* best effort — the local choice still applies */
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- user identity is checked through the ref

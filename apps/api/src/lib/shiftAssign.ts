@@ -1,7 +1,8 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from './timezone.js';
+import { formatDateInZone, formatTimeInZone } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { assertClientAllowed } from './programRules.js';
 import { emitShiftEvent } from './webhookEvents.js';
 
@@ -122,7 +123,7 @@ export function describeClash(clash: {
   client: { name: string } | null;
   locationRel: { timezone: string | null } | null;
 }): string {
-  const tz = clash.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+  const tz = clash.locationRel?.timezone ?? companyWorkweek().timezone;
   const overnight = formatDateInZone(clash.startsAt, tz) !== formatDateInZone(clash.endsAt, tz);
   return `${clash.position}${clash.client ? ` at ${clash.client.name}` : ''}, ${formatDateInZone(clash.startsAt, tz)} ${formatTimeInZone(clash.startsAt, tz)} – ${formatTimeInZone(clash.endsAt, tz)}${overnight ? ' (overnight — it runs into the next day)' : ''}${clash.status === 'DRAFT' ? ' [unpublished draft]' : ''}`;
 }
@@ -219,7 +220,7 @@ export async function assignWithinRules(
     // that. Admins can push through with overrideUnavailability
     // (audited by the caller); an explicit per-assignment decision, never silent.
     if (!opts.overrideUnavailability) {
-      const blocked = await blockedForWindow([associate.id], shift.startsAt, shift.endsAt, shift.locationRel?.timezone ?? DEFAULT_TIMEZONE, tx);
+      const blocked = await blockedForWindow([associate.id], shift.startsAt, shift.endsAt, shift.locationRel?.timezone ?? companyWorkweek().timezone, tx);
       if (blocked.size > 0) {
         throw new HttpError(409, 'associate_unavailable', `${associate.firstName} ${associate.lastName} has approved time off or a declared day off covering this shift.`);
       }

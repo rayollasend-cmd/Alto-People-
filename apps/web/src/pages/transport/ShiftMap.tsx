@@ -85,7 +85,7 @@ export function ShiftMapDrawer({ trip, open, onClose }: { trip: TripKey | null; 
       </DrawerHeader>
       <DrawerBody>
         {q.isError ? (
-          <QueryError what="this shift's stops" query={q} />
+          <QueryError what={t('ride.load.stops')} query={q} />
         ) : q.isLoading || !data ? (
           <div className="space-y-3">
             <Skeleton className="h-56 w-full" />

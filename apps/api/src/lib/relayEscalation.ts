@@ -9,6 +9,7 @@ import {
   startOfWeekUTC,
   utcInstantOfLocalMidnight,
 } from './timeAnomalies.js';
+import { logger } from './logger.js';
 
 /**
  * The Relay's teeth — "silence means green" with enforcement.
@@ -228,8 +229,8 @@ export function startRelayEscalationCron(): void {
     });
   }, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] relay escalation cron armed (6-hourly, one bell per overdue baton, reminded every ${RELAY_REMIND_EVERY_DAYS} days)`,
+  logger.info(
+    `relay escalation cron armed (6-hourly, one bell per overdue baton, reminded every ${RELAY_REMIND_EVERY_DAYS} days)`,
   );
 }
 

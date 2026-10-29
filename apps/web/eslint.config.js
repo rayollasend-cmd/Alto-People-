@@ -6,6 +6,44 @@ import jsxA11y from 'eslint-plugin-jsx-a11y';
 import tanstackQuery from '@tanstack/eslint-plugin-query';
 
 /**
+ * The company day (deep audit 2026-10-29, CODE-14 / upgrade 4): about thirty
+ * "today"s were the UTC date — after 5 PM Pacific it is already tomorrow (an
+ * out-of-office that couldn't start today, a statement "past due" on its due
+ * day). A day on screen comes from lib/format (ymdLocal, zonedDayKey with the
+ * store's zone) or lib/workweek. A place that is UTC on purpose says so:
+ *   // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: <why>
+ * The API config carries the same selectors. Spread into EVERY block that
+ * sets no-restricted-syntax: a later block replaces the rule for its files.
+ */
+const COMPANY_DAY = [
+  {
+    selector:
+      "CallExpression[callee.property.name=/^(slice|substring|substr)$/][arguments.length=2][arguments.0.value=0][arguments.1.value=10][callee.object.callee.property.name='toISOString']",
+    message:
+      '`.toISOString().slice(0, 10)` is the UTC date (tomorrow after 5 PM Pacific). Use ymdLocal() or zonedDayKey(d, storeZone) from @/lib/format; if UTC is meant, say why: `// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: <why>`.',
+  },
+  {
+    selector:
+      "MemberExpression[property.value=0][object.callee.property.name='split'][object.arguments.0.value='T'][object.callee.object.callee.property.name='toISOString']",
+    message:
+      "`.toISOString().split('T')[0]` is the UTC date. Use ymdLocal() or zonedDayKey(d, storeZone); if UTC is meant, say why in an eslint-disable comment.",
+  },
+  {
+    selector: "Identifier[name='DEFAULT_TIMEZONE']:not(ImportSpecifier > Identifier):not(ExportSpecifier > Identifier)",
+    message: "DEFAULT_TIMEZONE is New York, hard-coded. Use the store's or the company's zone.",
+  },
+];
+/** Fetch-in-effect (Brief 1B-2), shared by the blocks below. */
+const LOADER_IN_EFFECT = {
+  selector:
+    "CallExpression[callee.name='useEffect'] CallExpression[callee.name=/^(get|list|fetch|load|reload|refresh|search|apiFetch|fetcher)([A-Z]|$)/]",
+  message:
+    'Fetch with useQuery (@tanstack/react-query) rather than a loader inside useEffect — the query layer gives caching, dedupe, background refresh, retry and offline persistence for free.',
+};
+/** Tests build fixtures in UTC on purpose. */
+const TEST_FILES = ['src/**/__tests__/**', 'src/**/*.test.ts', 'src/**/*.test.tsx'];
+
+/**
  * Design-system guardrails — NOT a general lint preset.
  *
  * A full UI sweep (2026-06-11) found the drift this config exists to stop:
@@ -72,15 +110,13 @@ export default [
   {
     files: ['src/**/*.ts', 'src/**/*.tsx'],
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector:
-            "CallExpression[callee.name='useEffect'] CallExpression[callee.name=/^(get|list|fetch|load|reload|refresh|search|apiFetch|fetcher)([A-Z]|$)/]",
-          message:
-            'Fetch with useQuery (@tanstack/react-query) rather than a loader inside useEffect — the query layer gives caching, dedupe, background refresh, retry and offline persistence for free.',
-        },
-      ],
+      'no-restricted-syntax': ['error', LOADER_IN_EFFECT, ...COMPANY_DAY],
+    },
+  },
+  {
+    files: TEST_FILES,
+    rules: {
+      'no-restricted-syntax': ['error', LOADER_IN_EFFECT],
     },
   },
   {
@@ -150,6 +186,7 @@ export default [
             "CallExpression[callee.property.name='toLocaleTimeString']",
           message: 'Use fmtTime() from @/lib/format.',
         },
+        ...COMPANY_DAY,
       ],
     },
   },

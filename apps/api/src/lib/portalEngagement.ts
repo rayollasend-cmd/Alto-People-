@@ -10,6 +10,7 @@ import { formatTimeInZone } from './timezone.js';
 import { dayLabel } from './portalDayReport.js';
 import { tenantIdForWrite } from './tenant.js';
 import { fmtDay, fmtDayRange } from './humanDates.js';
+import { logger } from './logger.js';
 
 /**
  * Portal engagement — who on the client side is actually using their
@@ -421,7 +422,7 @@ export function startPortalEngagementDigestCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(`[alto-people/api] portal engagement digest armed (every ${seconds}s; sends Mondays after ${env.PORTAL_ENGAGEMENT_DIGEST_HOUR}:00 org time)`);
+  logger.info(`portal engagement digest armed (every ${seconds}s; sends Mondays after ${env.PORTAL_ENGAGEMENT_DIGEST_HOUR}:00 org time)`);
 }
 
 export function stopPortalEngagementDigestCron(): void {

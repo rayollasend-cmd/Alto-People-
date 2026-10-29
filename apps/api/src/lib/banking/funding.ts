@@ -7,8 +7,10 @@ import { tenantIdForWrite } from '../tenant.js';
 import { createApprovalRequest, registerApplyHandler } from '../approvalRequests.js';
 import { describeBranchFailure } from '../achReturnCodes.js';
 import { bankingProfile, originate, ownAccount, usesOurAch } from './ach.js';
-import { achTimeline, adjustPayDate, setHolidayOverrides, type AchSpeed } from './holidays.js';
+import { achTimeline, easternInstant, setHolidayOverrides, type AchSpeed } from './holidays.js';
 import { fmtDay } from '../humanDates.js';
+import { dateKeyInZone } from '../timeAnomalies.js';
+import { expectedPayDate } from '../payrollRunCut.js';
 
 /**
  * The money behind a run.
@@ -86,30 +88,14 @@ export async function computeFunding(db: Db, runId: string, profile: PayrollBank
  */
 export async function payDateFor(db: Db, runId: string): Promise<string> {
   const run = await db.payrollRun.findFirstOrThrow({ where: { id: runId, tenantId: tenantIdForWrite() }, select: { periodEnd: true, clientId: true, payrollScheduleId: true } });
-  const schedule =
-    // A run made for one pay schedule is paid on that schedule's day.
-    (run.payrollScheduleId ? await scheduleOffsetOn(db, run.payrollScheduleId, run.periodEnd) : null) ??
-    (run.clientId ? await db.payrollSchedule.findFirst({ where: { clientId: run.clientId, isActive: true, deletedAt: null }, select: { payDateOffsetDays: true } }) : null) ??
-    (await db.payrollSchedule.findFirst({ where: { tenantId: tenantIdForWrite(), clientId: null, isActive: true, deletedAt: null }, select: { payDateOffsetDays: true } }));
-  const offset = schedule?.payDateOffsetDays ?? 7;
-  const nominal = new Date(run.periodEnd.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
-  return adjustPayDate(nominal).payDate;
-}
-
-/** A schedule's pay-date offset for a period ending `periodEnd` — the pattern in force then, so a pattern change never moves an older period's payday. */
-async function scheduleOffsetOn(db: Db, scheduleId: string, periodEnd: Date): Promise<{ payDateOffsetDays: number } | null> {
-  const s = await db.payrollSchedule.findFirst({
-    where: { id: scheduleId },
-    select: { payDateOffsetDays: true, versions: { where: { effectiveFrom: { lte: periodEnd } }, orderBy: { effectiveFrom: 'desc' }, take: 1, select: { payDateOffsetDays: true } } },
-  });
-  if (!s) return null;
-  return { payDateOffsetDays: s.versions[0]?.payDateOffsetDays ?? s.payDateOffsetDays };
+  // One rule for a run's pay date — the same one its tax year keys on (lib/payrollRunCut, deep audit CODE-2).
+  return expectedPayDate(db, { payrollScheduleId: run.payrollScheduleId, clientId: run.clientId, periodEnd: dateKeyInZone(run.periodEnd, 'UTC') });
 }
 
 /** Load this tenant's holiday overrides into the calendar before date math. */
 export async function loadTenantHolidays(db: Db): Promise<void> {
   const rows = await db.bankHolidayOverride.findMany({ where: { tenantId: tenantIdForWrite() } });
-  setHolidayOverrides(rows.map((r) => ({ date: r.date.toISOString().slice(0, 10), name: r.name, closed: r.closed })));
+  setHolidayOverrides(rows.map((r) => ({ date: dateKeyInZone(r.date, 'UTC'), name: r.name, closed: r.closed })));
 }
 
 const money = (c: number | bigint) => (Number(c) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -148,12 +134,29 @@ export async function prepareFunding(db: PrismaClient, runId: string, actorUserI
     status: 'DRAFT',
     createdById: actorUserId,
   };
-  return existing ? db.payrollFunding.update({ where: { id: existing.id }, data }) : db.payrollFunding.create({ data });
+  if (existing) {
+    // Refresh only a row that is still a draft: a pull that claimed it a moment ago keeps its numbers.
+    await db.payrollFunding.updateMany({ where: { id: existing.id, status: { in: ['DRAFT', 'CANCELLED'] } }, data });
+    return db.payrollFunding.findUniqueOrThrow({ where: { id: existing.id } });
+  }
+  try {
+    return await db.payrollFunding.create({ data });
+  } catch (err) {
+    // Two first pulls at once: the other made the row (payrollRunId is unique). Use it.
+    const made = await db.payrollFunding.findUnique({ where: { payrollRunId: runId } });
+    if (made) return made;
+    throw err;
+  }
 }
+
+/** A pull that claimed the funding and never finished (a crash) lets go after this long. */
+export const FUNDING_CLAIM_STALE_MS = 15 * 60_000;
+const PULLABLE = ['DRAFT', 'AWAITING_APPROVAL', 'RETURNED'];
 
 /** Sum of today's submitted funding, for the per-day limit. */
 async function fundedToday(db: Db, excludeId: string, now: Date): Promise<number> {
-  const start = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  // The bank's day (Eastern), not UTC's: from 8 PM Eastern UTC is already tomorrow.
+  const start = easternInstant(dateKeyInZone(now, 'America/New_York'), '00:00');
   const agg = await db.payrollFunding.aggregate({
     where: { tenantId: tenantIdForWrite(), id: { not: excludeId }, submittedAt: { gte: start }, status: { in: ['SUBMITTED', 'SETTLED'] } },
     _sum: { amountCents: true },
@@ -173,7 +176,10 @@ export async function submitFunding(db: PrismaClient, runId: string, actor: { id
   if (funding.status === 'AWAITING_APPROVAL' && !opts.limitApproved) {
     return { funding, pending: { approvalId: funding.approvalRequestId! } };
   }
-  if (!['DRAFT', 'AWAITING_APPROVAL', 'RETURNED'].includes(funding.status)) throw new HttpError(409, 'already_funding', 'This run’s funding is already on its way.');
+  if (funding.status === 'SUBMITTING') funding = await releaseStaleClaim(db, funding, now);
+  if (!PULLABLE.includes(funding.status)) {
+    throw new HttpError(409, 'already_funding', funding.status === 'SUBMITTING' ? 'This run’s funding is being pulled right now.' : 'This run’s funding is already on its way.');
+  }
   if (funding.amountCents <= 0n) {
     funding = await db.payrollFunding.update({ where: { id: funding.id }, data: { status: 'SETTLED', settledAt: now, note: 'Nothing to pull: no one on this run is paid by our ACH.' } });
     return { funding };
@@ -207,9 +213,20 @@ export async function submitFunding(db: PrismaClient, runId: string, actor: { id
     funding = await db.payrollFunding.update({ where: { id: funding.id }, data: { status: 'AWAITING_APPROVAL', approvalRequestId: approval.id } });
     return { funding, pending: { approvalId: approval.id } };
   }
-  const result = await originate(db, profile, {
+  // Claim, then pull (deep audit CODE-18 / UPGRADE). Two clicks of "Pull
+  // funds" (or "Pull again") used to both pass the status check above and
+  // send two debits of the employer's account. The pull now claims the row
+  // in one conditional update — only from a pullable status — and the loser
+  // is told it is already under way. A failure before the bank file exists
+  // puts the row back as it was.
+  const before = funding.status;
+  const claimed = await db.payrollFunding.updateMany({ where: { id: funding.id, status: { in: PULLABLE } }, data: { status: 'SUBMITTING' } });
+  if (claimed.count !== 1) throw new HttpError(409, 'already_funding', 'This run’s funding is being pulled right now.');
+  let result;
+  try {
+    result = await originate(db, profile, {
     purpose: 'FUNDING',
-    effectiveDate: funding.debitEffectiveDate.toISOString().slice(0, 10),
+    effectiveDate: dateKeyInZone(funding.debitEffectiveDate, 'UTC'),
     sameDay: false,
     entryDescription: 'PAYROLL',
     payrollRunId: runId,
@@ -227,7 +244,11 @@ export async function submitFunding(db: PrismaClient, runId: string, actor: { id
         bankAccountId: account.id,
       },
     ],
-  });
+    });
+  } catch (err) {
+    await db.payrollFunding.updateMany({ where: { id: funding.id, status: 'SUBMITTING' }, data: { status: before } });
+    throw err;
+  }
   const entry = result.entries[0]!;
   if (!entry.accepted) {
     await db.payrollFunding.update({ where: { id: funding.id }, data: { status: 'RETURNED', returnReason: (entry.error ?? 'The bank refused the debit.').slice(0, 300), returnedAt: now } });
@@ -237,7 +258,7 @@ export async function submitFunding(db: PrismaClient, runId: string, actor: { id
     where: { id: funding.id },
     data: { status: 'SUBMITTED', submittedAt: now, achEntryId: entry.id, returnCode: null, returnReason: null, returnedAt: null },
   });
-  enqueueAudit({ actorUserId: actor.id, action: 'payroll.funding_submitted', entityType: 'PayrollRun', entityId: runId, metadata: { amountCents: amount, accountLast4: account.accountLast4, effectiveDate: funding.debitEffectiveDate.toISOString().slice(0, 10), file: result.file.id } }, 'banking.funding');
+  enqueueAudit({ actorUserId: actor.id, action: 'payroll.funding_submitted', entityType: 'PayrollRun', entityId: runId, metadata: { amountCents: amount, accountLast4: account.accountLast4, effectiveDate: dateKeyInZone(funding.debitEffectiveDate, 'UTC'), file: result.file.id } }, 'banking.funding');
   return { funding };
 }
 
@@ -266,15 +287,45 @@ registerApplyHandler(
 );
 
 /**
+ * A pull that claimed the funding (SUBMITTING) and never finished. Within
+ * the stale window it is a pull in flight. After it, the row is pullable
+ * again — unless that pull got as far as writing the debit's bank file, in
+ * which case the debit may be on its way and the row is completed from the
+ * file instead of pulling a second time.
+ */
+async function releaseStaleClaim(db: PrismaClient, funding: PayrollFunding, now: Date): Promise<PayrollFunding> {
+  if (funding.updatedAt.getTime() > now.getTime() - FUNDING_CLAIM_STALE_MS) return funding;
+  const file = await db.achFile.findFirst({
+    where: { tenantId: tenantIdForWrite(), purpose: 'FUNDING', payrollRunId: funding.payrollRunId, createdAt: { gte: funding.updatedAt } },
+    include: { entries: { where: { kind: 'DEBIT' }, select: { id: true }, take: 1 } },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (file?.entries[0]) {
+    return db.payrollFunding.update({ where: { id: funding.id }, data: { status: 'SUBMITTED', submittedAt: file.createdAt, achEntryId: file.entries[0].id } });
+  }
+  // Nothing reached a file: pullable again, from where it was (a returned debit stays "pull again").
+  await db.payrollFunding.updateMany({ where: { id: funding.id, status: 'SUBMITTING', updatedAt: funding.updatedAt }, data: { status: funding.returnedAt ? 'RETURNED' : 'DRAFT' } });
+  return db.payrollFunding.findUniqueOrThrow({ where: { id: funding.id } });
+}
+
+/**
  * A submitted debit counts as settled once its effective date has passed
  * (partners also tell us directly). A return can still arrive for two
  * banking days after; it reopens the funding and holds what hasn't paid.
+ *
+ * "Passed" is the banking day in New York (the Fed's ACH calendar), not
+ * UTC's: from 8 PM Eastern the evening before, UTC's date already read the
+ * effective date, and the debit was marked settled — unlocking pay — a day
+ * early (deep audit CODE-26). Settled means the Eastern date is after the
+ * effective date.
  */
 export async function settleDueFunding(db: Db, now = new Date()): Promise<number> {
-  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
-  const due = await db.payrollFunding.findMany({ where: { tenantId: tenantIdForWrite(), status: 'SUBMITTED', debitEffectiveDate: { lte: today } }, select: { id: true } });
-  for (const f of due) await db.payrollFunding.update({ where: { id: f.id }, data: { status: 'SETTLED', settledAt: now } });
-  return due.length;
+  const easternToday = new Date(`${dateKeyInZone(now, 'America/New_York')}T00:00:00Z`);
+  const due = await db.payrollFunding.findMany({ where: { tenantId: tenantIdForWrite(), status: 'SUBMITTED', debitEffectiveDate: { lt: easternToday } }, select: { id: true } });
+  let settled = 0;
+  // Only a row still SUBMITTED settles: a return that landed since the read keeps it RETURNED.
+  for (const f of due) settled += (await db.payrollFunding.updateMany({ where: { id: f.id, status: 'SUBMITTED' }, data: { status: 'SETTLED', settledAt: now } })).count;
+  return settled;
 }
 
 /** The employer's debit came back: hold the run's unpaid items and tell Finance how to wire. */
@@ -324,6 +375,7 @@ export async function assertRunFunded(db: Db, runId: string): Promise<void> {
   const message: Record<string, string> = {
     DRAFT: 'Pull this run’s funding first — no one is paid until the employer’s money arrives.',
     AWAITING_APPROVAL: 'The funding is over a limit and waits for a second person.',
+    SUBMITTING: 'The funding is being pulled right now.',
     SUBMITTED: `The funding debit settles on ${fmtDay(funding.debitEffectiveDate)}; pay goes out after that.`,
     RETURNED: `The funding came back (${funding.returnCode ?? 'returned'}): ${funding.returnReason ?? 'see the funding page'}. Wire the money or pull again.`,
     WIRE_PENDING: 'Waiting for the wire to arrive.',
@@ -343,7 +395,7 @@ export async function payrollFundingNeedingYou(db: Db): Promise<{ count: number;
   if (ownAccount(profile)) return { count: 0, description: 'Payroll is drawn on your own account; the ACH file is the money.' };
   const tenantId = tenantIdForWrite();
   const [unfunded, trouble, accounts] = await Promise.all([
-    db.payrollRun.count({ where: { tenantId, status: 'FINALIZED', NOT: { id: { in: (await db.payrollFunding.findMany({ where: { tenantId, status: { in: ['SUBMITTED', 'SETTLED', 'WIRE_RECEIVED', 'AWAITING_APPROVAL'] } }, select: { payrollRunId: true } })).map((f) => f.payrollRunId) } } } }),
+    db.payrollRun.count({ where: { tenantId, status: 'FINALIZED', NOT: { id: { in: (await db.payrollFunding.findMany({ where: { tenantId, status: { in: ['SUBMITTING', 'SUBMITTED', 'SETTLED', 'WIRE_RECEIVED', 'AWAITING_APPROVAL'] } }, select: { payrollRunId: true } })).map((f) => f.payrollRunId) } } } }),
     db.payrollFunding.count({ where: { tenantId, status: { in: ['RETURNED', 'WIRE_PENDING'] } } }),
     db.employerBankAccount.count({ where: { tenantId, status: 'MICRODEPOSITS_SENT' } }),
   ]);

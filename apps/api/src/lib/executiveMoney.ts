@@ -4,6 +4,8 @@ import { profitAndLoss, trialBalance } from './books/reports.js';
 import { budgetVsActual, listBudgets } from './books/budgets/budgets.js';
 import { cashForecast } from './cashForecast.js';
 import { tenantIdForWrite } from './tenant.js';
+import { dateColumnKey } from './timezone.js';
+import { companyWorkweek, dateKeyInZone, orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -29,7 +31,8 @@ export interface ExecutiveMoney {
   payrollRuns: Array<{ runId: string; periodStart: string; periodEnd: string; people: number; gross: number; employerTaxes: number; cost: number; costPerPerson: number }>;
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A DATE column's day (a run's period, a month start built at UTC midnight). */
+const ymd = (d: Date) => dateColumnKey(d);
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 async function cashToday(db: Db, asOf: string): Promise<ExecutiveMoney['cash']> {
@@ -44,8 +47,11 @@ async function cashToday(db: Db, asOf: string): Promise<ExecutiveMoney['cash']> 
 
 export async function executiveMoney(db: Db, now: Date): Promise<ExecutiveMoney> {
   const tenantId = tenantIdForWrite();
-  const asOf = ymd(now);
+  // The company's day and month: from 8 PM Eastern the UTC date is already tomorrow (or next month).
+  const asOf = orgDateKey(now);
   const month = asOf.slice(0, 7);
+  const [asOfYear, asOfMonth] = asOf.split('-').map(Number) as [number, number];
+  const tz = companyWorkweek().timezone;
   const monthStart = `${month}-01`;
 
   const [cash, forecast, pnl, budgets, statements, runs] = await Promise.all([
@@ -54,7 +60,7 @@ export async function executiveMoney(db: Db, now: Date): Promise<ExecutiveMoney>
     profitAndLoss(db as PrismaClient, monthStart, asOf).catch(() => null),
     listBudgets(db as PrismaClient).catch(() => ({ budgets: [] })),
     db.clientStatement.findMany({
-      where: { tenantId, status: 'FINAL', paidAt: { gte: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1)) }, finalizedAt: { not: null } },
+      where: { tenantId, status: 'FINAL', paidAt: { gte: utcInstantOfLocalMidnight(ymd(new Date(Date.UTC(asOfYear, asOfMonth - 1 - 5, 1))), tz) }, finalizedAt: { not: null } },
       select: { finalizedAt: true, paidAt: true },
       take: 5000,
     }),
@@ -67,16 +73,16 @@ export async function executiveMoney(db: Db, now: Date): Promise<ExecutiveMoney>
   ]);
 
   // The year's budget: the active one for this fiscal year, else any for it.
-  const year = now.getUTCFullYear();
+  const year = asOfYear;
   const yearBudgets = (budgets as { budgets: Array<{ id: string; name: string; fiscalYear: number; status?: string }> }).budgets.filter((b) => b.fiscalYear === year);
   const budget = yearBudgets.find((b) => b.status === 'ACTIVE') ?? yearBudgets[0] ?? null;
   const bva = budget ? await budgetVsActual(db as PrismaClient, budget.id, month).catch(() => null) : null;
 
   const dso: ExecutiveMoney['dso'] = [];
   for (let i = 5; i >= 0; i--) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    const key = ymd(d).slice(0, 7);
-    const paid = statements.filter((s) => ymd(s.paidAt!).slice(0, 7) === key);
+    const key = ymd(new Date(Date.UTC(asOfYear, asOfMonth - 1 - i, 1))).slice(0, 7);
+    // Paid in the month on the company's calendar.
+    const paid = statements.filter((s) => dateKeyInZone(s.paidAt!, tz).slice(0, 7) === key);
     const days = paid.length ? Math.round(paid.reduce((n, s) => n + (s.paidAt!.getTime() - s.finalizedAt!.getTime()) / 86_400_000, 0) / paid.length) : null;
     dso.push({ month: key, days, paid: paid.length });
   }

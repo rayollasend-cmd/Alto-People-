@@ -1,5 +1,7 @@
 // English for the pages that use 'adminHome.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/adminHome.ts).
+import '../es/adminHome';
 
 export const enAdminHome = {
   'adminHome.subHr': 'Here\'s what\'s happening across your workforce today.',

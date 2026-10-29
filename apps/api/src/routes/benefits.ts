@@ -18,6 +18,8 @@ import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { primaryClientsForAssociates } from '../lib/associateClients.js';
 import { scopeActiveAssociates, scopeClients, scopeWhere } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 export const benefitsRouter = Router();
 
@@ -118,7 +120,8 @@ benefitsRouter.get('/overview', RUNS_BENEFITS, async (req, res, next) => {
   try {
     const user = req.user!;
     const tenantId = tenantIdForWrite();
-    const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    // The company's day, not UTC's (CODE-14): an evening view must not count tomorrow's windows as open.
+    const today = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
     const clients = await prisma.client.findMany({
       where: scopeWhere<Prisma.ClientWhereInput>({ tenantId }, scopeClients(user)),
       select: { id: true, name: true },
@@ -208,9 +211,9 @@ benefitsRouter.get('/overview', RUNS_BENEFITS, async (req, res, next) => {
         clientName: w.client.name,
         name: w.name,
         status: w.status,
-        startsOn: w.startsOn.toISOString().slice(0, 10),
-        endsOn: w.endsOn.toISOString().slice(0, 10),
-        effectiveOn: w.effectiveOn.toISOString().slice(0, 10),
+        startsOn: dateColumnKey(w.startsOn),
+        endsOn: dateColumnKey(w.endsOn),
+        effectiveOn: dateColumnKey(w.effectiveOn),
       })),
       ...(carriers ? { carriers } : {}),
     });

@@ -94,7 +94,8 @@ describe('<RecruitingAnalytics>', () => {
     renderPage();
     expect(await screen.findByText('60%')).toBeInTheDocument();
     expect(screen.getByText('3 accepted · 1 declined · 1 lapsed')).toBeInTheDocument();
-    expect(screen.getByText('2 of 3 openings filled')).toBeInTheDocument();
+    // Seats, not postings: "No posting fully filled" beside "2 of 3 filled" read as a contradiction (PEOPLE-22).
+    expect(screen.getByText('2 of 3 seats filled on postings opened in this range')).toBeInTheDocument();
     expect(screen.getByText('$150.00')).toBeInTheDocument();
     expect(screen.getByText('$450.00 spent')).toBeInTheDocument();
     expect(screen.getByText('3 of 4 hires measured')).toBeInTheDocument();

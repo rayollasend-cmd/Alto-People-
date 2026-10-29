@@ -93,10 +93,13 @@ export function EmployersAdmin() {
     <div className="mx-auto max-w-6xl space-y-6">
       <PageHeader
         title="Employers of record"
-        subtitle="Who legally employs each person. The W-2 or 1099 employer and the pay statement's company block come from here."
-        actions={[{ label: 'Add employer of record', icon: Plus, primary: true, onSelect: () => setEditing('new'), hidden: !canManage }]}
+        subtitle={`Who legally employs each person. The W-2 or 1099 employer and the pay statement's company block come from here.${canManage ? '' : ' Read-only for your role.'}`}
+        // A refused or failed read never sits under an "Add" button (PEOPLE-16).
+        actions={[{ label: 'Add employer of record', icon: Plus, primary: true, onSelect: () => setEditing('new'), hidden: !canManage || query.isError }]}
       />
       {query.isError ? <QueryError what="the employers of record" query={query} /> : null}
+      {/* …nor above "No employers on file", which a failed read would contradict. */}
+      {!query.isError && (
       <DataGrid<EmployerRow>
         id="employers"
         caption="Employers of record"
@@ -111,6 +114,7 @@ export function EmployersAdmin() {
         rowActionLabel={(r) => `Edit ${r.legalName}`}
         empty={{ icon: Briefcase, title: 'No employers on file', description: 'The organization’s own row is written when the first tax form is prepared.' }}
       />
+      )}
       {editing && <EmployerDialog employer={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
     </div>
   );

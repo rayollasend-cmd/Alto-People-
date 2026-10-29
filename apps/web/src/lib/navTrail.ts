@@ -17,6 +17,7 @@ import {
   type ModuleNav,
   type NavShape,
 } from '@/lib/modules';
+import { homeLabel, localizeModule, localizeModules, localizeShape } from '@/lib/navI18n';
 
 /**
  * Where a page lives, in the sidebar's own words — the one source for
@@ -230,12 +231,16 @@ export function useNavModel(): { visible: ModuleNav[]; shape: NavShape | null; t
   const can = auth?.can;
   return useMemo(() => {
     if (!can || !role) return { visible: [], shape: null, term };
-    const visible = roleNavLabels(
-      applyTerms(visibleModules(role, can, { regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules),
-      role,
+    // Named in the reader's language (lib/navI18n), as the sidebar names them.
+    const visible = localizeModules(
+      roleNavLabels(
+        applyTerms(visibleModules(role, can, { regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules),
+        role,
+        t,
+      ),
       t,
     );
-    return { visible, shape: navShapeFor(visible, role, term), term };
+    return { visible, shape: localizeShape(navShapeFor(visible, role, term), t), term };
   }, [can, role, regionId, tenant.modules, tenant.id, term, t]);
 }
 
@@ -333,11 +338,12 @@ export function useResolvedCrumbs(explicit: BreadcrumbSegment[] | undefined, tit
 export function useNavLabel(): string | null {
   const pathname = usePathnameIfRouted();
   const { visible } = useNavModel();
+  const { t } = useI18n();
   return useMemo(() => {
     if (!pathname) return null;
-    if (pathname === DASHBOARD_NAV.path) return DASHBOARD_NAV.label;
+    if (pathname === DASHBOARD_NAV.path) return homeLabel(t);
     // A page outside this person's sidebar (a link, the access page) still
     // has a name: the module's own.
-    return (deepestModule(pathname, visible) ?? deepestModule(pathname, MODULES))?.label ?? null;
-  }, [pathname, visible]);
+    return (deepestModule(pathname, visible) ?? localizeModule(deepestModule(pathname, MODULES), t))?.label ?? null;
+  }, [pathname, visible, t]);
 }

@@ -50,6 +50,7 @@ import {
   adminCreateTimeEntry,
   adminEditTimeEntry,
   approveTimeEntry,
+  countAdminTimeEntries,
   exportTimeEntries,
   getActiveDashboard,
   getTimeExceptions,
@@ -834,7 +835,7 @@ describe('<AdminTimeView> anomaly triage', () => {
     expect(screen.getAllByText('Frank Forgot').length).toBeGreaterThan(0);
   });
 
-  it('offers "Approve at sched. end" on FORGOT_CLOCKOUT rows and sends the override', async () => {
+  it('offers "Approve at shift end" on FORGOT_CLOCKOUT rows and sends the override', async () => {
     vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: FLAGGED } as never);
     vi.mocked(approveTimeEntry).mockResolvedValue({} as never);
     const user = renderQueueTab();
@@ -844,15 +845,28 @@ describe('<AdminTimeView> anomaly triage', () => {
     // Only the FORGOT_CLOCKOUT row with a scheduled end offers it. (The
     // clickable row itself is also role=button, so anchor to the start.)
     const buttons = screen.getAllByRole('button', {
-      name: /^approve at sched\. end/i,
+      name: /^approve at shift end/i,
     });
     expect(buttons).toHaveLength(1);
+    // A flagged punch leads with "Fix time" — the Approvals panel's set (FLOOR-22).
+    expect(screen.getAllByRole('button', { name: /^fix time$/i }).length).toBeGreaterThanOrEqual(2);
     await user.click(buttons[0]);
     await waitFor(() =>
       expect(approveTimeEntry).toHaveBeenCalledWith('f1', {
         clockOutAt: '2026-06-24T22:00:00.000Z',
       }),
     );
+  });
+
+  it('no "Approve at shift end" once the auto clock-out already set it there (FLOOR-22)', async () => {
+    const autoClosed = FLAGGED.map((e) =>
+      e.id === 'f1' ? { ...e, clockOutAt: '2026-06-24T22:00:00.000Z', notes: 'Auto clocked out at shift end' } : e,
+    );
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: autoClosed } as never);
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await screen.findAllByText('Frank Forgot');
+    expect(screen.queryByRole('button', { name: /^approve at shift end/i })).not.toBeInTheDocument();
   });
 
   it('reject presets fill the reason box (still editable)', async () => {
@@ -1105,5 +1119,70 @@ describe('<AdminTimeView> exception tiles are the filter (F500 G2)', () => {
     const bar = await screen.findByTestId('bulk-bar');
     expect(bar.textContent).toMatch(/^2 selected/);
     expect(within(bar).getByRole('button', { name: /approve 2/i })).toBeInTheDocument();
+  });
+});
+
+describe('<AdminTimeView> a viewer without manage:time (deep audit CRAWL-10)', () => {
+  function renderReadOnly() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={AUTH_VALUE}>
+          <MemoryRouter initialEntries={['/?tab=queue']}>
+            <AdminTimeView canManage={false} />
+          </MemoryRouter>
+        </AuthContext.Provider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('reads only the live board — no queue, count, exceptions or pay periods that would 403', async () => {
+    vi.mocked(countAdminTimeEntries).mockClear();
+    vi.mocked(getTimeExceptions).mockClear();
+    vi.mocked(listPayPeriods).mockClear();
+    renderReadOnly();
+    expect(await screen.findByRole('button', { name: /clocked in/i })).toBeInTheDocument();
+    await waitFor(() => expect(getActiveDashboard).toHaveBeenCalled());
+    expect(countAdminTimeEntries).not.toHaveBeenCalled();
+    expect(getTimeExceptions).not.toHaveBeenCalled();
+    expect(listPayPeriods).not.toHaveBeenCalled();
+    expect(listAdminTimeEntries).not.toHaveBeenCalled();
+    // No queue tab, and never "Nothing waiting" for a count it can't read.
+    expect(screen.queryByRole('tab', { name: /approval queue/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Nothing waiting')).not.toBeInTheDocument();
+  });
+});
+
+describe('<AdminTimeView> a count that fails says so (deep audit CODE-20)', () => {
+  const restore = () => {
+    vi.mocked(getTimeExceptions).mockResolvedValue({
+      missedPunches: { count: 0, oldestAt: null },
+      lateToday: { count: 0, dayFrom: '', dayTo: '' },
+      overtimeRisk: { count: 0, thresholdHours: 36, weekStart: '2026-06-27', weekEnd: '2026-07-03', people: [] },
+    } as never);
+    vi.mocked(countAdminTimeEntries).mockResolvedValue({ count: 0 } as never);
+  };
+  beforeEach(restore);
+
+  it('the exceptions read failing shows an error with Retry, and the overtime list does not spin forever', async () => {
+    vi.mocked(getTimeExceptions).mockRejectedValue(new Error('boom'));
+    onTestFinished(restore);
+    const user = renderAtPath('/?tab=queue');
+    expect(await screen.findByText(/couldn.t load the counts above/i)).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: /overtime risk/i }));
+    const panel = await screen.findByTestId('ot-risk-panel');
+    expect(await within(panel).findByText(/couldn.t load who is heading into overtime/i)).toBeInTheDocument();
+    // Retry reads again.
+    vi.mocked(getTimeExceptions).mockClear();
+    await user.click(screen.getAllByRole('button', { name: /retry/i })[0]!);
+    await waitFor(() => expect(getTimeExceptions).toHaveBeenCalled());
+  });
+
+  it('a failed pending count is not "Nothing waiting"', async () => {
+    vi.mocked(countAdminTimeEntries).mockRejectedValue(new Error('boom'));
+    onTestFinished(restore);
+    renderAtPath('/?tab=queue');
+    expect(await screen.findByText(/couldn.t load the count$/i)).toBeInTheDocument();
+    expect(screen.queryByText('Nothing waiting')).not.toBeInTheDocument();
   });
 });

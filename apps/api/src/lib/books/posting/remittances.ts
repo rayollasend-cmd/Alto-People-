@@ -1,6 +1,7 @@
 import { tenantIdForWrite } from '../../tenant.js';
 import { postEntry } from '../ledger.js';
-import { LineBook, cents, voidByKey, ymd, type Db } from './common.js';
+import { LineBook, cents, dayOf, voidByKey, ymd, type Db } from './common.js';
+import { labelWords, quarterWords } from '../words.js';
 
 /**
  * Money payroll owes others leaving the payroll account:
@@ -45,7 +46,7 @@ function bookLiability(book: LineBook, kind: string, amount: number, breakdown: 
 }
 
 export async function postTaxPayment(db: Db, paymentId: string): Promise<'posted' | 'voided' | 'skipped'> {
-  const p = await db.taxPayment.findFirst({ where: { id: paymentId, tenantId: tenantIdForWrite() }, include: { liabilities: true } });
+  const p = await db.taxPayment.findFirst({ where: { id: paymentId, tenantId: tenantIdForWrite() }, include: { liabilities: true, account: { select: { agencyName: true } } } });
   if (!p) return 'skipped';
   if (p.status !== 'PAID') {
     return (await voidByKey(db, taxPaymentKey(p.id), `The tax payment is ${p.status.toLowerCase()}`)) > 0 ? 'voided' : 'skipped';
@@ -68,8 +69,8 @@ export async function postTaxPayment(db: Db, paymentId: string): Promise<'posted
   if (extra !== 0) book.debit('UNCATEGORIZED_EXPENSE', extra, {}, 'Tax payment beyond the liabilities it covers (penalty or interest?) — review');
   book.credit('CASH_PAYROLL', total);
   await postEntry(db, {
-    date: ymd(p.paidAt ?? p.dueDate),
-    memo: `Tax payment · ${p.jurisdiction} ${p.periodLabel}${p.confirmationNumber ? ` · conf. ${p.confirmationNumber}` : ''}`,
+    date: p.paidAt ? dayOf(p.paidAt) : ymd(p.dueDate),
+    memo: `Tax payment · ${p.account?.agencyName ?? (p.jurisdiction === 'US' ? 'Internal Revenue Service' : p.jurisdiction)} · ${quarterWords(p.periodLabel)}${p.confirmationNumber ? ` · conf. ${p.confirmationNumber}` : ''}`,
     source: 'TAX_PAYMENT',
     sourceType: 'TaxPayment',
     sourceId: p.id,
@@ -103,8 +104,8 @@ export async function postTaxDeposit(db: Db, depositId: string): Promise<'posted
   }
   book.credit('CASH_PAYROLL', total);
   await postEntry(db, {
-    date: ymd(d.paidAt ?? new Date()),
-    memo: `Tax deposit · ${kind === 'FUTA' ? 'FUTA' : 'Form 941'} · ${d.periodLabel}${d.confirmationNumber ? ` · conf. ${d.confirmationNumber}` : ''}`,
+    date: dayOf(d.paidAt ?? new Date()),
+    memo: `Tax deposit · ${kind === 'FUTA' ? 'FUTA' : 'Form 941'} · ${labelWords(d.periodLabel)}${d.confirmationNumber ? ` · conf. ${d.confirmationNumber}` : ''}`,
     source: 'TAX_PAYMENT',
     sourceType: 'TaxDeposit',
     sourceId: d.id,
@@ -124,7 +125,7 @@ export async function postGarnishmentRemittance(db: Db, remittanceId: string): P
   book.debit('GARNISHMENTS_PAYABLE', total);
   book.credit('CASH_PAYROLL', total);
   await postEntry(db, {
-    date: ymd(r.sentAt ?? new Date()),
+    date: dayOf(r.sentAt ?? new Date()),
     memo: `Garnishment remittance · ${r.method.toLowerCase()}`,
     source: 'GARNISHMENT',
     sourceType: 'GarnishmentRemittance',
@@ -146,7 +147,7 @@ export async function postWageAdvance(db: Db, advanceId: string): Promise<'poste
   book.credit('CASH_PAYROLL', a.amountCents);
   book.credit('OTHER_INCOME', a.feeCents, {}, 'Earned-wage advance fees');
   await postEntry(db, {
-    date: ymd(a.paidAt!),
+    date: dayOf(a.paidAt!),
     memo: 'Earned-wage advance paid before payday',
     source: 'PAYROLL_DISBURSEMENT',
     sourceType: 'EarnedWageAdvance',

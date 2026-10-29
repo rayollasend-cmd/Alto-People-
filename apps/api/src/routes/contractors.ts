@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { createHash } from 'node:crypto';
 import type { ContractorProfile, Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -33,6 +34,8 @@ import {
 import { aggregateF1099NecPayments, f1099NecThreshold, listF1099NecEligibleAssociates } from '../lib/f1099NecAggregator.js';
 import { aggregateF1099MiscPayments, listF1099MiscEligibleAssociates, meetsF1099MiscThreshold } from '../lib/f1099MiscAggregator.js';
 import type { SessionUser } from '../types/express.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Contractors (1099) desk: W-9s, IRS TIN matching, B-notices and backup
@@ -50,7 +53,8 @@ export const contractorSelfRouter = Router();
 
 const CONTRACTOR_TYPES = ['CONTRACTOR_1099_INDIVIDUAL', 'CONTRACTOR_1099_BUSINESS'] as const;
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A date column's YYYY-MM-DD (B-notice deadlines, pay dates). */
+const ymd = dateColumnKey;
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD.');
 const taxYearParam = z.preprocess((v) => Number(v ?? new Date().getUTCFullYear()), z.number().int().min(2000).max(2100));
 const EXPORT_PII = requireCapability('export:payroll-pii');
@@ -292,7 +296,7 @@ contractorsRouter.get('/tin-match/batches/:id/request.txt', EXPORT_PII, async (r
     });
     await recordCriticalAudit({ actorUserId: req.user!.id, action: 'contractor.tin_match_file_downloaded', entityType: 'TinMatchBatch', entityId: batch.id, metadata: { rows: rows.length } }, 'contractor.tin_match_file');
     res.setHeader('Content-Type', 'text/plain; charset=us-ascii');
-    res.setHeader('Content-Disposition', `attachment; filename="tin-match-${ymd(batch.createdAt)}.txt"`);
+    res.setHeader('Content-Disposition', `attachment; filename="tin-match-${orgDateKey(batch.createdAt)}.txt"`);
     res.send(buildTinMatchRequestFile(rows));
   } catch (err) {
     next(err);
@@ -793,10 +797,8 @@ async function payeeYears(user: SessionUser, taxYear: number): Promise<PayeeYear
   return out;
 }
 
-const csvCell = (v: unknown) => {
-  const s = String(v ?? '');
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
+// The shared escaper (@alto-people/shared): quoting plus the formula guard, numbers kept numeric.
+const csvCell = (v: unknown) => sharedCsvCell(typeof v === 'number' ? v : String(v ?? ''));
 
 /**
  * One state's 1099 recipients for direct filing, as CSV: payer state id,
@@ -978,7 +980,7 @@ function w9Summary(p: { legalName: string; businessName?: string | null; taxClas
     '3. I am a U.S. citizen or other U.S. person; and',
     '4. The FATCA code(s) entered on this form (if any) indicating that I am exempt from FATCA reporting is correct.',
     '',
-    `Signed: ${p.signatureName}   Date: ${p.signedAt.toISOString().slice(0, 10)}   (typed signature, ${p.signedAt.toISOString()}${p.ip ? `, from ${p.ip}` : ''})`,
+    `Signed: ${p.signatureName}   Date: ${orgDateKey(p.signedAt)}   (typed signature, ${p.signedAt.toISOString()}${p.ip ? `, from ${p.ip}` : ''})`,
     '',
     'Certification wording from IRS Form W-9 (Rev. March 2024). The full TIN is kept encrypted and is not printed on this copy.',
   ].join('\n');

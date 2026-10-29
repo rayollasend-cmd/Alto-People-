@@ -8,7 +8,11 @@ import { formatShiftLine, notifyShift } from './notifyShift.js';
 import { ACTIVE_ASSOCIATE_FILTER } from './schedulablePool.js';
 import { benchFor } from './scope.js';
 import { blockedForWindow } from './shiftAssign.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
+import { formatTimeInZone, localDateKey } from './timezone.js';
+
+/** A shift's store clock; a shift with no store reads the company's. */
+const zoneOfShift = (s: { locationRel: { timezone: string | null } | null }): string => s.locationRel?.timezone ?? companyWorkweek().timezone;
 
 /**
  * Peer shift swaps, in one place: the scheduling routes and Hugo's
@@ -61,7 +65,7 @@ export function toSwap(row: RawSwap): ShiftSwapRequestDTO {
     shiftId: row.shiftId,
     shiftStartsAt: row.shift.startsAt.toISOString(),
     shiftEndsAt: row.shift.endsAt.toISOString(),
-    shiftTimezone: row.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+    shiftTimezone: zoneOfShift(row.shift),
     shiftPosition: row.shift.position,
     shiftClientName: row.shift.client?.name ?? null,
     inExchange: row.counterpartShift
@@ -71,7 +75,7 @@ export function toSwap(row: RawSwap): ShiftSwapRequestDTO {
           clientName: row.counterpartShift.client?.name ?? null,
           startsAt: row.counterpartShift.startsAt.toISOString(),
           endsAt: row.counterpartShift.endsAt.toISOString(),
-          timezone: row.counterpartShift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          timezone: zoneOfShift(row.counterpartShift),
         }
       : null,
     requesterAssociateId: row.requesterAssociateId,
@@ -179,9 +183,10 @@ export async function createSwapRequest(db: Db, input: SwapCreate, opts: { manag
     counterpartyName: `${counterparty.firstName} ${counterparty.lastName}`,
     position: created.shift.position,
     clientName: created.shift.client?.name ?? 'the client',
-    shiftDate: created.shift.startsAt.toISOString().slice(0, 10),
-    startsAt: created.shift.startsAt.toISOString().slice(11, 16) + ' UTC',
-    endsAt: created.shift.endsAt.toISOString().slice(11, 16) + ' UTC',
+    // The store's day and clock, as the manager reads the schedule — not UTC.
+    shiftDate: localDateKey(created.shift.startsAt, zoneOfShift(created.shift)),
+    startsAt: formatTimeInZone(created.shift.startsAt, zoneOfShift(created.shift)),
+    endsAt: formatTimeInZone(created.shift.endsAt, zoneOfShift(created.shift)),
   });
   void notifyManager(requesterAssociateId, {
     subject: mgrSwapTpl.subject,
@@ -277,7 +282,7 @@ export async function swapCandidatesFor(
     },
   });
   if (!shift) return null;
-  const timezone = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+  const timezone = zoneOfShift(shift);
 
   // Schedulable pool ∩ placed at THIS client — offering a Publix shift
   // to someone who has never worked Publix is a dead-on-arrival request.

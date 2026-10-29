@@ -13,6 +13,8 @@ import { moduleOn } from './tenantProfile.js';
 import { orgDateKey } from './timeAnomalies.js';
 import { WA_REPLY, toWaLang, type WaLang } from './whatsappContent.js';
 import { fmtDay } from './humanDates.js';
+import { dateColumnKey } from './timezone.js';
+import { logger } from './logger.js';
 
 /**
  * The Compliance agent (agent families step 4;
@@ -371,8 +373,9 @@ export async function runSection2Clock(db: Db = defaultPrisma, now: Date = new D
   const disclose = hires.length ? await discloserFor(db, agent) : null;
   for (const h of hires) {
     if (!h.dueBy) continue;
-    const dueKey = h.dueBy.toISOString().slice(0, 10);
-    const stage = today > dueKey ? 'late' : today >= dayBefore(h.dueBy).toISOString().slice(0, 10) ? 'due_tomorrow' : null;
+    // dueBy is business days after a @db.Date start (UTC midnight), so its UTC date is the day; today is the company's.
+    const dueKey = dateColumnKey(h.dueBy);
+    const stage = today > dueKey ? 'late' : today >= dateColumnKey(dayBefore(h.dueBy)) ? 'due_tomorrow' : null;
     if (!stage) continue;
     const action = `agent.i9.${stage}`;
     if (await db.auditLog.findFirst({ where: { workerId: agent.workerId, action, entityId: h.associateId }, select: { id: true } })) continue;
@@ -483,7 +486,7 @@ export function startComplianceAgentCron(): void {
   tick();
   timer = setInterval(tick, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(`[alto-people/api] compliance agent cron armed (every ${SWEEP_SECONDS}s)`);
+  logger.info(`compliance agent cron armed (every ${SWEEP_SECONDS}s)`);
 }
 
 export function stopComplianceAgentCron(): void {

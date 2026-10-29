@@ -3,7 +3,7 @@ import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { notifyAssociate } from './notify.js';
 import { paidMinutesForRange } from '@alto-people/shared';
-import { startOfWeekForSite } from './timeAnomalies.js';
+import { startOfWeekForSite, orgDateKey } from './timeAnomalies.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { plannedEntry, splitHours, sumHours, type HoursEntry, type PayRules } from './laborRules/hours.js';
 import { assignWithinRules } from './shiftAssign.js';
@@ -187,5 +187,5 @@ export async function equalizationReport(db: Db, tenantId: string, associateScop
   rows.sort((a, b) => b.overtimeHours - a.overtimeHours || a.name.localeCompare(b.name));
   const ot = rows.map((r) => r.overtimeHours);
   const avg = ot.length ? round2(ot.reduce((a, b) => a + b, 0) / ot.length) : 0;
-  return { weeks, since: since.toISOString().slice(0, 10), averageOvertimeHours: avg, spread: ot.length ? round2(Math.max(...ot) - Math.min(...ot)) : 0, people: rows, truncated: entries.length >= 50_000 };
+  return { weeks, since: orgDateKey(since), averageOvertimeHours: avg, spread: ot.length ? round2(Math.max(...ot) - Math.min(...ot)) : 0, people: rows, truncated: entries.length >= 50_000 };
 }

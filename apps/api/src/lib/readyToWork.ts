@@ -7,6 +7,7 @@ import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyAssociate, notifyUser } fro
 import { ledWindows } from './shiftWindows.js';
 import { associateWeekLink } from './appLinks.js';
 import { fmtDay } from './humanDates.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * THE READY-TO-WORK HANDOFF.
@@ -103,7 +104,7 @@ function personName(u: { email: string; associate: { firstName: string; lastName
 }
 
 function ymd(d: Date | null | undefined): string | null {
-  return d ? d.toISOString().slice(0, 10) : null;
+  return d ? dateColumnKey(d) : null;
 }
 
 /** Where this associate works for this client: the open assignment, else the

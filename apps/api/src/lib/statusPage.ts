@@ -48,6 +48,7 @@ interface Measure {
 
 /** A component's own reading of each measured day (UTC 'YYYY-MM-DD'), the one the 90-day % counts. */
 type Daily = Map<string, { state: StatusState; pct: number }>;
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: the public status page is platform-wide (no one company's calendar) and reads the UTC-day route rollup (lib/usageTracker).
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 
 /** Today and yesterday from the daily route rollup: the API's own error rate. */

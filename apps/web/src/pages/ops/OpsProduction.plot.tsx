@@ -3,11 +3,11 @@ import {
   BarChart,
   Cell,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip as ChartTooltip,
   XAxis,
   YAxis,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
 
 const SERIES = PALETTE.primary;

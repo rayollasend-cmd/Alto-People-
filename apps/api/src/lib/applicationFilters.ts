@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * ONE DEFINITION OF "STUCK" (F500 SH-4; role walk HR 2 / HR 15).
@@ -79,10 +80,10 @@ export const STARTING_SOON_DAYS = 7;
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
-/** The caller's day if it is a real YYYY-MM-DD, else the server's UTC day. */
+/** The caller's day if it is a real YYYY-MM-DD, else the company's (never UTC's, which is tomorrow after 5 PM Pacific). */
 export function callerToday(raw: unknown, now: Date = new Date()): string {
   if (typeof raw === 'string' && YMD.test(raw) && !Number.isNaN(Date.parse(`${raw}T00:00:00Z`))) return raw;
-  return now.toISOString().slice(0, 10);
+  return orgDateKey(now);
 }
 
 function plusDays(ymd: string, days: number): Date {

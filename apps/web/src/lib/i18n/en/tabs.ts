@@ -21,6 +21,7 @@ export const enTabs = {
   'tabs.inbox': 'Inbox',
   'tabs.people': 'People',
   'tabs.ride': 'Ride',
+  'tabs.myTeam': 'My team',
 } as const;
 
 registerEnglish(enTabs);

@@ -32,7 +32,8 @@ import { UNCONFIRMED_SHIFT } from './shiftConfirmNudge.js';
 import { tenantIdForWrite } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
 import { loadTenantProfile } from './tenantProfile.js';
-import { DEFAULT_TIMEZONE, addDaysInZone, localDateKey, zonedMinutes, zonedWallTimeToUtcInstant } from './timezone.js';
+import { addDaysInZone, localDateKey, zonedMinutes, zonedWallTimeToUtcInstant, dateColumnKey } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * Hugo's notes (packages/shared/src/hugoWork.ts): what the assistant
@@ -116,7 +117,7 @@ async function detectCredentials(tenantId: string, now: Date): Promise<Desired[]
   return [...first.values()].map((i) => ({
     userId: byAssociate.get(i.associateId)!,
     subjectKey: i.itemKey.slice(0, 120),
-    data: { credential: { id: i.itemKey, word: i.wordKey, name: i.label, expiresOn: i.expiresAt.toISOString().slice(0, 10), days: Math.ceil((i.expiresAt.getTime() - now.getTime()) / DAY), url: i.linkUrl } },
+    data: { credential: { id: i.itemKey, word: i.wordKey, name: i.label, expiresOn: dateColumnKey(i.expiresAt), days: Math.ceil((i.expiresAt.getTime() - now.getTime()) / DAY), url: i.linkUrl } },
     expiresAt: new Date(Math.max(i.expiresAt.getTime() + 7 * DAY, now.getTime() + DAY)),
   }));
 }
@@ -190,7 +191,7 @@ async function detectUnconfirmedTomorrow(now: Date): Promise<Desired[]> {
   for (const d of desks) {
     const user = await sessionUserById(d.id);
     if (!user || !SCHEDULING_DESKS.has(user.role) || !can(user, 'manage:scheduling')) continue;
-    const tz = user.timezone ?? DEFAULT_TIMEZONE;
+    const tz = user.timezone ?? companyWorkweek().timezone;
     if (zonedMinutes(now, tz) < 12 * 60) continue;
     const date = localDateKey(addDaysInZone(now, 1, tz), tz);
     const [y, m, dd] = date.split('-').map(Number) as [number, number, number];
@@ -244,7 +245,8 @@ async function pushDue(agent: AgentContext, now: Date): Promise<number> {
   let pushed = 0;
   for (const n of due) {
     if (n.user.status !== 'ACTIVE') continue;
-    const hour = Math.floor(zonedMinutes(now, n.user.timezone ?? DEFAULT_TIMEZONE) / 60);
+    const tz = n.user.timezone ?? companyWorkweek().timezone;
+    const hour = Math.floor(zonedMinutes(now, tz) / 60);
     if (hour < PUSH_HOURS.from || hour >= PUSH_HOURS.to) continue;
     const today = await prisma.hugoNote.count({ where: { userId: n.userId, pushedAt: { gte: new Date(now.getTime() - DAY) } } });
     if (today >= MAX_PUSHES_PER_DAY) continue;
@@ -260,7 +262,7 @@ async function pushDue(agent: AgentContext, now: Date): Promise<number> {
     const words =
       n.kind === 'OPEN_SHIFT_MATCH' && data.shift
         ? HUGO_NOTICE.noteOpenShift(lang, hugoWhen(new Date(data.shift.startsAt), data.shift.timezone, lang), data.shift.site)
-        : HUGO_NOTICE.noteDirectDeposit(lang, hugoDay(data.payday ?? now.toISOString().slice(0, 10), lang));
+        : HUGO_NOTICE.noteDirectDeposit(lang, hugoDay(data.payday ?? localDateKey(now, tz), lang));
     const action = actionOf(n);
     await sendHugoNotice(agent, { userId: n.userId, lang, ...words, category: 'hugo_note', linkUrl: action.kind === 'link' ? action.url : (action.url ?? '/') });
     await logBuiltInAgentAction(prisma, 'whatsapp-assistant', { action: 'agent.note.pushed', entityType: 'HugoNote', entityId: n.id, metadata: { kind: n.kind } });

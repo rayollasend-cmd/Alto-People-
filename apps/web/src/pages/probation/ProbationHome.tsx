@@ -16,7 +16,7 @@ import {
   type ProbationSummary,
 } from '@/lib/probation116Api';
 import { useAuth, useTerm } from '@/lib/auth';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
 import {
   AssociatePicker,
@@ -322,12 +322,12 @@ function NewProbationDrawer({
 }) {
   const term = useTerm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
-  const [startDate, setStartDate] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
-  const [endDate, setEndDate] = useState(
-    new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-  );
+  const [startDate, setStartDate] = useState(() => ymdLocal());
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 90);
+    return ymdLocal(d);
+  });
   const [saving, setSaving] = useState(false);
 
   const start = parseLocalDate(startDate);
@@ -499,11 +499,11 @@ function ExtendDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [newEndDate, setNewEndDate] = useState(
-    new Date(new Date(row.endDate).getTime() + 30 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10),
-  );
+  const [newEndDate, setNewEndDate] = useState(() => {
+    const d = parseLocalDate(row.endDate.slice(0, 10)) ?? new Date();
+    d.setDate(d.getDate() + 30);
+    return ymdLocal(d);
+  });
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 

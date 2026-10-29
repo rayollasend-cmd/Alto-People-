@@ -79,8 +79,8 @@ function overview(stores: StoreSnapshot[]): RegionOverview {
   } as RegionOverview;
 }
 
-function renderRegion(stores: StoreSnapshot[]) {
-  vi.mocked(regionOverview).mockResolvedValue(overview(stores));
+function renderRegion(stores: StoreSnapshot[], data: RegionOverview = overview(stores)) {
+  vi.mocked(regionOverview).mockResolvedValue(data);
   const caps = ROLE_CAPABILITIES.CLIENT_PORTAL;
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -131,6 +131,18 @@ describe('the region command center', () => {
     expect(screen.getByText('Reply overdue · 32 days')).toBeInTheDocument();
     expect(screen.getByText('Received')).toBeInTheDocument();
     expect(screen.getByText('Open with Alto HR')).toBeInTheDocument();
+  });
+
+  it('"Late, not in yet" counts people, not stores; one unfilled slot is a slot (LEAD-8, LEAD-24)', async () => {
+    const s = store(1, { alert: '2 scheduled people are not on the floor', now: { ...store(1).now, missingFromSchedule: 2, lateNotIn: 2 } });
+    const o = overview([s]);
+    o.totals = { ...o.totals, alerts: 1, lateNotIn: 2, missingFromSchedule: 2, openToday: 1 };
+    renderRegion([s], o);
+    const label = await screen.findByText('Late, not in yet');
+    expect(label.nextElementSibling).toHaveTextContent('2');
+    expect(screen.getByText('2 late and not in yet')).toBeInTheDocument();
+    expect(screen.getByText('1 unfilled slot today')).toBeInTheDocument();
+    expect(screen.queryByText(/1 slots|1 unfilled slots/)).toBeNull();
   });
 
   it('seven stores: the table is the working view, with CSV', async () => {

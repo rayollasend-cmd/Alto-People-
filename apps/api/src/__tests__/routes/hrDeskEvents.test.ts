@@ -56,6 +56,30 @@ describe('final-pay deadline (HR walk 12)', () => {
   });
 });
 
+describe('final pay owed after the last run, by the site’s day', () => {
+  it('a Friday-evening shift the run paid is not owed again; paid through names the run’s last day', async () => {
+    const client = await createClient();
+    const site = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
+    await prisma.site.update({ where: { id: site.id }, data: { timezone: 'America/New_York' } });
+    const p = await placedAt(site.id, { state: 'FL' });
+    const run = await prisma.payrollRun.create({ data: { clientId: client.id, periodStart: new Date('2026-10-03T00:00:00Z'), periodEnd: new Date('2026-10-09T00:00:00Z'), status: 'FINALIZED', finalizedAt: new Date() } });
+    await prisma.payrollItem.create({ data: { payrollRunId: run.id, associateId: p.id, hoursWorked: 3, hourlyRate: 15, grossPay: 45, federalWithholding: 0, netPay: 45 } });
+    const entry = (at: string, hours: number) =>
+      prisma.timeEntry.create({ data: { associateId: p.id, clientId: client.id, locationId: site.id, clockInAt: new Date(at), clockOutAt: new Date(new Date(at).getTime() + hours * 3_600_000), status: 'APPROVED' } });
+    // Fri Oct 9, 9 PM Eastern (Saturday 01:00 UTC): the run's last day at the site — paid.
+    await entry('2026-10-10T01:00:00Z', 3);
+    // Sat Oct 10, 10 AM Eastern: after the run — owed.
+    await entry('2026-10-10T14:00:00Z', 2);
+    const sep = await prisma.separation.create({ data: { associateId: p.id, reason: 'VOLUNTARY_PERSONAL', lastDayWorked: new Date('2026-10-10T00:00:00Z') } });
+    const { a } = await hr();
+    const r = await a.get(`/separations/${sep.id}/offboarding`);
+    expect(r.status).toBe(200);
+    const snap = (await prisma.separation.findUniqueOrThrow({ where: { id: sep.id } })).finalPaySnapshot as { paidThrough: string; unpaidApprovedHours: number };
+    expect(snap.paidThrough).toBe('2026-10-09');
+    expect(snap.unpaidApprovedHours).toBe(2);
+  });
+});
+
 describe('HR opens a case on someone’s behalf (HR walk 13)', () => {
   it('files by phone with the channel and who filed it, and tells the person', async () => {
     const client = await createClient();

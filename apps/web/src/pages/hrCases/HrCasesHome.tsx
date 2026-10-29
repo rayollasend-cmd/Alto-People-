@@ -31,7 +31,6 @@ import {
 } from '@/lib/hrCases123Api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { hasCapability } from '@/lib/roles';
 import { statusTone } from '@/lib/status';
 import {
   Badge,
@@ -132,18 +131,16 @@ function fmtReplyHours(h: number): string {
 }
 
 export function HrCasesHome() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const { t } = useI18n();
-  // The case desk: manage:onboarding works every case; process:payroll
-  // (Finance) works the PAYROLL desk — the API scopes their queue.
-  const canManage = user
-    ? hasCapability(user.role, 'manage:onboarding') ||
-      hasCapability(user.role, 'process:payroll')
-    : false;
-  const payrollDeskOnly = user
-    ? !hasCapability(user.role, 'manage:onboarding') &&
-      hasCapability(user.role, 'process:payroll')
-    : false;
+  // The case desk (the API's rule, lib/hrCaseScope): HR — view:hr-admin AND
+  // manage:onboarding — works every case; process:payroll (Finance) works
+  // the PAYROLL desk. The recruiter and the workforce manager hold
+  // manage:onboarding for the onboarding desk only: they file and follow
+  // their own cases, never the queue (PEOPLE-5).
+  const hrDesk = !!user && can('view:hr-admin') && can('manage:onboarding');
+  const canManage = !!user && (hrDesk || can('process:payroll'));
+  const payrollDeskOnly = !!user && !hrDesk && can('process:payroll');
   // Filters live in the URL (?status=, ?category=, ?mine=1, ?sla=breached,
   // ?unassigned=1), so the Inbox's ?sla=breached link lands filtered and a
   // filtered queue can be shared.
@@ -161,7 +158,7 @@ export function HrCasesHome() {
   const [showNew, setShowNew] = useState(false);
   // HR opens a case for someone who called or walked in (HR walk 13).
   // The whole-desk role only — Finance works the payroll desk, it doesn't file.
-  const canFileOnBehalf = user ? hasCapability(user.role, 'manage:onboarding') : false;
+  const canFileOnBehalf = hrDesk;
   const [showOnBehalf, setShowOnBehalf] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [showSla, setShowSla] = useState(false);
@@ -276,40 +273,40 @@ export function HrCasesHome() {
     <ListTemplate title={t('hrc.title')} subtitle={t('hrc.subtitle')} actions={actions}>
       {canManage && (
         // Only desk staff have two views; an associate's one-option switch said nothing.
-        <SegmentedControl<Tab> ariaLabel="Case view" value={tab} onChange={setTab} options={tabOptions} />
+        <SegmentedControl<Tab> ariaLabel={t('hrc.viewAria')} value={tab} onChange={setTab} options={tabOptions} />
       )}
 
       {canManage && tab === 'queue' && summary && (
         // A desk that has never had a case gets the empty state below, not four zeros.
-        <MetricStrip label="The case desk" empty={summary.openTotal === 0 && (summary.firstReply?.filed ?? 0) === 0 && (summary.byStatus?.RESOLVED ?? 0) + (summary.byStatus?.CLOSED ?? 0) === 0}>
+        <MetricStrip label={t('hrc.desk.strip')} empty={summary.openTotal === 0 && (summary.firstReply?.filed ?? 0) === 0 && (summary.byStatus?.RESOLVED ?? 0) + (summary.byStatus?.CLOSED ?? 0) === 0}>
           <MetricCard
-            label="Open"
+            label={t('hrc.desk.open')}
             value={summary.openTotal}
-            hint="Open, in progress or waiting on the person"
+            hint={t('hrc.desk.openHint')}
             onClick={onlyOpen}
             selected={activeFilters === 0}
           />
           <MetricCard
-            label="Past SLA"
+            label={t('hrc.desk.pastSla')}
             value={summary.sla?.breached ?? 0}
-            hint={(summary.sla?.atRisk ?? 0) > 0 ? `${summary.sla.atRisk.toLocaleString('en-US')} more due within 4 hours` : 'Open cases past their target'}
+            hint={(summary.sla?.atRisk ?? 0) > 0 ? t('hrc.desk.pastSlaSoon', { n: summary.sla.atRisk.toLocaleString() }) : t('hrc.desk.pastSlaHint')}
             tone={(summary.sla?.breached ?? 0) > 0 ? 'alert' : 'default'}
             onClick={() => setSla(breachedOnly ? '' : 'breached')}
             selected={breachedOnly}
           />
           <MetricCard
-            label="Unassigned"
+            label={t('hrc.desk.unassigned')}
             value={summary.unassigned ?? 0}
-            hint="Open with no one on it"
+            hint={t('hrc.desk.unassignedHint')}
             tone={(summary.unassigned ?? 0) > 0 ? 'warning' : 'default'}
             onClick={() => setUnassignedOnly(!unassignedOnly)}
             selected={unassignedOnly}
           />
           <MetricCard
-            label="Median first reply"
+            label={t('hrc.desk.medianReply')}
             value={firstReply && firstReply.medianHours !== null ? fmtReplyHours(firstReply.medianHours) : '—'}
-            hint={firstReply ? `Cases filed in the last ${firstReply.days} days · ${firstReply.replied.toLocaleString('en-US')} of ${firstReply.filed.toLocaleString('en-US')} answered` : undefined}
-            nothing={!firstReply || firstReply.medianHours === null ? 'No replies in the last 90 days' : undefined}
+            hint={firstReply ? t('hrc.desk.medianReplyHint', { days: firstReply.days, replied: firstReply.replied.toLocaleString(), filed: firstReply.filed.toLocaleString() }) : undefined}
+            nothing={!firstReply || firstReply.medianHours === null ? t('hrc.desk.noReplies') : undefined}
           />
         </MetricStrip>
       )}
@@ -361,7 +358,7 @@ export function HrCasesHome() {
           </CardContent>
         </Card>
       ) : queueQuery.error ? (
-        <QueryError what="the case queue" query={queueQuery} />
+        <QueryError what={t('hrc.load.queue')} query={queueQuery} />
       ) : (
         <>
           <DataGrid<QueueCaseRow>
@@ -381,13 +378,13 @@ export function HrCasesHome() {
               <>
                 <Select
                   size="sm"
-                  aria-label="Filter by status"
+                  aria-label={t('hrc.filter.status')}
                   value={breachedOnly ? 'OPEN_ALL' : statusFilter}
                   disabled={breachedOnly}
                   onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
                 >
-                  <option value="OPEN_ALL">Open cases</option>
-                  <option value="ALL">All statuses</option>
+                  <option value="OPEN_ALL">{t('hrc.filter.openCases')}</option>
+                  <option value="ALL">{t('hrc.filter.allStatuses')}</option>
                   {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((st) => (
                     <option key={st} value={st}>
                       {caseStatusLabel(t, st)}
@@ -399,11 +396,11 @@ export function HrCasesHome() {
                 {!payrollDeskOnly && (
                   <Select
                     size="sm"
-                    aria-label="Filter by category"
+                    aria-label={t('hrc.filter.category')}
                     value={categoryFilter}
                     onChange={(e) => setCategoryFilter(e.target.value as CaseCategory | 'ALL')}
                   >
-                    <option value="ALL">All categories</option>
+                    <option value="ALL">{t('hrc.filter.allCategories')}</option>
                     {(Object.keys(CATEGORY_LABELS) as CaseCategory[]).map((k) => (
                       <option key={k} value={k}>
                         {CATEGORY_LABELS[k]}
@@ -516,7 +513,7 @@ export function HrCasesHome() {
         </>
       )}
 
-      {canManage && <SlaTargetsDialog open={showSla} canManage={user ? hasCapability(user.role, 'manage:org') : false} onClose={() => setShowSla(false)} />}
+      {canManage && <SlaTargetsDialog open={showSla} canManage={hrDesk && can('manage:org')} onClose={() => setShowSla(false)} />}
       {showOnBehalf && (
         <OnBehalfCaseDrawer
           onClose={() => setShowOnBehalf(false)}
@@ -844,7 +841,7 @@ function CaseDetailDrawer({
                         <span>{c.authorEmail ?? c.authorName ?? t('hrc.unknownAuthor')}</span>
                         <span>· {fmtDateTime(c.createdAt)}</span>
                         {c.internalNote && (
-                          <span className="text-warning">Internal</span>
+                          <span className="text-warning">{t('hrc.internal')}</span>
                         )}
                       </div>
                       <div className="text-sm text-white whitespace-pre-wrap">
@@ -988,7 +985,7 @@ function TriageBlock({
 
   return (
     <div className="space-y-2 p-3 rounded border border-navy-secondary">
-      <div className="text-xs uppercase tracking-wider text-silver">Triage</div>
+      <div className="text-xs uppercase tracking-wider text-silver">{t('hrc.triage')}</div>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-silver">
           {detail.assignedToEmail
@@ -1003,7 +1000,7 @@ function TriageBlock({
         {routable.length > 0 && (
           <Select
             size="sm"
-            aria-label="Route to a person"
+            aria-label={t('hrc.routeTo')}
             value=""
             onChange={async (e) => {
               const target = routable.find((s) => s.userId === e.target.value);
@@ -1080,10 +1077,10 @@ function TriageBlock({
             }
           }}
         >
-          <option value="LOW">Low</option>
-          <option value="MEDIUM">Medium</option>
-          <option value="HIGH">High</option>
-          <option value="URGENT">Urgent</option>
+          <option value="LOW">{t('hrc.priority.LOW')}</option>
+          <option value="MEDIUM">{t('hrc.priority.MEDIUM')}</option>
+          <option value="HIGH">{t('hrc.priority.HIGH')}</option>
+          <option value="URGENT">{t('hrc.priority.URGENT')}</option>
         </Select>
       </div>
       {detail.status === 'RESOLVED' && (
@@ -1091,7 +1088,7 @@ function TriageBlock({
           className="mt-1"
           value={resolution}
           onChange={(e) => setResolution(e.target.value)}
-          placeholder="Resolution summary"
+          placeholder={t('hrc.resolutionSummary')}
           onBlur={async () => {
             if (resolution.trim() !== (detail.resolution ?? '')) {
               try {
@@ -1114,7 +1111,7 @@ function TriageBlock({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Send your reply first?</DialogTitle>
+            <DialogTitle>{t('hrc.sendReplyFirst')}</DialogTitle>
             <DialogDescription>
               There's an unsent reply typed below. Closing the case disables
               the composer, so decide what happens to it.

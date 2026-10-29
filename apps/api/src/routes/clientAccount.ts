@@ -22,6 +22,7 @@ import { clientNeedsYou, daysUntil } from '../lib/clientNeedsYou.js';
 import { clientActivity } from '../lib/clientActivity.js';
 import { canOwnAccounts, OWNER_SELECT, ownerName } from '../lib/clientAccountFields.js';
 import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * The client's account (CL-A, 2026-10-22), mounted under /clients beside
@@ -303,7 +304,7 @@ clientAccountRouter.get('/:id/overview', async (req, res, next) => {
       clientActivity({ clientId: client.id, tenantId, canSeeMoney: money, canSeeRelay }),
     ]);
 
-    const end = client.contractEndDate ? client.contractEndDate.toISOString().slice(0, 10) : null;
+    const end = client.contractEndDate ? dateColumnKey(client.contractEndDate) : null;
     const body: ClientOverview = {
       clientId: client.id,
       asOf: now.toISOString(),
@@ -314,7 +315,7 @@ clientAccountRouter.get('/:id/overview', async (req, res, next) => {
       locations: { count: sites.length, items: locationItems },
       owner: owner ? { id: owner.id, name: ownerName(owner), email: owner.email } : null,
       contract: {
-        start: client.contractStartDate ? client.contractStartDate.toISOString().slice(0, 10) : null,
+        start: client.contractStartDate ? dateColumnKey(client.contractStartDate) : null,
         end,
         daysLeft: end ? daysUntil(end, now) : null,
       },

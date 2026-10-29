@@ -10,6 +10,8 @@ import type { SessionUser } from '../types/express.js';
 import { enqueueAudit } from './audit.js';
 import { ENTITY_COLUMNS, AGGREGATE_FNS, FILTER_OPS } from './reportRun.js';
 import { tenantIdForWrite } from './tenant.js';
+import { dayBoundsInTz, orgTimeZone, todayInTz } from './siteDay.js';
+import { addDaysToKey } from './timezone.js';
 import type { AssistantTool } from './assistantModel.js';
 
 /**
@@ -308,6 +310,12 @@ const ACT_WORDS: Record<ActLang, {
 
 const out = (reply: string, linkUrl: string | null = null) => ({ reply, linkUrl });
 
+/** The instant the company's day `offset` days from today begins (its own zone, DST-correct), for a shift-list window. */
+function companyDayStart(offset: number, now: Date = new Date()): string {
+  const tz = orgTimeZone();
+  return dayBoundsInTz(addDaysToKey(todayInTz(tz, now), offset), tz).start.toISOString();
+}
+
 /** The action and analytics tools this person may use. */
 export function actionTools(ctx: ActionContext): AssistantTool[] {
   const { req, user } = ctx;
@@ -389,11 +397,7 @@ export function actionTools(ctx: ActionContext): AssistantTool[] {
 
   // ---- Open shifts -------------------------------------------------------------
   if (can(user, 'manage:scheduling')) {
-    const range = () => {
-      const from = new Date();
-      const to = new Date(Date.now() + 14 * 86_400_000);
-      return `from=${from.toISOString().slice(0, 10)}&to=${to.toISOString().slice(0, 10)}`;
-    };
+    const range = () => `from=${companyDayStart(0)}&to=${companyDayStart(14)}`;
     const openShifts = async () => list((await get(`/scheduling/shifts?status=OPEN&${range()}`)).body, 'shifts');
     tools.push({
       key: 'ACT_OPEN_SHIFTS',
@@ -442,11 +446,9 @@ export function actionTools(ctx: ActionContext): AssistantTool[] {
 
   // ---- Messaging a crew ----------------------------------------------------------
   if (can(user, 'message:crew')) {
-    const today = async () => {
-      const d = new Date().toISOString().slice(0, 10);
-      const to = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-      return list((await get(`/scheduling/shifts?status=ASSIGNED&from=${d}&to=${to}`)).body, 'shifts');
-    };
+    // Today and tomorrow on the company's clock (`to` is exclusive: the start of the day after).
+    const today = async () =>
+      list((await get(`/scheduling/shifts?status=ASSIGNED&from=${companyDayStart(0)}&to=${companyDayStart(2)}`)).body, 'shifts');
     tools.push({
       key: 'ACT_CREW_SHIFTS',
       name: 'find_crew_shifts_today',

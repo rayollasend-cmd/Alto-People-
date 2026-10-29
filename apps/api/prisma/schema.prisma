@@ -357,6 +357,9 @@ enum PayrollEarningKind {
   DAILY_SETTLED // PAYEXP: what daily pay already paid this period (negative, on the true-up)
   // Non-cash taxable income: group-term life over $50,000 (IRS Pub 15-B Table I). Taxed, never paid out; W-2 Box 12 C.
   IMPUTED_INCOME
+  // Wages owed for hours a past run never paid (lib/payrollBackPay — the evening
+  // hours the old UTC pay-period cut missed). Regular wages, taxable.
+  BACK_PAY
 }
 
 enum NotificationChannel {
@@ -454,7 +457,8 @@ model User {
   activeRole             Role?
   status                 UserStatus         @default(INVITED)
   tokenVersion           Int                @default(0)
-  /// Preferred language for the emails Alto sends this person: en, es or tr.
+  /// The language Alto writes to this person in: en, es, tr, ht, pt or uk (EMAIL_LANGUAGES).
+  /// Emails and WhatsApp exist in en/es/tr and fall back to English.
   /// Null means English. Set from the app's language toggle and Settings;
   /// every associate-facing email reads it and falls back to English.
   language               String?            @db.VarChar(2)
@@ -896,6 +900,7 @@ model Client {
   fieldglassTimesheets    FieldglassTimesheet[]
   clientRequests          ClientRequest[]
   clientAcknowledgements  ClientAcknowledgement[]
+  hoursSignOffs           ClientHoursSignOff[]
   conversations           Conversation[]
   cohorts                 Cohort[]
   opsShifts               OpsShift[]
@@ -1095,6 +1100,7 @@ model Site {
   prevailingWageProjects PrevailingWageProject[]
   assetsHere             Asset[]                 @relation("AssetLocation")
   leadBench              LeadBenchCandidate[]    @relation("LeadBenchLocation")
+  hoursSignOffs          ClientHoursSignOff[]
 
   @@index([clientId, isActive])
   @@index([deletedAt])
@@ -1641,6 +1647,48 @@ model ClientAcknowledgement {
 
   @@unique([clientId, kind, subjectKey])
   @@index([tenantId])
+}
+
+// The client's sign-off on a store week's worked hours (deep audit 2026-10-29,
+// the VMS-grade upgrade): the store manager reviews each person's hours for
+// the week and signs them off, or flags lines with a note. One per store per
+// week; re-signing replaces it. The totals and lines are frozen as signed, so
+// hours that change afterwards read "changed since sign-off" on both sides.
+enum ClientHoursSignOffStatus {
+  SIGNED
+  FLAGGED
+}
+
+model ClientHoursSignOff {
+  id           String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The tenant this row belongs to. Required; the database default (Alto HR) fills a row written outside any tenant context.
+  tenantId     String                   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  clientId     String                   @db.Uuid
+  locationId   String                   @db.Uuid
+  /// The store week's first day (Saturday), on the store's own calendar.
+  weekStart    DateTime                 @db.Date
+  status       ClientHoursSignOffStatus @default(SIGNED)
+  /// The portal user who signed, and their name as it stood when they signed.
+  signedById   String                   @db.Uuid
+  signedByName String                   @db.VarChar(200)
+  signedAt     DateTime                 @default(now()) @db.Timestamptz(6)
+  /// Worked hours (closed punches, breaks out) at signing, and how many people.
+  totalHours   Decimal                  @db.Decimal(10, 2)
+  people       Int
+  /// [{ associateId, name, hours, punches }] as signed.
+  lines        Json
+  /// [{ associateId, name, hours, note }] — the lines the manager questioned.
+  flags        Json                     @default("[]")
+  note         String?                  @db.VarChar(1000)
+  createdAt    DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime                 @updatedAt @db.Timestamptz(6)
+
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  location Site   @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, locationId, weekStart])
+  @@index([tenantId])
+  @@index([clientId, weekStart])
 }
 
 // A seasonal wave: N heads for a client by a date. Lanes on the relay
@@ -4174,6 +4222,10 @@ model PayrollRun {
   /// An off-cycle run made from a missed payday: it pays the period's approved time, not add-ons alone (lib/payrollPeriodLedger).
   includesApprovedTime        Boolean                   @default(false)
   readinessRequests           PayrollReadinessRequest[] @relation("ReadinessRequestRun")
+  /// How its punches were sliced (lib/payrollRunCut, deep audit CODE-1): SITE_DAY = the clock-in's day on the site's clock; UTC = runs before that change.
+  timeCut                     String                    @default("SITE_DAY") @db.VarChar(12)
+  /// Disburse is in progress (claim-then-act, deep audit CODE-3): set atomically by the one request that pays the run, cleared when it finishes.
+  disburseClaimedAt           DateTime?                 @db.Timestamptz(6)
 
   @@index([clientId, periodStart])
   @@index([status, disbursedAt])
@@ -5807,6 +5859,8 @@ enum ApprovalRequestKind {
   PERIOD_REOPEN
   /// One second-person approval for a mass pay change (finance walk 13, POST /compensation/batch).
   PAY_RATE_BATCH
+  /// Back pay for evening hours the old UTC pay-period cut missed (lib/payrollBackPay).
+  BACK_PAY
 }
 
 enum ApprovalRequestStatus {
@@ -7864,6 +7918,9 @@ model GarnishmentRemittance {
   method       String                      @default("CHECK") @db.VarChar(12)
   fileId       String?                     @db.Uuid
   advice       String?
+  /// Deep audit CODE-18: claimed by an electronic send in flight (lib/garnishmentRemit). A remittance
+  /// another send has claimed is never put in a second ACH file; cleared when the send ends either way.
+  sendingAt    DateTime?                   @db.Timestamptz(6)
   createdAt    DateTime                    @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime                    @updatedAt @db.Timestamptz(6)
 
@@ -14200,6 +14257,10 @@ model AchEntry {
   createdAt       DateTime  @default(now()) @db.Timestamptz(6)
   file            AchFile   @relation(fields: [achFileId], references: [id], onDelete: Cascade)
 
+  // A paycheck is in at most one live bank file per account (deep audit CODE-3):
+  // partial unique index "AchEntry_live_paycheck_credit_key" (migration
+  // 20270204090000_payroll_site_day_cut) on (payrollItemId, payoutMethodId)
+  // WHERE kind = 'CREDIT' AND status IN ('SENT','SETTLED','CORRECTED').
   @@unique([tenantId, traceNumber])
   @@index([payrollItemId])
   @@index([payoutMethodId])
@@ -16501,6 +16562,7 @@ model Bill {
   applications BillPaymentApplication[]
   recurring    RecurringBill?           @relation(fields: [recurringId], references: [id], onDelete: SetNull)
 
+  @@unique([recurringId, billDate])
   @@index([tenantId, status])
   @@index([vendorId])
   @@index([tenantId, dueDate])
@@ -17114,4 +17176,39 @@ model HugoNoteMute {
 
   @@unique([userId, kind])
   @@index([tenantId])
+}
+
+/// Back pay for a punch a past run never paid (deep audit 2026-10-29: the
+/// evening hours the old UTC pay-period cut missed — lib/payrollBackPay).
+/// One row per punch, unique, so a punch is put on a run at most once. A
+/// claim stands while its approval is pending or its add-on is on a run that
+/// isn't cancelled; a stale one (rejected, add-on removed, run cancelled) is
+/// replaced when the punch is added again.
+model BackPayClaim {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String   @default(dbgenerated("'00000000-0000-4000-8000-000000000001'::uuid")) @db.Uuid
+  timeEntryId       String   @db.Uuid
+  associateId       String   @db.Uuid
+  /// The run made under the UTC cut whose period the punch belongs to.
+  sourceRunId       String?  @db.Uuid
+  /// The run that pays it; null while a second person decides.
+  payrollRunId      String?  @db.Uuid
+  /// The BACK_PAY add-on carrying it.
+  addOnId           String?  @db.Uuid
+  approvalRequestId String?  @db.Uuid
+  /// The punch's day on the site's clock.
+  workDate          DateTime @db.Date
+  hours             Decimal  @db.Decimal(8, 2)
+  rate              Decimal  @db.Decimal(8, 2)
+  /// Its share of the back pay: hours × rate plus its week's overtime premium share.
+  amount            Decimal  @db.Decimal(12, 2)
+  /// PENDING_APPROVAL | ADDED
+  status            String   @default("ADDED") @db.VarChar(20)
+  createdById       String?  @db.Uuid
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([tenantId, timeEntryId])
+  @@index([tenantId])
+  @@index([associateId])
+  @@index([payrollRunId])
 }

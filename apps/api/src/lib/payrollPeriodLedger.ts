@@ -3,7 +3,7 @@ import type { SessionUser } from '../types/express.js';
 import { scopeAssociates, scopePayrollSchedules } from './scope.js';
 import { tenantIdForWrite } from './tenant.js';
 import { addDaysYmd, dateOnly, membershipWindowsFor, periodContaining, todayYmd, ymd, type ScheduleWithVersions } from './payScheduleMembership.js';
-import { inWindows, workDayOf, type PeriodWindow } from './payrollSchedule.js';
+import { inWindows, punchFetchRange, punchInPeriod, workDayOf, type PeriodWindow } from './payrollSchedule.js';
 import { sumApprovedHours } from './payroll.js';
 
 type Db = Prisma.TransactionClient | PrismaClient;
@@ -132,7 +132,8 @@ export async function ledgerForSchedules(db: Db, schedules: ScheduleRow[], opts:
     }),
     db.timeEntry.findMany({
       // The caller's reach: a store-bound account sees its own people's hours only.
-      where: { tenantId, status: 'APPROVED', clockInAt: { gte: dateOnly(minStart), lt: dateOnly(addDaysYmd(maxEnd, 1)) }, ...(opts.associateWhere ? { associate: { is: opts.associateWhere } } : {}) },
+      // The pay-period cut (deep audit CODE-1): fetched with a margin day each side, kept by the site's day below.
+      where: { tenantId, status: 'APPROVED', clockInAt: punchFetchRange({ periodStart: minStart, periodEnd: maxEnd }), ...(opts.associateWhere ? { associate: { is: opts.associateWhere } } : {}) },
       select: {
         associateId: true,
         status: true,
@@ -289,7 +290,7 @@ export async function unpaidAssociatesFor(db: Db, runId: string | null, from: st
     }),
     db.externalPayment.findMany({ where: { tenantId: tenantIdForWrite(), deletedAt: null, periodEnd: { gte: dateOnly(from) }, periodStart: { lte: dateOnly(to) } }, select: { associateId: true, periodStart: true, periodEnd: true } }),
     db.timeEntry.findMany({
-      where: { tenantId: tenantIdForWrite(), status: 'APPROVED', clockInAt: { gte: dateOnly(from), lt: dateOnly(addDaysYmd(to, 1)) } },
+      where: { tenantId: tenantIdForWrite(), status: 'APPROVED', clockInAt: punchFetchRange({ periodStart: from, periodEnd: to }) },
       select: { associateId: true, clockInAt: true, location: { select: { timezone: true } } },
       take: 50_000,
     }),
@@ -300,9 +301,8 @@ export async function unpaidAssociatesFor(db: Db, runId: string | null, from: st
   const out = new Set<string>();
   for (const e of entries) {
     if (out.has(e.associateId)) continue;
-    const day = workDayOf(e.clockInAt, e.location?.timezone);
-    if (day < from || day > to) continue;
-    if (!covered(e.associateId, day)) out.add(e.associateId);
+    if (!punchInPeriod(e, { periodStart: from, periodEnd: to })) continue;
+    if (!covered(e.associateId, workDayOf(e.clockInAt, e.location?.timezone))) out.add(e.associateId);
   }
   return out;
 }

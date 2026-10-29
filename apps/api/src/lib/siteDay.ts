@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { companyWorkweek, dateKeyInZone, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 
 /**
  * "THE SITE'S DAY" (F500 SH-4).
@@ -38,9 +39,7 @@ export function todayInTz(tz: string, now: Date = new Date()): string {
 
 /** The next calendar day of a YYYY-MM-DD. */
 function nextDay(ymd: string): string {
-  const d = new Date(`${ymd}T12:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
+  return addDaysToKey(ymd, 1);
 }
 
 /** [start, end) of the calendar day `ymd` on `tz`'s clock, as instants (DST-correct: a day may be 23 or 25 hours). */

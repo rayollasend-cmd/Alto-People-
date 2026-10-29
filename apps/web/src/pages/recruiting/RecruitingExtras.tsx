@@ -40,7 +40,7 @@ import {
   type ReferralRecord,
   type ReferralStatus,
 } from '@/lib/recruiting90Api';
-import { listClients } from '@/lib/clientsApi';
+import { listClientOptions } from '@/lib/onboardingApi';
 import { downloadCsv } from '@/lib/csv';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
@@ -69,6 +69,7 @@ import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format
 import { toast } from 'sonner';
 import { postingSeedFrom, type PostingSeed } from './postingSeed';
 import { NewOfferDrawer } from './OfferDialog';
+import { offerShownStatus } from './recruitingLabels';
 
 type Tab = 'kits' | 'offers' | 'referrals' | 'postings';
 
@@ -107,7 +108,8 @@ function errMessage(err: unknown, fallback: string): string {
 
 /** Client list for the offer/posting drawers' <Select>. */
 function useClients() {
-  const query = useQuery({ queryKey: ['clients', 'names'], queryFn: () => listClients() });
+  // The invite-scoped picker (PEOPLE-4): whoever recruits reads it without view:clients.
+  const query = useQuery({ queryKey: ['clients', 'options'], queryFn: listClientOptions, staleTime: 5 * 60_000 });
   const clients = useMemo(
     () => (query.data ? query.data.clients.map((c) => ({ id: c.id, name: c.name })) : null),
     [query.data],
@@ -697,15 +699,22 @@ function OffersTab({
                 {
                   key: 'status',
                   header: 'Status',
-                  accessor: (o) => o.status,
+                  accessor: (o) => offerShownStatus(o),
                   sortable: true,
                   cell: (o) => (
                     <div className="space-y-0.5">
-                      <StatusBadge status={o.status} overrides={OFFER_STATUS_TONES} />
+                      <StatusBadge status={offerShownStatus(o)} overrides={OFFER_STATUS_TONES} />
                       {o.status === 'PENDING_APPROVAL' && o.approvalNote && (
                         <div className="max-w-[16rem] text-2xs text-warning">{o.approvalNote}</div>
                       )}
-                      {o.status === 'SENT' && <div className="text-2xs text-silver">Awaiting their signature</div>}
+                      {offerShownStatus(o) === 'SENT' && (
+                        <div className="text-2xs text-silver">
+                          Awaiting their signature{o.expiresAt ? ` · link works until ${fmtDate(o.expiresAt)}` : ''}
+                        </div>
+                      )}
+                      {offerShownStatus(o) === 'EXPIRED' && o.expiresAt && (
+                        <div className="text-2xs text-silver">Lapsed {fmtDate(o.expiresAt)} unanswered — send a new offer</div>
+                      )}
                       {o.signedName && o.signedAt && (
                         <div className="text-2xs text-silver">
                           Signed by {o.signedName}, {fmtDate(o.signedAt)}
@@ -756,7 +765,7 @@ function OffersTab({
                           Send
                         </Button>
                       )}
-                      {canManage && o.status === 'SENT' && (
+                      {canManage && offerShownStatus(o) === 'SENT' && (
                         <>
                           <Button size="sm" onClick={() => onDecide(o.id, 'ACCEPTED')}>
                             Accept

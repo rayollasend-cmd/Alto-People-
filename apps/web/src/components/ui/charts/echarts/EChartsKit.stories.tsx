@@ -73,6 +73,7 @@ function year(): { days: CalendarDay[]; from: string; to: string } {
     const weekend = t.getUTCDay() === 0 || t.getUTCDay() === 6 ? 2.2 : 1;
     const summer = t.getUTCMonth() >= 5 && t.getUTCMonth() <= 7 ? 1.8 : 1;
     const v = Math.floor(rand() * 3.2 * weekend * summer);
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: story fixture walking UTC-midnight dates
     if (v > 0) days.push({ date: t.toISOString().slice(0, 10), value: v });
   }
   return { days, from: '2025-10-24', to: '2026-10-23' };

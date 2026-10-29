@@ -5,10 +5,10 @@ import { HttpError } from '../middleware/error.js';
 import { benchFor } from './scope.js';
 import { clientRestrictionFor } from './programRules.js';
 import { assignWithinRules, autoFillScore, blockedForWindow, findRestGapViolation } from './shiftAssign.js';
-import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from './timeAnomalies.js';
+import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC, companyWorkweek } from './timeAnomalies.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { plannedEntry, splitHours, sumHours, type HoursEntry } from './laborRules/hours.js';
-import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone, zonedDayOfWeek, zonedMinutes } from './timezone.js';
+import { formatDateInZone, formatTimeInZone, zonedDayOfWeek, zonedMinutes } from './timezone.js';
 import { claimApproval, inProcessAgent, logAgentAction } from './agents.js';
 import {
   createProposal,
@@ -164,7 +164,7 @@ export async function rankBench(db: Db, shift: FillShift, now: Date, opts: RankO
   const none: BenchRanking = { pick: null, picked: null, considered: [], benchSize: 0, shiftMinutes };
   const bench = benchFor(shift);
   if (!bench) return none;
-  const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+  const tz = shift.locationRel?.timezone ?? companyWorkweek().timezone;
   const weekStart = startOfWeekUTC(shift.startsAt);
   const weekEnd = endOfWeekUTC(shift.startsAt);
   const people = await db.associate.findMany({
@@ -349,13 +349,13 @@ export function siteName(shift: FillShift & { location?: string | null }): strin
 }
 
 export function shiftWhen(shift: FillShift): string {
-  const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+  const tz = shift.locationRel?.timezone ?? companyWorkweek().timezone;
   return `${formatDateInZone(shift.startsAt, tz)} ${formatTimeInZone(shift.startsAt, tz)}–${formatTimeInZone(shift.endsAt, tz)}`;
 }
 
 /** The schedule opened on the shift's day at its site. */
 export function shiftDeepLink(shift: FillShift): string {
-  const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+  const tz = shift.locationRel?.timezone ?? companyWorkweek().timezone;
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(shift.startsAt);
   return `/scheduling?week=${day}${shift.locationId ? `&location=${shift.locationId}` : ''}`;
 }
@@ -370,7 +370,7 @@ export async function holderCannotWork(db: Db, shift: { startsAt: Date; endsAt: 
   if (!a || a.deletedAt || a.erasedAt) return 'is no longer on file';
   if (a.separatedAt) return 'separated';
   if (a.deactivatedAt) return 'was deactivated';
-  const blocked = await blockedForWindow([associateId], shift.startsAt, shift.endsAt, shift.locationRel?.timezone ?? DEFAULT_TIMEZONE, db);
+  const blocked = await blockedForWindow([associateId], shift.startsAt, shift.endsAt, shift.locationRel?.timezone ?? companyWorkweek().timezone, db);
   return blocked.size > 0 ? 'is on approved time off or a declared day off' : null;
 }
 

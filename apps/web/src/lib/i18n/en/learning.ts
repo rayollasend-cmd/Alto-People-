@@ -95,6 +95,7 @@ export const enLearning = {
   'learning.noExpiringDesc': 'Certs with validity periods auto-expire — they\'ll show here as their deadlines approach.',
   'learning.expiringCaption': 'Expiring certifications',
   'learning.expiringSearch': 'Course, {workerLc}…',
+  'learning.catalogTitle': 'Courses & training',
 } as const;
 
 registerEnglish(enLearning);

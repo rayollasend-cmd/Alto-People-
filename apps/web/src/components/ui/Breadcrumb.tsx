@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronRight } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Compact breadcrumb trail. Renders nothing when given an empty list, so
@@ -47,10 +48,11 @@ export function headerCrumbs(crumbs: BreadcrumbSegment[] | null, heading: string
 }
 
 export function Breadcrumb({ segments, current = true, className }: BreadcrumbProps) {
+  const { t } = useI18n();
   if (segments.length === 0) return null;
   return (
     <nav
-      aria-label="Breadcrumb"
+      aria-label={t('common.breadcrumb')}
       className={cn('flex items-center gap-1 text-xs text-silver mb-2', className)}
     >
       {segments.map((seg, i) => {

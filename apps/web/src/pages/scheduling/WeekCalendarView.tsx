@@ -1,4 +1,4 @@
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
 import { AuthContext, useTerm } from '@/lib/auth';
 import {
@@ -21,8 +21,10 @@ import {
   hourlyCoverage,
   isCopyDrag,
   shiftTimesOnDay,
+  weekGridColumns,
   type DropFit,
 } from './weekGridFit';
+import { positionShort, storeTags } from './chipLabels';
 import { CoverageHeatStrip } from './CoverageHeatStrip';
 
 /** A grid row: a roster associate, or someone assigned this week who is no
@@ -53,7 +55,7 @@ import {
 } from './ShiftContextMenu';
 import { TEMPLATE_MIME } from './TemplatesRail';
 import { Avatar } from '@/components/ui/Avatar';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { associateFace } from '@/lib/photoUrl';
 import {
   GRIP_HIT,
   GRIP_ICON,
@@ -639,13 +641,17 @@ export function WeekCalendarView({
   // elements, not one box — which is exactly what a virtualizer needs. Rows
   // are now their own grids sharing this column template, so header, body
   // and footer still line up while each row is a single measurable element.
-  const colsStyle = {
-    // 248px, not 200: the always-visible reorder controls + avatar +
-    // (crew ✕) squeezed long names into a ~60px sliver — the supervisor
-    // couldn't tell WHO they were scheduling. The rail pays for identity.
-    gridTemplateColumns: `248px repeat(${dayCount}, minmax(0, 1fr))`,
-  };
-  const minWidthStyle = { minWidth: `${248 + dayCount * 100}px` };
+  // Up to 248px, not 200: the always-visible reorder controls + avatar +
+  // (crew ✕) squeezed long names into a ~60px sliver — the supervisor
+  // couldn't tell WHO they were scheduling. The rail pays for identity
+  // when there is room, and gives way first when there isn't (FLOOR-11:
+  // at 1024 with the sidebar open, Thu–Fri sat behind a sideways scroll).
+  const gridCols = weekGridColumns(dayCount);
+  const colsStyle = { gridTemplateColumns: gridCols.gridTemplateColumns };
+  const minWidthStyle = { minWidth: `${gridCols.minWidthPx}px` };
+  // A store tag on every chip once the week spans two or more stores
+  // (FLOOR-12): a three-store supervisor reads the store off the chip.
+  const tags = useMemo(() => storeTags(shifts), [shifts]);
 
   // Compute the set of (associateId|unassigned)_dayMs cells that would be
   // conflicts for the currently-dragged shift. Using a Set keeps per-cell
@@ -709,6 +715,7 @@ export function WeekCalendarView({
   }, [activeDragShift, visibleAssociates, availabilityFit, weeklyMinutes, days, dayKeys]);
 
   return (
+    <StoreTagContext.Provider value={tags}>
     <DndContext
       sensors={sensors}
       onDragStart={handleDragStart}
@@ -938,7 +945,7 @@ export function WeekCalendarView({
               <div
                 key={`total_${d.getTime()}`}
                 className={cn(
-                  'border-t border-r border-navy-secondary px-2 py-2',
+                  'min-w-0 border-t border-r border-navy-secondary px-2 py-2',
                   isToday && 'bg-gold/[0.03]',
                   pastKeys.has(dayKeys[i]) && 'past-day',
                 )}
@@ -946,7 +953,9 @@ export function WeekCalendarView({
                 {count === 0 ? (
                   <div className="text-xs2 text-silver/70">—</div>
                 ) : (
-                  <div className="flex items-baseline gap-2 text-xs2 tabular-nums">
+                  // Wraps in a narrow day (1024 with the sidebar open) rather
+                  // than push the grid into a sideways scroll (FLOOR-11).
+                  <div className="flex flex-wrap items-baseline gap-x-1.5 text-xs2 tabular-nums">
                     <span className="text-white font-medium">{count}</span>
                     <span className="text-silver/70">·</span>
                     <span className="text-silver">{hrs.toFixed(1)}h</span>
@@ -1065,10 +1074,14 @@ export function WeekCalendarView({
         />
       )}
     </DndContext>
+    </StoreTagContext.Provider>
   );
 }
 
 /* ===== Subcomponents ====================================================== */
+
+/** locationId → a short store tag ("FB"), empty when the week is one store. */
+const StoreTagContext = createContext<ReadonlyMap<string, string>>(new Map());
 
 const Row = memo(function Row({
   associate,
@@ -1192,10 +1205,12 @@ const Row = memo(function Row({
             </div>
           </div>
         )}
+        {/* Below xl the rail narrows to fit the week (FLOOR-11): the name
+            keeps the room, the face waits for a wider screen. */}
         <Avatar
-          src={associatePhotoUrl(associate.id)}
+          src={associateFace(associate)}
           name={`${associate.firstName} ${associate.lastName}`}
-          className="h-7 w-7 bg-gold/15 text-gold text-xs font-semibold"
+          className="h-7 w-7 bg-gold/15 text-gold text-xs font-semibold max-xl:hidden"
         />
         <div className="min-w-0 flex-1">
           {/* Two lines + full-name tooltip: "Adolfo Fernando Reinoso
@@ -1558,7 +1573,7 @@ function ShiftChip({
     onPointerLeave: () => void;
   };
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: shift.id,
   });
 
@@ -1634,6 +1649,8 @@ function ShiftChip({
   // Ended while still OPEN: the shift went unfilled. It is history, not a
   // hole to fill — the label says so and the status mark is the record.
   const unfilled = wentUnfilled(shift);
+  const tagMap = useContext(StoreTagContext);
+  const storeTag = shift.locationId ? (tagMap.get(shift.locationId) ?? null) : null;
   return (
     <div
       ref={setNodeRef}
@@ -1671,34 +1688,32 @@ function ShiftChip({
         className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
         style={{ backgroundColor: color.accent }}
       />
-      {/* Drag grip — small icon inside a 24px hit box (WCAG 2.2 SC 2.5.8). */}
-      <div
-        {...listeners}
-        {...attributes}
-        className={cn('absolute left-0.5 top-1/2 -translate-y-1/2', GRIP_HIT)}
-        aria-label={`Move ${shift.position}`}
-      >
-        <GripVertical className={GRIP_ICON} />
-      </div>
-      {/* Single-line bar: time + position, status shape pushed right. The
-          client/sub-zone live in the hover card so the row stays rectangular. */}
+      {/* One chip, two lines (FLOOR-12, deep audit 2026-10-29): the time and
+          the status mark, then the position (and the store's tag when the
+          week spans stores). The drag grip took 28px of every chip and cut
+          the position to one letter ("6a–2p S…"); the whole chip drags now
+          (6px of movement first, so a click is still a click) and says so
+          with a grab cursor. Client and sub-zone live in the hover card. */}
       <button
         type="button"
         onClick={onClick}
+        {...(canManage ? listeners : {})}
         className={cn(
           'w-full flex-1 flex items-center text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded',
           density.padY,
-          density.padX,
+          // Clears the 4px accent bar; the resize rail overlays the right edge.
+          'pl-2 pr-2',
+          canManage && 'cursor-grab active:cursor-grabbing',
           // Clear the ⋯ touch-menu trigger, which only renders sans hover.
           '[@media(hover:none)]:pr-8',
         )}
-        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position} · ${unfilled ? 'Went unfilled' : SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
+        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position}${shift.locationName ? ` · ${shift.locationName}` : ''} · ${unfilled ? 'Went unfilled' : SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
         <div className="w-full min-w-0">
-        <div className="w-full flex items-center gap-1.5 min-w-0">
+        <div className="w-full flex items-center gap-1 min-w-0">
           <span
             className={cn(
-              'text-silver/90 tabular-nums shrink-0',
+              'flex-1 min-w-0 truncate text-silver/90 tabular-nums',
               density.time,
             )}
           >
@@ -1707,15 +1722,6 @@ function ShiftChip({
               previewEndsAt.toISOString(),
               shift.timezone,
             )}
-          </span>
-          <span
-            className={cn(
-              'flex-1 min-w-0 text-white font-medium truncate',
-              density.label,
-              statusLabelClass(shift.status),
-            )}
-          >
-            {shift.position}
           </span>
           {shortRest && (
             <span
@@ -1727,6 +1733,26 @@ function ShiftChip({
             </span>
           )}
           {!unfilled && <StatusMark status={shift.status} />}
+        </div>
+        <div className="w-full flex items-center gap-1 min-w-0">
+          {storeTag && (
+            <span
+              className="shrink-0 rounded-sm bg-navy-secondary/70 px-1 text-3xs font-semibold leading-4 tracking-wide text-silver"
+              data-testid="chip-store-tag"
+            >
+              {storeTag}
+              <span className="sr-only"> · {shift.locationName ?? shift.location}</span>
+            </span>
+          )}
+          <span
+            className={cn(
+              'flex-1 min-w-0 text-white font-medium truncate',
+              density.label,
+              statusLabelClass(shift.status),
+            )}
+          >
+            {positionShort(shift.position)}
+          </span>
         </div>
         {/* "Unfilled" on its own line inside the tile — as a pill beside the
             time it pushed past the tile's edge in a narrow day. */}

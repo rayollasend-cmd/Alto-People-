@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, RefreshCw } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { fmtDateTime, fmtDayShort, parseYmd } from '@/lib/format';
+import { fmtDateTime, fmtDayShort, parseYmd, ymdLocal } from '@/lib/format';
 import {
   closeEVerify,
   everifyProviderView,
@@ -113,7 +113,7 @@ export function EVerifyProviderPanel({
   const st = v.status ? STATUS[v.status] : null;
   const busy = act.isPending;
   const due = day(v.dueBy);
-  const duePassed = v.dueBy ? v.dueBy < new Date().toISOString().slice(0, 10) : false;
+  const duePassed = v.dueBy ? v.dueBy < ymdLocal() : false;
 
   return (
     <>

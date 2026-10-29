@@ -18,6 +18,7 @@ import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { regionOverview, type RegionOverview } from '@/lib/regionsApi';
 import { useUrlParam } from '@/lib/useUrlState';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtShiftRangeTz, fmtShiftTz, fmtTime, fmtTimeTz, parseYmd, phoneHref, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
@@ -38,6 +39,7 @@ import { clockInInWindows, crewOnFloor, inWindows, summarize, useShiftFocus, win
 import { ListTemplate } from '@/components/templates';
 import { CrewTextDialog } from '@/components/floor/CrewTextDialog';
 import { scopeParams, shiftDays } from './scope';
+import { CrewLink } from '@/components/floor/CrewCard';
 import '@/lib/i18n/en/floor';
 import '@/lib/i18n/en/focus';
 import '@/lib/i18n/en/portal';
@@ -66,7 +68,7 @@ interface DayPayload {
   target: number | null;
   roster: WaveRow[];
   /** Every open clock-in right now (today only) — the live board's count. */
-  onFloorNow?: Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
+  onFloorNow?: Array<{ associateId: string; name: string; photoUrl?: string | null; clockInAt: string; position: string | null }>;
   summary: { expected: number; worked: number; onFloor: number; missed: number; open: number };
   /** The store's named shift windows and who leads each. */
   windowLeads?: Array<{ locationId: string; label: string; startMinute: number; endMinute: number; leads: string[]; targetCount?: number }>;
@@ -77,7 +79,8 @@ interface DayPayload {
 type CrewView = 'list' | 'faces';
 const CREW_VIEWS: readonly CrewView[] = ['list', 'faces'];
 
-const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
+/** The row's face: the payload's photoUrl (null = none on file, no request), else the bare path. */
+const photoUrl = (r: { associateId: string | null; photoUrl?: string | null }) => personPhotoUrl(r) ?? null;
 const WAVE_KEY: Record<WaveName, MessageKey> = {
   morning: 'portal.wave.morning',
   midday: 'portal.wave.midday',
@@ -98,8 +101,10 @@ export function PortalToday() {
   const previewId = searchParams.get('clientId');
   const scope = scopeParams(searchParams, isPortal);
   const scopeQs = scope.toString() ? `?${scope.toString()}` : '';
-  const date = searchParams.get('date') ?? ymdLocal();
-  const qs = `?${new URLSearchParams([...scope.entries(), ['date', date]]).toString()}`;
+  // No ?date= is the STORE's today, which the server answers with (`today`):
+  // at 11:30 PM Pacific a Chicago store is already on tomorrow (LEAD-17).
+  const dateParam = searchParams.get('date');
+  const qs = `?${new URLSearchParams([...scope.entries(), ...(dateParam ? ([['date', dateParam]] as [string, string][]) : [])]).toString()}`;
 
   // A REGION account (the command center) has no store of its own: the day
   // API answers 400 "Pick a store in your region" until one is named, so the
@@ -121,13 +126,15 @@ export function PortalToday() {
     queryKey: ['clientPortal', 'day', qs],
     queryFn: () => apiFetch<DayPayload>(`/client-portal/day${qs}`),
     enabled,
-    refetchInterval: date === ymdLocal() ? 60_000 : false,
-    refetchOnWindowFocus: date === ymdLocal(),
+    refetchInterval: (q) => (!dateParam || q.state.data?.date === q.state.data?.today ? 60_000 : false),
+    refetchOnWindowFocus: true,
     // Stepping between days keeps the page on screen until the next loads.
     placeholderData: (prev) => prev,
   });
   const data = query.data;
-  const switching = !!data && data.date !== date;
+  const storeToday = data?.today ?? ymdLocal();
+  const date = dateParam ?? (query.isPlaceholderData ? storeToday : data?.date ?? storeToday);
+  const switching = query.isPlaceholderData;
   // An alert links here with ?wave=<start>: open that shift and bring it into view.
   const focusWave = searchParams.get('wave');
   useEffect(() => {
@@ -175,8 +182,8 @@ export function PortalToday() {
     else p.set('date', next);
     setSearchParams(p, { replace: true });
   };
-  const isToday = date === ymdLocal();
-  const isPast = date < ymdLocal();
+  const isToday = date === storeToday;
+  const isPast = date < storeToday;
   // The store's contracted windows (from the day payload): what an empty day is short of.
   const contracted = (data?.windowLeads ?? []).filter((w) => (w.targetCount ?? 0) > 0);
   const contractTotal = contracted.reduce((n, w) => n + (w.targetCount ?? 0), 0);
@@ -192,7 +199,7 @@ export function PortalToday() {
         });
   const dayLabel = isToday
     ? t('portal.todayNav')
-    : date === shiftDays(ymdLocal(), -1)
+    : date === shiftDays(storeToday, -1)
       ? t('portal.yesterday')
       : fmtDate(parseYmd(date));
 
@@ -264,8 +271,8 @@ export function PortalToday() {
           </Button>
           <Button
             size="sm"
-            variant={date === shiftDays(ymdLocal(), -1) ? 'secondary' : 'ghost'}
-            onClick={() => goDay(shiftDays(ymdLocal(), -1))}
+            variant={date === shiftDays(storeToday, -1) ? 'secondary' : 'ghost'}
+            onClick={() => goDay(shiftDays(storeToday, -1))}
             className="hidden shrink-0 sm:inline-flex"
           >
             {t('portal.yesterday')}
@@ -284,7 +291,7 @@ export function PortalToday() {
           variant="ghost"
           onClick={() => goDay(shiftDays(date, 1))}
           aria-label={t('portal.nextDay')}
-          disabled={date >= shiftDays(ymdLocal(), 14)}
+          disabled={date >= shiftDays(storeToday, 14)}
         >
           <ChevronRight className="h-4 w-4" aria-hidden="true" />
         </Button>
@@ -560,7 +567,7 @@ function OffScheduleCard({
           <ul className="mt-2 grid grid-cols-1 lg:grid-cols-2 lg:gap-x-6" data-testid="off-schedule-rows">
             {people.map((e) => (
               <li key={e.associateId} className="flex items-center gap-3 border-b border-navy-secondary/40 py-2">
-                <Avatar src={photoUrl(e.associateId)} name={e.name} email="" size="sm" />
+                <Avatar src={photoUrl(e)} name={e.name} email="" size="sm" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-ink">{e.name}</div>
                   <div className="truncate text-xs">
@@ -592,7 +599,7 @@ function OffScheduleCard({
                   )}
                 >
                   <Avatar
-                    src={photoUrl(e.associateId)}
+                    src={photoUrl(e)}
                     name={e.name}
                     email=""
                     size="lg"
@@ -725,7 +732,9 @@ function WaveCard({
         const tel = phoneHref(r.phone);
         return (
           <li key={r.shiftId} className="flex items-center gap-3 border-b border-navy-secondary/40 py-2">
-            <Avatar src={r.associateId ? photoUrl(r.associateId) : null} name={r.name ?? ''} email="" size="sm" />
+            {/* FLOOR-17: the field lead taps a person for their crew card; everyone else sees the row as before. */}
+            <CrewLink block associateId={r.associateId} name={r.name} className="flex min-w-0 flex-1 items-center gap-3">
+            <Avatar src={photoUrl(r)} name={r.name ?? ''} email="" size="sm" />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium text-ink">
                 {r.name ?? '—'}
@@ -736,6 +745,7 @@ function WaveCard({
                 <span className="text-ink-muted"> · {r.position}{multiStore && r.locationName ? ` · ${r.locationName}` : ''}</span>
               </div>
             </div>
+            </CrewLink>
             {canReach && r.phone && (
               <>
                 <a
@@ -811,7 +821,7 @@ function WaveCard({
                     )}
                   >
                     <Avatar
-                      src={r.associateId ? photoUrl(r.associateId) : null}
+                      src={photoUrl(r)}
                       name={r.name ?? ''}
                       email=""
                       size="lg"

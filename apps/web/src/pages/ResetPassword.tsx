@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/pw';
 
 /**
  * "ok" once the 12-char floor is met; "strong" when it also mixes upper +
@@ -32,11 +34,12 @@ function ShowPasswordToggle({
   shown: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <button
       type="button"
       onClick={onToggle}
-      aria-label={shown ? 'Hide password' : 'Show password'}
+      aria-label={shown ? t('pw.hide') : t('pw.show')}
       className="absolute right-2.5 coarse:right-1 top-1/2 -translate-y-1/2 p-1 coarse:p-2.5 rounded text-silver/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
     >
       {shown ? (
@@ -59,6 +62,7 @@ function ShowPasswordToggle({
 export function ResetPassword() {
   const { token = '' } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  const { t } = useI18n();
   // Ask first whether the link still works (non-consuming), so a dead link
   // says so up front — not after two 12-character passwords (F500 G5).
   const check = useQuery({
@@ -111,13 +115,13 @@ export function ResetPassword() {
       setTimeout(() => navigate('/login', { replace: true }), 1500);
     } catch (err) {
       if (err instanceof NetworkError) {
-        setError('Network error — check your connection and try again.');
+        setError(t('login.errNetwork'));
       } else if (err instanceof ApiError && err.code === 'invalid_token') {
         setError('expired');
       } else if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError("Couldn't reset the password. Try again in a minute.");
+        setError(t('pw.resetFailed'));
       }
     } finally {
       setSubmitting(false);
@@ -126,7 +130,7 @@ export function ResetPassword() {
 
   const newLink = (
     <Button asChild size="lg" className="w-full sm:w-auto">
-      <Link to="/forgot-password">Send me a new link</Link>
+      <Link to="/forgot-password">{t('pw.newLink')}</Link>
     </Button>
   );
 
@@ -134,7 +138,7 @@ export function ResetPassword() {
     return (
       <AuthShell>
         <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3" aria-busy="true">
-          <AuthCardTitle>New password</AuthCardTitle>
+          <AuthCardTitle>{t('pw.newPassword')}</AuthCardTitle>
           <Skeleton className="h-4 w-3/4 mb-6" />
           <Skeleton className="h-10 w-full mb-3" />
           <Skeleton className="h-10 w-full" />
@@ -147,17 +151,13 @@ export function ResetPassword() {
       <AuthShell>
         <LinkProblem
           kind={linkState}
-          title={linkState === 'expired' ? 'This reset link has expired' : 'This reset link isn’t valid'}
-          reason={
-            linkState === 'expired'
-              ? 'Reset links work for one hour, and only once. Ask for a new one — it takes a minute.'
-              : 'It may have been cut off or mistyped. Ask for a new one — it takes a minute.'
-          }
+          title={linkState === 'expired' ? t('pw.linkExpired') : t('pw.linkInvalid')}
+          reason={linkState === 'expired' ? t('pw.linkExpiredWhy') : t('pw.linkInvalidWhy')}
           action={newLink}
         >
           <Link to="/login" className="inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
             <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            Back to sign in
+            {t('pw.backToSignIn')}
           </Link>
         </LinkProblem>
       </AuthShell>
@@ -170,9 +170,9 @@ export function ResetPassword() {
       {done ? (
         <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
           <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-          <AuthCardTitle size="md">Password updated</AuthCardTitle>
+          <AuthCardTitle size="md">{t('pw.updated')}</AuthCardTitle>
           <p className="text-silver text-sm mb-6">
-            Sending you to sign in…
+            {t('pw.sendingToSignIn')}
           </p>
         </div>
       ) : (
@@ -182,29 +182,28 @@ export function ResetPassword() {
           className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
           noValidate
         >
-          <AuthCardTitle>New password</AuthCardTitle>
+          <AuthCardTitle>{t('pw.newPassword')}</AuthCardTitle>
           <p className="text-silver text-sm mb-6">
             {check.data ? (
               <>
-                For <span className="text-ink" data-testid="reset-email">{check.data.email}</span>.{' '}
+                {t('pw.forBefore')}<span className="text-ink" data-testid="reset-email">{check.data.email}</span>{t('pw.forAfter')}{' '}
               </>
             ) : null}
-            Pick something you don't use on other sites. Minimum 12
-            characters.
+            {t('pw.pickIntro')}
           </p>
 
           <div className="space-y-4">
             <Field
-              label="New password"
+              label={t('pw.newPassword')}
               required
               hint={
                 tooShort
-                  ? `Need ${12 - password.length} more character${12 - password.length === 1 ? '' : 's'}.`
+                  ? t('pw.needMore', { count: 12 - password.length })
                   : strength === 'strong'
-                    ? 'Strength: strong.'
+                    ? t('pw.strong')
                     : strength === 'ok'
-                      ? 'Strength: ok — mix upper and lower case with a number to make it strong.'
-                      : 'Minimum 12 characters.'
+                      ? t('pw.ok')
+                      : t('login.minChars')
               }
             >
               {(p) => (
@@ -232,9 +231,9 @@ export function ResetPassword() {
             </Field>
 
             <Field
-              label="Confirm new password"
+              label={t('pw.confirmNew')}
               required
-              error={mismatch ? "Passwords don't match." : undefined}
+              error={mismatch ? t('pw.mismatch') : undefined}
             >
               {(p) => (
                 <div className="relative">
@@ -263,9 +262,9 @@ export function ResetPassword() {
           {error === 'expired' ? (
             // The submit-time answer offers the action, not directions to it.
             <ErrorBanner className="mt-4">
-              This reset link has expired or was already used.{' '}
+              {t('pw.expiredOrUsed')}{' '}
               <Link to="/forgot-password" className="font-medium underline underline-offset-2">
-                Send me a new link
+                {t('pw.newLink')}
               </Link>
             </ErrorBanner>
           ) : (
@@ -279,7 +278,7 @@ export function ResetPassword() {
             loading={submitting}
             className="w-full mt-6"
           >
-            {submitting ? 'Updating…' : 'Update password'}
+            {submitting ? t('pw.updating') : t('pw.update')}
           </Button>
 
           <div className="mt-6 text-center">
@@ -288,7 +287,7 @@ export function ResetPassword() {
               className="inline-flex items-center gap-1.5 text-silver hover:text-white text-sm"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
-              Back to sign in
+              {t('pw.backToSignIn')}
             </Link>
           </div>
         </form>

@@ -4,6 +4,20 @@ import { Apple, Smartphone, Share, MoreVertical, Plus, Download, ChevronRight, S
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { QR_COLORS } from '@/lib/qrColors';
+import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/install';
+
+/** "Tap the {icon} Share button": a sentence with an icon in it, in any word order. */
+function withIcon(text: string, icon: React.ReactNode): React.ReactNode {
+  const [before, after] = text.split('{icon}');
+  return (
+    <>
+      {before}
+      {icon}
+      {after}
+    </>
+  );
+}
 
 type Platform = 'ios' | 'android' | 'desktop';
 
@@ -29,6 +43,7 @@ function isStandalone(): boolean {
 }
 
 export function Install() {
+  const { t } = useI18n();
   const [platform, setPlatform] = useState<Platform>('desktop');
   const [installed, setInstalled] = useState(false);
 
@@ -42,13 +57,13 @@ export function Install() {
       <Page>
         <div className="text-center">
           <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-          <AuthCardTitle size="md">You&rsquo;re all set</AuthCardTitle>
-          <p className="text-silver mb-6">Alto People is already installed on this device.</p>
+          <AuthCardTitle size="md">{t('install.page.allSet')}</AuthCardTitle>
+          <p className="text-silver mb-6">{t('install.page.already')}</p>
           <Link
             to="/"
             className="btn-gold inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-navy font-medium"
           >
-            Open the app <ChevronRight className="h-4 w-4" />
+            {t('install.page.openApp')} <ChevronRight className="h-4 w-4" />
           </Link>
         </div>
       </Page>
@@ -58,10 +73,9 @@ export function Install() {
   return (
     <Page>
       <header className="text-center mb-8">
-        <AuthCardTitle>Install Alto People</AuthCardTitle>
+        <AuthCardTitle>{t('install.page.title')}</AuthCardTitle>
         <p className="text-silver text-sm sm:text-base max-w-md mx-auto">
-          Add Alto People to your home screen for one-tap access — your schedule,
-          pay stubs, time off, and onboarding tasks, always a tap away.
+          {t('install.page.intro')}
         </p>
       </header>
 
@@ -70,12 +84,12 @@ export function Install() {
       {platform === 'desktop' && <DesktopInstructions />}
 
       <div className="mt-10 pt-6 border-t border-navy-secondary text-center">
-        <p className="text-xs text-silver mb-3">Already have an account?</p>
+        <p className="text-xs text-silver mb-3">{t('install.page.haveAccount')}</p>
         <Link
           to="/login"
           className="inline-flex items-center gap-1.5 text-gold hover:underline text-sm"
         >
-          Sign in <ChevronRight className="h-3.5 w-3.5" />
+          {t('login.signIn')} <ChevronRight className="h-3.5 w-3.5" />
         </Link>
       </div>
     </Page>
@@ -83,55 +97,37 @@ export function Install() {
 }
 
 function IosInstructions() {
+  const { t } = useI18n();
   return (
-    <Section icon={Apple} title="On your iPhone or iPad">
-      <Step
-        n={1}
-        title="Open this page in Safari"
-        body="Other browsers can't add to the home screen on iOS. If you opened this in Chrome or another app, tap the address bar and pick Open in Safari."
-      />
+    <Section icon={Apple} title={t('install.page.ios')}>
+      <Step n={1} title={t('install.page.ios1')} body={t('install.page.ios1Body')} />
       <Step
         n={2}
-        title={<>Tap the <Share className="inline h-4 w-4 mx-1 align-text-bottom" /> Share button</>}
-        body="It's at the bottom of the screen on iPhone, top-right on iPad."
+        title={withIcon(t('install.page.ios2'), <Share className="inline h-4 w-4 mx-1 align-text-bottom" />)}
+        body={t('install.page.ios2Body')}
       />
-      <Step
-        n={3}
-        title="Scroll down and tap Add to Home Screen"
-        body="It's in the second group of options, alongside Print, Find on Page, etc."
-      />
-      <Step
-        n={4}
-        title="Tap Add"
-        body="The Alto People icon appears on your home screen. Tap it to launch."
-      />
+      <Step n={3} title={t('install.page.ios3')} body={t('install.page.ios3Body')} />
+      <Step n={4} title={t('install.page.ios4')} body={t('install.page.ios4Body')} />
     </Section>
   );
 }
 
 function AndroidInstructions() {
+  const { t } = useI18n();
   return (
-    <Section icon={Smartphone} title="On your Android phone">
-      <Step
-        n={1}
-        title="Open this page in Chrome"
-        body="Chrome handles installs best on Android. Other browsers may work, but instructions vary."
-      />
+    <Section icon={Smartphone} title={t('install.page.android')}>
+      <Step n={1} title={t('install.page.and1')} body={t('install.page.and1Body')} />
       <Step
         n={2}
-        title={<>Tap the <MoreVertical className="inline h-4 w-4 mx-1 align-text-bottom" /> menu (three dots, top-right)</>}
-        body="You may instead see a banner near the bottom that says 'Install app' — tap it directly."
+        title={withIcon(t('install.page.and2'), <MoreVertical className="inline h-4 w-4 mx-1 align-text-bottom" />)}
+        body={t('install.page.and2Body')}
       />
       <Step
         n={3}
-        title={<>Tap <Plus className="inline h-4 w-4 mx-1 align-text-bottom" /> Install app or Add to Home screen</>}
-        body="The label depends on your Chrome version. Both end up the same way."
+        title={withIcon(t('install.page.and3'), <Plus className="inline h-4 w-4 mx-1 align-text-bottom" />)}
+        body={t('install.page.and3Body')}
       />
-      <Step
-        n={4}
-        title="Confirm"
-        body="The Alto People icon appears on your home screen and in your app drawer."
-      />
+      <Step n={4} title={t('install.page.and4')} body={t('install.page.and4Body')} />
     </Section>
   );
 }
@@ -161,21 +157,20 @@ function DesktopInstructions() {
   // On a desktop nothing is "above": say what to do, and give the phone a way here (F500 G5).
   const pageUrl = typeof window !== 'undefined' ? `${window.location.origin}/install` : '/install';
   const qr = useQrDataUrl(pageUrl);
+  const { t } = useI18n();
+  const [goBefore, goAfter] = t('install.page.deskGo').split('{url}');
   return (
-    <Section icon={Download} title="On a desktop browser">
+    <Section icon={Download} title={t('install.page.desktop')}>
       <li className="flex list-none flex-col items-center gap-4 sm:flex-row sm:items-start">
         <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-lg bg-white p-2" data-testid="install-qr">
-          {qr ? <img src={qr} alt={`QR code for ${pageUrl}`} className="h-full w-full" /> : null}
+          {qr ? <img src={qr} alt={t('install.page.qrAlt', { url: pageUrl })} className="h-full w-full" /> : null}
         </div>
         <div>
-          <p className="text-ink text-sm font-medium mb-1">Open this page on your phone to add the app.</p>
+          <p className="text-ink text-sm font-medium mb-1">{t('install.page.deskOpen')}</p>
           <p className="text-silver text-sm mb-3">
-            Point your phone’s camera at the code, or go to <span className="text-ink">{pageUrl.replace(/^https?:\/\//, '')}</span>.
+            {goBefore}<span className="text-ink">{pageUrl.replace(/^https?:\/\//, '')}</span>{goAfter}
           </p>
-          <p className="text-silver text-xs">
-            On Chrome, Edge or Brave you can also install Alto People on this computer: click the install icon (a small
-            monitor with a down arrow) in the address bar.
-          </p>
+          <p className="text-silver text-xs">{t('install.page.deskBrowser')}</p>
         </div>
       </li>
     </Section>

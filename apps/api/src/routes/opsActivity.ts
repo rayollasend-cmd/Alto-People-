@@ -6,6 +6,7 @@ import { requireAnyCapability } from '../middleware/auth.js';
 import { scopeShifts, scopeWhere } from '../lib/scope.js';
 import { companyWorkweek, dateKeyInZone } from '../lib/timeAnomalies.js';
 import { personDisplayName } from '../lib/displayName.js';
+import { addDaysToKey } from '../lib/timezone.js';
 
 /**
  * GET /ops-activity?days=7 — what happened on the floor, newest first:
@@ -54,9 +55,7 @@ const DAY_WORDS = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 's
 const atNoon = (key: string) => new Date(`${key}T12:00:00.000Z`);
 /** The first day of the company week holding a calendar day (YYYY-MM-DD). */
 function weekStartKey(key: string, weekStartsOn: number): string {
-  const d = atNoon(key);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() - weekStartsOn + 7) % 7));
-  return d.toISOString().slice(0, 10);
+  return addDaysToKey(key, -((atNoon(key).getUTCDay() - weekStartsOn + 7) % 7));
 }
 /**
  * Which days a publish covers, in words: "Sat, Oct 24" (one day), "Week of

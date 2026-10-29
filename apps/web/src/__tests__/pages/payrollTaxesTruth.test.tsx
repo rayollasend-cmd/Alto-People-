@@ -86,7 +86,7 @@ describe('payroll taxes overview', () => {
     expect(screen.queryByTestId('unposted-taxes')).toBeNull();
   });
 
-  it('once taxes are posted and all paid, it is paid up; tiles link to the deposits', async () => {
+  it('once taxes are posted and nothing is due in 14 days, it names the next deposit instead of "paid up" (MONEY-28); tiles link to the deposits', async () => {
     overview.value = {
       ...BASE,
       hasLiabilities: true,
@@ -95,11 +95,18 @@ describe('payroll taxes overview', () => {
       unposted: { count: 0, amount: 0, runs: [] },
     };
     renderDesk();
-    expect(await screen.findByText('You’re paid up')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing due in the next 14 days')).toBeInTheDocument();
+    expect(screen.queryByText('You’re paid up')).toBeNull();
     expect(screen.getByText('Nothing late')).toBeInTheDocument();
     expect(screen.getByText('$932.00 deposited · withheld and employer share')).toBeInTheDocument();
-    expect(screen.getByText('$759.00 · Internal Revenue Service')).toBeInTheDocument();
+    expect(screen.getByText('$759.00 to Internal Revenue Service')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Late/ })).toHaveAttribute('href', '/payroll/taxes?tab=deposits');
+  });
+
+  it('with nothing owed at all, it is paid up', async () => {
+    overview.value = { ...BASE, hasLiabilities: true, quarter: { periodLabel: '2026-Q4', posted: 932, deposited: 932 }, unposted: { count: 0, amount: 0, runs: [] } };
+    renderDesk();
+    expect(await screen.findByText('You’re paid up')).toBeInTheDocument();
   });
 
   it('the in-house note folds to one line once read; sibling desks are links, not buttons', async () => {

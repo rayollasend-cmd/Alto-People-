@@ -30,6 +30,7 @@ import {
   bulkResendInvite,
   getApplicationStats,
   listApplications,
+  listClientOptions,
   nudgeAllStale,
   reopenApplication,
   resendInvite,
@@ -38,8 +39,7 @@ import { CancelInviteDialog, cancelledToast, type AfterCancel, type CancelledInv
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
-import { listClients } from '@/lib/clientsApi';
-import type { ClientSummary } from '@alto-people/shared';
+import type { ClientOption } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -508,12 +508,14 @@ export function ApplicationsList() {
 
 
 
+  // The invite-scoped picker (PEOPLE-4/FLOOR-1): /clients needs view:clients.
   const clientsQuery = useQuery({
-    queryKey: ['ApplicationsList', 'clients'],
-    queryFn: () => listClients(),
+    queryKey: ['clients', 'options'],
+    queryFn: listClientOptions,
     enabled: clientsOn,
+    staleTime: 5 * 60_000,
   });
-  const clients: ClientSummary[] | null = clientsQuery.isError ? [] : (clientsQuery.data?.clients ?? null);
+  const clients: ClientOption[] | null = clientsQuery.isError ? [] : (clientsQuery.data?.clients ?? null);
 
   const now = Date.now();
   const stats = statsData ?? EMPTY_STATS;

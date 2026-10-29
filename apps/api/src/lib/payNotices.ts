@@ -6,6 +6,8 @@ import { employerFor } from './employment.js';
 import { payScheduleFor } from './associatePayday.js';
 import { notifyAssociate } from './notify.js';
 import { logger } from './logger.js';
+import { dateColumnKey } from './timezone.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * State pay notices — the written notice of pay rate, basis and payday a
@@ -161,7 +163,7 @@ export async function gatherNoticeFacts(db: Db, associateId: string, state: stri
     payFrequency: schedule ? FREQ_LABEL[schedule.frequency] ?? schedule.frequency : null,
     regularPayday,
     allowances: 'None',
-    effectiveDate: effectiveDate.toISOString().slice(0, 10),
+    effectiveDate: dateColumnKey(effectiveDate),
     sickLeave:
       state === 'CA'
         ? 'At least 40 hours or 5 days of paid sick leave a year (Labor Code §246).'
@@ -208,7 +210,8 @@ export async function issuePayNotice(
   const rule = NOTICE_RULES[state];
   if (!rule) return null;
   if (input.trigger !== 'MANUAL' && !rule.triggers.includes(input.trigger)) return null;
-  const effective = input.effectiveDate ?? new Date();
+  // The effective day as a calendar date (a DATE value): today on the company's calendar unless given.
+  const effective = input.effectiveDate ?? new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
   const facts = await gatherNoticeFacts(db, input.associateId, state, effective);
   if (!facts) return null;
   if (facts.exempt && !rule.coversExempt) return null;

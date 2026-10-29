@@ -1,4 +1,5 @@
-import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, CartesianGrid, ComposedChart, Legend, Line, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { STOCK_LEGEND } from '@/components/ui/charts/ChartTooltip';
 import { CHART } from '@/components/ui/ChartFrame';
 

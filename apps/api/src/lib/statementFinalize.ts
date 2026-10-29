@@ -7,6 +7,7 @@ import type { StatementSnapshot } from './clientStatement.js';
 import { notifyUser, trackNotificationWork } from './notify.js';
 import { claimAdjustmentsForStatement } from './payBillLink.js';
 import { finalizationTerms } from './statementDunning.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Finalizing a client statement — the one path (the statement row's
@@ -87,8 +88,8 @@ export async function finalizeStatement(db: PrismaClient, statementId: string, a
       entityId: row.id,
       metadata: {
         number: updated.number,
-        periodStart: row.periodStart.toISOString().slice(0, 10),
-        periodEnd: row.periodEnd.toISOString().slice(0, 10),
+        periodStart: dateColumnKey(row.periodStart),
+        periodEnd: dateColumnKey(row.periodEnd),
       },
     },
     'clients.statement_finalized',

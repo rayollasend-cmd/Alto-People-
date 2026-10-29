@@ -48,6 +48,7 @@ const LONG_LIVED_ROUTES = new Set(['GET /events/stream']);
 export const isLongLivedRoute = (method: string, route: string): boolean => LONG_LIVED_ROUTES.has(`${method} ${route}`);
 const timed = (r: { method: string; route: string }) => !isLongLivedRoute(r.method, r.route);
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: RouteUsageDaily rolls up per UTC day (usageTracker.dayKey) and the kiosk series groups by UTC day in SQL; these windows must line up with those rows.
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 const utcDay = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
 

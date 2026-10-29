@@ -20,8 +20,11 @@ import { notifyAssociate } from '../lib/notify.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
-import { teamNumbers, teamNumbersSummary } from '../lib/teamNumbers.js';
+import { companyDay, teamNumbers, teamNumbersSummary } from '../lib/teamNumbers.js';
 import { fmtDay, fmtDayInZone, fmtDayRange } from '../lib/humanDates.js';
+import { companyWorkweek, dateKeyInZone } from '../lib/timeAnomalies.js';
+import { timeAnomalyWords } from '@alto-people/shared';
+import { addDaysToKey, dateColumnKey } from '../lib/timezone.js';
 
 /** A time-off category the way a sentence says it ("sick time", "PTO"); `title` capitalizes it for a list line. */
 const TIME_OFF_WORDS: Record<string, string> = { SICK: 'sick time', VACATION: 'vacation', PTO: 'PTO', BEREAVEMENT: 'bereavement', JURY_DUTY: 'jury duty', OTHER: 'time off' };
@@ -268,7 +271,7 @@ teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
   const now = new Date();
   const empty = {
     due: { reviews: [], oneOnOnes: [], probations: [], rampMilestones: [], documents: [], credentials: [], pips: [] },
-    today: { shifts: [], onClock: [], out: [], celebrations: [] },
+    today: { date: companyDay(now).todayKey, shifts: [], onClock: [], out: [], celebrations: [] },
     suggestions: [],
   };
   if (!user.associateId) {
@@ -288,10 +291,12 @@ teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
   const nameOf = new Map(reports.map((r) => [r.id, `${r.firstName} ${r.lastName}`.trim()]));
   const in30 = new Date(now.getTime() + 30 * DAY);
   const in14 = new Date(now.getTime() + 14 * DAY);
-  const dayStart = new Date(now);
-  dayStart.setUTCHours(0, 0, 0, 0);
-  const dayEnd = new Date(dayStart.getTime() + DAY);
-  const todayKey = now.toISOString().slice(0, 10);
+  // "Today" is the company's calendar day (FLOOR-5), the day "Scheduled
+  // today" counts (lib/teamNumbers) — never the UTC day, which after 5 PM
+  // Pacific listed tomorrow's shifts and birthdays under today's header.
+  const { todayKey, dayStart, dayEnd } = companyDay(now);
+  // A @db.Date column holds the calendar day at UTC midnight.
+  const todayDate = new Date(`${todayKey}T00:00:00.000Z`);
 
   const [lastReviews, oneOnOnes, probations, rampPlans, documents, credentials, pips, shifts, onClock, out] = await Promise.all([
     // The most recent review per report; a report without one in 12 months is due.
@@ -308,7 +313,8 @@ teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
     prisma.pip.findMany({ where: { associateId: { in: ids }, status: 'ACTIVE', endDate: { lt: in14 } }, select: { id: true, associateId: true, endDate: true }, orderBy: { endDate: 'asc' }, take: 50 }),
     prisma.shift.findMany({ where: { assignedAssociateId: { in: ids }, status: { in: ['ASSIGNED', 'COMPLETED'] }, startsAt: { gte: dayStart, lt: dayEnd } }, select: { id: true, assignedAssociateId: true, startsAt: true, endsAt: true, position: true, location: true, locationRel: { select: { timezone: true } } }, orderBy: { startsAt: 'asc' }, take: 200 }),
     prisma.timeEntry.findMany({ where: { associateId: { in: ids }, status: 'ACTIVE' }, select: { associateId: true, clockInAt: true }, take: 200 }),
-    prisma.timeOffRequest.findMany({ where: { associateId: { in: ids }, status: 'APPROVED', startDate: { lte: now }, endDate: { gte: dayStart } }, select: { associateId: true, category: true, endDate: true }, take: 200 }),
+    // Off today: the request's calendar days (DATE columns) cover the company's today.
+    prisma.timeOffRequest.findMany({ where: { associateId: { in: ids }, status: 'APPROVED', startDate: { lte: todayDate }, endDate: { gte: todayDate } }, select: { associateId: true, category: true, endDate: true }, take: 200 }),
   ]);
 
   const latestReview = new Map<string, { periodEnd: Date; status: string }>();
@@ -319,15 +325,15 @@ teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
       const last = latestReview.get(r.id);
       const since = last?.periodEnd ?? r.hireDate ?? null;
       if (!since || since.getTime() > yearAgo.getTime()) return null;
-      return { associateId: r.id, associateName: nameOf.get(r.id)!, lastPeriodEnd: last?.periodEnd.toISOString().slice(0, 10) ?? null, overdueDays: Math.floor((now.getTime() - since.getTime() - 365 * DAY) / DAY) };
+      return { associateId: r.id, associateName: nameOf.get(r.id)!, lastPeriodEnd: last ? dateColumnKey(last.periodEnd) : null, overdueDays: Math.floor((now.getTime() - since.getTime() - 365 * DAY) / DAY) };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null)
     .sort((a, b) => b.overdueDays - a.overdueDays);
 
   const rampDue = rampPlans.flatMap((p) =>
     p.milestones
-      .map((m) => ({ id: m.id, planId: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, title: m.title, dueOn: new Date(p.startDate.getTime() + m.dayCheckpoint * DAY).toISOString().slice(0, 10), status: m.status }))
-      .filter((m) => m.dueOn <= in14.toISOString().slice(0, 10)),
+      .map((m) => ({ id: m.id, planId: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, title: m.title, dueOn: addDaysToKey(dateColumnKey(p.startDate), m.dayCheckpoint), status: m.status }))
+      .filter((m) => m.dueOn <= dateKeyInZone(in14, companyWorkweek().timezone)),
   );
 
   const celebrations = reports
@@ -335,7 +341,8 @@ teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
       const out: { associateId: string; associateName: string; kind: 'BIRTHDAY' | 'ANNIVERSARY'; years: number | null }[] = [];
       const md = (d: Date) => d.toISOString().slice(5, 10);
       if (r.dob && md(r.dob) === todayKey.slice(5)) out.push({ associateId: r.id, associateName: nameOf.get(r.id)!, kind: 'BIRTHDAY', years: null });
-      if (r.hireDate && md(r.hireDate) === todayKey.slice(5) && r.hireDate.getUTCFullYear() < now.getUTCFullYear()) out.push({ associateId: r.id, associateName: nameOf.get(r.id)!, kind: 'ANNIVERSARY', years: now.getUTCFullYear() - r.hireDate.getUTCFullYear() });
+      const year = Number(todayKey.slice(0, 4));
+      if (r.hireDate && md(r.hireDate) === todayKey.slice(5) && r.hireDate.getUTCFullYear() < year) out.push({ associateId: r.id, associateName: nameOf.get(r.id)!, kind: 'ANNIVERSARY', years: year - r.hireDate.getUTCFullYear() });
       return out;
     });
 
@@ -351,16 +358,19 @@ teamRouter.get('/home', VIEW, async (req: Request, res: Response) => {
     due: {
       reviews: reviewsDue,
       oneOnOnes: oneOnOnes.map((o) => ({ id: o.id, associateId: o.associateId, associateName: nameOf.get(o.associateId)!, scheduledFor: o.scheduledFor.toISOString() })),
-      probations: probations.map((p) => ({ id: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, endDate: p.endDate.toISOString().slice(0, 10) })),
+      probations: probations.map((p) => ({ id: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, endDate: dateColumnKey(p.endDate) })),
       rampMilestones: rampDue,
-      documents: documents.map((d) => ({ id: d.id, associateId: d.associateId, associateName: nameOf.get(d.associateId)!, kind: d.kind, expiresAt: d.expiresAt!.toISOString().slice(0, 10), expired: d.expiresAt!.getTime() < now.getTime() })),
-      credentials: credentials.map((c) => ({ id: c.id, associateId: c.associateId, associateName: nameOf.get(c.associateId)!, name: c.qualification.name, expiresAt: c.expiresAt!.toISOString().slice(0, 10), expired: c.expiresAt!.getTime() < now.getTime() })),
-      pips: pips.map((p) => ({ id: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, endDate: p.endDate.toISOString().slice(0, 10) })),
+      documents: documents.map((d) => ({ id: d.id, associateId: d.associateId, associateName: nameOf.get(d.associateId)!, kind: d.kind, expiresAt: dateColumnKey(d.expiresAt!), expired: dateColumnKey(d.expiresAt!) < todayKey })),
+      credentials: credentials.map((c) => ({ id: c.id, associateId: c.associateId, associateName: nameOf.get(c.associateId)!, name: c.qualification.name, expiresAt: dateColumnKey(c.expiresAt!), expired: dateColumnKey(c.expiresAt!) < todayKey })),
+      pips: pips.map((p) => ({ id: p.id, associateId: p.associateId, associateName: nameOf.get(p.associateId)!, endDate: dateColumnKey(p.endDate) })),
     },
     today: {
+      // The company's calendar day these lists are cut on — the page names
+      // it when it isn't the viewer's own (a Pacific evening).
+      date: todayKey,
       shifts: shifts.map((sh) => ({ id: sh.id, associateId: sh.assignedAssociateId!, associateName: nameOf.get(sh.assignedAssociateId!)!, startsAt: sh.startsAt.toISOString(), endsAt: sh.endsAt.toISOString(), position: sh.position, location: sh.location, timezone: shiftTimezone(sh.locationRel) })),
       onClock: onClock.map((e) => ({ associateId: e.associateId, associateName: nameOf.get(e.associateId)!, since: e.clockInAt.toISOString() })),
-      out: out.map((o) => ({ associateId: o.associateId, associateName: nameOf.get(o.associateId)!, category: o.category, until: o.endDate.toISOString().slice(0, 10) })),
+      out: out.map((o) => ({ associateId: o.associateId, associateName: nameOf.get(o.associateId)!, category: o.category, until: dateColumnKey(o.endDate) })),
       celebrations,
     },
     suggestions,
@@ -387,6 +397,8 @@ interface InboxItem {
   /** ISO timestamp of when the item first needed action — for sorting. */
   pendingSince: string;
   ageDays: number;
+  /** A timesheet carrying an anomaly flag — not one to approve in a batch. */
+  flagged?: boolean;
 }
 
 const PER_CATEGORY_CAP = 50;
@@ -482,8 +494,9 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
     const anomalyTags = Array.isArray(t.anomalies)
       ? (t.anomalies as string[])
       : [];
+    // In words (FLOOR-16): "Forgot clock-out", never "flagged: forgot_clockout".
     const anomalyNote = anomalyTags.length
-      ? ` · flagged: ${anomalyTags.join(', ').toLowerCase()}`
+      ? ` · ${anomalyTags.map(timeAnomalyWords).join(', ')}`
       : '';
     items.push({
       id: t.id,
@@ -494,6 +507,7 @@ teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
       link: '/team?tab=timesheets',
       pendingSince: pending.toISOString(),
       ageDays: Math.floor((now - pending.getTime()) / dayMs),
+      flagged: anomalyTags.length > 0,
     });
   }
   for (const r of timeOff) {
@@ -857,8 +871,8 @@ teamRouter.get('/timeoff', VIEW, async (req: Request, res: Response) => {
         ? `${r.associate.firstName} ${r.associate.lastName}`
         : null,
       category: r.category,
-      startDate: r.startDate.toISOString().slice(0, 10),
-      endDate: r.endDate.toISOString().slice(0, 10),
+      startDate: dateColumnKey(r.startDate),
+      endDate: dateColumnKey(r.endDate),
       requestedMinutes: r.requestedMinutes,
       reason: r.reason,
       status: r.status,
@@ -1009,8 +1023,8 @@ teamRouter.post(
       requestId: id,
       associateId: reqRow.associateId,
       category: reqRow.category,
-      startDate: reqRow.startDate.toISOString().slice(0, 10),
-      endDate: reqRow.endDate.toISOString().slice(0, 10),
+      startDate: dateColumnKey(reqRow.startDate),
+      endDate: dateColumnKey(reqRow.endDate),
     });
     void notifyAssociate(reqRow.associateId, {
       subject: 'Your time off was denied',

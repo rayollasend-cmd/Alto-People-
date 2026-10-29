@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, ReceiptText, TrendingUp } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { displayLocale, fmtMoney } from '@/lib/format';
+import { displayLocale, fmtHours, fmtMoney, zonedDayKey } from '@/lib/format';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
@@ -57,8 +57,13 @@ export interface Earnings {
   lastWeekEarned: number;
   days: EarningsDay[];
   openShifts: { count: number; estAmount: number };
-  /** Earned so far after taxes, deductions and early pay drawn (the tax engine). */
-  takeHome?: null | { gross: number; taxes: number; deductions: number; advances: number; net: number; basis: 'W4' | 'NO_W4' | 'NO_WITHHOLDING' };
+  /** Earned so far after taxes, deductions and early pay drawn (the tax engine) —
+   *  the week's share of the pay period's estimate, so it never disagrees with it. */
+  takeHome?: null | TakeHome;
+  /** The company's zone: the calendar "today" the week and the period are counted on. */
+  timezone?: string;
+  /** The pay period running today — what "this pay period" means on every associate screen. */
+  period?: EarningsPeriod | null;
   todayShift: {
     startsAt: string;
     endsAt: string;
@@ -66,6 +71,33 @@ export interface Earnings {
     inProgress: boolean;
   } | null;
 }
+
+export interface TakeHome {
+  gross: number;
+  taxes: number;
+  deductions: number;
+  advances: number;
+  net: number;
+  basis: 'W4' | 'NO_W4' | 'NO_WITHHOLDING';
+}
+
+/** GET /time/me/earnings `period` (apps/api lib/associateEarnings PeriodEarnings). */
+export interface EarningsPeriod {
+  start: string;
+  end: string;
+  payDate: string;
+  /** The company's calendar day today, and which day of the period it is. */
+  today: string;
+  day: number;
+  days: number;
+  workedHours: number;
+  /** Gross so far, overtime included. */
+  earned: number;
+  takeHome: TakeHome | null;
+}
+
+/** Hours as every associate screen writes them (fmtHours, up to 2 decimals), without the unit — for templates that carry their own "h". */
+const hoursNum = (h: number) => fmtHours(h).replace(/h$/, '');
 
 const REFRESH_MS = 60_000;
 
@@ -133,7 +165,9 @@ export function EarningsCard() {
     1,
     ...data.days.map((d) => d.workedAmount + d.scheduledAmount),
   );
-  const todayIso = new Date().toISOString().slice(0, 10);
+  // The company's calendar day — the week's days are keyed on it (never the
+  // UTC day: after 5 PM Pacific that was tomorrow's bar).
+  const todayIso = zonedDayKey(new Date(), data.timezone ?? null);
   const daysLeft = Math.max(
     0,
     Math.ceil((new Date(data.weekEnd).getTime() - Date.now()) / 86_400_000),
@@ -323,14 +357,14 @@ export function EarningsCard() {
         <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-navy-secondary/50 pt-2.5 text-xs">
           <span className="tabular-nums text-silver/80">
             {t('earn.hoursRate', {
-              worked: `${data.workedHours.toLocaleString(displayLocale(), { maximumFractionDigits: 2 })}h`,
+              worked: fmtHours(data.workedHours),
               rate: fmtMoney(data.hourlyRate),
             })}
           </span>
           {data.openShifts.count > 0 && data.openShifts.estAmount > 0 ? (
             <Link to="/marketplace" className="font-medium text-gold hover:text-gold-bright">
               {t('earn.openShifts', {
-                count: String(data.openShifts.count),
+                count: data.openShifts.count,
                 amount: fmtMoney(data.openShifts.estAmount),
               })}
             </Link>
@@ -359,8 +393,8 @@ export function EarningsCard() {
               <div className="pt-1.5 space-y-1 text-2xs text-silver/70">
                 <p className="tabular-nums">
                   {t('earn.rateLine', {
-                    worked: data.workedHours.toFixed(2),
-                    remaining: data.remainingHours.toFixed(2),
+                    worked: hoursNum(data.workedHours),
+                    remaining: hoursNum(data.remainingHours),
                     rate: fmtMoney(data.hourlyRate),
                   })}
                 </p>
@@ -380,7 +414,7 @@ export function EarningsCard() {
                 )}
                 {!data.overtime.unlocked && data.overtime.projectedOtHours > 0 && (
                   <p className="tabular-nums">
-                    {t('earn.otPace', { hours: data.overtime.projectedOtHours.toFixed(1) })}
+                    {t('earn.otPace', { hours: hoursNum(data.overtime.projectedOtHours) })}
                   </p>
                 )}
                 <p>

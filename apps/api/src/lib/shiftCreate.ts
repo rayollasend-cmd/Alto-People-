@@ -9,6 +9,7 @@ import { evaluateShiftNotice, isPublishingTransition } from './predictiveSchedul
 import { tenantIdForWrite } from './tenant.js';
 import { formatShiftLine, notifyShift, shiftWa } from './notifyShift.js';
 import { emitShiftEvent } from './webhookEvents.js';
+import { assertSiteInScope } from './scope.js';
 
 /**
  * Creating a shift, under the schedule's rules — one copy for the session
@@ -93,6 +94,10 @@ export async function createShiftWithinRules<I extends Prisma.ShiftInclude>(
     location = site;
     noticeState = site.state;
   }
+  // CODE-9: the site must be inside the person's reach — a store-A lead
+  // cannot publish a shift at store B (and notify its staff). The session
+  // rides on actor.req; the public API (no person) is scoped by its key.
+  if (actor.req?.user) await assertSiteInScope(db, actor.req.user, location.id);
 
   const startsAt = new Date(input.startsAt);
   const endsAt = new Date(input.endsAt);

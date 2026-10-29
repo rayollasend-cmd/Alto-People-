@@ -6,18 +6,18 @@ import { toast } from 'sonner';
 import type {
   Candidate,
   CandidateHireResponse,
-  ClientSummary,
+  ClientOption,
   EmploymentType,
   HireableRole,
   LocationSummary,
   OnboardingTemplate,
 } from '@alto-people/shared';
-import { HIREABLE_ROLES, ROLE_LABELS } from '@alto-people/shared';
+import { HIREABLE_ROLES, ROLE_LABELS, mayGrantRole } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
   cancelApplication,
   createApplication,
-  listClients,
+  listClientOptions,
   payScheduleForHire,
   listTemplates,
 } from '@/lib/onboardingApi';
@@ -40,6 +40,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useDirtyForm } from '@/lib/useDirtyForm';
 import { AuthContext, useTenant, useTerm } from '@/lib/auth';
 import { useOrgSites } from '@/lib/useOrgSites';
 import {
@@ -129,15 +130,27 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
   // Brief 2-1b: with the client portal off there are no clients — the hire is placed by site.
   const clientsOn = useTenant().moduleOn('clientPortal');
   const term = useTerm();
+  // Only the roles this person may grant (the API refuses the rest — PEOPLE-1): a
+  // recruiter can't mint a manager or finance account for a second email.
+  // Read softly, like the pay-schedule check below: the dialog also renders outside the auth provider.
+  const granter = useContext(AuthContext);
+  const granterRole = granter?.role ?? null;
+  const granterCaps = granter?.user?.capabilities ?? null;
+  const hireableHere = useMemo(
+    () => (granterRole ? HIREABLE_ROLES.filter((r) => r === 'ASSOCIATE' || mayGrantRole({ role: granterRole, capabilities: granterCaps }, r)) : (['ASSOCIATE'] as const)),
+    [granterRole, granterCaps],
+  );
   const workerLc = term('worker').toLowerCase();
   const orgSites = useOrgSites(open && !clientsOn);
   // Pickers, read when the dialog opens and kept for later opens in the
   // session — clients/templates don't change often. "Load failed" stays
   // distinct from "no clients exist": an empty Select with no explanation
   // made the dialog unsubmittable for no visible reason.
+  // GET /clients/options: the invite-scoped picker. /clients needs
+  // view:clients, which the workforce manager lacks (PEOPLE-4).
   const clientsQuery = useQuery({
-    queryKey: ['clients', 'summaries'],
-    queryFn: () => listClients(),
+    queryKey: ['clients', 'options'],
+    queryFn: listClientOptions,
     enabled: open && clientsOn,
     staleTime: 5 * 60_000,
   });
@@ -147,7 +160,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
     enabled: open,
     staleTime: 5 * 60_000,
   });
-  const clients: ClientSummary[] | null = clientsQuery.isError ? [] : (clientsQuery.data?.clients ?? null);
+  const clients: ClientOption[] | null = clientsQuery.isError ? [] : (clientsQuery.data?.clients ?? null);
   const clientsFailed = clientsQuery.isError;
   const templates: OnboardingTemplate[] | null = templatesQuery.isError
     ? NO_TEMPLATES
@@ -456,6 +469,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
     }
   };
 
+  const formDirty = useDirtyForm(open, { firstName, lastName, email, position, startDate, clientId, locationId, templateId, employmentType, hireRole });
+
   const copyLink = async () => {
     if (!inviteLink) return;
     try {
@@ -469,6 +484,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
   return (
     <Dialog
       open={open}
+      // A stray Esc used to throw away a ten-field invite (PEOPLE-14).
+      confirmDiscard={() => !inviteLink && !submitting && formDirty()}
       onOpenChange={(v) => {
         if (!v) reset();
         onOpenChange(v);
@@ -556,7 +573,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated, hire, pref
                   }}
                   {...p}
                 >
-                  {HIREABLE_ROLES.map((r) => (
+                  {hireableHere.map((r) => (
                     <option key={r} value={r}>
                       {r === 'ASSOCIATE' ? `${term('worker')} (default)` : HIRE_ROLE_LABEL[r]}
                     </option>

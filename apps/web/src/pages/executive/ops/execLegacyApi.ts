@@ -35,6 +35,8 @@ export interface LegacySummary {
 
 export interface LegacyBriefing {
   generatedAt: string;
+  /** The company time zone "today" is read in (newer APIs). */
+  timezone?: string;
   today: {
     dateKey: string;
     shiftsTotal: number;

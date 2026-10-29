@@ -18,8 +18,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
 import { accountPhotoUrlFor } from './profilePhotoUrl.js';
-import { companyWorkweek, startOfWeekUTC } from './timeAnomalies.js';
-import { localDateKey } from './timezone.js';
+import { startOfWeekUTC } from './timeAnomalies.js';
 import { payFor, splitByPerson } from './laborRules/hours.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { tenantIdForWrite } from './tenant.js';
@@ -112,18 +111,21 @@ async function generateRaw(
       select: { snapshot: true, updatedAt: true },
       take: 50,
     }),
+    // A prospect's age is its days IN THE STAGE (stageChangedAt) — the
+    // pipeline table's number. Read from updatedAt, any edit reset it, so
+    // one prospect read "waiting 6 days" here and "9 days" there (LEAD-30).
     prisma.clientProspect.findMany({
       where: { ...T, deletedAt: null, stage: 'VERBAL' },
-      select: { id: true, name: true, estWeeklyHours: true, estBillRate: true, updatedAt: true },
+      select: { id: true, name: true, estWeeklyHours: true, estBillRate: true, stageChangedAt: true },
       take: 10,
     }),
     prisma.clientProspect.findMany({
       where: { ...T,
         deletedAt: null,
         stage: 'PROPOSAL',
-        updatedAt: { lt: new Date(now.getTime() - 10 * DAY_MS) },
+        stageChangedAt: { lt: new Date(now.getTime() - 10 * DAY_MS) },
       },
-      select: { id: true, name: true, updatedAt: true },
+      select: { id: true, name: true, stageChangedAt: true },
       take: 10,
     }),
     prisma.execTarget.findFirst({
@@ -243,19 +245,20 @@ async function generateRaw(
       label: `${p.name} is at verbal — close it`,
       detail: 'A verbal yes decays fast. Worth the closing call this week.',
       stakes: weekly ? weekly * 4 : null,
-      ageDays: Math.floor((now.getTime() - p.updatedAt.getTime()) / DAY_MS),
+      ageDays: Math.floor((now.getTime() - p.stageChangedAt.getTime()) / DAY_MS),
       linkUrl: '/clients',
     });
   }
   for (const p of staleProposals) {
+    const days = Math.floor((now.getTime() - p.stageChangedAt.getTime()) / DAY_MS);
     out.push({
       key: `prospect:proposal:${p.id}`,
       category: 'move',
       severity: 'normal',
       label: `${p.name} proposal has gone quiet`,
-      detail: `No movement in ${Math.floor((now.getTime() - p.updatedAt.getTime()) / DAY_MS)} days — follow up or mark it lost.`,
+      detail: `In proposal for ${days} days — follow up or mark it lost.`,
       stakes: null,
-      ageDays: Math.floor((now.getTime() - p.updatedAt.getTime()) / DAY_MS),
+      ageDays: days,
       linkUrl: '/clients',
     });
   }
@@ -331,8 +334,9 @@ async function generateRaw(
       detail: 'Unapproved time is unbillable and delays payroll — have supervisors run timesheet approval.',
       stakes: null,
       ageDays: null,
-      // The queue on exactly those weeks: 90 days back through the day before this week.
-      linkUrl: `/time-attendance?tab=queue&from=${localDateKey(new Date(now.getTime() - 90 * DAY_MS), companyWorkweek().timezone)}&to=${localDateKey(new Date(thisWeekStart.getTime() - 1), companyWorkweek().timezone)}`,
+      // The chairman reads it on the executive operations page; the timesheet
+      // queue answered her with "Your clock is not set up yet" and two 403s (LEAD-6).
+      linkUrl: '/executive/operations',
     });
   }
   // Store-ops floor signals — keys mirrored with the role engine so a

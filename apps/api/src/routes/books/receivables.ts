@@ -7,7 +7,7 @@ import { HttpError } from '../../middleware/error.js';
 import { requireCapability } from '../../middleware/auth.js';
 import { enqueueAudit } from '../../lib/audit.js';
 import { tenantIdForWrite } from '../../lib/tenant.js';
-import { agingReport, recordClientPayment, undoClientPayment, unappliedCredits } from '../../lib/books/posting/receivables.js';
+import { agingReport, paidWithoutPayment, recordClientPayment, settleMarkedPaidStatements, undoClientPayment, unappliedCredits } from '../../lib/books/posting/receivables.js';
 import { backfillPosting, postingGaps } from '../../lib/books/posting/gaps.js';
 import { cents, ymd } from '../../lib/books/posting/common.js';
 import { accountByKey } from '../../lib/books/ledger.js';
@@ -206,25 +206,32 @@ booksReceivablesRouter.get('/worklist', async (_req, res, next) => {
 });
 
 /**
- * Days to collect, month by month (finance walk 7's DSO trend): for the
- * statements paid in each month, the average days from finalized to paid,
- * with how many and how much were collected.
+ * Collection speed (finance walk 7) — "Average days to pay" in the metric
+ * dictionary (@alto-people/shared METRICS.averageDaysToPay, deep audit
+ * MONEY-8): how long the statements paid in a window took, finalized to
+ * paid. Not "Days to collect", which is DSO and the executive pages' measure
+ * (lib/execFinance.dsoAsOf). Months are the company's calendar months.
  */
 booksReceivablesRouter.get('/dso', async (req, res, next) => {
   try {
     const q = z.object({ months: z.coerce.number().int().min(1).max(24).default(6) }).parse(req.query);
+    const tenantId = tenantIdForWrite();
     const now = new Date();
-    const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (q.months - 1), 1));
+    const today = orgDateKey(now);
+    const y = Number(today.slice(0, 4));
+    const m = Number(today.slice(5, 7));
+    // A day of slack on each side: months are keyed by the company day below.
+    const first = new Date(Date.UTC(y, m - q.months, 1) - 86_400_000);
     const paid = await prisma.clientStatement.findMany({
-      where: { tenantId: tenantIdForWrite(), status: 'FINAL', paidAt: { gte: first }, finalizedAt: { not: null } },
+      where: { tenantId, status: 'FINAL', paidAt: { gte: first }, finalizedAt: { not: null } },
       select: { paidAt: true, finalizedAt: true, snapshot: true },
       take: 10_000,
     });
     const months: Array<{ key: string; label: string; days: number | null; statements: number; collected: number }> = [];
     for (let i = 0; i < q.months; i++) {
-      const d = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + i, 1));
+      const d = new Date(Date.UTC(y, m - q.months + i, 1));
       const key = d.toISOString().slice(0, 7);
-      const mine = paid.filter((s) => s.paidAt!.toISOString().slice(0, 7) === key);
+      const mine = paid.filter((s) => orgDateKey(s.paidAt!).slice(0, 7) === key);
       const lags = mine.map((s) => (s.paidAt!.getTime() - s.finalizedAt!.getTime()) / 86_400_000);
       months.push({
         key,
@@ -234,29 +241,49 @@ booksReceivablesRouter.get('/dso', async (req, res, next) => {
         collected: Math.round(mine.reduce((a, s) => a + Number((s.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount ?? 0), 0) * 100) / 100,
       });
     }
-    // The two numbers Receivables leads with: days to collect over the
-    // last 90 days (statements paid in that window, finalized → paid), and
-    // the cash clients paid this calendar month (payments not undone).
+    // The figures Receivables leads with: average days to pay over the last
+    // 90 days (statements paid in that window, finalized → paid), and the
+    // cash clients paid this company month (payments not undone) — with any
+    // statements marked paid this month that no payment stands behind, so
+    // "nothing collected" never sits beside "6 statements paid".
     const since90 = new Date(now.getTime() - 90 * 86_400_000);
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const [paid90, received] = await Promise.all([
+    const monthStart = new Date(`${today.slice(0, 7)}-01T00:00:00.000Z`);
+    const [paid90, received, markedPaid] = await Promise.all([
       prisma.clientStatement.findMany({
-        where: { tenantId: tenantIdForWrite(), status: 'FINAL', paidAt: { gte: since90, lte: now }, finalizedAt: { not: null } },
+        where: { tenantId, status: 'FINAL', paidAt: { gte: since90, lte: now }, finalizedAt: { not: null } },
         select: { paidAt: true, finalizedAt: true },
         take: 10_000,
       }),
       prisma.clientPayment.aggregate({
-        where: { tenantId: tenantIdForWrite(), voidedAt: null, receivedOn: { gte: monthStart, lte: now } },
+        where: { tenantId, voidedAt: null, receivedOn: { gte: monthStart, lte: new Date(`${today}T00:00:00.000Z`) } },
         _sum: { amount: true },
         _count: { _all: true },
       }),
+      paidWithoutPayment(prisma, { paidAt: { gte: new Date(monthStart.getTime() - 86_400_000) } }),
     ]);
     const lags90 = paid90.map((s) => (s.paidAt!.getTime() - s.finalizedAt!.getTime()) / 86_400_000);
+    const markedThisMonth = markedPaid.filter((b) => b.paidAt && orgDateKey(new Date(b.paidAt)).slice(0, 7) === today.slice(0, 7));
     res.json({
       months,
       last90: { days: lags90.length ? Math.round(lags90.reduce((a, b) => a + b, 0) / lags90.length) : null, statements: lags90.length },
       collectedThisMonth: { amount: Math.round(Number(received._sum.amount ?? 0) * 100) / 100, payments: received._count._all },
+      markedPaidThisMonth: { statements: markedThisMonth.length, amount: dollars(markedThisMonth.reduce((n, b) => n + b.total, 0)) },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Record the payment behind every statement marked paid without one (audit
+ * 2026-10-29 MONEY-3): the books then stop counting them as owed. The same
+ * step Post history runs; this is the Books home's one-press fix.
+ */
+booksReceivablesRouter.post('/settle-marked-paid', MANAGE, async (req, res, next) => {
+  try {
+    const result = await settleMarkedPaidStatements(prisma, { userId: req.user!.id });
+    enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'books.marked_paid_settled', entityType: 'Tenant', entityId: tenantIdForWrite(), metadata: { payments: result.payments, amount: dollars(result.amount), failed: result.failed.length } }, 'books.receivables');
+    res.json({ payments: result.payments, amount: dollars(result.amount), failed: result.failed });
   } catch (err) {
     next(err);
   }
@@ -299,7 +326,7 @@ booksReceivablesRouter.get('/clients/:clientId', async (req, res, next) => {
 booksReceivablesRouter.post('/backfill', MANAGE, async (req, res, next) => {
   try {
     const q = z.object({ since: Ymd.optional() }).parse(req.body ?? {});
-    const result = await backfillPosting(prisma, q.since ? { since: new Date(`${q.since}T00:00:00.000Z`) } : {});
+    const result = await backfillPosting(prisma, { ...(q.since ? { since: new Date(`${q.since}T00:00:00.000Z`) } : {}), userId: req.user!.id });
     enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'books.posting_backfilled', entityType: 'Tenant', entityId: tenantIdForWrite(), metadata: { ...result, failed: result.failed.length } }, 'books.receivables');
     res.json(result);
   } catch (err) {

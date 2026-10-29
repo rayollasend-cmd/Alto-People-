@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * THE H-2B RULE.
@@ -17,7 +18,8 @@ import { orgDateKey } from './timeAnomalies.js';
 type Db = Pick<PrismaClient, 'program'>;
 
 const DAY_MS = 86_400_000;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** programStart / programEnd are DATE columns: their own day (the grace end is calendar math on one). */
+const ymd = (d: Date) => dateColumnKey(d);
 
 export interface ClientRestriction {
   programId: string;

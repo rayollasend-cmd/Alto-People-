@@ -9,6 +9,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { recordComplianceEvent } from '../lib/audit.js';
@@ -20,6 +21,8 @@ import {
 } from '../lib/everifyReadiness.js';
 import { primaryClientsForAssociates } from '../lib/associateClients.js';
 import { scopeAssociates } from '../lib/scope.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { hireDatesFor } from '../lib/hireDate.js';
 
 /**
  * E-Verify directorate — a staging surface for the federal E-Verify portal.
@@ -62,9 +65,8 @@ const IDENTITY_DOC_KINDS: readonly string[] = IDENTITY_DOCUMENT_KINDS;
  */
 const EVERIFY_PACKET_KIND = 'I9_VERIFICATION_RESULT' as const;
 
-function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+/** A date column's YYYY-MM-DD (hire, birth and expiry dates; dueBy is business days after a hire date). */
+const ymd = dateColumnKey;
 
 /**
  * Everyone onboarded or currently onboarding.
@@ -95,6 +97,8 @@ everifyRouter.get('/', async (req, res, next) => {
         dob: true,
         hireDate: true,
         ssnLast4: true,
+        photoS3Key: true,
+        photoUpdatedAt: true,
         i9Verification: {
           select: {
             section1CompletedAt: true,
@@ -115,6 +119,9 @@ everifyRouter.get('/', async (req, res, next) => {
     const now = new Date();
     // Current client per associate, for the roster's client filter.
     const placement = await primaryClientsForAssociates(page.map((a) => a.id));
+    // The one hire date (lib/hireDate, PEOPLE-10): the employment record's, the same
+    // date the person's record shows — it also sets E-Verify's three-day deadline.
+    const hired = await hireDatesFor(prisma, page.map((a) => a.id));
 
     const out = page.map((a) => {
       const i9 = a.i9Verification;
@@ -128,15 +135,16 @@ everifyRouter.get('/', async (req, res, next) => {
         // reports an unreadable blob when the case is actually opened.
         hasReadableSsn: !!a.w4Submission?.ssnEncrypted,
         dob: a.dob,
-        hireDate: a.hireDate,
+        hireDate: hired.get(a.id) ? new Date(`${hired.get(a.id)!.date}T00:00:00.000Z`) : a.hireDate,
       });
       return {
         associateId: a.id,
         associateName: `${a.firstName} ${a.lastName}`,
         associateEmail: a.email,
+        associatePhotoUrl: profilePhotoUrlFor(a),
         clientId: placement.get(a.id)?.clientId ?? null,
         clientName: placement.get(a.id)?.clientName ?? null,
-        hireDate: a.hireDate ? ymd(a.hireDate) : null,
+        hireDate: hired.get(a.id)?.date ?? (a.hireDate ? ymd(a.hireDate) : null),
         ssnLast4: a.ssnLast4,
         caseNumber: i9?.eVerifyCaseNumber ?? null,
         status: i9?.eVerifyStatus ?? null,
@@ -162,7 +170,9 @@ everifyRouter.get('/', async (req, res, next) => {
       ).length,
       notRun: out.filter((r) => r.status === null).length,
       overdue: out.filter((r) => r.overdue).length,
-      blocked: out.filter((r) => !r.ready).length,
+      // "Can't submit yet": no case opened and something still missing. A person with a
+      // case isn't blocked, whatever the readiness check says about re-submitting.
+      blocked: out.filter((r) => !r.ready && r.caseNumber === null && r.status === null).length,
     };
 
     res.json(EVerifyRosterResponseSchema.parse({ rows: out, counts, truncated }));

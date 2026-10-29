@@ -1,4 +1,4 @@
-import { ATTENDANCE_OVERTIME_THRESHOLD_HOURS } from '@alto-people/shared';
+import { ATTENDANCE_OVERTIME_THRESHOLD_HOURS, OVERTIME_RISK_HOURS, isOvertimeRisk } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { EMPLOYED_WHERE } from './activeDefinition.js';
@@ -7,6 +7,7 @@ import { teamScope } from './delegations.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
 import { tenantIdForWrite } from './tenant.js';
 import { companyWorkweek, dateKeyInZone, endOfWeekUTC, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 
 /**
  * A line manager's team in numbers (F500 2026-10-22: My team showed only
@@ -21,7 +22,8 @@ import { companyWorkweek, dateKeyInZone, endOfWeekUTC, startOfWeekUTC, utcInstan
  *   - Late or no-show, 7 days: unexcused LATE and NO_CALL_NO_SHOW attendance
  *     events on the last seven company days, today included.
  *   - Overtime risk: reports whose worked hours plus what is still scheduled
- *     this week pass 40 (Team hours' `projectedHours`).
+ *     this week reach OVERTIME_RISK_HOURS (36, the shared definition —
+ *     Time & attendance counts the same rule over everyone it reaches).
  *
  * The team is the caller's reports plus any team they cover (teamScope),
  * employed only — the same people /team/dashboard and /team/reports list.
@@ -48,6 +50,8 @@ export interface TeamNumbers {
   lateOrNoShow7d: number;
   lateOrNoShowPeople7d: number;
   overtimeRisk: number;
+  /** The hours at which a week reads as overtime risk (OVERTIME_RISK_HOURS). */
+  overtimeRiskHours: number;
   overtimeThresholdHours: number;
   people: Map<string, TeamPersonNumbers>;
 }
@@ -63,14 +67,23 @@ function shiftHours(s: { startsAt: Date; endsAt: Date; state: string | null | un
   return hours;
 }
 
+/**
+ * The company's calendar day around `now` — its key and its [start, end)
+ * instants. Every "today" on the manager's pages (My team, the manager's
+ * Home) cuts here, never on the UTC day.
+ */
+export function companyDay(now: Date): { todayKey: string; dayStart: Date; dayEnd: Date } {
+  const tz = companyWorkweek().timezone;
+  const todayKey = dateKeyInZone(now, tz);
+  const tomorrowKey = addDaysToKey(todayKey, 1);
+  return { todayKey, dayStart: utcInstantOfLocalMidnight(todayKey, tz), dayEnd: utcInstantOfLocalMidnight(tomorrowKey, tz) };
+}
+
 export async function teamNumbers(user: SessionUser, now = new Date()): Promise<TeamNumbers> {
   const tz = companyWorkweek().timezone;
   const weekStart = startOfWeekUTC(now);
   const weekEnd = endOfWeekUTC(now);
-  const todayKey = dateKeyInZone(now, tz);
-  const dayStart = utcInstantOfLocalMidnight(todayKey, tz);
-  const tomorrowKey = new Date(Date.parse(`${todayKey}T12:00:00Z`) + DAY_MS).toISOString().slice(0, 10);
-  const dayEnd = utcInstantOfLocalMidnight(tomorrowKey, tz);
+  const { dayStart, dayEnd } = companyDay(now);
   const sevenDaysKey = dateKeyInZone(new Date(now.getTime() - 6 * DAY_MS), tz);
 
   const empty: TeamNumbers = {
@@ -83,6 +96,7 @@ export async function teamNumbers(user: SessionUser, now = new Date()): Promise<
     lateOrNoShow7d: 0,
     lateOrNoShowPeople7d: 0,
     overtimeRisk: 0,
+    overtimeRiskHours: OVERTIME_RISK_HOURS,
     overtimeThresholdHours: ATTENDANCE_OVERTIME_THRESHOLD_HOURS,
     people: new Map(),
   };
@@ -149,7 +163,7 @@ export async function teamNumbers(user: SessionUser, now = new Date()): Promise<
     hoursScheduled: round1(scheduled),
     lateOrNoShow7d: events.length,
     lateOrNoShowPeople7d: rows.filter((r) => r.lateOrNoShow7d > 0).length,
-    overtimeRisk: rows.filter((r) => r.projectedHours > ATTENDANCE_OVERTIME_THRESHOLD_HOURS).length,
+    overtimeRisk: rows.filter((r) => isOvertimeRisk(r.projectedHours)).length,
     people,
   };
 }

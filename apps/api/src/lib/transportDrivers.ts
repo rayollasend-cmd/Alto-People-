@@ -1,8 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
-import { dateKeyInZone } from './timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone } from './timeAnomalies.js';
 import { tenantIdForWrite } from './tenant.js';
 import { actsAsAny } from './roleScope.js';
 import { fmtDay } from './humanDates.js';
@@ -127,6 +126,8 @@ export interface CredentialStatus {
 }
 
 const DAY_MS = 86_400_000;
+/** A date-only column's day (licence, DOT card, training: @db.Date, read at UTC midnight). */
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: only @db.Date columns come through here
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 export function driverCredentialStatus(
@@ -142,7 +143,8 @@ export function driverCredentialStatus(
   const problems: CredentialStatus['problems'] = [];
   const dueSoon: CredentialStatus['dueSoon'] = [];
   const soon = new Date(now.getTime() + 30 * DAY_MS);
-  const today = ymd(now);
+  // The company's day (CODE-14): at 9 PM Pacific the UTC date already called today's licence expired.
+  const today = dateKeyInZone(now, companyWorkweek().timezone);
   const judge = (key: CredentialKey, label: string, at: Date | null) => {
     if (!at) {
       problems.push({ key, label, expiresAt: null, expired: false });
@@ -228,7 +230,7 @@ export async function hosSettings(db: Db = prisma): Promise<HosSettings & { preT
 }
 
 /** The UTC bounds of a service day in the fleet's zone. */
-export function dayBounds(date: string, tz = DEFAULT_TIMEZONE): { from: Date; to: Date } {
+export function dayBounds(date: string, tz = companyWorkweek().timezone): { from: Date; to: Date } {
   // Walk from noon UTC of that date to the zone's midnight boundaries.
   const noon = new Date(`${date}T12:00:00Z`);
   let from = new Date(noon.getTime() - 24 * 3_600_000);
@@ -274,7 +276,7 @@ export async function driverUsersByAssociate(db: Db = prisma): Promise<Map<strin
  * active is fair game, as before).
  */
 export async function driversOnShiftAt(at: Date, db: Db = prisma): Promise<Set<string> | null> {
-  const date = dateKeyInZone(at, DEFAULT_TIMEZONE);
+  const date = dateKeyInZone(at, companyWorkweek().timezone);
   const { from, to } = dayBounds(date);
   const shifts = await driverShiftsBetween(from, to, db);
   if (shifts.length === 0) return null;
@@ -341,7 +343,7 @@ export function runBusyWindow(run: { departAt: Date; startedAt?: Date | null; en
   return { from: run.departAt.getTime() - 15 * 60_000, to: (run.endedAt ?? new Date(start.getTime() + RUN_SPAN_MS)).getTime() };
 }
 
-const fmtClock = (d: Date) => new Intl.DateTimeFormat('en-US', { timeZone: DEFAULT_TIMEZONE, hour: 'numeric', minute: '2-digit' }).format(d);
+const fmtClock = (d: Date) => new Intl.DateTimeFormat('en-US', { timeZone: companyWorkweek().timezone, hour: 'numeric', minute: '2-digit' }).format(d);
 
 /**
  * Transport walk 1: a van and a driver take one run at a time. Any PLANNED
@@ -410,7 +412,7 @@ export async function assertDriverFit(driverUserId: string, departAt: Date, opts
     throw new HttpError(409, 'driver_not_on_shift', `${name} isn't on a driver shift when this run leaves. Schedule them, or pick a driver who is.`);
   }
   const settings = await hosSettings(db);
-  const date = dateKeyInZone(departAt, DEFAULT_TIMEZONE);
+  const date = dateKeyInZone(departAt, companyWorkweek().timezone);
   const planned = await plannedHoursOn(driverUserId, date, db);
   // Shifts bound the day when they exist; otherwise the runs do.
   const already = planned.shiftHours > 0 ? planned.shiftHours : planned.runHours + (opts.excludeRunId ? 0 : hours(RUN_SPAN_MS));
@@ -456,7 +458,7 @@ export async function assertShiftWithinHos(
     );
   }
   // The day's total across shifts.
-  const date = dateKeyInZone(startsAt, DEFAULT_TIMEZONE);
+  const date = dateKeyInZone(startsAt, companyWorkweek().timezone);
   const { from, to } = dayBounds(date);
   const sameDay = await db.shift.findMany({
     where: {

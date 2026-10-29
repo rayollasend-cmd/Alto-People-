@@ -124,12 +124,18 @@ export async function makeDueRecurringBills(db: PrismaClient, now: Date = new Da
     let next = ymd(r.nextDate);
     for (let guard = 0; guard < 60 && next <= today; guard++) {
       if (r.endDate && next > ymd(r.endDate)) break;
-      // One bill per template per date: a second run finds it and moves on.
+      // One bill per template per date: a second run finds it and moves on. Two runs at once both pass
+      // the check; the unique (recurringId, billDate) key turns the second insert away (deep audit CODE-23).
       const exists = await db.bill.findFirst({ where: { recurringId: r.id, billDate: dateOnly(next) }, select: { id: true } });
       if (!exists && t.lines.length > 0) {
-        const bill = await createBill(db, { vendorId: r.vendorId, billDate: next, memo: r.memo ?? r.name, billNumber: null, lines: t.lines }, r.createdById, { recurringId: r.id });
-        if (t.autoSubmit) await submitBill(db, bill, r.createdById);
-        made += 1;
+        const bill = await createBill(db, { vendorId: r.vendorId, billDate: next, memo: r.memo ?? r.name, billNumber: null, lines: t.lines }, r.createdById, { recurringId: r.id }).catch((err: unknown) => {
+          if ((err as { code?: string }).code === 'P2002') return null; // the other run made it
+          throw err;
+        });
+        if (bill) {
+          if (t.autoSubmit) await submitBill(db, bill, r.createdById);
+          made += 1;
+        }
       }
       next = nextOccurrence(next, r.frequency);
     }

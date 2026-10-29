@@ -515,7 +515,6 @@ export const enOb = {
   'ob.j1.kindVisa': 'J-1 visa',
   // Onboarding — policy acknowledgments task
   'ob.policy.title': 'Policy acknowledgments',
-  'ob.policy.intro': "All Alto HR policies you need to acknowledge are below in one continuous read. Scroll through each one — you can acknowledge a policy as you pass it, or acknowledge everything at the end once you've read it all. Your acknowledgments are stored as part of your permanent employment record.",
   'ob.policy.loadFailed': 'Failed to load.',
   'ob.policy.ackFailed': 'Acknowledgement failed.',
   'ob.policy.progress': '{done} of {total} acknowledged',
@@ -574,6 +573,16 @@ export const enOb = {
   'ob.check.task.policies': 'Policy acknowledgments',
   'ob.check.task.j1': 'J-1 documents',
   'ob.check.task.i9': 'I-9 verification',
+  'ob.policy.intro': 'All {org} policies you need to acknowledge are below in one continuous read. Scroll through each one — you can acknowledge a policy as you pass it, or acknowledge everything at the end once you\'ve read it all. Your acknowledgments are stored as part of your permanent employment record.',
+  'ob.check.approvedWorkingTitle': 'Onboarding complete',
+  'ob.check.approvedWorkingBody': 'You\'re all set and already on the schedule. Your shifts, pay and documents are on Home.',
+  'ob.check.goHome': 'Go to Home',
+  'ob.home.title': 'Onboarding',
+  'ob.home.loadFailed': 'Couldn\'t load onboarding',
+  'ob.home.loadFailedDetail': 'Failed to load your onboarding.',
+  'ob.home.none': 'No active onboarding',
+  'ob.home.noneDetail': 'Once HR creates an application for you, it\'ll show up here with a checklist of what to complete.',
+  'ob.check.allCompleteWorking': 'All tasks complete.',
 } as const;
 
 registerEnglish(enOb);

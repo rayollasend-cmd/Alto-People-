@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import type { ExecClients, ExecCompareKey, ExecFinancials, ExecKpi, ExecOverview, ExecPeople, ExecPeriodKey, ExecRisks, ExecStatus } from '@alto-people/shared';
+import { METRICS, type ExecClients, type ExecCompareKey, type ExecFinancials, type ExecKpi, type ExecOverview, type ExecPeople, type ExecPeriodKey, type ExecRisks, type ExecStatus } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { CHART, ReportPdf, axisMoney } from './reportPdf.js';
 import { COLOR, SIZE } from './docKit/index.js';
@@ -387,10 +387,11 @@ export async function renderBoardPack(data: BoardPackData): Promise<Buffer> {
     pdf.table(
       [
         { label: 'Client', width: 150 },
-        { label: 'Billed', width: 66, align: 'right' },
+        // Est. at the standard rates (the scorecard's Revenue); statements are the invoice-grade figure.
+        { label: 'Est. revenue', width: 66, align: 'right' },
         { label: 'Margin', width: 52, align: 'right' },
         { label: 'Share', width: 48, align: 'right' },
-        { label: 'Active', width: 46, align: 'right' },
+        { label: METRICS.working.label, width: 46, align: 'right' },
         { label: 'Fill', width: 46, align: 'right' },
         { label: 'Health', align: 'left' },
       ],
@@ -410,7 +411,7 @@ export async function renderBoardPack(data: BoardPackData): Promise<Buffer> {
         [
           { label: 'Store', width: 150 },
           { label: 'Client', width: 120 },
-          { label: 'Billed', width: 66, align: 'right' },
+          { label: 'Est. revenue', width: 66, align: 'right' },
           { label: 'Margin', width: 60, align: 'right' },
           { label: 'Hours', width: 56, align: 'right' },
           { label: 'Overtime', align: 'right' },
@@ -443,10 +444,10 @@ export async function renderBoardPack(data: BoardPackData): Promise<Buffer> {
     const turn = o.scorecard.find((x) => x.id === 'turnover');
     const ot = o.scorecard.find((x) => x.id === 'overtimePct');
     const counts = people?.counts;
-    pdf.sectionTitle('Workforce', 'People', `${frame}. Headcount uses the one definition of active: placed at a site and worked recently or scheduled ahead.`);
+    pdf.sectionTitle('Workforce', 'People', `${frame}. ${METRICS.working.label}: ${METRICS.working.definition.replace(/^./, (c) => c.toLowerCase())}`);
     const periodHires = people?.kpis.find((x) => x.id === 'hires');
     pdf.tiles([
-      { label: 'Active', value: valueWords(wf?.value ?? counts?.active ?? null, 'count'), sub: wf?.sub ?? null, change: wf && o.comparison.available && deltaWords(wf) ? { text: deltaWords(wf)!, color: TONE_COLOR[toneOf(wf)] } : null },
+      { label: METRICS.working.label, value: valueWords(wf?.value ?? counts?.active ?? null, 'count'), sub: wf?.sub ?? null, change: wf && o.comparison.available && deltaWords(wf) ? { text: deltaWords(wf)!, color: TONE_COLOR[toneOf(wf)] } : null },
       { label: 'Onboarding', value: counts ? counts.onboarding.toLocaleString('en-US') : '—', sub: 'In flight' },
       { label: 'Hires', value: periodHires?.value !== null && periodHires?.value !== undefined ? Math.round(periodHires.value).toLocaleString('en-US') : '—', sub: 'In the period' },
       { label: 'Turnover', value: valueWords(turn?.value ?? null, 'pct'), sub: turn?.target !== null && turn?.target !== undefined ? `Plan ${turn.target.toFixed(1)}% a year` : 'Annualized' },
@@ -481,9 +482,12 @@ export async function renderBoardPack(data: BoardPackData): Promise<Buffer> {
     pdf.subheading('Turnover and overtime', undefined, L, colW);
     const tLines: Array<[string, string]> = [];
     if (turn) tLines.push(['Turnover', turn.value === null ? 'Not measurable: nobody was on the books' : `${valueWords(turn.value, 'pct')} annualized${turn.target !== null ? `, against a plan of ${turn.target.toFixed(1)}%` : ''}`]);
-    if (people) tLines.push(['Last 90 days', `${plural(people.turnover.separations90d, 'separation')}, about ${execMoney(people.turnover.estCost90d)} to replace`]);
+    if (people) {
+      const r90 = people.turnover.annualizedPct90d;
+      tLines.push(['Last 90 days', `${r90 !== null && r90 !== undefined ? `${valueWords(r90, 'pct')} annualized: ` : ''}${plural(people.turnover.separations90d, 'separation')}, about ${execMoney(people.turnover.estCost90d)} to replace`]);
+    }
     if (ot) tLines.push(['Overtime', ot.value === null ? 'No paid hours in the period' : `${valueWords(ot.value, 'pct')} of paid hours (${ot.sub ?? ''})`.replace(' ()', '')]);
-    if (counts) tLines.push(['On the books', `${counts.onTheBooks.toLocaleString('en-US')}: ${counts.active} active, ${counts.placedNotActive} placed without recent shifts, ${counts.notPlaced} not placed, ${counts.deactivated} paused`]);
+    if (counts) tLines.push(['On the books', `${counts.onTheBooks.toLocaleString('en-US')}: ${counts.active} working, ${counts.placedNotActive} placed without recent shifts, ${counts.notPlaced} not placed, ${counts.deactivated} paused`]);
     let yy = pdf.y;
     for (const [a, b] of tLines) {
       pdf.textAt(a, L, yy, { size: SIZE.small, color: COLOR.ink3, width: 78 });
@@ -597,7 +601,7 @@ export async function renderBoardPack(data: BoardPackData): Promise<Buffer> {
         { label: 'Margin', width: 66, align: 'right' },
         { label: 'Margin %', width: 58, align: 'right' },
         { label: 'Fill', width: 54, align: 'right' },
-        { label: 'Active', align: 'right' },
+        { label: METRICS.working.label, align: 'right' },
       ],
       weeks.map((w, i) => {
         const fv = fill?.trend[off + i]?.value ?? null;

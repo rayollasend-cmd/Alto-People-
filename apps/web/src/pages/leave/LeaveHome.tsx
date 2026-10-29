@@ -5,7 +5,7 @@ import { ArrowLeft, Check, Download, FileText, Settings2, Stethoscope, Upload, X
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   cancelLeave,
@@ -512,7 +512,7 @@ function Timeline({ c }: { c: LeaveCase }) {
 }
 
 function UsageCard({ c, onChanged }: { c: LeaveCase; onChanged: () => void }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => ymdLocal());
   const [hours, setHours] = useState('8');
   const [note, setNote] = useState('');
   const m = useMutation({
@@ -726,7 +726,7 @@ function DecideDialog({ c, onClose, onDone }: { c: LeaveCase; onClose: () => voi
 }
 
 function ReturnDialog({ c, onClose, onDone }: { c: LeaveCase; onClose: () => void; onDone: () => void }) {
-  const [date, setDate] = useState(c.expectedReturnDate ?? new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => c.expectedReturnDate ?? ymdLocal());
   const [override, setOverride] = useState('');
   const missing = c.fitnessForDutyRequired && !c.fitnessForDutyReceivedAt;
   const m = useMutation({
@@ -771,7 +771,7 @@ function OpenCaseDialog({ onClose, onOpened }: { onClose: () => void; onOpened: 
   const [reason, setReason] = useState<LeaveReason>('OWN_HEALTH');
   const [program, setProgram] = useState('');
   const [schedule, setSchedule] = useState<LeaveSchedule>('CONTINUOUS');
-  const [start, setStart] = useState(new Date().toISOString().slice(0, 10));
+  const [start, setStart] = useState(() => ymdLocal());
   const [end, setEnd] = useState('');
   const [pattern, setPattern] = useState('');
   const [hours, setHours] = useState('');

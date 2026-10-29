@@ -29,6 +29,25 @@ async function catchUpPosting(db: PrismaClient, now: Date): Promise<void> {
  * is isolated: one failing never stops the others.
  */
 export async function runBooksJobs(db: PrismaClient, now: Date = new Date()): Promise<void> {
+  // One sweep per tenant at a time (deep audit CODE-23): a slow QuickBooks pull must not let the
+  // next tick start a second sweep beside it — the job runner guards its own timer, this guards
+  // every other caller too.
+  const tenantId = tenantIdForWrite();
+  if (inFlight.has(tenantId)) return;
+  inFlight.add(tenantId);
+  try {
+    await runBooksParts(db, now);
+  } finally {
+    inFlight.delete(tenantId);
+  }
+}
+
+const inFlight = new Set<string>();
+
+/** Whether a tenant's books sweep is running now (tests). */
+export const booksSweepRunning = (tenantId: string): boolean => inFlight.has(tenantId);
+
+async function runBooksParts(db: PrismaClient, now: Date): Promise<void> {
   for (const [name, fn] of [
     ['posting', catchUpPosting],
     ['payables', runPayablesJobs],

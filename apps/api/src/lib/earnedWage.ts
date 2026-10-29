@@ -6,8 +6,10 @@ import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { resolveAdapter, type DisbursementInput } from './disbursement.js';
 import { notifyFinance, resolvePayoutForPayroll } from './financialChanges.js';
-import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
-import { periodContaining, scheduleMembershipFor, ymd } from './payScheduleMembership.js';
+import { netWorkedMinutes, orgDateKey, type BreakFacts } from './timeAnomalies.js';
+import { dateOnly, patternOn, periodContaining, scheduleMembershipFor } from './payScheduleMembership.js';
+import { estimateTakeHome } from './takeHome.js';
+import { punchesInPeriod } from './payrollSchedule.js';
 import { notifyUser } from './notify.js';
 import { orgSettingIdFor } from './branding.js';
 import { tenantIdForWrite } from './tenant.js';
@@ -75,6 +77,8 @@ export interface EwaAvailability {
   feeCents: number;
   /** Why nothing is available right now, when nothing is. */
   blocker: 'OFF' | 'NO_SCHEDULE' | 'NO_VERIFIED_ACCOUNT' | 'NOTHING_EARNED' | 'LIMIT_REACHED' | null;
+  /** Where an advance goes (the verified pay account), for the confirm before money moves. */
+  payoutTo: { kind: 'BANK' | 'CARD' | 'OTHER'; last4: string | null } | null;
 }
 
 const DEFAULT_NET_FACTOR = 0.78;
@@ -87,12 +91,35 @@ const DEFAULT_NET_FACTOR = 0.78;
  * fall back to the company's first schedule).
  */
 async function periodFor(db: Db, associateId: string, now: Date) {
-  const today = ymd(now);
+  // The company's day, not UTC's: after 8 PM Eastern on a period's last
+  // Friday, UTC is already in the next period (deep audit MONEY-16/CODE-14).
+  const today = orgDateKey(now);
   const m = (await scheduleMembershipFor(db, [associateId], today)).get(associateId) ?? null;
   if (!m || m.from > today) return null;
   const schedule = await db.payrollSchedule.findUnique({ where: { id: m.scheduleId }, include: { versions: true } });
   if (!schedule) return null;
-  return periodContaining(schedule, today);
+  const freq = patternOn(schedule, today).frequency;
+  // DAILY's check of record is its weekly true-up, withheld as weekly.
+  return { ...periodContaining(schedule, today), frequency: freq === 'DAILY' ? ('WEEKLY' as const) : freq };
+}
+
+/** Advances already out on a period (requested or paid), fees included, in cents. */
+async function drawnInPeriod(db: Db, associateId: string, periodStart: string): Promise<number> {
+  const drawn = await db.earnedWageAdvance.aggregate({
+    where: { associateId, status: { in: ['REQUESTED', 'PAID'] }, periodStart: dateOnly(periodStart) },
+    _sum: { amountCents: true, feeCents: true },
+  });
+  return (drawn._sum.amountCents ?? 0) + (drawn._sum.feeCents ?? 0);
+}
+
+/**
+ * What is left to draw: the cap (a share of estimated net) or the
+ * per-period ceiling, whichever is lower, less what is already out. The fee
+ * comes out of the same room, so the person can never owe more than the
+ * cap on payday.
+ */
+function roomLeft(capCents: number, maxPerPeriodCents: number, drawnCents: number, feeCents: number): number {
+  return Math.max(0, Math.min(capCents, maxPerPeriodCents) - drawnCents - feeCents);
 }
 
 /** What this person could draw right now, and why not if nothing. */
@@ -116,19 +143,29 @@ export async function ewaAvailability(db: Db, associateId: string, now: Date = n
     availableCents: 0,
     feeCents: settings.feeCents,
     blocker: null,
+    payoutTo: null,
   };
   if (!settings.enabled) return { ...base, blocker: 'OFF' };
   if (!period) return { ...base, blocker: 'NO_SCHEDULE' };
 
-  const from = new Date(`${period.periodStart}T00:00:00.000Z`);
-  const to = new Date(`${period.periodEnd}T00:00:00.000Z`);
-  to.setUTCDate(to.getUTCDate() + 1);
-  const [entries, comp, lastPaid, drawn, payout] = await Promise.all([
-    db.timeEntry.findMany({
-      where: { associateId, status: { in: ['APPROVED', 'COMPLETED'] }, clockOutAt: { not: null }, clockInAt: { gte: from, lt: to } },
-      select: { clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } } },
-      take: 2000,
-    }),
+  // The period's hours are cut the way the run that recovers the advance
+  // pays them: by the clock-in's day on the site's clock (lib/payrollSchedule
+  // punchesInPeriod; deep audit ASSOC-20) — an evening shift on the
+  // period's last day is this period's, even though UTC calls it tomorrow.
+  const [entries, comp, lastPaid, drawnCents, payout] = await Promise.all([
+    punchesInPeriod(period, null, (clockInAt) =>
+      db.timeEntry.findMany({
+        where: { associateId, status: { in: ['APPROVED', 'COMPLETED'] }, clockOutAt: { not: null }, clockInAt },
+        select: {
+          associateId: true,
+          clockInAt: true,
+          clockOutAt: true,
+          breaks: { select: { type: true, startedAt: true, endedAt: true } },
+          location: { select: { timezone: true } },
+        },
+        take: 2000,
+      }),
+    ),
     db.compensationRecord.findFirst({
       where: { associateId, payType: 'HOURLY', effectiveTo: null },
       orderBy: { effectiveFrom: 'desc' },
@@ -139,10 +176,7 @@ export async function ewaAvailability(db: Db, associateId: string, now: Date = n
       orderBy: { disbursedAt: 'desc' },
       select: { grossPay: true, netPay: true, reimbursementsTotal: true },
     }),
-    db.earnedWageAdvance.aggregate({
-      where: { associateId, status: { in: ['REQUESTED', 'PAID'] }, periodStart: from },
-      _sum: { amountCents: true, feeCents: true },
-    }),
+    drawnInPeriod(db, associateId, period.periodStart),
     resolvePayoutForPayroll(db, associateId),
   ]);
   let minutes = 0;
@@ -150,19 +184,33 @@ export async function ewaAvailability(db: Db, associateId: string, now: Date = n
   const hours = Math.round((minutes / 6)) / 10;
   const rate = comp ? Number(comp.amount) : env.DEFAULT_ASSOCIATE_PAY_RATE;
   const grossCents = Math.round(hours * rate * 100);
+  // Take-home on those hours from the ONE estimate the associate's Home and
+  // Pay read (lib/takeHome estimateTakeHome, as the check it will be on: the
+  // schedule's frequency, the period's days) — so "available now" is a share
+  // of the figure they see, never a third number. Before advances: what's
+  // already drawn this period comes off below. The last check's net/gross
+  // ratio stands in only when the estimate can't be made.
   let netFactor = DEFAULT_NET_FACTOR;
   if (lastPaid && Number(lastPaid.grossPay) > 0) {
     const f = (Number(lastPaid.netPay) - Number(lastPaid.reimbursementsTotal)) / Number(lastPaid.grossPay);
     netFactor = Math.min(0.95, Math.max(0.6, f));
   }
-  const netCents = Math.floor(grossCents * netFactor);
+  let netCents = Math.floor(grossCents * netFactor);
+  if (grossCents > 0) {
+    const days = Math.round((Date.parse(`${period.periodEnd}T00:00:00Z`) - Date.parse(`${period.periodStart}T00:00:00Z`)) / 86_400_000) + 1;
+    const est = await estimateTakeHome(db as PrismaClient, associateId, grossCents / 100, now, { payFrequency: period.frequency, days }).catch(() => null);
+    if (est) {
+      netCents = Math.max(0, Math.floor((est.gross - est.taxes - est.deductions) * 100));
+      netFactor = netCents / grossCents;
+    }
+  }
   const capCents = Math.floor((netCents * settings.capPct) / 100);
-  const drawnCents = (drawn._sum.amountCents ?? 0) + (drawn._sum.feeCents ?? 0);
-  const ceiling = Math.min(capCents, settings.maxPerPeriodCents);
-  // The fee comes out of the same room, so the person can never owe more
-  // than the cap on payday.
-  const availableCents = Math.max(0, ceiling - drawnCents - settings.feeCents);
+  const availableCents = roomLeft(capCents, settings.maxPerPeriodCents, drawnCents, settings.feeCents);
   let blocker: EwaAvailability['blocker'] = null;
+  const pm = payout.decision === 'verified' ? payout.method : null;
+  const payoutTo: EwaAvailability['payoutTo'] = pm
+    ? { kind: pm.type === 'BANK_ACCOUNT' ? 'BANK' : pm.type === 'BRANCH_CARD' ? 'CARD' : 'OTHER', last4: pm.type === 'BRANCH_CARD' ? (pm.branchCardId?.slice(-4) ?? null) : (pm.accountLast4 ?? null) }
+    : null;
   if (payout.decision !== 'verified') blocker = 'NO_VERIFIED_ACCOUNT';
   else if (netCents <= 0) blocker = 'NOTHING_EARNED';
   else if (availableCents < 100) blocker = 'LIMIT_REACHED';
@@ -177,6 +225,7 @@ export async function ewaAvailability(db: Db, associateId: string, now: Date = n
     drawnCents,
     availableCents: blocker ? 0 : availableCents,
     blocker,
+    payoutTo,
   };
 }
 
@@ -207,17 +256,34 @@ export async function requestEarnedWageAdvance(
   });
   const payout = await resolvePayoutForPayroll(db, input.associateId);
   const pm = payout.method!;
-  const row = await db.earnedWageAdvance.create({
-    data: {
-      associateId: input.associateId,
-      periodStart: new Date(`${avail.periodStart}T00:00:00.000Z`),
-      periodEnd: new Date(`${avail.periodEnd}T00:00:00.000Z`),
-      amountCents: input.amountCents,
-      feeCents: avail.feeCents,
-      earnedNetCents: avail.earnedNetCents,
-      availableCents: avail.availableCents,
-      status: 'REQUESTED',
-    },
+  // The rail first: if it can't be resolved (lib/disbursement fails closed),
+  // nothing is claimed and nothing is owed.
+  const adapter = await resolveAdapter();
+  // Claim, then pay (deep audit CODE-10). Two requests from two devices used
+  // to read the same `drawn`, both pass the cap and both pay out. Now one
+  // person's draws take turns: a per-person advisory lock held for the
+  // transaction, the advances already out re-read under it, the cap checked
+  // again, and only then the row. The rail is called after the row commits,
+  // once per row (its id is the payout's idempotency key).
+  const row = await db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ewa:${input.associateId}`}, 0))`;
+    const drawnNow = await drawnInPeriod(tx, input.associateId, avail.periodStart);
+    const room = roomLeft(avail.capCents, avail.maxPerPeriodCents, drawnNow, avail.feeCents);
+    if (input.amountCents > room) {
+      throw new HttpError(409, 'over_limit', room >= 100 ? `Up to $${(room / 100).toFixed(2)} is available right now.` : 'Nothing more is available this pay period.');
+    }
+    return tx.earnedWageAdvance.create({
+      data: {
+        associateId: input.associateId,
+        periodStart: dateOnly(avail.periodStart),
+        periodEnd: dateOnly(avail.periodEnd),
+        amountCents: input.amountCents,
+        feeCents: avail.feeCents,
+        earnedNetCents: avail.earnedNetCents,
+        availableCents: room,
+        status: 'REQUESTED',
+      },
+    });
   });
   enqueueAudit(
     {
@@ -248,7 +314,6 @@ export async function requestEarnedWageAdvance(
           }
         : {}),
   };
-  const adapter = await resolveAdapter();
   const result = await adapter
     .disburse({
       amount: input.amountCents / 100,

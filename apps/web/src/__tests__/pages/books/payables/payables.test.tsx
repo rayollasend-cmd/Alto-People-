@@ -153,6 +153,11 @@ describe('<BillsPage>', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Pay Shell Fleet' });
     expect(within(dialog).getByRole('checkbox', { name: /Send it over the company’s ACH/ })).toBeChecked();
     await user.click(within(dialog).getByRole('button', { name: 'Send $500.00' }));
+    // One click never moves money (deep audit MONEY-10/21): the amount, the account and the day, then send.
+    const ask = (await screen.findByText('Send $500.00 to Shell Fleet?')).closest('[role="alertdialog"],[role="dialog"]') as HTMLElement;
+    expect(within(ask).getByTestId('money-confirm-facts')).toHaveTextContent('$500.00');
+    expect(api.payBills).not.toHaveBeenCalled();
+    await user.click(within(ask).getByRole('button', { name: 'Send $500.00' }));
     await waitFor(() =>
       expect(api.payBills).toHaveBeenCalledWith(expect.objectContaining({ vendorId: SHELL, method: 'ACH', bankAccountId: CASH, sendAch: true, applications: [{ billId: late.id, amount: 300 }, { billId: second.id, amount: 200 }] })),
     );
@@ -185,6 +190,9 @@ describe('<BillsPage> — one bill run for several vendors (finance walk 8)', ()
     expect(within(run).getByText('$300.00', { selector: 'dd' })).toBeInTheDocument();
     await user.click(within(dialog).getByRole('checkbox', { name: 'Pay Coastal Van Lease' }));
     await user.click(within(dialog).getByRole('button', { name: 'Pay 2 vendors · $750.00' }));
+    const ask = (await screen.findByText('Record $750.00 paid to 2 vendors?')).closest('[role="alertdialog"],[role="dialog"]') as HTMLElement;
+    expect(api.payBillsBatch).not.toHaveBeenCalled();
+    await user.click(within(ask).getByRole('button', { name: 'Record $750.00' }));
     await waitFor(() =>
       expect(api.payBillsBatch).toHaveBeenCalledWith(
         expect.objectContaining({

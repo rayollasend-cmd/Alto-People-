@@ -180,7 +180,7 @@ function LocationSpy() {
   return null;
 }
 
-function renderRecord(profile: TenantProfile, route = `/people/${ID}`, role: 'HR_ADMINISTRATOR' | 'SHIFT_SUPERVISOR' = 'HR_ADMINISTRATOR') {
+function renderRecord(profile: TenantProfile, route = `/people/${ID}`, role: 'HR_ADMINISTRATOR' | 'SHIFT_SUPERVISOR' | 'WORKFORCE_MANAGER' | 'INTERNAL_RECRUITER' = 'HR_ADMINISTRATOR') {
   const caps = ROLE_CAPABILITIES[role];
   const tenant: TenantSession = { id: 't', ...profile };
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -343,7 +343,8 @@ describe('<PersonRecord>', () => {
     await screen.findByRole('heading', { name: 'Ana Reyes' });
     await settle();
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\(\d+\)/, '').trim());
-    expect(tabs).toEqual(['Overview', 'Profile', 'Employment', 'Time', 'Time off', 'Documents', 'Thread']);
+    // No Documents: the vault reads need manage:documents, and the tab only ever showed the refusal (PEOPLE-8).
+    expect(tabs).toEqual(['Overview', 'Profile', 'Employment', 'Time', 'Time off', 'Thread']);
     // A ?tab= the role can't open falls back to Overview rather than an empty page.
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
   });
@@ -398,6 +399,29 @@ describe('<PersonRecord> life-cycle actions (HR walk 12 and 13)', () => {
     } finally {
       FIXTURES[`/people/directory/${ID}`] = ANA;
     }
+  });
+
+  it('offers each role only what its API allows (PEOPLE-7, 8, 16)', async () => {
+    // The workforce manager (manage:org, no view:hr-admin, no manage:documents):
+    // Transfer and Deactivate yes; Separate and the Documents tab no — both
+    // used to land on "no access" / "Missing capability".
+    renderRecord(ALTO, `/people/${ID}`, 'WORKFORCE_MANAGER');
+    await screen.findByRole('heading', { name: 'Ana Reyes' });
+    await settle();
+    expect(screen.queryByRole('tab', { name: /Documents/ })).toBeNull();
+    await userEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]!);
+    expect(await screen.findByRole('menuitem', { name: 'Transfer…' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Separate…' })).toBeNull();
+    cleanup();
+
+    // The recruiter (no manage:org, no manage:communications): no Transfer
+    // button on Profile, and no WhatsApp row that could only ever be blank.
+    renderRecord(ALTO, `/people/${ID}?tab=profile`, 'INTERNAL_RECRUITER');
+    await screen.findByRole('heading', { name: 'Ana Reyes' });
+    await settle();
+    const panel = screen.getByRole('tabpanel');
+    expect(within(panel).queryByRole('button', { name: /^(Transfer|Assign to location)$/ })).toBeNull();
+    expect(within(panel).queryByText('WhatsApp')).toBeNull();
   });
 
   it('HR opens a case for them from the Cases tab, with the person already picked', async () => {

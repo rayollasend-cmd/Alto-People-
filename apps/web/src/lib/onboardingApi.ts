@@ -1,4 +1,5 @@
 import type {
+  ClientOptionsResponse,
   ApplicationCreateInput,
   ApplicationDetail,
   ApplicationListResponse,
@@ -295,6 +296,16 @@ export function compliancePacketUrl(applicationId: string): string {
 
 export function listClients(): Promise<ClientListResponse> {
   return apiFetch<ClientListResponse>('/clients');
+}
+
+/**
+ * The client picker for invites, applications, bulk invites and offers:
+ * GET /clients/options (id + name + status, the caller's own clients),
+ * readable by anyone who may invite or onboard — the workforce manager and
+ * the shift supervisor hold no view:clients, so /clients 403'd them.
+ */
+export function listClientOptions(): Promise<ClientOptionsResponse> {
+  return apiFetch<ClientOptionsResponse>('/clients/options');
 }
 
 /* ---------------------- Phase 19 / Phase 36 — e-sign --------------------- */

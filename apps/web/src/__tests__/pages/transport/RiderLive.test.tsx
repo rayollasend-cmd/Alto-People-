@@ -547,6 +547,34 @@ describe('what they owe, and the ledger', () => {
     expect(await screen.findByTestId('ride-view-charges')).toBeInTheDocument();
   });
 
+  // Payroll never takes a fare below the minimum wage (API lib/ridePayrollOutlook): a rider paid at the
+  // minimum (Maria, $15/h in Florida) is never promised a payday the paycheck won't keep.
+  const MIN_WAGE = { takeCents: 0, keptCents: 4000, reason: 'MINIMUM_WAGE' as const, minimumWageCents: 1500, state: 'FL' };
+
+  it('paid at the minimum wage: the card and Home say it stays owed, never "comes out on" a payday', async () => {
+    const charges = { pendingCents: 4000, rides: 8, noShows: 0, nextPayday: PAYDAY, payroll: MIN_WAGE };
+    routes((path) => (path === '/transport/me' ? me({ charges }) : undefined));
+    renderAs(<RideHome />, '/rides');
+    const card = await screen.findByTestId('owed-card');
+    expect(card).toHaveTextContent(/\$40\.00\s*stays owed — it can't come out of pay at the minimum wage/);
+    expect(card).not.toHaveTextContent(/comes out of your pay/);
+    expect(fareWords((k, v) => `${k} ${JSON.stringify(v)}`, 500, PAYDAY, '2026-10-27', MIN_WAGE)).toMatch(/^ride\.fare\.wordsMinimumWage/);
+  });
+
+  it('paid at the minimum wage: the Home line says it can’t come out of pay', async () => {
+    serveTrip('onWay', {}, { charges: { pendingCents: 4000, rides: 8, noShows: 0, nextPayday: PAYDAY, payroll: MIN_WAGE } });
+    renderAs(<RideStrip />);
+    expect(await screen.findByTestId('home-owed')).toHaveTextContent(/^You owe \$40\.00 for rides · it can't come out of pay at the minimum wage$/);
+  });
+
+  it('a check too small above the minimum: what comes out on the payday, and what stays owed', async () => {
+    const payroll = { takeCents: 1000, keptCents: 3000, reason: 'CHECK_TOO_SMALL' as const, minimumWageCents: 1500, state: 'FL' };
+    routes((path) => (path === '/transport/me' ? me({ charges: { pendingCents: 4000, rides: 8, noShows: 0, nextPayday: PAYDAY, payroll } }) : undefined));
+    renderAs(<RideHome />, '/rides');
+    const card = await screen.findByTestId('owed-card');
+    expect(card).toHaveTextContent(/\$10\.00 on \w{3}, Nov 13 · \$30\.00 doesn't fit in that check and stays owed/);
+  });
+
   const ledgerRides = (): Ride[] => [
     ride({ id: 'p1', status: 'COMPLETED', serviceDate: '2026-10-27', targetAt: '2026-10-27T12:00:00.000Z', owedCents: 500 }),
     ride({ id: 'n1', status: 'NO_SHOW', serviceDate: '2026-10-26', targetAt: '2026-10-26T12:00:00.000Z', owedCents: 100 }),
@@ -574,7 +602,9 @@ describe('what they owe, and the ledger', () => {
     renderAs(<RideHome />, '/rides?view=charges');
     const current = await screen.findByTestId('ledger-current');
     expect(within(current).getByTestId('ledger-running')).toHaveTextContent('$6.00');
-    expect(within(current).getByText(/Comes out of your pay on \w{3}, Nov 13/, { selector: 'p' })).toBeInTheDocument();
+    // Headed by its payday, never "This pay period" — Home's "this pay period" is the one running now (ASSOC-17).
+    expect(within(current).getByRole('heading', { name: /Comes out \w{3}, Nov 13/ })).toBeInTheDocument();
+    expect(within(current).queryByText(/This pay period/)).not.toBeInTheDocument();
     expect(within(current).getByText(/Waived — The van was early/)).toBeInTheDocument();
     expect(within(current).getByText(/The van didn’t run — nothing charged/)).toBeInTheDocument();
     const rows = within(current).getAllByTestId('ledger-row');

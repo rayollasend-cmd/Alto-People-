@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { HttpError } from '../../middleware/error.js';
 import { enqueueAudit } from '../audit.js';
 import { ALTO_TENANT_ID } from '../tenant.js';
+import { orgDateKey } from '../timeAnomalies.js';
+import { dateColumnKey } from '../timezone.js';
 import { RuleParamsSchema } from './params.js';
 
 /**
@@ -70,7 +72,7 @@ export async function createOverride(db: Db, tenantId: string, input: OverrideIn
       version: (last?.version ?? 0) + 1,
       params: input.params as Prisma.InputJsonObject,
       source: input.source,
-      sourceDate: D(new Date().toISOString().slice(0, 10)),
+      sourceDate: D(orgDateKey(new Date())),
       status: 'DRAFT',
     },
   });
@@ -90,7 +92,7 @@ export async function updateDraft(db: Db, tenantId: string, id: string, input: z
       ...(input.effectiveFrom ? { effectiveFrom: D(input.effectiveFrom) } : {}),
     },
   });
-  audit(actorUserId, tenantId, 'labor_rules.override_updated', id, { before: row.params as Prisma.InputJsonObject, after: updated.params as Prisma.InputJsonObject, effectiveFrom: updated.effectiveFrom.toISOString().slice(0, 10) });
+  audit(actorUserId, tenantId, 'labor_rules.override_updated', id, { before: row.params as Prisma.InputJsonObject, after: updated.params as Prisma.InputJsonObject, effectiveFrom: dateColumnKey(updated.effectiveFrom) });
   return updated;
 }
 
@@ -105,7 +107,7 @@ export async function activateSet(db: Db, tenantId: string, id: string, note: st
       await tx.laborRuleSet.updateMany({ where: { id: { not: id }, tenantId: row.tenantId, jurisdiction: row.jurisdiction, siteId: row.siteId, effectiveFrom: row.effectiveFrom, status: 'ACTIVE' }, data: { status: 'RETIRED' } });
       return tx.laborRuleSet.update({ where: { id }, data: { status: 'ACTIVE', approvedAt: now, approvedByUserId: actorUserId, approvalNote: note } });
     });
-    audit(actorUserId, tenantId, row.tenantId === null ? 'labor_rules.pack_signed' : 'labor_rules.override_signed', id, { jurisdiction: row.jurisdiction, effectiveFrom: row.effectiveFrom.toISOString().slice(0, 10), version: row.version, note });
+    audit(actorUserId, tenantId, row.tenantId === null ? 'labor_rules.pack_signed' : 'labor_rules.override_signed', id, { jurisdiction: row.jurisdiction, effectiveFrom: dateColumnKey(row.effectiveFrom), version: row.version, note });
     return updated;
   } catch (err) {
     if ((err as { code?: string }).code === 'P2002') throw new HttpError(409, 'active_exists', 'Another signed set already covers that date.');

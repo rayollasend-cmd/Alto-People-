@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient, Shift } from '@prisma/client';
 import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
 import { emitLiveEvent } from './liveEvents.js';
+import { logger } from './logger.js';
 
 type Db = Prisma.TransactionClient | PrismaClient;
 
@@ -247,10 +248,7 @@ export async function withdrawNoShowForShift(
       where: { shiftId, kind: 'NO_CALL_NO_SHOW', source: 'AUTO' },
     });
     if (count > 0) {
-      console.log(
-        '[attendance] withdrew no-call no-show — punch evidence arrived',
-        JSON.stringify({ shiftId, events: count }),
-      );
+      logger.info({ shiftId, events: count }, '[attendance] withdrew no-call no-show — punch evidence arrived');
     }
     return count;
   } catch (err) {
@@ -329,10 +327,7 @@ export async function withdrawContradictedNoShows(
     where: { id: { in: contradicted } },
   });
   if (count > 0) {
-    console.log(
-      '[attendance] withdrew no-call no-shows contradicted by punches',
-      JSON.stringify({ events: count }),
-    );
+    logger.info({ events: count }, '[attendance] withdrew no-call no-shows contradicted by punches');
   }
   return count;
 }

@@ -5,6 +5,7 @@ import { computeEmployerTaxes } from './payrollTax.js';
 import { computeYtdWages } from './payrollYtd.js';
 import { tenantIdForWrite } from './tenant.js';
 import { booksAfterPayrollRun } from './books/posting/hooks.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Manual checks and third-party sick pay (PAYEXP §3).
@@ -233,7 +234,8 @@ export async function listManualChecks(db: Db, where: Prisma.PayrollItemWhereInp
     associateId: i.associateId,
     associateName: `${i.associate.firstName} ${i.associate.lastName}`,
     checkNumber: (i.disbursementRef ?? '').replace(/^Manual check #/, ''),
-    payDate: i.disbursedAt?.toISOString().slice(0, 10) ?? null,
+    // A manual check's disbursedAt is its pay date held at UTC midnight (recordManualCheck).
+    payDate: i.disbursedAt ? dateColumnKey(i.disbursedAt) : null,
     gross: Number(i.grossPay),
     taxes: round2(Number(i.federalWithholding) + Number(i.fica) + Number(i.medicare) + Number(i.stateWithholding) + Number(i.localWithholding)),
     net: Number(i.netPay),

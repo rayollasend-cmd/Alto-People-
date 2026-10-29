@@ -11,6 +11,8 @@ import { recordCriticalAudit } from '../lib/audit.js';
 import { MIN_RETENTION_YEARS, retentionYearsFor, verifyAuditChain } from '../lib/auditChain.js';
 import { createAuditSink } from '../lib/auditSink.js';
 import { fmtDateSpan } from '../lib/floorLeads.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 export const auditRouter = Router();
 
@@ -120,7 +122,7 @@ async function entityLabels(rows: LabelledRow[], tenantId: string): Promise<Map<
   }
   for (const x of o) out.set(key('OrgUnit', x.id), { label: x.name, href: null });
   for (const x of pr) out.set(key('ClientProspect', x.id), { label: x.name, href: null });
-  for (const x of rn) out.set(key('PayrollRun', x.id), { label: `Payroll run · ${fmtDateSpan(x.periodStart.toISOString().slice(0, 10), x.periodEnd.toISOString().slice(0, 10))}`, href: `/payroll/runs/${x.id}/review` });
+  for (const x of rn) out.set(key('PayrollRun', x.id), { label: `Payroll run · ${fmtDateSpan(dateColumnKey(x.periodStart), dateColumnKey(x.periodEnd))}`, href: `/payroll/runs/${x.id}/review` });
   // The organization itself (an operator opening it, a profile change): only ever the caller's own.
   if (rows.some((r) => r.entityType === 'Tenant' && r.entityId === tenantId)) {
     const t = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
@@ -279,7 +281,7 @@ auditRouter.get('/logs.csv', async (req, res, next) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="alto-audit-${new Date().toISOString().slice(0, 10)}.csv"`
+      `attachment; filename="alto-audit-${orgDateKey(new Date())}.csv"`
     );
 
     res.write('createdAt,action,actorEmail,entityType,entityId,clientId,metadata\n');
@@ -325,7 +327,7 @@ auditRouter.get('/export.csv', MANAGE, async (req, res) => {
   const f = parseFilters(req);
   const where = buildWhere(f);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="alto-audit-full-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="alto-audit-full-${orgDateKey(new Date())}.csv"`);
   res.write('seq,createdAt,action,actorEmail,entityType,entityId,clientId,metadata,hash\n');
   let cursor: { createdAt: Date; id: string } | null = null;
   for (;;) {

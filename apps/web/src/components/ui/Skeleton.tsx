@@ -5,11 +5,14 @@ import { cn } from '@/lib/cn';
  * about to render — a row of text → a Skeleton with the right width;
  * a table → a stack of Skeleton rows. Avoid blanket "Loading…" text.
  */
-export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLElement>) {
+  // A block-level <span>, not a <div>: a placeholder for a line of text is
+  // often dropped inside a <p> (a drawer's "Assigned to …" line), where a
+  // <div> is invalid HTML and React logs validateDOMNesting (FLOOR-28).
   return (
-    <div
+    <span
       className={cn(
-        'relative overflow-hidden rounded-md bg-navy-secondary/60',
+        'relative block overflow-hidden rounded-md bg-navy-secondary/60',
         // Subtle shimmer sweep — runs forever; cheap because it's transform-only.
         'before:absolute before:inset-0 before:-translate-x-full before:animate-shimmer',
         // via-silver (not via-white) so the sweep stays visible in light

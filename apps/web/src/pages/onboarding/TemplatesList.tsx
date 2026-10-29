@@ -4,16 +4,16 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Copy, LayoutTemplate, MoreHorizontal, Pencil, Plus, Trash2 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
-  ClientSummary,
+  ClientOption,
   OnboardingTemplate,
 } from '@alto-people/shared';
 import {
   deleteTemplate,
-  listClients,
+  listClientOptions,
   listTemplates,
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { fmtDate } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -59,12 +59,14 @@ export function TemplatesList() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<OnboardingTemplate | null>(null);
 
+  const clientsOn = useTenant().moduleOn('clientPortal');
   const listQuery = useQuery({
-    queryKey: ['TemplatesList', 'all'],
-    queryFn: () => Promise.all([listTemplates(), listClients()]),
+    queryKey: ['TemplatesList', 'all', clientsOn],
+    // Client names via the onboarding-scoped picker (/clients needs view:clients — PEOPLE-4); none without clients.
+    queryFn: () => Promise.all([listTemplates(), clientsOn ? listClientOptions() : Promise.resolve({ clients: [] as ClientOption[] })]),
   });
   const templates: OnboardingTemplate[] | null = listQuery.data?.[0].templates ?? null;
-  const clients: ClientSummary[] | null = listQuery.data?.[1].clients ?? null;
+  const clients: ClientOption[] | null = listQuery.data?.[1].clients ?? null;
   const refresh = async () => {
     await listQuery.refetch();
   };

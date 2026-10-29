@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CANDIDATE_REJECT_PRESETS, CANDIDATE_WITHDRAW_PRESETS } from '@/lib/reasonPresets';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useDirtyForm } from '@/lib/useDirtyForm';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -179,7 +180,7 @@ const SORT_OPTIONS: Array<{ value: CandidateSort; label: string }> = [
 const SORTS = new Set<string>(SORT_OPTIONS.map((o) => o.value));
 
 /** The URL params a saved view keeps. */
-const VIEW_PARAMS = ['view', 'stage', 'q', 'source', 'posting', 'stuck', 'sort'] as const;
+const VIEW_PARAMS = ['view', 'stage', 'q', 'source', 'posting', 'stuck', 'sort', 'within'] as const;
 
 function readViewMode(): ViewMode {
   if (typeof window === 'undefined') return 'board';
@@ -226,6 +227,8 @@ export function RecruitingHome() {
       ? (stageParam as CandidateStage | 'ALL')
       : 'APPLIED';
   const search = searchParams.get('q') ?? '';
+  // A search looks in every stage unless narrowed to the chip's (?within=1) — PEOPLE-15.
+  const searchWithin = searchParams.get('within') === '1';
   const sourceFilter = searchParams.get('source') ?? '';
   const postingFilter = searchParams.get('posting') ?? '';
   const stuckOnly = searchParams.get('stuck') === '1';
@@ -290,9 +293,25 @@ export function RecruitingHome() {
     }),
     [debouncedSearch, sourceFilter, postingFilter, stuckOnly, sort],
   );
+  // Typing a name searches every stage (the chip used to hide Emmanuel in
+  // Offer behind "No candidates match"); ?within=1 narrows it to the chip.
+  const searchingAll = Boolean(debouncedSearch) && !searchWithin;
   const listFilters: CandidateFilters = useMemo(
-    () => ({ ...filters, ...(filter === 'ALL' ? {} : { stage: filter }) }),
-    [filters, filter],
+    () => ({ ...filters, ...(filter === 'ALL' || searchingAll ? {} : { stage: filter }) }),
+    [filters, filter, searchingAll],
+  );
+  const pickStage = useCallback(
+    (s: CandidateStage | 'ALL') =>
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (s === 'APPLIED') next.delete('stage');
+        else next.set('stage', s);
+        // Picking a stage while searching narrows the search to it.
+        if (next.get('q') && s !== 'ALL') next.set('within', '1');
+        else next.delete('within');
+        return next;
+      }),
+    [setSearchParams],
   );
   const filtered = Boolean(debouncedSearch || sourceFilter || postingFilter || stuckOnly);
 
@@ -306,7 +325,9 @@ export function RecruitingHome() {
     ? {
         inFunnel: Object.values(summaryQuery.data.byStage).reduce((a, b) => a + b, 0),
         interviewing: summaryQuery.data.byStage.INTERVIEW,
-        outstandingOffers: summaryQuery.data.byStage.OFFER,
+        // Live offers waiting on an answer — not candidates parked in the Offer stage, whose offers may have lapsed (PEOPLE-13).
+        outstandingOffers: summaryQuery.data.offersAwaitingReply,
+        inOfferStage: summaryQuery.data.byStage.OFFER,
         hiredThisMonth: summaryQuery.data.hiredThisMonth,
       }
     : null;
@@ -355,6 +376,11 @@ export function RecruitingHome() {
   });
   const candidates: Candidate[] | null = listQuery.data?.candidates ?? null;
   const listTotal = listQuery.data?.total ?? 0;
+  // Where a search's matches sit, whatever the chip says (the API counts every stage).
+  const stageCounts = debouncedSearch ? listQuery.data?.stageCounts : undefined;
+  const matchesAll = stageCounts ? Object.values(stageCounts).reduce((a, b) => a + (b ?? 0), 0) : 0;
+  const matchesInChip = stageCounts && filter !== 'ALL' ? (stageCounts[filter] ?? 0) : matchesAll;
+  const matchesElsewhere = matchesAll - matchesInChip;
 
   const activeQuery = view === 'board' ? boardQuery : listQuery;
   const error =
@@ -711,7 +737,7 @@ export function RecruitingHome() {
   const clearFilters = () =>
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      for (const k of ['q', 'source', 'posting', 'stuck', 'sort', 'sv']) next.delete(k);
+      for (const k of ['q', 'source', 'posting', 'stuck', 'sort', 'sv', 'within']) next.delete(k);
       return next;
     });
 
@@ -736,7 +762,13 @@ export function RecruitingHome() {
           {/* Every tile says what it counts (three had no caption). */}
           <MetricCard icon={Users} label="In funnel" value={kpis ? kpis.inFunnel : '—'} hint="Applied, in screening, interviewing or offered" href="/recruiting?view=board" />
           <MetricCard icon={Briefcase} label="Interviewing" value={kpis ? kpis.interviewing : '—'} hint="Candidates in the interview stage" href="/recruiting?view=list&stage=INTERVIEW" />
-          <MetricCard icon={Award} label="Open offers" value={kpis ? kpis.outstandingOffers : '—'} hint="Offers sent, waiting on an answer" href="/recruiting?view=list&stage=OFFER" />
+          <MetricCard
+            icon={Award}
+            label="Open offers"
+            value={kpis ? kpis.outstandingOffers : '—'}
+            hint={kpis ? `Sent and not yet answered · ${kpis.inOfferStage} in the Offer stage` : 'Sent and not yet answered'}
+            href="/recruiting/extras?tab=offers"
+          />
           <MetricCard icon={CheckCircle2} label="Hired this month" value={kpis ? kpis.hiredThisMonth : '—'} hint="Moved to hired since the 1st" href="/recruiting?view=list&stage=HIRED" />
         </MetricStrip>
       )}
@@ -836,13 +868,36 @@ export function RecruitingHome() {
               {(['ALL', ...STAGES] as Array<CandidateStage | 'ALL'>).map((s) => (
                 <FilterChip
                   key={s}
-                  active={filter === s}
-                  onClick={() => setFilter(s)}
+                  // Searching every stage is "All"; a picked stage narrows the search.
+                  active={(searchingAll ? 'ALL' : filter) === s}
+                  onClick={() => (debouncedSearch ? pickStage(s) : setFilter(s))}
                 >
                   {s === 'ALL' ? 'All' : STAGE_LABEL[s]}
+                  {stageCounts && s !== 'ALL' && (stageCounts[s] ?? 0) > 0 ? ` · ${stageCounts[s]}` : ''}
                 </FilterChip>
               ))}
             </div>
+          )}
+          {view === 'list' && stageCounts && filter !== 'ALL' && matchesAll > 0 && (searchingAll ? matchesElsewhere > 0 : true) && (
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs2 text-ink-muted" role="status" data-testid="search-scope">
+              {searchingAll ? (
+                <>
+                  Searching every stage — {matchesInChip} in {STAGE_LABEL[filter]}, {matchesElsewhere} in other stages.
+                  <Button size="sm" variant="ghost" onClick={() => pickStage(filter)}>
+                    Only {STAGE_LABEL[filter]}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  Showing {STAGE_LABEL[filter]} only{matchesElsewhere > 0 ? ` — ${matchesElsewhere} more in other stages` : ''}.
+                  {matchesElsewhere > 0 && (
+                    <Button size="sm" variant="ghost" onClick={() => setParam('within', null, { replace: true })}>
+                      Search every stage
+                    </Button>
+                  )}
+                </>
+              )}
+            </p>
           )}
         </CardHeader>
         <CardContent className="pt-0">
@@ -891,19 +946,27 @@ export function RecruitingHome() {
             <EmptyState
               icon={UserPlus}
               title={
-                filtered
+                filtered && !searchingAll && matchesElsewhere > 0
+                  ? `No matches in ${filter === 'ALL' ? 'this stage' : STAGE_LABEL[filter]}`
+                  : filtered
                   ? 'No candidates match these filters'
                   : 'No candidates in this stage'
               }
               description={
-                filtered
+                filtered && !searchingAll && matchesElsewhere > 0
+                  ? `${matchesElsewhere} ${matchesElsewhere === 1 ? 'candidate matches' : 'candidates match'} in other stages.`
+                  : filtered
                   ? 'Try a different search, or clear the filters.'
                   : canManage
                     ? 'Add a candidate or switch to a different stage.'
                     : 'Switch to a different stage to see more candidates.'
               }
               action={
-                filtered ? (
+                filtered && !searchingAll && matchesElsewhere > 0 ? (
+                  <Button variant="outline" onClick={() => setParam('within', null, { replace: true })}>
+                    Search every stage
+                  </Button>
+                ) : filtered ? (
                   <Button variant="outline" onClick={clearFilters}>
                     Clear filters
                   </Button>
@@ -1115,7 +1178,8 @@ export function RecruitingHome() {
       <NewApplicationDialog
         open={dialog?.kind === 'hire' && hireOffer !== undefined && hireCtx !== null}
         onOpenChange={(o) => !o && setDialog(null)}
-        onCreated={() => undefined}
+        // Hire mode reports through onHired; anything the dialog creates still refreshes the page.
+        onCreated={() => void refresh()}
         hire={hireCtx ? { ...hireCtx, onHired } : undefined}
       />
 
@@ -1426,6 +1490,8 @@ function CreateCandidateDialog({
   }, [open, defaultPostingId, lastSource]);
 
 
+  const formDirty = useDirtyForm(open, { firstName, lastName, email, phone, position, source, jobPostingId, resumeUrl, linkedinUrl });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
@@ -1454,7 +1520,8 @@ function CreateCandidateDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    // A stray Esc used to throw the typing away (PEOPLE-14).
+    <Dialog open={open} onOpenChange={onOpenChange} confirmDiscard={() => !submitting && formDirty()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>New candidate</DialogTitle>

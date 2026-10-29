@@ -7,6 +7,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { internalSites, scopeAssociates } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 108 — Asset tracking endpoints.
@@ -123,7 +124,7 @@ assetsRouter.get('/assets', VIEW, async (req, res) => {
       serial: a.serial,
       model: a.model,
       status: a.status,
-      purchasedAt: a.purchasedAt?.toISOString().slice(0, 10) ?? null,
+      purchasedAt: a.purchasedAt ? dateColumnKey(a.purchasedAt) : null,
       purchasePrice: a.purchasePrice?.toString() ?? null,
       notes: a.notes,
       locationId: a.locationId,

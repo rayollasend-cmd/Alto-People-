@@ -200,7 +200,7 @@ export function PreTripDialog({ run, onPassed, onClose, startsRun = true }: { ru
           <DialogDescription>{t('drive.preTripBody', { van: run.van.name })}</DialogDescription>
         </DialogHeader>
         {q.isError ? (
-          <QueryError what="the checklist" query={q} />
+          <QueryError what={t('drive.load.checklist')} query={q} />
         ) : q.isLoading ? (
           <Skeleton className="h-64" />
         ) : alreadyDone ? (

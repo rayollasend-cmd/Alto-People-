@@ -6,6 +6,7 @@ import { recordCandidateEvent } from './candidateEvents.js';
 import { env } from '../config/env.js';
 import { expireStaleInvites } from './onboardingUndo.js';
 import { tenantIdForWrite } from './tenant.js';
+import { logger } from './logger.js';
 
 /**
  * Candidates who have gone quiet close on their own.
@@ -210,10 +211,10 @@ export function startRecruitingCleanupCron(): void {
       runRecruitingCleanup().then((r) => {
         if (r.graceUntil && !announcedGrace) {
           announcedGrace = true;
-          console.log(`[alto-people/api] recruiting clean-up: grace period — nothing closes before ${r.graceUntil.toISOString()}`);
+          logger.info(`recruiting clean-up: grace period — nothing closes before ${r.graceUntil.toISOString()}`);
         }
         if (r.candidatesClosed || r.invitesExpired) {
-          console.log(`[alto-people/api] recruiting clean-up: ${r.candidatesClosed} candidates closed, ${r.invitesExpired} invites expired`);
+          logger.info(`recruiting clean-up: ${r.candidatesClosed} candidates closed, ${r.invitesExpired} invites expired`);
         }
       }),
     )()
@@ -222,7 +223,7 @@ export function startRecruitingCleanupCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(`[alto-people/api] recruiting clean-up armed (every ${seconds}s; quiet after ${QUIET_AFTER_DAYS}d)`);
+  logger.info(`recruiting clean-up armed (every ${seconds}s; quiet after ${QUIET_AFTER_DAYS}d)`);
 }
 
 export function stopRecruitingCleanupCron(): void {

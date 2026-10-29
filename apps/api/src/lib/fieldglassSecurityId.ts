@@ -12,6 +12,7 @@
  * Built from PII, so only finance sees it, and every look is audited with
  * the rest of the registration packet.
  */
+import { dateColumnKey } from './timezone.js';
 
 export interface SecurityIdInput {
   dob: Date | string | null;
@@ -43,7 +44,7 @@ export function fieldglassSecurityId(input: SecurityIdInput): SecurityId {
   const needs: string[] = [];
   let mmdd: string | null = null;
   if (input.dob) {
-    const iso = typeof input.dob === 'string' ? input.dob.slice(0, 10) : input.dob.toISOString().slice(0, 10);
+    const iso = typeof input.dob === 'string' ? input.dob.slice(0, 10) : dateColumnKey(input.dob);
     const [, m, d] = iso.split('-');
     if (m && d) mmdd = `${m}${d}`;
   }

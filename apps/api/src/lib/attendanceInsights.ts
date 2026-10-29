@@ -27,6 +27,7 @@ import { splitByPerson } from './laborRules/hours.js';
 import { teamScope } from './delegations.js';
 import { EMPLOYED_WHERE } from './activeDefinition.js';
 import { companyWorkweek, dateKeyInZone, endOfWeekUTC, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 
 /**
  * Attendance insights (packages/shared/src/attendanceInsights.ts is the
@@ -61,10 +62,7 @@ function shiftScope(user: SessionUser, siteId?: string): ShiftWhere {
 
 const PUBLISHED_LIVE: ShiftWhere = { publishedAt: { not: null }, status: { in: ['OPEN', 'ASSIGNED', 'COMPLETED'] } };
 
-function addDaysKey(key: string, days: number): string {
-  const [y, m, d] = key.split('-').map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
-}
+const addDaysKey = addDaysToKey;
 
 /** 0 = the workweek's first day (Saturday by default). */
 function dowIndex(key: string, weekStartsOn: number): number {
@@ -80,7 +78,7 @@ function hourInZone(at: Date, tz: string): number {
 }
 
 /** A date-only column's YYYY-MM-DD. */
-const dateOnlyKey = (d: Date) => d.toISOString().slice(0, 10);
+const dateOnlyKey = dateColumnKey;
 
 /* ---- The workweeks ------------------------------------------------------- */
 

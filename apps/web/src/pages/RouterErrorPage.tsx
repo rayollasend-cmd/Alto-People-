@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { isRouteErrorResponse, useNavigate, useRouteError } from 'react-router-dom';
 import { AlertOctagon, RefreshCw, Home } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 
 /**
  * Phase 71 — global router fallback. React Router calls this when a route's
@@ -16,9 +17,12 @@ export function RouterErrorPage() {
   const error = useRouteError();
   const navigate = useNavigate();
   const [showDetails, setShowDetails] = useState(false);
+  const { t } = useI18n();
 
   const errorId = `ERR-${Date.now().toString(36).toUpperCase()}`;
-  const { headline, detail } = describeError(error);
+  const { headline: headlineKey, detail } = describeError(error);
+  const headline = t(headlineKey);
+  const [refBefore, refAfter] = t('queryError.reference').split('{id}');
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-midnight text-white p-6">
@@ -28,20 +32,20 @@ export function RouterErrorPage() {
         </div>
         <h1 className="text-2xl text-white mb-2">{headline}</h1>
         <p className="text-sm text-silver mb-1">
-          The page hit an unexpected error and couldn&apos;t load.
+          {t('error.unexpected')}
         </p>
         <p className="text-xs text-silver/80 mb-6 tabular-nums">
-          Reference: <span className="font-mono text-silver">{errorId}</span>
+          {refBefore}<span className="font-mono text-silver">{errorId}</span>{refAfter}
         </p>
 
         <div className="flex flex-wrap items-center justify-center gap-2">
           <Button onClick={() => window.location.reload()}>
             <RefreshCw className="h-4 w-4" />
-            Reload page
+            {t('error.reloadPage')}
           </Button>
           <Button variant="outline" onClick={() => navigate('/')}>
             <Home className="h-4 w-4" />
-            Go home
+            {t('access.home')}
           </Button>
         </div>
 
@@ -52,7 +56,7 @@ export function RouterErrorPage() {
             className="text-xs uppercase tracking-widest text-silver/80 hover:text-silver focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
             aria-expanded={showDetails}
           >
-            {showDetails ? 'Hide' : 'Show'} technical details
+            {showDetails ? t('error.hideDetails') : t('error.showDetails')}
           </button>
           {showDetails && (
             <pre className="mt-3 max-h-60 overflow-auto rounded-md bg-midnight border border-navy-secondary p-3 text-xs text-silver/90 whitespace-pre-wrap break-words">
@@ -65,10 +69,10 @@ export function RouterErrorPage() {
   );
 }
 
-function describeError(error: unknown): { headline: string; detail: string } {
+function describeError(error: unknown): { headline: MessageKey; detail: string } {
   if (isRouteErrorResponse(error)) {
     return {
-      headline: error.status === 404 ? 'We couldn’t find that page' : 'Something went wrong',
+      headline: error.status === 404 ? 'error.notFoundTitle' : 'error.wentWrong',
       detail:
         typeof error.data === 'string'
           ? error.data
@@ -83,10 +87,10 @@ function describeError(error: unknown): { headline: string; detail: string } {
     const detail = import.meta.env.DEV
       ? `${error.name}: ${error.message}\n\n${error.stack ?? ''}`.trim()
       : `${error.name}: ${error.message}`;
-    return { headline: 'Something went wrong', detail };
+    return { headline: 'error.wentWrong', detail };
   }
   return {
-    headline: 'Something went wrong',
+    headline: 'error.wentWrong',
     detail: String(error ?? 'Unknown error'),
   };
 }

@@ -54,7 +54,7 @@ vi.mock('@/lib/agentProposalsApi', async (orig) => ({
   decideProposal: vi.fn(),
   listMyProposals: vi.fn(),
 }));
-// Hugo's panel sits under the queue (agent families step 3); its own tests are HugoPanel.test.tsx.
+// Hugo's api, stubbed for anything on the page that reads it.
 vi.mock('@/lib/hugoApi', () => ({
   getHugo: vi.fn().mockResolvedValue({ name: 'Hugo', audience: 'admin', intro: 'I am Hugo.', can: [] }),
   askHugo: vi.fn(),

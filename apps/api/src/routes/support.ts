@@ -10,6 +10,7 @@ import { notifyUser } from '../lib/notify.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 import { COMPANY } from '../lib/emailLayout.js';
 import { ALTO_TENANT_ID, runWithTenant, tenantIdForWrite, withPlatformScope } from '../lib/tenant.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Brief 2-6 step 5 — customer success basics (§4.5; decisions 8, 9).
@@ -114,7 +115,7 @@ supportRouter.post('/:id/followup', requireAuth, async (req, res) => {
   const { body } = z.object({ body: z.string().trim().min(2).max(2000) }).strict().parse(req.body);
   const row = await prisma.supportRequest.findFirst({ where: { id, requesterUserId: req.user!.id, tenantId: tenantIdForWrite() } });
   if (!row) throw new HttpError(404, 'not_found', 'Not found.');
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = orgDateKey(new Date());
   const added = `\n\n— Follow-up ${stamp}: ${body}`;
   if (row.body.length + added.length > 5000) throw new HttpError(400, 'too_long', 'This request is full — send a new one, and mention this one.');
   const updated = await prisma.supportRequest.update({ where: { id }, data: { body: row.body + added, status: 'OPEN', resolvedAt: null } });
@@ -126,7 +127,7 @@ supportRouter.post('/:id/followup', requireAuth, async (req, res) => {
   res.status(201).json({ id: updated.id, status: updated.status });
 });
 
-supportRouter.get('/inbox', requireCapability('manage:org'), async (req, res) => {
+supportRouter.get('/inbox', requireCapability('manage:org', 'view:hr-admin'), async (req, res) => {
   operatorOnly();
   const status = z.enum(['OPEN', 'IN_PROGRESS', 'RESOLVED']).optional().parse(req.query.status);
   // Every organization's requests: the operator reads across tenants, on the record.
@@ -153,7 +154,7 @@ supportRouter.get('/inbox', requireCapability('manage:org'), async (req, res) =>
   });
 });
 
-supportRouter.patch('/:id', requireCapability('manage:org'), async (req, res) => {
+supportRouter.patch('/:id', requireCapability('manage:org', 'view:hr-admin'), async (req, res) => {
   operatorOnly();
   const id = z.string().uuid().parse(req.params.id);
   const input = z.object({ status: z.enum(['OPEN', 'IN_PROGRESS', 'RESOLVED']), reply: z.string().trim().max(5000).nullable().optional() }).strict().parse(req.body);

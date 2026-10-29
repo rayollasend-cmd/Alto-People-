@@ -5,7 +5,9 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { createDelegation, getDelegationCandidates, getMyDelegations, removeDelegation } from '@/lib/delegationsApi';
-import { fmtDate, parseYmd } from '@/lib/format';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
+import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/settings';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -21,9 +23,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
  * everything throughout — cover adds a reader, never removes one.
  */
 
-const today = () => new Date().toISOString().slice(0, 10);
+// The calendar day where they are — not UTC's, which after 5 PM Pacific is
+// tomorrow: cover couldn't start today (`min={today()}`) (CODE-14).
+const today = () => ymdLocal();
 
 export function OutOfOfficeCard() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const queryClient = useQueryClient();
   const enabled = can('view:my-team');
@@ -40,21 +45,21 @@ export function OutOfOfficeCard() {
   const create = useMutation({
     mutationFn: () => createDelegation({ toUserId, startsOn, endsOn, note: note.trim() || undefined }),
     onSuccess: (r) => {
-      toast.success(`${r.delegation.to.name} covers your team ${fmtDate(parseYmd(r.delegation.startsOn))} – ${fmtDate(parseYmd(r.delegation.endsOn))}.`);
+      toast.success(t('settings.ooo.set', { name: r.delegation.to.name, from: fmtDate(parseYmd(r.delegation.startsOn)), to: fmtDate(parseYmd(r.delegation.endsOn)) }));
       setToUserId('');
       setNote('');
       setFormOpen(false);
       void invalidate();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not set cover.'),
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('settings.ooo.setFailed')),
   });
   const remove = useMutation({
     mutationFn: (id: string) => removeDelegation(id),
     onSuccess: () => {
-      toast.success('Cover removed.');
+      toast.success(t('settings.ooo.removed'));
       void invalidate();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not remove cover.'),
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : t('settings.ooo.removeFailed')),
   });
 
   if (!enabled) return null;
@@ -67,12 +72,9 @@ export function OutOfOfficeCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <CalendarOff className="h-4 w-4 text-gold" />
-          Out of office
+          {t('settings.ooo.title')}
         </CardTitle>
-        <CardDescription>
-          Name who covers your team inbox while you are away. For those days they see and can act on your direct
-          reports and are copied on your notifications; you keep everything as usual.
-        </CardDescription>
+        <CardDescription>{t('settings.ooo.desc')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {given.length > 0 && (
@@ -83,13 +85,13 @@ export function OutOfOfficeCard() {
                 <span className="text-silver tabular-nums">
                   {fmtDate(parseYmd(d.startsOn))} – {fmtDate(parseYmd(d.endsOn))}
                 </span>
-                {d.startsOn <= (mine.data?.today ?? '') && <Badge variant="success">Covering now</Badge>}
+                {d.startsOn <= (mine.data?.today ?? '') && <Badge variant="success">{t('settings.ooo.coveringNow')}</Badge>}
                 {d.note && <span className="text-xs text-silver/70">{d.note}</span>}
                 <Button
                   size="sm"
                   variant="ghost"
                   className="ml-auto text-silver hover:text-alert"
-                  aria-label={`Remove cover by ${d.to.name}`}
+                  aria-label={t('settings.ooo.removeAria', { name: d.to.name })}
                   onClick={() => remove.mutate(d.id)}
                   disabled={remove.isPending}
                 >
@@ -101,19 +103,14 @@ export function OutOfOfficeCard() {
         )}
         {received.length > 0 && (
           <p className="text-sm text-silver">
-            You are covering for{' '}
-            {received.map((d, i) => (
-              <span key={d.id}>
-                {i > 0 && ', '}
-                <span className="text-white">{d.from.name}</span> until {fmtDate(parseYmd(d.endsOn))}
-              </span>
-            ))}
-            .
+            {t('settings.ooo.coveringFor', {
+              people: received.map((d) => t('settings.ooo.until', { name: d.from.name, date: fmtDate(parseYmd(d.endsOn)) })).join(', '),
+            })}
           </p>
         )}
         {/* A status line, not a standing form: who covers (or nobody), and a way to set it. */}
         <div className="flex flex-wrap items-center justify-between gap-3" data-testid="ooo-status">
-          <p className="text-sm text-silver">{given.length === 0 ? 'No cover set.' : given.length === 1 ? '1 cover set.' : `${given.length} covers set.`}</p>
+          <p className="text-sm text-silver">{given.length === 0 ? t('settings.ooo.noneSet') : t('settings.ooo.countSet', { count: given.length })}</p>
           <Button
             size="sm"
             variant="secondary"
@@ -123,20 +120,20 @@ export function OutOfOfficeCard() {
               setFormOpen(true);
             }}
           >
-            Set cover…
+            {t('settings.ooo.setCoverOpen')}
           </Button>
         </div>
         <Dialog open={formOpen} onOpenChange={(o) => !create.isPending && setFormOpen(o)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Set cover</DialogTitle>
-              <DialogDescription>Who covers your team inbox, and for which days.</DialogDescription>
+              <DialogTitle>{t('settings.ooo.setCover')}</DialogTitle>
+              <DialogDescription>{t('settings.ooo.dialogDesc')}</DialogDescription>
             </DialogHeader>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Who covers" className="sm:col-span-2">
+              <Field label={t('settings.ooo.who')} className="sm:col-span-2">
                 {(p) => (
                   <Select value={toUserId} onChange={(e) => setToUserId(e.target.value)} {...p}>
-                    <option value="">Choose a manager…</option>
+                    <option value="">{t('settings.ooo.choose')}</option>
                     {(candidates.data?.candidates ?? []).map((c) => (
                       // The name (or "Role · email" when no name is on file) — never the address twice.
                       <option key={c.id} value={c.id}>
@@ -146,18 +143,18 @@ export function OutOfOfficeCard() {
                   </Select>
                 )}
               </Field>
-              <Field label="From">{(p) => <Input type="date" value={startsOn} min={today()} onChange={(e) => setStartsOn(e.target.value)} {...p} />}</Field>
-              <Field label="Through">{(p) => <Input type="date" value={endsOn} min={startsOn} onChange={(e) => setEndsOn(e.target.value)} {...p} />}</Field>
-              <Field label="Note (optional)" className="sm:col-span-2">
-                {(p) => <Input value={note} maxLength={200} placeholder="e.g. Vacation — back Monday" onChange={(e) => setNote(e.target.value)} {...p} />}
+              <Field label={t('settings.ooo.from')}>{(p) => <Input type="date" value={startsOn} min={today()} onChange={(e) => setStartsOn(e.target.value)} {...p} />}</Field>
+              <Field label={t('settings.ooo.through')}>{(p) => <Input type="date" value={endsOn} min={startsOn} onChange={(e) => setEndsOn(e.target.value)} {...p} />}</Field>
+              <Field label={t('settings.ooo.note')} className="sm:col-span-2">
+                {(p) => <Input value={note} maxLength={200} placeholder={t('settings.ooo.notePlaceholder')} onChange={(e) => setNote(e.target.value)} {...p} />}
               </Field>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setFormOpen(false)} disabled={create.isPending}>
-                Cancel
+                {t('settings.ooo.cancel')}
               </Button>
               <Button onClick={() => create.mutate()} loading={create.isPending} disabled={!valid || create.isPending}>
-                Set cover
+                {t('settings.ooo.setCover')}
               </Button>
             </DialogFooter>
           </DialogContent>

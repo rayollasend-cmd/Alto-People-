@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
+  marginPctOf,
   OPEN_PROSPECT_STAGES,
   PROSPECT_STAGE_LABELS,
   PROSPECT_STAGE_WEIGHTS,
@@ -62,6 +63,11 @@ export const CONCENTRATION_THRESHOLD_PCT = 50;
 export const HEALTH_WORD: Record<ClientHealth, string> = { good: 'Good', watch: 'Watch', risk: 'At risk' };
 
 const pct1 = (num: number, den: number): number | null => (den > 0 ? Math.round((num / den) * 1000) / 10 : null);
+/** Gross margin % by the dictionary's formula (METRICS.grossMarginPct), to a tenth. */
+const grossMarginPct1 = (billed: number, cost: number): number | null => {
+  const v = marginPctOf(billed, cost);
+  return v === null ? null : Math.round(v * 10) / 10;
+};
 
 /** Shares of a whole, in percent to one decimal, rounded by largest remainder so they add to exactly 100. */
 export function sharesOf(values: readonly number[]): number[] {
@@ -209,7 +215,7 @@ export async function computeExecClients(db: Db, w: ExecWindow): Promise<ExecCli
       name: c.name,
       billed: round2(m.billed),
       margin: round2(m.billed - m.cost),
-      marginPct: pct1(m.billed - m.cost, m.billed),
+      marginPct: grossMarginPct1(m.billed, m.cost),
       sharePct: shareList[i]!,
       headcount: active.byClient.get(c.id) ?? 0,
       hours: round2(m.hours),
@@ -282,7 +288,7 @@ export async function computeExecClients(db: Db, w: ExecWindow): Promise<ExecCli
         clientName: clientId ? (nameOf.get(clientId) ?? 'A client no longer on file') : 'Company site',
         billed: round2(m.billed),
         margin: round2(m.billed - m.cost),
-        marginPct: pct1(m.billed - m.cost, m.billed),
+        marginPct: grossMarginPct1(m.billed, m.cost),
         hours: round2(m.hours),
         otHours: round2(m.otHours),
       };

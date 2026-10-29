@@ -20,11 +20,12 @@ import {
   Wallet,
   type LucideIcon,
 } from '@/components/ui/icons';
-import type {
-  AuditSearchEntry,
-  DashboardKPIs,
-  KpiTrend,
-  TermKey,
+import {
+  METRICS,
+  type AuditSearchEntry,
+  type DashboardKPIs,
+  type KpiTrend,
+  type TermKey,
 } from '@alto-people/shared';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -38,7 +39,7 @@ import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { OpsActivityFeed } from '@/components/home/OpsActivityFeed';
 import { ApiError, apiFetch } from '@/lib/api';
-import { fmtDayShort, fmtMoney, fmtRelativeDate } from '@/lib/format';
+import { displayTimeZone, fmtDateOnly, fmtDateOnlyRange, fmtDayShort, fmtMoney, fmtRelativeDate, tzAbbrev, zonedDayKey } from '@/lib/format';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { userPhotoUrl } from '@/lib/photoUrl';
@@ -130,6 +131,20 @@ const humanizeAction = (action: string): string => {
   const tail = action.split('.').pop() ?? action;
   return tail.replace(/_/g, ' ');
 };
+
+/**
+ * Today on the company's calendar (the zone the API counts "today" and "this
+ * week" in — Coverage today, the fill rate, hours this week), with the
+ * zone's abbreviation when it isn't the viewer's: at 11:30 PM Pacific the
+ * stores are already on Thursday, and the date line said Wednesday above
+ * Thursday's coverage (deep audit LEAD-17). The viewer's own day until the
+ * company zone has loaded.
+ */
+function companyToday(now: Date, companyTz: string | undefined): string {
+  if (!companyTz) return fmtDayShort(now);
+  const day = fmtDateOnly(zonedDayKey(now, companyTz), { weekday: true, year: 'auto' });
+  return companyTz === displayTimeZone() ? day : `${day} (${tzAbbrev(companyTz, now)})`;
+}
 
 export function AdminDashboard() {
   const clockParts = useClockParts();
@@ -233,7 +248,7 @@ export function AdminDashboard() {
         subtitle={wide ? t((role && SUBTITLE_BY_ROLE[role]) ?? 'adminHome.subHr') : undefined}
         // One quiet line, the same on every home (HomeMeta): today, then the
         // company clock. No role pill — the account menu says who you are.
-        meta={<HomeMeta items={[<LiveNow key="today" render={(now) => fmtDayShort(now)} />, ...clockParts]} />}
+        meta={<HomeMeta items={[<LiveNow key="today" render={(now) => companyToday(now, kpis?.week?.timezone)} />, ...clockParts]} />}
         banners={
           <>
             {error && <ErrorBanner>{error}</ErrorBanner>}
@@ -602,15 +617,15 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
       // Brief 2-1b: the tenant's word for its people (a hotel says team members).
       // "Working" — one of the two named numbers every page shows
       // (apps/api/src/lib/peopleStatus.ts), with "On the books" beside it.
-      label: `Working (${k.activeWindowDays ?? 14} days)`,
+      label: `${METRICS.working.label} (${k.activeWindowDays ?? 14} days)`,
       value: fmtInt(k.activeAssociates),
-      hint: `${k.onTheBooks !== undefined ? `${fmtInt(k.onTheBooks)} ${term('workers').toLowerCase()} on the books · ` : ''}${k.associatesClockedIn > 0 ? `${fmtInt(k.associatesClockedIn)} clocked in now` : 'No one on the clock'}`,
+      hint: `${k.onTheBooks !== undefined ? `${fmtInt(k.onTheBooks)} ${term('workers').toLowerCase()} ${METRICS.onTheBooks.label.toLowerCase()} · ` : ''}${k.associatesClockedIn > 0 ? `${fmtInt(k.associatesClockedIn)} ${METRICS.onTheFloor.label.toLowerCase()}` : 'No one on the clock'}`,
       icon: Users,
       to: linkTo('/people?workStatus=ACTIVE', 'view:org'),
       // No sparkline: the weekly series the API has is hires, not this number.
     },
     {
-      label: `Open shifts · next ${k.windowDays}d`,
+      label: `${METRICS.openShifts.label} · next ${k.windowDays}d`,
       value: fmtInt(k.openShiftsNext30d),
       hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : 'Still to fill',
       icon: CalendarPlus,
@@ -627,9 +642,14 @@ function buildKpis(k: DashboardKPIs, role: Role | null, term: (key: TermKey) => 
     const lastWeek = hours.series[hours.series.length - 2] ?? 0;
     const soFar = hours.series[hours.series.length - 1] ?? 0;
     xs.push({
-      label: 'Hours worked · last week',
+      // The dictionary's names (packages/shared metrics.ts): paid hours, and
+      // "Hours this week" on the company week, its dates said.
+      label: `${METRICS.paidHours.label} · last week`,
       value: fmtHours(lastWeek),
-      hint: soFar > 0 ? `${fmtHours(soFar)} so far this week` : 'None clocked yet this week',
+      hint:
+        soFar > 0
+          ? `${METRICS.hoursThisWeek.label}: ${fmtHours(soFar)}${k.week ? ` · ${fmtDateOnlyRange(k.week.start, k.week.end)}` : ''}`
+          : 'None clocked yet this week',
       icon: Clock,
       to: linkTo('/time-attendance', 'view:time'),
       trend: { ...hours, deltaLabel: 'vs the week before', format: fmtHours, lastIsPartial: true },

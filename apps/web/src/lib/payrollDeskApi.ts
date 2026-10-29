@@ -29,6 +29,56 @@ export function getPeriodLedger(scheduleId?: string): Promise<PeriodLedger> {
   return apiFetch<PeriodLedger>(`/payroll/period-ledger${scheduleId ? `?scheduleId=${scheduleId}` : ''}`);
 }
 
+/* ===== Back pay: evening hours the old UTC cut missed ===================== */
+
+export interface BackPayPunch {
+  timeEntryId: string;
+  workDay: string;
+  hours: number;
+  rate: number;
+  sourceRunId: string;
+  amount: number;
+}
+
+export interface BackPayPerson {
+  associateId: string;
+  name: string;
+  punches: BackPayPunch[];
+  hours: number;
+  rates: number[];
+  overtimeHours: number;
+  overtimePremium: number;
+  amount: number;
+  periods: Array<{ periodStart: string; periodEnd: string }>;
+  /** The open regular run it would go on; null when none is open for them. */
+  target: { runId: string; periodStart: string; periodEnd: string } | null;
+}
+
+export interface BackPayOwed {
+  total: number;
+  people: BackPayPerson[];
+  waitingForRun: number;
+}
+
+export interface BackPayAddResult {
+  people: Array<{ associateId: string; name: string; amount: number; runId: string | null }>;
+  total: number;
+  waiting: Array<{ associateId: string; name: string; amount: number }>;
+  /** Sent to a second person (202). */
+  pending?: boolean;
+  approvalId?: string;
+}
+
+export function getBackPay(): Promise<BackPayOwed> {
+  return apiFetch<BackPayOwed>('/payroll/back-pay');
+}
+
+/** Add it to the next regular run; one key per press so a retried request never adds twice. */
+export function addBackPay(associateIds?: string[]): Promise<BackPayAddResult> {
+  const key = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? `backpay-${crypto.randomUUID()}` : `backpay-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return apiFetch<BackPayAddResult>('/payroll/back-pay/add', { method: 'POST', body: associateIds ? { associateIds } : {}, headers: { 'Idempotency-Key': key } });
+}
+
 /* ===== Readiness: ask everyone at once (finance walk 4) =================== */
 
 export function requestReadiness(associateIds: string[], items: ReadinessRequestItem[]): Promise<{ requested: number; skipped: Array<{ associateId: string; reason: string }> }> {

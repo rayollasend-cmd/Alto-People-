@@ -5,6 +5,7 @@ import { TaxYearSelect } from '@/components/ui/TaxYearSelect';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { useAuth } from '@/lib/auth';
 import { urlNumber, useUrlParam, useUrlState } from '@/lib/useUrlState';
+import { ymdLocal } from '@/lib/format';
 import { RejectedFormsCard } from '@/pages/payrollTaxes/ReturnsTab';
 import { TaxFormsTab } from '@/pages/payrollTax/PayrollTaxHome';
 import { YearEndTab as ContractorYearEnd } from '@/pages/contractors/ContractorPayments';
@@ -29,8 +30,16 @@ import { YearEndReconcile, downloadReconWorkbook } from './YearEndReconciliation
 export type YearEndTabKey = 'checklist' | 'reconcile' | 'forms';
 const TABS: readonly YearEndTabKey[] = ['checklist', 'reconcile', 'forms'];
 
-/** The tax year a year-end page opens on: last year (the one being closed). */
-export const defaultTaxYear = (now: Date = new Date()) => now.getFullYear() - 1;
+/**
+ * The tax year a year-end page opens on (deep audit MONEY-27): from October 1
+ * the year now ending — its W-2s, 1099s and fourth-quarter returns are the
+ * work ahead — and before that last year, which may still be closing. Read on
+ * the local calendar day, never UTC's.
+ */
+export const defaultTaxYear = (now: Date = new Date()) => {
+  const [y, m] = ymdLocal(now).split('-').map(Number) as [number, number];
+  return m >= 10 ? y : y - 1;
+};
 
 const YEAR_CODEC = urlNumber({ min: 2000, max: 2100, integer: true });
 

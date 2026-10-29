@@ -22,6 +22,28 @@ export interface ChartColumn {
   /** Right-align and tabular figures. */
   numeric?: boolean;
   format?: (v: unknown) => string;
+  /** What the CSV carries for this column, when it isn't the raw value. */
+  csv?: (v: unknown) => string | number | null;
+}
+
+/**
+ * One CSV cell for a chart column (audit 2026-10-29 MONEY-29): the raw
+ * number, never the display string — "$29,885.44" and "—" are text to a
+ * spreadsheet, and the same figure came out as a number from a grid's CSV.
+ * A missing value is an empty cell. Text columns keep their formatter (a
+ * month key reads "Oct 2026" in the file as on screen).
+ */
+export function chartCsvCell(c: ChartColumn, v: unknown): string | number | null {
+  if (c.csv) return c.csv(v);
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return Number.isFinite(v) ? v : '';
+  if (c.numeric) return String(v);
+  return c.format ? c.format(v) : String(v);
+}
+
+/** The chart's CSV: a header row, then each row's raw values. */
+export function chartCsvRows(columns: ChartColumn[], rows: Array<Record<string, unknown>>): Array<Array<string | number | null>> {
+  return [columns.map((c) => c.label), ...rows.map((r) => columns.map((c) => chartCsvCell(c, r[c.key])))];
 }
 
 /**
@@ -204,7 +226,7 @@ export function ChartFrame({
                   size="sm"
                   variant="ghost"
                   aria-label={`Download ${title} as CSV`}
-                  onClick={() => downloadCsv(`${csvName}-${ymdLocal()}.csv`, [columns.map((c) => c.label), ...rows.map((r) => columns.map((c) => cell(c, r[c.key])))])}
+                  onClick={() => downloadCsv(`${csvName}-${ymdLocal()}.csv`, chartCsvRows(columns, rows))}
                 >
                   <Download className="h-3.5 w-3.5" aria-hidden="true" />
                   <span className="hidden sm:inline">CSV</span>

@@ -22,8 +22,10 @@ import type { PrismaClient } from '@prisma/client';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { notifyAssociate } from './notify.js';
-import { listEligibleOpenShiftSlots } from '../routes/qualifications.js';
-import { endOfWeekUTC, startOfWeekUTC } from './timeAnomalies.js';
+import { eligibleOpenShifts } from './openShiftEligibility.js';
+import { currentPayPeriodFor } from './associatePayday.js';
+import { companyWorkweek, dateKeyInZone, endOfWeekUTC, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 import { estimateTakeHome, type TakeHomeEstimate } from './takeHome.js';
 import { payFor, penaltyAmount, plannedEntry, splitHours, type EntryHours, type HoursEntry, type HoursSplit, type LaborSite } from './laborRules/hours.js';
 import { loadPayContext } from './laborRules/payContext.js';
@@ -55,7 +57,7 @@ async function hourlyRateFor(
 }
 
 export interface EarningsDay {
-  /** YYYY-MM-DD (UTC week bucket, Sat→Fri). */
+  /** YYYY-MM-DD — the company's calendar day (the week runs Sat→Fri). */
   date: string;
   workedMinutes: number;
   workedAmount: number;
@@ -101,14 +103,130 @@ export interface AssociateEarnings {
    *  projection (so they show 1.5× when they'd land in overtime). */
   openShifts: { count: number; estAmount: number };
   /** The next assigned shift within 24h (or the one in progress). */
-  /** BEYOND — earnedSoFar after taxes, deductions and advances drawn (lib/takeHome). */
+  /** BEYOND — earnedSoFar after taxes, deductions and advances drawn (lib/takeHome).
+   *  The week's share of the pay period's estimate (same tax figuring as the
+   *  check), so Home, Pay and the period never show two take-homes for the
+   *  same hours (ASSOC-4). */
   takeHome: TakeHomeEstimate | null;
+  /** The company's IANA zone — the calendar "today" every figure here is counted on. */
+  timezone: string;
+  /** The pay period running today — the one "this pay period" means on every associate screen. */
+  period: PeriodEarnings | null;
   todayShift: {
     startsAt: string;
     endsAt: string;
     estAmount: number;
     inProgress: boolean;
   } | null;
+}
+
+export interface PeriodEarnings {
+  /** YYYY-MM-DD, inclusive. */
+  start: string;
+  end: string;
+  payDate: string;
+  /** The company's calendar day, and which day of the period it is (1-based). */
+  today: string;
+  day: number;
+  days: number;
+  /** Hours as pay counts them (rounded punches, net of breaks), incl. the running punch. */
+  workedHours: number;
+  /** Gross so far, split the way the check splits it (overtime included). */
+  earned: number;
+  /** `earned` after taxes, deductions and advances — figured as the period's own check. */
+  takeHome: TakeHomeEstimate | null;
+}
+
+const addDaysKey = addDaysToKey;
+const daysBetweenKeys = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / DAY_MS);
+
+/** A take-home estimate for part of the gross it was figured on (the week inside its period). */
+function shareOfTakeHome(t: TakeHomeEstimate, gross: number, ratio: number): TakeHomeEstimate {
+  const r = Math.max(0, Math.min(1, ratio));
+  const taxes = round2(t.taxes * r);
+  const deductions = round2(t.deductions * r);
+  return {
+    ...t,
+    gross: round2(gross),
+    taxes,
+    federalIncomeTax: round2(t.federalIncomeTax * r),
+    socialSecurity: round2(t.socialSecurity * r),
+    medicare: round2(t.medicare * r),
+    stateIncomeTax: round2(t.stateIncomeTax * r),
+    deductions,
+    net: round2(Math.max(0, gross - taxes - deductions - t.advances)),
+  };
+}
+
+/**
+ * This pay period so far, as money — the one figure Home's ring, My time's
+ * pay-period hero and Pay's "pay before payday" all show (ASSOC-3/4/27).
+ * Each punch counts on its store's calendar day; the hours split the way
+ * the check splits them; take-home is figured as that period's check.
+ */
+async function periodEarnings(
+  prisma: PrismaClient,
+  associateId: string,
+  now: Date,
+  rate: number,
+  pay: Awaited<ReturnType<typeof loadPayContext>>,
+  zone: string,
+): Promise<PeriodEarnings | null> {
+  const today = dateKeyInZone(now, zone);
+  const p = await currentPayPeriodFor(associateId, today);
+  if (!p) return null;
+  // A day of slack either side; the store's calendar day decides below.
+  const from = new Date(utcInstantOfLocalMidnight(p.periodStart, zone).getTime() - DAY_MS);
+  const to = new Date(utcInstantOfLocalMidnight(addDaysKey(p.periodEnd, 1), zone).getTime() + DAY_MS);
+  const rows = await prisma.timeEntry.findMany({
+    where: { associateId, status: { in: ['APPROVED', 'COMPLETED', 'ACTIVE'] }, clockInAt: { gte: from, lt: to } },
+    orderBy: { clockInAt: 'asc' },
+    select: {
+      id: true,
+      locationId: true,
+      clockInAt: true,
+      clockOutAt: true,
+      status: true,
+      breaks: { select: { type: true, startedAt: true, endedAt: true } },
+      location: SITE_SELECT,
+    },
+    take: 400,
+  });
+  const worked: HoursEntry[] = [];
+  for (const raw of rows) {
+    const day = dateKeyInZone(raw.clockInAt, raw.location?.timezone || zone);
+    if (day < p.periodStart || day > p.periodEnd) continue;
+    const e = pay.forPay(raw);
+    if (!e.clockOutAt && e.status !== 'ACTIVE') continue;
+    const out = e.clockOutAt ?? new Date(Math.max(e.clockInAt.getTime(), Math.min(now.getTime(), e.clockInAt.getTime() + LIVE_CAP_MS)));
+    worked.push({ id: e.id, clockInAt: e.clockInAt, clockOutAt: out, breaks: e.breaks, site: e.location });
+  }
+  const split = splitHours(pay.rules, worked);
+  let earned = 0;
+  let workedHours = 0;
+  for (const share of split.entries) {
+    if (share.workedHours <= 0) continue;
+    earned += moneyOf(share, rate, split);
+    workedHours += share.workedHours;
+  }
+  for (const pen of split.penalties) {
+    const amount = penaltyAmount(pen, rate);
+    if (amount >= 0.005) earned += amount;
+  }
+  const days = daysBetweenKeys(p.periodStart, p.periodEnd) + 1;
+  const day = Math.max(1, Math.min(days, daysBetweenKeys(p.periodStart, today) + 1));
+  const frequency = p.frequency === 'DAILY' ? 'WEEKLY' : p.frequency;
+  return {
+    start: p.periodStart,
+    end: p.periodEnd,
+    payDate: p.payDate,
+    today,
+    day,
+    days,
+    workedHours: round2(workedHours),
+    earned: round2(earned),
+    takeHome: earned > 0 ? await estimateTakeHome(prisma, associateId, round2(earned), now, { payFrequency: frequency, days }).catch(() => null) : null,
+  };
 }
 
 export async function computeAssociateEarnings(
@@ -173,19 +291,33 @@ export async function computeAssociateEarnings(
         },
         take: 100,
       }),
-      listEligibleOpenShiftSlots(associateId, { before: weekEnd }),
+      eligibleOpenShifts(associateId, { before: weekEnd }),
       loadPayContext(prisma),
     ]);
+  // Each open shift's posted pay rate and its own store (its overtime rules
+  // and zone): an open shift is worth what it posts, else their rate — the
+  // one rule the Schedule and Open shifts pages price by too (ASSOC-5).
+  const openRows = openEligible.length
+    ? await prisma.shift.findMany({ where: { id: { in: openEligible.map((s) => s.id) } }, select: { id: true, payRate: true, locationRel: SITE_SELECT } })
+    : [];
+  const openById = new Map(openRows.map((r) => [r.id, r]));
 
+  // The company's calendar days, Sat→Fri, stepped as calendar days (a DST
+  // week is 167 or 169 hours). A punch lands on its store's calendar day.
+  const zone = companyWorkweek().timezone;
+  const firstDay = dateKeyInZone(weekStart, zone);
   const days: EarningsDay[] = Array.from({ length: 7 }, (_, i) => ({
-    date: new Date(weekStart.getTime() + i * DAY_MS).toISOString().slice(0, 10),
+    date: addDaysKey(firstDay, i),
     workedMinutes: 0,
     workedAmount: 0,
     scheduledMinutes: 0,
     scheduledAmount: 0,
   }));
-  const dayIndex = (d: Date) =>
-    Math.max(0, Math.min(6, Math.floor((d.getTime() - weekStart.getTime()) / DAY_MS)));
+  const dayIndex = (d: Date, tz?: string | null) => {
+    const key = dateKeyInZone(d, tz || zone);
+    const i = days.findIndex((x) => x.date === key);
+    return i >= 0 ? i : key < firstDay ? 0 : 6;
+  };
 
   // Worked time, as pay counts it: closed punches (rounded where a policy
   // says so) and the running one up to now.
@@ -209,7 +341,7 @@ export async function computeAssociateEarnings(
     if (share.workedHours <= 0) return;
     const amount = moneyOf(share, rate, workedSplit);
     if (i === activeIndex) currentShiftEarned = round2(amount);
-    const d = days[dayIndex(worked[i]!.clockInAt)];
+    const d = days[dayIndex(worked[i]!.clockInAt, worked[i]!.site?.timezone)];
     d.workedMinutes += Math.round(share.workedHours * 60);
     d.workedAmount = round2(d.workedAmount + amount);
     earnedSoFar += amount;
@@ -246,7 +378,7 @@ export async function computeAssociateEarnings(
     const share = projSplit.entries[worked.length + i]!;
     if (share.workedHours <= 0) return;
     const amount = moneyOf(share, rate, projSplit);
-    const d = days[dayIndex(p.from)];
+    const d = days[dayIndex(p.from, p.s.locationRel?.timezone)];
     d.scheduledMinutes += Math.round(share.workedHours * 60);
     d.scheduledAmount = round2(d.scheduledAmount + amount);
     remainingHours += share.workedHours;
@@ -265,12 +397,19 @@ export async function computeAssociateEarnings(
 
   // Eligible open shifts, priced ON TOP of the projection: if picking one
   // up would land in overtime, it honestly shows the overtime value.
-  const open = openEligible
-    .map((s) => plannedEntry({ startsAt: s.startsAt, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(s.startsAt, s.endsAt), site: lastSite }))
-    .filter((e) => e.clockOutAt! > e.clockInAt);
+  const openPriced = openEligible
+    .map((s) => {
+      const row = openById.get(s.id);
+      const posted = row?.payRate != null ? Number(row.payRate) : NaN;
+      return {
+        rate: Number.isFinite(posted) && posted > 0 ? posted : rate,
+        entry: plannedEntry({ startsAt: s.startsAt, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(s.startsAt, s.endsAt), site: row?.locationRel ?? lastSite }),
+      };
+    })
+    .filter((o) => o.entry.clockOutAt! > o.entry.clockInAt);
   const base = [...worked, ...planned.map((p) => p.entry)];
-  const openSplit = splitHours(pay.rules, [...base, ...open]);
-  const openAmount = open.reduce((a, _e, i) => a + moneyOf(openSplit.entries[base.length + i]!, rate, openSplit), 0);
+  const openSplit = splitHours(pay.rules, [...base, ...openPriced.map((o) => o.entry)]);
+  const openAmount = openPriced.reduce((a, o, i) => a + moneyOf(openSplit.entries[base.length + i]!, o.rate, openSplit), 0);
 
   const next = shifts.find(
     (s) => s.endsAt > now && s.startsAt.getTime() < now.getTime() + 24 * 3600_000,
@@ -305,6 +444,19 @@ export async function computeAssociateEarnings(
   // A minute in overtime is 0.0167 h of it; anything under a millionth is float residue.
   const EPS = 1e-6;
   const nextMultiplier = nextShare.doubleTimeHours > EPS ? probeSplit.doubleMultiplier : nextShare.overtimeHours > EPS ? probeSplit.overtimeMultiplier : 1;
+
+  // The pay period, and the week's take-home as its share of the period's
+  // check: one tax figuring for the same hours on every screen. A week that
+  // straddles two periods (semimonthly) is figured on its own. Never fails
+  // the card: no estimate is better than no earnings.
+  const period = await periodEarnings(prisma, associateId, now, rate, pay, zone).catch(() => null);
+  const weekFirst = days[0]!.date;
+  const weekLast = days[6]!.date;
+  const weekInPeriod = !!period && weekFirst >= period.start && weekLast <= period.end;
+  const weekTakeHome =
+    weekInPeriod && period.takeHome && period.earned > 0
+      ? shareOfTakeHome(period.takeHome, round2(earnedSoFar), earnedSoFar / period.earned)
+      : await estimateTakeHome(prisma, associateId, round2(earnedSoFar), now).catch(() => null);
 
   return {
     weekStart: weekStart.toISOString(),
@@ -342,8 +494,9 @@ export async function computeAssociateEarnings(
       estAmount: round2(openAmount),
     },
     todayShift,
-    // Never fails the card: no estimate is better than no earnings.
-    takeHome: await estimateTakeHome(prisma, associateId, round2(earnedSoFar), now).catch(() => null),
+    takeHome: weekTakeHome,
+    timezone: zone,
+    period,
   };
 }
 

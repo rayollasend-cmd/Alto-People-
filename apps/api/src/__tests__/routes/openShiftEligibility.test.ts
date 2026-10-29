@@ -89,6 +89,22 @@ describe('one open-shift rule — the Open shifts page and My schedule list the 
     expect(ids(schedule.body)).toEqual([ok.id]);
   });
 
+  it('both lists carry the store\'s street address and coordinates, and the posted pay rate (never the bill rate)', async () => {
+    const { mine, agent, open } = await seed();
+    const store = await prisma.site.create({
+      data: { clientId: mine.id, name: 'Front Beach 218', timezone: 'America/Chicago', addressLine1: '218 Front Beach Rd', city: 'Panama City Beach', state: 'FL', zip: '32413', latitude: 30.1766, longitude: -85.8055 },
+    });
+    const s = await open(mine.id, 48, { locationId: store.id, payRate: 15.5, hourlyRate: 22 });
+    for (const path of ['/shifts/open', '/scheduling/me/open-shifts']) {
+      const res = await agent.get(path);
+      expect(res.status).toBe(200);
+      const row = res.body.shifts.find((x: { id: string }) => x.id === s.id);
+      expect(row).toMatchObject({ locationAddress: '218 Front Beach Rd, Panama City Beach, FL 32413', locationLat: 30.1766, locationLng: -85.8055 });
+      expect(Number(row.payRate)).toBe(15.5);
+      expect(row.hourlyRate ?? null).toBeNull();
+    }
+  });
+
   it('a required qualification they lack keeps a shift off both lists', async () => {
     const { mine, agent, open } = await seed();
     const forklift = await prisma.qualification.create({ data: { code: 'FORK', name: 'Forklift' } });

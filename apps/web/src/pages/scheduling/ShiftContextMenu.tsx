@@ -19,6 +19,7 @@ import {
 import { wentUnfilled, type AutoFillCandidate, type Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import type { QuickActions } from './ShiftHoverCard';
+import { oneWeekLater, shiftActions } from './shiftHistory';
 
 /**
  * Right-click context menu on shift chips.
@@ -151,22 +152,35 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
   }
 
   if (canManage) {
-    items.push({
-      kind: 'item',
-      label: 'Edit',
-      // Pencil, not Edit3 — the one edit glyph used app-wide (see the
-      // admin toolbar + mobile action sheet).
-      icon: Pencil,
-      onClick: () => {
-        actions.onEdit(active.shift);
-        onClose();
-      },
-    });
+    // One rule with the phone sheet and the hover card (FLOOR-18): a shift
+    // that is over offers a copy one week on, and nothing that rewrites it.
+    const acts = shiftActions(active.shift, canManage);
+    if (acts.edit) {
+      items.push({
+        kind: 'item',
+        label: 'Edit',
+        // Pencil, not Edit3 — the one edit glyph used app-wide (see the
+        // admin toolbar + mobile action sheet).
+        icon: Pencil,
+        onClick: () => {
+          actions.onEdit(active.shift);
+          onClose();
+        },
+      });
+    }
     if (unfilled) {
       items.push({
         kind: 'item',
         label: 'Went unfilled',
         icon: UserMinus,
+        disabled: true,
+        onClick: () => undefined,
+      });
+    } else if (acts.readOnly) {
+      items.push({
+        kind: 'item',
+        label: 'Shift ended · read-only',
+        icon: Clock,
         disabled: true,
         onClick: () => undefined,
       });
@@ -193,16 +207,18 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
           },
         });
       }
-      items.push({
-        kind: 'item',
-        label: 'Assign…',
-        icon: UserPlus,
-        onClick: () => {
-          actions.onAssign(active.shift);
-          onClose();
-        },
-      });
-    } else {
+      if (acts.assign) {
+        items.push({
+          kind: 'item',
+          label: 'Assign…',
+          icon: UserPlus,
+          onClick: () => {
+            actions.onAssign(active.shift);
+            onClose();
+          },
+        });
+      }
+    } else if (acts.unassign) {
       items.push({
         kind: 'item',
         label: 'Unassign',
@@ -213,49 +229,43 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
         },
       });
     }
-    items.push({
-      kind: 'item',
-      label: 'Duplicate',
-      icon: CopyIcon,
-      onClick: async () => {
-        await actions.onDuplicate(active.shift);
-        onClose();
-      },
-    });
-    items.push({
-      kind: 'item',
-      label: 'Duplicate to associate…',
-      icon: UsersRound,
-      onClick: () => {
-        actions.onDuplicateToEmployee(active.shift);
-        onClose();
-      },
-    });
-    items.push({
-      kind: 'item',
-      label: 'Copy to next week',
-      icon: CalendarPlus,
-      onClick: async () => {
-        // Same shift one week later. Add 7 CALENDAR days via setDate (not a
-        // raw +7×24h offset) so the wall-clock time is preserved across a
-        // DST boundary. onDuplicate only reads the data fields (clientId,
-        // position, times, rates) — the id on this copy is ignored.
-        const nextStart = new Date(active.shift.startsAt);
-        nextStart.setDate(nextStart.getDate() + 7);
-        const nextEnd = new Date(active.shift.endsAt);
-        nextEnd.setDate(nextEnd.getDate() + 7);
-        const fakeShift: Shift = {
-          ...active.shift,
-          startsAt: nextStart.toISOString(),
-          endsAt: nextEnd.toISOString(),
-        };
-        await actions.onDuplicate(fakeShift);
-        onClose();
-      },
-    });
+    if (acts.duplicate) {
+      items.push({
+        kind: 'item',
+        label: 'Duplicate',
+        icon: CopyIcon,
+        onClick: async () => {
+          await actions.onDuplicate(active.shift);
+          onClose();
+        },
+      });
+      items.push({
+        kind: 'item',
+        label: 'Duplicate to associate…',
+        icon: UsersRound,
+        onClick: () => {
+          actions.onDuplicateToEmployee(active.shift);
+          onClose();
+        },
+      });
+    }
+    if (acts.copyNextWeek) {
+      items.push({
+        kind: 'item',
+        label: 'Copy to next week',
+        icon: CalendarPlus,
+        onClick: async () => {
+          // Same shift one week later, at its store's wall clock (DST-safe).
+          // onDuplicate only reads the data fields (clientId, position,
+          // times, rates) — the id on this copy is ignored.
+          await actions.onDuplicate({ ...active.shift, ...oneWeekLater(active.shift) });
+          onClose();
+        },
+      });
+    }
     // Publish / un-publish a single shift. DRAFT → publish; published →
     // move back to draft. Not shown on COMPLETED/CANCELLED (terminal).
-    if (active.shift.status === 'DRAFT') {
+    if (acts.publish) {
       items.push({
         kind: 'item',
         label: 'Publish shift',
@@ -265,10 +275,7 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
           onClose();
         },
       });
-    } else if (
-      active.shift.status === 'OPEN' ||
-      active.shift.status === 'ASSIGNED'
-    ) {
+    } else if (acts.unpublish) {
       items.push({
         kind: 'item',
         label: 'Move to draft',
@@ -279,8 +286,8 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
         },
       });
     }
-    items.push({ kind: 'sep' });
-    if (active.shift.status !== 'CANCELLED' && active.shift.status !== 'COMPLETED') {
+    if (acts.cancel || acts.delete) items.push({ kind: 'sep' });
+    if (acts.cancel) {
       items.push({
         kind: 'item',
         label: 'Cancel shift',
@@ -296,16 +303,18 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
     // destructive and read as such; the LABEL ("Cancel shift" keeps a
     // CANCELLED record, "Delete shift" removes it) carries the difference,
     // not a subtle icon variant nobody can tell apart at 14px.
-    items.push({
-      kind: 'item',
-      label: 'Delete shift',
-      icon: Trash2,
-      danger: true,
-      onClick: async () => {
-        await actions.onDelete(active.shift);
-        onClose();
-      },
-    });
+    if (acts.delete) {
+      items.push({
+        kind: 'item',
+        label: 'Delete shift',
+        icon: Trash2,
+        danger: true,
+        onClick: async () => {
+          await actions.onDelete(active.shift);
+          onClose();
+        },
+      });
+    }
   } else {
     items.push({
       kind: 'item',

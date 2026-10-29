@@ -53,6 +53,10 @@ export const enTime = {
   'time.send': 'Send to HR',
   'time.reportSent': 'Sent — HR will follow up.',
   'time.reportFailed': 'Could not send',
+  'time.payPeriodChip': 'This pay period',
+  'time.heroPayPeriod': 'This pay period · {range}',
+  'time.heroLineWorked': '{hours} worked — estimated gross, before taxes',
+  'time.whatPunches': 'your punches',
 } as const;
 
 registerEnglish(enTime);

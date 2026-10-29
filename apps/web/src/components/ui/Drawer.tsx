@@ -4,6 +4,7 @@ import { X } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { DiscardConfirm, useDiscardGuard } from './Dialog';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Right-edge slide-over drawer for record detail panels — the F500 pattern
@@ -44,6 +45,7 @@ export function Drawer({
   confirmDiscard,
   children,
 }: DrawerProps) {
+  const { t } = useI18n();
   // Dirty-guard — same contract as Dialog's confirmDiscard.
   const guard = useDiscardGuard(confirmDiscard, () => onOpenChange(false));
   // Back closes the panel before it closes the page — the same dismissal
@@ -139,7 +141,7 @@ export function Drawer({
             // guard's preventDefault holds the drawer open.
             onClick={(e) => guard.intercept(e)}
             className="absolute grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.5rem,env(safe-area-inset-right))]"
-            aria-label="Close"
+            aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />
           </DialogPrimitive.Close>

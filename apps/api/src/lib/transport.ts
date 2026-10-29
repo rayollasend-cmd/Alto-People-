@@ -1,8 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { isNotRun } from './transportConflicts.js';
 import { prisma } from '../db.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
-import { dateKeyInZone } from './timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone } from './timeAnomalies.js';
 import { placedClientIds } from './openShiftEligibility.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
 import { payFor } from './laborRules/hours.js';
@@ -176,7 +175,7 @@ export async function ownStoreIds(associateId: string, db: Db = prisma): Promise
 }
 
 export function serviceDateFor(targetAt: Date, timezone: string | null | undefined): string {
-  return dateKeyInZone(targetAt, timezone ?? DEFAULT_TIMEZONE);
+  return dateKeyInZone(targetAt, timezone ?? companyWorkweek().timezone);
 }
 
 export const rideSelect = {
@@ -415,6 +414,12 @@ export interface RideChargePlan {
 }
 
 const FEDERAL_MINIMUM_WAGE_CENTS = 725;
+
+/** The hourly floor no fare may push a paycheck under: the state's minimum wage, never below the federal one. */
+export function rideMinimumWage(taxState: string | null): { state: string; minimumWageCents: number } {
+  const policy = getLaborPolicy(taxState);
+  return { state: policy.state, minimumWageCents: Math.max(policy.minimumWageCents, FEDERAL_MINIMUM_WAGE_CENTS) };
+}
 
 /**
  * Decide which owed rides this check takes: authorized ones only, oldest

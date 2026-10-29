@@ -33,6 +33,7 @@ import { enqueueAudit } from './audit.js';
 import { fleetConnector, fleetProviderFromEnv, registerSimulatedRobot, type FleetRobotStatus } from './fleet/index.js';
 import { displayName } from './messaging.js';
 import { shiftTimezone } from './shiftZone.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Brief 3-1 — the robot registry behind /robots.
@@ -78,7 +79,7 @@ function profileSummary(p: {
     serial: p.serial,
     firmware: p.firmware,
     ownership: p.ownership,
-    leaseEndsOn: p.leaseEndsOn ? p.leaseEndsOn.toISOString().slice(0, 10) : null,
+    leaseEndsOn: p.leaseEndsOn ? dateColumnKey(p.leaseEndsOn) : null,
     connectorProvider: (['SIMULATED', 'BEAR', 'PUDU'].includes(p.connectorProvider) ? p.connectorProvider : 'SIMULATED') as FleetProvider,
     connectorExternalId: p.connectorExternalId,
     certifications: Array.isArray(p.certifications) ? (p.certifications as RobotProfileSummary['certifications']) : [],
@@ -436,7 +437,7 @@ export async function signOffCommissioning(db: Db, workerId: string, locationId:
 /* -------------------------------------------------------- maintenance -- */
 
 function maintenanceSummary(m: { id: string; performedOn: Date; kind: string; description: string; performedBy: string | null; costCents: number | null; nextDueOn: Date | null }): RobotMaintenanceSummary {
-  return { id: m.id, performedOn: m.performedOn.toISOString().slice(0, 10), kind: m.kind, description: m.description, performedBy: m.performedBy, costCents: m.costCents, nextDueOn: m.nextDueOn?.toISOString().slice(0, 10) ?? null };
+  return { id: m.id, performedOn: dateColumnKey(m.performedOn), kind: m.kind, description: m.description, performedBy: m.performedBy, costCents: m.costCents, nextDueOn: m.nextDueOn ? dateColumnKey(m.nextDueOn) : null };
 }
 
 export async function addMaintenance(db: Db, workerId: string, input: MaintenanceInput, actorUserId: string, now: Date = new Date()): Promise<RobotMaintenanceSummary> {
@@ -472,7 +473,7 @@ export async function listEvents(db: Db, workerId: string, limit = 100): Promise
 function incidentSummary(i: { id: string; kind: RobotIncidentSummary['kind']; occurredAt: Date; description: string; locationId: string | null; site: { name: string } | null; reportedBy: { id: string; email: string; associate: { firstName: string; lastName: string } | null } | null; oshaIncidentId: string | null; peopleOnShift: unknown; samples: unknown; events: unknown; retainUntil: Date; evidencePurgedAt: Date | null }): RobotIncidentSummary {
   const samples = Array.isArray(i.samples) ? i.samples : [];
   const events = Array.isArray(i.events) ? i.events : [];
-  return { id: i.id, kind: i.kind, occurredAt: i.occurredAt.toISOString(), description: i.description, locationId: i.locationId, locationName: i.site?.name ?? null, reportedBy: nameOf(i.reportedBy), oshaIncidentId: i.oshaIncidentId, peopleOnShift: (i.peopleOnShift as unknown as RobotIncidentSummary['peopleOnShift']) ?? [], sampleCount: samples.length, eventCount: events.length, retainUntil: i.retainUntil.toISOString().slice(0, 10), evidencePurgedAt: i.evidencePurgedAt?.toISOString() ?? null };
+  return { id: i.id, kind: i.kind, occurredAt: i.occurredAt.toISOString(), description: i.description, locationId: i.locationId, locationName: i.site?.name ?? null, reportedBy: nameOf(i.reportedBy), oshaIncidentId: i.oshaIncidentId, peopleOnShift: (i.peopleOnShift as unknown as RobotIncidentSummary['peopleOnShift']) ?? [], sampleCount: samples.length, eventCount: events.length, retainUntil: dateColumnKey(i.retainUntil), evidencePurgedAt: i.evidencePurgedAt?.toISOString() ?? null };
 }
 
 const incidentInclude = { site: { select: { name: true } }, reportedBy: userSelect } as const;

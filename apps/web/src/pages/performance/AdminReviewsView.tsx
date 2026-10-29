@@ -56,6 +56,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { useTerm } from '@/lib/auth';
+import { useReadable } from '@/lib/useReadable';
 import { ReviewRecordPanel } from './ReviewRecordPanel';
 import { pickOne } from '@/lib/validationCopy';
 
@@ -113,6 +114,8 @@ const STATUS_LABELS: Record<PerformanceReviewStatus, string> = {
 };
 
 export function AdminReviewsView({ canManage }: { canManage: boolean }) {
+  // Goals, 1:1s and feedback read view:hr-admin endpoints (routes/performance84); the link shows to who can open them.
+  const opensExtras = useReadable('view:hr-admin');
   // The filter lives in the URL (?status=), and opens on what needs action.
   const [filter, setFilter] = useUrlParam<ReviewFilter>('status', 'NEEDS_ACTION', FILTER_VALUES);
   const peopleView = filter === 'DUE' || filter === 'OVERDUE';
@@ -232,7 +235,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
       title="Performance"
       subtitle={canManage ? 'Reviews due, waiting on the person, and done this quarter.' : 'Read-only view of performance reviews.'}
       related={[
-        { label: 'Goals, 1:1s & feedback', to: '/performance/extras' },
+        ...(opensExtras ? [{ label: 'Goals, 1:1s & feedback', to: '/performance/extras' }] : []),
         ...(canManage ? [{ label: 'Calibration', to: '/performance/calibration' }] : []),
       ]}
       actions={canManage ? [{ label: 'New review', icon: Plus, primary: true, onSelect: () => setShowCreate(true) }] : undefined}

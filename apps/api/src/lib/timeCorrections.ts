@@ -5,6 +5,8 @@ import { notifyAssociate, notifyClientSupervisors } from './notify.js';
 import { getLaborPolicy } from './stateLaborPolicy.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { fmtDayInZone, fmtMomentInZone } from './humanDates.js';
+import { siteTimeZone } from './siteDay.js';
+import { dateKeyInZone } from './timeAnomalies.js';
 
 /**
  * Timekeeping corrections, attested.
@@ -108,13 +110,15 @@ export async function submitCorrection(db: Db, ctx: { tenantId: string; associat
   const open = await db.timeCorrectionRequest.findFirst({ where: { associateId: ctx.associateId, status: 'SUBMITTED', ...(entry ? { timeEntryId: entry.id } : {}), ...(entry ? {} : { proposedClockIn: cin }) }, select: { id: true } });
   if (open) throw new HttpError(409, 'already_requested', 'You already asked to fix this one — it’s waiting on your manager.');
 
+  // The work day is the punch's day on the site's clock (a 7 PM Pacific punch stays on its own day).
+  const workDay = dateKeyInZone(workAt, await siteTimeZone(siteId, db));
   const data = {
     tenantId: ctx.tenantId,
     associateId: ctx.associateId,
     timeEntryId: entry?.id ?? null,
     kind: input.kind,
     status: 'SUBMITTED',
-    workDate: new Date(`${workAt.toISOString().slice(0, 10)}T00:00:00Z`),
+    workDate: new Date(`${workDay}T00:00:00Z`),
     siteId,
     proposedClockIn: cin,
     proposedClockOut: cout,
@@ -210,8 +214,9 @@ export async function decideCorrection(db: Db, id: string, decider: { id: string
 export async function promptMissedClockOut(db: Db, tenantId: string, entry: { id: string; associateId: string; clockInAt: Date; locationId: string | null }): Promise<string> {
   const existing = await db.timeCorrectionRequest.findFirst({ where: { timeEntryId: entry.id, status: { in: ['PROMPTED', 'SUBMITTED'] } }, select: { id: true } });
   if (existing) return existing.id;
+  const workDay = dateKeyInZone(entry.clockInAt, await siteTimeZone(entry.locationId, db));
   const row = await db.timeCorrectionRequest.create({
-    data: { tenantId, associateId: entry.associateId, timeEntryId: entry.id, kind: 'MISSED_CLOCK_OUT', status: 'PROMPTED', siteId: entry.locationId, workDate: new Date(`${entry.clockInAt.toISOString().slice(0, 10)}T00:00:00Z`), before: { clockInAt: iso(entry.clockInAt), clockOutAt: null, status: 'ACTIVE' } },
+    data: { tenantId, associateId: entry.associateId, timeEntryId: entry.id, kind: 'MISSED_CLOCK_OUT', status: 'PROMPTED', siteId: entry.locationId, workDate: new Date(`${workDay}T00:00:00Z`), before: { clockInAt: iso(entry.clockInAt), clockOutAt: null, status: 'ACTIVE' } },
   });
   void notifyAssociate(entry.associateId, { subject: 'You didn’t clock out last time', body: 'Tell us when you left, from the Time tab, so your hours are right.', category: 'time', linkUrl: '/time-attendance?fix=1' });
   return row.id;

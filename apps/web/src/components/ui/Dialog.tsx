@@ -4,6 +4,7 @@ import { X } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { Button } from './Button';
+import { useI18n } from '@/lib/i18n';
 
 /* ------------------------------------------------------- discard guard */
 
@@ -37,6 +38,7 @@ export function DiscardConfirm({
   onKeep: () => void;
   onDiscard: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <DialogPrimitive.Root open={open} onOpenChange={(o) => !o && onKeep()}>
       <DialogPrimitive.Portal>
@@ -54,17 +56,17 @@ export function DiscardConfirm({
           )}
         >
           <DialogPrimitive.Title className="text-2xl text-white leading-none">
-            Discard your changes?
+            {t('dialog.discardTitle')}
           </DialogPrimitive.Title>
           <DialogPrimitive.Description className="text-sm text-silver">
-            You have unsaved edits — closing now will lose them.
+            {t('dialog.discardBody')}
           </DialogPrimitive.Description>
           <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" onClick={onKeep}>
-              Keep editing
+              {t('dialog.keepEditing')}
             </Button>
             <Button type="button" variant="destructive" onClick={onDiscard}>
-              Discard
+              {t('dialog.discard')}
             </Button>
           </div>
         </DialogPrimitive.Content>
@@ -162,6 +164,7 @@ export const DialogContent = React.forwardRef<
   // set. Each user-dismissal path below routes through it; it no-ops
   // (returns false) when the dialog is clean or unguarded.
   const discardGuard = React.useContext(DiscardGuardContext);
+  const { t } = useI18n();
   // Drag-to-dismiss for the phone bottom sheet. The grab handle below is
   // the universal "drag me down" signal — it used to be decoration, which
   // is worse than absent: users tried the gesture and nothing happened.
@@ -281,7 +284,7 @@ export const DialogContent = React.forwardRef<
         // not push the X into the title; the safe-area offset only applies
         // to the centered (sm+) variant, where the top can meet the notch.
         className="absolute grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-2 right-2 sm:top-[max(0.5rem,env(safe-area-inset-top))] sm:right-[max(0.5rem,env(safe-area-inset-right))]"
-        aria-label="Close"
+        aria-label={t('common.close')}
       >
         <X className="h-4 w-4" />
       </DialogPrimitive.Close>

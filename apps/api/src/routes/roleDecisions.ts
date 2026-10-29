@@ -21,8 +21,8 @@ import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { computeRoleDecisions } from '../lib/roleDecisions.js';
 import { deskMayDecide } from '../lib/agentCapabilities.js';
 import { decideApproval } from '../lib/agents.js';
-import { formatTimeInZone } from '../lib/timezone.js';
-import { companyWorkweek } from '../lib/timeAnomalies.js';
+import { formatTimeInZone, dateColumnKey } from '../lib/timezone.js';
+import { companyWorkweek, orgDateKey } from '../lib/timeAnomalies.js';
 import { fmtDayRange } from '../lib/humanDates.js';
 
 /**
@@ -265,7 +265,7 @@ async function computeItemFacts(
         { label: 'Associate', value: `${a.firstName} ${a.lastName}` },
         {
           label: 'Paused since',
-          value: a.deactivatedAt ? a.deactivatedAt.toISOString().slice(0, 10) : '—',
+          value: a.deactivatedAt ? orgDateKey(a.deactivatedAt) : '—',
         },
         ...(a.deactivationReason ? [{ label: 'Reason', value: a.deactivationReason }] : []),
       );
@@ -409,7 +409,7 @@ roleDecisionsRouter.get('/decisions', requireAuth, async (req: Request, res: Res
             ? {
                 text: s.text,
                 ownerName: s.owner ? personOf(s.owner as ClaimerRow).name : null,
-                dueDay: s.dueDay ? s.dueDay.toISOString().slice(0, 10) : null,
+                dueDay: s.dueDay ? dateColumnKey(s.dueDay) : null,
               }
             : null,
         };
@@ -792,7 +792,7 @@ roleDecisionsRouter.get('/decisions/item', requireAuth, async (req: Request, res
       ? {
           text: nextStep.text,
           owner: nextStep.owner ? personOf(nextStep.owner as ClaimerRow) : null,
-          dueDay: nextStep.dueDay ? nextStep.dueDay.toISOString().slice(0, 10) : null,
+          dueDay: nextStep.dueDay ? dateColumnKey(nextStep.dueDay) : null,
         }
       : null,
     facts: itemContext.facts,
@@ -947,7 +947,7 @@ roleDecisionsRouter.get('/plan', requireAuth, async (req: Request, res: Response
   res.json({
     items: items.map((i) => ({
       id: i.id,
-      day: i.day.toISOString().slice(0, 10),
+      day: dateColumnKey(i.day),
       title: i.title,
       decisionKey: i.decisionKey,
       linkUrl: i.linkUrl,

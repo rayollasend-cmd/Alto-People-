@@ -11,6 +11,7 @@ import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { isEmailMuted, trackNotificationWork } from './notify.js';
 import { emitLiveEvent } from './liveEvents.js';
 import { sendPushToUser } from './webPush.js';
+import { logger } from './logger.js';
 
 /**
  * The Saturday email — last week's service report, in the manager's inbox
@@ -248,8 +249,8 @@ export function startServiceReportMailCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] service report mail cron armed (every ${seconds}s; Saturdays after ${env.SERVICE_REPORT_MAIL_HOUR}:00 org time, catching up through Monday)`,
+  logger.info(
+    `service report mail cron armed (every ${seconds}s; Saturdays after ${env.SERVICE_REPORT_MAIL_HOUR}:00 org time, catching up through Monday)`,
   );
 }
 

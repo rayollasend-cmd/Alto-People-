@@ -25,6 +25,8 @@ import { createApprovalRequest, logAgentAction, type AgentContext } from './agen
 import { gateFor } from './agentGates.js';
 import { complianceHold } from './decisionRecord.js';
 import { AGENT_KILL_CATEGORY, allAgentsSuspended, evaluateScenario } from './agentControls.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 
 /**
  * Agent families step 0 (docs/agent-families-investigation.md §8).
@@ -560,7 +562,7 @@ export async function runCapabilityFixture(
       }
       // Approved hires: the start date, an approved application, the I-9 as far as it got.
       for (const h of fixture.world.hires ?? []) {
-        const start = new Date(`${new Date(now.getTime() - h.startDaysAgo * DAY).toISOString().slice(0, 10)}T00:00:00Z`);
+        const start = new Date(`${addDaysToKey(orgDateKey(now), -h.startDaysAgo)}T00:00:00Z`);
         await db.associate.update({ where: { id: refs[h.personRef]! }, data: { hireDate: start } });
         await db.application.create({ data: { associateId: refs[h.personRef]!, onboardingTrack: 'STANDARD', status: 'APPROVED', startDate: start, tenantId } });
         await db.i9Verification.create({ data: { associateId: refs[h.personRef]!, tenantId, ...(h.section1 ? { section1CompletedAt: start } : {}), ...(h.section2 ? { section2CompletedAt: start } : {}) } });

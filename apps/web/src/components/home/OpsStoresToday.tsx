@@ -17,9 +17,17 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
  * much of tomorrow is confirmed. Read from the same /workforce/overview the
  * floor row above it uses (its per-store board), so the two never disagree;
  * the "no lead" count comes from the store-leads gaps.
+ *
+ * One row is one STORE (`today.sites`), its client named under it. The rows
+ * were clients under a "Store" header — "2 stores" with four, and Coastal's
+ * three rolled into one, so Front Beach at 0 of 2 couldn't be seen (LEAD-10).
  */
 
 export interface OpsStoreRow {
+  /** Per-store rows (today.sites): the row key and its store; absent on client rows from an older server. */
+  key?: string;
+  locationId?: string | null;
+  locationName?: string | null;
   clientId: string | null;
   clientName: string;
   onFloor: number;
@@ -37,7 +45,7 @@ export interface OpsStoreRow {
 }
 
 interface OverviewStores {
-  today: { stores: OpsStoreRow[] };
+  today: { stores: OpsStoreRow[]; sites?: OpsStoreRow[] };
 }
 
 interface Row extends OpsStoreRow {
@@ -72,13 +80,26 @@ export function OpsStoresToday() {
 
   const rows: Row[] | null = useMemo(() => {
     if (!overview.data) return null;
-    const uncovered = new Map<string, number>();
-    for (const c of leads.data?.clients ?? []) uncovered.set(c.clientId, c.uncovered.length);
-    return overview.data.today.stores.map((s) => ({
+    // Windows with no lead, per store (and per client for an older server's client rows).
+    const uncoveredBySite = new Map<string, number>();
+    const uncoveredByClient = new Map<string, number>();
+    for (const c of leads.data?.clients ?? []) {
+      uncoveredByClient.set(c.clientId, c.uncovered.length);
+      for (const w of c.uncovered) uncoveredBySite.set(w.locationId, (uncoveredBySite.get(w.locationId) ?? 0) + 1);
+    }
+    const perStore = overview.data.today.sites;
+    return (perStore ?? overview.data.today.stores).map((s) => ({
       ...s,
       // Shifts with no client come back as one '—' bucket: name it.
       clientName: s.clientId ? s.clientName : 'Shifts with no client',
-      noLead: leads.data && s.clientId ? (uncovered.get(s.clientId) ?? 0) : null,
+      noLead:
+        leads.data && s.clientId
+          ? perStore
+            ? s.locationId
+              ? (uncoveredBySite.get(s.locationId) ?? 0)
+              : 0
+            : (uncoveredByClient.get(s.clientId) ?? 0)
+          : null,
       tomorrowTotal: (s.confirmedTomorrow ?? 0) + s.unconfirmedTomorrow + s.openTomorrow,
     }));
   }, [overview.data, leads.data]);
@@ -86,25 +107,33 @@ export function OpsStoresToday() {
   const storeWord = term('site');
   const storesWord = term('sites');
   const scheduleOf = (r: Row, open = false) =>
-    r.clientId ? `/scheduling?client=${r.clientId}${open ? '&open=1' : ''}&date=${today}` : `/scheduling?${open ? 'open=1&' : ''}date=${today}`;
+    r.clientId
+      ? `/scheduling?client=${r.clientId}${r.locationId ? `&location=${r.locationId}` : ''}${open ? '&open=1' : ''}&date=${today}`
+      : `/scheduling?${open ? 'open=1&' : ''}date=${today}`;
+  /** The row's name: the store, else (no store set, or an older server's client row) the client. */
+  const rowName = (r: Row) =>
+    r.locationName ?? (r.key !== undefined && r.clientId ? `${r.clientName} · no ${storeWord.toLowerCase()} set` : r.clientName);
 
   const columns: GridColumn<Row>[] = [
     {
       key: 'store',
       header: storeWord,
       primary: true,
-      accessor: (r) => r.clientName,
+      accessor: (r) => rowName(r),
       sortable: true,
       cell: (r) => (
         <span className="flex min-w-0 items-center gap-2">
           <span className={cn('h-2 w-2 shrink-0 rounded-full', DOT[r.status])} aria-hidden="true" />
           <span className="min-w-0">
-            <span className="block font-medium text-ink">{r.clientName}</span>
-            <span className="block text-2xs text-ink-muted">{STATUS_WORD[r.status]}</span>
+            <span className="block font-medium text-ink">{rowName(r)}</span>
+            <span className="block text-2xs text-ink-muted">
+              {r.locationName && r.clientId ? `${r.clientName} · ` : ''}
+              {STATUS_WORD[r.status]}
+            </span>
           </span>
         </span>
       ),
-      csv: (r) => r.clientName,
+      csv: (r) => (r.locationName && r.clientId ? `${r.locationName} (${r.clientName})` : rowName(r)),
     },
     {
       key: 'floor',
@@ -227,13 +256,13 @@ export function OpsStoresToday() {
         error={overview.isError ? (overview.error instanceof ApiError ? overview.error.message : `Couldn't load today's ${storesWord.toLowerCase()}.`) : null}
         onRetry={() => void overview.refetch()}
         columns={columns}
-        rowKey={(r) => r.clientId ?? r.clientName}
+        rowKey={(r) => r.key ?? r.clientId ?? r.clientName}
         search={false}
         urlState={false}
         columnChooser={false}
         exportCsv={{ filename: `${storesWord.toLowerCase()}-today-${today}` }}
         onRowClick={(r) => navigate(scheduleOf(r))}
-        rowActionLabel={(r) => `Open ${r.clientName}'s schedule today`}
+        rowActionLabel={(r) => `Open ${rowName(r)}'s schedule today`}
         empty={{
           icon: Store,
           title: 'No shifts today',

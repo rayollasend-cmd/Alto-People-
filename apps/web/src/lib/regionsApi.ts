@@ -22,6 +22,8 @@ export interface StoreSnapshot {
     shortBasis?: 'contract' | 'schedule';
     shortOfContract?: number | null;
     missingFromSchedule?: number;
+    /** People assigned to a wave past its grace period and not in. Absent from an older server. */
+    lateNotIn?: number;
   };
   today: { expected: number; present: number; open: number; missedSoFar: number };
   tomorrow: { expected: number; open: number; unconfirmed: number };
@@ -65,6 +67,9 @@ export interface RegionOverview {
     belowContract?: number;
     /** People scheduled now who are not on the floor, across the region. */
     missingFromSchedule?: number;
+    /** People assigned to a wave past its grace period and not in — "late, not in yet". */
+    lateNotIn?: number;
+    /** Stores with a live alert (a count of stores, not people). */
     alerts: number;
     openToday: number;
     openTomorrow: number;

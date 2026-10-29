@@ -17,6 +17,7 @@ import { runShiftFill } from './workforceAgent.js';
 import { runScheduleRepair } from './scheduleRepair.js';
 import { runAttendanceConfirm } from './attendanceConfirm.js';
 import { runCoverageForecast } from './coverageForecast.js';
+import { logger } from './logger.js';
 
 const SWEEP_SECONDS = 15 * 60;
 const HORIZON_MS = 48 * 3600_000;
@@ -155,8 +156,8 @@ export function startShiftAutofillCron(): void {
     });
   }, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] shift auto-fill cron armed (every ${SWEEP_SECONDS}s, 48h horizon)`,
+  logger.info(
+    `shift auto-fill cron armed (every ${SWEEP_SECONDS}s, 48h horizon)`,
   );
 }
 

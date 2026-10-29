@@ -174,16 +174,19 @@ describe('Background check endpoints', () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
 
-    const initiate = await a.post('/compliance/background').send({
-      associateId: associate.id,
-      provider: 'alto-stub',
+    // One person's order, recorded (the stubbed POST /compliance/background is gone).
+    const initiate = await a.post('/compliance/background/bulk-initiate').send({
+      associateIds: [associate.id],
+      provider: 'Sterling (portal)',
     });
-    expect(initiate.status).toBe(201);
-    expect(initiate.body.status).toBe('INITIATED');
-    expect(initiate.body.clientId).toBe(client.id);
+    expect(initiate.status).toBe(200);
+    expect(initiate.body).toMatchObject({ created: 1, skipped: 0 });
+    const row = await prisma.backgroundCheck.findUniqueOrThrow({ where: { id: initiate.body.ids[0] } });
+    expect(row.status).toBe('INITIATED');
+    expect(row.clientId).toBe(client.id);
 
     const update = await a
-      .post(`/compliance/background/${initiate.body.id}/update`)
+      .post(`/compliance/background/${row.id}/update`)
       .send({ status: 'PASSED', externalId: 'ext-12345' });
     expect(update.status).toBe(200);
     expect(update.body.status).toBe('PASSED');
@@ -194,23 +197,25 @@ describe('Background check endpoints', () => {
   it('initiate with unknown associateId → 404', async () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
-    const res = await a.post('/compliance/background').send({
-      associateId: '00000000-0000-4000-8000-000000000000',
-      provider: 'alto-stub',
+    const res = await a.post('/compliance/background/bulk-initiate').send({
+      associateIds: ['00000000-0000-4000-8000-000000000000'],
+      provider: 'Sterling (portal)',
     });
     expect(res.status).toBe(404);
+    // The stub is gone for good.
+    expect((await a.post('/compliance/background').send({ associateId: '00000000-0000-4000-8000-000000000000' })).status).toBe(404);
   });
 
   it('non-terminal status updates do not set completedAt', async () => {
     const associate = await createAssociate();
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
-    const initiate = await a.post('/compliance/background').send({
-      associateId: associate.id,
-      provider: 'alto-stub',
+    const initiate = await a.post('/compliance/background/bulk-initiate').send({
+      associateIds: [associate.id],
+      provider: 'Sterling (portal)',
     });
     const update = await a
-      .post(`/compliance/background/${initiate.body.id}/update`)
+      .post(`/compliance/background/${initiate.body.ids[0]}/update`)
       .send({ status: 'IN_PROGRESS' });
     expect(update.body.status).toBe('IN_PROGRESS');
     expect(update.body.completedAt).toBeNull();
@@ -220,12 +225,12 @@ describe('Background check endpoints', () => {
     const associate = await createAssociate();
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
-    const initiate = await a.post('/compliance/background').send({
-      associateId: associate.id,
-      provider: 'alto-stub',
+    const initiate = await a.post('/compliance/background/bulk-initiate').send({
+      associateIds: [associate.id],
+      provider: 'Sterling (portal)',
     });
-    expect(initiate.status).toBe(201);
-    const checkId = initiate.body.id as string;
+    expect(initiate.status).toBe(200);
+    const checkId = initiate.body.ids[0] as string;
 
     // Two report docs on the associate; a deleted one must not count.
     const mkDoc = (filename: string, deletedAt: Date | null = null) =>
@@ -417,16 +422,19 @@ describe('Drug test endpoints', () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
 
-    const order = await a.post('/compliance/drug-tests').send({
-      associateId: associate.id,
+    // One person's order, recorded with the provider's reference (the stubbed POST /compliance/drug-tests is gone).
+    const order = await a.post('/compliance/drug-tests/bulk-initiate').send({
+      associateIds: [associate.id],
       provider: 'checkr',
+      externalId: 'scr-100',
     });
-    expect(order.status).toBe(201);
-    expect(order.body.status).toBe('INITIATED');
-    expect(order.body.clientId).toBe(client.id);
+    expect(order.status).toBe(200);
+    const test = await prisma.drugTest.findUniqueOrThrow({ where: { id: order.body.ids[0] } });
+    expect(test).toMatchObject({ status: 'INITIATED', clientId: client.id, externalId: 'scr-100' });
+    expect((await a.post('/compliance/drug-tests').send({ associateId: associate.id })).status).toBe(404);
 
     const update = await a
-      .post(`/compliance/drug-tests/${order.body.id}/update`)
+      .post(`/compliance/drug-tests/${test.id}/update`)
       .send({ status: 'PASSED', externalId: 'scr-777' });
     expect(update.status).toBe(200);
     expect(update.body.status).toBe('PASSED');

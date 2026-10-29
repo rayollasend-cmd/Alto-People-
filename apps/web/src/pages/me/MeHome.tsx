@@ -38,9 +38,11 @@ import {
 import { useConfirm } from '@/lib/confirm';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { MySkillsCard } from './MySkillsCard';
+import { TAX_DOC_FORM } from './MyTaxDocs';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import { updateProfile } from '@/lib/settingsApi';
 import { useAuth } from '@/lib/auth';
+import { useAuthIfMounted } from '@/lib/navTrail';
 import { fmtPhone } from '@/lib/format';
 import {
   Badge,
@@ -151,12 +153,7 @@ const evsLabel = (t: Translate, st: string): string =>
 const benkLabel = (t: Translate, k: string): string =>
   t(('me.benk.' + k) as MessageKey);
 
-const TAX_DOC_LABEL: Record<TaxDoc['kind'], string> = {
-  W2: 'Form W-2',
-  W3: 'Form W-3',
-  N_1099_NEC: 'Form 1099-NEC',
-  N_1095_C: 'Form 1095-C',
-};
+const TAX_DOC_LABEL = TAX_DOC_FORM;
 
 type SectionErrors = {
   profile: string | null;
@@ -219,11 +216,17 @@ export function MeHome() {
     else next.set('tab', v);
     setSearchParams(next, { replace: true });
   };
+  // No person record behind this sign-in (an administrator, an executive, a
+  // store's portal login): every /self/me/* read would be refused — seven
+  // silent 403s a load (CRAWL-15). Don't ask; say what applies.
+  const auth = useAuthIfMounted();
+  const hasPerson = !auth?.user || !!auth.user.associateId;
   // allSettled, not all: one flaky endpoint must not blank the whole
   // portal. Each section keeps its own data/error; the page-level error
   // only fires when everything failed (likely network/auth-wide).
   const sectionsQuery = useQuery({
     queryKey: ['MeHome', 'sections'],
+    enabled: hasPerson,
     queryFn: () =>
       Promise.allSettled([
         getProfile(),
@@ -273,7 +276,7 @@ export function MeHome() {
   const [editing, setEditing] = useState(() => searchParams.get('edit') === 'address');
   // No person behind this sign-in: one designed state, not the API's
   // sentence twice with a Retry that can never work (F500 audit).
-  const noPerson = !!p && p.status === 'rejected' && isNoPersonRecord(p.reason);
+  const noPerson = !hasPerson || (!!p && p.status === 'rejected' && isNoPersonRecord(p.reason));
 
   if (noPerson) {
     return (
@@ -1212,8 +1215,10 @@ function DependentsPanel({
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: t('me.dep.removeTitle'), destructive: true }))) return;
     try {
-      await deleteDependent(id);
-      toast.success(t('me.dep.removed'));
+      // With the self-service approval switch on, the change waits for HR
+      // (202): say so — never "removed" over a dependent still on file (CODE-32).
+      const r = await deleteDependent(id);
+      toast.success(isPending(r) ? t('me.pendingApproval') : t('me.dep.removed'));
       onChange();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('me.removeFailed'));
@@ -1333,9 +1338,8 @@ function DependentDrawer({
         ssnLast4: draft.ssnLast4 || null,
         isCovered: draft.isCovered,
       };
-      if (draft.id) await updateDependent(draft.id, body);
-      else await createDependent(body);
-      toast.success(draft.id ? t('me.dep.updated') : t('me.dep.added'));
+      const r = draft.id ? await updateDependent(draft.id, body) : await createDependent(body);
+      toast.success(isPending(r) ? t('me.pendingApproval') : draft.id ? t('me.dep.updated') : t('me.dep.added'));
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('me.saveFailed'));

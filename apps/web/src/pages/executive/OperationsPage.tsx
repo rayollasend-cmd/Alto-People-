@@ -1,6 +1,6 @@
 import { ExecPage, ExecSection } from '@/components/executive/ExecPage';
 import { useTenant } from '@/lib/auth';
-import { fmtTime } from '@/lib/format';
+import { fmtExecAsOf } from '@/lib/executiveFormat';
 import { useI18n } from '@/lib/i18n';
 import '@/lib/i18n/en/execPortal';
 import { AttendanceCard } from './ops/AttendanceCard';
@@ -33,7 +33,7 @@ export function ExecOperationsPage() {
   return (
     <ExecPage title={t('execPortal.ops.title')} subtitle={t(clientPortal ? 'execPortal.ops.subtitle' : 'execPortal.ops.subtitleNoClients')} testId="exec-operations">
       <p className="-mt-3 text-xs2 text-ink-muted" aria-live="polite">
-        {asOf ? t('execPortal.ops.rightNow', { time: fmtTime(asOf) }) : t('execPortal.ops.rightNowLoading')}
+        {asOf ? t('execPortal.ops.rightNow', { time: fmtExecAsOf(asOf, briefing.data?.timezone) }) : t('execPortal.ops.rightNowLoading')}
       </p>
       <ExecSection id="exec-ops-now" title={t('execPortal.ops.nowTitle')} description={t('execPortal.ops.nowDesc')}>
         <div className="grid items-start gap-4 lg:grid-cols-2">

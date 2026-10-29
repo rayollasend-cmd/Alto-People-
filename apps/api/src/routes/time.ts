@@ -30,13 +30,13 @@ import {
   type TimeEntryListResponse,
   can,
 } from '@alto-people/shared';
-import { csvCell as sharedCsvCell, isClientBoundedRole } from '@alto-people/shared';
+import { csvCell as sharedCsvCell, isClientBoundedRole, toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
-import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter, assertAssociateInScope, assertClientInScope, assertSiteInScope, isInternallyScoped, scopeAssociates } from '../lib/scope.js';
 import { openSopOnClockIn, sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
@@ -52,7 +52,7 @@ import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import { computeAssociateEarnings } from '../lib/associateEarnings.js';
 import { notifyAssociate } from '../lib/notify.js';
-import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone, localDateKey } from '../lib/timezone.js';
+import { formatDateInZone, formatTimeInZone, localDateKey, dateColumnKey } from '../lib/timezone.js';
 import {
   detectAnomalies,
   endOfWeekUTC,
@@ -80,7 +80,7 @@ import { listPayPeriods } from '../lib/payPeriods.js';
 import { pendingTimeWhere, pendingTimeWindow } from '../lib/pendingTime.js';
 import { timeExceptions } from '../lib/timeExceptions.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
-import { companyWorkweek } from '../lib/timeAnomalies.js';
+import { companyWorkweek, orgDateKey } from '../lib/timeAnomalies.js';
 import {
   buildTimesheetWeek,
   buildAssociateTimesheetDetail,
@@ -139,7 +139,8 @@ function notifyEntryDecision(
     | { kind: 'approved'; minutes: number }
     | { kind: 'rejected'; reason: string },
 ): void {
-  const tz = DEFAULT_TIMEZONE;
+  // The company's clock (lib/timeAnomalies), not a hard-coded New York one.
+  const tz = companyWorkweek().timezone;
   const day = formatDateInZone(entry.clockInAt, tz);
   const range = `${formatTimeInZone(entry.clockInAt, tz)}–${
     entry.clockOutAt ? formatTimeInZone(entry.clockOutAt, tz) : '…'
@@ -1010,10 +1011,25 @@ timeRouter.get('/admin/entries/count', MANAGE, async (req, res, next) => {
         : null;
     let byPeriod: Array<{ start: string; end: string; count: number; hasRun: boolean }> | undefined;
     if (req.query.groupBy?.toString() === 'payPeriod') {
-      const [periods, rows] = await Promise.all([
-        listPayPeriods(prisma),
-        count > 0 ? prisma.timeEntry.findMany({ where, select: { clockInAt: true }, take: 5000 }) : [],
-      ]);
+      // Every pending entry, paged — never a silent take: 5000 (CODE-19), so
+      // the buckets always sum to the count shown beside them.
+      const readAll = async (): Promise<Array<{ clockInAt: Date }>> => {
+        const out: Array<{ clockInAt: Date }> = [];
+        let cursor: string | null = null;
+        for (;;) {
+          const page: Array<{ id: string; clockInAt: Date }> = await prisma.timeEntry.findMany({
+            where,
+            select: { id: true, clockInAt: true },
+            orderBy: { id: 'asc' },
+            take: 5000,
+            ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+          });
+          out.push(...page);
+          if (page.length < 5000) return out;
+          cursor = page[page.length - 1]!.id;
+        }
+      };
+      const [periods, rows] = await Promise.all([listPayPeriods(prisma), count > 0 ? readAll() : []]);
       const tz = companyWorkweek().timezone;
       const buckets = new Map<string, { start: string; end: string; count: number; hasRun: boolean }>();
       for (const row of rows) {
@@ -1174,7 +1190,7 @@ function toAttendanceEvent(r: {
     shiftId: r.shiftId,
     kind: r.kind,
     points: Number(r.points),
-    occurredOn: r.occurredOn.toISOString().slice(0, 10),
+    occurredOn: toDateOnly(r.occurredOn)!,
     source: r.source,
     note: r.note,
     excused: r.excusedAt !== null,
@@ -1188,7 +1204,9 @@ timeRouter.get('/admin/attendance', MANAGE, async (req, res, next) => {
     if (!associateId) {
       throw new HttpError(400, 'invalid_query', 'associateId is required');
     }
-    // Tenant clamp: bounded callers only see events at their own client.
+    // The caller's reach (CODE-9): a bounded caller sees only the events at
+    // their own client, a site-bound office account only its own people's —
+    // anyone else's history reads as empty, never theirs.
     const clamp = clockInRequestClientClamp(req.user!);
     const rows = await prisma.attendanceEvent.findMany({
       where: {
@@ -1266,7 +1284,11 @@ const NO_CLIENT_SENTINEL = '00000000-0000-0000-0000-000000000000';
 function clockInRequestClientClamp(user: NonNullable<Express.Request['user']>) {
   const clamped = effectiveClientIdFilter(user, undefined);
   if (clamped === null) return { clientId: NO_CLIENT_SENTINEL };
-  return clamped ? { clientId: clamped } : {};
+  if (clamped) return { clientId: clamped };
+  // A site/region-bound office account (Ops, Workforce): its own people's
+  // requests and attendance only (CODE-9) — the client clamp alone returned
+  // {} for them, so a store-A lead approved store-B walk-ins.
+  return isInternallyScoped(user) ? { associate: { is: scopeAssociates(user) } } : {};
 }
 
 // Approving a stale request would materialize an ACTIVE entry that has
@@ -1399,7 +1421,7 @@ timeRouter.post('/admin/clock-in-requests/:id/approve', MANAGE, async (req, res,
     });
     void notifyAssociate(request.associateId, {
       subject: "You're clocked in",
-      body: `Your supervisor approved your clock-in — you are on the clock as of ${formatTimeInZone(request.requestedAt, DEFAULT_TIMEZONE)}. No need to punch again; clock out at the kiosk as usual.`,
+      body: `Your supervisor approved your clock-in — you are on the clock as of ${formatTimeInZone(request.requestedAt, companyWorkweek().timezone)}. No need to punch again; clock out at the kiosk as usual.`,
       category: 'time_entry',
       linkUrl: `/time-attendance?entry=${entry.id}`,
     });
@@ -1612,8 +1634,11 @@ timeRouter.post('/admin/entries', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_range', 'Clock-out must be after clock-in.');
     }
 
-    const associate = await prisma.associate.findUnique({
-      where: { id: associateId },
+    // CODE-9: only someone in the caller's reach — a store-A lead cannot
+    // create punches for a store-B person (assertAssociateInScope 404s).
+    await assertAssociateInScope(prisma, user, associateId);
+    const associate = await prisma.associate.findFirst({
+      where: { id: associateId, tenantId: tenantIdForWrite() },
       select: { id: true, state: true },
     });
     if (!associate) {
@@ -1624,9 +1649,10 @@ timeRouter.post('/admin/entries', MANAGE, async (req, res, next) => {
     let payRate: number | null = null;
     if (jobId) {
       const job = await prisma.job.findFirst({
-        where: { id: jobId, deletedAt: null, isActive: true },
+        where: { id: jobId, deletedAt: null, isActive: true, tenantId: tenantIdForWrite() },
       });
       if (!job) throw new HttpError(404, 'job_not_found', 'Job not found or inactive');
+      if (job.clientId) await assertClientInScope(prisma, user, job.clientId);
       clientId = job.clientId;
       payRate = job.payRate ? Number(job.payRate) : null;
     }
@@ -1645,6 +1671,8 @@ timeRouter.post('/admin/entries', MANAGE, async (req, res, next) => {
     if (bounded !== undefined && clientId !== bounded) {
       throw new HttpError(403, 'forbidden', 'You can only add time for your assigned client.');
     }
+    // …and a site-bound office account only at its own sites.
+    if (resolved.locationId) await assertSiteInScope(prisma, user, resolved.locationId);
 
     const status: 'ACTIVE' | 'COMPLETED' = clockOutAt ? 'COMPLETED' : 'ACTIVE';
     const anomalies: TimeAnomaly[] = clockOutAt
@@ -1849,7 +1877,7 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
     if (approvedCorrection) {
       await accrueSickLeaveForEntry(prisma, updated.id);
     void accruePolicyLeaveForEntry(prisma, updated.id).catch((err) => console.warn('[time-off] policy accrual failed:', err instanceof Error ? err.message : err));
-      const tz = DEFAULT_TIMEZONE;
+      const tz = companyWorkweek().timezone;
       const day = formatDateInZone(updated.clockInAt, tz);
       const range = `${formatTimeInZone(updated.clockInAt, tz)}–${
         updated.clockOutAt ? formatTimeInZone(updated.clockOutAt, tz) : '…'
@@ -2671,13 +2699,13 @@ timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, nex
       facility = (await loadClientName(parsed.data.clientId)) ?? 'Client';
     }
 
-    const dayStr = (d: Date) => d.toISOString().slice(0, 10);
-    const fname = `time-summary-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.csv`;
+    // The company day at each end (the range's last instant is 23:59 local — its UTC date was tomorrow).
+    const fname = `time-summary-${orgDateKey(from)}-to-${orgDateKey(new Date(to.getTime() - 1))}.csv`;
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
 
     res.write(`Time summary,${csvEscape(facility)}\n`);
-    res.write(`Range,${dayStr(from)} to ${dayStr(new Date(to.getTime() - 1))}\n`);
+    res.write(`Range,${orgDateKey(from)} to ${orgDateKey(new Date(to.getTime() - 1))}\n`);
     res.write(`Status,APPROVED only\n`);
     res.write(`Overtime rule,"Split by the labor rules pay uses: over 40 hours per workweek (federal), plus the daily and double-time rules of any jurisdiction your organization pays live"\n`);
     res.write(
@@ -2749,9 +2777,7 @@ timeRouter.post('/admin/export.csv', EXPORT_SHEETS, async (req, res, next) => {
       res.setHeader('X-Truncated-Limit', String(TIME_EXPORT_MAX_ROWS));
     }
 
-    const fname = `time-${from.toISOString().slice(0, 10)}-to-${new Date(to.getTime() - 1)
-      .toISOString()
-      .slice(0, 10)}.csv`;
+    const fname = `time-${orgDateKey(from)}-to-${orgDateKey(new Date(to.getTime() - 1))}.csv`;
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
 
@@ -2786,7 +2812,7 @@ timeRouter.post('/admin/export.csv', EXPORT_SHEETS, async (req, res, next) => {
         { clockInAt: r.clockInAt, clockOutAt: r.clockOutAt },
         r.breaks,
       );
-      const tz = r.location?.timezone ?? DEFAULT_TIMEZONE;
+      const tz = r.location?.timezone ?? companyWorkweek().timezone;
       const local = (d: Date) =>
         `${localDateKey(d, tz)} ${formatTimeInZone(d, tz)}`;
       const cols = [
@@ -2868,7 +2894,7 @@ timeRouter.post('/admin/export.pdf', MANAGE, async (req, res, next) => {
         clockOutAt: r.clockOutAt,
         // Renderer formats punches on the SITE's wall clock, matching the
         // queue — it used to toLocale* on the UTC server.
-        timezone: r.location?.timezone ?? DEFAULT_TIMEZONE,
+        timezone: r.location?.timezone ?? companyWorkweek().timezone,
         associateName: `${r.associate.firstName} ${r.associate.lastName}`,
         clientName: r.clientId ? clientMap.get(r.clientId) ?? null : null,
         jobName: r.job?.name ?? null,
@@ -2878,9 +2904,7 @@ timeRouter.post('/admin/export.pdf', MANAGE, async (req, res, next) => {
       })),
     });
 
-    const fname = `time-${from.toISOString().slice(0, 10)}-to-${new Date(to.getTime() - 1)
-      .toISOString()
-      .slice(0, 10)}.pdf`;
+    const fname = `time-${orgDateKey(from)}-to-${orgDateKey(new Date(to.getTime() - 1))}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     res.send(pdf);
@@ -3206,8 +3230,8 @@ function setExternalSheetHeaders(
 }
 
 function externalSheetFilename(from: Date, to: Date, ext: string): string {
-  const dayStr = (d: Date) => d.toISOString().slice(0, 10);
-  return `external-payroll-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
+  // The range edges are dates sent as UTC midnight (the period's first day, the day after its last).
+  return `external-payroll-${dateColumnKey(from)}-to-${dateColumnKey(new Date(to.getTime() - 86_400_000))}.${ext}`;
 }
 
 timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
@@ -3246,8 +3270,8 @@ timeRouter.post('/admin/external-payroll-sheet.pdf', EXPORT_PII, bulkPiiExportLi
 });
 
 function payrollSheetFilename(from: Date, to: Date, ext: string): string {
-  const dayStr = (d: Date) => d.toISOString().slice(0, 10);
-  return `payroll-sheet-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
+  // The range edges are dates sent as UTC midnight (the first day, the day after the last).
+  return `payroll-sheet-${dateColumnKey(from)}-to-${dateColumnKey(new Date(to.getTime() - 86_400_000))}.${ext}`;
 }
 
 timeRouter.post('/admin/payroll-sheet.pdf', EXPORT_SHEETS, async (req, res, next) => {
@@ -3537,7 +3561,7 @@ timeRouter.put('/admin/timesheets/note', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const clientId = timesheetClientId(req.user!, parsed.data.clientId) ?? parsed.data.clientId;
-    const week = saturdayWeek(new Date(parsed.data.weekStart), DEFAULT_TIMEZONE);
+    const week = saturdayWeek(new Date(parsed.data.weekStart), companyWorkweek().timezone);
     const weekStart = new Date(`${week.weekStart}T00:00:00Z`);
     // Only a week that exists for this worker and client — a note never
     // conjures a week (or a client) out of nothing.
@@ -3598,6 +3622,7 @@ timeRouter.post('/admin/timesheets/fieldglass-import', MANAGE, fgUpload.single('
         list.map((r) => {
           const end = new Date(`${r.weekEnd}T12:00:00Z`);
           end.setUTCDate(end.getUTCDate() - 6);
+          // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a UTC-noon anchor of a calendar day.
           return end.toISOString().slice(0, 10);
         }),
       ),
@@ -3629,6 +3654,7 @@ timeRouter.post('/admin/timesheets/fieldglass-import', MANAGE, fgUpload.single('
     for (const fg of list) {
       const end = new Date(`${fg.weekEnd}T12:00:00Z`);
       end.setUTCDate(end.getUTCDate() - 6);
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a UTC-noon anchor of a calendar day.
       const week = weeks.get(end.toISOString().slice(0, 10));
       const byId = fg.workerId ? byWorkerId.get(fg.workerId.toLowerCase()) : undefined;
       const candidates = (week?.rows ?? []).filter(

@@ -30,7 +30,7 @@ vi.mock('@/pages/time/AdminTimeView', () => ({
   ),
 }));
 
-import { bulkApproveTimeEntries, countAdminTimeEntries, listAdminTimeEntries, rejectTimeEntry } from '@/lib/timeApi';
+import { approveTimeEntry, bulkApproveTimeEntries, countAdminTimeEntries, listAdminTimeEntries, rejectTimeEntry } from '@/lib/timeApi';
 import { PendingTimesheetsPanel } from '@/pages/time/PendingTimesheetsPanel';
 import { ymdLocal } from '@/lib/format';
 import { AuthContext } from '@/lib/auth';
@@ -133,6 +133,27 @@ describe('PendingTimesheetsPanel', () => {
     expect(within(row).getByTestId('flagged-age')).toHaveTextContent(new RegExp(`^${days} days? ago · pay period Sep 12 – 25, 2026, paid$`));
     await user.click(within(row).getByRole('button', { name: 'Fix time' }));
     expect(await screen.findByRole('dialog', { name: 'Edit Ana Diaz' })).toBeInTheDocument();
+  });
+
+  it('a forgotten clock-out left running offers the queue\'s "Approve at shift end"; an auto clock-out at the end does not (FLOOR-22)', async () => {
+    const shiftEnd = new Date(AT.getTime() + 8 * 3_600_000).toISOString();
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({
+      entries: [
+        // Clocked out 4 h after the shift ended: the shortcut sets it to the end.
+        { ...entry('f1', 'a-ana', 'Ana Diaz', ['FORGOT_CLOCKOUT']), clockOutAt: new Date(AT.getTime() + 12 * 3_600_000).toISOString(), shiftEndsAt: shiftEnd },
+        // The auto clock-out already put it at the end: Approve does the same.
+        { ...entry('f2', 'a-bo', 'Bo Auto', ['FORGOT_CLOCKOUT']), clockOutAt: shiftEnd, shiftEndsAt: shiftEnd },
+      ],
+      truncated: false,
+    } as never);
+    vi.mocked(approveTimeEntry).mockClear();
+    const user = renderPanel();
+    await screen.findByText('Ana Diaz');
+    const [ana, bo] = screen.getAllByTestId('pending-flagged-row');
+    expect(within(bo!).queryByRole('button', { name: /approve at shift end/i })).toBeNull();
+    expect(within(bo!).getByRole('button', { name: 'Fix time' })).toBeInTheDocument();
+    await user.click(within(ana!).getByRole('button', { name: /approve at shift end/i }));
+    await waitFor(() => expect(vi.mocked(approveTimeEntry)).toHaveBeenCalledWith('f1', { clockOutAt: shiftEnd }));
   });
 
   it('rejecting a flagged row needs a reason', async () => {

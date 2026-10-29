@@ -2,7 +2,7 @@ import type * as React from 'react';
 import { render } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ROLE_CAPABILITIES, type Capability, type ExecKpi, type TenantModule } from '@alto-people/shared';
+import { ROLE_CAPABILITIES, type Capability, type ExecKpi, type Role, type TenantModule } from '@alto-people/shared';
 import { AuthContext, DEFAULT_TENANT } from '@/lib/auth';
 
 /**
@@ -19,17 +19,18 @@ function LocationProbe() {
 }
 export const location = () => lastLocation;
 
-export function renderAsChairman(ui: React.ReactElement, opts: { route?: string; off?: TenantModule[] } = {}) {
-  const caps = ROLE_CAPABILITIES.EXECUTIVE_CHAIRMAN;
+export function renderAsChairman(ui: React.ReactElement, opts: { route?: string; off?: TenantModule[]; /** Another role holding view:executive (an HR admin, an ops manager). */ role?: Role } = {}) {
+  const role: Role = opts.role ?? 'EXECUTIVE_CHAIRMAN';
+  const caps = ROLE_CAPABILITIES[role];
   const modules = { ...DEFAULT_TENANT.modules };
   for (const m of opts.off ?? []) modules[m] = false;
   const value = {
     isInitializing: false,
     isOffline: false,
-    user: { id: 'u-exec', email: 'exec@altohr.com', role: 'EXECUTIVE_CHAIRMAN', status: 'ACTIVE', clientId: null, associateId: null },
-    role: 'EXECUTIVE_CHAIRMAN',
-    primaryRole: 'EXECUTIVE_CHAIRMAN',
-    availableRoles: ['EXECUTIVE_CHAIRMAN'],
+    user: { id: 'u-exec', email: 'exec@altohr.com', role, status: 'ACTIVE', clientId: null, associateId: null },
+    role,
+    primaryRole: role,
+    availableRoles: [role],
     capabilities: new Set<Capability>(caps),
     tenant: { ...DEFAULT_TENANT, modules },
     signIn: () => Promise.resolve({}),

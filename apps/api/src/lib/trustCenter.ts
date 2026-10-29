@@ -3,6 +3,8 @@ import { CONTROL_STATUSES, PRODUCT_NAME, PUBLIC_CONTROL_TITLES, SUB_PROCESSORS, 
 import { complianceEvidence } from './evidence.js';
 import { MIN_RETENTION_YEARS, retentionYearsFor } from './auditChain.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
+import { dateColumnKey } from './timezone.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * The Trust Center's numbers (UX upgrade step 4). Everything here is an
@@ -61,7 +63,7 @@ export async function soc2Progress(db: Db, now: Date = new Date()): Promise<Soc2
   // Observation starts the day the last control first produced evidence.
   const firstByControl = new Map(firsts.map((f) => [f.control, f._min.collectedAt]));
   const starts = controls.map((c) => firstByControl.get(c.id) ?? null);
-  const observationSince = stage === 'preparing' || starts.some((d) => !d) ? null : new Date(Math.max(...starts.map((d) => d!.getTime()))).toISOString().slice(0, 10);
+  const observationSince = stage === 'preparing' || starts.some((d) => !d) ? null : orgDateKey(new Date(Math.max(...starts.map((d) => d!.getTime()))));
   return {
     stage,
     // The one status (controlStatusOf): the same "passing" the hero and Compliance evidence count.
@@ -70,7 +72,7 @@ export async function soc2Progress(db: Db, now: Date = new Date()): Promise<Soc2
     controlsTotal: controls.length,
     lastEvidenceAt: latest.length ? latest[latest.length - 1]! : null,
     observationSince,
-    reportIssuedOn: setting?.soc2ReportIssuedOn ? setting.soc2ReportIssuedOn.toISOString().slice(0, 10) : null,
+    reportIssuedOn: setting?.soc2ReportIssuedOn ? dateColumnKey(setting.soc2ReportIssuedOn) : null,
   };
 }
 

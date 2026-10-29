@@ -65,6 +65,19 @@ describe('effective dating', () => {
     expect(resolveRate(cards, { clientId: client.id, position: 'Lead', startsAt: D('2026-10-14'), isLead: true })).toMatchObject({ payRate: 18, billRate: 24.24, source: 'standard' });
     expect(resolveRate(cards, { clientId: client.id, position: 'Associate', startsAt: D('2025-06-01') })).toMatchObject({ payRate: 15, source: 'standard' });
   });
+
+  it('an evening shift is priced by its own day’s card, not the next UTC date’s', async () => {
+    const client = await createClient('Coastal Resort');
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    await setRateCard(prisma, { clientId: client.id, position: 'Associate', payRate: 15, billRate: 21, effectiveFrom: '2026-01-01' }, hr.id);
+    await setRateCard(prisma, { clientId: client.id, position: 'Associate', payRate: 16, billRate: 22, effectiveFrom: '2026-07-01' }, hr.id);
+    const cards = await loadRateCards(prisma, [client.id]);
+    // Tue Jun 30, 9 PM Eastern = Jul 1 01:00 UTC: still June's rate.
+    expect(resolveRate(cards, { clientId: client.id, position: 'Associate', startsAt: new Date('2026-07-01T01:00:00Z') })).toMatchObject({ payRate: 15, source: 'card' });
+    expect(resolveRate(cards, { clientId: client.id, position: 'Associate', startsAt: new Date('2026-07-01T13:00:00Z') })).toMatchObject({ payRate: 16, source: 'card' });
+    // A calendar day given as YYYY-MM-DD is that day.
+    expect(cardOn(cards, client.id, 'Associate', '2026-06-30')?.payRate).toBe(15);
+  });
 });
 
 describe('the surfaces', () => {

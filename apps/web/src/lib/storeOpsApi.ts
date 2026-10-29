@@ -41,6 +41,12 @@ export interface StoreOpsRun {
   runBy: string;
   openedAt: string;
   closedAt: string | null;
+  /** Closed by the expiry sweep — nobody submitted it. Absent from an older server. */
+  expired?: boolean;
+  /** The store day the run is filed under. */
+  day?: string;
+  /** From an earlier day and still on the floor now: listed live, not counted in this day. */
+  carried?: boolean;
   dueAt: string | null;
   done: number;
   total: number;
@@ -69,6 +75,8 @@ export interface StoreOpsAttention {
 export interface StoreOpsTemp {
   taskId: string;
   shiftId: string;
+  /** A carried run's reading — its own day's log; shown only in its run. */
+  carried?: boolean;
   department: string;
   period: OpsPeriod;
   storeName: string | null;
@@ -94,6 +102,7 @@ export interface StoreOpsMetric {
 export interface StoreOpsHandoff {
   id: string;
   shiftId: string;
+  carried?: boolean;
   department: string;
   period: OpsPeriod;
   kind: OpsHandoverKind;
@@ -112,7 +121,10 @@ export interface StoreOpsDay {
   storeToday: string;
   summary: {
     sops: number;
+    /** Submitted by a person — an expired run is never "submitted". */
     submitted: number;
+    /** Closed by the expiry sweep, never submitted. Absent from an older server. */
+    expired?: number;
     running: number;
     notStarted: number;
     completionPct: number | null;

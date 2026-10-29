@@ -21,8 +21,8 @@ import { armJob, stopJob } from './jobs.js';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import {
-  DEFAULT_TIMEZONE,
   formatDateInZone,
   formatTimeInZone,
   zonedDayOfWeek,
@@ -88,7 +88,7 @@ export async function runWeekAheadSweep(
   prisma: PrismaClient = defaultPrisma,
   now: Date = new Date(),
 ): Promise<WeekAheadSweepResult> {
-  const tz = DEFAULT_TIMEZONE;
+  const tz = companyWorkweek().timezone;
   const localHour = Math.floor(zonedMinutes(now, tz) / 60);
   if (localHour < env.WEEK_AHEAD_SEND_HOUR) {
     return { sent: 0, shifts: 0, skipped: 'before_hour' };
@@ -236,7 +236,7 @@ export function startWeekAheadCron(): void {
     label: 'Week-ahead digest to associates',
     intervalSeconds: env.WEEK_AHEAD_INTERVAL_SECONDS,
     run: tenantJob(WEEK_AHEAD_JOB, runWeekAheadSweep),
-    note: `WEEK_AHEAD_INTERVAL_SECONDS; sends after ${env.WEEK_AHEAD_SEND_HOUR}:00 ${DEFAULT_TIMEZONE} the evening before each client's week.`,
+    note: `WEEK_AHEAD_INTERVAL_SECONDS; sends after ${env.WEEK_AHEAD_SEND_HOUR}:00 company time the evening before each client's week.`,
   });
 }
 

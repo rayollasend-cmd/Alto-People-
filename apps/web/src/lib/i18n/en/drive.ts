@@ -147,7 +147,7 @@ export const enDrive = {
   'drive.notSetUp': 'You’re not set up to drive yet — transportation assigns your van, and you ask for clients below. Seat requests show up once both are done.',
   'drive.arriveBy': 'Be at {store} by {time}',
   'drive.leaveStore': 'Leaves {store} at {time}',
-  'drive.riderSince': 'Riding with Alto since {date}',
+  'drive.riderSince': 'Riding with {org} since {date}',
   'drive.riderRides': '{count} rides',
   'drive.riderNoShows': '{count} no-shows',
   'drive.riderCancelled': '{count} cancelled',
@@ -324,6 +324,12 @@ export const enDrive = {
   'drive.workedToday': 'On the clock today',
   'drive.workedWeek': 'This week',
   'drive.yourTime': 'Your time',
+  'drive.load.runs': 'today’s runs',
+  'drive.load.seatRequests': 'seat requests',
+  'drive.load.clients': 'your clients',
+  'drive.load.rider': 'this rider',
+  'drive.load.checklist': 'the checklist',
+  'drive.load.week': 'your week',
 } as const;
 
 registerEnglish(enDrive);

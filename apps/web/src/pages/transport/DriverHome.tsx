@@ -156,7 +156,7 @@ export function DriverHome() {
       <Skeleton className="h-48" />
     </div>
   ) : runs.isError ? (
-    <QueryError what="today's runs" query={runs} />
+    <QueryError what={t('drive.load.runs')} query={runs} />
   ) : current ? (
     <DriveNow
       key={current.id}
@@ -293,7 +293,7 @@ function SeatRequests({ onRider }: { onRider: (associateId: string) => void }) {
   const van = q.data?.van ?? null;
   // A new seat request: buzz, chime — the ride-share "ding".
   useNewKeys(q.data ? requests.map((r) => `req:${r.id}`) : null, () => rideAlert('request'));
-  if (q.isError) return <QueryError what="seat requests" query={q} />;
+  if (q.isError) return <QueryError what={t('drive.load.seatRequests')} query={q} />;
   if (q.isPending) return <Skeleton className="h-20 w-full rounded-lg" />;
   if (!q.data) return null;
 
@@ -430,7 +430,7 @@ function DriverClients() {
   const [picked, setPicked] = useState<string[]>([]);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  if (q.isError) return <QueryError what="your clients" query={q} />;
+  if (q.isError) return <QueryError what={t('drive.load.clients')} query={q} />;
   if (q.isPending) return <Skeleton className="h-20 w-full rounded-lg" />;
   if (!q.data) return null;
   // Tolerate a thin answer (an older API, a generic test mock): no clients is a quiet card.
@@ -587,7 +587,7 @@ function RiderDialog({ associateId, onClose }: { associateId: string; onClose: (
           <DialogTitle>{t('drive.riderProfile')}</DialogTitle>
         </DialogHeader>
         {q.isError ? (
-          <QueryError what="this rider" query={q} />
+          <QueryError what={t('drive.load.rider')} query={q} />
         ) : !r ? (
           <Skeleton className="h-32" />
         ) : (

@@ -16,7 +16,6 @@ vi.mock('@/lib/complianceApi', () => ({
   getBackgroundCheckDetail: vi.fn(),
   listPendingBackgroundChecks: vi.fn(),
   bulkInitiateBackgroundChecks: vi.fn(),
-  initiateBackgroundCheck: vi.fn(),
   updateBackgroundCheck: vi.fn(),
   listAdverseActions: vi.fn(),
   sendPreAdverse: vi.fn(),

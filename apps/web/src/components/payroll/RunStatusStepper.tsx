@@ -64,7 +64,10 @@ export function RunStatusStepper({ status, lifecycle, signedOff, signoffRequired
   const next = lifecycle?.nextStep ?? null;
   const shownNext = liveNextStep(lifecycle ? { status, totalsAgree: lifecycle.totalsAgree, nextStep: next } : null);
   const reachedIdx = (() => {
-    if (status === 'DISBURSED') return next && (next.key === 'done' || next.key === 'remit') ? 4 : 3;
+    // A closed run (deposit made, nothing left): every step is done, none is "current" (MONEY-13 —
+    // a fully closed run sat on step 5 with a "5" in a ring, never a tick).
+    if (status === 'DISBURSED' && next?.key === 'done') return stages.length;
+    if (status === 'DISBURSED') return next && next.key === 'remit' ? 4 : 3;
     if (status === 'FINALIZED') return hasSignoff || (next && next.key !== 'review') ? 2 : 1;
     return 0;
   })();

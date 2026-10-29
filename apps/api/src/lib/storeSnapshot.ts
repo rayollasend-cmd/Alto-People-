@@ -53,6 +53,9 @@ export interface StoreSnapshot {
     shortBasis: 'contract' | 'schedule';
     shortOfContract: number | null;
     missingFromSchedule: number;
+    /** PEOPLE assigned to a wave that started more than the grace period ago
+     *  and not on the floor — "late, not in yet". Open slots aren't people. */
+    lateNotIn: number;
   };
   today: { expected: number; present: number; open: number; missedSoFar: number };
   tomorrow: { expected: number; open: number; unconfirmed: number };
@@ -155,6 +158,12 @@ export async function storeSnapshot(
   // Short of the SCHEDULE: scheduled into a wave under way (or its open slots) and not on the floor.
   const missingFromSchedule = Math.max(0, expectedNow + openNow - presentNow);
   const graceMs = 15 * 60_000;
+  const lateNotIn = liveWaves.filter(
+    (s) =>
+      s.status !== 'OPEN' &&
+      s.startsAt.getTime() <= nowMs - graceMs &&
+      !(s.assignedAssociateId && onFloorIds.has(s.assignedAssociateId)),
+  ).length;
   const shortPastGrace =
     liveWaves.some((s) => s.startsAt.getTime() <= nowMs - graceMs) && missingFromSchedule > 0;
 
@@ -240,13 +249,16 @@ export async function storeSnapshot(
           shortBasis: shortOfContract !== null ? ('contract' as const) : ('schedule' as const),
           shortOfContract,
           missingFromSchedule,
+          lateNotIn,
         };
       })(),
     },
+    // Today's shifts start today on the store's clock — the store page's and
+    // the Schedule's count; last night's overnight still finishing is last night's (LEAD-3).
     today: {
-      expected: todayShifts.filter((s) => s.status !== 'OPEN').length,
+      expected: todayShifts.filter((s) => s.status !== 'OPEN' && cal.key(s.startsAt) === todayKey).length,
       present: presentNow,
-      open: todayShifts.filter((s) => s.status === 'OPEN').length,
+      open: todayShifts.filter((s) => s.status === 'OPEN' && cal.key(s.startsAt) === todayKey).length,
       missedSoFar,
     },
     tomorrow: {

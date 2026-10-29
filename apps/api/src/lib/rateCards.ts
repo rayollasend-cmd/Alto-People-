@@ -5,6 +5,8 @@ import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { placements } from './activeDefinition.js';
 import { fmtDay } from './humanDates.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * Rate cards (Brief 1A-2): one effective-dated pay and bill rate per
@@ -36,7 +38,8 @@ export interface ResolvedRate {
   cardId: string | null;
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** effectiveFrom / effectiveTo are DATE columns: their own day. */
+const ymd = (d: Date) => dateColumnKey(d);
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
 function toCard(r: { id: string; clientId: string | null; position: string; payRate: Prisma.Decimal; billRate: Prisma.Decimal | null; effectiveFrom: Date; effectiveTo: Date | null }): RateCard {
@@ -56,9 +59,19 @@ export async function loadRateCards(db: Db, clientIds: Array<string | null>): Pr
   return rows.map(toCard);
 }
 
-/** The card in force for (client, position) on a date, from a loaded list. */
-export function cardOn(cards: RateCard[], clientId: string | null, position: string, on: Date): RateCard | null {
-  const day = ymd(on);
+/**
+ * The card in force for (client, position) on a day, from a loaded list.
+ * `on` is the day: a YYYY-MM-DD, or a Date holding a calendar day at UTC
+ * midnight (a DATE column, dateOnly). An instant — a shift's start, now —
+ * is read on a calendar first (orgDateKey, or the site's day): its UTC date
+ * is tomorrow from 5 PM Pacific.
+ */
+export function cardOn(cards: RateCard[], clientId: string | null, position: string, on: Date | string): RateCard | null {
+  // A date (YYYY-MM-DD, or a DATE column at UTC midnight) is its own day; a moment — a
+  // shift's start, "now" — is read on the company's calendar, not UTC (an 8 PM Eastern
+  // shift was priced by tomorrow's card). A caller that knows the store's zone passes its day.
+  const utcMidnight = typeof on !== 'string' && on.getUTCHours() === 0 && on.getUTCMinutes() === 0 && on.getUTCSeconds() === 0 && on.getUTCMilliseconds() === 0;
+  const day = typeof on === 'string' ? on : utcMidnight ? ymd(on) : orgDateKey(on);
   for (const c of cards) {
     if (c.clientId !== clientId || c.position !== position) continue;
     if (c.effectiveFrom <= day && (c.effectiveTo === null || c.effectiveTo >= day)) return c;
@@ -72,7 +85,7 @@ export async function currentRateCards(db: Db, clientId: string, on: Date = new 
   const out = new Map<string, RateCard>();
   for (const c of cards) {
     if (out.has(c.position)) continue;
-    const hit = cardOn(cards, clientId, c.position, on);
+    const hit = cardOn(cards, clientId, c.position, orgDateKey(on));
     if (hit) out.set(c.position, hit);
   }
   return [...out.values()].sort((a, b) => a.position.localeCompare(b.position));
@@ -80,7 +93,8 @@ export async function currentRateCards(db: Db, clientId: string, on: Date = new 
 
 /** Pay and bill for a shift: explicit rate, else the card, else the org standard by lead flag. */
 export function resolveRate(cards: RateCard[], shift: { clientId: string; position: string; startsAt: Date; payRate?: number | null; isLead?: boolean }): ResolvedRate {
-  const card = cardOn(cards, shift.clientId, shift.position, shift.startsAt);
+  // The shift's day on the company's calendar (a 9 PM Eastern start is still that day's card).
+  const card = cardOn(cards, shift.clientId, shift.position, orgDateKey(shift.startsAt));
   if (shift.payRate != null) return { payRate: shift.payRate, billRate: card?.billRate ?? null, source: 'explicit', cardId: card?.id ?? null };
   if (card) return { payRate: card.payRate, billRate: card.billRate, source: 'card', cardId: card.id };
   const pay = shift.isLead ? env.DEFAULT_LEAD_PAY_RATE : env.DEFAULT_ASSOCIATE_PAY_RATE;
@@ -104,7 +118,7 @@ export interface RateCardInput {
  * never rewritten: the date may not fall before the current card's start.
  */
 export async function setRateCard(db: Db, input: RateCardInput, actorUserId: string, now: Date = new Date()): Promise<RateCard> {
-  const from = input.effectiveFrom ?? ymd(now);
+  const from = input.effectiveFrom ?? orgDateKey(now);
   const current = await db.shiftRateDefault.findFirst({
     where: { clientId: input.clientId, position: input.position, effectiveTo: null },
     orderBy: { effectiveFrom: 'desc' },
@@ -142,7 +156,8 @@ export async function endRateCard(db: Db, id: string, on: Date = new Date()): Pr
   const row = await db.shiftRateDefault.findUnique({ where: { id } });
   if (!row) throw new HttpError(404, 'rate_default_not_found', 'Rate card not found.');
   if (row.effectiveTo) throw new HttpError(409, 'rate_card_ended', `This rate already ended ${fmtDay(row.effectiveTo, { year: true })}.`);
-  const lastDay = new Date(dateOnly(ymd(on)).getTime() - 86_400_000);
+  // Ends yesterday on the company's calendar.
+  const lastDay = dateOnly(addDaysToKey(orgDateKey(on), -1));
   if (lastDay < row.effectiveFrom) {
     await db.shiftRateDefault.delete({ where: { id } });
     return null;
@@ -187,7 +202,7 @@ export async function associatesWithoutRate(
   for (const p of people) {
     const placement = placed.get(p.id)!;
     const position = p.applications[0]?.position ?? null;
-    if (position && cardOn(cards, placement.clientId, position, now)) continue;
+    if (position && cardOn(cards, placement.clientId, position, orgDateKey(now))) continue;
     // A client-less placement (a direct employer): the org-wide card was checked above; the row names no client.
     out.push({ associateId: p.id, name: `${p.firstName} ${p.lastName}`.trim(), clientId: placement.clientId, clientName: (placement.clientId ? clientName.get(placement.clientId) : undefined) ?? '', locationId: placement.locationId, position });
   }

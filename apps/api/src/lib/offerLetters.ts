@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { getBlobStore, tenantBlobKey } from './blobStore.js';
 import { renderLetterPdf } from './letterPdf.js';
 import { recordDocumentEvent } from './audit.js';
+import { logger } from './logger.js';
 
 /**
  * Offer-letter automation.
@@ -329,7 +330,7 @@ export function startOfferLetterCron(): void {
     void tenantJob('offerLetters', () =>
       runOfferLetterSweep().then((r) => {
         if (r.filed > 0) {
-          console.log(`[alto-people/api] offer-letter sweep filed ${r.filed} letter(s)`);
+          logger.info(`offer-letter sweep filed ${r.filed} letter(s)`);
         }
         // Why it filed NOTHING is the interesting case, and it used to be
         // the silent one: every associate skipping with `no_template`
@@ -350,8 +351,8 @@ export function startOfferLetterCron(): void {
   tick();
   timer = setInterval(tick, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] offer-letter sweep armed (every ${seconds}s; cap ${SWEEP_CAP}/tick)`,
+  logger.info(
+    `offer-letter sweep armed (every ${seconds}s; cap ${SWEEP_CAP}/tick)`,
   );
 }
 

@@ -43,7 +43,13 @@ const DAY_NAME_UTC_FMT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'UTC',
 });
 
-function weekDays(): Array<{
+/**
+ * Today and the next six CALENDAR days. Stepped with setDate from local
+ * noon — never `+ i × 24h`: across a DST change a day is 23 or 25 hours,
+ * so adding milliseconds from just after midnight lands on the same date
+ * twice (the Nov 1 fall-back showed "Sun 1" twice, sharing one key).
+ */
+export function weekDays(now: Date = new Date()): Array<{
   key: string;
   letter: string;
   date: number;
@@ -51,7 +57,7 @@ function weekDays(): Array<{
 }> {
   const out: Array<{ key: string; letter: string; date: number; isToday: boolean }> = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(Date.now() + i * 86_400_000);
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, 12, 0, 0, 0);
     out.push({
       key: ymdLocal(d),
       letter: NARROW_WEEKDAY_FMT.format(d),
@@ -112,7 +118,7 @@ export function MyPlanCard() {
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
-  const days = useMemo(weekDays, []);
+  const days = useMemo(() => weekDays(), []);
   const todayKey = days[0].key;
   const tomorrowKey = days[1].key;
   const [selectedDay, setSelectedDay] = useState(todayKey);

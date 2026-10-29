@@ -14,6 +14,7 @@ import {
   ClipboardX,
   Download,
   FileWarning,
+  ImageOff,
   Moon,
   Printer,
   ShieldCheck,
@@ -100,6 +101,14 @@ const handoverKindLabel = (t: Translate, kind: string) => t(`portalOps.handoverK
 /** One period vocabulary on the page: Morning, Evening, Closing, Overnight. */
 const periodLabel = (t: Translate, p: string) =>
   ['MORNING', 'EVENING', 'CLOSING', 'OVERNIGHT'].includes(p) ? t(`portalOps.period.${p}` as MessageKey) : p;
+/** The store window's name after the period — only when it says something
+ *  the period doesn't ("Overnight · Swing"), never "Morning · Morning". */
+export const windowSuffix = (t: Translate, period: string, windowLabel: string | null | undefined): string => {
+  const w = windowLabel?.trim();
+  if (!w) return '';
+  const same = (x: string) => x.trim().toLowerCase() === w.toLowerCase();
+  return same(period) || same(periodLabel(t, period)) ? '' : ` · ${w}`;
+};
 
 /** /portal/ops — the store manager's page (and an admin's preview). */
 export function PortalOps() {
@@ -145,27 +154,32 @@ export function StoreOps() {
   const isPortal = user?.role === 'CLIENT_PORTAL';
   const scope = scopeParams(searchParams, isPortal);
   const scopeQs = scope.toString() ? `?${scope.toString()}` : '';
-  const date = searchParams.get('date') ?? ymdLocal();
+  // No ?date= is the STORE's today, which the server answers with: at
+  // 11:30 PM Pacific a Chicago store is already on tomorrow, and the
+  // browser's day opened its manager on yesterday (LEAD-17).
+  const dateParam = searchParams.get('date');
   // The two narrowings a store manager actually asks for. "What happened
   // overnight" is a filter on this page, not a different page.
   const period = searchParams.get('period') ?? '';
   const department = searchParams.get('department') ?? '';
   const qs = `?${new URLSearchParams([
     ...scope.entries(),
-    ['date', date],
+    ...(dateParam ? ([['date', dateParam]] as [string, string][]) : []),
     ...(period ? ([['period', period]] as [string, string][]) : []),
     ...(department ? ([['department', department]] as [string, string][]) : []),
   ]).toString()}`;
-  const isToday = date === ymdLocal();
   const query = useQuery({
     queryKey: ['clientPortal', 'ops', qs],
     queryFn: () => getStoreOps(qs),
-    refetchInterval: isToday ? 60_000 : false,
-    refetchOnWindowFocus: isToday,
+    refetchInterval: (q) => (!dateParam || q.state.data?.date === q.state.data?.storeToday ? 60_000 : false),
+    refetchOnWindowFocus: true,
     placeholderData: (prev) => prev,
   });
   const data = query.data;
-  const switching = !!data && data.date !== date;
+  const storeToday = data?.storeToday ?? ymdLocal();
+  const date = dateParam ?? (query.isPlaceholderData ? storeToday : data?.date ?? storeToday);
+  const isToday = date === storeToday;
+  const switching = query.isPlaceholderData;
   const [openRun, setOpenRun] = useState<string | null>(null);
 
   const goDay = (next: string | null) => {
@@ -183,7 +197,7 @@ export function StoreOps() {
   /** "Last night" is one button: yesterday, narrowed to the overnight. */
   const goLastNight = () => {
     const p = new URLSearchParams(searchParams);
-    p.set('date', shiftDays(ymdLocal(), -1));
+    p.set('date', shiftDays(storeToday, -1));
     p.set('period', 'OVERNIGHT');
     setSearchParams(p, { replace: true });
   };
@@ -194,13 +208,14 @@ export function StoreOps() {
     p.delete('date');
     setSearchParams(p, { replace: true });
   };
-  const lastNightOn = date === shiftDays(ymdLocal(), -1) && period === 'OVERNIGHT';
+  const lastNightOn = date === shiftDays(storeToday, -1) && period === 'OVERNIGHT';
 
   const run = data?.runs.find((r) => r.id === openRun) ?? null;
   return (
     <div className={cn('space-y-4', switching && 'opacity-70 transition-opacity')}>
       <DateBar
         date={date}
+        today={storeToday}
         onDate={goDay}
         data={data}
         period={period}
@@ -226,7 +241,9 @@ export function StoreOps() {
           <OnTheFloorNow data={data} onOpen={setOpenRun} />
           <DepartmentGrid data={data} onOpen={setOpenRun} />
           <FromTheFloor data={data} scopeQs={scopeQs} onOpen={setOpenRun} />
-          <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
+          {/* minmax(0, …) tracks: a truncating title set the column's
+              min-content width and pushed the card 74px off a phone (LEAD-11). */}
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <FoodSafety data={data} />
             <Production data={data} />
           </div>
@@ -378,10 +395,9 @@ function FromTheFloor({
                   })}
                   className="block overflow-hidden rounded-lg border border-navy-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                 >
-                  <img
+                  <OpsPhoto
                     src={storeOpsPhotoUrl(ph.id, scopeQs)}
                     alt={ph.title}
-                    loading="lazy"
                     className="aspect-[4/3] w-full object-cover transition-transform group-hover:scale-[1.03]"
                   />
                 </a>
@@ -389,7 +405,7 @@ function FromTheFloor({
                   <button
                     type="button"
                     onClick={() => onOpen(ph.shiftId)}
-                    className="block max-w-full truncate text-left text-xs font-medium text-white hover:text-gold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                    className="block max-w-full truncate text-left text-xs font-medium text-white hover:text-gold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11"
                     aria-label={t('portalOps.photoShift', { dept: ph.department ?? t('portalOps.thisShift') })}
                   >
                     {ph.title}
@@ -410,6 +426,30 @@ function FromTheFloor({
   );
 }
 
+/**
+ * A floor photo, or — when its file is gone — a quiet "Photo unavailable"
+ * tile instead of the browser's broken-image box with the alt text wrapped
+ * across it (LEAD-19).
+ */
+export function OpsPhoto({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const { t } = useI18n();
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <span
+        role="img"
+        aria-label={`${alt} — ${t('portalOps.photoUnavailable')}`}
+        className={cn(className, 'flex flex-col items-center justify-center gap-1 bg-navy-secondary/40 text-silver/60')}
+        data-testid="ops-photo-unavailable"
+      >
+        <ImageOff className="h-5 w-5" aria-hidden="true" />
+        <span className="text-2xs">{t('portalOps.photoUnavailable')}</span>
+      </span>
+    );
+  }
+  return <img src={src} alt={alt} loading="lazy" className={className} onError={() => setFailed(true)} />;
+}
+
 /* ----- date bar ---------------------------------------------------------- */
 
 /**
@@ -421,6 +461,7 @@ function FromTheFloor({
  */
 function DateBar({
   date,
+  today,
   onDate,
   data,
   period,
@@ -434,6 +475,8 @@ function DateBar({
   onRefresh,
 }: {
   date: string;
+  /** The store's today (the server's), not the browser's. */
+  today: string;
   onDate: (d: string | null) => void;
   data?: StoreOpsDay;
   period: string;
@@ -449,7 +492,6 @@ function DateBar({
   const { t } = useI18n();
   const wide = useMinWidth(640);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const today = ymdLocal();
   const yesterday = shiftDays(today, -1);
   const narrowed = period !== '' || department !== '' || date !== today;
   const filterCount = (period ? 1 : 0) + (department ? 1 : 0);
@@ -543,9 +585,7 @@ function DateBar({
           </Button>
         )}
         <span className="ml-auto hidden text-xs text-silver lg:inline">
-          {data?.scope.location?.name ?? data?.scope.client.name}
-          {' · '}
-          {fmtDate(parseYmd(date))}
+          {[data?.scope.location?.name ?? data?.scope.client.name, fmtDate(parseYmd(date))].filter(Boolean).join(' · ')}
         </span>
         <Button size="sm" variant="outline" className="hidden shrink-0 print:hidden sm:inline-flex" onClick={() => window.print()}>
           <Printer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -590,6 +630,9 @@ function Verdict({ data, isToday, onOpen }: { data: StoreOpsDay; isToday: boolea
   const s = data.summary;
   const urgent = data.attention.filter((a) => a.severity === 'high');
   const noRuns = s.sops === 0 && s.notStarted === 0;
+  // "On track" never sits over a checklist that closed short or was never
+  // submitted (LEAD-27): those are findings, not a track being kept.
+  const findings = data.attention.some((a) => a.kind === 'INCOMPLETE' || a.kind === 'NOT_SUBMITTED');
   const tone = urgent.length > 0 ? 'alert' : data.attention.length > 0 ? 'warning' : noRuns ? 'quiet' : 'success';
   // A past day is the record, not a call to act: "needed attention", never "needs you now".
   const headline =
@@ -598,7 +641,7 @@ function Verdict({ data, isToday, onOpen }: { data: StoreOpsDay; isToday: boolea
         ? t('portalOps.needsNow', { count: urgent.length })
         : t('portalOps.neededPast', { count: urgent.length })
       : data.attention.length > 0
-        ? isToday
+        ? isToday && !findings
           ? t('portalOps.toReview', { count: data.attention.length })
           : t('portalOps.toReviewPast', { count: data.attention.length })
         : noRuns
@@ -651,11 +694,15 @@ function Verdict({ data, isToday, onOpen }: { data: StoreOpsDay; isToday: boolea
           label={t('portalOps.kpiSubmitted')}
           value={s.sops + s.notStarted > 0 ? `${s.submitted}/${s.sops + s.notStarted}` : '—'}
           sub={
-            [s.running ? t('portalOps.running', { count: s.running }) : null, s.notStarted ? t('portalOps.notStarted', { count: s.notStarted }) : null]
+            [
+              s.running ? t('portalOps.running', { count: s.running }) : null,
+              s.expired ? t('portalOps.neverSubmitted', { count: s.expired }) : null,
+              s.notStarted ? t('portalOps.notStarted', { count: s.notStarted }) : null,
+            ]
               .filter(Boolean)
               .join(' · ') || t('portalOps.nothingOpen')
           }
-          subTone={s.notStarted > 0 ? 'alert' : undefined}
+          subTone={s.notStarted > 0 || (s.expired ?? 0) > 0 ? 'alert' : undefined}
         />
         <Kpi
           label={t('portalOps.kpiOnTime')}
@@ -859,6 +906,8 @@ function DepartmentGrid({ data, onOpen }: { data: StoreOpsDay; onOpen: (id: stri
 
 function runState(t: Translate, run: StoreOpsRun): { label: string; variant: 'success' | 'pending' | 'destructive' | 'accent' } {
   if (run.status === 'CLOSED') {
+    // Closed by the expiry sweep: nobody submitted it (LEAD-2).
+    if (run.expired) return { label: t('portalOps.state.expired'), variant: 'destructive' };
     return run.closedIncomplete ? { label: t('portalOps.state.incomplete'), variant: 'pending' } : { label: t('portalOps.state.submitted'), variant: 'success' };
   }
   if (run.dueAt && Date.parse(run.dueAt) < Date.now()) return { label: t('portalOps.state.notSubmitted'), variant: 'destructive' };
@@ -884,7 +933,7 @@ function RunCell({ run, tz, onOpen }: { run: StoreOpsRun; tz: string; onOpen: (i
       <div className="flex items-center justify-between gap-2">
         <span className="text-2xs uppercase tracking-wider text-silver/70">
           {periodLabel(t, run.period)}
-          {run.storeName && run.windowLabel ? ` · ${run.windowLabel}` : ''}
+          {run.storeName ? windowSuffix(t, run.period, run.windowLabel) : ''}
         </span>
         <Badge variant={st.variant} size="sm">
           {st.label}
@@ -905,7 +954,9 @@ function RunCell({ run, tz, onOpen }: { run: StoreOpsRun; tz: string; onOpen: (i
       </div>
       <div className="mt-1.5 truncate text-xs text-silver">
         {run.status === 'CLOSED'
-          ? t('portalOps.submittedBy', { name: run.runBy, time: fmtTimeTz(run.closedAt, tz) })
+          ? run.expired
+            ? t('portalOps.expiredBy', { name: run.runBy })
+            : t('portalOps.submittedBy', { name: run.runBy, time: fmtTimeTz(run.closedAt, tz) })
           : run.current
             ? t('portalOps.nowSection', { section: run.current.section, time: fmtTimeTz(run.current.dueAt, tz) })
             : run.runBy}
@@ -935,7 +986,9 @@ function RunDialog({ run, data, scopeQs, onClose }: { run: StoreOpsRun; data: St
           </DialogTitle>
           <DialogDescription>
             {run.templateName ?? t('portalOps.checklist')} · {t('portalOps.runBy', { name: run.runBy, time: fmtTimeTz(run.openedAt, data.tz) })}
-            {run.closedAt ? ` · ${t('portalOps.submittedAt', { time: fmtTimeTz(run.closedAt, data.tz) })}` : ''}
+            {run.closedAt
+              ? ` · ${run.expired ? t('portalOps.expiredAt', { time: fmtTimeTz(run.closedAt, data.tz) }) : t('portalOps.submittedAt', { time: fmtTimeTz(run.closedAt, data.tz) })}`
+              : ''}
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
@@ -950,7 +1003,9 @@ function RunDialog({ run, data, scopeQs, onClose }: { run: StoreOpsRun; data: St
           </div>
           {run.closedIncomplete && run.incompleteReason && (
             <div className="rounded-md border border-warning/40 bg-warning/[0.06] p-3 text-sm text-white">
-              <div className="text-2xs uppercase tracking-wider text-warning">{t('portalOps.whyIncomplete')}</div>
+              <div className="text-2xs uppercase tracking-wider text-warning">
+                {run.expired ? t('portalOps.state.expired') : t('portalOps.whyIncomplete')}
+              </div>
               {run.incompleteReason}
             </div>
           )}
@@ -1027,11 +1082,10 @@ function RunDialog({ run, data, scopeQs, onClose }: { run: StoreOpsRun; data: St
                 <Camera className="h-3.5 w-3.5" aria-hidden="true" />
                 {t('portalOps.finalZone')}
               </figcaption>
-              <img
+              <OpsPhoto
                 src={storeOpsPhotoUrl(run.finalPhotoId, scopeQs)}
                 alt={t('portalOps.finalZoneAlt', { dept: run.department })}
-                className="max-h-80 w-full rounded-md border border-navy-secondary object-cover"
-                loading="lazy"
+                className="max-h-80 min-h-24 w-full rounded-md border border-navy-secondary object-cover"
               />
             </figure>
           )}
@@ -1089,9 +1143,12 @@ function TempReading({ t: temp, tz }: { t: StoreOpsTemp; tz: string }) {
 
 function FoodSafety({ data }: { data: StoreOpsDay }) {
   const { t } = useI18n();
+  // This day's log: a carried overnight's readings are on its own day (its run dialog shows them).
   const rows = useMemo(
     () =>
-      [...data.temps].sort((a, b) => (a.at ?? a.dueAt ?? '').localeCompare(b.at ?? b.dueAt ?? '')),
+      data.temps
+        .filter((temp) => !temp.carried)
+        .sort((a, b) => (a.at ?? a.dueAt ?? '').localeCompare(b.at ?? b.dueAt ?? '')),
     [data.temps],
   );
   return (
@@ -1211,7 +1268,8 @@ function Production({ data }: { data: StoreOpsDay }) {
 
 function Handoffs({ data }: { data: StoreOpsDay }) {
   const { t } = useI18n();
-  if (data.handoffs.length === 0) return null;
+  const handoffs = data.handoffs.filter((h) => !h.carried);
+  if (handoffs.length === 0) return null;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -1219,7 +1277,7 @@ function Handoffs({ data }: { data: StoreOpsDay }) {
       </CardHeader>
       <CardContent>
         <ul className="divide-y divide-navy-secondary/60">
-          {data.handoffs.map((h) => {
+          {handoffs.map((h) => {
             const Icon = HANDOVER_KIND_ICON[h.kind];
             const variant = HANDOFF_VARIANT[h.status] ?? 'default';
             return (

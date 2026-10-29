@@ -119,10 +119,12 @@ export function markClientStatementPaid(
   clientId: string,
   statementId: string,
   paymentRef?: string,
+  /** When the money arrived and how (default: today, "Other"). */
+  paid: { receivedOn?: string; method?: 'ACH' | 'CHECK' | 'WIRE' | 'CARD' | 'OTHER' } = {},
 ): Promise<ClientStatement> {
   return apiFetch(`/clients/${clientId}/statements/${statementId}/mark-paid`, {
     method: 'POST',
-    body: paymentRef ? { paymentRef } : {},
+    body: { ...(paymentRef ? { paymentRef } : {}), ...paid },
   });
 }
 

@@ -1,7 +1,9 @@
 import type { PrismaClient } from '@prisma/client';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { aggregatePayrollProjection } from './payrollAggregator.js';
+import { punchesInPeriod } from './payrollSchedule.js';
 import { activeAssociateIds, activeWindowDays } from './activeDefinition.js';
 import { startOfWeekUTC, endOfWeekUTC } from './timeAnomalies.js';
 import { ACTIVE_COUNT_SITES, DISTINCT_ACTIVE_RULES } from './activeInventory.js';
@@ -28,13 +30,19 @@ type Db = PrismaClient;
 
 /**
  * Column map for the Synchros export. Each entry names the CSV header that
- * carries the value. The defaults are placeholders: the owner supplies the
- * real column names and the map is completed (or overridden on the command
- * line with --map "hours=Reg Hours,gross=Gross Pay,...").
+ * carries the value, matched case-insensitively with surrounding whitespace
+ * trimmed; `--map "hours=Reg Hours,gross=Gross Pay,..."` overrides any of
+ * them on the command line.
  *
- * TODO(1A-1): replace the placeholder headers with the Synchros export's
- * columns when they arrive. Every header listed here is matched
- * case-insensitively and with surrounding whitespace trimmed.
+ * Brief 1A-1 left these as placeholders until the owner shares a real
+ * Synchros export — still an owner question (no export has been shared, so
+ * the true headers can't be confirmed from here). Two things keep that from
+ * ever producing a silently wrong report: a default header that isn't found
+ * also tries the usual names payroll exports give the same column
+ * (PAYROLL_COLUMN_ALIASES — never a total-hours column, which would double
+ * count overtime), and a column that still isn't found is never read as
+ * zero: parsePayrollCsv returns it in `missingColumns` and the report names
+ * it at the top.
  */
 export const PAYROLL_COLUMNS = {
   /** Something that identifies the person: email by default. */
@@ -55,6 +63,19 @@ export const PAYROLL_COLUMNS = {
 } as const;
 
 export type PayrollColumnKey = keyof typeof PAYROLL_COLUMNS;
+
+/** Other headers a payroll export commonly uses for a column, tried only when the column's default header is absent (and the map wasn't overridden). */
+export const PAYROLL_COLUMN_ALIASES: Record<PayrollColumnKey, readonly string[]> = {
+  email: ['Email Address', 'Employee Email', 'Work Email', 'E-mail'],
+  employeeNumber: ['Employee #', 'Employee No', 'Employee ID', 'EE #', 'EE ID', 'Emp #'],
+  firstName: ['First', 'Employee First Name', 'FName'],
+  lastName: ['Last', 'Employee Last Name', 'LName'],
+  hours: ['Regular Hours', 'Reg Hours', 'REG Hours'],
+  overtimeHours: ['OT Hours', 'Overtime', 'OT'],
+  rate: ['Pay Rate', 'Hourly Rate', 'Rate of Pay'],
+  gross: ['Gross Pay', 'Gross Wages', 'Gross Earnings', 'Total Gross'],
+  status: ['Employee Status', 'Employment Status', 'Emp Status'],
+};
 export type PayrollColumnMap = Record<PayrollColumnKey, string>;
 
 export interface PayrollRow {
@@ -117,7 +138,16 @@ export function parsePayrollCsv(text: string, map: PayrollColumnMap = PAYROLL_CO
   const table = parseCsv(text);
   if (table.length === 0) return { rows: [], missingColumns: Object.keys(map) as PayrollColumnKey[] };
   const header = table[0]!.map((h) => h.trim().toLowerCase());
-  const idx = (key: PayrollColumnKey): number => header.indexOf(map[key].trim().toLowerCase());
+  const idx = (key: PayrollColumnKey): number => {
+    const at = header.indexOf(map[key].trim().toLowerCase());
+    if (at >= 0 || map[key] !== PAYROLL_COLUMNS[key]) return at;
+    // The default header isn't there: the usual alternatives, first match wins.
+    for (const alt of PAYROLL_COLUMN_ALIASES[key]) {
+      const i = header.indexOf(alt.toLowerCase());
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
   const col = Object.fromEntries((Object.keys(map) as PayrollColumnKey[]).map((k) => [k, idx(k)])) as Record<PayrollColumnKey, number>;
   const missingColumns = (Object.keys(map) as PayrollColumnKey[]).filter((k) => col[k] < 0);
   const cell = (r: string[], k: PayrollColumnKey): string | undefined => (col[k] >= 0 ? r[col[k]]?.trim() : undefined);
@@ -231,16 +261,18 @@ export async function platformSide(db: Db, period: { start: string; end: string 
     activeAssociateIds({ windowDays }, now, db),
   ]);
   const byAssociate = new Map(projection.items.map((i) => [i.associateId, i]));
-  const entryCounts = await db.timeEntry.groupBy({
-    by: ['associateId', 'status'],
-    where: { clockInAt: { gte: periodStart, lt: periodEndExclusive } },
-    _count: { _all: true },
-  });
+  // The pay-period cut (deep audit CODE-1): the same punches the projection above pays — by the site's day.
+  const periodEntries = await punchesInPeriod({ periodStart: period.start, periodEnd: period.end }, null, (clockInAt) =>
+    db.timeEntry.findMany({
+      where: { clockInAt, status: { in: ['COMPLETED', 'ACTIVE', 'REJECTED'] } },
+      select: { associateId: true, status: true, clockInAt: true, location: { select: { timezone: true } } },
+    }),
+  );
   const pending = new Map<string, number>();
   const rejected = new Map<string, number>();
-  for (const e of entryCounts) {
-    if (e.status === 'COMPLETED' || e.status === 'ACTIVE') pending.set(e.associateId, (pending.get(e.associateId) ?? 0) + e._count._all);
-    if (e.status === 'REJECTED') rejected.set(e.associateId, (rejected.get(e.associateId) ?? 0) + e._count._all);
+  for (const e of periodEntries) {
+    if (e.status === 'COMPLETED' || e.status === 'ACTIVE') pending.set(e.associateId, (pending.get(e.associateId) ?? 0) + 1);
+    if (e.status === 'REJECTED') rejected.set(e.associateId, (rejected.get(e.associateId) ?? 0) + 1);
   }
   const weekStart = startOfWeekUTC(now);
   const weekEnd = endOfWeekUTC(now);
@@ -435,10 +467,8 @@ export function reconcile(
 // Output
 // ---------------------------------------------------------------------------
 
-const csvCell = (v: unknown): string => {
-  const s = v == null ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
+// One escaper for every export (@alto-people/shared): quoting, formula guard, numbers kept numeric.
+const csvCell = (v: unknown): string => sharedCsvCell(typeof v === 'number' ? v : v == null ? '' : String(v));
 
 export function reconcileCsv(r: ReconcileResult): string {
   const head = ['key', 'name', 'platformHours', 'payrollHours', 'hoursDiff', 'platformRate', 'payrollRate', 'rateDiff', 'platformGross', 'payrollGross', 'grossDiff', 'platformStatus', 'payrollStatus', 'causes'];

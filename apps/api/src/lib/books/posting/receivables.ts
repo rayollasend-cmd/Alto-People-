@@ -4,7 +4,8 @@ import { tenantIdForWrite } from '../../tenant.js';
 import { emitBooksChange } from '../events.js';
 import { accountByKey, postEntry } from '../ledger.js';
 import { cents, voidByKey, ymd, type Db } from './common.js';
-import { statementAmounts } from './statements.js';
+import { postStatement, statementAmounts } from './statements.js';
+import { orgDateKey } from '../../timeAnomalies.js';
 import { AGING_BUCKETS, bucketFor, daysPastDue, dueOnFor, zeroBuckets, type AgingBucket } from '../aging.js';
 
 /**
@@ -84,7 +85,11 @@ export interface RecordPaymentInput {
   userId: string | null;
 }
 
-export async function recordClientPayment(db: Prisma.TransactionClient | import('@prisma/client').PrismaClient, input: RecordPaymentInput) {
+export async function recordClientPayment(
+  db: Prisma.TransactionClient | import('@prisma/client').PrismaClient,
+  input: RecordPaymentInput,
+  opts: { settleMarkedPaid?: boolean } = {},
+) {
   const tenantId = tenantIdForWrite();
   const amount = cents(input.amount);
   if (amount <= 0) throw new HttpError(400, 'invalid_amount', 'A payment is more than zero.');
@@ -104,10 +109,12 @@ export async function recordClientPayment(db: Prisma.TransactionClient | import(
   if (new Set(apps.map((a) => a.statementId)).size !== apps.length) throw new HttpError(400, 'duplicate_statement', 'Each statement once.');
   const balances = apps.length ? await statementBalances(db, { id: { in: apps.map((a) => a.statementId) } }) : [];
   const byId = new Map(balances.map((b) => [b.statementId, b]));
+  // A statement marked paid before payments were recorded reads 0 open; settling it records the money it was marked paid with.
+  const openOf = (b: StatementBalance) => (opts.settleMarkedPaid && b.paidAt && b.applied === 0 ? b.total : b.open);
   for (const a of apps) {
     const b = byId.get(a.statementId);
     if (!b || b.clientId !== client.id) throw new HttpError(400, 'statement_not_open', 'A statement in this payment isn’t a final statement of this client.');
-    if (a.amount > b.open) throw new HttpError(400, 'over_statement', `More than statement ${b.number ?? ''} still owes (${(b.open / 100).toFixed(2)}).`.replace('  ', ' '));
+    if (a.amount > openOf(b)) throw new HttpError(400, 'over_statement', `More than statement ${b.number ?? ''} still owes (${(openOf(b) / 100).toFixed(2)}).`.replace('  ', ' '));
   }
 
   const run = async (tx: Prisma.TransactionClient) => {
@@ -139,9 +146,10 @@ export async function recordClientPayment(db: Prisma.TransactionClient | import(
       ],
     });
     await tx.clientPayment.update({ where: { id: payment.id }, data: { journalEntryId: entry.id } });
-    // Statements this payment finishes are paid.
+    // Statements this payment finishes are paid (one already marked paid keeps its date and reference).
     for (const a of apps) {
       const b = byId.get(a.statementId)!;
+      if (opts.settleMarkedPaid && b.paidAt) continue;
       if (a.amount >= b.open) {
         await tx.clientStatement.update({
           where: { id: a.statementId },
@@ -195,29 +203,78 @@ export async function undoClientPayment(db: import('@prisma/client').PrismaClien
 
 /**
  * "Mark paid" on a statement: a payment of whatever is still open on it,
- * received today, through the one payment path. A statement with nothing
- * open (a $0 statement) is simply marked paid.
+ * received today (the company's day, not UTC's), through the one payment
+ * path. A statement with nothing open (a $0 statement) is simply marked paid.
  */
-export async function recordStatementPaidInFull(db: import('@prisma/client').PrismaClient, input: { statementId: string; userId: string | null; paymentRef: string | null; receivedOn?: string }) {
+export async function recordStatementPaidInFull(db: import('@prisma/client').PrismaClient, input: { statementId: string; userId: string | null; paymentRef: string | null; receivedOn?: string; method?: ClientPaymentMethod }) {
   const [b] = await statementBalances(db, { id: input.statementId });
   if (!b) throw new HttpError(404, 'not_found', 'Statement not found.');
+  const receivedOn = input.receivedOn ?? orgDateKey(new Date());
   if (b.open > 0) {
     await recordClientPayment(db, {
       clientId: b.clientId,
-      receivedOn: input.receivedOn ?? ymd(new Date()),
+      receivedOn,
       amount: b.open / 100,
-      method: 'OTHER',
+      method: input.method ?? 'OTHER',
       reference: input.paymentRef,
       applications: [{ statementId: b.statementId, amount: b.open / 100 }],
       userId: input.userId,
     });
   }
-  // The statement keeps the reference as given, and paid now.
+  // The statement keeps the reference as given, paid the day the money arrived (MONEY-17: a check that came last week isn't dated today).
   return db.clientStatement.update({
     where: { id: input.statementId },
-    data: { paidAt: new Date(), paidById: input.userId, paymentRef: input.paymentRef },
+    data: { paidAt: new Date(`${receivedOn}T12:00:00.000Z`), paidById: input.userId, paymentRef: input.paymentRef },
     include: { finalizedBy: { select: { email: true } } },
   });
+}
+
+/**
+ * Statements marked paid with no payment behind them (audit 2026-10-29
+ * MONEY-3): finalized, posted to receivables in the books, marked paid on
+ * the statement — but no ClientPayment, so the books still count them as
+ * owed while the statements read paid. Older "Mark paid" flows and seeded
+ * data wrote paidAt directly. Cents.
+ */
+export async function paidWithoutPayment(db: Db, where: Prisma.ClientStatementWhereInput = {}): Promise<StatementBalance[]> {
+  return (await statementBalances(db, { paidAt: { not: null }, ...where })).filter((b) => b.applied === 0 && b.total > 0);
+}
+
+/**
+ * Record the payment each of those statements was marked paid with — dated
+ * the company day it was marked paid, for its full amount, into operating
+ * checking — so the books' receivables match the statements. Idempotent:
+ * a statement with a payment is no longer in the list. The statement's own
+ * paidAt and reference are kept. Returns what it recorded.
+ */
+export async function settleMarkedPaidStatements(db: import('@prisma/client').PrismaClient, opts: { userId: string | null; since?: Date }): Promise<{ payments: number; amount: number; failed: Array<{ statementId: string; error: string }> }> {
+  const list = await paidWithoutPayment(db, opts.since ? { paidAt: { gte: opts.since } } : {});
+  const out = { payments: 0, amount: 0, failed: [] as Array<{ statementId: string; error: string }> };
+  for (const b of list) {
+    try {
+      // Receivables first: a statement that never posted would leave the payment crediting nothing.
+      await postStatement(db, b.statementId);
+      const ref = (await db.clientStatement.findFirst({ where: { id: b.statementId }, select: { paymentRef: true } }))?.paymentRef ?? null;
+      await recordClientPayment(
+        db,
+        {
+          clientId: b.clientId,
+          receivedOn: orgDateKey(new Date(b.paidAt!)),
+          amount: b.total / 100,
+          method: 'OTHER',
+          reference: ref ?? `Marked paid${b.number !== null ? ` · No. ${String(b.number).padStart(4, '0')}` : ''}`,
+          applications: [{ statementId: b.statementId, amount: b.total / 100 }],
+          userId: opts.userId,
+        },
+        { settleMarkedPaid: true },
+      );
+      out.payments += 1;
+      out.amount += b.total;
+    } catch (err) {
+      out.failed.push({ statementId: b.statementId, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return out;
 }
 
 /* ---- Aging ------------------------------------------------------------ */

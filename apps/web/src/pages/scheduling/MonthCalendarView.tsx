@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { fmtDate, fmtDayHeaderTz, fmtTimeTz, zonedDayKey } from '@/lib/format';
 import { addDays, paidShiftMinutes, sameDay, startOfDay, ymd } from './calendarDates';
 import { StatusMark, statusLabelClass, statusTileClass } from './shiftTile';
@@ -44,14 +44,17 @@ function initialsOf(name: string | null): string {
  */
 function ChipFace({
   associateId,
+  photoUrl,
   initials,
   className,
 }: {
   associateId: string | null;
+  /** The shift's assignedAssociatePhotoUrl; null = none on file, so no request. */
+  photoUrl?: string | null;
   initials: string;
   className?: string;
 }) {
-  const src = associatePhotoUrl(associateId);
+  const src = personPhotoUrl({ photoUrl, associateId });
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   if (src && failedSrc !== src) {
     return (
@@ -487,6 +490,7 @@ function MonthShiftChip({
           </span>
           <ChipFace
             associateId={shift.assignedAssociateId}
+            photoUrl={shift.assignedAssociatePhotoUrl}
             initials={initials}
             className={tone.initials}
           />

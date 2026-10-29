@@ -69,6 +69,29 @@ describe('a finalized run in shadow', () => {
     expect(diff.reasons).toEqual(expect.arrayContaining([expect.stringContaining(`(daily), SITE:${site.id} 2026-01-01 v1`)]));
   });
 
+  it('cuts the run by the site’s day, as payroll does: Friday evening is in, the previous Friday evening is out', async () => {
+    // 38 hours Mon–Fri, plus 3 hours Friday Oct 9 from 9 PM Eastern (Saturday 01:00 UTC — the run's
+    // last day at the site) and 2 hours Friday Oct 2 from 8:30 PM Eastern (Saturday Oct 3 00:30 UTC —
+    // the period before). A UTC slice paid the wrong evening: 40 hours, no overtime.
+    const { run, a, site } = await world('FL', [10, 10, 6, 6, 6]);
+    const c = await prisma.client.findFirstOrThrow({ where: { name: 'Shadow Resort' } });
+    for (const [start, hours] of [['2026-10-10T01:00:00Z', 3], ['2026-10-03T00:30:00Z', 2]] as const) {
+      const at = new Date(start);
+      await prisma.timeEntry.create({ data: { associateId: a.id, clientId: c.id, locationId: site.id, clockInAt: at, clockOutAt: new Date(at.getTime() + hours * 3_600_000), status: 'APPROVED' } });
+    }
+    await prisma.laborRuleSet.create({
+      data: { tenantId: ALTO_TENANT_ID, level: 'SITE', jurisdiction: 'SITE', siteId: site.id, effectiveFrom: new Date('2026-01-01T00:00:00Z'), version: 1, params: { overtime: { dailyThreshold: 8, dailyMultiplier: 1.5 } }, source: 'Union contract §7', sourceDate: new Date('2026-01-01T00:00:00Z') },
+    });
+    const rec = await recordShadowRun(prisma, run.id);
+    const diff = await prisma.laborShadowDiff.findFirstOrThrow({ where: { shadowRunId: rec!.id } });
+    // 41 hours in the period: what was paid splits them 40 + 1.
+    expect(Number(diff.paidRegular)).toBe(40);
+    expect(Number(diff.paidOvertime)).toBe(1);
+    // Daily overtime under the override: 2 + 2, and Friday's 6 + 3 = 9 hours owes 1 more.
+    expect(Number(diff.engineRegular)).toBe(36);
+    expect(Number(diff.engineOvertime)).toBe(5);
+  });
+
   it('the Rules routes list the shadow runs and one run’s people', async () => {
     const { run } = await world('FL');
     await recordShadowRun(prisma, run.id);

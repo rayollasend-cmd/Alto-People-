@@ -10,6 +10,8 @@
  * (`href`), so a board number can always be traced.
  */
 
+import type { Capability } from './roles.js';
+
 export type ExecPeriodKey = 'week' | 'month' | 'quarter' | 'year';
 export type ExecCompareKey = 'plan' | 'prior' | 'year';
 
@@ -29,6 +31,8 @@ export interface ExecPeriod {
   elapsedPct: number;
   /** When the figures were computed (ISO instant). */
   asOf: string;
+  /** The company time zone the days above (and "as of") are read in, e.g. "America/New_York". */
+  timezone?: string;
 }
 
 export interface ExecComparison {
@@ -283,7 +287,12 @@ export interface ExecPeople {
   counts: ExecWorkforceCounts;
   /** The last 13 complete weeks, oldest first. */
   weeks: ExecPeopleWeek[];
-  turnover: { annualizedPct: number | null; targetPct: number | null; separations90d: number; estCost90d: number };
+  /**
+   * `annualizedPct` is the selected period's rate (the scorecard's Turnover,
+   * judged against the plan); `annualizedPct90d` is the trailing 90 days'
+   * (METRICS.turnover90d) — the same span as `separations90d` and its cost.
+   */
+  turnover: { annualizedPct: number | null; targetPct: number | null; separations90d: number; estCost90d: number; annualizedPct90d?: number | null };
   /** Unexcused events per site per week (the last 8 weeks), for the heatmap. */
   attendance: {
     sites: Array<{ id: string; name: string }>;
@@ -316,12 +325,28 @@ export interface ExecRisk {
   trend: 'rising' | 'steady' | 'easing' | 'new';
   /** The number behind it, as text: "76% of est. billed". */
   metric: string | null;
+  /**
+   * Where the risk opens for anyone holding view:executive — an executive
+   * page, a page every executive role can read, or the Risk page's own
+   * read-only detail (`/executive/risk?open=<id>`). Never a desk the
+   * chairman cannot open, never her own self-service page.
+   */
   href: string;
+  /**
+   * The desk that works it, for the roles that can act there ("Open the
+   * leave desk" for HR): the web shows it only when the viewer holds
+   * `requires`. Null when `href` is already that desk.
+   */
+  desk?: { href: string; label: string; requires: Capability } | null;
+  /** The records behind it, read-only and without medical or claim facts: "Eligibility notice" · "Due Oct 23, 6 days late". */
+  items?: Array<{ label: string; sub: string | null }>;
 }
 
 /** GET /executive/risks */
 export interface ExecRisks {
   asOf: string;
+  /** The company time zone "as of" is read in. */
+  timezone?: string;
   /** Highest severity first. */
   risks: ExecRisk[];
 }

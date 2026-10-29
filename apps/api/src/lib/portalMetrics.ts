@@ -30,6 +30,7 @@ export function fullName(a: { firstName: string; lastName: string }): string {
  *  their local-midnight boundaries. */
 export function nextKey(key: string, days: number): string {
   const [y, m, d] = key.split('-').map(Number);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on a date key, never an instant.
   return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
 }
 
@@ -359,23 +360,28 @@ export async function loadAcknowledgements(clientId: string) {
  * assigned associate overlapping the shift (wrong kiosk still counts).
  */
 export async function loadPunches(scope: PortalScope, from: Date, to: Date, now: Date) {
-  const rows = await prisma.timeEntry.findMany({
-    where: {
-      ...entryScope(scope),
-      status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
-      clockInAt: { gte: new Date(from.getTime() - DAY), lt: to },
-    },
-    select: {
-      associateId: true,
-      shiftId: true,
-      clockInAt: true,
-      clockOutAt: true,
-      locationId: true,
-      shift: { select: { locationId: true } },
-    },
-    orderBy: { clockInAt: 'asc' },
-    take: 20000,
-  });
+  // Every punch in the window, read in pages (a 92-day market history ran
+  // past the old silent 20,000 cap and graded a random subset — CODE-19).
+  const { rows: paged, truncated } = await readAll((page) =>
+    prisma.timeEntry.findMany({
+      where: {
+        ...entryScope(scope),
+        status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
+        clockInAt: { gte: new Date(from.getTime() - DAY), lt: to },
+      },
+      select: {
+        id: true,
+        associateId: true,
+        shiftId: true,
+        clockInAt: true,
+        clockOutAt: true,
+        locationId: true,
+        shift: { select: { locationId: true } },
+      },
+      ...page,
+    }),
+  );
+  const rows = paged.sort((a, b) => a.clockInAt.getTime() - b.clockInAt.getTime());
   const byShift = new Map<string, (typeof rows)[number]>();
   const byAssociate = new Map<string, typeof rows>();
   for (const e of rows) {
@@ -398,7 +404,38 @@ export async function loadPunches(scope: PortalScope, from: Date, to: Date, now:
     clockInAt: e.clockInAt,
     clockOutAt: e.clockOutAt,
   }));
-  return { punchFor, punched: (s: ShiftLike) => punchFor(s) !== null, entries };
+  return { punchFor, punched: (s: ShiftLike) => punchFor(s) !== null, entries, truncated };
+}
+
+/** Past this many rows a portal read stops and says so (`truncated`). */
+export const PORTAL_ROW_CEILING = 250_000;
+
+/**
+ * Every row a portal read needs, in pages of `batch` ordered by id — never
+ * a silent `take` cap (scope-every-list: "page or return truncated"). The
+ * caller passes the page arguments straight into its findMany; `truncated`
+ * is true only when the hard ceiling stopped the read, and the payload
+ * carries it so the page can say the figures are partial.
+ */
+export async function readAll<T extends { id: string }>(
+  read: (page: { take: number; orderBy: { id: 'asc' }; skip?: number; cursor?: { id: string } }) => Promise<T[]>,
+  opts: { batch?: number; ceiling?: number } = {},
+): Promise<{ rows: T[]; truncated: boolean }> {
+  const batch = opts.batch ?? 5000;
+  const ceiling = opts.ceiling ?? PORTAL_ROW_CEILING;
+  const rows: T[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const got = await read(
+      after
+        ? { take: batch, orderBy: { id: 'asc' }, skip: 1, cursor: { id: after } }
+        : { take: batch, orderBy: { id: 'asc' } },
+    );
+    rows.push(...got);
+    if (got.length < batch) return { rows, truncated: false };
+    if (rows.length >= ceiling) return { rows, truncated: true };
+    after = got[got.length - 1]!.id;
+  }
 }
 
 /** Unexcused attendance events in a window, keyed the way the store

@@ -34,7 +34,8 @@ import { cancelSwapRequest, createSwapRequest, swapCandidatesFor } from './shift
 import { runWithTenant } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
 import { moduleOn } from './tenantProfile.js';
-import { DEFAULT_TIMEZONE, addDaysInZone, localDateKey, zonedWallTimeToUtcInstant } from './timezone.js';
+import { addDaysInZone, dateColumnKey, localDateKey, zonedWallTimeToUtcInstant } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { onWebhookEvent } from './webhookDispatch.js';
 import { handoff } from './whatsappAssistant.js';
 
@@ -154,7 +155,8 @@ interface WatchState {
   errors?: number;
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A date column's YYYY-MM-DD (time-off days, pay periods). */
+const ymd = dateColumnKey;
 const taskLink = (id: string) => `/?hugo=task:${id}`;
 /** "Maria G." — enough to know who, on a trail only the requester reads. */
 const shortName = (first: string, last: string) => `${first} ${last ? `${last.charAt(0)}.` : ''}`.trim();
@@ -279,7 +281,7 @@ async function prepare(user: SessionUser, input: HugoTaskCreate, now: Date): Pro
       };
     }
     case 'CHASE_CONFIRMATIONS': {
-      const tz = user.timezone ?? DEFAULT_TIMEZONE;
+      const tz = user.timezone ?? companyWorkweek().timezone;
       const today = localDateKey(now, tz);
       const date = input.date ?? tomorrowIn(tz, now);
       const last = localDateKey(addDaysInZone(now, 7, tz), tz);
@@ -489,7 +491,7 @@ async function withdrawAsk(t: HugoTask, swapId: string, c: Ctx): Promise<void> {
     const peer = await prisma.user.findFirst({ where: { associateId: swap.counterpartyAssociateId, status: 'ACTIVE', deletedAt: null }, select: { id: true, language: true } });
     if (!peer) return;
     const { lang } = await readerOf(peer.id);
-    const tz = swap.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+    const tz = swap.shift.locationRel?.timezone ?? companyWorkweek().timezone;
     const n = HUGO_NOTICE.swapClosed(lang, swap.requester.firstName, hugoWhen(swap.shift.startsAt, tz, lang));
     await notifyUser(peer.id, { subject: n.subject, body: n.body, category: 'swap_request_closed', quiet: true, byAgentId: c.agent.workerId, linkUrl: '/scheduling' });
   } catch (err) {
@@ -622,7 +624,7 @@ async function stepCover(t: HugoTask, c: Ctx): Promise<Outcome> {
 
 /** Where the desk's chase stands for the day: confirmed, called off, still waiting. */
 async function chaseStatus(user: SessionUser, day: string, now: Date) {
-  const tz = user.timezone ?? DEFAULT_TIMEZONE;
+  const tz = user.timezone ?? companyWorkweek().timezone;
   const { start, end } = dayWindow(day, tz);
   const where: Prisma.ShiftWhereInput = { AND: [scopeShifts(user), chaseWindow(start, end, now)] };
   const shifts = await prisma.shift.findMany({

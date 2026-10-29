@@ -16,7 +16,6 @@ import type {
 import {
   bulkInitiateDrugTests,
   getDrugTestDetail,
-  initiateDrugTest,
   listDrugTests,
   listPendingDrugTests,
   updateDrugTest,
@@ -27,7 +26,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useStoreScope } from '@/lib/storeScope';
 import {
@@ -903,7 +902,7 @@ function BulkOrderDialog({
 
   const download = () => {
     if (rows.length === 0) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ymdLocal(); // the file is named for the reader's day, not UTC's
     // Header names exactly as the provider's template expects them.
     downloadCsv(`drug-test-bulk-order-${today}.csv`, [
       ['email', 'first name', 'phone number'],
@@ -1111,11 +1110,15 @@ function OrderTestDialog({
     setBusy(true);
     try {
       const ref = externalId.trim();
-      await initiateDrugTest({
-        associateId: associate.id,
+      // One person's order through the same record the bulk CSV order makes
+      // (the old single "order" was a stub). Someone with an order still
+      // open isn't ordered twice.
+      const r = await bulkInitiateDrugTests({
+        associateIds: [associate.id],
         provider: 'checkr',
         ...(ref ? { externalId: ref } : {}),
       });
+      if (r.created === 0) toast.message(`${associate.name} already has a drug test in progress. Open it in the list.`);
       onCreated();
     } catch (err) {
       onError(err instanceof ApiError ? err.message : 'Order failed.');

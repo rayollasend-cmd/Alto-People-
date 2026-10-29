@@ -12,7 +12,7 @@ import {
   sendOffer,
 } from '@/lib/recruiting90Api';
 import { getCandidate, listCandidates } from '@/lib/recruitingApi';
-import { listClients } from '@/lib/clientsApi';
+import { listClientOptions } from '@/lib/onboardingApi';
 import { usePersistentState } from '@/lib/usePersistentState';
 import {
   Button,
@@ -50,7 +50,8 @@ export function nextMonday(from: Date = new Date()): string {
 
 /** Client names for the offer form's <Select>. */
 function useClientNames() {
-  const query = useQuery({ queryKey: ['clients', 'names'], queryFn: () => listClients() });
+  // The invite-scoped picker (PEOPLE-4): whoever makes offers reads it without view:clients.
+  const query = useQuery({ queryKey: ['clients', 'options'], queryFn: listClientOptions, staleTime: 5 * 60_000 });
   const clients = useMemo(
     () => (query.data ? query.data.clients.map((c) => ({ id: c.id, name: c.name })) : null),
     [query.data],

@@ -53,7 +53,7 @@ export const enPay = {
   'pay.medicare': 'Medicare',
   'pay.stateIncomeTax': 'State income tax',
   'pay.garnishments': 'Garnishments / post-tax',
-  'pay.transport': 'Alto van rides ({rides} rides, {noShows} missed)',
+  'pay.transport': '{org} van rides ({rides} rides, {noShows} missed)',
   'pay.transportDeferred': '{amount} carried to a later check so your pay stays at the {state} minimum wage of {wage}/h',
   'pay.totalDeductions': 'Total deductions',
   'pay.employerFica': 'Employer FICA match',
@@ -159,6 +159,8 @@ export const enPay = {
   'pay.askSentToast': 'Sent — HR will follow up on your paycheck.',
   'pay.askSendFailed': 'Could not send your question.',
   'pay.askSend': 'Send',
+  'pay.whatPaychecks': 'your paychecks',
+  'pay.kind.BACK_PAY': 'Back pay for missed hours',
 } as const;
 
 registerEnglish(enPay);

@@ -74,6 +74,16 @@ describe('the payroll export', () => {
     expect(missingColumns).toEqual(['employeeNumber']);
     expect(rows[0]).toMatchObject({ email: 'ana@example.com', name: 'Ana Lopez', hours: 16, rate: 16, gross: 256, status: 'Active', line: 2 });
   });
+
+  it('tries the usual header names when a default is absent, and never reads a total-hours column as regular hours', () => {
+    const csv = 'Email Address,Employee ID,First Name,Last Name,Regular Hours,OT Hours,Total Hours,Pay Rate,Gross Pay,Employee Status\nana@example.com,1042,Ana,Lopez,40,4,44,$16.00,"$736.00",Active\n';
+    const { rows, missingColumns } = parsePayrollCsv(csv);
+    expect(missingColumns).toEqual([]);
+    expect(rows[0]).toMatchObject({ email: 'ana@example.com', employeeNumber: '1042', hours: 44, rate: 16, gross: 736, status: 'Active' });
+    // An explicit --map is taken at its word: no fallback behind it.
+    const mapped = parsePayrollCsv(csv, columnMapFromArg('hours=Straight Time'));
+    expect(mapped.missingColumns).toEqual(['hours']);
+  });
 });
 
 describe('the comparison', () => {

@@ -41,6 +41,7 @@ import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
 import { getLaborPolicy } from '../lib/stateLaborPolicy.js';
 import { syncPolicyEntitlements } from '../lib/timeOffPolicy.js';
 import { scopeAssociates, scopeTimeOffRequests, scopeWhere } from '../lib/scope.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { companyWorkweek, orgDateKey } from '../lib/timeAnomalies.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
@@ -50,6 +51,7 @@ import { repairAfterTimeOff } from '../lib/scheduleRepair.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { associateWeekLink } from '../lib/appLinks.js';
 import { fmtMomentInZone } from '../lib/humanDates.js';
+import { addDaysToKey, dateColumnKey } from '../lib/timezone.js';
 
 export const timeOffRouter = Router();
 
@@ -62,6 +64,13 @@ type RawRequest = Prisma.TimeOffRequestGetPayload<{
   };
 }>;
 
+/** The requester's photo URL when the include read the photo columns (REQUEST_INCLUDE does); omitted otherwise. */
+function requestAssociatePhoto(row: RawRequest): { associatePhotoUrl?: string | null } {
+  const a = row.associate as { photoS3Key?: string | null; photoUpdatedAt?: Date | null } | null;
+  if (!a || a.photoS3Key === undefined) return {};
+  return { associatePhotoUrl: profilePhotoUrlFor({ id: row.associateId, photoS3Key: a.photoS3Key, photoUpdatedAt: a.photoUpdatedAt ?? null }) };
+}
+
 function toRequestDTO(row: RawRequest): TimeOffRequestDTO {
   return {
     id: row.id,
@@ -69,6 +78,7 @@ function toRequestDTO(row: RawRequest): TimeOffRequestDTO {
     associateName: row.associate
       ? `${row.associate.firstName} ${row.associate.lastName}`
       : null,
+    ...requestAssociatePhoto(row),
     category: row.category,
     startDate: formatDateUTC(row.startDate),
     endDate: formatDateUTC(row.endDate),
@@ -85,7 +95,7 @@ function toRequestDTO(row: RawRequest): TimeOffRequestDTO {
 }
 
 const REQUEST_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true, managerId: true } },
+  associate: { select: { firstName: true, lastName: true, managerId: true, photoS3Key: true, photoUpdatedAt: true } },
   reviewer: { select: { email: true } },
 } as const;
 
@@ -161,7 +171,7 @@ async function notifyCoverageImpact(row: {
           linkUrl: associateWeekLink({
             associateId: row.associateId,
             clientId: clientIds.length === 1 ? clientIds[0] : null,
-            week: row.startDate.toISOString().slice(0, 10), // a calendar date
+            week: dateColumnKey(row.startDate), // a calendar date (@db.Date)
           }),
         }),
       ),
@@ -431,9 +441,7 @@ timeOffRouter.post('/me/requests/:id/cancel', async (req, res, next) => {
 
 /** YYYY-MM-DD ± days, on the calendar (no zone). */
 function addDays(key: string, days: number): string {
-  const d = new Date(`${key}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  return addDaysToKey(key, days);
 }
 
 /**

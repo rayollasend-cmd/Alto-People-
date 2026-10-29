@@ -104,6 +104,7 @@ let inFlight: Promise<unknown> = Promise.resolve();
 /** UTC calendar day. Analytics is reported in one zone or the numbers stop
  *  adding up across a company that spans several. */
 export function dayKey(at: Date = new Date()): string {
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: platform telemetry read across tenants by the operator's analytics and the status page, one calendar for all.
   return at.toISOString().slice(0, 10);
 }
 

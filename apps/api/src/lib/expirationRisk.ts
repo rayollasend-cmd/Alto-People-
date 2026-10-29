@@ -5,6 +5,7 @@ import { scopeAssociates } from './scope.js';
 import { shiftTimezone } from './shiftZone.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { tenantIdForWrite } from './tenant.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Expirations, as the floor feels them.
@@ -93,7 +94,8 @@ export interface RiskQuery {
   isCert?: boolean;
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** AssociateQualification.expiresAt is a @db.Date: its UTC date is the day it lapses. */
+const ymd = dateColumnKey;
 
 export async function buildExpirationRisk(user: SessionUser, q: RiskQuery, now = new Date()): Promise<ExpirationRisk> {
   const tenantId = tenantIdForWrite();

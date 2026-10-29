@@ -1,8 +1,8 @@
 import { COLOR, SIZE, createDoc, fmt } from './docKit/index.js';
 import type { PrismaClient } from '@prisma/client';
 import { computeStatementSnapshot, type StatementSnapshot } from './clientStatement.js';
-import { orgDateKey } from './timeAnomalies.js';
-import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
+import { companyWorkweek, orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey, formatTimeInZone } from './timezone.js';
 import { getBlobStore } from './blobStore.js';
 import { METRIC_LABEL } from './opsSops.js';
 import { paidMinutesForRange } from '@alto-people/shared';
@@ -166,7 +166,7 @@ export async function buildClientServiceReport(
     // Paid hours (the shared unpaid-break rule) — the report must
     // reconcile with the invoice, which bills paid time.
     const hours = paidMinutesForRange(s.startsAt, s.endsAt) / 60;
-    const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+    const tz = s.locationRel?.timezone ?? companyWorkweek().timezone;
     const who = s.assignedAssociate
       ? `${s.assignedAssociate.firstName} ${s.assignedAssociate.lastName}`
       : null;
@@ -398,8 +398,8 @@ export async function buildClientServiceReport(
     const snap = r.snapshot as unknown as StatementSnapshot | null;
     return {
       period: fmt.dateRange(
-        r.periodStart.toISOString().slice(0, 10),
-        r.periodEnd.toISOString().slice(0, 10),
+        dateColumnKey(r.periodStart),
+        dateColumnKey(r.periodEnd),
       ),
       label:
         r.status === 'FINAL'
@@ -417,7 +417,7 @@ export async function buildClientServiceReport(
     periodEnd: orgDateKey(new Date(start.getTime() + 6 * 24 * 3_600_000)),
     generatedAt: `${fmt.date(orgDateKey(nowInstant))}, ${formatTimeInZone(
       nowInstant,
-      DEFAULT_TIMEZONE,
+      companyWorkweek().timezone,
     )}`,
     snapshot,
     now,

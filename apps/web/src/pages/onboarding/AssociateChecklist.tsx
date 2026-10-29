@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/Card';
 import { Celebrate } from '@/components/ui/Celebrate';
 import { QueryError } from '@/components/ui/QueryError';
+import { useMyEarnings } from '@/components/EarningsCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { usePublishPageTitle } from '@/lib/pageTitle';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
@@ -274,6 +275,13 @@ export function AssociateChecklist() {
     enabled: !!applicationId,
     retry: false,
   });
+  // Already working (hours this period, this week or last): onboarding is
+  // history, not "your manager will be in touch about your first shift"
+  // (ASSOC-31). The Home earnings answer, cached; quiet for anyone else.
+  const earnings = useMyEarnings();
+  const working =
+    !!earnings.data &&
+    ((earnings.data.period?.workedHours ?? 0) > 0 || earnings.data.workedHours > 0 || earnings.data.lastWeekEarned > 0);
   const appQuery = useQuery({
     queryKey: ['AssociateChecklist', 'application', applicationId ?? null],
     queryFn: () => getApplication(applicationId!),
@@ -407,9 +415,19 @@ export function AssociateChecklist() {
           <statusBanner.icon className="h-5 w-5 shrink-0 mt-0.5" />
           <div className="min-w-0">
             <div className="text-sm font-medium text-white">
-              {t(statusBanner.title)}
+              {detail.status === 'APPROVED' && working ? t('ob.check.approvedWorkingTitle') : t(statusBanner.title)}
             </div>
-            <div className="text-xs mt-0.5">{t(statusBanner.body)}</div>
+            <div className="text-xs mt-0.5">
+              {detail.status === 'APPROVED' && working ? t('ob.check.approvedWorkingBody') : t(statusBanner.body)}
+            </div>
+            {detail.status === 'APPROVED' && working && (
+              <Link
+                to="/"
+                className="mt-1 inline-flex items-center coarse:min-h-11 text-sm font-medium text-gold underline underline-offset-2 hover:text-gold-bright"
+              >
+                {t('ob.check.goHome')}
+              </Link>
+            )}
           </div>
         </div>
       )}
@@ -447,7 +465,7 @@ export function AssociateChecklist() {
           {allDone ? (
             <div className="mt-3 inline-flex items-center gap-1.5 text-success text-sm">
               <Sparkles className="h-4 w-4" />
-              {t('ob.check.allComplete')}
+              {working ? t('ob.check.allCompleteWorking') : t('ob.check.allComplete')}
             </div>
           ) : nextTask ? (
             <Button asChild className="mt-4 group">

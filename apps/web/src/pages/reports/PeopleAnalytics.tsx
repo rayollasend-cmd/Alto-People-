@@ -4,7 +4,7 @@ import { lazyPlot } from '@/components/ui/charts/lazyPlot';
 import { Download, Users } from '@/components/ui/icons';
 import { useTenant, useTerm } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';
-import { fmtMonth, ymdLocal } from '@/lib/format';
+import { fmtCount, fmtMonth, ymdLocal } from '@/lib/format';
 import { urlEnum, urlNumber, useUrlState, type UrlCodec } from '@/lib/useUrlState';
 import { getPeopleAnalytics, type PeopleAnalytics as PeopleAnalyticsData, type TurnoverGroup } from '@/lib/peopleAnalyticsApi';
 import { Button } from '@/components/ui/Button';
@@ -40,6 +40,11 @@ const SlowestPositionsPlot = lazyPlot(() => plots().then((m) => ({ default: m.Sl
  */
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? '—' : `${v}%`);
+/** Every count with its thousands separator ("4,885 shift days", LEAD-28). */
+const INT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
+const num = (v: number) => INT.format(v);
+/** A table twin's count column: separators on screen, the raw number in the CSV (ChartFrame). */
+const countCell = (v: unknown) => (v === null || v === undefined || v === '' ? '—' : num(Number(v)));
 /** "Nov 2025" — one month formatter for the axes, the tables and the CSVs. */
 const monthLabel = (ym: string) => fmtMonth(ym);
 const WINDOWS = [6, 12, 24] as const;
@@ -139,11 +144,11 @@ function EarlyTurnoverGrid({ d }: { d: PeopleAnalyticsData }) {
                     <div className={r.inactive ? 'text-ink-muted' : 'text-ink'}>{siteLabel(r)}</div>
                     {hasClients && r.clientName && <div className="text-2xs text-ink-muted">{r.clientName}</div>}
                   </th>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-ink">{r.hires}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-ink">{r.separations}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-ink">{num(r.hires)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-ink">{num(r.separations)}</td>
                   {r.bands.map((n, k) => (
                     <td key={k} className="px-1 py-1 text-center">
-                      <span className={cn('block rounded px-2 py-1 tabular-nums text-ink', shade(n, r.separations))}>{n || <span className="text-ink-subtle">·</span>}</span>
+                      <span className={cn('block rounded px-2 py-1 tabular-nums text-ink', shade(n, r.separations))}>{n ? num(n) : <span className="text-ink-subtle">·</span>}</span>
                     </td>
                   ))}
                 </tr>
@@ -211,11 +216,11 @@ export function PeopleAnalytics() {
         {/* The window first: it sets every number under it. */}
         <SegmentedControl ariaLabel="Window" options={WINDOWS.map((m) => ({ value: m, label: `${m} months` }))} value={months} onChange={(m) => setMonths(m)} />
         <MetricStrip label="People at a glance">
-          <MetricCard label="Annualized turnover" value={d ? pct(d.turnover.annualizedPct) : '—'} accent={Boolean(d && (d.turnover.annualizedPct ?? 0) >= 25)} hint={d ? `${d.turnover.separations} left · average ${d.turnover.averageHeadcount} on the books` : undefined} />
+          <MetricCard label="Annualized turnover" value={d ? pct(d.turnover.annualizedPct) : '—'} accent={Boolean(d && (d.turnover.annualizedPct ?? 0) >= 25)} hint={d ? `${num(d.turnover.separations)} left · average ${num(d.turnover.averageHeadcount)} on the books` : undefined} />
           {/* "On the books" (hired, not separated): the number Headcount and Analytics show (apps/api/src/lib/peopleStatus.ts). */}
-          <MetricCard label="On the books" value={headcountNow ?? '—'} valueTitle="Hired and not separated" hint={headcountThen !== null && headcountNow !== null ? `${headcountNow - headcountThen >= 0 ? '+' : ''}${headcountNow - headcountThen} since ${d ? monthLabel(d.headcount[0]!.month) : ''}` : undefined} />
-          <MetricCard label="Median time to fill" value={d && d.timeToFill.medianDays !== null ? `${d.timeToFill.medianDays} days` : '—'} hint={d ? `${d.timeToFill.filled} seats filled in the window` : undefined} />
-          <MetricCard label="Absence rate" value={d ? pct(d.absence.absenceRatePct) : '—'} hint={d ? `${d.absence.absenceDays} days off against ${d.absence.scheduledShiftDays} shift days` : undefined} />
+          <MetricCard label="On the books" value={headcountNow === null ? '—' : num(headcountNow)} valueTitle="Hired and not separated" hint={headcountThen !== null && headcountNow !== null ? `${headcountNow - headcountThen >= 0 ? '+' : '\u2212'}${num(Math.abs(headcountNow - headcountThen))} since ${d ? monthLabel(d.headcount[0]!.month) : ''}` : undefined} />
+          <MetricCard label="Median time to fill" value={d && d.timeToFill.medianDays !== null ? fmtCount(d.timeToFill.medianDays, 'day') : '—'} hint={d ? `${fmtCount(d.timeToFill.filled, 'seat')} filled in the window` : undefined} />
+          <MetricCard label="Absence rate" value={d ? pct(d.absence.absenceRatePct) : '—'} hint={d ? `${fmtCount(d.absence.absenceDays, 'day')} off against ${fmtCount(d.absence.scheduledShiftDays, 'shift day')}` : undefined} />
         </MetricStrip>
         </div>
       }
@@ -244,18 +249,18 @@ export function PeopleAnalytics() {
             }
             summary={
               trendBy === 'company'
-                ? `On the books went from ${headcountThen ?? 0} to ${headcountNow ?? 0} over ${months} months, with ${trend.reduce((s, t) => s + t.hires, 0)} hires and ${trend.reduce((s, t) => s + t.left, 0)} leavers.`
+                ? `On the books went from ${num(headcountThen ?? 0)} to ${num(headcountNow ?? 0)} over ${months} months, with ${fmtCount(trend.reduce((s, t) => s + t.hires, 0), 'hire')} and ${fmtCount(trend.reduce((s, t) => s + t.left, 0), 'leaver')}.`
                 : `On the books by ${term('label.store').toLowerCase()} for the ${d.headcountByStore?.length ?? 0} busiest.`
             }
             columns={
               trendBy === 'company'
                 ? [
                     { key: 'month', label: 'Month' },
-                    { key: 'headcount', label: 'On the books', numeric: true },
-                    { key: 'hires', label: 'Hires', numeric: true },
-                    { key: 'left', label: 'Left', numeric: true },
+                    { key: 'headcount', label: 'On the books', numeric: true, format: countCell },
+                    { key: 'hires', label: 'Hires', numeric: true, format: countCell },
+                    { key: 'left', label: 'Left', numeric: true, format: countCell },
                   ]
-                : [{ key: 'month', label: 'Month' }, ...(d.headcountByStore ?? []).map((s) => ({ key: s.storeName, label: s.clientName ? `${s.clientName} · ${s.storeName}` : s.storeName, numeric: true }))]
+                : [{ key: 'month', label: 'Month' }, ...(d.headcountByStore ?? []).map((s) => ({ key: s.storeName, label: s.clientName ? `${s.clientName} · ${s.storeName}` : s.storeName, numeric: true, format: countCell }))]
             }
             rows={trendBy === 'company' ? trend : storeTrend}
             csvName={trendBy === 'company' ? 'headcount-trend' : 'headcount-by-store'}
@@ -271,7 +276,7 @@ export function PeopleAnalytics() {
               title="The first 90 days"
               description="Share of each hiring month still here, week by week."
               summary={`Survival over the first 90 days for the last ${d.survival?.length ?? 0} hiring months.`}
-              columns={[{ key: 'day', label: 'Day' }, ...(d.survival ?? []).map((c) => ({ key: monthLabel(c.month), label: `${monthLabel(c.month)} (${c.hires})`, numeric: true, format: (v: unknown) => pct(v as number | null) }))]}
+              columns={[{ key: 'day', label: 'Day' }, ...(d.survival ?? []).map((c) => ({ key: monthLabel(c.month), label: `${monthLabel(c.month)} (${num(c.hires)})`, numeric: true, format: (v: unknown) => pct(v as number | null) }))]}
               rows={survivalRows}
               csvName="first-90-days"
               empty={<p className="text-sm text-ink-muted">Nobody was hired in this window.</p>}
@@ -285,8 +290,8 @@ export function PeopleAnalytics() {
               summary={`Annualized turnover by tenure band: ${d.turnover.byTenure.map((b) => `${b.label} ${pct(b.annualizedTurnoverPct)}`).join(', ')}.`}
               columns={[
                 { key: 'label', label: 'Tenure' },
-                { key: 'headcount', label: 'On the books', numeric: true },
-                { key: 'separations', label: 'Left', numeric: true },
+                { key: 'headcount', label: 'On the books', numeric: true, format: countCell },
+                { key: 'separations', label: 'Left', numeric: true, format: countCell },
                 { key: 'annualizedTurnoverPct', label: 'Annualized', numeric: true, format: (v) => pct(v as number | null) },
               ]}
               rows={tenureRows}
@@ -307,10 +312,10 @@ export function PeopleAnalytics() {
             <ChartFrame
               title={hasClients ? `Time to fill, by ${term('label.client').toLowerCase()}` : 'Time to fill, by department'}
               description="Median days from a seat opening to its fill."
-              summary={`Median time to fill is ${d.timeToFill.medianDays ?? '—'} days across ${d.timeToFill.filled} seats.`}
+              summary={`Median time to fill is ${d.timeToFill.medianDays === null ? '—' : fmtCount(d.timeToFill.medianDays, 'day')} across ${fmtCount(d.timeToFill.filled, 'seat')}.`}
               columns={[
                 { key: 'label', label: hasClients ? term('label.client') : 'Department' },
-                { key: 'filled', label: 'Filled', numeric: true },
+                { key: 'filled', label: 'Filled', numeric: true, format: countCell },
                 { key: 'medianDays', label: 'Median days', numeric: true },
               ]}
               rows={hasClients && fillByClient.length ? fillByClient : d.timeToFill.byDepartment.map((r) => ({ label: r.department, filled: r.filled, medianDays: r.medianDays }))}
@@ -341,10 +346,10 @@ export function PeopleAnalytics() {
           {fillByPosition.length > 0 && (
             <ChartFrame
               title="Slowest positions to fill"
-              summary={`The slowest position to fill takes a median of ${fillByPosition[0]!.medianDays ?? '—'} days.`}
+              summary={`The slowest position to fill takes a median of ${fillByPosition[0]!.medianDays === null ? '—' : fmtCount(fillByPosition[0]!.medianDays, 'day')}.`}
               columns={[
                 { key: 'label', label: 'Position' },
-                { key: 'filled', label: 'Filled', numeric: true },
+                { key: 'filled', label: 'Filled', numeric: true, format: countCell },
                 { key: 'medianDays', label: 'Median days', numeric: true },
               ]}
               rows={fillByPosition}
@@ -397,7 +402,7 @@ function CohortGrid({ cohorts }: { cohorts: PeopleAnalyticsData['cohorts'] }) {
     <ChartFrame
       title="Hiring cohorts"
       description="Each hiring month, and the share still here at 30, 60, 90 and 180 days. Blank until the whole month’s hires are old enough to count."
-      summary={latest90 ? `Of ${latest90.month}’s ${latest90.hires} hires, ${pct(latest90.s90)} were still here at 90 days.` : 'No cohort is 90 days old yet.'}
+      summary={latest90 ? `Of ${latest90.month}’s ${fmtCount(latest90.hires, 'hire')}, ${pct(latest90.s90)} were still here at 90 days.` : 'No cohort is 90 days old yet.'}
       csvName="hiring-cohorts"
       height={Math.max(120, rows.length * 32 + 36)}
       columns={[
@@ -430,7 +435,7 @@ function CohortRow({ row }: { row: { month: string; hires: number; s30: number |
   return (
     <>
       <span className="truncate px-2 py-1.5 text-ink">{row.month}</span>
-      <span className="px-2 py-1.5 text-right tabular-nums text-ink-muted">{row.hires}</span>
+      <span className="px-2 py-1.5 text-right tabular-nums text-ink-muted">{num(row.hires)}</span>
       {HORIZONS.map((h) => {
         const v = row[h.key];
         return (

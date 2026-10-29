@@ -14,8 +14,8 @@ import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyUser, notifyAssociate, trackNotificationWork } from '../lib/notify.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
-import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
-import { dateKeyInZone } from '../lib/timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone } from '../lib/timeAnomalies.js';
+import { fmtDayInZone } from '../lib/humanDates.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from '../lib/tenant.js';
 import { actsAsAny } from '../lib/roleScope.js';
 import { geocode } from '../lib/geocode.js';
@@ -72,7 +72,11 @@ const VIEW = requireCapability('view:transport');
 const MANAGE = requireCapability('manage:transport');
 
 const iso = (d: Date | null | undefined) => d?.toISOString() ?? null;
+/** A date-only column's day (they read at UTC midnight). Never an instant — those go through the company's zone. */
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: only @db.Date columns come through here
 const ymd = (d: Date | null | undefined) => d?.toISOString().slice(0, 10) ?? null;
+/** The company's zone (CODE-14): transport's "today" was New York, hard-coded. */
+const companyZone = (): string => companyWorkweek().timezone;
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const toDate = (s: string | null | undefined) => (s ? new Date(`${s}T00:00:00Z`) : null);
 
@@ -159,7 +163,7 @@ transportOpsRouter.patch('/driver/profile', DRIVE, async (req, res) => {
  */
 transportOpsRouter.get('/driver/today', DRIVE, async (req, res) => {
   const now = new Date();
-  const date = dateKeyInZone(now, DEFAULT_TIMEZONE);
+  const date = dateKeyInZone(now, companyZone());
   const { from, to } = dayBounds(date);
   const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: { associateId: true } });
   const associateId = user?.associateId ?? null;
@@ -294,7 +298,7 @@ transportOpsRouter.get('/driver/shifts', DRIVE, async (req, res) => {
     res.json({ shifts: [], associateId: null });
     return;
   }
-  const from = dayBounds(q.from ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE)).from;
+  const from = dayBounds(q.from ?? dateKeyInZone(new Date(), companyZone())).from;
   const to = new Date(from.getTime() + q.days * 86_400_000);
   const shifts = await prisma.shift.findMany({
     where: { position: DRIVER_POSITION, assignedAssociateId: user.associateId, status: { not: 'CANCELLED' }, startsAt: { lt: to }, endsAt: { gt: from } },
@@ -636,7 +640,7 @@ transportOpsRouter.post('/incidents', requireAuth, async (req, res) => {
       include: incidentInclude,
     });
     if (parkVan && vanId) {
-      await tx.van.update({ where: { id: vanId }, data: { outOfServiceAt: occurredAt, outOfServiceReason: `${input.kind.toLowerCase().replace(/_/g, ' ')} on ${occurredAt.toISOString().slice(0, 10)} — see incident` } });
+      await tx.van.update({ where: { id: vanId }, data: { outOfServiceAt: occurredAt, outOfServiceReason: `${input.kind.toLowerCase().replace(/_/g, ' ')} on ${fmtDayInZone(occurredAt, companyZone())} — see incident` } });
     }
     return created;
   });
@@ -1086,7 +1090,7 @@ transportOpsRouter.delete('/vans/:id/service/:entryId', MANAGE, async (req, res)
 
 transportOpsRouter.get('/drivers', VIEW, async (_req, res) => {
   const now = new Date();
-  const date = dateKeyInZone(now, DEFAULT_TIMEZONE);
+  const date = dateKeyInZone(now, companyZone());
   const { from, to } = dayBounds(date);
   const [users, vans, shifts] = await Promise.all([
     prisma.user.findMany({
@@ -1185,7 +1189,7 @@ async function shiftViews(rows: Array<Prisma.ShiftGetPayload<{ select: typeof dr
 
 transportOpsRouter.get('/driver-shifts', VIEW, async (req, res) => {
   const q = z.object({ from: dateOnly.optional(), to: dateOnly.optional() }).parse(req.query);
-  const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const today = dateKeyInZone(new Date(), companyZone());
   const from = dayBounds(q.from ?? today).from;
   const to = dayBounds(q.to ?? q.from ?? today).to;
   const rows = await driverShiftsBetween(from, to);
@@ -1228,7 +1232,7 @@ transportOpsRouter.post('/driver-shifts', MANAGE, async (req, res) => {
   void trackNotificationWork(
     notifyUser(driver.id, {
       subject: 'A driver shift for you',
-      body: `${new Intl.DateTimeFormat('en-US', { timeZone: DEFAULT_TIMEZONE, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(startsAt)} – ${new Intl.DateTimeFormat('en-US', { timeZone: DEFAULT_TIMEZONE, hour: 'numeric', minute: '2-digit' }).format(endsAt)}. Clock in from your runs when you start.`,
+      body: `${new Intl.DateTimeFormat('en-US', { timeZone: companyZone(), weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(startsAt)} – ${new Intl.DateTimeFormat('en-US', { timeZone: companyZone(), hour: 'numeric', minute: '2-digit' }).format(endsAt)}. Clock in from your runs when you start.`,
       category: 'transport',
       linkUrl: '/',
     }),
@@ -1244,7 +1248,7 @@ transportOpsRouter.delete('/driver-shifts/:id', MANAGE, async (req, res) => {
   await prisma.shift.update({ where: { id }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancellationReason: 'Removed by transportation' } });
   enqueueAudit({ actorUserId: req.user!.id, action: 'transport.driver_shift_cancelled', entityType: 'Shift', entityId: id }, 'transportOps');
   if (shift.assignedAssociateId) {
-    void trackNotificationWork(notifyAssociate(shift.assignedAssociateId, { subject: 'A driver shift was removed', body: `Your driver shift on ${ymd(shift.startsAt)} was taken off the schedule.`, category: 'transport', linkUrl: '/' }));
+    void trackNotificationWork(notifyAssociate(shift.assignedAssociateId, { subject: 'A driver shift was removed', body: `Your driver shift on ${fmtDayInZone(shift.startsAt, companyZone(), { weekday: true })} was taken off the schedule.`, category: 'transport', linkUrl: '/' }));
   }
   res.status(204).end();
 });
@@ -1261,7 +1265,7 @@ export interface NeedsYouItem {
 
 /** Everything waiting on the transportation desk right now, counted. */
 export async function transportNeedsYou(now = new Date()): Promise<{ total: number; items: NeedsYouItem[] }> {
-  const date = dateKeyInZone(now, DEFAULT_TIMEZONE);
+  const date = dateKeyInZone(now, companyZone());
   const [sos, escalated, needsVan, late, safetyIssues, incidents, access, expiring] = await Promise.all([
     prisma.rideRun.count({ where: { status: 'ACTIVE', sosAt: { not: null }, sosAckAt: null } }),
     prisma.rideRun.count({ where: { status: 'ACTIVE', stallEscalatedAt: { not: null } } }),
@@ -1395,11 +1399,13 @@ export function orgWeekStartOf(ymd: string): string {
   const d = new Date(`${ymd}T00:00:00Z`);
   // Sat → 0 days back, Sun → 1, … Fri → 6.
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 1) % 7));
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
   return d.toISOString().slice(0, 10);
 }
 const addDaysYmd = (ymd: string, n: number) => {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
   return d.toISOString().slice(0, 10);
 };
 
@@ -1415,7 +1421,7 @@ const ON_TIME_GRACE_MS = 5 * 60_000;
  */
 transportOpsRouter.get('/trends', VIEW, async (req, res) => {
   const weeks = z.coerce.number().int().min(2).max(26).default(8).parse(req.query.weeks ?? 8);
-  const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const today = dateKeyInZone(new Date(), companyZone());
   const thisWeek = orgWeekStartOf(today);
   const starts = Array.from({ length: weeks }, (_, i) => addDaysYmd(thisWeek, (i - weeks + 1) * 7));
   const from = starts[0]!;
@@ -1465,6 +1471,7 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
     b.costCents += runDriverCents(run, rateOf);
   }
   for (const s of service) {
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: VanServiceEntry.occurredAt is a @db.Date
     const b = buckets.get(orgWeekStartOf(s.occurredAt.toISOString().slice(0, 10)));
     if (b) b.costCents += s.costCents;
   }
@@ -1498,7 +1505,7 @@ transportOpsRouter.get('/trends', VIEW, async (req, res) => {
 transportOpsRouter.get('/ops', VIEW, async (req, res) => {
   const { date } = z.object({ date: dateOnly.optional() }).parse(req.query);
   res.setHeader('Cache-Control', 'no-store');
-  res.json(await computeOpsBoard(date ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE)));
+  res.json(await computeOpsBoard(date ?? dateKeyInZone(new Date(), companyZone())));
 });
 
 /** Is the day ready? Six checks, tomorrow unless ?date= says otherwise (lib/transportReadiness). */

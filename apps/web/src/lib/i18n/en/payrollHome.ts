@@ -1,5 +1,7 @@
 // English for the pages that use 'payrollHome.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/payrollHome.ts).
+import '../es/payrollHome';
 
 export const enPayrollHome = {
   'payrollHome.title': 'Payroll',

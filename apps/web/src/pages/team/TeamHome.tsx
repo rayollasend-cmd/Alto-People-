@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getMyDelegations } from '@/lib/delegationsApi';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Users } from '@/components/ui/icons';
+import { AlertTriangle, ArrowRight, CalendarOff, Clock, Download, Inbox, Receipt, Users } from '@/components/ui/icons';
 import {
   approveTeamTimeOff,
   approveTeamTimesheet,
@@ -48,7 +48,7 @@ import { OneOnOneCell } from '@/components/team/OneOnOneCell';
 import { toast } from 'sonner';
 import { removeFromLists, useOptimisticMutation } from '@/lib/optimistic';
 import { ListTemplate } from '@/components/templates';
-import { usePrompt } from '@/lib/confirm';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import '@/lib/i18n/en/timeoff';
 
 // Query keys are tuples so invalidateQueries({ queryKey: ['team'] }) can
@@ -139,7 +139,10 @@ export function TeamHome() {
           <MetricCard
             label="Overtime risk"
             value={team.overtimeRisk}
-            hint={`On track for more than ${team.overtimeThresholdHours} h this week`}
+            // One definition everywhere (FLOOR-23, packages/shared
+            // OVERTIME_RISK_HOURS): worked + still scheduled reaches 36 h —
+            // Time & attendance counts the same rule over everyone it reaches.
+            hint={`Your team · ${team.overtimeRiskHours ?? 36}h+ worked and scheduled this week`}
             tone={team.overtimeRisk > 0 ? 'warning' : 'default'}
             href="/team?tab=reports"
           />
@@ -249,11 +252,33 @@ const KIND_META: Record<
 
 function InboxTab() {
   const prompt = usePrompt();
+  const confirm = useConfirm();
   const term = useTerm();
   const q = useQuery({
     queryKey: teamKeys.inbox(),
     queryFn: getTeamInbox,
   });
+  // The one gold action on the page (FLOOR-30: nine gold "Approve"s, one a
+  // row): approve every timesheet with nothing flagged, in one decision.
+  // A flagged one is looked at row by row.
+  const clean = (q.data?.items ?? []).filter((i) => i.kind === 'TIMESHEET' && !i.flagged);
+  const approveCleanM = useOptimisticMutation({
+    mutationFn: (ids: string[]) => bulkApproveTeamTimesheets(ids),
+    keys: [teamKeys.all],
+    apply: (ids: string[], c) => removeFromLists(c, [teamKeys.all], ids),
+    errorMessage: 'Approve failed.',
+    onSuccess: (r) => toast.success(`Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}.`),
+  });
+  const approveClean = async () => {
+    const ids = clean.map((i) => i.id);
+    if (ids.length === 0) return;
+    const ok = await confirm({
+      title: `Approve ${ids.length} ${ids.length === 1 ? 'timesheet' : 'timesheets'} with nothing flagged?`,
+      description: 'Approved hours are locked and go into the next payroll run. Flagged timesheets stay here for you to look at one by one.',
+      confirmLabel: 'Approve',
+    });
+    if (ok) approveCleanM.mutate(ids);
+  };
 
 
   // Same API mutations as the Timesheets/Time off queue tabs, so a
@@ -354,6 +379,17 @@ function InboxTab() {
   }
 
   return (
+    <div className="space-y-3">
+    {clean.length > 0 && (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface-raised px-4 py-3" data-testid="approve-clean">
+        <span className="text-sm text-ink-muted">
+          {clean.length === 1 ? '1 timesheet has nothing flagged.' : `${clean.length} timesheets have nothing flagged.`}
+        </span>
+        <Button size="sm" onClick={() => void approveClean()} loading={approveCleanM.isPending}>
+          Approve {clean.length} clean
+        </Button>
+      </div>
+    )}
     <DataGrid<NonNullable<typeof q.data>['items'][number]>
       id="team-inbox"
       caption="Waiting on you"
@@ -417,15 +453,20 @@ function InboxTab() {
           stopRowClick: true,
           cell: (item) => (
             <div className="flex justify-end gap-2">
+              {/* A way in, not a decision: it reads as a link (it read as plain text). */}
               <Button size="sm" variant="ghost" asChild>
-                <Link to={item.link}>Open</Link>
+                <Link to={item.link} className="text-accent">
+                  Open
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </Link>
               </Button>
+              {/* Row decisions are secondary; the page's one gold action is the batch above. */}
               {item.kind === 'TIMESHEET' && (
                 <>
                   <Button size="sm" variant="outline" onClick={() => rejectTs(item.id)} disabled={pendingId === item.id}>
                     Reject
                   </Button>
-                  <Button size="sm" onClick={() => approveTsM.mutate(item.id)} loading={pendingId === item.id}>
+                  <Button size="sm" variant="secondary" onClick={() => approveTsM.mutate(item.id)} loading={pendingId === item.id}>
                     Approve
                   </Button>
                 </>
@@ -435,7 +476,7 @@ function InboxTab() {
                   <Button size="sm" variant="outline" onClick={() => denyPto(item.id)} disabled={pendingId === item.id}>
                     Reject
                   </Button>
-                  <Button size="sm" onClick={() => approvePtoM.mutate(item.id)} loading={pendingId === item.id}>
+                  <Button size="sm" variant="secondary" onClick={() => approvePtoM.mutate(item.id)} loading={pendingId === item.id}>
                     Approve
                   </Button>
                 </>
@@ -445,6 +486,7 @@ function InboxTab() {
         },
       ]}
     />
+    </div>
   );
 }
 
@@ -910,7 +952,7 @@ function TimesheetsTab() {
                     <Button size="sm" variant="outline" onClick={() => reject(e.id)} disabled={pendingId === e.id}>
                       Reject
                     </Button>
-                    <Button size="sm" onClick={() => approveM.mutate(e.id)} loading={pendingId === e.id}>
+                    <Button size="sm" variant="secondary" onClick={() => approveM.mutate(e.id)} loading={pendingId === e.id}>
                       Approve
                     </Button>
                   </div>
@@ -1160,7 +1202,7 @@ function TimeOffTab() {
                 <Button size="sm" variant="outline" onClick={() => deny(r.id)} disabled={pendingId === r.id}>
                   Reject
                 </Button>
-                <Button size="sm" onClick={() => approveM.mutate(r.id)} loading={pendingId === r.id}>
+                <Button size="sm" variant="secondary" onClick={() => approveM.mutate(r.id)} loading={pendingId === r.id}>
                   Approve
                 </Button>
               </div>

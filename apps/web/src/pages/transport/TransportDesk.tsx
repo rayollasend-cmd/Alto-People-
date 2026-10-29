@@ -382,6 +382,7 @@ function DriverShiftDialog({ date, drivers, onClose }: { date: string; drivers: 
     setBusy(true);
     try {
       const startsAt = localInputToUtcIso(`${date}T${start}`);
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
       const endDay = end <= start ? new Date(Date.parse(`${date}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10) : date;
       const endsAt = localInputToUtcIso(`${endDay}T${end}`);
       await createDriverShift({ driverUserId, startsAt, endsAt, notes: notes.trim() || null });
@@ -864,6 +865,7 @@ export function IncidentsSection({ manage }: { manage: boolean }) {
 
 function last(days: number): { from: string; to: string } {
   const to = ymdLocal();
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
   return { from: new Date(Date.parse(`${to}T12:00:00Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10), to };
 }
 

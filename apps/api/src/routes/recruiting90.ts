@@ -37,6 +37,8 @@ import {
   offerLetterIpLimiter,
 } from '../middleware/rateLimit.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
+import { expireLapsedOffers, isLapsed } from '../lib/offerExpiry.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Phase 90 — Recruiting extras: interview kits + scheduled interviews,
@@ -521,6 +523,8 @@ async function notifyOfferApprovers(subject: string, body: string, exceptUserId:
 recruiting90Router.get('/offers', VIEW, async (req, res) => {
   const candidateId = z.string().uuid().optional().parse(req.query.candidateId);
   const status = z.enum(OFFER_STATUSES).optional().parse(req.query.status);
+  // A lapsed offer is expired on read — never "Sent — awaiting" with an Accept button (PEOPLE-13).
+  await expireLapsedOffers(prisma);
   const rows = await prisma.offer.findMany({
     where: {
       ...(candidateId ? { candidateId } : {}),
@@ -542,6 +546,7 @@ recruiting90Router.get('/offers', VIEW, async (req, res) => {
       clientId: o.clientId ?? '',
       clientName: o.client?.name ?? '',
       jobTitle: o.jobTitle,
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: Offer.startDate is a @db.Date column
       startDate: o.startDate.toISOString().slice(0, 10),
       salary: o.salary?.toString() ?? null,
       hourlyRate: o.hourlyRate?.toString() ?? null,
@@ -836,7 +841,8 @@ recruiting90Router.post('/offers/:id/send', MANAGE, async (req, res) => {
         `Read your offer letter and accept it by signing online:`,
         link,
         '',
-        `The link is yours alone and works until ${letterDate(new Date(expiresAt.toISOString().slice(0, 10)))}.`,
+        // The company's calendar day the link lapses on — the UTC date read a day late after 7 PM Eastern (CODE-14).
+        `The link is yours alone and works until ${letterDate(new Date(`${orgDateKey(expiresAt)}T00:00:00.000Z`))}.`,
         'Questions? Reply to this email.',
       ].join('\n'),
     }).catch(() => {
@@ -859,6 +865,11 @@ recruiting90Router.post('/offers/:id/decision', MANAGE, async (req, res) => {
   // acceptance) — but not for pay nobody has approved.
   if (o.status === 'PENDING_APPROVAL' && decision === 'ACCEPTED') {
     throw new HttpError(409, 'needs_approval', 'This offer needs approval before it can be accepted.');
+  }
+  // Past its expiry nobody can say yes to it — send a new one (PEOPLE-13).
+  if (decision === 'ACCEPTED' && isLapsed(o)) {
+    await expireLapsedOffers(prisma);
+    throw new HttpError(409, 'offer_expired', 'This offer expired before it was accepted. Send a new offer instead.');
   }
   await prisma.$transaction(async (tx) => {
     await tx.offer.update({

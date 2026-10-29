@@ -13,6 +13,7 @@ export const enWeek = {
   'week.overtime': '{hours} of overtime this week',
   'week.headingOver': 'Your schedule adds up to {hours} of overtime this week',
   'week.needsConfirm': 'Needs your confirm',
+  'week.load.hours': 'your hours this week',
 } as const;
 
 registerEnglish(enWeek);

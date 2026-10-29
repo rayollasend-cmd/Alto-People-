@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';
-import { fmtMoney, fmtRelativeDayTz, fmtTimeTz } from '@/lib/format';
+import { fmtDateTz, fmtMoney, fmtRelativeDayTz, fmtTimeTz, fmtWeekdayTz, ymdLocal, zonedDayKey } from '@/lib/format';
 import { getMyLiveRide, getMyTransport, signalDriver, type MyTransport, type Ride } from '@/lib/transportApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -70,11 +70,17 @@ function OwedLine({ data, framed }: { data: MyTransport; framed: boolean }) {
     >
       <Wallet className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1 tabular-nums">
-        {!date
-          ? t('ride.owe.stripNoDate', { amount })
-          : s.laterCents > 0
-            ? t('ride.owe.stripSplit', { amount, due: fmtMoney((s.cents - s.laterCents) / 100), date })
-            : t('ride.owe.strip', { amount, date })}
+        {s.keptReason === 'MINIMUM_WAGE'
+          ? t('ride.owe.stripMinimumWage', { amount })
+          : !date
+            ? t('ride.owe.stripNoDate', { amount })
+            : s.keptReason === 'CHECK_TOO_SMALL'
+              ? (s.dueCents ?? 0) > 0
+                ? t('ride.owe.stripSplit', { amount, due: fmtMoney((s.dueCents ?? 0) / 100), date })
+                : t('ride.owe.stripNoneThisCheck', { amount, date })
+              : s.laterCents > 0
+                ? t('ride.owe.stripSplit', { amount, due: fmtMoney((s.cents - s.laterCents) / 100), date })
+                : t('ride.owe.strip', { amount, date })}
       </span>
       <ChevronRight className="h-4 w-4 shrink-0" aria-hidden="true" />
     </Link>
@@ -245,7 +251,23 @@ function RideStripInner() {
   if (!need) return <OwedLine data={data} framed={false} />;
   const store = data.stores.find((st) => st.id === need.shift.locationId);
   const tz = store?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const when = `${fmtRelativeDayTz(need.shift.startsAt, tz)} ${fmtTimeTz(need.shift.startsAt, tz)}`;
+  // "today's 6:00 AM shift", not "your Today 6:00 AM shift": the relative
+  // day is a word inside the sentence, so each case is its own sentence in
+  // every language (ASSOC-23).
+  const time = fmtTimeTz(need.shift.startsAt, tz);
+  const shiftDay = zonedDayKey(need.shift.startsAt, tz);
+  const todayKey = zonedDayKey(new Date(now), tz);
+  // The calendar day after the store's today (date-only arithmetic, no zone in it).
+  const tomorrowKey = (() => {
+    const [y, m, d] = todayKey.split('-').map(Number) as [number, number, number];
+    return ymdLocal(new Date(y, m - 1, d + 1, 12));
+  })();
+  const needLine =
+    shiftDay === todayKey
+      ? t('ride.homeStripNeedToday', { time })
+      : shiftDay === tomorrowKey
+        ? t('ride.homeStripNeedTomorrow', { time })
+        : t('ride.homeStripNeed', { when: `${fmtWeekdayTz(need.shift.startsAt, tz)}, ${fmtDateTz(need.shift.startsAt, tz)} ${time}` });
   const amount = fmtMoney((need.canBook.length * data.settings.fareCents) / 100);
 
   const book = async () => {
@@ -269,7 +291,7 @@ function RideStripInner() {
           <Bus className="h-5 w-5" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium text-ink">{t('ride.homeStripNeed', { when })}</span>
+          <span className="block text-sm font-medium text-ink">{needLine}</span>
           {data.defaultPickup && <span className="block truncate text-xs text-ink-muted">{t('ride.forShiftsFrom', { pickup: data.defaultPickup.label })}</span>}
         </span>
         {data.defaultPickup ? (

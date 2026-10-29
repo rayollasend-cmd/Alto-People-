@@ -14,7 +14,7 @@ import { onNoScheduleWhere, PAY_RUN_POPULATION_WHERE } from './payScheduleMember
 import { scopeWhere } from './scope.js';
 import { tenantIdForWrite } from './tenant.js';
 import { companyWorkweek, startOfWeekUTC } from './timeAnomalies.js';
-import { localDateKey } from './timezone.js';
+import { dateColumnKey, localDateKey } from './timezone.js';
 
 /**
  * The chairman's risk register (GET /executive/risks, the board pack's risk
@@ -43,6 +43,15 @@ import { localDateKey } from './timezone.js';
  *
  * Every read runs at once; the register answers in well under half a
  * second on the demo company.
+ *
+ * Where a risk opens (deep audit 2026-10-29, LEAD-6): `href` is always a
+ * page every view:executive role can read — an executive page, a page all
+ * of them hold the view for, or the Risk page's own read-only detail
+ * (`detailHref`, with the records behind the risk in `items`). The desk
+ * that works it (the leave desk, the claims desks, the supervisor roster,
+ * the cash forecast) rides in `desk` with the capability it needs; the web
+ * shows it only to someone who holds it. The chairman is never sent to a
+ * page that says "You don't have access", nor to her own "My leave".
  */
 
 export type Db = PrismaClient | Prisma.TransactionClient;
@@ -60,6 +69,11 @@ const SCORECARD_AREAS: Record<string, string> = {
   training: 'training',
   safety: 'safety',
 };
+
+/** The Risk page's own read-only detail for a risk. */
+export const detailHref = (id: string): string => `/executive/risk?open=${encodeURIComponent(id)}`;
+/** How many records a risk lists in place. */
+const ITEMS_MAX = 10;
 
 const listWords = (xs: string[]): string => (xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 const pct1 = (n: number): string => `${(Math.round(n * 10) / 10).toFixed(1)}%`;
@@ -100,6 +114,7 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
     forecast,
     scheduleCount,
     unscheduled,
+    unscheduledPeople,
     ncns,
     shifts56,
     incidents,
@@ -162,8 +177,15 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
     cashForecast(now, { tenantId, weeks: 13 }).catch(() => null),
     db.payrollSchedule.count({ where: { tenantId, isActive: true, deletedAt: null } }),
     db.associate.count({ where: scopeWhere<Prisma.AssociateWhereInput>({ tenantId }, PAY_RUN_POPULATION_WHERE, onNoScheduleWhere(today)) }),
+    // The first few of them by name, for the risk's in-place detail.
+    db.associate.findMany({
+      where: scopeWhere<Prisma.AssociateWhereInput>({ tenantId }, PAY_RUN_POPULATION_WHERE, onNoScheduleWhere(today)),
+      select: { firstName: true, lastName: true },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      take: ITEMS_MAX,
+    }),
     db.attendanceEvent.findMany({
-      where: { tenantId, kind: 'NO_CALL_NO_SHOW', excusedAt: null, occurredOn: { gte: new Date(ago56.toISOString().slice(0, 10) + 'T00:00:00Z'), lt: todayStart } },
+      where: { tenantId, kind: 'NO_CALL_NO_SHOW', excusedAt: null, occurredOn: { gte: new Date(localDateKey(ago56, tz) + 'T00:00:00Z'), lt: todayStart } },
       select: { occurredOn: true },
       take: 20_000,
     }),
@@ -246,7 +268,10 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
         owner: 'Operations',
         trend: 'steady',
         metric: bare.length === 1 ? `${plural(people, 'person', 'people')} placed` : `${plural(people, 'person', 'people')} placed across ${listWords(bare.slice(0, 3).map((s) => s.name))}${bare.length > 3 ? ` and ${bare.length - 3} more` : ''}`,
-        href: '/scheduling/supervisors',
+        // The supervisor roster is manage:org — the stores are listed here instead.
+        href: detailHref('site-supervisor'),
+        desk: { href: '/scheduling/supervisors', label: 'Open the supervisor roster', requires: 'manage:org' },
+        items: bare.slice(0, ITEMS_MAX).map((st) => ({ label: st.name, sub: `${plural(st.people, 'person', 'people')} placed, no shift or floor supervisor` })),
       });
     }
   }
@@ -304,11 +329,15 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
 
   // ----- Legal deadlines that passed
   const leaveDue = (c: (typeof leaveCases)[number]) => (c.status === 'REQUESTED' ? addBusinessDays(c.createdAt, 5) : c.certificationDueAt!);
+  // A notice's due date is an instant (five business days from the request);
+  // a certification's is a calendar date (a DATE column, read as stored).
+  const leaveDueKey = (c: (typeof leaveCases)[number]) => (c.status === 'REQUESTED' ? localDateKey(leaveDue(c), tz) : dateColumnKey(leaveDue(c)));
   const lateLeave = leaveCases.filter((c) => leaveDue(c).getTime() < todayStart.getTime());
   if (lateLeave.length > 0) {
     const notices = lateLeave.filter((c) => c.status === 'REQUESTED').length;
     const certs = lateLeave.length - notices;
-    const oldestDue = lateLeave.map(leaveDue).sort((a, b) => a.getTime() - b.getTime())[0]!;
+    const oldestCase = [...lateLeave].sort((a, b) => leaveDue(a).getTime() - leaveDue(b).getTime())[0]!;
+    const oldestDue = leaveDue(oldestCase);
     push({
       id: 'leave-deadlines',
       category: 'compliance',
@@ -317,8 +346,21 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
       detail: 'The eligibility and rights notice is owed within five business days of a leave request, and a leave cannot be designated without its certification. Sending each notice and closing out each certification retires it.',
       owner: 'HR',
       trend: newOrSteady(oldestDue, now),
-      metric: [notices ? plural(notices, 'notice') : null, certs ? plural(certs, 'certification') : null, `the oldest due ${fmtDay(localDateKey(oldestDue, tz))}`].filter(Boolean).join(' · '),
-      href: '/leave',
+      metric: [notices ? plural(notices, 'notice') : null, certs ? plural(certs, 'certification') : null, `the oldest due ${fmtDay(leaveDueKey(oldestCase))}`].filter(Boolean).join(' · '),
+      // /leave is the leave desk only for manage:leave; for anyone else it is
+      // their own "My leave". The obligations are listed in place — what is
+      // owed and since when, never who or why (leave carries medical facts).
+      href: detailHref('leave-deadlines'),
+      desk: { href: notices > 0 ? '/leave?status=notices' : '/leave?status=certs-due', label: 'Open the leave desk', requires: 'manage:leave' },
+      items: lateLeave
+        .map((c) => ({ c, due: leaveDue(c) }))
+        .sort((a, b) => a.due.getTime() - b.due.getTime())
+        .slice(0, ITEMS_MAX)
+        .map(({ c, due }) => {
+          const late = Math.max(1, Math.round((todayStart.getTime() - due.getTime()) / DAY_MS));
+          const dueKey = leaveDueKey(c);
+          return { label: c.status === 'REQUESTED' ? 'Eligibility and rights notice' : 'Medical certification', sub: `Due ${fmtDay(dueKey)} · ${plural(late, 'day')} late` };
+        }),
     });
   }
   if (uiClaims.length > 0) {
@@ -331,8 +373,14 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
       detail: 'A late response loses the right to contest and can charge the claim to the company’s account. Answering each with the state retires it.',
       owner: 'HR',
       trend: newOrSteady(oldest, now),
-      metric: `The oldest was due ${fmtDay(oldest.toISOString().slice(0, 10))}`,
-      href: '/claims/unemployment',
+      metric: `The oldest was due ${fmtDay(dateColumnKey(oldest))}`,
+      href: detailHref('ui-claim-deadlines'),
+      desk: { href: '/claims/unemployment', label: 'Open unemployment claims', requires: 'manage:claims' },
+      items: uiClaims
+        .map((c) => c.responseDueAt)
+        .sort((a, b) => a.getTime() - b.getTime())
+        .slice(0, ITEMS_MAX)
+        .map((due) => ({ label: 'Response to the state', sub: `Was due ${fmtDay(dateColumnKey(due))} · ${plural(Math.max(1, Math.round((todayStart.getTime() - due.getTime()) / DAY_MS)), 'day')} late` })),
     });
   }
   if (wcClaims.length > 0) {
@@ -345,8 +393,14 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
       detail: 'The first report of injury goes to the carrier by a state deadline; late reports draw penalties and slow the injured person’s care. Sending each report retires it.',
       owner: 'Compliance',
       trend: newOrSteady(oldest, now),
-      metric: `The oldest was due ${fmtDay(oldest.toISOString().slice(0, 10))}`,
-      href: '/claims/workers-comp',
+      metric: `The oldest was due ${fmtDay(dateColumnKey(oldest))}`,
+      href: detailHref('wc-report-deadlines'),
+      desk: { href: '/claims/workers-comp', label: 'Open workers’ comp claims', requires: 'manage:claims' },
+      items: wcClaims
+        .map((c) => c.froiDueAt)
+        .sort((a, b) => a.getTime() - b.getTime())
+        .slice(0, ITEMS_MAX)
+        .map((due) => ({ label: 'First report of injury to the carrier', sub: `Was due ${fmtDay(dateColumnKey(due))} · ${plural(Math.max(1, Math.round((todayStart.getTime() - due.getTime()) / DAY_MS)), 'day')} late` })),
     });
   }
 
@@ -369,7 +423,10 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
       // Against four weeks ago: what was already past 60 days then (and is still open).
       trend: lateThen === 0 ? 'new' : late.length > lateThen ? 'rising' : 'steady',
       metric: `${plural(late.length, 'statement')} · the oldest ${oldestDays} days past due${over90.length ? ` · ${execMoney(over90.reduce((n, s) => n + s.row.amount, 0))} over 90` : ''}`,
-      href: '/books/receivables',
+      // Financials' receivables section ages the same statements for every
+      // executive role; the books' receivables (view:books) work them.
+      href: '/executive/financials',
+      desk: { href: '/books/receivables', label: 'Open receivables in the books', requires: 'view:books' },
     });
   }
 
@@ -386,7 +443,8 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
       owner: 'Finance',
       trend: 'steady',
       metric: `The week of ${fmtDay(low.weekStart)}`,
-      href: '/finance/cash-forecast',
+      href: '/executive/financials',
+      desk: { href: '/finance/cash-forecast', label: 'Open the cash forecast', requires: 'process:payroll' },
     });
   }
 
@@ -401,12 +459,14 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
       owner: 'Finance',
       trend: 'steady',
       metric: `${plural(unscheduled, 'hired person', 'hired people')} without a schedule`,
-      href: '/payroll/schedules?view=unassigned',
+      href: detailHref('pay-schedule-unassigned'),
+      desk: { href: '/payroll/schedules?view=unassigned', label: 'Open pay schedules', requires: 'process:payroll' },
+      items: unscheduledPeople.map((a) => ({ label: `${a.firstName} ${a.lastName}`.trim(), sub: 'On no pay schedule' })),
     });
   }
 
   // ----- No-call no-shows over 2% of assigned shifts in 4 weeks
-  const ncnsNow = ncns.filter((e) => e.occurredOn.getTime() >= new Date(ago28.toISOString().slice(0, 10) + 'T00:00:00Z').getTime()).length;
+  const ncnsNow = ncns.filter((e) => e.occurredOn.getTime() >= new Date(localDateKey(ago28, tz) + 'T00:00:00Z').getTime()).length;
   const ncnsBefore = ncns.length - ncnsNow;
   const shiftsNow = shifts56.filter((s) => s.startsAt >= ago28).length;
   const shiftsBefore = shifts56.length - shiftsNow;
@@ -481,5 +541,5 @@ export async function computeExecRisks(db: Db, now: Date): Promise<ExecRisks> {
   }
 
   risks.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
-  return { asOf: now.toISOString(), risks };
+  return { asOf: now.toISOString(), timezone: tz, risks };
 }

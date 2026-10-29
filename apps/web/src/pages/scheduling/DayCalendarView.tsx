@@ -19,7 +19,7 @@ import { shiftMinutes, ymd } from './calendarDates';
 import { layoutLanes } from './dayLanes';
 import { dayIsPast } from './weekGridFit';
 import { Avatar } from '@/components/ui/Avatar';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { associateFace } from '@/lib/photoUrl';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -362,7 +362,7 @@ const DayColumn = memo(function DayColumn({
       {associate ? (
         <div className="px-2 py-2 border-b border-navy-secondary h-12 flex items-center gap-2 bg-navy/95">
           <Avatar
-            src={associatePhotoUrl(associate.id)}
+            src={associateFace(associate)}
             name={`${associate.firstName} ${associate.lastName}`}
             className="h-7 w-7 bg-gold/15 text-gold text-2xs font-semibold"
           />

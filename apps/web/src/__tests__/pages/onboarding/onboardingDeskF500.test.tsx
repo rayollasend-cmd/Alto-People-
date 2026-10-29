@@ -33,6 +33,7 @@ vi.mock('@/lib/onboardingApi', async (orig) => ({
   getApplicationStats: vi.fn(),
   listTemplates: vi.fn(),
   listClients: vi.fn(async () => ({ clients: [], total: 0, nextCursor: null })),
+  listClientOptions: vi.fn(async () => ({ clients: [], total: 0, nextCursor: null })),
   deleteTemplate: vi.fn(),
   getApplication: vi.fn(),
   resendInvite: vi.fn(),

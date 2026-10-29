@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import {
+  UNPAID_BREAK_MIN,
+  UNPAID_BREAK_THRESHOLD_MIN,
   DashboardKPIsSchema,
   OnboardingAnalyticsResponseSchema,
   RetentionResponseSchema,
@@ -16,7 +18,7 @@ import { paidHoursByWeek, weekStartsEndingWith } from '../lib/paidHours.js';
 import { peopleStandings, workStatusCounts } from '../lib/peopleStatus.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
-import { startOfWeekUTC } from '../lib/timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone, endOfWeekUTC, startOfWeekUTC, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
 import {
   associatesOfClient,
   effectiveClientIdFilter,
@@ -85,31 +87,6 @@ function trendDelta(series: number[]): number {
   const lastComplete = series[series.length - 2] ?? 0;
   const prior = series[series.length - 3] ?? 0;
   return lastComplete - prior;
-}
-
-function daysBetween(a: Date, b: Date): number {
-  return (b.getTime() - a.getTime()) / ONE_DAY_MS;
-}
-
-function median(sorted: number[]): number | null {
-  if (sorted.length === 0) return null;
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
-}
-
-function percentile(sorted: number[], p: number): number | null {
-  if (sorted.length === 0) return null;
-  // Linear interpolation between two ranks; standard "p9 = days at the
-  // 90th-percentile boundary." For our purposes (HR dashboards, not
-  // statistical inference) this is plenty accurate.
-  const rank = (p / 100) * (sorted.length - 1);
-  const lo = Math.floor(rank);
-  const hi = Math.ceil(rank);
-  if (lo === hi) return sorted[lo];
-  const w = rank - lo;
-  return sorted[lo] * (1 - w) + sorted[hi] * w;
 }
 
 /** Inclusive YYYY-MM key in UTC for the given Date. */
@@ -203,10 +180,14 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
     ] = await Promise.all([
       // Brief 1A-2: the one definition of active, clamped to the caller's client.
       activeInReach(),
+      // "Open shifts" (shared METRICS.openShifts): published with no one
+      // assigned — status OPEN only — and not over yet, starting inside the
+      // window. It counted ASSIGNED too and read 276 against Scheduling's 1
+      // (deep audit LEAD-1).
       prisma.shift.count({
         where: {
           AND: [
-            { tenantId: T, status: { in: ['OPEN', 'ASSIGNED'] }, startsAt: { gte: now, lte: in30 } },
+            { tenantId: T, status: 'OPEN', assignedAssociateId: null, endsAt: { gt: now }, startsAt: { lte: in30 } },
             clientClamp,
             scopeShifts(req.user!),
           ],
@@ -310,7 +291,31 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       hires: { series: hiresSeries, delta: trendDelta(hiresSeries) },
     };
 
-    const [onTheBooks, activeWindow] = await Promise.all([onTheBooksInReach(), activeWindowDays()]);
+    // "Hours this week" and "Scheduled hours" (shared METRICS): the company
+    // week so far — the same paid-hours bucket the trend's last point is —
+    // and the week's non-cancelled shifts at their paid minutes
+    // (paidMinutesForRange: start to end, less the hour's meal over six
+    // hours), summed in SQL. The ops director's home reads this instead of
+    // re-adding the labor-cost rows over a UTC week (552h vs 537h, LEAD-21).
+    const weekEnd = endOfWeekUTC(now);
+    const tz = companyWorkweek().timezone;
+    const [onTheBooks, activeWindow, scheduledRows] = await Promise.all([
+      onTheBooksInReach(),
+      activeWindowDays(),
+      prisma.$queryRaw<Array<{ hours: number }>>(Prisma.sql`
+        SELECT COALESCE(SUM(CASE WHEN m > ${UNPAID_BREAK_THRESHOLD_MIN} THEN m - ${UNPAID_BREAK_MIN} ELSE m END), 0)::float8 / 60 AS hours
+        FROM (
+          SELECT GREATEST(0, ROUND(EXTRACT(EPOCH FROM ("endsAt" - "startsAt")) / 60)) AS m
+          FROM "Shift"
+          WHERE "tenantId" = ${T}::uuid
+            AND "status" <> 'CANCELLED'::"ShiftStatus"
+            AND "startsAt" >= ${thisWeekStart} AND "startsAt" < ${weekEnd}
+            ${boundedClientId ? Prisma.sql`AND "clientId" = ${boundedClientId}::uuid` : Prisma.empty}
+            ${sqlSites}
+        ) s
+      `),
+    ]);
+    const lastDay = new Date(weekEnd.getTime() - 12 * 60 * 60 * 1000);
     const payload: DashboardKPIs = DashboardKPIsSchema.parse({
       activeAssociates,
       onTheBooks,
@@ -325,6 +330,13 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       applicationStatusCounts,
       windowDays: days,
       trends,
+      week: {
+        start: dateKeyInZone(thisWeekStart, tz),
+        end: dateKeyInZone(lastDay, tz),
+        timezone: tz,
+        paidHours: hoursSeries.at(-1) ?? 0,
+        scheduledHours: Math.round(Number(scheduledRows[0]?.hours ?? 0) * 100) / 100,
+      },
     });
     res.json(payload);
   } catch (err) {
@@ -537,9 +549,84 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
     };
     const now = new Date();
     const windowStart = new Date(now.getTime() - ANALYTICS_LOOKBACK_DAYS * ONE_DAY_MS);
-    const monthlyStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (ANALYTICS_MONTHS - 1), 1)
-    );
+    // Months are the company's calendar months (company time zone), not UTC's.
+    const tz = companyWorkweek().timezone;
+    const monthKeys: string[] = [];
+    {
+      const [cy, cm] = dateKeyInZone(now, tz).split('-').map(Number) as [number, number];
+      for (let i = ANALYTICS_MONTHS - 1; i >= 0; i--) {
+        const d = new Date(Date.UTC(cy, cm - 1 - i, 1));
+        monthKeys.push(monthKey(d));
+      }
+    }
+    const monthlyStart = utcInstantOfLocalMidnight(`${monthKeys[0]}-01`, tz);
+
+    // Every number below is aggregated in SQL over EVERY application in
+    // scope (CODE-19): the route used to read `take: 500` rows with no
+    // order, so past 500 applications the medians, the per-client counts
+    // and the monthly chart came from an arbitrary subset. The where
+    // clause is the Prisma clamp above in SQL: this tenant, not deleted,
+    // the caller's client (fail closed when bounded with none), their sites.
+    const appSql = Prisma.sql`a."tenantId" = ${tenantIdForWrite()}::uuid AND a."deletedAt" IS NULL
+      ${clamped === undefined ? Prisma.empty : Prisma.sql`AND a."clientId" = ${clamped ?? NO_CLIENT}::uuid`}
+      ${onboardingReach ? Prisma.sql`AND a."locationId" = ANY(${onboardingReach.ids}::uuid[])` : Prisma.empty}`;
+    const daysSql = Prisma.sql`(EXTRACT(EPOCH FROM (a."submittedAt" - a."invitedAt"))::float8 / 86400)`;
+    const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+
+    const [completionRows, trackRows, clientRows, invitedRows, completedRows] = await Promise.all([
+      // Invite → submit, over the lookback (a negative span is bad data, left out).
+      prisma.$queryRaw<Array<{ median: number | null; p90: number | null; n: number }>>(Prisma.sql`
+        SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY d) AS median,
+               percentile_cont(0.9) WITHIN GROUP (ORDER BY d) AS p90,
+               COUNT(*)::int AS n
+        FROM (
+          SELECT ${daysSql} AS d FROM "Application" a
+          WHERE ${appSql} AND a."invitedAt" >= ${windowStart} AND a."submittedAt" IS NOT NULL
+        ) x
+        WHERE d >= 0
+      `),
+      // Per track: every invite in the window, and the median over the finished ones.
+      prisma.$queryRaw<Array<{ track: string; count: number; completed: number; median: number | null }>>(Prisma.sql`
+        SELECT a."onboardingTrack"::text AS track,
+               COUNT(*)::int AS count,
+               COUNT(*) FILTER (WHERE a."submittedAt" IS NOT NULL)::int AS completed,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY ${daysSql}) FILTER (WHERE a."submittedAt" IS NOT NULL) AS median
+        FROM "Application" a
+        WHERE ${appSql} AND a."invitedAt" >= ${windowStart}
+        GROUP BY 1
+        ORDER BY 2 DESC, 1 ASC
+      `),
+      // Per client, the top N by invites (a client-less application — a direct employer — is in the totals only).
+      prisma.$queryRaw<Array<{ clientId: string; clientName: string; count: number; completed: number; median: number | null }>>(Prisma.sql`
+        SELECT a."clientId"::text AS "clientId",
+               c."name" AS "clientName",
+               COUNT(*)::int AS count,
+               COUNT(*) FILTER (WHERE a."submittedAt" IS NOT NULL)::int AS completed,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY ${daysSql}) FILTER (WHERE a."submittedAt" IS NOT NULL) AS median
+        FROM "Application" a
+        JOIN "Client" c ON c."id" = a."clientId"
+        WHERE ${appSql} AND a."invitedAt" >= ${windowStart}
+        GROUP BY a."clientId", c."name"
+        ORDER BY count DESC, c."name" ASC
+        LIMIT ${ANALYTICS_TOP_CLIENTS}
+      `),
+      // Invited per company month, and how many of that month's invites have finished since.
+      prisma.$queryRaw<Array<{ month: string; invited: number; invitedCompleted: number }>>(Prisma.sql`
+        SELECT to_char(a."invitedAt" AT TIME ZONE ${tz}, 'YYYY-MM') AS month,
+               COUNT(*)::int AS invited,
+               COUNT(*) FILTER (WHERE a."submittedAt" IS NOT NULL)::int AS "invitedCompleted"
+        FROM "Application" a
+        WHERE ${appSql} AND a."invitedAt" >= ${monthlyStart}
+        GROUP BY 1
+      `),
+      // Submitted per company month.
+      prisma.$queryRaw<Array<{ month: string; completed: number }>>(Prisma.sql`
+        SELECT to_char(a."submittedAt" AT TIME ZONE ${tz}, 'YYYY-MM') AS month, COUNT(*)::int AS completed
+        FROM "Application" a
+        WHERE ${appSql} AND a."submittedAt" >= ${monthlyStart}
+        GROUP BY 1
+      `),
+    ]);
 
     // Snapshot of *all* applications by status (no time filter — HR wants
     // to see where everyone is right now).
@@ -551,137 +638,39 @@ analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
     const byStatus: Record<string, number> = {};
     for (const g of statusGroups) byStatus[g.status] = g._count._all;
 
-    // Window: applications invited within the lookback. Used for the
-    // completion / track / client / monthly stats.
-    const inWindow = await prisma.application.findMany({
-      take: 500,
-      where: { deletedAt: null, ...clientClamp, invitedAt: { gte: windowStart } },
-      select: {
-        clientId: true,
-        onboardingTrack: true,
-        invitedAt: true,
-        submittedAt: true,
-        client: { select: { name: true } },
-      },
-    });
-
-    const completed = inWindow.filter(
-      (a): a is typeof a & { submittedAt: Date } => a.submittedAt !== null
-    );
-    const completionDays = completed
-      .map((a) => daysBetween(a.invitedAt, a.submittedAt))
-      .filter((n) => n >= 0)
-      .sort((a, b) => a - b);
-
-    // Track breakdown: median per track, count per track.
-    const byTrackMap = new Map<string, number[]>();
-    for (const a of completed) {
-      const key = a.onboardingTrack;
-      const arr = byTrackMap.get(key) ?? [];
-      arr.push(daysBetween(a.invitedAt, a.submittedAt));
-      byTrackMap.set(key, arr);
-    }
-    // Add invited-but-not-completed counts so a track HR is using shows
-    // up even if nobody has finished yet within the window.
-    const trackCounts: Record<string, number> = {};
-    for (const a of inWindow) {
-      trackCounts[a.onboardingTrack] = (trackCounts[a.onboardingTrack] ?? 0) + 1;
-    }
-    const byTrack: OnboardingTrackBreakdown[] = Object.entries(trackCounts)
-      .map(([track, count]) => {
-        const sorted = (byTrackMap.get(track) ?? []).sort((a, b) => a - b);
-        return {
-          track: track as OnboardingTrackBreakdown['track'],
-          count,
-          medianDays: median(sorted),
-          // The median's sample: the page says "too few to tell" under 3.
-          completed: sorted.length,
-        };
-      })
-      .sort((a, b) => b.count - a.count);
-
-    // Client breakdown: top N by application count in the window. Median
-    // is over the completed subset for that client.
-    const byClientMap = new Map<
-      string,
-      { name: string; count: number; days: number[] }
-    >();
-    for (const a of inWindow) {
-      // The breakdown is per client; a client-less application (a direct employer) is in the totals only.
-      if (!a.clientId || !a.client) continue;
-      const entry = byClientMap.get(a.clientId) ?? {
-        name: a.client.name,
-        count: 0,
-        days: [],
-      };
-      entry.count += 1;
-      if (a.submittedAt) entry.days.push(daysBetween(a.invitedAt, a.submittedAt));
-      byClientMap.set(a.clientId, entry);
-    }
-    const byClient: OnboardingClientBreakdown[] = Array.from(byClientMap.entries())
-      .map(([clientId, v]) => ({
-        clientId,
-        clientName: v.name,
-        count: v.count,
-        medianDays: median(v.days.sort((a, b) => a - b)),
-        completed: v.days.length,
-      }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, ANALYTICS_TOP_CLIENTS);
-
-    // Monthly invited vs completed — a different (longer) window than
-    // the completion stats. Pull both invited and completed events that
-    // fall in the last N months.
-    const monthlyApps = await prisma.application.findMany({
-      take: 500,
-      where: {
-        deletedAt: null,
-        ...clientClamp,
-        OR: [
-          { invitedAt: { gte: monthlyStart } },
-          { submittedAt: { gte: monthlyStart } },
-        ],
-      },
-      select: { invitedAt: true, submittedAt: true },
-    });
-
-    const monthlyMap = new Map<string, { invited: number; completed: number; invitedCompleted: number }>();
-    // Pre-seed with empty months so the chart has full coverage even if
-    // a quiet month had zero of both.
-    for (let i = 0; i < ANALYTICS_MONTHS; i++) {
-      const d = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)
-      );
-      monthlyMap.set(monthKey(d), { invited: 0, completed: 0, invitedCompleted: 0 });
-    }
-    for (const a of monthlyApps) {
-      if (a.invitedAt >= monthlyStart) {
-        const k = monthKey(a.invitedAt);
-        const entry = monthlyMap.get(k);
-        if (entry) {
-          entry.invited += 1;
-          // The invite month's cohort: finished at any time since.
-          if (a.submittedAt) entry.invitedCompleted += 1;
-        }
-      }
-      if (a.submittedAt && a.submittedAt >= monthlyStart) {
-        const k = monthKey(a.submittedAt);
-        const entry = monthlyMap.get(k);
-        if (entry) entry.completed += 1;
-      }
-    }
-    const monthly: OnboardingMonthlyPoint[] = Array.from(monthlyMap.entries())
-      .map(([month, v]) => ({ month, invited: v.invited, completed: v.completed, invitedCompleted: v.invitedCompleted }))
-      .sort((a, b) => a.month.localeCompare(b.month));
+    const completion = completionRows[0];
+    const byTrack: OnboardingTrackBreakdown[] = trackRows.map((r) => ({
+      track: r.track as OnboardingTrackBreakdown['track'],
+      count: Number(r.count),
+      medianDays: num(r.median),
+      // The median's sample: the page says "too few to tell" under 3.
+      completed: Number(r.completed),
+    }));
+    const byClient: OnboardingClientBreakdown[] = clientRows.map((r) => ({
+      clientId: r.clientId,
+      clientName: r.clientName,
+      count: Number(r.count),
+      medianDays: num(r.median),
+      completed: Number(r.completed),
+    }));
+    const invitedBy = new Map(invitedRows.map((r) => [r.month, r]));
+    const completedBy = new Map(completedRows.map((r) => [r.month, Number(r.completed)]));
+    // Every month present, so the chart has full coverage even when a quiet month had zero of both.
+    const monthly: OnboardingMonthlyPoint[] = monthKeys.map((month) => ({
+      month,
+      invited: Number(invitedBy.get(month)?.invited ?? 0),
+      completed: completedBy.get(month) ?? 0,
+      invitedCompleted: Number(invitedBy.get(month)?.invitedCompleted ?? 0),
+    }));
 
     const payload: OnboardingAnalyticsResponse =
       OnboardingAnalyticsResponseSchema.parse({
         windowDays: ANALYTICS_LOOKBACK_DAYS,
         byStatus,
         completion: {
-          medianDays: median(completionDays),
-          p90Days: percentile(completionDays, 90),
-          sample: completionDays.length,
+          medianDays: num(completion?.median),
+          p90Days: num(completion?.p90),
+          sample: Number(completion?.n ?? 0),
         },
         byTrack,
         byClient,

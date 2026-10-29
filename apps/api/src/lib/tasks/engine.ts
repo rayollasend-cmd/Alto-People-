@@ -369,13 +369,24 @@ export async function taskDetail(db: Db, taskId: string): Promise<WorkTaskDetail
   return { ...taskView(t), events, history: t.assignments.filter((a) => a.state !== 'ACTIVE').map(assignmentView) };
 }
 
-export async function listTasks(db: Db, filter: { locationId?: string | null; from?: Date | null; to?: Date | null; status?: string | null }): Promise<WorkTaskView[]> {
+/**
+ * FLOOR-9: `sites` is the caller's reach (lib/scope scopeSites) — a
+ * client-bound supervisor lists her client's tasks, never every client's.
+ * Omitted only by system callers that already pinned one site.
+ */
+export async function listTasks(db: Db, filter: { locationId?: string | null; from?: Date | null; to?: Date | null; status?: string | null; sites?: Prisma.SiteWhereInput | null }): Promise<WorkTaskView[]> {
   const tenantId = tenantIdForWrite();
   const rows = await db.workTask.findMany({
     where: {
       tenantId,
+      ...(filter.sites ? { location: { is: filter.sites } } : {}),
       ...(filter.locationId ? { locationId: filter.locationId } : {}),
-      ...(filter.status ? { status: filter.status as TaskRow['status'] } : {}),
+      // One status, or several as "QUEUED|STALLED|FAILED" (the Inbox's needs view).
+      ...(filter.status
+        ? filter.status.includes('|')
+          ? { status: { in: filter.status.split('|').filter(Boolean) as Array<TaskRow['status']> } }
+          : { status: filter.status as TaskRow['status'] }
+        : {}),
       ...(filter.from ? { windowEnd: { gt: filter.from } } : {}),
       ...(filter.to ? { windowStart: { lt: filter.to } } : {}),
     },
@@ -386,9 +397,10 @@ export async function listTasks(db: Db, filter: { locationId?: string | null; fr
   return rows.map(taskView);
 }
 
-export async function taskSummary(db: Db, locationId: string | null, now: Date = new Date()): Promise<WorkTaskSummary> {
+export async function taskSummary(db: Db, locationId: string | null, now: Date = new Date(), sites: Prisma.SiteWhereInput | null = null): Promise<WorkTaskSummary> {
   const tenantId = tenantIdForWrite();
-  const where = { tenantId, ...(locationId ? { locationId } : {}) };
+  // The caller's reach (FLOOR-9), as in listTasks.
+  const where: Prisma.WorkTaskWhereInput = { tenantId, ...(locationId ? { locationId } : {}), ...(sites ? { location: { is: sites } } : {}) };
   const counts = await db.workTask.groupBy({ by: ['status'], where, _count: { _all: true } });
   const n = (s: string) => counts.find((c) => c.status === s)?._count._all ?? 0;
   const dayStart = new Date(now.getTime() - 24 * 3_600_000);

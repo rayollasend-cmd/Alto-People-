@@ -17,6 +17,7 @@ import {
 } from '../lib/tenantRoles.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
 import { applyGroupRoles } from '../lib/scimGroups.js';
+import { IDENTITY_CAPABILITIES, assertMayGrantCapabilities, assertMayGrantRole } from '../lib/roleGrant.js';
 
 /**
  * Brief 2-3 step 3 — the permission matrix and custom roles.
@@ -33,7 +34,11 @@ import { applyGroupRoles } from '../lib/scimGroups.js';
 
 export const tenantRolesRouter = Router();
 
-const MANAGE = requireCapability('manage:org');
+// Roles, custom roles and directory group mappings are the org
+// administrator's (manage:org AND view:hr-admin, lib/roleGrant) — the
+// workforce manager's manage:org is for the field org, not who holds what
+// (PEOPLE-2). Every grant also answers to the no-escalation rule.
+const MANAGE = requireCapability(...IDENTITY_CAPABILITIES);
 const RoleSchema = z.enum(HUMAN_ROLES as [Role, ...Role[]]);
 const CapsSchema = z.array(z.string().max(60)).max(200);
 
@@ -99,10 +104,17 @@ tenantRolesRouter.post('/scim-groups', MANAGE, async (req, res) => {
   // a role whose module is off.
   if (input.archetype === 'CLIENT_PORTAL') throw new HttpError(400, 'role_not_provisionable', 'Client portal accounts are invited from the client, not provisioned by SCIM.');
   await assertRoleOffered(input.archetype, tenantId);
+  // A mapping hands its role to everyone in the group — including, once
+  // the directory says so, the person mapping it. Never more than they hold.
+  let narrowed: { name: string; capabilities: string[] } | null = null;
   if (input.tenantRoleId) {
-    const tr = await prisma.tenantRole.findFirst({ where: { id: input.tenantRoleId, tenantId, deletedAt: null }, select: { archetype: true } });
+    const tr = await prisma.tenantRole.findFirst({ where: { id: input.tenantRoleId, tenantId, deletedAt: null }, select: { archetype: true, name: true, capabilities: true } });
     if (!tr || tr.archetype !== input.archetype) throw new HttpError(400, 'archetype_mismatch', 'That custom role is not a version of the chosen role.');
+    narrowed = tr;
   }
+  // A custom role narrows the archetype: what it holds is what is granted.
+  if (narrowed) assertMayGrantCapabilities(req.user!, narrowed.capabilities, `“${narrowed.name}”`);
+  else assertMayGrantRole(req.user!, input.archetype);
   const existing = await prisma.scimGroupRoleMap.findFirst({ where: { tenantId, groupName: input.groupName } });
   if (existing) throw new HttpError(409, 'already_mapped', 'That group already has a role. Remove it first.');
   const row = await prisma.scimGroupRoleMap.create({ data: { tenantId, groupName: input.groupName, archetype: input.archetype, tenantRoleId: input.tenantRoleId ?? null, priority: input.priority, createdById: req.user!.id } });

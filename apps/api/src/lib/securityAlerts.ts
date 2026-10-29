@@ -5,6 +5,7 @@ import { notifyUser } from './notify.js';
 import { send } from './notifications.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
 import { platformJob } from './tenantJobs.js';
+import { logger } from './logger.js';
 
 /**
  * Brief 2-5 step 7 — alerting from the audit trail
@@ -151,7 +152,7 @@ export async function raiseSecurityAlert(db: Db, c: Candidate & { linkUrl?: stri
     }
   }
   for (const a of admins) {
-    void notifyUser(a.id, { subject: 'Security alert', body: c.summary, category: 'security_alert', linkUrl: c.linkUrl ?? '/admin/audit' });
+    void notifyUser(a.id, { subject: 'Security alert', body: c.summary, category: 'security_alert', linkUrl: c.linkUrl ?? '/audit' });
     deliveredTo.push(`user:${a.id}`);
   }
   const alert = await db.securityAlert.create({ data: { rule: c.rule, key: c.key.slice(0, 200), summary: c.summary.slice(0, 500), auditLogIds: c.auditLogIds.slice(0, 200), deliveredTo } });
@@ -165,6 +166,6 @@ export function startSecurityAlertsCron(db: Db): void {
   const tick = () => void platformJob('securityAlerts', () => runSecurityAlerts(db))().catch((err) => console.error('[alto-people/api] security alerts failed:', err));
   timer = setInterval(tick, 5 * 60_000);
   timer.unref();
-  console.log('[alto-people/api] security alerting armed (every 5 minutes over the audit trail)');
+  logger.info('security alerting armed (every 5 minutes over the audit trail)');
 }
 export const securityAlertsArmed = () => timer !== null;

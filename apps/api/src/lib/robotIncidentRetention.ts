@@ -4,6 +4,8 @@ import { prisma as defaultPrisma } from '../db.js';
 import { enqueueAudit } from './audit.js';
 import { armJob, stopJob } from './jobs.js';
 import { tenantJob } from './tenantJobs.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Robot incident evidence retention (audit 2026-10-21; docs/robots-investigation.md:
@@ -21,7 +23,7 @@ export interface IncidentRetentionResult {
 }
 
 export async function purgeExpiredIncidentEvidence(db: PrismaClient = defaultPrisma, tenantId: string | null = null, now: Date = new Date()): Promise<IncidentRetentionResult> {
-  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const today = new Date(`${orgDateKey(now)}T00:00:00.000Z`);
   const due = await db.robotIncident.findMany({
     where: { retainUntil: { lt: today }, evidencePurgedAt: null, ...(tenantId ? { tenantId } : {}) },
     select: { id: true, workerId: true, tenantId: true, retainUntil: true },
@@ -33,7 +35,7 @@ export async function purgeExpiredIncidentEvidence(db: PrismaClient = defaultPri
       data: { samples: [], events: [], peopleOnShift: [], evidencePurgedAt: now },
     });
     enqueueAudit(
-      { actorUserId: null, clientId: null, tenantId: i.tenantId, workerId: i.workerId, action: 'robot.incident_evidence_purged', entityType: 'RobotIncident', entityId: i.id, metadata: { retainUntil: i.retainUntil.toISOString().slice(0, 10) } },
+      { actorUserId: null, clientId: null, tenantId: i.tenantId, workerId: i.workerId, action: 'robot.incident_evidence_purged', entityType: 'RobotIncident', entityId: i.id, metadata: { retainUntil: dateColumnKey(i.retainUntil) } },
       'robots',
     );
   }

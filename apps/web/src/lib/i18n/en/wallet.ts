@@ -43,6 +43,9 @@ export const enWallet = {
   'wallet.noExpiry': 'No expiry',
   'wallet.loadFailed': 'Could not load your credentials.',
   'wallet.shareFailed': 'Could not create the link.',
+  'wallet.noPersonTitle': 'Credentials belong to an employee record',
+  'wallet.noPersonBody': 'Your sign-in isn’t linked to an employee record, so there’s no badge or credential to show here. Your name, password and notifications are in Account settings.',
+  'wallet.noPersonCta': 'Account settings',
 } as const;
 
 registerEnglish(enWallet);

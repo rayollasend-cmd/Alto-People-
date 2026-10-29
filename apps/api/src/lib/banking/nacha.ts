@@ -149,6 +149,7 @@ export function buildNachaFile(header: NachaFileHeader, batches: NachaBatch[], o
   const built: BuiltEntry[] = [];
   const hh = String(header.createdAt.getUTCHours()).padStart(2, '0');
   const mi = String(header.createdAt.getUTCMinutes()).padStart(2, '0');
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: the header's YYMMDD is written from this same UTC instant.
   const created = header.createdAt.toISOString().slice(0, 10);
 
   lines.push(

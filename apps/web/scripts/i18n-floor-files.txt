@@ -27,6 +27,7 @@ src/components/floor/FloorFlagsCard.tsx
 src/components/floor/FloorWeekStrip.tsx
 src/components/floor/HandoverBanner.tsx
 src/components/floor/IncidentReportDialog.tsx
+src/components/floor/CrewCard.tsx
 # The driver
 src/pages/transport/DriverHome.tsx
 src/pages/transport/DriverTools.tsx

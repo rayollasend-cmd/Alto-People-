@@ -5,6 +5,7 @@ import { env } from '../config/env.js';
 import { notifyAllAdmins } from './notify.js';
 import { orgDateKey } from './timeAnomalies.js';
 import { fmtDay } from './humanDates.js';
+import { logger } from './logger.js';
 
 /**
  * Evening store-ops digest — the "how did the floor actually go today"
@@ -126,8 +127,8 @@ export function startOpsDigestCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] ops digest cron armed (every ${seconds}s; sends after ${SEND_AFTER_HOUR}:00 org time)`,
+  logger.info(
+    `ops digest cron armed (every ${seconds}s; sends after ${SEND_AFTER_HOUR}:00 org time)`,
   );
 }
 

@@ -117,6 +117,7 @@ export type ModuleKey =
   | 'mentorship'
   | 'expirations'
   | 'learning-paths'
+  | 'learning-admin'
   | 'succession'
   | 'probation'
   | 'holidays'
@@ -208,10 +209,16 @@ export interface ModuleNav {
    *  used where two audiences share a page (e.g. Labor costs is both a
    *  scheduling-ops and an executive surface). */
   requiresAny?: Capability[];
+  /** When set, the module ALSO needs this capability (AND): Sign-in is an org
+   *  administrator's — manage:org and HR-admin reach — never the workforce
+   *  manager's manage:org alone (fix wave 2026-10-29, PEOPLE-2). */
+  alsoRequires?: Capability;
   /** Brief 2-5: shown only to the tenant that operates the platform (its evidence is the platform's). */
   platformOnly?: boolean;
   /** Phase 67 — sidebar grouping. */
   group: ModuleGroup;
+  /** Extra words search finds the page by ("direct deposit", "w2") — set per reader (roleNavLabels). */
+  keywords?: string;
 }
 
 /**
@@ -433,6 +440,7 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'skills',
   'expirations',
   'learning-paths',
+  'learning-admin', // the course catalog beside its paths (PEOPLE-19)
   'headcount',
   'headcount-plan',
   'communications',
@@ -691,7 +699,7 @@ export function visibleModules(
   scope: { regionId?: string | null; modules?: TenantModules; tenantId?: string | null } = {},
 ): ModuleNav[] {
   const base = MODULES.filter(
-    (m) => can(m.requires) || (m.requiresAny?.some(can) ?? false),
+    (m) => (can(m.requires) || (m.requiresAny?.some(can) ?? false)) && (!m.alsoRequires || can(m.alsoRequires)),
   ).filter(
     // Brief 2-5: the platform's own pages are the operator tenant's alone.
     (m) => !m.platformOnly || scope.tenantId === PLATFORM_OPERATOR_TENANT_ID,
@@ -1093,6 +1101,17 @@ export const MODULES: ModuleNav[] = [
     group: 'workforce-management',
   },
   {
+    // The course catalog (PEOPLE-19): HR's admin view lived under Me at
+    // /learning, beside "My learning"; it is People › Learning now.
+    key: 'learning-admin',
+    path: '/learning/catalog',
+    label: 'Courses & training',
+    description:
+      'The course catalog: create and publish courses, assign them, follow enrollments, and chase certifications about to lapse.',
+    requires: 'view:compliance',
+    group: 'workforce-management',
+  },
+  {
     key: 'succession',
     path: '/succession',
     label: 'Succession',
@@ -1489,8 +1508,11 @@ export const MODULES: ModuleNav[] = [
     label: 'Call-outs',
     description:
       'Who can’t make their shift — by phone, text, WhatsApp or the app — the reason, and how cover is going. Cover starts on its own.',
-    requires: 'view:scheduling',
-    requiresAny: ['view:scheduling', 'manage:scheduling'],
+    // GET /call-outs serves the people who lead the floor (manage:scheduling)
+    // and the chairman's read (view:executive); an associate or a store's
+    // portal account is refused there (deep audit 2026-10-29, CRAWL-12).
+    requires: 'manage:scheduling',
+    requiresAny: ['manage:scheduling', 'view:executive'],
     group: 'workforce-management',
   },
   {
@@ -1941,7 +1963,10 @@ export const MODULES: ModuleNav[] = [
       'Submit expense reimbursements with receipts; managers approve and HR/Finance settles them into the next payroll run.',
     // Every associate can submit their own — the page scopes what each
     // role sees; approval/settlement actions stay capability-gated inside.
-    requires: 'view:dashboard',
+    // GET /reimbursements needs view:payroll, which every submitter,
+    // approver and settler holds; a driver or a recruiter got "Failed to
+    // load reimbursements" from the nav (deep audit 2026-10-29, CRAWL-12).
+    requires: 'view:payroll',
     group: 'payroll-finance',
   },
   {
@@ -2047,6 +2072,7 @@ export const MODULES: ModuleNav[] = [
     label: 'Sign-in',
     description: 'Your identity provider, the email domains that lead to it, and SCIM provisioning.',
     requires: 'manage:org',
+    alsoRequires: 'view:hr-admin',
     group: 'platform',
   },
   {
@@ -2325,6 +2351,9 @@ export interface NavDoor {
 
 /** Always-on rows above the doors, one row each, in this order. */
 export const RAIL_ROWS: readonly ModuleKey[] = ['inbox', 'messages', 'relay', 'floor-today'];
+/** Rows a role keeps right after Messages (ASSOC-26: an associate's
+ *  Notifications sat under "My records", away from Messages). */
+export const ROLE_ROWS: Partial<Record<Role, readonly ModuleKey[]>> = { ASSOCIATE: ['communications'] };
 
 export const DOORS: Record<DoorKey, NavDoor> = {
   me: { key: 'me', label: 'Me', children: ['me', 'wallet', 'learning', 'help-center', 'career', 'internal-jobs', 'volunteer', 'rides'] },
@@ -2332,7 +2361,7 @@ export const DOORS: Record<DoorKey, NavDoor> = {
   people: {
     key: 'people',
     label: (term) => term('nav.people'),
-    children: ['people', 'workers', 'agents', 'org', 'org-chart', 'headcount', 'headcount-plan', 'retention', 'skills', 'celebrations', 'assets', 'performance', 'probation', 'ramp', 'succession', 'mentorship', 'learning-paths', 'separations'],
+    children: ['people', 'workers', 'agents', 'org', 'org-chart', 'headcount', 'headcount-plan', 'retention', 'skills', 'celebrations', 'assets', 'performance', 'probation', 'ramp', 'succession', 'mentorship', 'learning-admin', 'learning-paths', 'separations'],
   },
   // Marketing sits under Hiring for the admins (the top of the same funnel);
   // the marketing manager's own rail opens its Marketing door first.
@@ -2481,7 +2510,7 @@ export function navShapeFor(
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const used = new Set<ModuleKey>();
   const rows: ModuleNav[] = [];
-  for (const key of RAIL_ROWS) {
+  for (const key of [...RAIL_ROWS, ...(ROLE_ROWS[role as Role] ?? [])]) {
     const m = byKey.get(key);
     if (m) {
       rows.push(m);
@@ -2543,7 +2572,52 @@ export function allDoors(shape: NavShape): NavDoorView[] {
  * pay page is their paystubs, not "Payroll" (the office's word). Applied
  * after applyTerms by every nav surface (Sidebar, phone menu).
  */
-export function roleNavLabels(modules: ModuleNav[], role: string | undefined, t: (key: 'nav.paystubs') => string): ModuleNav[] {
+/**
+ * The associate's own words for their pages in search (ASSOC-19): what the
+ * page does for THEM ("Your paychecks, taxes and direct deposit"), not the
+ * desk's description ("Multi-state payroll, anomaly detection, Branch
+ * cards…"), and the words they search by. Keys in the core pack
+ * (nav.desc.* / nav.kw.*), so every language finds its pages.
+ */
+type AssociateSearchId =
+  | 'payroll' | 'me' | 'timeOff' | 'scheduling' | 'marketplace' | 'timeAttendance' | 'documents' | 'benefits' | 'reimbursements' | 'rides'
+  | 'learning' | 'leave' | 'hrCases' | 'wallet' | 'internalJobs' | 'agreements' | 'communications' | 'messages' | 'helpCenter';
+
+export const ASSOCIATE_SEARCH: Partial<Record<ModuleKey, AssociateSearchId>> = {
+  payroll: 'payroll',
+  me: 'me',
+  'time-off': 'timeOff',
+  scheduling: 'scheduling',
+  marketplace: 'marketplace',
+  'time-attendance': 'timeAttendance',
+  documents: 'documents',
+  benefits: 'benefits',
+  reimbursements: 'reimbursements',
+  rides: 'rides',
+  learning: 'learning',
+  leave: 'leave',
+  'hr-cases': 'hrCases',
+  wallet: 'wallet',
+  'internal-jobs': 'internalJobs',
+  agreements: 'agreements',
+  communications: 'communications',
+  messages: 'messages',
+  'help-center': 'helpCenter',
+};
+
+type AssociateNavKey = 'nav.paystubs' | 'nav.myTime' | 'nav.myTraining' | `nav.desc.${AssociateSearchId}` | `nav.kw.${AssociateSearchId}`;
+
+export function roleNavLabels(modules: ModuleNav[], role: string | undefined, t: (key: AssociateNavKey) => string): ModuleNav[] {
   if (role !== 'ASSOCIATE') return modules;
-  return modules.map((m) => (m.key === 'payroll' ? { ...m, label: t('nav.paystubs') } : m));
+  const tr = t;
+  // The associate's menu says what the page says at its top (ASSOC-26:
+  // More "Learning" opened "My training", "Time" opened "My time") — the
+  // rule Home's quick links already follow.
+  return modules.map((m) => {
+    const label =
+      m.key === 'payroll' ? tr('nav.paystubs') : m.key === 'time-attendance' ? tr('nav.myTime') : m.key === 'learning' ? tr('nav.myTraining') : m.label;
+    const id = ASSOCIATE_SEARCH[m.key];
+    if (!id && label === m.label) return m;
+    return { ...m, label, ...(id ? { description: tr(`nav.desc.${id}`), keywords: tr(`nav.kw.${id}`) } : {}) };
+  });
 }

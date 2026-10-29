@@ -546,11 +546,20 @@ export function RecruitingAnalytics() {
             <MetricCard
               label="Median time to fill"
               value={days(data.speed.medianDaysToFill)}
-              nothing={data.speed.medianDaysToFill === null ? 'No postings filled in this range' : undefined}
+              // Beside "Fill rate 33% — 3 of 9 openings filled", "No postings
+              // filled" read as a contradiction: a posting counts once its LAST
+              // opening is filled; seats can fill before that (PEOPLE-22).
+              nothing={
+                data.speed.medianDaysToFill === null
+                  ? data.fill.filled > 0
+                    ? `No posting fully filled yet · ${data.fill.filled} of ${data.fill.openings} seats filled`
+                    : 'No posting fully filled yet'
+                  : undefined
+              }
               hint={
                 data.speed.postingsFilled
-                  ? `Posting opened to last opening filled · ${data.speed.postingsFilled} filled`
-                  : 'No postings filled in this range'
+                  ? `Posting opened to its last seat filled · ${data.speed.postingsFilled} ${data.speed.postingsFilled === 1 ? 'posting' : 'postings'} fully filled`
+                  : 'Counts a posting once every seat on it is filled'
               }
             />
             <MetricCard
@@ -561,7 +570,7 @@ export function RecruitingAnalytics() {
             <MetricCard
               label="Fill rate"
               value={fmtPercent(data.fill.fillRatePct)}
-              hint={data.fill.openings ? `${data.fill.filled} of ${data.fill.openings} openings filled` : 'No postings opened in this range'}
+              hint={data.fill.openings ? `${data.fill.filled} of ${data.fill.openings} seats filled on postings opened in this range` : 'No postings opened in this range'}
             />
             <MetricCard
               label="Cost per hire"

@@ -67,6 +67,7 @@ import {
   type Shift,
   MAX_SHIFT_WALL_MIN,
   isClientBoundedRole,
+  minuteOfDayInZone,
   paidMinutesForRange,
   type ShiftConflict,
   type ShiftListResponse,
@@ -91,6 +92,7 @@ import {
   scopeShifts,
   scopeTimeEntries,
   siteInScope,
+  assertSiteInScope,
 } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { moduleOn } from '../lib/tenantProfile.js';
@@ -132,11 +134,12 @@ import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { formatShiftLine, notifyShift, shiftWa } from '../lib/notifyShift.js';
 import { notifyAllAdmins, notifyClientSupervisors, trackNotificationWork } from '../lib/notify.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC, startOfWeekForSite } from '../lib/timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone, startOfWeekInZone } from '../lib/timeAnomalies.js';
 import { loadLiveRules } from '../lib/laborRules/live.js';
 import { payFor, plannedEntry, splitByPerson, splitHours, sumHours, type EntryHours, type HoursEntry, type HoursSplit, type LaborSite, type PayRules } from '../lib/laborRules/hours.js';
 import {
-  DEFAULT_TIMEZONE,
   addDaysInZone,
+  dateColumnKey,
   localDateKey,
   zonedDayOfWeek,
   zonedMinutes,
@@ -150,7 +153,7 @@ import { renderSchedulePdf } from '../lib/scheduleReport.js';
 import { mintCalendarToken } from '../lib/calendarFeed.js';
 import { env } from '../config/env.js';
 import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
-import { ORG_TZ, nextKey, portalCalendar, storeCalendar } from '../lib/portalMetrics.js';
+import { ORG_TZ, loadTargets, nextKey, portalCalendar, storeCalendar, targetAtMinute } from '../lib/portalMetrics.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { ledWindows, windowCovers } from '../lib/shiftWindows.js';
 import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
@@ -163,8 +166,9 @@ import { nudgeUnconfirmedShifts } from '../lib/shiftConfirmNudge.js';
 import { hugoHandlesSwap, kickCoverTask } from '../lib/hugoTasks.js';
 import { SWAP_INCLUDE, cancelSwapRequest, createSwapRequest, swapCandidatesFor, toSwap } from '../lib/shiftSwaps.js';
 import { emitShiftEvent } from '../lib/webhookEvents.js';
-import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { accountPhotoUrlFor, profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { listPayPeriods } from '../lib/payPeriods.js';
+import { computeNoShowRisk } from '../lib/noShowRisk.js';
 
 export const schedulingRouter = Router();
 
@@ -258,6 +262,8 @@ type RawShift = Prisma.ShiftGetPayload<{
     locationRel: { select: { id: true; name: true; timezone: true; state: true; city: true } };
   };
 }>;
+/** SHIFT_INCLUDE also carries the street address and coordinates; other reads may not. */
+type ShiftSiteAddress = { addressLine1?: string | null; zip?: string | null; latitude?: Prisma.Decimal | null; longitude?: Prisma.Decimal | null };
 
 /** PAID scheduled minutes — the shared unpaid-break rule (shifts over 6h
  *  include a 1-hour meal break). All aggregations, OT flags, and cost
@@ -303,6 +309,14 @@ async function hasOverlapExcluding(
  * caller looked up via `loadRateResolver`. Callers that don't pass it get
  * the explicit rate — correct for endpoints where no defaults were loaded.
  */
+/** The holder's photo URL when the row's include read the photo columns (SHIFT_INCLUDE does); omitted otherwise. */
+function shiftHolderPhoto(row: RawShift): { assignedAssociatePhotoUrl?: string | null } {
+  const a = row.assignedAssociate as { photoS3Key?: string | null; photoUpdatedAt?: Date | null } | null;
+  if (!row.assignedAssociateId) return { assignedAssociatePhotoUrl: null };
+  if (!a || a.photoS3Key === undefined) return {};
+  return { assignedAssociatePhotoUrl: profilePhotoUrlFor({ id: row.assignedAssociateId, photoS3Key: a.photoS3Key, photoUpdatedAt: a.photoUpdatedAt ?? null }) };
+}
+
 function toShift(row: RawShift, effectivePayRate?: number | null): Shift {
   const explicitPay = row.payRate ? Number(row.payRate) : null;
   return {
@@ -324,10 +338,13 @@ function toShift(row: RawShift, effectivePayRate?: number | null): Shift {
     // client→location filter and per-shift location display.
     locationId: row.locationId,
     locationName: row.locationRel?.name ?? null,
+    locationAddress: siteAddressLine(row.locationRel as (RawShift['locationRel'] & ShiftSiteAddress) | null),
+    locationLat: (row.locationRel as ShiftSiteAddress | null)?.latitude != null ? Number((row.locationRel as ShiftSiteAddress).latitude) : null,
+    locationLng: (row.locationRel as ShiftSiteAddress | null)?.longitude != null ? Number((row.locationRel as ShiftSiteAddress).longitude) : null,
     // IANA timezone of the work site — lets the calendar render every shift
     // in the STORE's wall-clock time, not the viewer's browser zone. Falls
-    // back to the deployment default for shifts without a Location yet.
-    timezone: row.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+    // back to the company's zone for shifts without a Location yet.
+    timezone: row.locationRel?.timezone ?? companyWorkweek().timezone,
     // The site's fair-workweek notice window (lib/fairWorkweek): the web
     // requires a changeReason on every change to a shift that has one.
     fairWorkweekNoticeDays: fairWorkweekNoticeDays(row.tenantId ?? tenantIdForWrite(), row.locationRel, row.startsAt),
@@ -335,6 +352,7 @@ function toShift(row: RawShift, effectivePayRate?: number | null): Shift {
     assignedAssociateName: row.assignedAssociate
       ? `${row.assignedAssociate.firstName} ${row.assignedAssociate.lastName}`
       : null,
+    ...shiftHolderPhoto(row),
     assignedAt: row.assignedAt ? row.assignedAt.toISOString() : null,
     cancellationReason: row.cancellationReason,
     scheduledMinutes: scheduledMinutes(row),
@@ -407,11 +425,19 @@ async function withEffectiveRate(row: RawShift): Promise<Shift> {
   return toShift(row, card ? card.payRate : null);
 }
 
+/** "100 Gulf Blvd, Panama City Beach, FL 32413" — null when the site has no street line. */
+function siteAddressLine(site: { addressLine1?: string | null; city?: string | null; state?: string | null; zip?: string | null } | null | undefined): string | null {
+  if (!site?.addressLine1) return null;
+  const cityState = [site.city, [site.state, site.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return [site.addressLine1, cityState].filter(Boolean).join(', ');
+}
+
 const SHIFT_INCLUDE = {
   client: { select: { name: true } },
-  assignedAssociate: { select: { firstName: true, lastName: true } },
+  assignedAssociate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
   // state + city: the site's labor-rules jurisdiction (lib/fairWorkweek).
-  locationRel: { select: { id: true, name: true, timezone: true, state: true, city: true } },
+  // The street address and coordinates: the associate's Directions go to the store, not a search for its name.
+  locationRel: { select: { id: true, name: true, timezone: true, state: true, city: true, addressLine1: true, zip: true, latitude: true, longitude: true } },
 } as const;
 
 /* ----- The labor-rules engine, as scheduling reads it ---------------------- *
@@ -633,10 +659,20 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
       throw new HttpError(400, 'invalid_query', '`ended` must be true or false');
     }
     const endedNow = new Date();
+    // ?associateId=<uuid> — one person's shifts (the call-out desk asks for
+    // one person's, CODE-29: it downloaded every ASSIGNED shift in the
+    // tenant, up to 3,000, to find them). Same scope as the list.
+    const associateId = req.query.associateId?.toString();
+    if (associateId !== undefined && !z.string().uuid().safeParse(associateId).success) {
+      throw new HttpError(400, 'invalid_associate', '`associateId` must be an associate id');
+    }
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
       ...(id ? { id } : {}),
+      // AND, never a spread key: the scope's own assignedAssociateId (an
+      // associate's own shifts) must not be replaced by the query's.
+      ...(associateId ? { AND: [{ assignedAssociateId: associateId }] } : {}),
       // Brief 2-1: explicit tenant until enforce mode (cross-tenant suite).
       tenantId: tenantIdForWrite(),
       ...(status ? { status: status as Prisma.ShiftWhereInput['status'] } : {}),
@@ -705,12 +741,107 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
 });
 
 /**
+ * GET /scheduling/contract?date=YYYY-MM-DD[&clientId=UUID][&locationId=UUID]
+ *
+ * The contracted floor through one store day (FLOOR-4): the client's
+ * staffing targets as they stand — each labeled window with its count, and
+ * the contract summed hour by hour on the store's clock. The supervisor's
+ * coverage chart drew the contract AT THIS MINUTE (2 at 1 AM) flat across
+ * all 24 hours, so a full 6 AM floor of 11 read as far over contract.
+ *
+ * The same targets the portal's "/ 8" reads (lib/portalMetrics loadTargets,
+ * targetAtMinute). Client-bound callers are clamped to their client; an
+ * office account names one (no client → 400); a store-bound office account
+ * sees only its own stores. No people, no money.
+ */
+schedulingRouter.get('/contract', SCHED_READ, async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        clientId: z.string().uuid().optional(),
+        locationId: z.string().uuid().optional(),
+      })
+      .parse(req.query);
+    const clamped = effectiveClientIdFilter(req.user!, q.clientId);
+    if (clamped === null) throw new HttpError(404, 'client_not_found', 'Client not found');
+    if (!clamped) throw new HttpError(400, 'client_required', 'Name the client (`clientId`).');
+    const client = await prisma.client.findFirst({ where: { id: clamped, tenantId: tenantIdForWrite(), deletedAt: null }, select: { id: true, name: true } });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    // A store-bound office account: its own stores only.
+    const reach = internalSites(req.user!);
+    const sites = await prisma.site.findMany({
+      where: {
+        AND: [
+          { clientId: client.id, deletedAt: null, isActive: true },
+          ...(q.locationId ? [{ id: q.locationId }] : []),
+          ...(reach ? [reach] : []),
+        ],
+      },
+      select: { id: true, name: true, timezone: true },
+      take: 200,
+    });
+    const location = q.locationId ? (sites[0] ?? null) : null;
+    if (q.locationId && !location) throw new HttpError(404, 'location_not_found', 'Location not found');
+    const cal = await portalCalendar({ clientId: client.id, location });
+    const now = new Date();
+    const date = q.date ?? cal.key(now);
+    const dayStart = cal.midnight(date);
+    const dayEnd = cal.midnight(nextKey(date, 1));
+    const allowed = new Set(sites.map((x) => x.id));
+    const names = new Map(sites.map((x) => [x.id, x.name]));
+    // The targets in force on that day (effective-dated: as of its end).
+    const targets = (
+      await loadTargets(
+        { clientId: client.id, locationId: location?.id ?? null, client, location: null },
+        new Date(Math.max(dayStart.getTime(), Math.min(now.getTime(), dayEnd.getTime() - 1))),
+      )
+    ).filter((t) => allowed.has(t.id));
+    // Hour h of the store day: the targets matching its first minute, each
+    // store on its own clock. A day across a DST change has 23 or 25 hours.
+    const hours: Array<{ at: string; target: number | null }> = [];
+    for (let at = dayStart.getTime(); at < dayEnd.getTime(); at += 3_600_000) {
+      const instant = new Date(at);
+      let total = 0;
+      let any = false;
+      for (const t of targets) {
+        const hit = targetAtMinute(t, minuteOfDayInZone(instant.toISOString(), t.timezone));
+        if (!hit) continue;
+        any = true;
+        total += hit.target;
+      }
+      hours.push({ at: instant.toISOString(), target: any ? total : null });
+    }
+    res.json({
+      date,
+      timezone: cal.tz,
+      windows: targets.flatMap((t) =>
+        t.windows.map((w) => ({
+          locationId: t.id,
+          locationName: names.get(t.id) ?? '',
+          timezone: t.timezone,
+          label: w.label,
+          startMinute: w.start,
+          endMinute: w.end,
+          targetCount: w.count,
+        })),
+      ),
+      // A store's all-day target where it has no labeled windows.
+      totals: targets.filter((t) => t.total !== null && t.windows.length === 0).map((t) => ({ locationId: t.id, targetCount: t.total! })),
+      hours,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /scheduling/kpis?from=ISO&to=ISO[&clientId=UUID]
  * GET /scheduling/kpis?week=this|last[&clientId=UUID]
  * GET /scheduling/kpis?fromDay=YYYY-MM-DD&toDay=YYYY-MM-DD[&clientId=UUID]
  *
- * Phase 50 — top-of-page signal strip. Defaults to the current
- * Sunday→Saturday calendar week if from/to are missing. `week` asks for
+ * Phase 50 — top-of-page signal strip. Defaults to the current company
+ * workweek (Saturday → Friday on the company's clock) if from/to are missing. `week` asks for
  * the workweek (Sat→Fri) on the client's store calendar — the week the
  * client portal grades, so a supervisor's "fill rate this week" is the
  * store manager's. `fromDay`/`toDay` (inclusive) are days on that same
@@ -765,14 +896,12 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
         to = cal.weekEnd(anchor);
       }
     } else {
-      // Default window: Sunday 00:00 → next Sunday 00:00 (local time).
-      const defaultFrom = new Date(now);
-      defaultFrom.setHours(0, 0, 0, 0);
-      defaultFrom.setDate(defaultFrom.getDate() - defaultFrom.getDay());
-      const defaultTo = new Date(defaultFrom);
-      defaultTo.setDate(defaultTo.getDate() + 7);
-      from = parseDateParam(fromParam, 'from') ?? defaultFrom;
-      to = parseDateParam(toParam, 'to') ?? defaultTo;
+      // Default window (CODE-15): the company workweek — Saturday 00:00 →
+      // the next Saturday 00:00 on the company's clock, the week payroll and
+      // overtime run on. It was Sunday → Sunday in the server's own zone
+      // (UTC on Railway), a week nobody else on the page used.
+      from = parseDateParam(fromParam, 'from') ?? startOfWeekUTC(now);
+      to = parseDateParam(toParam, 'to') ?? endOfWeekUTC(now);
     }
     const scope = scopeShifts(req.user!);
     const where: Prisma.ShiftWhereInput = {
@@ -913,6 +1042,44 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
       totalScheduledMinutes,
       projectedLaborCost: showCost ? projectedLaborCost : null,
       shiftsWithoutRate: showCost ? shiftsWithoutRate : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/shifts/high-risk  →  { shifts: [{ shiftId, points }] }
+ *
+ * Tomorrow's shifts held by high-risk attendees (lib/noShowRisk — the
+ * radar behind the Needs-you row "11 of tomorrow's shifts are held by
+ * high-risk attendees"), as ids the schedule marks and filters to. That
+ * row's "Go to it" opened the whole day with nothing marked (FLOOR-31,
+ * deep audit 2026-10-29); now it opens `?risk=1` and the day shows these.
+ * A client-bound caller gets their client's only, and every id is re-read
+ * through the caller's own shift scope and tenant.
+ */
+schedulingRouter.get('/shifts/high-risk', SCHED_READ, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const clientId = effectiveClientIdFilter(user, undefined);
+    // A client-bound role with no client fails closed, like the list.
+    if (clientId === null) {
+      res.json({ shifts: [] });
+      return;
+    }
+    const risky = await computeNoShowRisk(prisma, new Date(), clientId ?? null);
+    if (risky.length === 0) {
+      res.json({ shifts: [] });
+      return;
+    }
+    const visible = await prisma.shift.findMany({
+      where: { AND: [scopeShifts(user), { tenantId: tenantIdForWrite(), id: { in: risky.map((r) => r.shiftId) } }] },
+      select: { id: true },
+    });
+    const ok = new Set(visible.map((v) => v.id));
+    res.json({
+      shifts: risky.filter((r) => ok.has(r.shiftId)).map((r) => ({ shiftId: r.shiftId, points: r.points })),
     });
   } catch (err) {
     next(err);
@@ -1212,7 +1379,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
       Map<string, Array<{ from: string; count: number; startMinute: number; endMinute: number }>>
     >();
     for (const t of targetRows) {
-      const from = t.effectiveFrom.toISOString().slice(0, 10);
+      const from = dateColumnKey(t.effectiveFrom);
       if (t.label === null) {
         const arr = totalsByLocation.get(t.locationId) ?? [];
         arr.push({ from, count: t.targetCount });
@@ -1403,7 +1570,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
     };
 
     for (const s of shifts) {
-      const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+      const tz = s.locationRel?.timezone ?? companyWorkweek().timezone;
       const day = localDateKey(s.startsAt, tz);
       const b = bucketFor(
         day,
@@ -1475,7 +1642,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (
 
     for (const e of entries) {
       const loc = e.locationId ? locationById.get(e.locationId) : undefined;
-      const tz = loc?.timezone ?? DEFAULT_TIMEZONE;
+      const tz = loc?.timezone ?? companyWorkweek().timezone;
       const day = localDateKey(e.clockInAt, tz);
       const b = bucketFor(
         day,
@@ -1700,7 +1867,7 @@ schedulingRouter.get('/staffing-targets', SCHED_READ, async (req, res, next) => 
       Map<string, { label: string; startMinute: number; endMinute: number; targetCount: number; effectiveFrom: string }>
     >();
     for (const t of targets) {
-      const ymdFrom = t.effectiveFrom.toISOString().slice(0, 10);
+      const ymdFrom = dateColumnKey(t.effectiveFrom);
       if (t.label === null) {
         if (!currentByLocation.has(t.locationId)) {
           currentByLocation.set(t.locationId, {
@@ -1763,13 +1930,14 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
           ? { clientId: clamped ?? NO_MATCH_ID }
           : {}),
       },
-      select: { id: true, clientId: true, name: true },
+      select: { id: true, clientId: true, name: true, timezone: true },
     });
     if (!location) throw new HttpError(404, 'location_not_found', 'Location not found');
 
+    // No date named: from today on the store's clock (the company's when it has none), never UTC's.
     const effectiveFrom = parsed.data.effectiveFrom
       ? new Date(`${parsed.data.effectiveFrom}T00:00:00.000Z`)
-      : new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+      : new Date(`${localDateKey(new Date(), location.timezone ?? companyWorkweek().timezone)}T00:00:00.000Z`);
     const created = await prisma.staffingTarget.create({
       data: {
         locationId: location.id,
@@ -1800,7 +1968,7 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
                 endMinute: created.endMinute,
               }
             : {}),
-          effectiveFrom: created.effectiveFrom.toISOString().slice(0, 10),
+          effectiveFrom: dateColumnKey(created.effectiveFrom),
         },
       },
       'scheduling.staffing_target_set',
@@ -1809,7 +1977,7 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
       id: created.id,
       locationId: created.locationId,
       targetCount: created.targetCount,
-      effectiveFrom: created.effectiveFrom.toISOString().slice(0, 10),
+      effectiveFrom: dateColumnKey(created.effectiveFrom),
     });
   } catch (err) {
     next(err);
@@ -1844,9 +2012,21 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const trendClientId = clamped === null ? NO_MATCH_ID : clamped;
     const now = new Date();
-    const bounds: Date[] = [startOfWeekUTC(now)];
+    // One week per screen (deep audit LEAD-23): asked about one client, the
+    // weeks are that client's own (Client.weekStartsOn, company zone) — the
+    // week its statements and the Performance tab's hours chart run on — so
+    // the client's margin-per-hour line and its hours line share their weeks.
+    // Company-wide, the company week (Saturday → Friday).
+    const tz = companyWorkweek().timezone;
+    let weekStartsOn = companyWorkweek().weekStartsOn;
+    if (typeof clamped === 'string') {
+      const c = await prisma.client.findFirst({ where: { id: clamped, tenantId: tenantIdForWrite() }, select: { weekStartsOn: true } });
+      if (c) weekStartsOn = c.weekStartsOn;
+    }
+    const weekOf = (d: Date) => startOfWeekInZone(d, tz, weekStartsOn);
+    const bounds: Date[] = [weekOf(now)];
     for (let i = 0; i < 4; i++) {
-      bounds.push(startOfWeekUTC(new Date(bounds[i].getTime() - 36 * 3600_000)));
+      bounds.push(weekOf(new Date(bounds[i].getTime() - 36 * 3600_000)));
     }
     const TREND_CAP = 50_000;
     const fetchedEntries = await prisma.timeEntry.findMany({
@@ -1886,7 +2066,7 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
     const perStoreWeek = new Map<string, { minutes: number; otMinutes: number; pay: number; billed: number; standardMin: number }>();
     for (const e of entries) {
       if (!e.locationId || !e.clientId) continue;
-      const wkStart = startOfWeekUTC(e.clockInAt).getTime();
+      const wkStart = weekOf(e.clockInAt).getTime();
       const wkIdx = bounds.findIndex(
         (_b, i) => i > 0 && wkStart >= bounds[i].getTime() && wkStart < bounds[i - 1].getTime(),
       );
@@ -1927,7 +2107,7 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
             clientId,
             locationId,
             weeks: [4, 3, 2, 1].map((i) => ({
-              start: bounds[i].toISOString().slice(0, 10),
+              start: dateKeyInZone(bounds[i], tz),
               hours: 0,
               marginPerHour: null as number | null,
             })),
@@ -1979,7 +2159,7 @@ schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async 
     });
     const best = Math.max(0, ...out.map((s) => s.avgMarginPerHour ?? 0));
     out.sort((a, b) => (b.avgMarginPerHour ?? -999) - (a.avgMarginPerHour ?? -999));
-    res.json({ stores: out, bestMarginPerHour: best, truncated: trendsTruncated });
+    res.json({ stores: out, bestMarginPerHour: best, truncated: trendsTruncated, weekStartsOn });
   } catch (err) {
     next(err);
   }
@@ -2147,7 +2327,7 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
       // Not over yet, but the week as scheduled lands hours in overtime.
       else if (remainingPlanned.has(e.associateId)) {
         // This week's worked hours (the site's week) plus what's still scheduled.
-        const weekStart = startOfWeekForSite(now, e.location?.timezone ?? DEFAULT_TIMEZONE);
+        const weekStart = startOfWeekForSite(now, e.location?.timezone ?? companyWorkweek().timezone);
         const worked = workOf(e.associateId).filter((w) => w.clockInAt >= weekStart);
         const ahead = plannedOvertime(liveRules, worked, remainingPlanned.get(e.associateId)!);
         if (ahead.overtimeHours + ahead.doubleTimeHours > 1e-9) agg.projectedOtHeads += 1;
@@ -2191,7 +2371,7 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (re
 
     const rows = locations
       .map((l) => {
-        const minute = zonedMinutes(now, l.timezone ?? DEFAULT_TIMEZONE);
+        const minute = zonedMinutes(now, l.timezone ?? companyWorkweek().timezone);
         const windows = [...(windowsByLocation.get(l.id)?.values() ?? [])].sort(
           (a, b) => a.startMinute - b.startMinute,
         );
@@ -2700,7 +2880,7 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
       // …and the caller's reach: a site-scoped manager never gets the org-wide roster.
       where: { AND: [where, { tenantId: tenantIdForWrite() }, scopeAssociates(req.user!)] },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
-      select: { id: true, firstName: true, lastName: true, email: true },
+      select: { id: true, firstName: true, lastName: true, email: true, photoS3Key: true, photoUpdatedAt: true },
       take: ROSTER_PAGE + 1,
     });
     const truncated = rows.length > ROSTER_PAGE;
@@ -2729,7 +2909,7 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
       }
     }
     res.json(
-      AssociateListResponseSchema.parse({ associates: page, truncated }),
+      AssociateListResponseSchema.parse({ associates: page.map(({ photoS3Key, photoUpdatedAt, ...a }) => ({ ...a, photoUrl: profilePhotoUrlFor({ id: a.id, photoS3Key, photoUpdatedAt }) })), truncated }),
     );
   } catch (err) {
     next(err);
@@ -2983,6 +3163,9 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       noticeState = site.state;
       placeName = site.name;
     }
+    // The single create checks the site against the caller's reach (lib/shiftCreate);
+    // the bulk create must too — a store-bound manager can't post shifts at another store.
+    await assertSiteInScope(prisma, req.user!, location.id);
     const bulkClientId = input.clientId ?? null;
 
     // Every day copy of the shift: the primary date + any "also on …"
@@ -3107,7 +3290,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
           candidateIds,
           o.startsAt,
           o.endsAt,
-          location.timezone ?? DEFAULT_TIMEZONE,
+          location.timezone ?? companyWorkweek().timezone,
         ),
       ),
     );
@@ -3311,7 +3494,7 @@ schedulingRouter.get('/unconfirmed', MANAGE, async (req, res, next) => {
         clientName: r.client?.name ?? null,
         startsAt: r.startsAt.toISOString(),
         // The store's clock: the chase list reads the shift as the store does.
-        timezone: r.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        timezone: r.locationRel?.timezone ?? companyWorkweek().timezone,
         associateId: r.assignedAssociate!.id,
         associateName: `${r.assignedAssociate!.firstName} ${r.assignedAssociate!.lastName}`,
         phone: r.assignedAssociate!.phone ?? null,
@@ -3949,7 +4132,7 @@ schedulingRouter.get('/me/shifts/:id', async (req, res, next) => {
       },
       orderBy: { startsAt: 'asc' },
       take: 50,
-      include: { assignedAssociate: { select: { firstName: true, lastName: true } } },
+      include: { assignedAssociate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } } },
     });
     // One row per person — back-to-back split shifts would otherwise list
     // the same teammate twice.
@@ -3963,6 +4146,7 @@ schedulingRouter.get('/me/shifts/:id', async (req, res, next) => {
         {
           associateId: s.assignedAssociateId,
           name: `${s.assignedAssociate.firstName} ${s.assignedAssociate.lastName}`,
+          photoUrl: profilePhotoUrlFor({ id: s.assignedAssociateId, photoS3Key: s.assignedAssociate.photoS3Key, photoUpdatedAt: s.assignedAssociate.photoUpdatedAt }),
           position: s.position,
           startsAt: s.startsAt.toISOString(),
           endsAt: s.endsAt.toISOString(),
@@ -4125,7 +4309,7 @@ schedulingRouter.post('/me/shifts/:id/decline', async (req, res, next) => {
 
 /* ===== One-off availability exceptions ("can't work July 15") ========== */
 
-const exceptionDayString = (d: Date) => d.toISOString().slice(0, 10);
+const exceptionDayString = dateColumnKey; // AvailabilityException.date is a @db.Date
 
 schedulingRouter.get('/me/availability/exceptions', async (req, res, next) => {
   try {
@@ -4240,6 +4424,10 @@ schedulingRouter.get('/me/open-shifts', async (req, res, next) => {
       OpenShiftsResponseSchema.parse({
         shifts: eligible.map((s) => ({
           ...toAssociateShift(s),
+          // The rate the shift is posted at is what the worker would earn — theirs to see
+          // (the client's bill rate, hourlyRate, stays hidden). One open-shift pay rule on
+          // the web (lib/openShiftPay) reads it.
+          payRate: s.payRate ? Number(s.payRate) : null,
           myClaimStatus: claimByShift.get(s.id)?.status ?? null,
           myClaimId: claimByShift.get(s.id)?.id ?? null,
         })),
@@ -4271,7 +4459,7 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
     }
     // Placed, qualified, free that day — the same rule as the list.
     await assertCanClaimOpenShift(user.associateId, shift.id);
-    const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+    const tz = shift.locationRel?.timezone ?? companyWorkweek().timezone;
     const existing = await prisma.openShiftClaim.findFirst({
       where: { shiftId: shift.id, associateId: user.associateId, status: 'PENDING' },
       select: { id: true },
@@ -4401,7 +4589,7 @@ schedulingRouter.get('/open-shift-claims', MANAGE, async (req, res, next) => {
           shiftClientName: c.shift.client?.name ?? null,
           shiftStartsAt: c.shift.startsAt.toISOString(),
           shiftEndsAt: c.shift.endsAt.toISOString(),
-          shiftTimezone: c.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          shiftTimezone: c.shift.locationRel?.timezone ?? companyWorkweek().timezone,
           wouldExceed40h: otFlags[i].exceed,
           weeklyMinutes: otFlags[i].weeklyMinutes,
           createdAt: c.createdAt.toISOString(),
@@ -4469,7 +4657,7 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
         [claim.associateId],
         claim.shift.startsAt,
         claim.shift.endsAt,
-        claim.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        claim.shift.locationRel?.timezone ?? companyWorkweek().timezone,
         tx,
       );
       if (nowBlocked.size > 0) {
@@ -4686,7 +4874,7 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
     // Day-bound the target in the STORE's zone so this advisory matches
     // what /assign actually enforces (blockedForWindow). UTC flooring here
     // was off by one day for evening shifts at stores west of UTC.
-    const conflictTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+    const conflictTz = target.locationRel?.timezone ?? companyWorkweek().timezone;
     const targetStartDate = new Date(
       `${dayKeyInZone(target.startsAt, conflictTz)}T00:00:00Z`,
     );
@@ -4739,11 +4927,11 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
     const timeOffConflicts = ptoOverlaps.map((r) => ({
       requestId: r.id,
       category: r.category,
-      startDate: r.startDate.toISOString().slice(0, 10),
-      endDate: r.endDate.toISOString().slice(0, 10),
+      startDate: dateColumnKey(r.startDate),
+      endDate: dateColumnKey(r.endDate),
     }));
     const unavailableDays = exceptionDays.map((x) => ({
-      date: x.date.toISOString().slice(0, 10),
+      date: dateColumnKey(x.date),
       note: x.note,
     }));
     res.json(
@@ -4843,7 +5031,7 @@ async function rankAutoFillCandidates(
 ): Promise<AutoFillCandidate[]> {
   // Availability is wall-clock at the STORE, so convert the shift's UTC
   // instant to the location's local day-of-week + minutes before matching.
-  const targetTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+  const targetTz = target.locationRel?.timezone ?? companyWorkweek().timezone;
 
   // Day-bound the target in the store's zone so the ranking's PTO flag
   // agrees with the /assign hard block (same fix as /conflicts).
@@ -5168,7 +5356,7 @@ schedulingRouter.get('/me/trade-options', async (req, res, next) => {
           clientName: s.client?.name ?? null,
           startsAt: s.startsAt.toISOString(),
           endsAt: s.endsAt.toISOString(),
-          timezone: s.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          timezone: s.locationRel?.timezone ?? companyWorkweek().timezone,
         })),
       }),
     );
@@ -5441,14 +5629,14 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         [swap.counterpartyAssociateId],
         swap.shift.startsAt,
         swap.shift.endsAt,
-        swap.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        swap.shift.locationRel?.timezone ?? companyWorkweek().timezone,
       ),
       swap.counterpartShift
         ? blockedForWindow(
             [swap.requesterAssociateId],
             swap.counterpartShift.startsAt,
             swap.counterpartShift.endsAt,
-            swap.counterpartShift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+            swap.counterpartShift.locationRel?.timezone ?? companyWorkweek().timezone,
           )
         : Promise.resolve(new Set<string>()),
     ]);
@@ -5765,7 +5953,7 @@ schedulingRouter.get('/availability-overview', MANAGE, async (req, res, next) =>
       }),
     ]);
 
-    const dayKey = (d: Date): string => d.toISOString().slice(0, 10);
+    const dayKey = dateColumnKey; // time-off and exception dates are @db.Date columns
     const blocked = new Map<string, Set<string>>();
     const block = (associateId: string, key: string) => {
       const set = blocked.get(associateId) ?? new Set<string>();
@@ -6386,7 +6574,7 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
     // from the site's. Find the site-local Sunday of the week containing
     // weekStart, advance to the template's dayOfWeek, then build the UTC
     // instants from site-local wall time.
-    const siteTz = location.timezone ?? DEFAULT_TIMEZONE;
+    const siteTz = location.timezone ?? companyWorkweek().timezone;
     const anchorKey = localDateKey(new Date(parsed.data.weekStart), siteTz);
     const [ay, am, ad] = anchorKey.split('-').map(Number);
     const anchorUtcMidnight = Date.UTC(ay!, (am ?? 1) - 1, ad ?? 1);
@@ -6615,7 +6803,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       const carry = preserveAssignments && s.assignedAssociateId != null;
       // Calendar-day shift in the WORK SITE's zone so a copy across a DST
       // boundary keeps its wall-clock time (9am stays 9am).
-      const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+      const tz = s.locationRel?.timezone ?? companyWorkweek().timezone;
       const startsAt = addDaysInZone(s.startsAt, dayOffset, tz);
       const endsAt = addDaysInZone(s.endsAt, dayOffset, tz);
       // Never propagate a corrupted span (the 31-hour-shift class) into
@@ -6896,7 +7084,7 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
         startsAt: s.startsAt,
         endsAt: s.endsAt,
         rate: rateOf(s),
-        timezone: s.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        timezone: s.locationRel?.timezone ?? companyWorkweek().timezone,
         entry: plannedEntry({ startsAt: s.startsAt, endsAt: s.endsAt, paidMinutes: paidMinutesForRange(s.startsAt, s.endsAt), site: s.locationRel }),
       });
       byAssociate.set(s.assignedAssociateId, entry);
@@ -7463,7 +7651,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
 
     for (const shift of openShifts) {
       // Wall-clock at the store, matching how associates enter availability.
-      const shiftTz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+      const shiftTz = shift.locationRel?.timezone ?? companyWorkweek().timezone;
       const dow = zonedDayOfWeek(shift.startsAt, shiftTz);
       const startMin = zonedMinutes(shift.startsAt, shiftTz);
       const endMin = zonedMinutes(shift.endsAt, shiftTz);
@@ -7689,13 +7877,14 @@ schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
       clientName = c?.name ?? null;
     }
 
+    const headerTz = rows[0]?.locationRel?.timezone ?? companyWorkweek().timezone;
     const pdf = await renderSchedulePdf({
       rangeFrom: from,
       rangeTo: to,
       generatedAt: new Date(),
-      // Header stamp timezone: the first shift's site, else the deployment
-      // default. Per-row times each use their own site timezone.
-      timezone: rows[0]?.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+      // Header stamp timezone: the first shift's site, else the company's.
+      // Per-row times each use their own site timezone.
+      timezone: headerTz,
       filters: { clientName },
       shifts: rows.map((r) => ({
         startsAt: r.startsAt,
@@ -7705,7 +7894,7 @@ schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
         location: r.location,
         // Render each row's date/time in its own work-site timezone so the
         // printed schedule shows store-local times, not the server's UTC.
-        timezone: r.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        timezone: r.locationRel?.timezone ?? companyWorkweek().timezone,
         assignedAssociateName: r.assignedAssociate
           ? `${r.assignedAssociate.firstName} ${r.assignedAssociate.lastName}`
           : null,
@@ -7717,11 +7906,8 @@ schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
       showRate: !billRateHidden(req.user!.role),
     });
 
-    const fname = `shifts-${from.toISOString().slice(0, 10)}-to-${new Date(
-      to.getTime() - 1
-    )
-      .toISOString()
-      .slice(0, 10)}.pdf`;
+    // The range's first and last day as the header reads them, not UTC's.
+    const fname = `shifts-${localDateKey(from, headerTz)}-to-${localDateKey(new Date(to.getTime() - 1), headerTz)}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);

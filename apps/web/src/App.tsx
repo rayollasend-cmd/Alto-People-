@@ -261,6 +261,7 @@ const RecruitingExtras = lazyNamed(() => import('@/pages/recruiting/RecruitingEx
 const RecruitingAnalytics = lazyNamed(() => import('@/pages/recruiting/RecruitingAnalytics'), 'RecruitingAnalytics');
 const InternalJobsHome = lazyNamed(() => import('@/pages/internalJobs/InternalJobsHome'), 'InternalJobsHome');
 const LearningHome = lazyNamed(() => import('@/pages/learning/LearningHome'), 'LearningHome');
+const LearningCatalog = lazyNamed(() => import('@/pages/learning/LearningCatalog'), 'LearningCatalog');
 const LearningPathsHome = lazyNamed(() => import('@/pages/learningPaths/LearningPathsHome'), 'LearningPathsHome');
 const SkillsHome = lazyNamed(() => import('@/pages/skills/SkillsHome'), 'SkillsHome');
 const MentorshipHome = lazyNamed(() => import('@/pages/mentorship/MentorshipHome'), 'MentorshipHome');
@@ -475,7 +476,7 @@ function PublicRouteFallback() {
 }
 
 const ONBOARDING_ROUTES = [
-  { path: 'onboarding', element: <OnboardingHome /> },
+  { path: 'onboarding', element: <RequireCapability cap="view:onboarding"><OnboardingHome /></RequireCapability> },
   // Phase 61 — template manager (HR/Ops only; component enforces).
   { path: 'onboarding/templates', element: <RequireCapability cap="manage:onboarding"><TemplatesList /></RequireCapability> },
   { path: 'onboarding/templates/new', element: <RequireCapability cap="manage:onboarding"><TemplateEditor /></RequireCapability> },
@@ -554,10 +555,10 @@ const ONBOARDING_ROUTES = [
 // Authenticated routes that live under the Layout shell.
 const LAYOUT_ROUTES = [
   { index: true, element: <Dashboard /> },
-  { path: 'time-attendance', element: <TimeHome /> },
+  { path: 'time-attendance', element: <RequireCapability cap="view:time"><TimeHome /></RequireCapability> },
   // Finance's alias for the same surface — their nav says "Timesheets".
-  { path: 'timesheets', element: <TimeHome /> },
-  { path: 'time-off', element: <TimeOffHome /> },
+  { path: 'timesheets', element: <RequireCapability cap="view:time"><TimeHome /></RequireCapability> },
+  { path: 'time-off', element: <RequireCapability cap="view:time"><TimeOffHome /></RequireCapability> },
   // Route-level capability gates below mirror the sidebar's module gating
   // (lib/modules.ts) so a bounded role (SHIFT_SUPERVISOR, CLIENT_PORTAL,
   // FINANCE_ACCOUNTANT…) deep-linking into a module it can't see gets the
@@ -593,9 +594,9 @@ const LAYOUT_ROUTES = [
   { path: 'region', element: <RegionHome /> },
   { path: 'messages', element: <MessagesHome /> },
   { path: 'messages/:id', element: <MessagesHome /> },
-  { path: 'scheduling', element: <SchedulingHome /> },
+  { path: 'scheduling', element: <RequireCapability cap="view:scheduling"><SchedulingHome /></RequireCapability> },
   // Every store's next seven days on one screen (role walk HR 6).
-  { path: 'scheduling/coverage', element: <RequireCapability cap="view:scheduling"><CoverageBoard /></RequireCapability> },
+  { path: 'scheduling/coverage', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']}><CoverageBoard /></RequireCapability> },
   // The supervisor corps: field leadership places a supervisor at a store and shift.
   { path: 'scheduling/supervisors', element: <RequireCapability cap="manage:org"><SupervisorCorps /></RequireCapability> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
@@ -618,7 +619,7 @@ const LAYOUT_ROUTES = [
   { path: 'forecast', element: <RequireCapability cap="view:org"><ForecastHome /></RequireCapability> },
   { path: 'communications', element: <CommunicationsHome /> },
   { path: 'performance', element: <RequireCapability cap="view:performance"><PerformanceHome /></RequireCapability> },
-  { path: 'recruiting', element: <RecruitingHome /> },
+  { path: 'recruiting', element: <RequireCapability cap="view:recruiting"><RecruitingHome /></RequireCapability> },
   { path: 'analytics', element: <RequireCapability cap="view:analytics"><AnalyticsHome /></RequireCapability> },
   // Brief 3-2: tasks and their assignment.
   { path: 'tasks', element: <RequireCapability cap="view:time-live"><TasksBoard /></RequireCapability> },
@@ -663,7 +664,7 @@ const LAYOUT_ROUTES = [
     // Settings & trust → Communications: channels, WhatsApp, the do-not-email list, routing.
     { path: 'admin/communications', element: <RequireCapability cap="manage:communications"><CommunicationsSettings /></RequireCapability> },
     { path: 'admin/organization', element: <RequireCapability cap="view:hr-admin"><TenantProfileHome /></RequireCapability> },
-    { path: 'admin/sign-in', element: <RequireCapability cap="manage:org"><SignInSettings /></RequireCapability> },
+    { path: 'admin/sign-in', element: <RequireCapability cap="view:hr-admin"><RequireCapability cap="manage:org"><SignInSettings /></RequireCapability></RequireCapability> },
     // Access pack: certification campaigns — any signed-in reviewer may open theirs; running one needs manage:org (the page gates the button).
     { path: 'admin/access-certifications', element: <AccessCertifications /> },
     { path: 'admin/access-certifications/:id', element: <AccessCertificationPage /> },
@@ -672,7 +673,7 @@ const LAYOUT_ROUTES = [
     { path: 'admin/document-retention', element: <RequireCapability cap="view:hr-admin"><DocumentRetentionAdmin /></RequireCapability> },
     { path: 'admin/org-units', element: <RequireCapability cap="view:org"><OrgUnitsAdmin /></RequireCapability> },
     { path: 'admin/sites', element: <RequireCapability cap="view:org"><SitesAdmin /></RequireCapability> },
-    { path: 'admin/task-policy', element: <RequireCapability cap="view:scheduling"><TaskPolicyPage /></RequireCapability> },
+    { path: 'admin/task-policy', element: <RequireCapability cap="view:time-live"><TaskPolicyPage /></RequireCapability> },
     { path: 'admin/compliance-evidence', element: <RequireCapability cap="view:org"><ComplianceEvidenceHome /></RequireCapability> },
     { path: 'admin/billing', element: <RequireCapability cap="manage:org" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
     { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
@@ -700,7 +701,7 @@ const LAYOUT_ROUTES = [
   { path: 'people/:associateId', element: <RequireCapability cap="view:org"><PersonRecord /></RequireCapability> },
   { path: 'org', element: <RequireCapability cap="view:org"><OrgHome /></RequireCapability> },
   { path: 'org/chart', element: <RequireCapability cap="view:org"><OrgChart /></RequireCapability> },
-  { path: 'call-outs', element: <RequireCapability cap="view:scheduling" anyOf={['manage:scheduling']}><CallOutsDesk /></RequireCapability> },
+  { path: 'call-outs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive']}><CallOutsDesk /></RequireCapability> },
   { path: 'retention', element: <RequireCapability cap="view:org" anyOf={['manage:scheduling']}><RetentionDesk /></RequireCapability> },
   // F500 fix-up: every capability-gated page carries its module's guard, so a
   // deep link shows the access page instead of "Missing capability: …".
@@ -718,7 +719,7 @@ const LAYOUT_ROUTES = [
   { path: 'learning-paths', element: <RequireCapability cap="view:compliance"><LearningPathsHome /></RequireCapability> },
   { path: 'succession', element: <RequireCapability cap="view:hr-admin"><SuccessionHome /></RequireCapability> },
   { path: 'probation', element: <RequireCapability cap="view:hr-admin"><ProbationHome /></RequireCapability> },
-  { path: 'holidays', element: <HolidaysHome /> },
+  { path: 'holidays', element: <RequireCapability cap="view:scheduling"><HolidaysHome /></RequireCapability> },
   { path: 'discipline', element: <RequireCapability cap="view:hr-admin"><DisciplineHome /></RequireCapability> },
   { path: 'separations', element: <RequireCapability cap="view:hr-admin"><SeparationHome /></RequireCapability> },
   { path: 'internal-jobs', element: <InternalJobsHome /> },
@@ -750,9 +751,9 @@ const LAYOUT_ROUTES = [
   { path: 'me/discipline', element: <MyDiscipline /> },
   { path: 'me/discipline/:actionId', element: <MyDiscipline /> },
   { path: 'compensation', element: <RequireCapability cap="view:comp"><CompensationHome /></RequireCapability> },
-  { path: 'performance/extras', element: <RequireCapability cap="view:performance"><PerformanceExtras /></RequireCapability> },
+  { path: 'performance/extras', element: <RequireCapability cap="view:hr-admin"><PerformanceExtras /></RequireCapability> },
   { path: 'performance/calibration', element: <RequireCapability cap="manage:performance"><ReviewCalibration /></RequireCapability> },
-  { path: 'marketplace', element: <MarketplaceHome /> },
+  { path: 'marketplace', element: <RequireCapability cap="view:scheduling"><MarketplaceHome /></RequireCapability> },
   { path: 'payrules', element: <RequireCapability cap="process:payroll"><PayRulesHome /></RequireCapability> },
   { path: 'directory', element: <RequireCapability cap="view:org"><DirCommsHome /></RequireCapability> },
   { path: 'compliance/osha', element: <RequireCapability cap="view:compliance"><OshaWcEeoHome /></RequireCapability> },
@@ -829,10 +830,12 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },
   { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
   { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
+  // The course catalog — People › Courses & training (PEOPLE-19).
+  { path: 'learning/catalog', element: <RequireCapability cap="view:compliance"><LearningCatalog /></RequireCapability> },
   { path: 'worktags', element: <RequireCapability cap="view:hr-admin"><WorktagsHome /></RequireCapability> },
   { path: 'reports', element: <RequireCapability cap="view:analytics"><ReportsHome /></RequireCapability> },
   { path: 'reports/people', element: <RequireCapability cap="view:analytics"><PeopleAnalytics /></RequireCapability> },
-  { path: 'reimbursements', element: <RequireCapability cap="view:dashboard"><ReimbursementsHome /></RequireCapability> },
+  { path: 'reimbursements', element: <RequireCapability cap="view:payroll"><ReimbursementsHome /></RequireCapability> },
   { path: 'time-attendance/kiosk', element: <RequireCapability cap="manage:time"><KioskAdmin /></RequireCapability> },
   { path: 'time-attendance/timesheets', element: <RequireCapability cap="manage:time"><TimesheetsView /></RequireCapability> },
   { path: 'time-attendance/timesheets/history/:associateId', element: <RequireCapability cap="manage:time"><TimesheetHistory /></RequireCapability> },

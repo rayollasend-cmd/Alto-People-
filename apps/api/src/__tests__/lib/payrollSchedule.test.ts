@@ -43,6 +43,21 @@ describe('getCurrentPeriod — WEEKLY', () => {
   });
 });
 
+describe('getCurrentPeriod — "now" is the company\'s day, not UTC\'s', () => {
+  // Alto's biweekly Saturday→Friday periods, anchored Oct 10, 2026 (memory: alto-pay-schedule).
+  const schedule = { frequency: 'BIWEEKLY' as const, anchorDate: '2026-10-10', payDateOffsetDays: 7 };
+
+  it('at 9 PM Eastern on the period\'s last Friday it is still that period (UTC already says Saturday)', () => {
+    const w = getCurrentPeriod(schedule, new Date('2026-10-24T01:00:00.000Z')); // Fri Oct 23, 9 PM EDT
+    expect(w.periodStart).toBe('2026-10-10');
+    expect(w.periodEnd).toBe('2026-10-23');
+  });
+
+  it('a date value (UTC midnight) is read as that date', () => {
+    expect(getCurrentPeriod(schedule, new Date('2026-10-24T00:00:00.000Z')).periodStart).toBe('2026-10-24');
+  });
+});
+
 describe('getCurrentPeriod — BIWEEKLY', () => {
   const schedule = {
     frequency: 'BIWEEKLY' as const,

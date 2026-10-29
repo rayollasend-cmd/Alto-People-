@@ -23,6 +23,7 @@ import { fmtDateTick } from '@/components/ui/charts/axes';
 import { scopeParams, shiftDays } from './scope';
 import { ListTemplate } from '@/components/templates';
 import { ServiceReportDialog } from './ServiceReportDialog';
+import { HoursSignOffPanel } from './HoursSignOff';
 import '@/lib/i18n/en/portal';
 
 /**
@@ -40,6 +41,8 @@ interface HistoryPayload {
   store: { id: string; name: string } | null;
   range: { from: string; to: string; days: number };
   generatedAt: string;
+  /** A read hit the server's hard ceiling: the figures are partial. Absent from an older server. */
+  truncated?: boolean;
   days: Array<{
     date: string;
     published: number;
@@ -82,6 +85,8 @@ interface HistoryPayload {
     taskTotal: number;
     tempAlerts: number;
     incomplete: number;
+    /** Never submitted — closed by the expiry sweep. Absent from an older server. */
+    expired?: number;
     photos: number;
   } | null;
   safety: { incidents: number; open: number };
@@ -130,7 +135,9 @@ function presetRange(preset: Preset, today: string): { from: string; to: string 
       return { from: `${today.slice(0, 7)}-01`, to: today };
     case 'lastMonth': {
       const [y, m] = today.split('-').map(Number);
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on the store's own date key.
       const first = new Date(Date.UTC(y!, m! - 2, 1)).toISOString().slice(0, 10);
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on the store's own date key.
       const last = new Date(Date.UTC(y!, m! - 1, 0)).toISOString().slice(0, 10);
       return { from: first, to: last };
     }
@@ -367,6 +374,8 @@ export function PortalHistory() {
         </div>
       ) : (
         <>
+          {/* A range too big to read whole says so, never a quiet subset (CODE-19). */}
+          {data.truncated && <ErrorBanner>{t('portal.historyTruncated')}</ErrorBanner>}
           {/* ---- KPI strip ------------------------------------------------ */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {/* Contracted hours delivered, as a percentage with its hours under
@@ -375,7 +384,8 @@ export function PortalHistory() {
                 (next tile) is the supervisor's measure: shifts filled of
                 shifts scheduled. */}
             <StatTile
-              label={data.totals.basis === 'schedule' ? t('portal.kpiShowedUpRange') : t('portal.kpiDeliveredRange')}
+              // The range is in the bar above: "· this period" cut the label to "CONTRACTED HOURS…" at 1024 (LEAD-32).
+              label={data.totals.basis === 'schedule' ? t('portal.kpiShowedUpShort') : t('portal.kpiDeliveredShort')}
               value={data.totals.reliabilityPct !== null ? `${data.totals.reliabilityPct}%` : '—'}
               meter={
                 data.totals.reliabilityPct !== null
@@ -430,11 +440,12 @@ export function PortalHistory() {
               value={data.incidents.noCallNoShows}
               unit={t('portal.kpiNcnsWord')}
               deltaTone={data.incidents.noCallNoShows > 0 ? 'bad' : 'good'}
-              sub={t('portal.kpiIncidentsSub', {
-                callOuts: data.incidents.callOuts,
-                lates: data.incidents.lates,
-                replaced: data.incidents.replacementsFound,
-              })}
+              // Each count with its own plural ("1 call-outs", LEAD-24).
+              sub={[
+                t('portal.incCallOuts', { count: data.incidents.callOuts }),
+                t('portal.incLates', { count: data.incidents.lates }),
+                t('portal.incCovered', { count: data.incidents.replacementsFound }),
+              ].join(' · ')}
             />
           </div>
 
@@ -576,10 +587,11 @@ export function PortalHistory() {
                           photos: data.ops.photos,
                         })}
                       </p>
-                      {(data.ops.tempAlerts > 0 || data.ops.incomplete > 0) && (
+                      {(data.ops.tempAlerts > 0 || data.ops.incomplete > 0 || (data.ops.expired ?? 0) > 0) && (
                         <p className="mt-1 text-xs text-warning tabular-nums">
                           {[
                             data.ops.tempAlerts > 0 && t('portal.opsTemp', { count: data.ops.tempAlerts }),
+                            (data.ops.expired ?? 0) > 0 && t('portal.opsNeverSubmitted', { count: data.ops.expired ?? 0 }),
                             data.ops.incomplete > 0 && t('portal.opsIncomplete', { count: data.ops.incomplete }),
                           ]
                             .filter(Boolean)
@@ -643,6 +655,11 @@ export function PortalHistory() {
                 {reportsOpenWeek && <p className="mt-2 text-xs text-ink-muted">{t('portal.svcReportInProgress')}</p>}
               </CardContent>
             </Card>
+
+            {/* ---- The client's sign-off on a finished week's hours ------------ */}
+            <div className="md:col-span-2 xl:col-span-12">
+              <HoursSignOffPanel scopeQs={scopeQs} />
+            </div>
 
             {/* ---- Billing: apart from the floor's record, whatever the range ---- */}
             <Card className="md:col-span-2 xl:col-span-12">

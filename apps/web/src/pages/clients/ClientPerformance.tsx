@@ -153,6 +153,10 @@ export function ClientPerformance({ clientId }: { clientId: string }) {
   const totalShifts = weeks.reduce((n, w) => n + w.shifts, 0);
   const totalFilled = weeks.reduce((n, w) => n + w.filled, 0);
   const weekWord = `${p.weeks.length} full weeks (${WEEKDAYS[p.weekStartsOn] ?? 'Saturday'} to ${WEEKDAYS[(p.weekStartsOn + 6) % 7] ?? 'Friday'})`;
+  // The margin line's weeks are the client's own too (store-trends answers with them, LEAD-23):
+  // name them, rather than "the company week" beside an hours chart on another.
+  const marginWeekStart = labor.data?.weekStartsOn ?? p.weekStartsOn;
+  const marginWeekWord = `the client's week (${WEEKDAYS[marginWeekStart] ?? 'Saturday'} to ${WEEKDAYS[(marginWeekStart + 6) % 7] ?? 'Friday'})`;
   const billedTotal = statements.reduce((n, s) => n + s.amount, 0);
   const waitingTotal = statements.filter((s) => s.state === 'waiting').reduce((n, s) => n + s.open, 0);
 
@@ -278,7 +282,7 @@ export function ClientPerformance({ clientId }: { clientId: string }) {
           {canLabor && marginWeeks.some((w) => w.margin !== null) && (
             <ChartFrame
               title="Margin per hour, week by week"
-              description={`Bill less pay, per hour worked, on the company week. ${marginBasis(standardShare)}.${labor.data?.truncated ? ' Too many punches to count them all — the oldest week may read low.' : ''}`}
+              description={`Bill less pay, per hour worked, on ${marginWeekWord}. ${marginBasis(standardShare)}.${labor.data?.truncated ? ' Too many punches to count them all — the oldest week may read low.' : ''}`}
               summary={`Margin per hour over ${marginWeeks.length} weeks; the last week ran ${perHour(marginWeeks[marginWeeks.length - 1]!.margin)}.`}
               csvName="client-margin"
               height={220}
@@ -288,7 +292,8 @@ export function ClientPerformance({ clientId }: { clientId: string }) {
                 { key: 'margin', label: 'Margin per hour', numeric: true, format: (v) => perHour(v as number | null) },
               ]}
             >
-              <TrendLineChart data={marginWeeks} x="week" series={[{ key: 'margin', name: 'Margin per hour', color: PALETTE.good }]} zeroBased={false} format={(v) => `$${Math.round(v * 100) / 100}`} heading={(x) => `Week of ${x}`} />
+              {/* From zero: cut to $3.60–$4.40, a few cents' move drew as a cliff (LEAD-22). */}
+              <TrendLineChart data={marginWeeks} x="week" series={[{ key: 'margin', name: 'Margin per hour', color: PALETTE.good }]} format={(v) => `$${Math.round(v * 100) / 100}`} heading={(x) => `Week of ${x}`} />
             </ChartFrame>
           )}
         </div>

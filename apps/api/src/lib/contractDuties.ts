@@ -5,6 +5,7 @@ import { ATTESTATION_CONFIGS, classifyStatus, dueDateFor, periodForNow, type Att
 import { isClientBoundedRole, isInternallyScoped } from './scope.js';
 import { tenantIdForWrite } from './tenant.js';
 import { loadTenantProfile, tenantProfileSync } from './tenantProfile.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * The contract duties that are overdue (role walk HR 2): the recurring
@@ -50,7 +51,8 @@ export interface OverdueContractDuties {
 }
 
 const DAY_MS = 86_400_000;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** Attestation periods and due dates are calendar days held at UTC midnight (DATE columns, lib/manualAttestation). */
+const ymd = (d: Date) => dateColumnKey(d);
 const NONE: OverdueContractDuties = { items: [], count: 0, snoozed: 0, oldestDue: null };
 
 /** Whether this person's reach includes the company's contract duties (and the tenant has client contracts). */

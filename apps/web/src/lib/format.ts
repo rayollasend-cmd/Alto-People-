@@ -40,22 +40,60 @@ const EN_US = 'en-US';
 const DASH = '—';
 
 /**
- * Locale for DISPLAY formatters (dates, weekday/month names, money
- * grouping). Reads <html lang>, which I18nProvider keeps current — the
- * same non-React channel fmtRelativeDayTz already used for Hoy/Mañana —
- * so every fmt* call site in the app localizes without threading a lang
- * parameter through hundreds of components. es-US (not es-ES) keeps
- * US-style currency and 12-hour clocks for a US workforce.
+ * Locale for DISPLAY formatters (dates, weekday/month names, clock
+ * times) in the app language: "Mon, Nov 2" in English, "2 Kas Pzt" in
+ * Turkish. Reads <html lang>, which I18nProvider keeps current, so every
+ * fmt* call site in the app localizes without threading a lang parameter
+ * through hundreds of components. es-US (not es-ES) keeps 12-hour clocks
+ * for a US workforce. Money and plain numbers use numberLocale().
  *
  * MACHINE-facing helpers (zonedDayKey, zonedWallTimeToUtc, the
  * datetime-input converters) stay pinned to en-US: their output is
  * parsed back as numbers, never shown to a person.
  */
 export function displayLocale(): string {
-  return typeof document !== 'undefined' && document.documentElement.lang === 'es'
-    ? 'es-US'
-    : EN_US;
+  const lang = typeof document !== 'undefined' ? document.documentElement.lang : 'en';
+  return DATE_LOCALE[lang] ?? EN_US;
 }
+
+/**
+ * Each app language's locale for dates, weekday and month names and clock
+ * times (lib/i18n Lang). Haitian Creole has no CLDR data in any browser, so
+ * it reads French-Haitian dates ("lun. 2 nov.") rather than English ones;
+ * the same table as the Hugo task cards (components/assistant/hugoWorkText).
+ */
+const DATE_LOCALE: Record<string, string> = { es: 'es-US', tr: 'tr-TR', ht: 'fr-HT', pt: 'pt-BR', uk: 'uk-UA' };
+
+/**
+ * Locale for MONEY and plain numbers: US grouping and a decimal point in
+ * every language ("$1,234.50", "7.5h"). The amounts are US dollars that the
+ * paycheck, the bank and the W-2 all print this way, and a page mixing
+ * "$1,234.50" with "7,5h" would read as two different numbers. es-US
+ * formats numbers exactly as en-US does; only dates follow the language.
+ */
+export function numberLocale(): string {
+  return typeof document !== 'undefined' && document.documentElement.lang === 'es' ? 'es-US' : EN_US;
+}
+
+/** "Today" / "Tomorrow" / "Yesterday" in the app language — our own words, not Intl's (Intl has no Haitian Creole). */
+const RELATIVE_DAY: Record<string, { today: string; tomorrow: string; yesterday: string }> = {
+  en: { today: 'Today', tomorrow: 'Tomorrow', yesterday: 'Yesterday' },
+  es: { today: 'Hoy', tomorrow: 'Mañana', yesterday: 'Ayer' },
+  tr: { today: 'Bugün', tomorrow: 'Yarın', yesterday: 'Dün' },
+  ht: { today: 'Jodi a', tomorrow: 'Demen', yesterday: 'Yè' },
+  pt: { today: 'Hoje', tomorrow: 'Amanhã', yesterday: 'Ontem' },
+  uk: { today: 'Сьогодні', tomorrow: 'Завтра', yesterday: 'Учора' },
+};
+
+export function relativeDayWord(which: 'today' | 'tomorrow' | 'yesterday'): string {
+  const lang = typeof document !== 'undefined' ? document.documentElement.lang : 'en';
+  return (RELATIVE_DAY[lang] ?? RELATIVE_DAY.en)[which];
+}
+
+/** Every language's "Today" and "Yesterday" — for telling a relative heading from a date. */
+export const RELATIVE_DAY_WORDS: ReadonlySet<string> = new Set(
+  Object.values(RELATIVE_DAY).flatMap((w) => [w.today, w.tomorrow, w.yesterday]),
+);
 
 /**
  * The zone every INSTANT formatter renders in unless told otherwise.
@@ -102,7 +140,7 @@ export function fmtMoney(
   if (value === null || value === undefined || value === '') return DASH;
   const n = typeof value === 'string' ? Number(value) : value;
   if (!Number.isFinite(n)) return DASH;
-  return n.toLocaleString(displayLocale(), {
+  return n.toLocaleString(numberLocale(), {
     style: 'currency',
     currency: opts.currency ?? 'USD',
     minimumFractionDigits: 2,
@@ -124,7 +162,7 @@ export function fmtMoneyWhole(value: number | string | null | undefined): string
   if (!Number.isFinite(n)) return DASH;
   // Math.round(-0.4) is -0, which Intl prints as "-$0".
   const rounded = Math.round(n) || 0;
-  return rounded.toLocaleString(displayLocale(), {
+  return rounded.toLocaleString(numberLocale(), {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 0,
@@ -156,7 +194,7 @@ export function fmtMoneyCompact(
   // $1k–$10k keeps one decimal ($1.2k).
   if (abs >= 10_000) return `${sign}$${Math.round(abs / 1000)}k`;
   if (abs >= 1_000) return `${sign}$${(abs / 1000).toFixed(1)}k`;
-  return `${sign}$${Math.round(abs).toLocaleString(displayLocale())}`;
+  return `${sign}$${Math.round(abs).toLocaleString(numberLocale())}`;
 }
 
 /**
@@ -199,7 +237,7 @@ export function fmtCompactRange(
  */
 export function fmtMoneyEst(value: number): string {
   if (!Number.isFinite(value)) return DASH;
-  return `~${value.toLocaleString(displayLocale(), {
+  return `~${value.toLocaleString(numberLocale(), {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 0,
@@ -254,7 +292,7 @@ export const STUCK_RUN_MINUTES = 180;
 
 export function fmtHours(hours: number | null | undefined): string {
   if (hours === null || hours === undefined || !Number.isFinite(hours)) return DASH;
-  const s = hours.toLocaleString(displayLocale(), {
+  const s = hours.toLocaleString(numberLocale(), {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });
@@ -269,6 +307,28 @@ export function fmtHours(hours: number | null | undefined): string {
  */
 export function mapsUrl(address: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
+
+/**
+ * "Directions" to a store: its point when known, else its street address,
+ * as a maps DIRECTIONS link (opens turn-by-turn in the phone's maps app).
+ * Only with neither on file does it fall back to searching the names
+ * (ASSOC-10: "Directions" searched Google for "Client Store 218 Front end",
+ * the client, the store code and the department, not where the store is).
+ */
+export function directionsUrl(place: {
+  address?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  /** Names to search when the store has no address on file. */
+  names?: Array<string | null | undefined>;
+}): string {
+  if (place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng)) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`;
+  }
+  const address = place.address?.trim();
+  if (address) return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+  return mapsUrl((place.names ?? []).filter(Boolean).join(' '));
 }
 
 /** "/hr" or "/yr" suffix tacked on for pay rates. */
@@ -848,21 +908,18 @@ export function fmtRelativeDayTz(
   timeZone?: string | null,
   now: number = Date.now(),
 ): string {
-  // Date FORMATTING stays en-US app-wide, but "Today"/"Tomorrow" are our
-  // own words and read badly inside otherwise-Spanish sentences. The
-  // I18nProvider keeps <html lang> current, so this non-React helper can
-  // localize the two words without threading a lang param everywhere.
-  const es =
-    typeof document !== 'undefined' && document.documentElement.lang === 'es';
+  // "Today"/"Tomorrow" are our own words (relativeDayWord), in the app
+  // language: the I18nProvider keeps <html lang> current, so this
+  // non-React helper localizes without threading a lang param everywhere.
   const key = zonedDayKey(value, timeZone);
   const todayKey = zonedDayKey(new Date(now), timeZone);
-  if (key === todayKey) return es ? 'Hoy' : 'Today';
+  if (key === todayKey) return relativeDayWord('today');
   // Tomorrow is derived from today's CALENDAR key, not from now + 86.4e6 ms.
   // The instant-based version broke in any DST-observing zone: on the
   // fall-back day (25 hours long) now + 24h is still today, so "Tomorrow"
   // silently degraded to "Sun, Nov 1" — on the associate schedule, which is
   // the surface that leans hardest on the relative wording.
-  if (key === nextCalendarDayKey(todayKey)) return es ? 'Mañana' : 'Tomorrow';
+  if (key === nextCalendarDayKey(todayKey)) return relativeDayWord('tomorrow');
   return `${fmtWeekdayTz(value, timeZone)}, ${fmtDateTz(value, timeZone)}`;
 }
 
@@ -926,20 +983,49 @@ export function parseYmd(s: string | null | undefined): Date | null {
 /** "2h ago", "yesterday", "Mar 4". For activity feeds. */
 export function fmtRelativeDate(
   value: string | Date | null | undefined,
+  opts: { yesterday?: boolean } = {},
 ): string {
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
   const ms = Date.now() - d.getTime();
   const min = Math.floor(ms / 60_000);
+  const hrs = Math.floor(min / 60);
+  const days = Math.floor(hrs / 24);
+  const yesterday = opts.yesterday !== false && days === 1;
+  if (days >= 7) return fmtDate(d);
+  const lang = typeof document !== 'undefined' ? document.documentElement.lang : 'en';
+  if (lang && lang !== 'en') return relativeAgo(lang, min, hrs, days, yesterday);
   if (min < 1) return 'just now';
   if (min < 60) return `${min}m ago`;
-  const hrs = Math.floor(min / 60);
   if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days === 1) return 'yesterday';
-  if (days < 7) return `${days}d ago`;
-  return fmtDate(d);
+  if (yesterday) return 'yesterday';
+  return `${days}d ago`;
+}
+
+/**
+ * "2h ago" in the app language (deep audit 2026-10-29, ASSOC-11: the bell
+ * and Messages said "9h ago" in every language). Intl's short relative
+ * time where the runtime has the language; Haitian Creole, which no
+ * runtime ships, in its own words ("2 è de sa").
+ */
+function relativeAgo(lang: string, min: number, hrs: number, days: number, yesterday: boolean): string {
+  if (lang === 'ht') {
+    if (min < 1) return 'kounye a';
+    if (min < 60) return `${min} min de sa`;
+    if (hrs < 24) return `${hrs} è de sa`;
+    return yesterday ? 'yè' : `${days} jou de sa`;
+  }
+  try {
+    const rtf = new Intl.RelativeTimeFormat(displayLocale(), { numeric: 'auto', style: 'short' });
+    if (min < 1) return rtf.format(0, 'second');
+    if (min < 60) return rtf.format(-min, 'minute');
+    if (hrs < 24) return rtf.format(-hrs, 'hour');
+    // "1 day ago" rather than "yesterday" where the caller asked (a list of times).
+    return yesterday || days !== 1 ? rtf.format(-days, 'day') : new Intl.RelativeTimeFormat(displayLocale(), { numeric: 'always', style: 'short' }).format(-1, 'day');
+  } catch {
+    return fmtDate(new Date(Date.now() - min * 60_000));
+  }
 }
 
 /**
@@ -1065,6 +1151,6 @@ export function fmtStatementNo(n: number | null | undefined, fallback = 'Draft')
  * "1 People" and "2 item(s)" all came from skipping this.
  */
 export function fmtCount(n: number, singular: string, plural = `${singular}s`): string {
-  const shown = Number.isFinite(n) ? n.toLocaleString(displayLocale()) : DASH;
+  const shown = Number.isFinite(n) ? n.toLocaleString(numberLocale()) : DASH;
   return `${shown} ${n === 1 ? singular : plural}`;
 }

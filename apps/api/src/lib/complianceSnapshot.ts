@@ -6,6 +6,7 @@ import {
   buildScorecardBundle,
   computeWeightedScore,
 } from '../routes/complianceScorecard.js';
+import { logger } from './logger.js';
 
 /**
  * Daily compliance-score snapshot — the scorecard's memory.
@@ -91,8 +92,8 @@ export function startComplianceSnapshotCron(): void {
   tick();
   timer = setInterval(tick, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] compliance snapshot cron armed (every ${seconds}s, one row/day/scope)`,
+  logger.info(
+    `compliance snapshot cron armed (every ${seconds}s, one row/day/scope)`,
   );
 }
 

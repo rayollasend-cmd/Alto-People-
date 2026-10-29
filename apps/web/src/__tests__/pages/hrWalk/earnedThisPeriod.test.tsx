@@ -6,10 +6,10 @@ import type { Capability } from '@alto-people/shared';
 import { AuthContext, DEFAULT_TENANT } from '@/lib/auth';
 
 /**
- * Floor walk 26: the associate home's pay-period ring — what this pay
- * period has earned so far, from the hours clocked at their rate, labelled
- * as an estimate; and the period it reads is the one running today, even
- * when the next payday pays for a period that already closed.
+ * Floor walk 26 / ASSOC-3, -4, -27: the associate home's pay-period ring —
+ * what this pay period has earned so far, the one take-home estimate, and
+ * the day of the period, all from GET /time/me/earnings `period` (counted on
+ * the company's day), so Home, My time and Pay read the same numbers.
  */
 
 vi.mock('@/lib/timeApi', () => ({
@@ -27,7 +27,7 @@ vi.mock('@/lib/schedulingApi', () => ({
 vi.mock('@/lib/qualApi', () => ({ listOpenShifts: vi.fn().mockResolvedValue({ shifts: [] }) }));
 vi.mock('@/lib/payrollApi', () => ({
   listMyPayrollItems: vi.fn().mockResolvedValue({ items: [] }),
-  getMyNextPayday: vi.fn(),
+  getMyNextPayday: vi.fn().mockResolvedValue({ nextPayday: null }),
 }));
 vi.mock('@/lib/timeOffApi', () => ({ getMyBalance: vi.fn().mockResolvedValue({ balances: [] }) }));
 vi.mock('@/lib/inboxApi', async () => {
@@ -46,21 +46,14 @@ vi.mock('@/lib/emergencyApi', () => ({
 vi.mock('@/lib/onboardingApi', () => ({
   listApplications: vi.fn().mockResolvedValue({ applications: [], total: 0, page: 1, pageSize: 50 }),
 }));
+const earningsState: { data: unknown } = { data: undefined };
 vi.mock('@/components/EarningsCard', () => ({
   EarningsCard: () => null,
-  useMyEarnings: () => ({ data: { hourlyRate: 20, onClock: false }, dataUpdatedAt: 0 }),
+  useMyEarnings: () => ({ data: earningsState.data, dataUpdatedAt: 0, isSuccess: true }),
   useTickSeconds: () => 0,
 }));
 
-import { listMyTimeEntries } from '@/lib/timeApi';
-import { getMyNextPayday } from '@/lib/payrollApi';
-import { AssociateDashboard, currentPeriod } from '@/pages/AssociateDashboard';
-
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const plus = (n: number) => {
-  const d = new Date();
-  return ymd(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n));
-};
+import { AssociateDashboard } from '@/pages/AssociateDashboard';
 
 function renderHome() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -93,49 +86,34 @@ function renderHome() {
   );
 }
 
-describe('currentPeriod', () => {
-  it('is the next payday’s period when today is inside it', () => {
-    expect(currentPeriod({ payDate: '2026-10-16', periodStart: '2026-09-26', periodEnd: '2026-10-09', schedule: 'Biweekly' }, '2026-10-01')).toEqual({
-      start: '2026-09-26',
-      end: '2026-10-09',
-      payDate: '2026-10-16',
-    });
-  });
-
-  it('steps to the period running today when the next payday pays a closed one', () => {
-    // Paid the Friday after: on Oct 12 the next payday (Oct 16) pays Sep 26–Oct 9.
-    expect(currentPeriod({ payDate: '2026-10-16', periodStart: '2026-09-26', periodEnd: '2026-10-09', schedule: 'Biweekly' }, '2026-10-12')).toEqual({
-      start: '2026-10-10',
-      end: '2026-10-23',
-      payDate: '2026-10-30',
-    });
-  });
+const period = (over: Record<string, unknown> = {}) => ({
+  start: '2026-10-24',
+  end: '2026-11-06',
+  payDate: '2026-11-13',
+  today: '2026-10-29',
+  day: 6,
+  days: 14,
+  workedHours: 23.43,
+  earned: 351.45,
+  takeHome: { gross: 351.45, taxes: 26.84, deductions: 0, advances: 0, net: 324.61, basis: 'W4' },
+  ...over,
 });
 
 describe('<AssociateDashboard> — earned this pay period', () => {
-  it('shows the estimate from clocked hours at their rate, with the ring and the period', async () => {
-    vi.mocked(getMyNextPayday).mockResolvedValue({
-      nextPayday: { payDate: plus(9), periodStart: plus(-3), periodEnd: plus(10), schedule: 'Biweekly' },
-    });
-    vi.mocked(listMyTimeEntries).mockResolvedValue({
-      entries: [
-        { id: 'e1', status: 'APPROVED', minutesElapsed: 480, netMinutes: 450 },
-        { id: 'e2', status: 'COMPLETED', minutesElapsed: 300 },
-        { id: 'e3', status: 'REJECTED', minutesElapsed: 600 },
-      ] as never,
-    });
+  it('reads the server’s period: its money, hours, take-home and the company’s day of it', async () => {
+    earningsState.data = { hourlyRate: 15, onClock: false, period: period() };
     renderHome();
     const card = await screen.findByTestId('earned-this-period');
-    // 450 + 300 minutes = 12.5h × $20 = $250.00; the rejected entry is not counted.
-    expect(card).toHaveTextContent('$250.00');
+    expect(card).toHaveTextContent('$351.45');
+    expect(card).toHaveTextContent('23.43h worked');
+    expect(card).toHaveTextContent('About $324.61 after taxes');
     expect(card).toHaveTextContent('Earned this pay period');
-    expect(card).toHaveTextContent('An estimate before taxes');
-    expect(screen.getByRole('meter', { name: 'Day 4 of 14' })).toBeInTheDocument();
-    expect(vi.mocked(listMyTimeEntries)).toHaveBeenCalled();
+    // The company's day (Thursday, day 6), never the phone's — a phone in LA at 11 PM read "Day 5".
+    expect(screen.getByRole('meter', { name: 'Day 6 of 14' })).toBeInTheDocument();
   });
 
   it('is hidden when there is no pay schedule to measure a period by', async () => {
-    vi.mocked(getMyNextPayday).mockResolvedValue({ nextPayday: null });
+    earningsState.data = { hourlyRate: 15, onClock: false, period: null };
     renderHome();
     // No shifts ahead: the 14-day strip is one line (F500 G5) — the page has rendered.
     expect(await screen.findByTestId('next-14-none')).toHaveTextContent('No shifts in the next 14 days.');
@@ -143,13 +121,39 @@ describe('<AssociateDashboard> — earned this pay period', () => {
   });
 
   it('is hidden with nothing clocked this period — no "$0.00 · 0h" beside a day ring (F500 G5)', async () => {
-    vi.mocked(getMyNextPayday).mockResolvedValue({
-      nextPayday: { payDate: plus(9), periodStart: plus(-3), periodEnd: plus(10), schedule: 'Biweekly' },
-    });
-    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [] as never });
+    earningsState.data = { hourlyRate: 15, onClock: false, period: period({ workedHours: 0, earned: 0, takeHome: null }) };
     renderHome();
     expect(await screen.findByTestId('next-14-none')).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByTestId('earned-this-period')).not.toBeInTheDocument();
+  });
+});
+
+describe('<AssociateDashboard> — the numbers strip (ASSOC-15, ASSOC-29)', () => {
+  it('no accrual rule: "No balance yet", never "accrues as you work"', async () => {
+    earningsState.data = { hourlyRate: 15, onClock: false, period: null };
+    const { getMyBalance } = await import('@/lib/timeOffApi');
+    vi.mocked(getMyBalance).mockResolvedValue({ balances: [], sickAccrual: null } as never);
+    renderHome();
+    expect(await screen.findByText('No balance yet')).toBeInTheDocument();
+    expect(screen.queryByText(/accrue/i)).not.toBeInTheDocument();
+  });
+
+  it('an accrual rule: "Accrues as you work"', async () => {
+    earningsState.data = { hourlyRate: 15, onClock: false, period: null };
+    const { getMyBalance } = await import('@/lib/timeOffApi');
+    vi.mocked(getMyBalance).mockResolvedValue({ balances: [], sickAccrual: { hoursWorkedPerHour: 30 } } as never);
+    renderHome();
+    expect(await screen.findByText('Accrues as you work')).toBeInTheDocument();
+  });
+
+  it('open shifts ride on the quick link — no third tile alone on a row', async () => {
+    earningsState.data = { hourlyRate: 15, onClock: false, period: null };
+    const { listOpenShifts } = await import('@/lib/qualApi');
+    vi.mocked(listOpenShifts).mockResolvedValue({ shifts: [{ id: 's1' }, { id: 's2' }, { id: 's3' }] } as never);
+    renderHome();
+    expect(await screen.findByLabelText('3 open shifts you can pick up')).toBeInTheDocument();
+    const strip = screen.getByRole('group', { name: /numbers/i });
+    expect(strip.querySelectorAll('[data-metric-strip] > div, :scope > div').length).toBe(2);
   });
 });

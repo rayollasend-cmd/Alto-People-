@@ -13,6 +13,8 @@ import { ENTITY_COLUMNS, SpecSchema, runReport, aggregateColumns } from './repor
 import type { SessionUser } from '../types/express.js';
 import { publicBaseUrl } from './emailLayout.js';
 import { tenantJob } from './tenantJobs.js';
+import { logger } from './logger.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * Scheduled-report delivery sweep.
@@ -217,7 +219,7 @@ export async function runDueReportSchedules(
       const rows = truncated ? fetched.slice(0, cap) : fetched;
 
       const csv = buildReportCsv(report.entity, spec.groupBy?.length ? aggregateColumns(spec) : spec.columns, rows);
-      const runDate = now.toISOString().slice(0, 10);
+      const runDate = orgDateKey(now); // the company's day the report ran, as its readers count days
       const tpl = scheduledReportTemplate({
         reportName: report.name,
         runDate,
@@ -354,8 +356,8 @@ export function startReportScheduleCron(): void {
   tick();
   timer = setInterval(tick, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] report schedule cron armed (every ${seconds}s; row cap ${REPORT_SCHEDULE_ROW_CAP})`,
+  logger.info(
+    `report schedule cron armed (every ${seconds}s; row cap ${REPORT_SCHEDULE_ROW_CAP})`,
   );
 }
 

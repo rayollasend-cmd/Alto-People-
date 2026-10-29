@@ -21,7 +21,7 @@ import { midSentence } from '@/pages/portal/words';
 import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { cn } from '@/lib/cn';
-import { fmtTime } from '@/lib/format';
+import { sharedZoneOf, storeTime, useViewerSites } from '@/pages/scheduling/viewerSites';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useShiftClock } from '@/lib/useShiftClock';
 import { useClients } from '@/lib/useClients';
@@ -404,6 +404,9 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   > | null = optionsQuery.data ?? null;
   // Before the shift starts: what it will need — the last shift's notes,
   // the checklists they lead, who is on (F500 G2: a lone Clock-in card).
+  // The stores' own clock for the preview's times (the preview names the
+  // company's zone): the one zone the viewer's stores share.
+  const viewerSites = useViewerSites();
   const previewQuery = useQuery({
     queryKey: ['ops', 'shift-preview', bounded, clientId],
     queryFn: () => getOpsShiftPreview(bounded ? undefined : clientId),
@@ -530,7 +533,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
       </div>
 
       {!options.resumeShift && !submitted && previewQuery.data && (
-        <ShiftPreview preview={previewQuery.data} />
+        <ShiftPreview preview={previewQuery.data} timeZone={sharedZoneOf(viewerSites)} />
       )}
 
       {/* The SOP their window actually has assigned. Offered ahead of the
@@ -703,9 +706,12 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
 }
 
 /** The shift ahead, before it starts: notes, checklists, crew. */
-export function ShiftPreview({ preview }: { preview: OpsShiftPreview }) {
+export function ShiftPreview({ preview, timeZone = null }: { preview: OpsShiftPreview; timeZone?: string | null }) {
   const { t: tr } = useI18n();
-  const clock = (iso: string) => fmtTime(new Date(iso));
+  // The store's clock, under the store's day (FLOOR-20: a 6 AM Central shift
+  // read "4:00 AM" for a viewer out west) — the zone named when it differs.
+  // The stores' shared zone when known; else the zone the preview names.
+  const clock = (iso: string) => storeTime(iso, timeZone ?? preview.timezone);
   const CREW_SHOWN = 8;
   return (
     <div className="space-y-3" data-testid="ops-shift-preview">
@@ -811,6 +817,11 @@ function ShiftRunner({
 }) {
   const { t: tr } = useI18n();
   const { shift, tasks, handoverIn, clockedIn } = detail;
+  // Due times read on the store's clock (FLOOR-20), the zone named only
+  // when the viewer's own clock differs.
+  const sites = useViewerSites();
+  const storeZone = (shift.locationId && sites?.find((x) => x.id === shift.locationId)?.timezone) || null;
+  const dueClock = (iso: string) => storeTime(iso, storeZone);
   // A floor supervisor helping on their shift supervisor's SOP checks
   // items off; the one running it adds tasks, reads the notes in, and
   // submits.
@@ -982,7 +993,7 @@ function ShiftRunner({
                 window, and gates the clock-out — say both, plainly. */}
             {shift.dueAt && (
               <div className="mt-1 text-xs text-gold">
-                Due by {fmtTime(shift.dueAt)} ·{' '}
+                Due by {dueClock(shift.dueAt)} ·{' '}
                 {helping ? `${runnerFirst} submits it` : 'submit it before you clock out'}
               </div>
             )}
@@ -1189,10 +1200,10 @@ function ShiftRunner({
                 >
                   <AlarmClock className="h-3.5 w-3.5" aria-hidden="true" />
                   {late
-                    ? `Overdue — was due ${fmtTime(due)}`
+                    ? `Overdue — was due ${dueClock(due)}`
                     : section === nowSection
-                      ? `Now · due by ${fmtTime(due)}`
-                      : `Due by ${fmtTime(due)}`}
+                      ? `Now · due by ${dueClock(due)}`
+                      : `Due by ${dueClock(due)}`}
                 </div>
               )}
             </CardHeader>
@@ -1228,7 +1239,7 @@ function ShiftRunner({
             {handoverIn.length > 0 && (
               <span className="text-warning"> · {handoverIn.length} note{handoverIn.length === 1 ? '' : 's'} to read</span>
             )}
-            {shift.dueAt && <span> · due {fmtTime(shift.dueAt)}</span>}
+            {shift.dueAt && <span> · due {dueClock(shift.dueAt)}</span>}
           </div>
           {helping ? (
             <span className="shrink-0 text-xs text-silver">{runnerFirst} submits it</span>

@@ -26,7 +26,7 @@ import { toast } from 'sonner';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDayShort, fmtRelativeDate, fmtShiftSpanTz, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDayShort, fmtRelativeDate, fmtShiftSpanTz, parseYmd, ymdLocal } from '@/lib/format';
 import { HomeMeta } from '@/components/home/HomeMeta';
 import { useNeedsYouCount } from '@/lib/meDecisions';
 import { useConfirm } from '@/lib/confirm';
@@ -326,14 +326,28 @@ function NeedsYou({
   const inbox = useInbox();
   // The Inbox's own count: the queues this person owns, not the ones another desk does (packages/shared queues.ts).
   const companyWaiting = inbox.data?.total ?? 0;
+  // Every timesheet this person approves — the sidebar's Time and Approvals
+  // count them — beside their own team's (FLOOR-15: "7 Timesheets to review"
+  // sat beside a sidebar 14 with nothing saying the 7 was their team).
+  const allTimesheets = inbox.data?.sources.find((s) => s.key === 'timesheets' && !s.watching) ?? null;
   // Ranked: urgent before attention, then the bigger pile first.
   const cards = [
     {
       key: 'timesheets',
       icon: Clock,
       count: tsCount,
-      label: tsCount === 1 ? t('managerHome.timesheetToReview') : t('managerHome.timesheetsToReview'),
-      hint: t('managerHome.timesheetsHint'),
+      label: tsCount === 1 ? t('managerHome.teamTimesheet') : t('managerHome.teamTimesheets'),
+      hint:
+        allTimesheets && allTimesheets.count > tsCount ? (
+          <>
+            {t('managerHome.timesheetsInAll', { n: allTimesheets.count })}{' '}
+            <Link to={allTimesheets.path} className="text-accent underline underline-offset-2">
+              {t('managerHome.seeEveryTimesheet')}
+            </Link>
+          </>
+        ) : (
+          t('managerHome.timesheetsHint')
+        ),
       cta: t('managerHome.openQueue'),
       severity: (tsCount > 10 ? 'urgent' : 'attention') as 'urgent' | 'attention',
       action: (
@@ -351,7 +365,7 @@ function NeedsYou({
       key: 'timeoff',
       icon: CalendarOff,
       count: ptoCount,
-      label: ptoCount === 1 ? t('managerHome.timeOffWaiting') : t('managerHome.timeOffsWaiting'),
+      label: ptoCount === 1 ? t('managerHome.teamTimeOffWaiting') : t('managerHome.teamTimeOffsWaiting'),
       hint: t('managerHome.timeOffHint'),
       cta: t('managerHome.openRequests'),
       severity: (ptoCount > 5 ? 'urgent' : 'attention') as 'urgent' | 'attention',
@@ -473,7 +487,7 @@ function ApprovalCard({
   icon: LucideIcon;
   count: number;
   label: string;
-  hint?: string;
+  hint?: React.ReactNode;
   to: string;
   cta: string;
   severity: 'attention' | 'urgent';
@@ -888,9 +902,20 @@ function TodayOnYourTeam({ home, error, onRetry }: { home: TeamHome | null; erro
   if (today && today.shifts.length === 0 && today.out.length === 0 && today.celebrations.length === 0) return null;
   const show = (n: number | undefined) => !today || (n ?? 0) > 0;
   const cards = today ? [today.shifts.length, today.out.length, today.celebrations.length].filter((n) => n > 0).length : 3;
+  // The lists are the company's day (FLOOR-5); when that isn't the viewer's
+  // own calendar day (late evening out west), the section names it.
+  const companyDay = today?.date && today.date !== TODAY_KEY() ? fmtDate(parseYmd(today.date)) : null;
   return (
     <section id="team-today" aria-label="Today on your team" className="scroll-mt-20 space-y-3">
-      <SectionTitle icon={CalendarCheck} title="Today on your team" />
+      <SectionTitle
+        icon={CalendarCheck}
+        title={
+          <>
+            Today on your team
+            {companyDay && <span className="font-normal text-ink-muted"> · {companyDay}</span>}
+          </>
+        }
+      />
       <div className={cn('grid grid-cols-1 gap-3', cards >= 3 ? 'md:grid-cols-3' : cards === 2 ? 'md:grid-cols-2' : '')}>
         {show(today?.shifts.length) && (
         <Card>

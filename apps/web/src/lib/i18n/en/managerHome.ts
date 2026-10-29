@@ -1,5 +1,7 @@
 // English for the pages that use 'managerHome.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/managerHome.ts).
+import '../es/managerHome';
 
 export const enManagerHome = {
   'managerHome.oneReport': 'You have 1 direct report on your team.',
@@ -36,15 +38,17 @@ export const enManagerHome = {
   'managerHome.nothingDue': 'Nothing due this month',
   'managerHome.myTeam': 'My team',
   'managerHome.openTeamPage': 'Open team page',
-  'managerHome.timesheetToReview': 'Timesheet to review',
-  'managerHome.timesheetsToReview': 'Timesheets to review',
   'managerHome.timesheetsHint': 'Approve so payroll can include the hours.',
   'managerHome.openQueue': 'Open queue',
   'managerHome.approveAllN': 'Approve all {n}',
-  'managerHome.timeOffWaiting': 'Time-off request waiting',
-  'managerHome.timeOffsWaiting': 'Time-off requests waiting',
   'managerHome.timeOffHint': 'Approve or reject before the requested dates.',
   'managerHome.openRequests': 'Open requests',
+  'managerHome.teamTimesheet': 'Timesheet from your team',
+  'managerHome.teamTimesheets': 'Timesheets from your team',
+  'managerHome.timesheetsInAll': '{n} in all across everyone you approve.',
+  'managerHome.seeEveryTimesheet': 'See every timesheet',
+  'managerHome.teamTimeOffWaiting': 'Time-off request from your team',
+  'managerHome.teamTimeOffsWaiting': 'Time-off requests from your team',
 } as const;
 
 registerEnglish(enManagerHome);

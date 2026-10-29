@@ -58,6 +58,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip
 import { openKeyboardShortcuts } from './KeyboardShortcutsDialog';
 import { RoleSwitcher } from './RoleSwitcher';
 import '@/lib/i18n/en/top';
+import { homeLabel, localizeModules, localizeShape } from '@/lib/navI18n';
 
 /**
  * The sidebar: a dozen rows, not a hundred.
@@ -114,12 +115,16 @@ export function Sidebar() {
   const tenant = useTenant();
   const term = useTerm();
   const { t: tr } = useI18n();
-  const visible = roleNavLabels(
-    applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules),
-    user?.role,
+  // Named in the reader's language (lib/navI18n): an associate's pages and doors.
+  const visible = localizeModules(
+    roleNavLabels(
+      applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules),
+      user?.role,
+      tr,
+    ),
     tr,
   );
-  const shape = useMemo(() => navShapeFor(visible, user?.role, term), [visible, user?.role, term]);
+  const shape = useMemo(() => localizeShape(navShapeFor(visible, user?.role, term), tr), [visible, user?.role, term, tr]);
   const portalHomePaths = useMemo(() => new Set(visible.filter((m) => PORTAL_HOME_KEYS.has(m.key)).map((m) => m.path)), [visible]);
   const routePath = useActiveNavPath();
   const location = useLocation();
@@ -230,6 +235,19 @@ export function Sidebar() {
     return () => window.removeEventListener('keydown', onKey);
   }, [toggleRail]);
 
+  // The page you're on is always in view in the rail: a deep link to the
+  // 30th module opened with its row scrolled out of sight (PEOPLE-30).
+  // Only when it's out of view, and without animating, so nothing jumps.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const nav = document.querySelector<HTMLElement>('nav[data-tour="nav"]');
+    const current = nav?.querySelector<HTMLElement>('[aria-current="page"], [aria-current="location"]');
+    if (!nav || !current || typeof current.scrollIntoView !== 'function') return;
+    const n = nav.getBoundingClientRect();
+    const c = current.getBoundingClientRect();
+    if (c.top < n.top || c.bottom > n.bottom) current.scrollIntoView({ block: 'nearest' });
+  }, [activePath, railCollapsed]);
+
   return (
     <aside
       className={cn(sidebarFrameClass(railCollapsed), 'transition-[width] duration-200 ease-out')}
@@ -242,7 +260,7 @@ export function Sidebar() {
           // A store or region account's home IS "My store" / "Command
           // center" (one page, listed once): Home lights there too.
           active={(activePath === DASHBOARD_NAV.path && !homeIsHere) || (user?.role === 'CLIENT_PORTAL' && portalHomePaths.has(activePath ?? ''))}
-          label={DASHBOARD_NAV.label}
+          label={homeLabel(tr)}
           icon={DASHBOARD_ICON}
           railCollapsed={railCollapsed}
         />
@@ -400,7 +418,7 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
           <button
             type="button"
             onClick={onToggleRail}
-            aria-label={railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={railCollapsed ? t('top.expandSidebar') : t('top.collapseSidebar')}
             aria-expanded={!railCollapsed}
             aria-keyshortcuts="Control+\\ Meta+\\"
             className={cn(
@@ -416,7 +434,7 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
           </button>
         </TooltipTrigger>
         <TooltipContent side="right">
-          {railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          {railCollapsed ? t('top.expandSidebar') : t('top.collapseSidebar')}
           <span className="ml-2 text-silver/70">⌘\</span>
         </TooltipContent>
       </Tooltip>
@@ -506,6 +524,7 @@ interface DoorRowProps {
  * hub is drawn as that page's row — nothing to open.
  */
 function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPinned, onTogglePin, onToggle, onOpen }: DoorRowProps) {
+  const { t } = useI18n();
   const Icon = DOOR_ICONS[door.key];
   const single = door.flat || (door.children.length === 1 && door.target.key === door.children[0]!.key);
   // The door's badge: what waits behind it — the queues listed on any of its
@@ -562,7 +581,7 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
                 return (
                   <DropdownMenuItem key={m.key} asChild>
                     <Link to={m.path} onMouseEnter={() => prefetchRoute(m.path)} onFocus={() => prefetchRoute(m.path)}>
-                      <span className="flex-1 truncate">{m.key === door.target.key && door.target.key !== door.children[0]?.key ? `${m.label} — overview` : m.label}</span>
+                      <span className="flex-1 truncate">{m.key === door.target.key && door.target.key !== door.children[0]?.key ? t('top.doorOverview', { name: m.label }) : m.label}</span>
                       {!!n && <span className="ml-2 text-2xs text-gold tabular-nums">{n > 99 ? '99+' : n}</span>}
                     </Link>
                   </DropdownMenuItem>
@@ -609,7 +628,7 @@ function DoorRow({ door, open, active, activePath, railCollapsed, badgeFor, isPi
           type="button"
           onClick={onToggle}
           aria-expanded={open}
-          aria-label={open ? `Hide ${door.label} pages` : `Show ${door.label} pages`}
+          aria-label={open ? t('top.hideDoor', { name: door.label }) : t('top.showDoor', { name: door.label })}
           className="absolute right-3 top-1/2 -translate-y-1/2 grid h-6 w-6 place-items-center rounded text-silver/70 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           {open ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -665,6 +684,7 @@ interface PinnableRowProps {
  * already pinned so it can be unpinned.
  */
 function PinnableRow({ module: m, icon, indent, active, railCollapsed, badge, pinned, onTogglePin }: PinnableRowProps) {
+  const { t } = useI18n();
   if (railCollapsed) {
     // Collapsed rail is icon-only — no room for the star; pin management
     // happens with the rail expanded.
@@ -693,7 +713,7 @@ function PinnableRow({ module: m, icon, indent, active, railCollapsed, badge, pi
       <button
         type="button"
         onClick={() => onTogglePin(m.key)}
-        aria-label={pinned ? `Unpin ${m.label}` : `Pin ${m.label}`}
+        aria-label={pinned ? t('top.unpin', { name: m.label }) : t('top.pin', { name: m.label })}
         aria-pressed={pinned}
         className={cn(
           'absolute right-3 top-1/2 -translate-y-1/2 grid h-6 w-6 place-items-center rounded transition-opacity',
@@ -997,7 +1017,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
             disabled={signingOut}
           >
             <LogOut className="h-4 w-4" />
-            {signingOut ? 'Signing out…' : 'Sign out'}
+            {signingOut ? t('top.signingOut') : t('top.signOut')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

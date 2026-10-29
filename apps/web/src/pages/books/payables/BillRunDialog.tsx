@@ -10,6 +10,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { toast } from '@/components/ui/Toaster';
+import { useMoneyConfirm } from '@/components/payroll/MoneyConfirm';
 import { errText, invalidatePayables, money, usePayablesOptions } from './payablesKit';
 
 /**
@@ -24,6 +25,7 @@ import { errText, invalidatePayables, money, usePayablesOptions } from './payabl
 export function nextFriday(today: string = ymdLocal()): string {
   const d = new Date(`${today}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + ((5 - d.getUTCDay() + 7) % 7));
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: day arithmetic on a local day key anchored at noon UTC.
   return d.toISOString().slice(0, 10);
 }
 
@@ -31,6 +33,7 @@ const payable = (b: BooksBill) => (b.status === 'APPROVED' || b.status === 'PART
 
 export function BillRunDialog({ open, onOpenChange, preselected }: { open: boolean; onOpenChange: (o: boolean) => void; preselected?: BooksBill[] }) {
   const qc = useQueryClient();
+  const confirmMoney = useMoneyConfirm();
   const opts = usePayablesOptions();
   const [dueBy, setDueBy] = useState(nextFriday());
   const [method, setMethod] = useState<BooksVendorPaymentMethod>('ACH');
@@ -176,7 +179,27 @@ export function BillRunDialog({ open, onOpenChange, preselected }: { open: boole
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={() => run.mutate()} loading={run.isPending} disabled={included.length === 0 || !from || !paidOn}>
+          <Button
+            onClick={async () => {
+              // One click never moves money (deep audit MONEY-10/21): the amount, the account and the day, first.
+              const acct = payFrom.find((a) => a.id === from);
+              const n = included.length;
+              if (
+                !(await confirmMoney({
+                  title: canAch ? `Send ${money(total)} to ${n} ${n === 1 ? 'vendor' : 'vendors'}?` : `Record ${money(total)} paid to ${n} ${n === 1 ? 'vendor' : 'vendors'}?`,
+                  amount: total,
+                  from: acct ? `${acct.code} ${acct.name}` : null,
+                  to: n === 1 ? included[0]!.vendorName : `${n} vendors`,
+                  when: canAch ? `In today’s ACH file · paid ${fmtDate(paidOn)}` : `Paid ${fmtDate(paidOn)}`,
+                  confirmLabel: canAch ? `Send ${money(total)}` : `Record ${money(total)}`,
+                }))
+              )
+                return;
+              run.mutate();
+            }}
+            loading={run.isPending}
+            disabled={included.length === 0 || !from || !paidOn}
+          >
             {canAch ? `Send ${money(total)}` : `Pay ${included.length} ${included.length === 1 ? 'vendor' : 'vendors'} · ${money(total)}`}
           </Button>
         </DialogFooter>

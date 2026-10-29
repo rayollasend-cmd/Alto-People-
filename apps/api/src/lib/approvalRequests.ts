@@ -7,6 +7,9 @@ import { tenantIdForWrite } from './tenant.js';
 import { rolesHolding } from './approvalPolicy.js';
 import { applyBillRateChange, applyPayRateChange } from './payChanges.js';
 import { calendarDay, fmtDay, sentenceFromCode } from './humanDates.js';
+import { subjectInReach, subjectReachWhere } from './scope.js';
+import { orgDateKey } from './timeAnomalies.js';
+import type { SessionUser } from '../types/express.js';
 
 /**
  * The approval engine's one record ("maker-checker").
@@ -28,6 +31,12 @@ export interface Decider {
   id: string;
   role: Role;
   capabilities?: Capability[] | null;
+  /**
+   * The decider's session, for their reach (CODE-6): a store-bound or
+   * client-bound account decides — and reads — only requests about its
+   * own people and clients. Absent = a company-wide decider (system work).
+   */
+  reach?: SessionUser | null;
 }
 
 export interface ApproverRule {
@@ -136,6 +145,7 @@ const KIND_LINK: Record<ApprovalRequestKind, (r: ApprovalRequest) => string> = {
   VENDOR_BANK: (r) => `/books/vendors/${r.subjectId}`,
   PERIOD_REOPEN: (r) => `/books/close/${(r.proposed as { periodKey?: string } | null)?.periodKey ?? ''}`,
   PAY_RATE_BATCH: () => '/people/mass-update',
+  BACK_PAY: () => '/payroll?backPay=1',
 };
 
 /** The link a decider opens to see the subject. */
@@ -143,7 +153,8 @@ export function subjectLink(r: ApprovalRequest): string {
   return KIND_LINK[r.kind](r);
 }
 
-const dayStart = (d: Date) => new Date(`${d.toISOString().slice(0, 10)}T00:00:00.000Z`);
+// Delegations run by the company's calendar day (startsOn/endsOn are @db.Date).
+const dayStart = (d: Date) => new Date(`${orgDateKey(d)}T00:00:00.000Z`);
 
 /** The people whose approvals `userId` is covering today. */
 export async function delegatedFrom(db: Db, userId: string, now = new Date()): Promise<string[]> {
@@ -155,9 +166,21 @@ export async function delegatedFrom(db: Db, userId: string, now = new Date()): P
   return rows.map((r) => r.fromUserId);
 }
 
-/** The server's one rule for who may decide a request. */
-export async function mayDecide(db: Db, row: Pick<ApprovalRequest, 'status' | 'requesterUserId' | 'approverUserId' | 'approverCapability' | 'approverRole'>, user: Decider, now = new Date()): Promise<boolean> {
-  if (row.status !== 'PENDING') return false;
+type RuleRow = Pick<ApprovalRequest, 'status' | 'requesterUserId' | 'approverUserId' | 'approverCapability' | 'approverRole' | 'associateId' | 'clientId'>;
+
+/** Is the request's subject (its person, else its client) inside the decider's reach? Company-wide deciders: always. */
+export async function requestInReach(db: Db, row: Pick<ApprovalRequest, 'associateId' | 'clientId'>, user: Decider): Promise<boolean> {
+  return !user.reach || subjectInReach(db, user.reach, row);
+}
+
+/**
+ * Would this person be a decider for the request, whatever its status?
+ * Never the requester; the named person (or their delegate) always; else a
+ * holder of the named capability or role — and then only when the subject
+ * is inside their reach (CODE-6): a store-A account never approves a
+ * store-B pay change, however the rule names it.
+ */
+async function eligibleDecider(db: Db, row: RuleRow, user: Decider, now: Date): Promise<boolean> {
   // Maker ≠ checker, always.
   if (row.requesterUserId && row.requesterUserId === user.id) return false;
   if (row.approverUserId) {
@@ -165,21 +188,42 @@ export async function mayDecide(db: Db, row: Pick<ApprovalRequest, 'status' | 'r
     const covering = await delegatedFrom(db, user.id, now);
     if (covering.includes(row.approverUserId)) return true;
   }
-  if (row.approverCapability && can(user, row.approverCapability as Capability)) return true;
-  if (row.approverRole && row.approverRole === user.role) return true;
+  let matched = false;
+  if (row.approverCapability && can(user, row.approverCapability as Capability)) matched = true;
+  if (!matched && row.approverRole && row.approverRole === user.role) matched = true;
   // A delegation also carries the delegating person's capability-based right.
-  if (row.approverCapability || row.approverRole) {
+  if (!matched && (row.approverCapability || row.approverRole)) {
     const covering = await delegatedFrom(db, user.id, now);
     if (covering.length > 0) {
       const froms = await db.user.findMany({ where: { id: { in: covering }, status: 'ACTIVE', deletedAt: null }, select: { id: true, role: true } });
       for (const f of froms) {
         if (f.id === row.requesterUserId) continue;
-        if (row.approverCapability && ROLE_CAPABILITIES[f.role as Role].has(row.approverCapability as Capability)) return true;
-        if (row.approverRole && row.approverRole === f.role) return true;
+        if (row.approverCapability && ROLE_CAPABILITIES[f.role as Role].has(row.approverCapability as Capability)) matched = true;
+        if (row.approverRole && row.approverRole === f.role) matched = true;
+        if (matched) break;
       }
     }
   }
-  return false;
+  return matched && (await requestInReach(db, row, user));
+}
+
+/** The server's one rule for who may decide a request. */
+export async function mayDecide(db: Db, row: RuleRow, user: Decider, now = new Date()): Promise<boolean> {
+  if (row.status !== 'PENDING') return false;
+  return eligibleDecider(db, row, user, now);
+}
+
+/**
+ * May this person open the request (GET /approvals/requests/:id)? It carries
+ * the proposed and previous values — a pay rate, a separation — so only the
+ * requester, whoever decided it, its eligible deciders, and the record's
+ * readers (inside their reach) may (CODE-6). Not every signed-in account
+ * that has an id from a link.
+ */
+export async function mayViewRequest(db: Db, row: RuleRow & Pick<ApprovalRequest, 'decidedById'>, user: Decider, now = new Date()): Promise<boolean> {
+  if (row.requesterUserId === user.id || row.decidedById === user.id) return true;
+  if (await eligibleDecider(db, row, user, now)) return true;
+  return mayReadRecord(user) && (await requestInReach(db, row, user));
 }
 
 /** A Prisma where for "pending requests this person may decide" — the same rule, as a query, for lists and counts. */
@@ -194,6 +238,9 @@ export async function decidableWhere(db: Db, user: Decider, now = new Date()): P
     for (const c of ROLE_CAPABILITIES[f.role as Role]) caps.add(c);
   }
   const userIds = [user.id, ...covering];
+  // A narrowed decider's capability/role matches stop at their reach; a
+  // request that names them (or whom they cover) is theirs wherever it is.
+  const reach = user.reach ? await subjectReachWhere(db, user.reach) : null;
   return {
     tenantId: tenantIdForWrite(),
     status: 'PENDING',
@@ -203,6 +250,7 @@ export async function decidableWhere(db: Db, user: Decider, now = new Date()): P
       { approverCapability: { in: [...caps] } },
       { approverRole: { in: [...roles] as Role[] } },
     ],
+    ...(reach ? { AND: [{ OR: [{ approverUserId: { in: userIds } }, reach] }] } : {}),
   };
 }
 
@@ -344,6 +392,11 @@ export interface DecideInput {
 export async function decideApprovalRequest(db: PrismaClient, id: string, user: Decider, input: DecideInput): Promise<ApprovalRequest> {
   const row = await db.approvalRequest.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
   if (!row) throw new HttpError(404, 'not_found', 'Approval request not found.');
+  // Outside the decider's reach the request doesn't exist for them (CODE-6) —
+  // unless it names them, or they asked for it.
+  if (!(await eligibleDecider(db, row, user, new Date())) && row.requesterUserId !== user.id && !(await requestInReach(db, row, user))) {
+    throw new HttpError(404, 'not_found', 'Approval request not found.');
+  }
   if (row.status !== 'PENDING') throw new HttpError(409, 'approval_decided', 'This request was already decided.');
   if (!(await mayDecide(db, row, user))) {
     if (row.requesterUserId === user.id) throw new HttpError(403, 'maker_checker', 'You asked for this change; a second person has to approve it.');
@@ -422,7 +475,9 @@ export async function cancelApprovalRequest(db: PrismaClient, id: string, user: 
   const row = await db.approvalRequest.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
   if (!row) throw new HttpError(404, 'not_found', 'Approval request not found.');
   if (row.status !== 'PENDING') throw new HttpError(409, 'approval_decided', 'This request was already decided.');
-  if (row.requesterUserId !== user.id && !can(user, 'manage:org')) throw new HttpError(403, 'forbidden', 'Only the person who asked can withdraw this.');
+  if (row.requesterUserId !== user.id && !(can(user, 'manage:org') && (await requestInReach(db, row, user)))) {
+    throw new HttpError(403, 'forbidden', 'Only the person who asked can withdraw this.');
+  }
   const updated = await db.approvalRequest.update({ where: { id }, data: { status: 'CANCELLED', decidedById: user.id, decidedAt: new Date() } });
   enqueueAudit({ actorUserId: user.id, clientId: row.clientId, action: 'approval.cancelled', entityType: 'ApprovalRequest', entityId: id, metadata: { kind: row.kind } }, 'approvalRequests.cancel');
   return updated;
@@ -452,8 +507,11 @@ export async function listApprovalRequests(db: PrismaClient, user: Decider, opts
   else if (opts.scope === 'mine') where = { tenantId, requesterUserId: user.id, ...(opts.status ? { status: opts.status } : {}) };
   else {
     const f = opts.filters ?? {};
+    // The record stops at the reader's reach too (CODE-6).
+    const reach = user.reach ? await subjectReachWhere(db, user.reach) : null;
     where = {
       tenantId,
+      ...(reach ? { AND: [reach] } : {}),
       ...(opts.status ? { status: opts.status } : {}),
       ...(f.kind ? { kind: f.kind } : {}),
       ...(f.requesterUserId ? { requesterUserId: f.requesterUserId } : {}),

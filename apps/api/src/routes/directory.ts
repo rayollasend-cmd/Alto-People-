@@ -15,6 +15,9 @@ import { prisma } from '../db.js';
 import { peopleStandings, workStatusCounts } from '../lib/peopleStatus.js';
 import { atClient, scopeAssociates, scopeDocuments, scopeShifts, scopeTimeEntries, scopeWhere } from '../lib/scope.js';
 import { scheduleMembershipFor } from '../lib/payScheduleMembership.js';
+import { ASSOCIATE_SEARCH, idsMatching } from '../lib/peopleSearch.js';
+import { hireDatesFor } from '../lib/hireDate.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { computePercent } from '../lib/checklist.js';
@@ -228,6 +231,21 @@ async function buildEntries(user: SessionUser, associates: DirectoryRow[], now: 
     }
   }
 
+  const hires = await hireDatesFor(
+    prisma,
+    associates.map((a) => a.id),
+    new Map(
+      associates.map((a) => {
+        // The workplace application, as below: approved, else in flight, else the newest.
+        const app =
+          a.applications.find((x) => x.status === 'APPROVED') ??
+          a.applications.find((x) => x.status === 'DRAFT' || x.status === 'SUBMITTED' || x.status === 'IN_REVIEW') ??
+          a.applications[0] ??
+          null;
+        return [a.id, app?.startDate ?? null];
+      }),
+    ),
+  );
   return associates.map((a) => {
     const apps = a.applications;
     const approved = apps.find((x) => x.status === 'APPROVED');
@@ -282,9 +300,10 @@ async function buildEntries(user: SessionUser, associates: DirectoryRow[], now: 
       workplaceClientId,
       workplaceClientName,
       position: workplaceApp?.position ?? null,
-      startDate: workplaceApp?.startDate
-        ? workplaceApp.startDate.toISOString().slice(0, 10)
-        : null,
+      // One hire date (lib/hireDate): the employment record, else the hire
+      // at approval, else the application's planned start (PEOPLE-10).
+      startDate: hires.get(a.id)?.date ?? null,
+      startDateSource: hires.get(a.id)?.source ?? null,
       ...(seesPay
         ? {
             payAmount: comp ? comp.amount.toString() : null,
@@ -322,7 +341,8 @@ async function buildEntries(user: SessionUser, associates: DirectoryRow[], now: 
       currentLocationId: a.assignments[0]?.locationId ?? null,
       currentLocationName: a.assignments[0]?.location?.name ?? null,
       currentAssignmentStartedAt: a.assignments[0]?.startedAt
-        ? a.assignments[0].startedAt.toISOString().slice(0, 10)
+        ? // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: AssociateAssignment.startedAt is a @db.Date column
+          a.assignments[0].startedAt.toISOString().slice(0, 10)
         : null,
     };
   });
@@ -336,7 +356,10 @@ async function buildEntries(user: SessionUser, associates: DirectoryRow[], now: 
  * could list any store; a search dropped the client). The list and its
  * status counts read the same where, so a tile is the list it filters.
  */
-function directoryWhere(user: SessionUser, filters: z.infer<typeof QuerySchema>): Prisma.AssociateWhereInput {
+async function directoryWhere(user: SessionUser, filters: z.infer<typeof QuerySchema>): Promise<Prisma.AssociateWhereInput> {
+  // Search (PEOPLE-6): every word must match some field — "Maria Lopez",
+  // "lopez maria", accents ignored, phone by digits (lib/peopleSearch).
+  const matched = filters.q ? await idsMatching(prisma, ASSOCIATE_SEARCH, tenantIdForWrite(), filters.q) : null;
   return scopeWhere<Prisma.AssociateWhereInput>(
     { deletedAt: null, tenantId: tenantIdForWrite() },
     // Access pack: an internal role narrowed to sites/regions lists its people only.
@@ -347,13 +370,7 @@ function directoryWhere(user: SessionUser, filters: z.infer<typeof QuerySchema>)
     // Where they work now (a transfer moves them), else — nobody
     // placed yet — the client they applied to (lib/scope.atClient).
     !!filters.clientId && atClient(filters.clientId),
-    !!filters.q && {
-      OR: [
-        { firstName: { contains: filters.q, mode: 'insensitive' } },
-        { lastName: { contains: filters.q, mode: 'insensitive' } },
-        { email: { contains: filters.q, mode: 'insensitive' } },
-      ],
-    },
+    matched !== null && { id: { in: matched } },
   );
 }
 
@@ -370,7 +387,7 @@ directoryRouter.get('/directory/summary', VIEW, async (req, res, next) => {
   try {
     const filters = QuerySchema.parse(req.query);
     const tenantId = tenantIdForWrite();
-    const where = directoryWhere(req.user!, filters);
+    const where = await directoryWhere(req.user!, filters);
     // Unfiltered and unbounded: the whole tenant (no id list to ship).
     const bounded = !unfiltered(filters) || Object.keys(scopeAssociates(req.user!)).length > 0;
     const ids = bounded ? (await prisma.associate.findMany({ where, select: { id: true } })).map((r) => r.id) : undefined;
@@ -395,7 +412,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       ...(filters.cursor
         ? { cursor: { id: filters.cursor }, skip: 1 }
         : {}),
-      where: directoryWhere(req.user!, filters),
+      where: await directoryWhere(req.user!, filters),
       select: DIRECTORY_SELECT,
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
     });
@@ -500,7 +517,7 @@ directoryRouter.get('/directory/:id/overview', VIEW, async (req, res, next) => {
         select: { id: true, startsAt: true, endsAt: true, position: true, locationRel: { select: { name: true, timezone: true } } },
       }),
       prisma.attendanceEvent.count({
-        where: { associateId: person.id, tenantId, kind: 'NO_CALL_NO_SHOW', excusedAt: null, occurredOn: { gte: new Date(ago30.toISOString().slice(0, 10)) } },
+        where: { associateId: person.id, tenantId, kind: 'NO_CALL_NO_SHOW', excusedAt: null, occurredOn: { gte: new Date(`${orgDateKey(ago30)}T00:00:00.000Z`) } },
       }),
       // Their documents that carry an expiry date, newest first: per kind,
       // the newest one is the one that counts (a renewed ID replaces the

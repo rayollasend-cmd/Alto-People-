@@ -6,6 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { scopeAssociates, scopeWhere } from '../lib/scope.js';
 import { shiftTimezone } from '../lib/shiftZone.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { ATTESTATION_TEXT, CORRECTION_KINDS, breakQuestionsFor, decideCorrection, submitCorrection } from '../lib/timeCorrections.js';
 import type { Prisma } from '@prisma/client';
@@ -52,7 +53,7 @@ const shape = (r: Prisma.TimeCorrectionRequestGetPayload<{ include: { associate:
   name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
   kind: r.kind,
   status: r.status,
-  workDate: r.workDate?.toISOString().slice(0, 10) ?? null,
+  workDate: r.workDate ? dateColumnKey(r.workDate) : null,
   siteName: r.siteId ? sites.get(r.siteId) ?? null : null,
   // The site's clock: the proposed punches are read the way the site reads them.
   timezone: r.siteId ? sites.zoneOf(r.siteId) : null,

@@ -5,6 +5,12 @@ import { zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
  * many assigned shifts (and how many unfilled slots) cover that hour.
  * Shared by the home page's coverage curve and the schedule heatmap so
  * the two never disagree about an hour.
+ *
+ * Pass every shift that might touch the day — the whole week, plus the
+ * evening before it. A shift counts in each hour it covers, on every day it
+ * covers: an overnight that starts Friday at 10 PM fills Saturday's 12a–6a.
+ * Fed only the shifts that START on the day, the heatmap read every
+ * overnight hour as "0 scheduled · below the contract" (LEAD-3).
  */
 
 export interface CoverageShift {
@@ -41,8 +47,12 @@ export function coverageByHour(
   }));
   for (const r of shifts) {
     const zone = tz ?? r.timezone;
-    const startMin = zonedDayKey(r.startsAt, zone) === dayKey ? zonedMinutesOfDay(r.startsAt, zone) : 0;
-    const endMin = zonedDayKey(r.endsAt, zone) === dayKey ? zonedMinutesOfDay(r.endsAt, zone) : 1440;
+    const startKey = zonedDayKey(r.startsAt, zone);
+    const endKey = zonedDayKey(r.endsAt, zone);
+    // Not this day at all: it starts after it, or ended before it began.
+    if (startKey > dayKey || endKey < dayKey) continue;
+    const startMin = startKey === dayKey ? zonedMinutesOfDay(r.startsAt, zone) : 0;
+    const endMin = endKey === dayKey ? zonedMinutesOfDay(r.endsAt, zone) : 1440;
     for (const p of points) {
       const m = p.hour * 60;
       if (m >= startMin && m < endMin) {

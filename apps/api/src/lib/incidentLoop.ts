@@ -17,6 +17,7 @@ import { osha300aLine, osha300aSummary } from './osha300a.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { toWaLang } from './whatsappContent.js';
 import { fmtDayInZone } from './humanDates.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * The Compliance agent's `incident.loop` (agent families step 5;
@@ -101,7 +102,7 @@ const INCIDENT_SELECT = {
   daysAway: true,
   daysRestricted: true,
   client: { select: { name: true } },
-  store: { select: { name: true } },
+  store: { select: { name: true, timezone: true } },
   associate: { select: { firstName: true, lastName: true } },
 } as const;
 
@@ -177,7 +178,8 @@ export async function runIncidentLoop(db: Db = defaultPrisma, now: Date = new Da
     if (needsHrCase(i, now)) {
       const earlier = await db.agentProposal.count({ where: { tenantId, capabilityKey: INCIDENT_LOOP, subjectId: i.id, status: { in: ['PROPOSED', 'APPROVED', 'EXECUTED', 'REJECTED'] } } });
       if (earlier) continue;
-      const occurred = i.occurredAt.toISOString().slice(0, 10);
+      // The day it happened at the store (its zone, else the company's), in words.
+      const occurred = fmtDayInZone(i.occurredAt, i.store?.timezone ?? companyWorkweek().timezone, { year: true });
       const days = openDays(i, now);
       const told = Math.max(stage, i.chaseStage);
       await createProposal(
@@ -241,7 +243,7 @@ export async function executeCaseOpen(
   if (!approval || approval.status !== 'APPROVED') return false;
   const payload = (approval.payload as Record<string, unknown>) ?? {};
   const incident = proposal.subjectId
-    ? await db.oshaIncident.findFirst({ where: { id: proposal.subjectId, tenantId }, select: { id: true, hrCaseId: true, description: true, severity: true, occurredAt: true } })
+    ? await db.oshaIncident.findFirst({ where: { id: proposal.subjectId, tenantId }, select: { id: true, hrCaseId: true, description: true, severity: true, occurredAt: true, store: { select: { timezone: true } } } })
     : null;
   if (!incident || incident.hrCaseId) {
     await supersedeProposal(db, proposal, !incident ? 'the incident no longer exists' : 'a case is already open for it', now);
@@ -255,7 +257,7 @@ export async function executeCaseOpen(
     await syncProposalWithApproval(db, approval.id, 'FAILED', now, { code: 'associate_not_found', message: 'The person is no longer on file.' });
     return true;
   }
-  const occurred = incident.occurredAt.toISOString().slice(0, 10);
+  const occurred = fmtDayInZone(incident.occurredAt, incident.store?.timezone ?? companyWorkweek().timezone, { year: true });
   const hrCase = await db.$transaction(async (tx) => {
     const c = await tx.hrCase.create({
       data: {

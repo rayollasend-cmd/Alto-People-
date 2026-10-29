@@ -78,6 +78,7 @@ import {
   markTaskDoneByKind,
   markTaskSkippedById,
 } from '../lib/checklist.js';
+import { taskEvidenceFor } from '../lib/taskEvidence.js';
 import { backgroundApprovalWarning, markBackgroundTaskInProgress, recordSelfServeConsent } from '../lib/backgroundCheckConsent.js';
 import { saveEeoSelfId } from '../lib/hiringCompliance.js';
 import { EeoSelfIdInputSchema } from '@alto-people/shared';
@@ -146,6 +147,9 @@ import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 import { queueScheduleRecompute } from '../lib/payScheduleTriggers.js';
 import { callerToday, isStuck, lastActivityOf, startingSoonUnfinishedWhere, startingSoonWhere, stuckWhere } from '../lib/applicationFilters.js';
 import { applicationOwners } from '../lib/applicationOwners.js';
+import { assertMayGrantRole, atOrBelow } from '../lib/roleGrant.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 export const onboardingRouter = Router();
 
@@ -296,6 +300,17 @@ export async function inviteOneApplicant(
   input: InviteApplicantInput
 ): Promise<InviteApplicantResult> {
   const email = input.associateEmail.trim().toLowerCase();
+  // PEOPLE-1 — never grant more than you hold. Inviting an associate is
+  // the desk's everyday work (manage:onboarding / invite:onboarding is the
+  // right to it); "Hire as" a staff role answers to the same rule as a role
+  // change (lib/roleGrant): a recruiter cannot mint a Manager or Finance
+  // login for a second email. No signed-in actor = nothing to grant from.
+  const hireRoleAsked = input.hireRole ?? 'ASSOCIATE';
+  const actor = reqForAudit.user;
+  if (hireRoleAsked !== 'ASSOCIATE') {
+    if (!actor) throw new HttpError(403, 'role_escalation_forbidden', 'Only a signed-in administrator can hire into a staff role.');
+    assertMayGrantRole(actor, hireRoleAsked);
+  }
   const invite = generateInviteToken();
   const expiresAt = new Date(Date.now() + env.INVITE_TOKEN_TTL_SECONDS * 1000);
   // A held invite gets its link when it is sent, not now.
@@ -425,6 +440,13 @@ export async function inviteOneApplicant(
         updates.associate = { connect: { id: associate.id } };
       }
       if (user.role !== hireRole) {
+        // Re-invite promotion answers to the rule above (checked before the
+        // transaction); changing the role of a pending account MORE
+        // privileged than the caller is refused too — a recruiter must not
+        // demote (or re-route) an invited Manager by re-inviting the email.
+        if (user.role !== 'ASSOCIATE' && !(actor && atOrBelow(actor, user.role))) {
+          throw new HttpError(403, 'target_more_privileged', 'That email has a pending invite for a role above yours. Ask an administrator to change it.');
+        }
         updates.role = hireRole;
         // Any role change kills existing sessions. The user is INVITED so
         // there's no live session today, but defence-in-depth: if a session
@@ -991,6 +1013,8 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       }
     }
 
+    // PEOPLE-17: a DONE flag with nothing on file behind it says so.
+    const evidence = await taskEvidenceFor(prisma, { associateId: row.associateId, clientId: row.clientId }, row.checklist?.tasks ?? []);
     const tasks: ChecklistTask[] = (row.checklist?.tasks ?? []).map((t) => ({
       id: t.id,
       kind: t.kind,
@@ -1001,6 +1025,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       documentId: t.documentId,
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
       dueOffsetDays: t.dueOffsetDays,
+      ...(evidence.has(t.id) ? { evidence: evidence.get(t.id) } : {}),
     }));
 
     const [deliveryByAssociate, owners] = await Promise.all([
@@ -1045,7 +1070,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       cancelReason: row.cancelReason,
       cancelNote: row.cancelNote,
       hireDate: row.associate.hireDate
-        ? row.associate.hireDate.toISOString().slice(0, 10)
+        ? dateColumnKey(row.associate.hireDate)
         : null,
       locationId: row.locationId,
       locationName: row.location?.name ?? null,
@@ -1063,7 +1088,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
 // first shift booked, and the I-9 Section 2 deadline. GET reads them; PATCH
 // fixes the three that live on the application and the person.
 
-const ymdOf = (d: Date | null | undefined): string | null => (d ? d.toISOString().slice(0, 10) : null);
+const ymdOf = (d: Date | null | undefined): string | null => (d ? dateColumnKey(d) : null);
 
 async function firstDayApplication(req: Request) {
   const app = await prisma.application.findFirst({
@@ -1105,7 +1130,7 @@ async function firstDayView(app: Awaited<ReturnType<typeof firstDayApplication>>
     }),
   ]);
   // Their first booked shift on or after the start date (today when none).
-  const from = app.startDate ?? new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+  const from = app.startDate ?? new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
   const shift = await prisma.shift.findFirst({
     where: { assignedAssociateId: app.associateId, status: 'ASSIGNED', startsAt: { gte: from } },
     orderBy: { startsAt: 'asc' },
@@ -1182,7 +1207,7 @@ onboardingRouter.patch('/applications/:id/first-day', MANAGE, async (req, res, n
       });
       if (!manager) throw new HttpError(400, 'invalid_manager', 'Pick a manager from your team.');
     }
-    const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+    const today = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
     await prisma.$transaction(async (tx) => {
       if (input.startDate !== undefined || input.locationId !== undefined) {
         await tx.application.update({
@@ -1274,7 +1299,7 @@ onboardingRouter.get('/pay-schedule-for-hire', MANAGE, async (req, res, next) =>
       })
       .parse(req.query);
     const world = await loadWorld(prisma);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = orgDateKey(new Date());
     const d = desiredFor(
       { associateId: '', name: '', clientId: q.clientId ?? null, siteId: q.locationId ?? null, departmentId: q.departmentId ?? null, payType: null, legacyScheduleId: null },
       // A prospective hire has no individual rules.
@@ -1589,7 +1614,7 @@ async function approveOneApplication(
   );
   emitWorkerStatusChanged({ associateId: app.associateId }, 'hired');
   // The workflow engine: approval is both "onboarding done" and the hire.
-  const hireContext = { associateId: app.associateId, application: { id: app.id, clientId: app.clientId }, hireDate: hireDateValue ? hireDateValue.toISOString().slice(0, 10) : null, actorUserId: req.user!.id };
+  const hireContext = { associateId: app.associateId, application: { id: app.id, clientId: app.clientId }, hireDate: hireDateValue ? dateColumnKey(hireDateValue) : null, actorUserId: req.user!.id };
   void emitWorkflow({ trigger: 'ONBOARDING_COMPLETED', entityType: 'Application', entityId: app.id, clientId: app.clientId, context: hireContext }).catch((err) => console.warn('[onboarding] workflow emit failed:', err));
   void emitWorkflow({ trigger: 'ASSOCIATE_HIRED', entityType: 'Associate', entityId: app.associateId, clientId: app.clientId, context: hireContext }).catch((err) => console.warn('[onboarding] workflow emit failed:', err));
   // The hire's state pay notice (NY §195(1), CA §2810.5 …) and its new-hire report row.
@@ -1735,7 +1760,7 @@ onboardingRouter.post(
         firstName: rejAssoc?.firstName ?? 'there',
         clientName: rejClient?.name ?? getBrandingSync().orgName,
         rejectionReason: reason,
-        decisionDate: new Date().toISOString().slice(0, 10),
+        decisionDate: orgDateKey(new Date()),
       });
       void notifyAssociate(app.associateId, {
         subject: rejTpl.subject,
@@ -2366,7 +2391,7 @@ onboardingRouter.get('/applications/:id/profile', async (req, res, next) => {
       lastName: a.lastName,
       middleInitial: a.middleInitial,
       otherLastNames: a.otherLastNames ?? [],
-      dob: a.dob ? a.dob.toISOString().slice(0, 10) : null,
+      dob: a.dob ? dateColumnKey(a.dob) : null,
       phone: a.phone,
       addressLine1: a.addressLine1,
       addressLine2: a.addressLine2,
@@ -3534,7 +3559,7 @@ onboardingRouter.get('/applications/:id/i9', async (req, res, next) => {
             completedAt: row.section1CompletedAt.toISOString(),
             citizenshipStatus: row.citizenshipStatus,
             workAuthExpiresAt: row.workAuthExpiresAt
-              ? row.workAuthExpiresAt.toISOString().slice(0, 10)
+              ? dateColumnKey(row.workAuthExpiresAt)
               : null,
             // alienRegistrationNumberEnc is intentionally NOT returned —
             // the associate types it once and HR doesn't need it back
@@ -3670,9 +3695,26 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       typeof req.body?.alienRegistrationNumber === 'string'
         ? req.body.alienRegistrationNumber.replace(/\s+/g, '').slice(0, 30) || null
         : null;
-    const workAuthExpiresAt: Date | null = req.body?.workAuthExpiresAt
-      ? new Date(`${String(req.body.workAuthExpiresAt).slice(0, 10)}T00:00:00.000Z`)
-      : null;
+    // A calendar day, YYYY-MM-DD, that exists (CODE-24): "12/31/2027" used to
+    // become an Invalid Date that passed the "required" check below and
+    // then threw inside the write — a 500 instead of a plain answer.
+    const workAuthRaw: unknown = req.body?.workAuthExpiresAt;
+    let workAuthExpiresAt: Date | null = null;
+    if (workAuthRaw !== undefined && workAuthRaw !== null && workAuthRaw !== '') {
+      const ymd = z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/)
+        .refine((s) => {
+          const d = new Date(`${s}T00:00:00.000Z`);
+          // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: a round trip through UTC midnight proves the calendar day exists (no Feb 30).
+          return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+        })
+        .safeParse(typeof workAuthRaw === 'string' ? workAuthRaw.slice(0, 10) : workAuthRaw);
+      if (!ymd.success) {
+        throw new HttpError(400, 'invalid_work_auth_expiry', 'Enter the work authorization expiry as a date (YYYY-MM-DD).');
+      }
+      workAuthExpiresAt = new Date(`${ymd.data}T00:00:00.000Z`);
+    }
 
     // Per USCIS: ALIEN_AUTHORIZED_TO_WORK requires either an A-Number, an
     // I-94, or a foreign-passport number. We accept A-Number; the others
@@ -3748,7 +3790,7 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       metadata: {
         citizenshipStatus: updated.citizenshipStatus,
         hasAlienNumber: alienEnc !== null,
-        workAuthExpiresAt: workAuthExpiresAt ? workAuthExpiresAt.toISOString().slice(0, 10) : null,
+        workAuthExpiresAt: workAuthExpiresAt ? dateColumnKey(workAuthExpiresAt) : null,
       },
       req,
     });
@@ -3769,7 +3811,7 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
     // The application's planned start date is the real anchor for the
     // USCIS 3-business-day clock.
     const startAnchor = assoc?.hireDate ?? app.startDate ?? null;
-    const hireDateStr = startAnchor ? startAnchor.toISOString().slice(0, 10) : null;
+    const hireDateStr = startAnchor ? dateColumnKey(startAnchor) : null;
     let section2Due: string | null = null;
     if (startAnchor) {
       // Three business days from the start date (cheap calendar
@@ -3781,7 +3823,7 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
         const dow = due.getUTCDay();
         if (dow !== 0 && dow !== 6) added += 1;
       }
-      section2Due = due.toISOString().slice(0, 10);
+      section2Due = dateColumnKey(due);
     }
     const i9Tpl = i9Section2Template({
       associateName,
@@ -4905,7 +4947,7 @@ onboardingRouter.post(
             firstName: app.associate?.firstName ?? 'there',
             clientName: app.client?.name ?? getBrandingSync().orgName,
             rejectionReason: reason,
-            decisionDate: new Date().toISOString().slice(0, 10),
+            decisionDate: orgDateKey(new Date()),
           });
           void notifyAssociate(app.associateId, {
             subject: rejTpl.subject,

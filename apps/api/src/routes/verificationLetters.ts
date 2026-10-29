@@ -10,6 +10,8 @@ import { getBrandingSync } from '../lib/branding.js';
 import { notifyAllAdmins, notifyAssociate, ADMIN_EMAIL_HR_ONLY } from '../lib/notify.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { fmtDay } from '../lib/humanDates.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Employment and income verification letters (HR pack 2026-10).
@@ -73,8 +75,8 @@ async function snapshotFor(associateId: string, includePay: boolean): Promise<Sn
       name: `${a.firstName} ${a.lastName}`.trim(),
       title: a.jobProfile?.title ?? null,
       employmentType: a.employmentType,
-      hireDate: a.hireDate?.toISOString().slice(0, 10) ?? null,
-      endDate: a.separatedAt?.toISOString().slice(0, 10) ?? null,
+      hireDate: a.hireDate ? dateColumnKey(a.hireDate) : null,
+      endDate: a.separatedAt ? orgDateKey(a.separatedAt) : null,
       status: a.separatedAt ? 'former' : 'current',
     },
     pay: includePay && comp ? { payType: comp.payType, amount: comp.amount.toFixed(2), currency: comp.currency } : null,
@@ -210,6 +212,6 @@ verificationLettersRouter.get('/verification-letters/:id/pdf', requireAuth, asyn
   });
   enqueueAudit({ actorUserId: req.user!.id, action: 'verification_letter.downloaded', entityType: 'VerificationLetter', entityId: id, metadata: { own } }, 'verification_letter.downloaded');
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="verification-${kind.toLowerCase()}-${issuedAt.toISOString().slice(0, 10)}.pdf"`);
+  res.setHeader('Content-Disposition', `attachment; filename="verification-${kind.toLowerCase()}-${orgDateKey(issuedAt)}.pdf"`);
   res.send(pdf);
 });

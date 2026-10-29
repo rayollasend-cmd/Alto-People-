@@ -8,6 +8,7 @@ import { onWebhookEvent } from '../webhookDispatch.js';
 import { mergeMapping, redact, type AdapterContext, type IntegrationAdapter, type SyncOutcome } from './adapter.js';
 import { lastClosedPeriod, payrollExportBatch, schedulesForSync, timesheetsForPeriod, workersForSync } from './domain.js';
 import { adapterFor, vendorInfo } from './registry.js';
+import { addDaysToKey } from '../timezone.js';
 
 /**
  * Brief 3-5: the sync runner. One run per (connection, capability): load
@@ -52,8 +53,6 @@ export class SyncRefused extends Error {
     super(message);
   }
 }
-
-const DAY = 86_400_000;
 
 export async function runSync(opts: RunSyncOpts): Promise<RunSyncResult> {
   const now = opts.now ?? new Date();
@@ -231,9 +230,7 @@ export const EVENT_CAPABILITIES: Record<string, IntegrationCapability> = {
 /** The biweekly period (Saturday to Friday) that contains `now`, for an event that touched today's time. */
 export function currentPeriod(now: Date): { periodStart: string; periodEnd: string } {
   const last = lastClosedPeriod(now);
-  const start = new Date(new Date(`${last.periodEnd}T00:00:00.000Z`).getTime() + DAY);
-  const end = new Date(start.getTime() + 13 * DAY);
-  return { periodStart: start.toISOString().slice(0, 10), periodEnd: end.toISOString().slice(0, 10) };
+  return { periodStart: addDaysToKey(last.periodEnd, 1), periodEnd: addDaysToKey(last.periodEnd, 14) };
 }
 
 // A burst of shift edits is one sync, not fifty: at most one event-driven run

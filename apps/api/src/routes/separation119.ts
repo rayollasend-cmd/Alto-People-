@@ -15,6 +15,8 @@ import { assertAssetsReturned, completeSeparation } from '../lib/separationCompl
 import { loadApprovalPolicy, secondPersonExists } from '../lib/approvalPolicy.js';
 import { createApprovalRequest, pendingResponse } from '../lib/approvalRequests.js';
 import { fmtDay, sentenceFromCode } from '../lib/humanDates.js';
+import { addDaysToKey, dateColumnKey } from '../lib/timezone.js';
+import { workDayOf } from '../lib/payrollSchedule.js';
 
 /**
  * Phase 119 â€” Separations + exit interviews.
@@ -105,9 +107,9 @@ separation119Router.get('/separations', VIEW, async (req, res) => {
       associateEmail: s.associate.email,
       reason: s.reason,
       status: s.status,
-      noticeDate: s.noticeDate?.toISOString().slice(0, 10) ?? null,
-      lastDayWorked: s.lastDayWorked.toISOString().slice(0, 10),
-      finalPaycheckDate: s.finalPaycheckDate?.toISOString().slice(0, 10) ?? null,
+      noticeDate: s.noticeDate ? dateColumnKey(s.noticeDate) : null,
+      lastDayWorked: dateColumnKey(s.lastDayWorked),
+      finalPaycheckDate: s.finalPaycheckDate ? dateColumnKey(s.finalPaycheckDate) : null,
       rating: s.rating,
       reasonNotes: s.reasonNotes,
       feedbackPositive: s.feedbackPositive,
@@ -401,7 +403,7 @@ export function finalPayDeadline(
   const rule = (st && FINAL_PAY_DEADLINE[st]) || { involuntary: null, voluntary: null, note: 'No state deadline on file; federal law requires the next regular payday.' };
   const days = reason.startsWith('INVOLUNTARY') ? rule.involuntary : rule.voluntary;
   if (days === null) return { deadline: null, basis: 'next regular payday', note: rule.note, state: st };
-  const deadline = new Date(new Date(`${lastDayWorked}T00:00:00.000Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
+  const deadline = addDaysToKey(lastDayWorked, days);
   const basis = days === 0 ? 'immediately — on the last day worked' : `${days} day${days === 1 ? '' : 's'} after the last day worked`;
   return { deadline, basis, note: rule.note, state: st };
 }
@@ -429,8 +431,9 @@ separation119Router.get('/separations/final-pay-deadline', VIEW, async (req, res
 
 separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const s = await prisma.separation.findUnique({
-    where: { id },
+  // This tenant's, and inside the caller's reach — like every other separation route (reachOf).
+  const s = await prisma.separation.findFirst({
+    where: { AND: [{ id }, reachOf(req.user!)] },
     include: {
       associate: {
         select: {
@@ -458,11 +461,14 @@ separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) =
     orderBy: { payrollRun: { periodEnd: 'desc' } },
     select: { payrollRun: { select: { periodEnd: true } } },
   });
-  const paidThrough = lastPaid ? new Date(lastPaid.payrollRun.periodEnd.getTime() + 86_400_000) : null;
-  const [approved, awaiting] = await Promise.all([
+  // The last day the run paid (its period end, a DATE). Hours after it are
+  // the ones whose SITE day is later — the payroll cut (lib/payrollSchedule
+  // workDayOf), not UTC midnight, which counted a paid Friday evening as owed.
+  const paidThrough = lastPaid ? dateColumnKey(lastPaid.payrollRun.periodEnd) : null;
+  const [approvedRows, awaiting] = await Promise.all([
     prisma.timeEntry.findMany({
-      where: { associateId: a.id, status: 'APPROVED', clockOutAt: { not: null }, ...(paidThrough ? { clockInAt: { gte: paidThrough } } : {}) },
-      select: { clockInAt: true, clockOutAt: true },
+      where: { associateId: a.id, status: 'APPROVED', clockOutAt: { not: null }, ...(lastPaid ? { clockInAt: { gte: lastPaid.payrollRun.periodEnd } } : {}) },
+      select: { clockInAt: true, clockOutAt: true, location: { select: { timezone: true } } },
     }),
     prisma.timeEntry.findMany({ where: { associateId: a.id, status: 'COMPLETED', clockOutAt: { not: null } }, select: { clockInAt: true, clockOutAt: true } }),
   ]);
@@ -470,12 +476,13 @@ separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) =
     Math.round(rows.reduce((sum, r) => sum + ((r.clockOutAt?.getTime() ?? r.clockInAt.getTime()) - r.clockInAt.getTime()) / 3_600_000, 0) * 100) / 100;
   const comp = a.compRecords[0] ?? null;
   const hourly = comp?.payType === 'HOURLY' ? Number(comp.amount) : comp ? Number(comp.amount) / 2080 : null;
+  const approved = paidThrough ? approvedRows.filter((r) => workDayOf(r.clockInAt, r.location?.timezone) > paidThrough) : approvedRows;
   const unpaidHours = hours(approved);
   const awaitingHours = hours(awaiting);
   const payable = a.timeOffBalances.filter((b) => (b.category === 'VACATION' || b.category === 'PTO') && b.balanceMinutes > 0);
   const leaveHours = Math.round((payable.reduce((sum, b) => sum + b.balanceMinutes, 0) / 60) * 100) / 100;
   const state = (a.state ?? '').toUpperCase();
-  const fp = finalPayDeadline(state, s.reason, s.lastDayWorked.toISOString().slice(0, 10));
+  const fp = finalPayDeadline(state, s.reason, dateColumnKey(s.lastDayWorked));
   const deadline = fp.deadline;
   const policy = getLaborPolicy(state || null);
   const snapshot = {
@@ -483,7 +490,7 @@ separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) =
     state: state || null,
     rate: hourly,
     payType: comp?.payType ?? null,
-    paidThrough: paidThrough ? paidThrough.toISOString().slice(0, 10) : null,
+    paidThrough,
     unpaidApprovedHours: unpaidHours,
     awaitingApprovalHours: awaitingHours,
     leavePayoutHours: leaveHours,
@@ -491,8 +498,8 @@ separation119Router.get('/separations/:id/offboarding', VIEW, async (req, res) =
     estimatedGross: hourly === null ? null : Math.round((unpaidHours + leaveHours) * hourly * 100) / 100,
     deadline: { date: deadline, basis: fp.basis, note: fp.note, minimumWageCents: policy.minimumWageCents },
     paySchedule: a.payrollSchedule ? { name: a.payrollSchedule.name, frequency: a.payrollSchedule.frequency } : null,
-    finalPaycheckDate: s.finalPaycheckDate?.toISOString().slice(0, 10) ?? null,
-    finalPaycheckLate: deadline && s.finalPaycheckDate ? s.finalPaycheckDate.toISOString().slice(0, 10) > deadline : false,
+    finalPaycheckDate: s.finalPaycheckDate ? dateColumnKey(s.finalPaycheckDate) : null,
+    finalPaycheckLate: deadline && s.finalPaycheckDate ? dateColumnKey(s.finalPaycheckDate) > deadline : false,
   };
   await prisma.separation.update({ where: { id }, data: { finalPaySnapshot: snapshot } });
   res.json({

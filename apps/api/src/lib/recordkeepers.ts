@@ -1,4 +1,6 @@
 import type { Transport } from './fileDelivery.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 
 /**
  * 401(k) recordkeeper files.
@@ -87,10 +89,8 @@ export interface RecordkeeperAdapter {
 }
 
 const m = (n: number) => n.toFixed(2);
-const cell = (v: string | number | null | undefined) => {
-  const s = v == null ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
+// One escaper for every export (@alto-people/shared): quoting, formula guard, numbers kept numeric.
+const cell = (v: string | number | null | undefined) => sharedCsvCell(v);
 const csv = (rows: Array<Array<string | number | null | undefined>>) => rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';
 const mdy = (d: string | null) => (d ? `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}` : '');
 
@@ -244,7 +244,7 @@ const empower: RecordkeeperAdapter = {
   transport: 'SFTP',
   extension: 'txt',
   contributionFile(planNumber, payDate, rows) {
-    const lines: string[] = [pipe(['H', planNumber ?? '', payDate.replace(/-/g, ''), new Date().toISOString().slice(0, 10).replace(/-/g, '')])];
+    const lines: string[] = [pipe(['H', planNumber ?? '', payDate.replace(/-/g, ''), orgDateKey(new Date()).replace(/-/g, '')])]; // created today, on the company's calendar like the pay date
     let total = 0;
     let count = 0;
     for (const r of rows) {

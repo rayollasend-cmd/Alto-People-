@@ -8,6 +8,7 @@ import { defaultEmployerOrg } from '../../lib/employment.js';
 import { WA_REPLY, WA_TEMPLATES } from '../../lib/whatsappContent.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
 import { refreshBranding } from '../../lib/branding.js';
+import { onStubbedEmail } from '../../lib/notifications.js';
 
 /**
  * Brief 2-1b — the hotel's journey through the API, with no client
@@ -48,15 +49,9 @@ describe('a direct employer with no clients', () => {
     // The journey runs under the hotel's own name: every notice it writes and
     // every email it sends is checked against the forbidden list at the end.
     expect((await admin.patch('/admin/org/settings').send({ orgName: 'The Grand Hotel' })).status).toBe(200);
-    // Stubbed sends print to the console (lib/notifications.ts): that is the email as it would leave.
+    // Stubbed sends are heard through onStubbedEmail (lib/notifications.ts; the body never reaches the log): that is the email as it would leave.
     const sentEmails: string[] = [];
-    const consoleLog = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      const line = args.map(String).join(' ');
-      // Keep the email (subject and body), not the log's own prefix and hint ("[alto-people/api]", "apps/api/.env").
-      const at = line.indexOf('Subject:');
-      const end = line.indexOf('(Set RESEND_API_KEY');
-      if (line.includes('STUBBED EMAIL') && at !== -1) sentEmails.push(line.slice(at, end === -1 ? undefined : end));
-    });
+    const stopListening = onStubbedEmail((e) => sentEmails.push(`Subject: ${e.subject ?? '(none)'}\n  Body:\n${e.body}`));
 
     // A property, under a region of the hotel's own tree.
     const region = await admin.post('/admin/org-units').send({ type: 'REGION', name: 'Gulf Coast' });
@@ -162,7 +157,7 @@ describe('a direct employer with no clients', () => {
     // Every notice the journey wrote (bell, email record, push) and every
     // email it sent speaks the hotel's words too.
     await flushPendingNotifications();
-    consoleLog.mockRestore();
+    stopListening();
     const notices = await prisma.notification.findMany({ select: { channel: true, category: true, subject: true, body: true } });
     expect(notices.length, 'the journey writes notices (invite, approval, the HR desk)').toBeGreaterThan(0);
     const badNotices = notices.filter((n) => FORBIDDEN.test(exempt(`${n.subject ?? ''}\n${n.body}`)));

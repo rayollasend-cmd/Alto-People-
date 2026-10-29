@@ -1,8 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import type { FleetVan, FleetVanState, TransportException, TransportExceptionSeverity, TransportOpsBoard } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
-import { dateKeyInZone } from './timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone } from './timeAnomalies.js';
 import { fmtDay } from './humanDates.js';
 import { STALE_MS, computeRunLive, liveRunInclude, type RunLive } from './transportLive.js';
 import { STALL_MINUTES } from './transportSafety.js';
@@ -63,7 +62,7 @@ const fullName = (u: { email: string; associate: { firstName: string; lastName: 
   u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : (u.email.split('@')[0] ?? u.email);
 const firstName = (u: { email: string; associate: { firstName: string } | null }) => u.associate?.firstName ?? u.email.split('@')[0] ?? u.email;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const zoneOf = (run: OpsRun) => run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE;
+const zoneOf = (run: OpsRun) => run.rides[0]?.location.timezone ?? companyWorkweek().timezone;
 const fmtTime = (d: Date, tz: string) => new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(d);
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 const riding = (r: { status: string }) => r.status === 'SCHEDULED' || r.status === 'BOARDED';
@@ -103,7 +102,7 @@ function nextStopOf(run: OpsRun, live: RunLive, rideRows: Map<string, { name: st
 }
 
 export async function computeOpsBoard(date: string, now = new Date()): Promise<TransportOpsBoard> {
-  const today = dateKeyInZone(now, DEFAULT_TIMEZONE);
+  const today = dateKeyInZone(now, companyWorkweek().timezone);
   const isToday = date === today;
 
   const [runs, vansAll, waiting, noShows, issues, settings, enforced] = await Promise.all([
@@ -185,7 +184,7 @@ export async function computeOpsBoard(date: string, now = new Date()): Promise<T
     ...noShows.map((r) => r.location.timezone),
   ]);
   const mixed = zones.size > 1;
-  const boardZone = zones.size === 1 ? [...zones][0]! : zones.size === 0 ? (center?.timezone ?? DEFAULT_TIMEZONE) : DEFAULT_TIMEZONE;
+  const boardZone = zones.size === 1 ? [...zones][0]! : zones.size === 0 ? (center?.timezone ?? companyWorkweek().timezone) : companyWorkweek().timezone;
   const when = (d: Date, tz: string): string => (mixed ? `${fmtTime(d, tz)} ${zoneAbbr(d, tz)}` : fmtTime(d, boardZone));
 
   /* ----- the vans ----- */

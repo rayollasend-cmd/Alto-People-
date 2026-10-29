@@ -75,22 +75,35 @@ describe('pay before payday', () => {
     drawn: 0,
     available: 78,
     fee: 0,
+    payoutTo: { kind: 'BANK' as const, last4: '6789' },
   };
 
   it('shows what is available and draws it', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path: string, opts?: { method?: string; body?: unknown }) => {
       if (path === '/me/earned-wage' && opts?.method === 'POST') return { id: 'x', status: 'PAID', amount: 40, fee: 0, failureReason: null } as never;
       if (path === '/me/earned-wage') return avail as never;
+      // The period as Home counts it: one earned figure, one take-home (ASSOC-4).
+      if (path === '/time/me/earnings') {
+        return { period: { start: '2026-10-24', end: '2026-11-06', payDate: '2026-11-13', today: '2026-10-29', day: 6, days: 14, workedHours: 10, earned: 200, takeHome: { gross: 200, taxes: 44, deductions: 0, advances: 0, net: 156, basis: 'W4' } } } as never;
+      }
       throw new Error(`unexpected ${path}`);
     });
     renderAs('ASSOCIATE', <EarnedWageCard />);
     const card = await screen.findByTestId('earned-wage-card');
     expect(within(card).getByText('$78.00')).toBeInTheDocument();
-    expect(within(card).getByText(/earned about \$156\.00/)).toBeInTheDocument();
+    // Earned is the gross; the after-tax figure is called what it is — never "earned about $156".
+    expect(await within(card).findByText(/You've earned \$200\.00 this pay period on 10h \(about \$156\.00 after taxes\)/)).toBeInTheDocument();
     expect(within(card).getByText('No fee')).toBeInTheDocument();
     fireEvent.change(within(card).getByLabelText('How much?'), { target: { value: '40' } });
     fireEvent.click(within(card).getByRole('button', { name: 'Get $40.00' }));
-    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/me/earned-wage', { method: 'POST', body: { amount: 40 } }));
+    // Money moves only after the confirm names the amount, where it goes and when (MONEY-10's rule).
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Get $40.00 now?')).toBeInTheDocument();
+    expect(within(dialog).getByText('Your bank account ····6789')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Sent now · comes off your .* check/)).toBeInTheDocument();
+    expect(apiFetch).not.toHaveBeenCalledWith('/me/earned-wage', expect.objectContaining({ method: 'POST' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Get $40.00' }));
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/me/earned-wage', { method: 'POST', body: { amount: 40 }, headers: { 'Idempotency-Key': expect.stringMatching(/^ewa-/) } }));
   });
 
   it('says why when nothing can be drawn', async () => {

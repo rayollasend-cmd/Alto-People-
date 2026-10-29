@@ -53,16 +53,20 @@ export function PunchPhotosTab({ canManage }: { canManage: boolean }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : 'Could not end it.'),
   });
 
-  // The places a rule can name: the locations (and their clients) that have a kiosk.
+  // The places a rule can name: the locations (and their clients) that have a
+  // kiosk — or, for a client- or store-bound caller, the locations the API
+  // says are theirs (FLOOR-7: her picker was empty, its buttons dead).
+  const ownPlaces = overview.data?.places ?? null;
   const places = useMemo(() => {
     const sites = new Map<string, { id: string; name: string; clientId: string | null; clientName: string }>();
     const clients = new Map<string, string>();
-    for (const d of devices.data?.devices ?? []) {
-      if (d.locationId && d.locationName) sites.set(d.locationId, { id: d.locationId, name: d.locationName, clientId: d.clientId, clientName: d.clientName });
-      if (d.clientId) clients.set(d.clientId, d.clientName);
+    const from = ownPlaces ?? (devices.data?.devices ?? []).filter((d) => d.locationId && d.locationName).map((d) => ({ id: d.locationId!, name: d.locationName!, clientId: d.clientId, clientName: d.clientName }));
+    for (const s of from) {
+      sites.set(s.id, s);
+      if (s.clientId) clients.set(s.clientId, s.clientName);
     }
     return { sites: [...sites.values()].sort((a, b) => a.name.localeCompare(b.name)), clients: [...clients.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)) };
-  }, [devices.data]);
+  }, [devices.data, ownPlaces]);
 
   const [pick, setPick] = useState('');
 
@@ -70,6 +74,11 @@ export function PunchPhotosTab({ canManage }: { canManage: boolean }) {
   if (overview.isError) return <QueryError what="the photo rules" query={overview} />;
   const o = overview.data;
   const companyOn = !!o.company?.required;
+  // What this caller may change (the API refuses the rest): a one-client
+  // supervisor never gets the company-wide switch, a store-bound office
+  // account never a whole client.
+  const mayCompany = canManage && o.canSetCompanyRule !== false;
+  const mayClients = o.canSetClientRules !== false;
 
   const endRule = async (r: PunchPhotoRule) => {
     const reason = await prompt({ title: `End “${r.label}”?`, description: 'The next broader rule applies again.', reasonLabel: 'Why', confirmLabel: 'End it' });
@@ -97,7 +106,7 @@ export function PunchPhotosTab({ canManage }: { canManage: boolean }) {
             title="Every punch, company-wide"
             description="On: the kiosk photographs everyone at every punch and nobody can skip it. A broken camera never stops a punch — it goes to a supervisor to confirm."
             trailing={
-              canManage ? (
+              mayCompany ? (
                 <Button size="sm" variant={companyOn ? 'secondary' : 'primary'} loading={set.isPending} onClick={() => set.mutate({ scope: 'COMPANY', required: !companyOn })}>
                   {companyOn ? (
                     <>
@@ -131,7 +140,7 @@ export function PunchPhotosTab({ canManage }: { canManage: boolean }) {
                       {r.setBy ? ` · ${r.setBy}` : ''}
                     </span>
                   </span>
-                  {canManage && (
+                  {canManage && (r.scope !== 'CLIENT' || mayClients) && (
                     <Button size="xs" variant="ghost" onClick={() => void endRule(r)}>
                       End
                     </Button>
@@ -152,6 +161,7 @@ export function PunchPhotosTab({ canManage }: { canManage: boolean }) {
                     </option>
                   ))}
                   {hasClients &&
+                    mayClients &&
                     places.clients.map((c) => (
                       <option key={c.id} value={`client:${c.id}`}>
                         Every {c.name} location

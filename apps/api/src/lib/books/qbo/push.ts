@@ -33,6 +33,7 @@ export interface PushCtx {
 
 export type PushOutcome = { result: 'OK' | 'SKIPPED' | 'CONFLICT'; message: string; qboId?: string };
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: @db.Date values are stored at UTC midnight.
 const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
 const money = (n: unknown) => Math.round(Number(n ?? 0) * 100) / 100;
 

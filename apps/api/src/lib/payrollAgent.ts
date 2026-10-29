@@ -20,6 +20,8 @@ import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { moduleOn } from './tenantProfile.js';
 import { tenantJob } from './tenantJobs.js';
 import { fmtDay, fmtDayRange } from './humanDates.js';
+import { cutOf, punchesInPeriod } from './payrollSchedule.js';
+import { dateKeyInZone, orgDateKey } from './timeAnomalies.js';
 
 /**
  * The Payroll agent's `payroll.prep` (BEYOND).
@@ -130,11 +132,14 @@ export async function payrollAgentFor(db: Db, tenantId: string): Promise<AgentCo
 async function rateSuggestions(db: Db, associateIds: string[], periodStart: Date, periodEndExclusive: Date): Promise<Map<string, RateSuggestion | null>> {
   const out = new Map<string, RateSuggestion | null>();
   if (!associateIds.length) return out;
-  const entries = await db.timeEntry.findMany({
-    where: { associateId: { in: associateIds }, clockInAt: { gte: periodStart, lt: periodEndExclusive }, shiftId: { not: null } },
-    select: { associateId: true, clientId: true, clockInAt: true, clockOutAt: true, shift: { select: { position: true, clientId: true } } },
-    take: 5000,
-  });
+  // The pay-period cut (deep audit CODE-1): the clock-in's day at the site.
+  const entries = await punchesInPeriod(cutOf(periodStart, periodEndExclusive), null, (clockInAt) =>
+    db.timeEntry.findMany({
+      where: { associateId: { in: associateIds }, clockInAt, shiftId: { not: null } },
+      select: { associateId: true, clientId: true, clockInAt: true, clockOutAt: true, location: { select: { timezone: true } }, shift: { select: { position: true, clientId: true } } },
+      take: 5000,
+    }),
+  );
   const byPerson = new Map<string, Map<string, { clientId: string | null; position: string; minutes: number }>>();
   for (const e of entries) {
     if (!e.shift?.position) continue;
@@ -161,7 +166,7 @@ async function rateSuggestions(db: Db, associateIds: string[], periodStart: Date
     out.set(
       id,
       card && top
-        ? { amount: card.payRate, position: top.position, clientId: top.clientId, clientName: top.clientId ? (clientName.get(top.clientId) ?? null) : null, effectiveFrom: periodStart.toISOString().slice(0, 10) }
+        ? { amount: card.payRate, position: top.position, clientId: top.clientId, clientName: top.clientId ? (clientName.get(top.clientId) ?? null) : null, effectiveFrom: dateKeyInZone(periodStart, 'UTC') }
         : null,
     );
   }
@@ -404,7 +409,7 @@ export function registerPayrollAgent(): void {
     type FixtureException = { ref: string; kind: string; cardRate?: number | null; state?: string };
     const list = (Array.isArray(ctx.input.exceptions) ? ctx.input.exceptions : []) as FixtureException[];
     const rates = new Map<string, RateSuggestion | null>(
-      list.filter((x) => x.kind === 'MISSING_COMP_RECORD').map((x) => [x.ref, x.cardRate ? { amount: x.cardRate, position: 'Associate', clientId: null, clientName: null, effectiveFrom: ctx.now.toISOString().slice(0, 10) } : null]),
+      list.filter((x) => x.kind === 'MISSING_COMP_RECORD').map((x) => [x.ref, x.cardRate ? { amount: x.cardRate, position: 'Associate', clientId: null, clientName: null, effectiveFrom: orgDateKey(ctx.now) } : null]),
     );
     const plan = planPayrollPrep(list.map((x) => ({ associateId: x.ref, associateName: x.ref, kind: x.kind, detail: x.state ? { state: x.state } : undefined })), rates);
     return {

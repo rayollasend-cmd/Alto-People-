@@ -72,9 +72,12 @@ export function SchedulingToolbar(p: SchedulingToolbarProps) {
       data-testid="scheduling-toolbar"
       className={cn(
         // A phone wraps the bar onto two lines (view and period, then the
-        // scope) instead of a 401px row in a 390px screen; a desk keeps one.
+        // scope) instead of a 401px row in a 390px screen. A desk wraps too
+        // rather than scroll sideways: at 1024 with the sidebar open the
+        // one-line bar put Build and Publish at x=1182–1384, out of sight
+        // with no cue (FLOOR-11). From 2xl the bar is one 48px line.
         'sticky top-0 z-20 -mx-4 mb-2 flex min-h-12 flex-wrap items-center gap-2 border-b border-navy-secondary bg-navy/95 px-4 py-1.5 backdrop-blur no-print',
-        'md:mx-0 md:h-12 md:flex-nowrap md:overflow-x-auto md:rounded-md md:border md:px-2 md:py-0',
+        'md:mx-0 md:rounded-md md:border md:px-2 2xl:h-12 2xl:flex-nowrap 2xl:py-0',
         p.className,
       )}
     >
@@ -138,30 +141,66 @@ export function SchedulingToolbar(p: SchedulingToolbarProps) {
         )}
         {p.trailing}
       </div>
-      {p.canManage && p.onBuild && (
-        <Button variant="secondary" size="sm" onClick={p.onBuild} loading={p.building} className="relative shrink-0" title="Copy this week into next week, fill what's open, review the picks, then publish">
-          <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />
-          <span className="hidden sm:inline">Build</span>
-          {p.openToFill > 0 && (
-            <span
-              className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-3xs font-semibold tabular-nums text-navy"
-              title={`${p.openToFill} open shift${p.openToFill === 1 ? '' : 's'} this week can be auto-filled`}
-              data-testid="toolbar-open-badge"
+      {/* Build and Publish stay together at the end of the bar and wrap as
+          one group, so Publish is never the one pushed out of view. Each
+          says its name at every size: icon-only on a phone read "1" (the
+          badge) to a screen reader, and a tooltip doesn't exist on touch
+          (FLOOR-26). */}
+      {p.canManage && (p.onBuild || p.onPublish) && (
+        <div className="ml-auto flex shrink-0 items-center gap-2" data-testid="toolbar-actions">
+          {p.onBuild && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={p.onBuild}
+              loading={p.building}
+              className="relative shrink-0"
+              aria-label={buildLabel(p.openToFill)}
+              title="Copy this week into next week, fill what's open, review the picks, then publish"
             >
-              {p.openToFill}
-            </span>
+              <Wand2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Build</span>
+              {p.openToFill > 0 && (
+                <span
+                  className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-3xs font-semibold tabular-nums text-navy"
+                  aria-hidden="true"
+                  data-testid="toolbar-open-badge"
+                >
+                  {p.openToFill}
+                </span>
+              )}
+            </Button>
           )}
-        </Button>
-      )}
-      {p.canManage && p.onPublish && (
-        <Button variant="primary" size="sm" onClick={p.onPublish} loading={p.publishing} disabled={p.draftsToPublish === 0} className="shrink-0" title={p.draftsToPublish === 0 ? 'Nothing to publish in this week' : `Publish ${p.draftsToPublish} draft${p.draftsToPublish === 1 ? '' : 's'}`}>
-          <Send className="h-3.5 w-3.5" aria-hidden="true" />
-          <span className="hidden sm:inline">Publish</span>
-          {p.draftsToPublish > 0 && <span className="tabular-nums">{p.draftsToPublish}</span>}
-        </Button>
+          {p.onPublish && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={p.onPublish}
+              loading={p.publishing}
+              disabled={p.draftsToPublish === 0}
+              className="shrink-0"
+              aria-label={publishLabel(p.draftsToPublish)}
+              title={p.draftsToPublish === 0 ? 'Nothing to publish in this week' : `Publish ${p.draftsToPublish} draft${p.draftsToPublish === 1 ? '' : 's'}`}
+            >
+              <Send className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Publish</span>
+              {p.draftsToPublish > 0 && <span className="tabular-nums" aria-hidden="true">{p.draftsToPublish}</span>}
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );
+}
+
+/** Build's accessible name: "Build next week, 1 open to fill" — never the bare badge ("1"). */
+export function buildLabel(openToFill: number): string {
+  return openToFill > 0 ? `Build next week, ${openToFill} open to fill` : 'Build next week';
+}
+
+/** Publish's accessible name, with what it would publish. */
+export function publishLabel(drafts: number): string {
+  return drafts > 0 ? `Publish ${drafts} draft${drafts === 1 ? '' : 's'}` : 'Publish — nothing to publish in this week';
 }
 
 export type KpiPartKey = 'filled' | 'open' | 'unfilled' | 'hours' | 'forecast' | 'cost';

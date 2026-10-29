@@ -2,7 +2,8 @@ import type { PrismaClient } from '@prisma/client';
 import { HttpError } from '../middleware/error.js';
 import { getPlanRow } from './seasonPlanner.js';
 import { loadRateCards, resolveRate } from './rateCards.js';
-import { dateKeyInZone, orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone, orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 
 /**
  * What-if on the live schedule (field roles, 2026-10): a season plan's
@@ -82,15 +83,12 @@ export async function liveWhatIf(db: Db, planId: string, rawWeek: string | undef
       })
     : [];
   const tag = tagFor(planId, week);
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(from.getTime() + i * DAY_MS + 12 * 3_600_000);
-    return d.toISOString().slice(0, 10);
-  });
+  const days = Array.from({ length: 7 }, (_, i) => addDaysToKey(week, i));
   const dayKeys = new Set(days);
   const counted = new Map<string, { scheduled: number; drafted: number }>();
   for (const s of shifts) {
     if (!s.locationId) continue;
-    const tz = tzOf.get(s.locationId) ?? 'America/New_York';
+    const tz = tzOf.get(s.locationId) ?? companyWorkweek().timezone;
     const date = dateKeyInZone(s.startsAt, tz);
     if (!dayKeys.has(date)) continue;
     const key = `${s.locationId}|${date}|${partOf(s.startsAt, tz)}`;
@@ -158,7 +156,7 @@ export async function applyLiveWhatIf(db: Db, planId: string, rawWeek: string | 
   const data: Array<{ clientId: string; locationId: string; position: string; startsAt: Date; endsAt: Date; status: 'DRAFT'; notes: string; createdById: string }> = [];
   for (const r of preview.rows) {
     if (r.gap === 0) continue;
-    const tz = tzOf.get(r.locationId) ?? 'America/New_York';
+    const tz = tzOf.get(r.locationId) ?? companyWorkweek().timezone;
     const midnight = utcInstantOfLocalMidnight(r.date, tz);
     const startsAt = new Date(midnight.getTime() + PART_START[r.part] * 3_600_000);
     const endsAt = new Date(startsAt.getTime() + plan.shiftHours * 3_600_000);

@@ -6,6 +6,7 @@ import { personName } from './floorLeads.js';
 import { currentStoreWindows } from './shiftWindows.js';
 import { zonedWallTimeToUtcInstant } from './timezone.js';
 import { nextKey, type PortalScope, type StoreCalendar } from './portalMetrics.js';
+import { sopExpired } from './storeShiftSop.js';
 
 /**
  * Store operations, one day — what a Walmart store manager and their team
@@ -73,6 +74,8 @@ const shiftSelect = {
   status: true,
   openedAt: true,
   closedAt: true,
+  closedById: true,
+  dateKey: true,
   dueAt: true,
   sopDone: true,
   sopTotal: true,
@@ -114,6 +117,30 @@ type TaskRow = Prisma.OpsTaskGetPayload<{ select: typeof taskSelect }>;
 
 const num = (d: Prisma.Decimal | null): number | null => (d == null ? null : Number(d));
 
+/**
+ * A run the expiry sweep closed: nobody submitted it. The sweep is the only
+ * close without a person (lib/storeShiftSop runSopExpirySweep) — it reads
+ * "CLOSED" in the table and must never read "submitted" to a client.
+ */
+export function runExpired(s: { status: string; closedIncomplete: boolean; closedById: string | null }): boolean {
+  return s.status === 'CLOSED' && s.closedIncomplete && s.closedById === null;
+}
+
+/**
+ * The one store day a run belongs to. A store window's run carries the
+ * store day its window opened on (an overnight opened at 22:00 on the 27th
+ * is the 27th's, however late it is submitted — "Last night" reads it
+ * there); a run opened by hand, the store day it opened. A run is never
+ * filed under the day it CLOSED: matched on closedAt, an expired morning
+ * run reappeared as the next day's checklist (LEAD-2).
+ */
+export function runDayKey(
+  s: { locationId: string | null; windowLabel: string | null; dateKey: string; openedAt: Date },
+  cal: Pick<StoreCalendar, 'key'>,
+): string {
+  return s.locationId && s.windowLabel ? s.dateKey : cal.key(s.openedAt);
+}
+
 export async function buildStoreOps(
   scope: PortalScope,
   opts: {
@@ -148,7 +175,7 @@ export async function buildStoreOps(
       : { locationId: scope.locationId }
     : {};
 
-  const [shifts, windows, assigned] = await Promise.all([
+  const [fetched, windows, assigned] = await Promise.all([
     prisma.opsShift.findMany({
       where: {
         ...HAPPENED,
@@ -163,13 +190,16 @@ export async function buildStoreOps(
         AND: [
           {
             OR: [
-              // Opened inside the day…
+              // Filed under the day (a store window's run: the store day
+              // its window opened on)…
+              { dateKey },
+              // …or opened inside it (a run opened by hand is filed under
+              // the company's day, which a store in another zone can differ
+              // from — runDayKey decides)…
               { openedAt: { gte: dayStart, lt: dayEnd } },
-              // …or finished inside it. The overnight crew opens at 22:00
-              // and submits at 06:00; keyed on the open alone, their work
-              // vanished from the morning the manager reads it.
-              { closedAt: { gte: dayStart, lt: dayEnd } },
-              // …or is on the floor right now, on the day that is now.
+              // …or is on the floor right now, on the day that is now. An
+              // overnight that opened yesterday at 22:00 is the most current
+              // thing at 05:00 — shown as live, counted on its own day.
               ...(isToday ? [{ status: 'ACTIVE' as const, openedAt: { lt: dayEnd } }] : []),
             ],
           },
@@ -193,6 +223,15 @@ export async function buildStoreOps(
       },
     }),
   ]);
+  // One day per run (LEAD-2): the day's runs, plus — on today only — runs
+  // from an earlier day still on the floor now ("carried"): listed live and
+  // openable, never counted in this day's grid, totals or logs.
+  const shifts = fetched.filter(
+    (s) =>
+      runDayKey(s, cal) === dateKey ||
+      (isToday && s.status === 'ACTIVE' && !sopExpired(s, now)),
+  );
+  const carriedIds = new Set(shifts.filter((s) => runDayKey(s, cal) !== dateKey).map((s) => s.id));
   const shiftIds = shifts.map((s) => s.id);
   const [tasks, handovers] = shiftIds.length
     ? await Promise.all([
@@ -276,6 +315,7 @@ export async function buildStoreOps(
     const list = tasksByShift.get(s.id) ?? [];
     const sop = list.filter((t) => t.source === 'SOP');
     const active = s.status === 'ACTIVE';
+    const expired = runExpired(s);
     const done = active ? sop.filter((t) => t.status === 'DONE').length : s.sopDone;
     const total = active ? sop.length : s.sopTotal;
     const storeName = s.location?.name ?? (soleStore ? stores[0]!.name : null);
@@ -346,7 +386,18 @@ export async function buildStoreOps(
         });
       }
     }
-    if (s.status === 'CLOSED' && s.closedIncomplete) {
+    if (expired) {
+      // Never submitted: the sweep closed it 12 hours after the shift. Not
+      // "submitted incomplete" — nobody submitted anything.
+      attention.push({
+        ...base,
+        kind: 'NOT_SUBMITTED',
+        severity: SEVERITY.NOT_SUBMITTED,
+        title: `Never submitted — expired with ${s.sopDone} of ${s.sopTotal} done`,
+        detail: personName(s.openedBy),
+        at: s.dueAt?.toISOString() ?? s.closedAt?.toISOString() ?? null,
+      });
+    } else if (s.status === 'CLOSED' && s.closedIncomplete) {
       attention.push({
         ...base,
         kind: 'INCOMPLETE',
@@ -392,6 +443,12 @@ export async function buildStoreOps(
       runBy: personName(s.openedBy),
       openedAt: s.openedAt.toISOString(),
       closedAt: s.closedAt?.toISOString() ?? null,
+      /** Closed by the expiry sweep — never submitted by anyone. */
+      expired,
+      /** The store day the run is filed under. */
+      day: runDayKey(s, cal),
+      /** From an earlier day, still on the floor now: live, not this day's. */
+      carried: carriedIds.has(s.id),
       dueAt: s.dueAt?.toISOString() ?? null,
       done,
       total,
@@ -431,7 +488,11 @@ export async function buildStoreOps(
     const start = zonedWallTimeToUtcInstant(y, m, d, w.startMinute, store.timezone);
     const length = (w.endMinute - w.startMinute + 1440) % 1440 || 1440;
     const end = new Date(start.getTime() + length * 60_000);
-    const started = shifts.some((s) => s.locationId === a.locationId && s.windowLabel === a.label);
+    // This day's run of the window — a carried overnight from yesterday
+    // doesn't start tonight's.
+    const started = shifts.some(
+      (s) => !carriedIds.has(s.id) && s.locationId === a.locationId && s.windowLabel === a.label,
+    );
     expected.push({
       department: a.template.department,
       period: a.template.period,
@@ -469,6 +530,8 @@ export async function buildStoreOps(
       return {
         taskId: t.id,
         shiftId: t.opsShiftId,
+        /** A carried run's reading: its own day's log, shown only in its run. */
+        carried: carriedIds.has(t.opsShiftId),
         department: owner.department,
         period: owner.period,
         storeName: owner.storeName,
@@ -489,6 +552,7 @@ export async function buildStoreOps(
           : null,
       };
     });
+  const dayTemps = temps.filter((t) => !t.carried);
   for (const t of temps) {
     if (!t.outOfRange) continue;
     const fixed = t.recheck && t.recheck.value !== null && !t.recheck.outOfRange;
@@ -510,6 +574,7 @@ export async function buildStoreOps(
   const metricMap = new Map<string, { key: string; label: string; unit: string | null; total: number; byDepartment: Record<string, number> }>();
   for (const t of tasks) {
     if (!t.metricKey || t.status !== 'DONE' || t.answerNumber == null) continue;
+    if (carriedIds.has(t.opsShiftId)) continue;
     const dept = shiftName.get(t.opsShiftId)!.department;
     const row = metricMap.get(t.metricKey) ?? {
       key: t.metricKey,
@@ -559,6 +624,7 @@ export async function buildStoreOps(
     return {
       id: h.id,
       shiftId: h.fromShiftId,
+      carried: carriedIds.has(h.fromShiftId),
       department: owner.department,
       period: owner.period,
       kind: h.kind,
@@ -572,14 +638,16 @@ export async function buildStoreOps(
   });
 
   /* ----- the grid ------------------------------------------------------- */
-  const departments = [...new Set([...runs.map((r) => r.department), ...expected.map((e) => e.department)])].sort();
+  // This day's runs only: a carried overnight is live above, and on its own day's grid.
+  const dayRuns = runs.filter((r) => !r.carried);
+  const departments = [...new Set([...dayRuns.map((r) => r.department), ...expected.map((e) => e.department)])].sort();
   const periods = PERIOD_ORDER.filter(
-    (p) => runs.some((r) => r.period === p) || expected.some((e) => e.period === p),
+    (p) => dayRuns.some((r) => r.period === p) || expected.some((e) => e.period === p),
   );
   const grid = departments.map((department) => ({
     department,
     cells: periods.map((period) => {
-      const cellRuns = runs.filter((r) => r.department === department && r.period === period);
+      const cellRuns = dayRuns.filter((r) => r.department === department && r.period === period);
       const waiting = expected.filter(
         (e) => e.department === department && e.period === period && !e.started,
       );
@@ -603,30 +671,33 @@ export async function buildStoreOps(
       (a.at ?? '').localeCompare(b.at ?? ''),
   );
 
-  const sopTotal = runs.reduce((n, r) => n + r.total, 0);
-  const sopDone = runs.reduce((n, r) => n + r.done, 0);
+  const sopTotal = dayRuns.reduce((n, r) => n + r.total, 0);
+  const sopDone = dayRuns.reduce((n, r) => n + r.done, 0);
   return {
     date: dateKey,
     tz: cal.tz,
     storeToday: cal.key(now),
     summary: {
-      sops: runs.length,
-      submitted: runs.filter((r) => r.status === 'CLOSED').length,
-      running: runs.filter((r) => r.status === 'ACTIVE').length,
+      sops: dayRuns.length,
+      // Submitted by a person. A run the expiry sweep closed is CLOSED in
+      // the table and was never submitted (LEAD-2: "Submitted 1/1").
+      submitted: dayRuns.filter((r) => r.status === 'CLOSED' && !r.expired).length,
+      expired: dayRuns.filter((r) => r.expired).length,
+      running: dayRuns.filter((r) => r.status === 'ACTIVE').length,
       notStarted: expected.filter((e) => !e.started && Date.parse(e.startsAt) + NOT_STARTED_GRACE_MS <= now.getTime())
         .length,
       completionPct: sopTotal ? Math.round((sopDone / sopTotal) * 100) : null,
       onTimePct: onTime(
-        tasks.filter((t) => t.source === 'SOP'),
+        tasks.filter((t) => t.source === 'SOP' && !carriedIds.has(t.opsShiftId)),
         now,
       ),
-      overdueBlocks: runs.reduce((n, r) => n + r.blocks.filter((b) => b.state === 'overdue').length, 0),
-      tempChecks: temps.filter((t) => t.value !== null).length,
-      tempsDue: temps.filter((t) => t.value === null && t.dueAt && Date.parse(t.dueAt) <= now.getTime()).length,
-      tempAlerts: temps.filter((t) => t.outOfRange).length,
+      overdueBlocks: dayRuns.reduce((n, r) => n + r.blocks.filter((b) => b.state === 'overdue').length, 0),
+      tempChecks: dayTemps.filter((t) => t.value !== null).length,
+      tempsDue: dayTemps.filter((t) => t.value === null && t.dueAt && Date.parse(t.dueAt) <= now.getTime()).length,
+      tempAlerts: dayTemps.filter((t) => t.outOfRange).length,
       tempOpen: attention.filter((a) => a.kind === 'TEMP').length,
       needsAttention: attention.filter((a) => a.severity === 'high').length,
-      photos: tasks.reduce((n, t) => n + t.photos.length, 0),
+      photos: tasks.reduce((n, t) => n + (carriedIds.has(t.opsShiftId) ? 0 : t.photos.length), 0),
     },
     periods,
     grid,
@@ -658,8 +729,8 @@ export async function buildStoreOps(
             current: r.current,
           }))
       : null,
-    /** The floor, photographed. Newest first. */
-    photos: photoRows.map((ph) => {
+    /** The floor, photographed. Newest first. This day's runs only. */
+    photos: photoRows.filter((ph) => !carriedIds.has(ph.task.opsShiftId)).map((ph) => {
       const where = shiftName.get(ph.task.opsShiftId);
       return {
         id: ph.id,

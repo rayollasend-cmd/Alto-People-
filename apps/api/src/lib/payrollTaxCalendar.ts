@@ -20,6 +20,7 @@ export const DEPOSIT_FREQUENCIES: readonly DepositFrequency[] = ['NEXT_DAY', 'SE
 
 const DAY = 86_400_000;
 const utc = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d));
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column (stored at UTC midnight) or a UTC-midnight anchor.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 export const addDays = (d: Date, n: number) => new Date(d.getTime() + n * DAY);
 

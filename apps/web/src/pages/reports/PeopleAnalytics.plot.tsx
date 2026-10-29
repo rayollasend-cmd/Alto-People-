@@ -1,4 +1,5 @@
-import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { STOCK_LEGEND, seriesColor } from '@/components/ui/charts';
 import { CHART } from '@/components/ui/ChartFrame';
 import type { PeopleAnalytics as PeopleAnalyticsData } from '@/lib/peopleAnalyticsApi';
@@ -50,6 +51,16 @@ export function HeadcountTrendPlot({
   );
 }
 
+/**
+ * Legend order for the survival chart: the cohorts' own order (oldest
+ * first), never recharts 3's default alphabetical sort ("Apr, Aug, Jun,
+ * Oct, Sep" — LEAD-31). Exported for the test.
+ */
+export function cohortLegendSorter(cohorts: ReadonlyArray<{ dataKey: string }>): (item: { dataKey?: unknown; value?: unknown }) => number {
+  const order = new Map(cohorts.map((c, i) => [c.dataKey, i]));
+  return (item) => order.get(String(item.dataKey ?? item.value ?? '')) ?? cohorts.length;
+}
+
 /** The first 90 days: one line per hiring month (`dataKey` is the month's label, oldest first). */
 export function SurvivalPlot({ rows, cohorts }: { rows: Array<Record<string, string | number | null>>; cohorts: Array<{ month: string; dataKey: string }> }) {
   return (
@@ -59,12 +70,21 @@ export function SurvivalPlot({ rows, cohorts }: { rows: Array<Record<string, str
         <XAxis dataKey="day" tick={axis} tickLine={false} axisLine={false} interval={2} />
         <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={axis} tickLine={false} axisLine={false} width="auto" />
         <Tooltip contentStyle={CHART.tooltip} labelStyle={CHART.tooltipLabel} itemStyle={CHART.tooltipItem} formatter={(v) => pct(v as number | null)} />
-        <Legend {...STOCK_LEGEND} />
-        {/* The five most recent hiring months in color; older ones thin and gray. */}
+        {/* Every month the chart draws is named, in calendar order (the table twin lists the same months). */}
+        <Legend {...STOCK_LEGEND} itemSorter={cohortLegendSorter(cohorts)} />
+        {/* The five most recent hiring months in color; an older one thin, gray and dashed — still in the legend. */}
         {cohorts.map((c, i, all) => {
           const rank = all.length - 1 - i;
           return (
-            <Line key={c.month} dataKey={c.dataKey} stroke={rank < 5 ? seriesColor(rank) : CHART.other} strokeWidth={rank < 5 ? 2 : 1} dot={false} connectNulls={false} legendType={rank < 5 ? undefined : 'none'} />
+            <Line
+              key={c.month}
+              dataKey={c.dataKey}
+              stroke={rank < 5 ? seriesColor(rank) : CHART.other}
+              strokeWidth={rank < 5 ? 2 : 1}
+              strokeDasharray={rank < 5 ? undefined : '4 3'}
+              dot={false}
+              connectNulls={false}
+            />
           );
         })}
       </LineChart>

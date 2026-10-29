@@ -10,6 +10,7 @@
  * the local date components, not UTC, so an event at 11pm PT on
  * May 6 doesn't appear under "May 7" because UTC rolled over.
  */
+import { displayLocale, relativeDayWord, RELATIVE_DAY_WORDS } from './format';
 
 function localDateKey(d: Date): string {
   const yyyy = d.getFullYear();
@@ -23,24 +24,21 @@ export function dayKey(iso: string): string {
   return localDateKey(new Date(iso));
 }
 
-/** The app language via <html lang> — same non-React channel
- *  lib/format.ts uses, so this helper localizes without a lang param. */
+/** The app language's locale via <html lang> — lib/format.ts's channel, so
+ *  this helper localizes without a lang param (every app language, not only es). */
 function appLocale(): string {
-  return typeof document !== 'undefined' && document.documentElement.lang === 'es'
-    ? 'es-US'
-    : 'en-US';
+  return displayLocale();
 }
 
 /** Friendly label: "Today" / "Yesterday" / "Friday, May 2" / "Friday, May 2, 2025". */
 export function dayHeading(key: string): string {
-  const es = appLocale() === 'es-US';
   const today = new Date();
   const todayKey = localDateKey(today);
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = localDateKey(yesterday);
-  if (key === todayKey) return es ? 'Hoy' : 'Today';
-  if (key === yesterdayKey) return es ? 'Ayer' : 'Yesterday';
+  if (key === todayKey) return relativeDayWord('today');
+  if (key === yesterdayKey) return relativeDayWord('yesterday');
   // Parse the local key back to a Date; use noon to dodge any DST fence.
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d, 12, 0, 0);
@@ -62,7 +60,7 @@ export function dayHeading(key: string): string {
  * /^(Today|Yesterday)$/ regex silently never matched 'Hoy'/'Ayer'.
  */
 export function isRelativeDayHeading(heading: string): boolean {
-  return ['Today', 'Yesterday', 'Hoy', 'Ayer'].includes(heading);
+  return RELATIVE_DAY_WORDS.has(heading);
 }
 
 /**

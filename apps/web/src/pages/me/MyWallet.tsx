@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useAuthIfMounted } from '@/lib/navTrail';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Award, BadgeCheck, Copy, Download, Expand, GraduationCap, IdCard, QrCode, Share2, type LucideIcon } from '@/components/ui/icons';
+import { Award, BadgeCheck, Copy, Download, Expand, GraduationCap, IdCard, QrCode, Share2, UserRound, type LucideIcon } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { getMyWallet, getWorkerBadge, shareMyWallet, type WalletItem } from '@/lib/walletApi';
@@ -73,13 +75,18 @@ export function WalletItemRow({ item, onDownload, downloading }: { item: WalletI
 
 export function MyWallet() {
   const { t } = useI18n();
-  const q = useQuery({ queryKey: ['me', 'wallet'], queryFn: getMyWallet });
+  // The wallet is an employee record's (the API refuses any other sign-in):
+  // don't ask, and say so — not "Could not load your credentials. Retry"
+  // for a request that can never succeed (CRAWL-15).
+  const auth = useAuthIfMounted();
+  const hasPerson = !auth?.user || !!auth.user.associateId;
+  const q = useQuery({ queryKey: ['me', 'wallet'], queryFn: getMyWallet, enabled: hasPerson });
   const qc = useQueryClient();
   const [shareOpen, setShareOpen] = useState(false);
   const [appOpen, setAppOpen] = useState(false);
   // The badge is what a worker opens this page for: "Show badge" is the
   // page's primary action (F500 G5). Same query the card reads.
-  const badgeQ = useQuery({ queryKey: ['me', 'wallet', 'badge'], queryFn: getWorkerBadge, retry: false });
+  const badgeQ = useQuery({ queryKey: ['me', 'wallet', 'badge'], queryFn: getWorkerBadge, retry: false, enabled: hasPerson });
   const [badgeFull, setBadgeFull] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const items = q.data?.items ?? [];
@@ -99,6 +106,23 @@ export function MyWallet() {
       setDownloading(null);
     }
   };
+
+  if (!hasPerson) {
+    return (
+      <ListTemplate title={t('wallet.title')}>
+        <EmptyState
+          icon={UserRound}
+          title={t('wallet.noPersonTitle')}
+          description={t('wallet.noPersonBody')}
+          action={
+            <Button asChild>
+              <Link to="/settings">{t('wallet.noPersonCta')}</Link>
+            </Button>
+          }
+        />
+      </ListTemplate>
+    );
+  }
 
   return (
     <ListTemplate

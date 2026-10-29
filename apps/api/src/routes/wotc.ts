@@ -24,6 +24,8 @@ import {
 import { render8850Pdf } from '../lib/wotc8850Pdf.js';
 import { csvCell } from '@alto-people/shared';
 import type { SessionUser } from '../types/express.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * WOTC (TAXCOMP 2026-10).
@@ -46,7 +48,10 @@ export const wotcRouter = Router();
 
 const HR = requireAnyCapability('process:payroll', 'manage:onboarding');
 const DAY = 86_400_000;
-const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+/** Offer, hire, start and birth dates (and the deadline built from them) are @db.Date columns: their UTC date is the day. */
+const ymd = (d: Date | null | undefined) => (d ? dateColumnKey(d) : null);
+/** The applicant's signature is a moment: the company's day it was signed on. */
+const signedDay = (d: Date | null | undefined) => (d ? orgDateKey(d) : null);
 const answersOf = (v: Prisma.JsonValue | null): WotcAnswers => (v && typeof v === 'object' && !Array.isArray(v) ? (v as WotcAnswers) : {});
 
 /* ----- The applicant ------------------------------------------------------ */
@@ -145,7 +150,7 @@ function view(s: ScreeningRow, progress: { hours: number; wages: number } | unde
   const place = s.associate.assignments[0]?.location ?? null;
   const group = s.certifiedGroup ?? s.targetGroups[0] ?? null;
   const est = creditFor(s.status === 'DENIED' ? null : group, progress?.hours ?? 0, progress?.wages ?? 0);
-  const signedAfterOffer = !!(s.offerDate && s.applicantSignedAt && ymd(s.applicantSignedAt)! > ymd(s.offerDate)!);
+  const signedAfterOffer = !!(s.offerDate && s.applicantSignedAt && signedDay(s.applicantSignedAt)! > ymd(s.offerDate)!);
   return {
     id: s.id,
     associateId: s.associateId,
@@ -374,7 +379,7 @@ wotcRouter.get('/wotc/export.csv', HR, async (req, res) => {
   const header = ['Last name', 'First name', 'SSN last 4', 'Date of birth', 'Street', 'City', 'State', 'ZIP', 'Gave information', 'Offered', 'Hired', 'Started', 'Starting wage', 'Position', 'Filing state', 'Deadline', 'Target groups'];
   const lines = rows.map((r) => [
     r.associate.lastName, r.associate.firstName, r.associate.ssnLast4 ?? '', ymd(r.associate.dob) ?? '', r.associate.addressLine1 ?? '', r.associate.city ?? '', r.associate.state ?? '', r.associate.zip ?? '',
-    ymd(r.applicantSignedAt) ?? '', ymd(r.offerDate) ?? '', ymd(r.hireDate) ?? '', ymd(r.startDate) ?? '', r.startingWage !== null ? Number(r.startingWage).toFixed(2) : '', r.position ?? '', r.filingState ?? '',
+    signedDay(r.applicantSignedAt) ?? '', ymd(r.offerDate) ?? '', ymd(r.hireDate) ?? '', ymd(r.startDate) ?? '', r.startingWage !== null ? Number(r.startingWage).toFixed(2) : '', r.position ?? '', r.filingState ?? '',
     ymd(filingDeadline(r.startDate)) ?? '', r.targetGroups.map((g) => WOTC_GROUPS[g]?.label ?? g).join('; '),
   ]);
   enqueueAudit({ actorUserId: req.user!.id, action: 'wotc.exported', entityType: 'WotcScreening', entityId: state ?? 'ALL', metadata: { state: state ?? null, rows: rows.length } }, 'wotc.export');

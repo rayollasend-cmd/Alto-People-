@@ -61,10 +61,11 @@ import { useI18n } from '@/lib/i18n';
 import { withReturn } from '@/lib/returnPath';
 import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
-import { displayLocale, fmtDate, fmtMoney, fmtPayRate, fmtPhone, parseYmd, phoneHref, ymdLocal } from '@/lib/format';
+import { displayLocale, fmtDate, fmtDateOnly, fmtMoney, fmtPayRate, fmtPhone, parseYmd, phoneHref, ymdLocal } from '@/lib/format';
 import { useMinWidth } from '@/lib/useViewport';
 import { QueryError } from '@/components/ui/QueryError';
-import { proposePromotion } from '@/lib/approvalRequestsApi';
+import { isPending as isPendingApproval, proposePromotion } from '@/lib/approvalRequestsApi';
+import { useSentForApproval } from '@/lib/useGatedMutation';
 import { downloadCsv } from '@/lib/csv';
 import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import {
@@ -1324,7 +1325,10 @@ export function ProfileTab({
   onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
 }) {
   const [transferOpen, setTransferOpen] = useState(false);
-  const canTransfer = Boolean(a.workplaceClientId);
+  const { can } = useAuth();
+  // A transfer is an org change (the API needs manage:org) — the recruiter
+  // was shown the button and refused (PEOPLE-16). Same rule as the record header.
+  const canTransfer = can('manage:org') && Boolean(a.workplaceClientId) && !a.separatedAt;
   const term = useTerm();
   const { moduleOn } = useTenant();
   // A tenant without clients has no client to show on a person's workplace.
@@ -1350,11 +1354,14 @@ export function ProfileTab({
           associate={a}
           onSaved={(phone) => onAssociateChange({ phone })}
         />
-        <InfoRow
-          icon={<MessageCircle className="h-3.5 w-3.5" />}
-          label="WhatsApp"
-          value={<WhatsAppStatusLine associateId={a.id} />}
-        />
+        {/* The message record is manage:communications; without it the row was a label with a blank value (PEOPLE-16). */}
+        {can('manage:communications') && (
+          <InfoRow
+            icon={<MessageCircle className="h-3.5 w-3.5" />}
+            label="WhatsApp"
+            value={<WhatsAppStatusLine associateId={a.id} />}
+          />
+        )}
       </Section>
 
       <Section title="Workplace">
@@ -1392,16 +1399,31 @@ export function ProfileTab({
             onAssociateChange({ position: next });
           }}
         />
-        <InlineFieldRow
-          label="Start date"
-          display={a.startDate ? fmtDate(parseYmd(a.startDate) ?? a.startDate) : '—'}
-          current={a.startDate ?? ''}
-          inputType="date"
-          onSave={async (next) => {
-            await patchAssociateProfile(a.id, { startDate: next });
-            onAssociateChange({ startDate: next });
-          }}
-        />
+        {/* One hire date (PEOPLE-10): once hired it is the employment
+            record's, read here and on every tab; only a planned start
+            (not hired yet) is edited on the profile. */}
+        {a.startDateSource === 'employment' || a.startDateSource === 'hire' ? (
+          <InfoRow
+            label="Hire date"
+            value={
+              <span>
+                {a.startDate ? fmtDateOnly(a.startDate) : '—'}
+                <span className="ml-2 text-xs text-ink-muted">From the employment record</span>
+              </span>
+            }
+          />
+        ) : (
+          <InlineFieldRow
+            label="Planned start"
+            display={a.startDate ? fmtDateOnly(a.startDate) : '—'}
+            current={a.startDate ?? ''}
+            inputType="date"
+            onSave={async (next) => {
+              await patchAssociateProfile(a.id, { startDate: next });
+              onAssociateChange({ startDate: next, startDateSource: 'application' });
+            }}
+          />
+        )}
         {a.status === 'PENDING' && a.onboardingPercent !== null && (
           <InfoRow
             label="Onboarding"
@@ -2589,7 +2611,8 @@ function PlacementCard({ a, hiredOn }: { a: DirectoryEntry; hiredOn: string | nu
   const hasClients = useTenant().moduleOn('clientPortal');
   const start = a.startDate ? a.startDate.slice(0, 10) : hiredOn;
   const facts: Array<[string, string | null]> = [
-    ['Start date', start ? fmtDate(start) : null],
+    // The same hire date the header, Overview and Employment read (PEOPLE-10).
+    [a.startDate && a.startDateSource === 'application' ? 'Planned start' : 'Hire date', start ? fmtDateOnly(start) : null],
     ['Employment type', EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType],
     ['Position', a.position ?? a.jobProfileTitle],
     ...(hasClients ? ([[term('label.client'), a.workplaceClientName]] as Array<[string, string | null]>) : []),
@@ -2896,7 +2919,8 @@ function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
               }
             }}
           >
-            <Mail className="mr-2 h-3.5 w-3.5" /> Email number
+            {/* "Email number" read as a label, not an action (PEOPLE-30). */}
+            <Mail className="mr-2 h-3.5 w-3.5" /> Send them their number
           </Button>
         )}
         {blocked ? (
@@ -4149,6 +4173,7 @@ function NewRateDialog({
   const [reason, setReason] = useState<CompChangeReason>('MERIT');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const sentForApproval = useSentForApproval();
 
   // Reset whenever dialog opens for a different associate or current rate
   // changes — prevents stale form values bleeding across rows.
@@ -4192,14 +4217,17 @@ function NewRateDialog({
     if (!valid || submitting) return;
     setSubmitting(true);
     try {
-      await createRecord(a.id, {
+      const res = await createRecord(a.id, {
         payType,
         amount: amountNum,
         reason,
         notes: notes.trim() || undefined,
         effectiveFrom,
       });
-      toast.success('Rate updated.');
+      // A change past the threshold goes to a second person (202 pending):
+      // the rate in force stays until it's approved (MONEY-11).
+      if (isPendingApproval(res)) sentForApproval(res);
+      else toast.success('Rate updated.');
       onSaved();
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not save.';

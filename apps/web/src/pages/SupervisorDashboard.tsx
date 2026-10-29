@@ -11,7 +11,7 @@ import { listClientLocations } from '@/lib/clientsApi';
 import { getMySop, type HelpingSop } from '@/lib/opsApi';
 import { useShiftClock } from '@/lib/useShiftClock';
 import { useInbox } from '@/lib/inboxApi';
-import { getSchedulingKpis, listShifts } from '@/lib/schedulingApi';
+import { getSchedulingKpis, getStaffingContract, listShifts } from '@/lib/schedulingApi';
 import {
   fmtDate,
   fmtShiftRangeTz,
@@ -21,8 +21,10 @@ import {
   ymdLocal,
   zonedDayKey,
   zonedMinutesOfDay,
+  zonedWallTimeToUtc,
   mapsUrl,
 } from '@/lib/format';
+import { contractByStoreHour, groupWindows, nextWindows, windowsContractAt } from '@/pages/supervisorHome';
 import { cn } from '@/lib/cn';
 import { VanArrivalsCard } from '@/components/VanArrivals';
 import { IncidentReportDialog } from '@/components/floor/IncidentReportDialog';
@@ -31,6 +33,7 @@ import { FloorFlagsCard } from '@/components/floor/FloorFlagsCard';
 import { HandoverBanner } from '@/components/floor/HandoverBanner';
 import { CoverShiftCard } from '@/components/floor/CoverShiftCard';
 import { FloorWeekStrip } from '@/components/floor/FloorWeekStrip';
+import { CrewFaces } from '@/components/floor/CrewCard';
 import { ReadyToScheduleCard } from '@/components/ReadyToScheduleCard';
 import { ProgramAlertsCard } from '@/components/ProgramAlertsCard';
 import { enterStagger } from '@/lib/motion';
@@ -42,7 +45,6 @@ import { CrewSignalsCard } from '@/components/home/CrewSignalsCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useGreeting, greetingName } from '@/lib/greeting';
 import { Card, CardContent } from '@/components/ui/Card';
-import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -62,9 +64,10 @@ import {
   crewOnFloor,
   focusName,
   inWindows,
+  summarize,
   useShiftFocus,
 } from '@/pages/portal/shiftFocus';
-import { fmtClockMinute, fmtShiftWindow, isOpenShift, minuteOfDayInZone } from '@alto-people/shared';
+import { fmtClockMinute, fmtShiftWindow, isOpenShift } from '@alto-people/shared';
 import { CoverageGapNotice, coverageGaps } from '@/components/floor/CoverageGapNotice';
 import { getCoverageAhead } from '@/lib/floorApi';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -114,7 +117,7 @@ interface DayPayload {
   target: number | null;
   roster: WaveRow[];
   /** Every open clock-in right now (today only) — the live board's count. */
-  onFloorNow?: Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
+  onFloorNow?: Array<{ associateId: string; name: string; photoUrl?: string | null; clockInAt: string; position: string | null }>;
   summary: { expected: number; worked: number; onFloor: number; missed: number; open: number };
 }
 
@@ -127,7 +130,6 @@ interface ApprovalsCount {
   total: number;
 }
 
-const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 const DAY_MS = 86_400_000;
 /** The KPI strip's desktop columns for the tiles it has (static, so Tailwind sees them). */
 const KPI_XL_COLS: Record<number, string> = { 1: 'xl:grid-cols-1', 2: 'xl:grid-cols-2', 3: 'xl:grid-cols-3', 4: 'xl:grid-cols-4' };
@@ -208,21 +210,35 @@ export function SupervisorDashboard() {
   const canReport = can('report:incident');
   const { windows: myWindows, focus, setFocus, mine } = useShiftFocus();
   const teamQuery = useFloorTeam();
-  const todayKey = ymdLocal();
-  const tomorrowKey = shiftDays(todayKey, 1);
 
   // ---- Reads -------------------------------------------------------------
+  // The store's day answers "today" (FLOOR-3): the day payload is cut on the
+  // store's clock, so "tomorrow", the week ahead and the KPIs key off ITS
+  // today — never the browser's, which from 10 PM to midnight Pacific
+  // (viewing a Central store) made "Tomorrow" show today's floor.
   const dayQuery = useQuery({
-    queryKey: ['floor', 'day', todayKey],
+    queryKey: ['floor', 'day', 'today'],
     queryFn: () => apiFetch<DayPayload>('/client-portal/day'),
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
     placeholderData: (prev) => prev,
   });
+  const todayKey = dayQuery.data?.today ?? null;
+  const tomorrowKey = todayKey ? shiftDays(todayKey, 1) : null;
+  const dayTz = dayQuery.data?.store?.timezone ?? dayQuery.data?.roster[0]?.timezone ?? null;
   const tomorrowQuery = useQuery({
     queryKey: ['floor', 'day', tomorrowKey],
     queryFn: () => apiFetch<DayPayload>(`/client-portal/day?date=${tomorrowKey}`),
+    enabled: !!tomorrowKey,
     refetchInterval: 5 * 60_000,
+  });
+  // The contract through today, hour by hour (FLOOR-4) — the chart draws
+  // each contracted window, never this minute's number across all 24 hours.
+  const contractQuery = useQuery({
+    queryKey: ['floor', 'contract', todayKey],
+    queryFn: () => getStaffingContract({ date: todayKey! }),
+    enabled: !!todayKey && !watchOnly,
+    staleTime: 5 * 60_000,
   });
   const locationsQuery = useQuery({
     queryKey: ['floor', 'locations', client?.id],
@@ -230,14 +246,15 @@ export function SupervisorDashboard() {
     enabled: !!client,
     staleTime: 10 * 60_000,
   });
-  // The next seven days, today first — the fill chart and the open count.
+  // The next seven days, the store's today first — the fill chart and the
+  // open count, from the store's midnight (not the browser's).
   const aheadQuery = useQuery({
-    queryKey: ['floor', 'ahead', todayKey],
-    enabled: !watchOnly,
+    queryKey: ['floor', 'ahead', todayKey, dayTz],
+    enabled: !watchOnly && !!todayKey,
     queryFn: () => {
-      const from = new Date();
-      from.setHours(0, 0, 0, 0);
-      return listShifts({ from: from.toISOString(), to: new Date(from.getTime() + 7 * DAY_MS).toISOString() });
+      const [y, m, d] = todayKey!.split('-').map(Number) as [number, number, number];
+      const from = zonedWallTimeToUtc(y, m, d, 0, 0, dayTz);
+      return listShifts({ from: from.toISOString(), to: new Date(from.getTime() + 7 * DAY_MS + 2 * 3_600_000).toISOString() });
     },
   });
   // Short vs contract over the next 7 days, on the windows this lead runs —
@@ -252,12 +269,12 @@ export function SupervisorDashboard() {
   // the week the store manager's portal grades, so both read one number.
   const kpiThis = useQuery({
     queryKey: ['floor', 'kpis', 'this', todayKey],
-    enabled: !watchOnly,
+    enabled: !watchOnly && !!todayKey,
     queryFn: () => getSchedulingKpis({ week: 'this' }),
   });
   const kpiLast = useQuery({
     queryKey: ['floor', 'kpis', 'last', todayKey],
-    enabled: !watchOnly,
+    enabled: !watchOnly && !!todayKey,
     queryFn: () => getSchedulingKpis({ week: 'last' }),
   });
   // The SOP their clock-in opened — on top of My floor until submitted.
@@ -288,11 +305,13 @@ export function SupervisorDashboard() {
   );
   const waves = useMemo(() => groupWaves(focusRows), [focusRows]);
   const storeTz = data?.store?.timezone ?? data?.roster[0]?.timezone ?? null;
+  // One scope for the whole card (FLOOR-2): "My shift" draws their shift's
+  // rows, "Whole store" every row — the count, the curve and its summary agree.
   const curve = useMemo(
     () =>
       data
         ? coverageByHour(
-            data.roster.map((r) => ({
+            focusRows.map((r) => ({
               startsAt: r.startsAt,
               endsAt: r.endsAt,
               timezone: r.timezone,
@@ -302,13 +321,13 @@ export function SupervisorDashboard() {
             storeTz,
           )
         : [],
-    [data, storeTz],
+    [data, focusRows, storeTz],
   );
 
   // Next seven days, one column per day: filled vs unfilled.
   const aheadDays = useMemo(() => {
     const shifts = aheadQuery.data?.shifts;
-    if (!shifts) return null;
+    if (!shifts || !todayKey) return null;
     return Array.from({ length: 7 }, (_, i) => {
       const date = shiftDays(todayKey, i);
       const onDay = shifts.filter(
@@ -437,7 +456,7 @@ export function SupervisorDashboard() {
   );
   const floorDialogs = (
     <>
-      {canReport && <IncidentReportDialog open={incidentOpen} onOpenChange={setIncidentOpen} />}
+      {canReport && <IncidentReportDialog open={incidentOpen} onOpenChange={setIncidentOpen} timeZone={dayTz} />}
       {watchOnly && canReport && <FloorFlagDialog open={flagOpen} onOpenChange={setFlagOpen} />}
     </>
   );
@@ -482,30 +501,29 @@ export function SupervisorDashboard() {
   // Everyone clocked in right now — the live board's definition. Counting
   // only roster rows matched to an assigned shift read "0 / 10" while the
   // floor was full of walk-ins, covers and people on draft shifts.
-  const everyoneOn: Array<{ associateId: string; name: string; clockInAt?: string }> =
+  const everyoneOn: Array<{ associateId: string; name: string; photoUrl?: string | null; clockInAt?: string }> =
     data.onFloorNow ??
     data.roster
       .filter((r) => r.state === 'on-floor' && r.associateId)
-      .map((r) => ({ associateId: r.associateId!, name: r.name ?? '', clockInAt: r.clockInAt ?? undefined }));
+      .map((r) => ({ associateId: r.associateId!, name: r.name ?? '', photoUrl: r.photoUrl, clockInAt: r.clockInAt ?? undefined }));
   // My shift: their crew is whoever's shift starts in their window — a
   // walk-in (or last night's crew, off today's roster) goes by clock-in.
   const onFloor = mine ? crewOnFloor(everyoneOn, data.roster, myWindows) : everyoneOn;
   const runningNow = mine ? activeWindows(myWindows) : [];
-  // Off the clock: the next of their windows to start, on its store's clock.
-  const nextUp =
-    mine && runningNow.length === 0
-      ? ([...myWindows].sort((a, b) => {
-          const wait = (w: typeof a) => (w.startMinute - minuteOfDayInZone(new Date(), w.timezone) + 1440) % 1440;
-          return wait(a) - wait(b);
-        })[0] ?? null)
-      : null;
+  // Off the clock: EVERY one of their windows that starts next, together
+  // (FLOOR-2) — three Morning windows at three stores are one 6 AM start
+  // against all three targets, as runningNow already sums them.
+  const nextUps = mine && runningNow.length === 0 ? nextWindows(myWindows) : [];
+  const nextUp = nextUps[0] ?? null;
   const target = mine
     ? runningNow.length > 0
       ? runningNow.reduce((n, w) => n + w.targetCount, 0)
-      : (nextUp?.targetCount ?? null)
+      : nextUps.length > 0
+        ? nextUps.reduce((n, w) => n + w.targetCount, 0)
+        : null
     : data.target;
-  const nextScheduled = nextUp
-    ? focusRows.filter((r) => r.state !== 'open' && inWindows(r, [nextUp])).length
+  const nextScheduled = nextUps.length > 0
+    ? focusRows.filter((r) => r.state !== 'open' && inWindows(r, nextUps)).length
     : 0;
   const short = target !== null && onFloor.length < target && !nextUp;
   const staffed = target !== null ? onFloor.length >= target : onFloor.length > 0;
@@ -521,6 +539,32 @@ export function SupervisorDashboard() {
     zonedDayKey(new Date(), storeTz) === data.date
       ? Math.floor(zonedMinutesOfDay(new Date(), storeTz) / 60)
       : null;
+  // ---- The contract across the day (FLOOR-4) ------------------------------
+  // Each contracted window drawn where it runs, with its count — "My shift"
+  // their own windows, "Whole store" every window — instead of this
+  // minute's contract (2 at 1 AM) drawn flat across all 24 hours.
+  const contract = contractQuery.data ?? null;
+  const contractWindows = contract
+    ? mine
+      ? contract.windows.filter((cw) => myWindows.some((w) => w.locationId === cw.locationId && w.label === cw.label))
+      : contract.windows
+    : mine
+      ? myWindows
+      : [];
+  const contractBands = groupWindows(contractWindows).map((g) => ({
+    startMinute: g.startMinute,
+    endMinute: g.endMinute,
+    label: t('sup.contractBand', { label: g.label, count: g.targetCount }),
+  }));
+  // A store with one all-day number and no windows: that line IS flat.
+  const flatContract =
+    !mine && contract && contract.windows.length === 0 && contract.totals.length > 0
+      ? contract.totals.reduce((n, x) => n + x.targetCount, 0)
+      : null;
+  const storeHourContract = contract ? contractByStoreHour(contract.hours, storeTz) : null;
+  const contractAtHour = (hour: number): number | null =>
+    mine ? windowsContractAt(contractWindows, hour * 60) : (storeHourContract?.[hour] ?? null);
+  const focusSummary = mine ? summarize(focusRows) : data.summary;
 
   // ---- KPI figures -------------------------------------------------------
   const k = kpiThis.data;
@@ -831,11 +875,22 @@ export function SupervisorDashboard() {
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 animate-enter">
                 <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} />
                 {mine && (
-                  <span className="text-xs text-silver/70">
-                    {myWindows
-                      .map((w) => `${w.label} ${fmtShiftWindow(w)}${locations.length > 1 ? ` · ${w.locationName}` : ''}`)
-                      .join('  ·  ')}
-                  </span>
+                  // One line per window, the stores it runs at counted (FLOOR-27):
+                  // four windows ran on as one string, the same Morning per store.
+                  <ul className="flex flex-wrap gap-1.5 text-xs text-silver/80" aria-label={t('sup.myShiftWindows')} data-testid="my-windows">
+                    {groupWindows(myWindows).map((g) => (
+                      <li key={`${g.label}|${g.startMinute}|${g.endMinute}`}>
+                        <Badge variant="outline" withDot={false} className="tabular-nums normal-case" title={g.stores.join(', ')}>
+                          <span className="font-medium text-ink">{g.label}</span>&nbsp;{fmtShiftWindow(g)}
+                          {locations.length > 1 && (
+                            <span className="text-ink-muted">
+                              &nbsp;· {g.stores.length === 1 ? g.stores[0] : plural(g.stores.length, term('site').toLowerCase(), term('sites').toLowerCase())}
+                            </span>
+                          )}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
             )}
@@ -871,7 +926,7 @@ export function SupervisorDashboard() {
                         {t('portal.onFloorNow')}
                         {mine && (
                           <span className="normal-case tracking-normal text-silver/70">
-                            {' '}· {focusName(runningNow.length > 0 ? runningNow : nextUp ? [nextUp] : myWindows)}
+                            {' '}· {focusName(runningNow.length > 0 ? runningNow : nextUps.length > 0 ? nextUps : myWindows)}
                           </span>
                         )}
                       </span>
@@ -896,7 +951,7 @@ export function SupervisorDashboard() {
                     <p className="mt-2 text-sm text-silver">
                       {nextUp
                         ? t(nextScheduled === 0 ? 'focus.startsAtNone' : 'focus.startsAt', {
-                            label: nextUp.label,
+                            label: focusName(nextUps),
                             time: fmtClockMinute(nextUp.startMinute),
                             count: nextScheduled,
                           })
@@ -910,23 +965,8 @@ export function SupervisorDashboard() {
                             ? t('portal.onPlain', { on: onFloor.length })
                             : t('portal.nobodyNow')}
                     </p>
-                    {onFloor.length > 0 && (
-                      <Link to="/today" className="mt-3 flex items-center -space-x-2" aria-label={t('portal.todayOpen')}>
-                        {onFloor.slice(0, 8).map((p) => (
-                          <Avatar
-                            key={p.associateId}
-                            src={photoUrl(p.associateId)}
-                            name={p.name}
-                            email=""
-                            size="md"
-                            ringed
-                          />
-                        ))}
-                        {onFloor.length > 8 && (
-                          <span className="pl-4 text-sm text-silver tabular-nums">+{onFloor.length - 8}</span>
-                        )}
-                      </Link>
-                    )}
+                    {/* FLOOR-17: each face opens that person's crew card; "+N" opens the floor. */}
+                    <CrewFaces className="mt-3" people={onFloor} moreTo="/today" />
                   </div>
                   {data.roster.length > 0 && (
                   <div className="md:col-span-8">
@@ -936,16 +976,16 @@ export function SupervisorDashboard() {
                       title={t('portal.curveTitle')}
                       trailing={
                         <span className="text-xs tabular-nums text-ink-muted">
-                          {t('portal.todayMeta', { filled: data.summary.expected, open: data.summary.open })}
+                          {t('portal.todayMeta', { filled: focusSummary.expected, open: focusSummary.open })}
                         </span>
                       }
                     />
                     <div>
                       <CoverageCurve
                         points={curve}
-                        target={data.target}
+                        target={flatContract}
                         nowHour={nowHour}
-                        bands={mine ? myWindows : []}
+                        bands={contractBands}
                         labels={{
                           scheduled: t('portal.chartScheduled'),
                           open: t('portal.chartOpen'),
@@ -955,10 +995,15 @@ export function SupervisorDashboard() {
                           at: (h) => t('portal.chartAt', { hour: h }),
                         }}
                       />
+                      {contractBands.length > 0 && (
+                        <p className="mt-1 text-2xs text-ink-muted" data-testid="contract-caption">{t('sup.contractCaption')}</p>
+                      )}
                       <DetailsTable
                         label={t('portal.details')}
-                        columns={[t('portal.chartHour'), t('portal.chartScheduled'), t('portal.chartOpen')]}
-                        rows={curve.filter((p) => p.scheduled + p.open > 0).map((p) => [p.label, p.scheduled, p.open])}
+                        columns={[t('portal.chartHour'), t('portal.chartScheduled'), t('portal.chartOpen'), t('portal.chartContracted')]}
+                        rows={curve
+                          .filter((p) => p.scheduled + p.open > 0 || (contractAtHour(p.hour) ?? 0) > 0)
+                          .map((p) => [p.label, p.scheduled, p.open, contractAtHour(p.hour) ?? '—'])}
                       />
                     </div>
                   </div>
@@ -988,7 +1033,7 @@ export function SupervisorDashboard() {
             <WatchNeedsYou />
           ) : (
             <>
-              <CoverageGapNotice gaps={gaps} today={todayKey} />
+              <CoverageGapNotice gaps={gaps} today={data.today} />
               {/* With a gap above it, an empty queue says nothing — not "all clear". */}
               {/* The gap cards above ARE the queue's coverage items: shown once (F500 SH-4). */}
               <RoleDecisionQueue title={null} hideWhenEmpty={gaps.length > 0} excludeKeyPrefix={gaps.length > 0 ? 'coverage:' : undefined} />
@@ -1139,7 +1184,7 @@ export function SupervisorDashboard() {
                     <div className="mt-3">
                       <WeekFillChart
                         days={aheadDays}
-                        todayKey={todayKey}
+                        todayKey={data.today}
                         labels={{
                           filled: t('portal.chartFilled'),
                           open: t('portal.chartOpen'),

@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { tenantJob } from './tenantJobs.js';
 import { hasCapability, type Role } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
@@ -239,7 +240,8 @@ export async function buildAccessReport(db: Db = defaultPrisma, now: Date = new 
 }
 
 export function accessReportCsv(report: AccessReport): string {
-  const esc = (v: string | number | null) => (v === null ? '' : typeof v === 'number' ? String(v) : `"${v.replace(/"/g, '""')}"`);
+  // The shared escaper (@alto-people/shared): quoting alone doesn't stop a spreadsheet running a formula.
+  const esc = (v: string | number | null) => sharedCsvCell(v);
   const head = ['Email', 'Personal email', 'Role', 'Additional roles', 'Status', 'Scope', 'Person', 'Employment', 'Created', 'Last sign-in', 'Days since sign-in', 'Deactivated', 'Reason', 'Deletion after', 'Flags'];
   const lines = [head.map(esc).join(',')];
   for (const r of report.rows) {

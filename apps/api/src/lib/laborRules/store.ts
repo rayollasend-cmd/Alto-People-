@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { RuleParamsSchema, type ResolvedRules, type RuleLevel, type RuleSetDef } from './params.js';
 import { SHIPPED_PACKS, jurisdictionsFor } from './packs.js';
 import { resolveFor } from './resolve.js';
+import { dateColumnKey } from '../timezone.js';
 
 /**
  * Brief 2-2 step 2 — the rule sets in the database.
@@ -25,7 +26,8 @@ export interface StoredRuleSet extends RuleSetDef {
   approvalNote: string | null;
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** effectiveFrom / sourceDate are date columns. */
+const ymd = dateColumnKey;
 
 type Row = {
   id: string;

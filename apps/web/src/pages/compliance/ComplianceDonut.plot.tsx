@@ -1,4 +1,5 @@
-import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
+import { Cell, Pie, PieChart } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { PALETTE } from '@/components/ui/charts/palette';
 
 /** ComplianceDonut's drawing — fetched with the donut (lazyPlot), the only part that needs recharts. */

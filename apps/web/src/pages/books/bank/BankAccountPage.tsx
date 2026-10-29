@@ -5,6 +5,7 @@ import { ArrowLeftRight, Ban, CheckCheck, Download, FileSpreadsheet, FileUp, Han
 import type { BankBulkAction, BankCategorizeInput, BankFeedAccountView, BankRuleInput, BankTxnStatus, BankTxnSuggestions, BankTxnView } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { usePrompt } from '@/lib/confirm';
 import {
   BANK_KEY,
   bulkDecideTxns,
@@ -678,6 +679,27 @@ function seedFrom(t: BankTxnView): Partial<BankRuleInput> {
 
 function DecidedRow({ t, manage }: { t: BankTxnView; manage: boolean }) {
   const qc = useQueryClient();
+  const prompt = usePrompt();
+  // Taking a client payment back reopens what it paid: it asks why, the
+  // same prompt as Receivables → Payments (audit 2026-10-29 MONEY-29).
+  const undoPaymentToo = async (kept: { id: string; clientName: string }) => {
+    const reason = await prompt({
+      title: `Undo the payment from ${kept.clientName}?`,
+      description: 'It comes off the books, and the statements it paid are open again.',
+      reasonLabel: 'Why',
+      reasonPlaceholder: 'Recorded from a bank deposit by mistake',
+      confirmLabel: 'Undo payment',
+      destructive: true,
+    });
+    if (!reason) return;
+    try {
+      await undoClientPayment(kept.id, reason);
+      toast.success('Payment taken back.');
+      void qc.invalidateQueries({ queryKey: ['books'] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Couldn’t undo the payment.');
+    }
+  };
   const undo = useMutation({
     mutationFn: (opts: { undoPayment?: boolean } = {}) => undoTxn(t.id, opts),
     onSuccess: (r, opts) => {
@@ -689,13 +711,7 @@ function DecidedRow({ t, manage }: { t: BankTxnView; manage: boolean }) {
         return void toast.success(`Back in For review. The payment from ${kept.clientName} is still recorded.`, {
           action: {
             label: 'Undo the payment too',
-            onClick: () =>
-              void undoClientPayment(kept.id, 'Recorded from a bank deposit by mistake')
-                .then(() => {
-                  toast.success('Payment taken back.');
-                  void qc.invalidateQueries({ queryKey: ['books'] });
-                })
-                .catch((err) => toast.error(err instanceof ApiError ? err.message : 'Couldn’t undo the payment.')),
+            onClick: () => void undoPaymentToo(kept),
           },
         });
       }

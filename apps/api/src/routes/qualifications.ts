@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { requireCapability } from '../middleware/auth.js';
 import {
   effectiveClientIdFilter,
@@ -264,8 +265,8 @@ qualificationsRouter.get(
         code: r.qualification.code,
         name: r.qualification.name,
         isCert: r.qualification.isCert,
-        acquiredAt: r.acquiredAt?.toISOString().slice(0, 10) ?? null,
-        expiresAt: r.expiresAt?.toISOString().slice(0, 10) ?? null,
+        acquiredAt: r.acquiredAt ? dateColumnKey(r.acquiredAt) : null,
+        expiresAt: r.expiresAt ? dateColumnKey(r.expiresAt) : null,
         evidenceKey: r.evidenceKey,
       })),
     });
@@ -436,7 +437,7 @@ export async function listEligibleOpenShifts(associateId: string, opts: { before
     include: {
       qualReqs: { include: { qualification: true } },
       client: { select: { id: true, name: true } },
-      locationRel: { select: { id: true, name: true, timezone: true } },
+      locationRel: { select: { id: true, name: true, timezone: true, addressLine1: true, city: true, state: true, zip: true, latitude: true, longitude: true } },
       claims: { where: { status: 'PENDING', associateId } },
     },
   });
@@ -487,6 +488,12 @@ qualificationsRouter.get(
         location: s.location,
         locationId: s.locationRel?.id ?? null,
         locationName: s.locationRel?.name ?? null,
+        // Where to go: Directions use the street address, not a search for the store's name.
+        locationAddress: s.locationRel?.addressLine1
+          ? [s.locationRel.addressLine1, [s.locationRel.city, [s.locationRel.state, s.locationRel.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ')].filter(Boolean).join(', ')
+          : null,
+        locationLat: s.locationRel?.latitude != null ? Number(s.locationRel.latitude) : null,
+        locationLng: s.locationRel?.longitude != null ? Number(s.locationRel.longitude) : null,
         // The store's clock (one shift, one time).
         timezone: shiftTimezone(s.locationRel),
         // A site they have not worked at — the feed says so before they tap.

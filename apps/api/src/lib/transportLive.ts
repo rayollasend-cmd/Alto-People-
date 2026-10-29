@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
+import { armJob } from './jobs.js';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { geocode, type GeoPoint } from './geocode.js';
@@ -7,6 +8,7 @@ import { notifyAssociate, notifyUser, trackNotificationWork } from './notify.js'
 import { emitLiveEvent } from './liveEvents.js';
 import { legDurations, routingAvailable } from './mapboxRouting.js';
 import { watchForTrouble } from './transportSafety.js';
+import { logger } from './logger.js';
 
 /**
  * The vans live — phase 2 of transportation.
@@ -426,19 +428,16 @@ export async function afterPing(runId: string, now = new Date()): Promise<void> 
 export async function runVanTrailRetention(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - TRAIL_RETENTION_DAYS * 86_400_000);
   const r = await prisma.rideRunPing.deleteMany({ where: { at: { lt: cutoff } } });
-  if (r.count > 0) console.log(`[alto-people/api] van trail retention: removed ${r.count} pings (>${TRAIL_RETENTION_DAYS}d)`);
+  if (r.count > 0) logger.info(`van trail retention: removed ${r.count} pings (>${TRAIL_RETENTION_DAYS}d)`);
   return r.count;
 }
 
-let timer: NodeJS.Timeout | null = null;
+/** Through the jobs registry (in-flight guard, Scheduled jobs panel); per tenant with transportation on. */
 export function startVanTrailRetentionCron(): void {
-  if (timer) return;
-  const seconds = env.VAN_TRAIL_RETENTION_INTERVAL_SECONDS;
-  if (seconds <= 0) return;
-  const tick = () => {
-    void tenantJob('transportLive', runVanTrailRetention, { module: 'transportation' })().catch((err) => console.error('[alto-people/api] van trail retention failed:', err));
-  };
-  tick();
-  timer = setInterval(tick, seconds * 1000);
-  timer.unref();
+  armJob({
+    name: 'vanTrailRetention',
+    label: 'Van trail retention',
+    intervalSeconds: Math.max(0, env.VAN_TRAIL_RETENTION_INTERVAL_SECONDS),
+    run: tenantJob('transportLive', runVanTrailRetention, { module: 'transportation' }),
+  });
 }

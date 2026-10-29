@@ -9,6 +9,9 @@ import { SHIPPED_PACKS, jurisdictionsFor } from './packs.js';
 import { loadRulePool, rulesForSite, type StoredRuleSet } from './store.js';
 import type { ResolvedRules, RuleSetDef } from './params.js';
 import { fmtDay } from '../humanDates.js';
+import { dateColumnKey } from '../timezone.js';
+import { paidPunchFilters } from '../payrollRunCut.js';
+import { punchFetchRange } from '../payrollSchedule.js';
 
 /**
  * Brief 2-2 step 4 — the engine pays, one jurisdiction at a time.
@@ -179,8 +182,11 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
     where: { tenantId, status: { in: ['FINALIZED', 'DISBURSED'] }, kind: 'REGULAR' },
     orderBy: { periodEnd: 'desc' },
     take: Math.min(Math.max(input.runs ?? 4, 1), 12),
-    select: { id: true, periodStart: true, periodEnd: true },
+    select: { id: true, periodStart: true, periodEnd: true, payrollScheduleId: true, clientId: true, kind: true, timeCut: true },
   });
+  // The punches each run paid, cut as payroll cut them: by the site's day (the
+  // run's own timeCut, deploy carry-in included) — never by UTC midnights.
+  const paidBy = await paidPunchFilters(db, runs);
   const byRule = { OVERTIME: 0, MEAL: 0, REST: 0, REST_BETWEEN_SHIFTS: 0, SPREAD_OF_HOURS: 0, SPLIT_SHIFT: 0 };
   const asIfLive: PayRules = { any: true, activationFor: () => true, rulesFor: (site, date) => (site ? rulesForSite(pinned, site, date) : null) };
   const people = new Map<string, ChangeReportPerson>();
@@ -188,10 +194,13 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
   for (const run of runs) {
     const items = await db.payrollItem.findMany({ where: { payrollRunId: run.id }, select: { associateId: true, hourlyRate: true, associate: { select: { firstName: true, lastName: true } } } });
     if (!items.length || !siteIds.size) continue;
-    const entries = await db.timeEntry.findMany({
-      where: { status: 'APPROVED', associateId: { in: items.map((i) => i.associateId) }, locationId: { in: [...siteIds] }, clockInAt: { gte: run.periodStart, lt: new Date(run.periodEnd.getTime() + 86_400_000) }, clockOutAt: { not: null } },
-      select: { id: true, associateId: true, clockInAt: true, clockOutAt: true, locationId: true, breaks: { select: { type: true, startedAt: true, endedAt: true } } },
-    });
+    const paid = paidBy.get(run.id)!;
+    const entries = (
+      await db.timeEntry.findMany({
+        where: { status: 'APPROVED', associateId: { in: items.map((i) => i.associateId) }, locationId: { in: [...siteIds] }, clockInAt: punchFetchRange({ periodStart: dateColumnKey(run.periodStart), periodEnd: dateColumnKey(run.periodEnd) }), clockOutAt: { not: null } },
+        select: { id: true, associateId: true, clientId: true, clockInAt: true, clockOutAt: true, locationId: true, location: { select: { timezone: true } }, breaks: { select: { type: true, startedAt: true, endedAt: true } } },
+      })
+    ).filter((e) => paid(e));
     const siteById = new Map(sites.map((s) => [s.id, s]));
     for (const item of items) {
       const mine = entries.filter((e) => e.associateId === item.associateId);
@@ -238,7 +247,7 @@ export async function buildChangeReport(db: Db, tenantId: string, input: { juris
   return {
     jurisdiction: input.jurisdiction,
     siteId: input.siteId ?? null,
-    runs: runs.map((r) => ({ id: r.id, periodStart: r.periodStart.toISOString().slice(0, 10), periodEnd: r.periodEnd.toISOString().slice(0, 10) })),
+    runs: runs.map((r) => ({ id: r.id, periodStart: dateColumnKey(r.periodStart), periodEnd: dateColumnKey(r.periodEnd) })),
     people: rows.length,
     replayed: replayed.size,
     amountDifference: round2(rows.reduce((a, r) => a + r.difference, 0)),

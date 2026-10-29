@@ -1,4 +1,5 @@
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { fmtMoney } from '@/lib/format';
 import { ChartTooltipContent } from '@/components/ui/charts/ChartTooltip';

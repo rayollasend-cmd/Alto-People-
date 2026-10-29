@@ -23,6 +23,8 @@ import { errorText } from '@/lib/errorText';
 import { useConfirm } from '@/lib/confirm';
 import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
+import { openShiftRate, openShiftWorth } from '@/lib/openShiftPay';
+import { useMyEarnings } from '@/components/EarningsCard';
 import {
   Badge,
   Button,
@@ -52,7 +54,7 @@ import {
   fmtRelativeDayTz,
   fmtShiftRangeTz,
   fmtShiftTz,
-  mapsUrl,
+  directionsUrl,
   parseYmd,
   zonedDayKey,
 } from '@/lib/format';
@@ -160,6 +162,9 @@ function NotifyMe() {
 
 function AvailableTab() {
   const { t } = useI18n();
+  // Their own rate prices a shift that posts none (lib/openShiftPay).
+  const earnings = useMyEarnings();
+  const myRate = earnings.data?.hourlyRate ?? null;
   const [rows, setRows] = useState<OpenShiftListItem[] | null>(null);
   // The card that just got claimed — plays the success flash once.
   const [flashId, setFlashId] = useState<string | null>(null);
@@ -236,8 +241,10 @@ function AvailableTab() {
     try {
       const r = await claimShift(shiftId);
       setFlashId(shiftId);
+      // The associate's words: they "pick up" a shift and the manager
+      // confirms it — the Schedule page's verb (ASSOC-26), never "claim".
       toast.success(
-        r.alreadyClaimed ? t('mk.claimAlready') : t('mk.claimSubmitted'),
+        r.alreadyClaimed ? t('mk.pickupAlready') : t('sched.pickupToast'),
       );
       // Flip the acted card to "Claim pending" in place instead of
       // collapsing the whole list to a skeleton.
@@ -414,9 +421,11 @@ function AvailableTab() {
           <section key={d.key} className="space-y-2">
             <h2 className="pt-1 text-sm font-medium text-gold">{d.label}</h2>
             {d.shifts.map((s, i) => {
-              const hours = (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 3_600_000;
-              const rate = s.payRate ? Number(s.payRate) : null;
-              const worth = rate && hours > 0 ? rate * hours : null;
+              // One rule for what a shift is worth (lib/openShiftPay): its
+              // posted rate, else theirs, times its PAID hours — the Schedule
+              // page and Home price the same shift the same way (ASSOC-5).
+              const rate = openShiftRate(s.payRate, myRate);
+              const worth = openShiftWorth(s, s.payRate, myRate);
               return (
                 <Card
                   key={s.id}
@@ -443,11 +452,11 @@ function AvailableTab() {
                             </Badge>
                           )}
                         </div>
-                        {s.location && (
+                        {(s.locationAddress || s.location) && (
                           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-silver">
-                            <span>{s.location}</span>
+                            <span>{s.locationAddress || s.location}</span>
                             <a
-                              href={mapsUrl([s.clientName, s.location].filter(Boolean).join(' '))}
+                              href={directionsUrl({ address: s.locationAddress, lat: s.locationLat, lng: s.locationLng, names: [s.clientName, s.locationName ?? s.location] })}
                               target="_blank"
                               rel="noreferrer"
                               className="inline-flex items-center coarse:min-h-11 text-xs text-gold hover:text-gold-bright underline underline-offset-2"
@@ -457,9 +466,9 @@ function AvailableTab() {
                             </a>
                           </div>
                         )}
-                        {s.payRate && (
+                        {rate !== null && (
                           <div className="mt-1 text-sm text-success">
-                            {fmtPayRate(s.payRate, 'HOURLY')}
+                            {fmtPayRate(rate, 'HOURLY')}
                             {worth !== null && (
                               <span className="font-semibold text-gold">
                                 {' '}· {t('sched.heroWorth', { amount: fmtMoneyEst(worth) })}
@@ -479,7 +488,7 @@ function AvailableTab() {
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">
                         {s.myPendingClaim ? (
-                          <Badge variant="pending">{t('mk.claimPending')}</Badge>
+                          <Badge variant="pending">{t('sched.openRequested')}</Badge>
                         ) : (
                           <>
                             <Button
@@ -487,7 +496,7 @@ function AvailableTab() {
                               disabled={claimingId !== null}
                               loading={claimingId === s.id}
                             >
-                              {claimingId === s.id ? t('mk.claiming') : t('mk.claim')}
+                              {claimingId === s.id ? t('mk.pickingUp') : t('sched.openPickUp')}
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => void onDecline(s.id)} disabled={claimingId === s.id}>
                               {t('mk.notForMe')}

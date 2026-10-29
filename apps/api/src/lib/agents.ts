@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
   AGENT_EXECUTABLE_ACTIONS,
@@ -993,13 +994,20 @@ export async function claimApproval(db: Db, agent: AgentContext, approvalId: str
   return approvalSummary(updated);
 }
 
-export async function expireApprovals(db: Db = defaultPrisma, now: Date = new Date()): Promise<number> {
-  const due = await db.agentApprovalRequest.findMany({ where: { status: 'PENDING', expiresAt: { lte: now } }, select: { id: true } });
+/**
+ * Unanswered requests past their deadline read EXPIRED, for one tenant (the
+ * one in context by default). The boot runs it per tenant from the agents
+ * sweep (index.ts); it used to run once with no tenant in context, which the
+ * tenancy wall refused every 15 minutes, so nothing ever expired (CRAWL-4).
+ */
+export async function expireApprovals(db: Db = defaultPrisma, now: Date = new Date(), tenantIdArg?: string | null): Promise<number> {
+  const tenantId = registryTenant(tenantIdArg);
+  const due = await db.agentApprovalRequest.findMany({ where: { tenantId, status: 'PENDING', expiresAt: { lte: now } }, select: { id: true } });
   if (!due.length) return 0;
   const ids = due.map((d) => d.id);
-  const r = await db.agentApprovalRequest.updateMany({ where: { id: { in: ids }, status: 'PENDING' }, data: { status: 'EXPIRED' } });
+  const r = await db.agentApprovalRequest.updateMany({ where: { tenantId, id: { in: ids }, status: 'PENDING' }, data: { status: 'EXPIRED' } });
   // The proposals waiting on them expire with them.
-  await db.agentProposal.updateMany({ where: { approvalId: { in: ids }, status: 'PROPOSED' }, data: { status: 'EXPIRED', statusAt: now } });
+  await db.agentProposal.updateMany({ where: { tenantId, approvalId: { in: ids }, status: 'PROPOSED' }, data: { status: 'EXPIRED', statusAt: now } });
   return r.count;
 }
 
@@ -1065,9 +1073,9 @@ export async function postAgentMessage(
   return { gated: false, messageId: m.id, approvalId };
 }
 
+// One escaper for every export (@alto-people/shared): quoting, formula guard, numbers kept numeric.
 function csvCell(v: unknown): string {
-  const s = v == null ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return sharedCsvCell(typeof v === 'number' ? v : v == null ? '' : String(v));
 }
 
 /** The one export an agent can ask for: a client's schedule as CSV, names included — which is why it is gated. */

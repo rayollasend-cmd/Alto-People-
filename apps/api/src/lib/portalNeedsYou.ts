@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
 import { DAY, nextKey, portalCalendar, serviceReportKey, shiftScope, type PortalScope } from './portalMetrics.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * What needs a client account — one definition for the store home's
@@ -33,7 +34,7 @@ export function keyDays(fromKey: string, toKey: string): number {
 /** Days past the due date on the store's calendar; null when not yet due (or no due date). */
 export function daysPastDue(dueAt: Date | null, todayKey: string): number | null {
   if (!dueAt) return null;
-  const d = keyDays(dueAt.toISOString().slice(0, 10), todayKey);
+  const d = keyDays(dateColumnKey(dueAt), todayKey); // ClientStatement.dueAt is a @db.Date
   return d > 0 ? d : null;
 }
 

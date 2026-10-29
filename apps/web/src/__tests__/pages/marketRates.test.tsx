@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderAs } from './hrPack/harness';
+import { toast } from 'sonner';
 import type { MarketRow } from '@/lib/marketRatesApi';
 
 const getMarketRates = vi.fn();
@@ -58,7 +59,8 @@ beforeEach(() => {
 
 describe('<MarketRatesHome>', () => {
   it('shows where pay sits, the gap, fill, and proposes the suggested rate through the rate card', async () => {
-    upsertRateDefault.mockResolvedValue({ pending: true, approvalId: 'a1', title: 't' });
+    upsertRateDefault.mockResolvedValue({ pending: true, approvalId: 'a1', title: 'Stocker: bill $21.00 → $23.89' });
+    const success = vi.spyOn(toast, 'success');
     renderAs('HR_ADMINISTRATOR', <MarketRatesHome />, '/market-rates');
     expect((await screen.findAllByText('Front Beach')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('31st percentile').length).toBeGreaterThan(0);
@@ -72,6 +74,9 @@ describe('<MarketRatesHome>', () => {
     expect(await screen.findByText(/Fill here is 78% against 93%/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /propose \$16\.00 pay · \$23\.89 bill/i }));
     await waitFor(() => expect(upsertRateDefault).toHaveBeenCalledWith({ clientId: 'c1', position: 'Stocker', payRate: 16, billRate: 23.89 }));
+    // The 202 answer (CODE-12): "Sent for approval" with the request — never "new rate card in force".
+    await waitFor(() => expect(success).toHaveBeenCalledWith('Sent for approval', expect.objectContaining({ description: expect.stringContaining('Stocker: bill $21.00 → $23.89') })));
+    expect(success.mock.calls.some((c) => /in force/.test(String(c[0])))).toBe(false);
   });
 
   it('an executive reads it but proposes nothing and can’t change the mapping', async () => {

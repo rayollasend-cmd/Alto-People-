@@ -31,7 +31,6 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
@@ -40,7 +39,12 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { ListTemplate } from '@/components/templates';
 import { useUrlParam } from '@/lib/useUrlState';
 import { BenefitsAdminHome } from './BenefitsAdminHome';
-import { KIND_LABEL } from './benefitsWords';
+import { QueryError } from '@/components/ui/QueryError';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/benme';
+
+/** A plan kind in the reader's language (the desk keeps benefitsWords' English). */
+const kindLabel = (t: (key: MessageKey) => string, kind: BenefitsPlan['kind']) => t(`benme.kind.${kind}` as MessageKey);
 
 function isActiveEnrollment(e: BenefitsEnrollment): boolean {
   if (!e.terminationDate) return true;
@@ -48,6 +52,7 @@ function isActiveEnrollment(e: BenefitsEnrollment): boolean {
 }
 
 export function BenefitsHome() {
+  const { t } = useI18n();
   const { user, can } = useAuth();
   // The people who run benefits (HR, finance) get the desk: plans by client,
   // who's enrolled, what's waiting. Someone who is also an associate can
@@ -58,7 +63,7 @@ export function BenefitsHome() {
   if (!user?.associateId) {
     return (
       <div className="mx-auto">
-        <PageHeader title="Benefits" subtitle="Benefits enrollment belongs to a person record, and this account isn’t linked to one." />
+        <PageHeader title={t('benme.title')} subtitle={t('benme.noPerson')} />
       </div>
     );
   }
@@ -66,6 +71,7 @@ export function BenefitsHome() {
 }
 
 function MyBenefits() {
+  const { t } = useI18n();
   const [enrolling, setEnrolling] = useState<BenefitsPlan | null>(null);
   const [explain, setExplain] = useState(false);
 
@@ -84,8 +90,9 @@ function MyBenefits() {
   // left them on "Could not load your benefits" with no plan in sight.
   const plansQuery = useQuery({ queryKey: ['BenefitsHome', 'plans', 'mine'], queryFn: listMyPlans });
   const availablePlans: BenefitsPlan[] | null = plansQuery.data?.plans ?? null;
-  const failed = refreshQuery.error ?? plansQuery.error;
-  const error = failed ? (failed instanceof ApiError ? failed.message : 'Could not load your benefits.') : null;
+  // The failure in plain words (QueryError), never the server's raw text.
+  const failedQuery = refreshQuery.isError ? refreshQuery : plansQuery.isError ? plansQuery : null;
+  const error = failedQuery !== null;
 
   const enrolledPlanIds = new Set(
     (enrollments ?? [])
@@ -99,40 +106,24 @@ function MyBenefits() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Benefits"
+        title={t('benme.title')}
         subtitle={
           <>
-            Your elections come out of each paycheck before tax.{' '}
-            <button type="button" className="text-gold underline-offset-2 hover:underline" aria-expanded={explain} onClick={() => setExplain((v) => !v)}>
-              How this works
+            {t('benme.subtitle')}{' '}
+            {/* A real tap target on a phone (ASSOC-21: 99×23). */}
+            <button type="button" className="-my-2 inline-flex items-center px-1 text-gold underline-offset-2 hover:underline coarse:min-h-11" aria-expanded={explain} onClick={() => setExplain((v) => !v)}>
+              {t('benme.howItWorks')}
             </button>
           </>
         }
     >
       {explain && (
         <p className="rounded-lg border border-line bg-surface-raised p-3 text-sm text-ink-muted">
-          Pre-tax elections come out of every paycheck before federal, Social Security, Medicare and state tax, so your take-home goes down by less than the amount you elect. Changes apply from the next pay period.
+          {t('benme.explain')}
         </p>
       )}
 
-      {error && (
-        <ErrorBanner
-          action={
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                void refresh();
-                void plansQuery.refetch();
-              }}
-            >
-              Retry
-            </Button>
-          }
-        >
-          {error}
-        </ErrorBanner>
-      )}
+      {failedQuery && <QueryError what={t('benme.what')} query={failedQuery} />}
 
       {!enrollments && !error && (
         <div className="space-y-2">
@@ -146,25 +137,25 @@ function MyBenefits() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <HeartPulse className="h-4 w-4 text-gold" />
-              Your enrollments
+              {t('benme.yourEnrollments')}
             </CardTitle>
             <CardDescription>
-              {enrollments.filter(isActiveEnrollment).length} active election
-              {enrollments.filter(isActiveEnrollment).length === 1 ? '' : 's'}.
+              {t('benme.activeCount', { count: enrollments.filter(isActiveEnrollment).length })}
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             {enrollments.length === 0 ? (
               <EmptyState
                 icon={HeartPulse}
-                title="No active benefits"
+                title={t('benme.noneTitle')}
                 description={
                   offerable.length > 0
-                    ? `${offerable.length} plan${offerable.length === 1 ? ' is' : 's are'} available to elect right now.`
+                    ? t('benme.offerable', { count: offerable.length })
                     : availablePlans && availablePlans.length === 0
-                      ? 'Your employer hasn’t published any plans yet. When they do, they show here to elect.'
-                      : "When HR opens enrollment, plans you're eligible for will appear below to elect."
+                      ? t('benme.noPlansYet')
+                      : t('benme.waitForEnrollment')
                 }
+                // No "Refresh" button: a page that refreshes itself (ASSOC-30).
                 action={
                   offerable.length > 0 ? (
                     <Button
@@ -175,13 +166,9 @@ function MyBenefits() {
                           ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                       }
                     >
-                      Browse available plans
+                      {t('benme.browse')}
                     </Button>
-                  ) : (
-                    <Button size="sm" variant="secondary" onClick={refresh}>
-                      Refresh
-                    </Button>
-                  )
+                  ) : undefined
                 }
               />
             ) : (
@@ -204,11 +191,8 @@ function MyBenefits() {
         (offerable.length > 0 ? (
           <Card id="benefits-available-plans">
             <CardHeader>
-              <CardTitle>Available plans</CardTitle>
-              <CardDescription>
-                Pick a plan to enroll. You can change or cancel any time —
-                enrollment changes apply on the next payroll period.
-              </CardDescription>
+              <CardTitle>{t('benme.available')}</CardTitle>
+              <CardDescription>{t('benme.availableDesc')}</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <ul className="divide-y divide-navy-secondary">
@@ -216,26 +200,25 @@ function MyBenefits() {
                   <li key={p.id} className="p-4 flex items-center gap-4">
                     <div className="flex-1 min-w-0">
                       <Badge variant="outline" className="text-2xs mb-1">
-                        {KIND_LABEL[p.kind]}
+                        {kindLabel(t, p.kind)}
                       </Badge>
                       <div className="text-white font-medium">{p.name}</div>
                       {p.description && (
                         <p className="text-xs text-silver/80 mt-1">{p.description}</p>
                       )}
                       <div className="text-xs text-silver mt-1">
-                        Default: {fmtMoney(p.employeeContributionDefaultCentsPerPeriod / 100)}/period
+                        {t('benme.default', { amount: fmtMoney(p.employeeContributionDefaultCentsPerPeriod / 100) })}
                         {p.employerContributionCentsPerPeriod > 0 && (
                           <>
                             {' · '}
-                            Employer match:{' '}
-                            {fmtMoney(p.employerContributionCentsPerPeriod / 100)}
+                            {t('benme.match', { amount: fmtMoney(p.employerContributionCentsPerPeriod / 100) })}
                           </>
                         )}
                       </div>
                     </div>
                     <Button size="sm" onClick={() => setEnrolling(p)}>
                       <Plus className="h-4 w-4" />
-                      Enroll
+                      {t('benme.enroll')}
                     </Button>
                   </li>
                 ))}
@@ -245,13 +228,11 @@ function MyBenefits() {
         ) : (
           <Card>
             <CardHeader>
-              <CardTitle>Available plans</CardTitle>
+              <CardTitle>{t('benme.available')}</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-silver">
-                {availablePlans.length === 0
-                  ? 'Your employer hasn’t published any benefit plans yet. When HR sets up plans or opens enrollment, they’ll appear here to elect.'
-                  : 'You’re already enrolled in every plan your employer currently offers — there’s nothing new to elect right now.'}
+                {availablePlans.length === 0 ? t('benme.noPlansLong') : t('benme.allEnrolled')}
               </p>
             </CardContent>
           </Card>
@@ -276,6 +257,7 @@ function EnrollmentRow({
   enrollment: BenefitsEnrollment;
   onTerminated: () => void;
 }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const active = isActiveEnrollment(enrollment);
@@ -287,12 +269,12 @@ function EnrollmentRow({
         // Calendar date, in the USER's zone — not a UTC instant.
         terminationDate: ymdLocal(new Date()),
       });
-      toast.success('Enrollment ended.');
+      toast.success(t('benme.ended'));
       setShowConfirm(false);
       onTerminated();
     } catch (err) {
-      toast.error('Could not stop enrollment.', {
-        description: err instanceof Error ? err.message : 'Something went wrong.',
+      toast.error(t('benme.stopFailed'), {
+        description: err instanceof ApiError ? err.message : t('benme.wentWrong'),
       });
     } finally {
       setBusy(false);
@@ -303,24 +285,18 @@ function EnrollmentRow({
     <li className="p-4 flex items-center gap-4">
       <div className="flex-1 min-w-0">
         <Badge variant="outline" className="text-2xs mb-1">
-          {KIND_LABEL[enrollment.planKind]}
+          {kindLabel(t, enrollment.planKind)}
         </Badge>
         <div className="text-white font-medium">{enrollment.planName}</div>
         <div className="text-xs text-silver mt-0.5">
           {enrollment.planKind === 'LIFE_INSURANCE' && enrollment.lifeCoverageCents ? (
             <>
-              {fmtMoney(enrollment.lifeCoverageCents / 100)} coverage
+              {t('benme.coverage', { amount: fmtMoney(enrollment.lifeCoverageCents / 100) })}
               {' · '}
             </>
           ) : null}
-          {fmtMoney(enrollment.electedAmountCentsPerPeriod / 100)}/period · effective{' '}
-          {fmtDate(enrollment.effectiveDate)}
-          {enrollment.terminationDate && (
-            <>
-              {' · ended '}
-              {fmtDate(enrollment.terminationDate)}
-            </>
-          )}
+          {t('benme.perPeriod', { amount: fmtMoney(enrollment.electedAmountCentsPerPeriod / 100), date: fmtDate(enrollment.effectiveDate) })}
+          {enrollment.terminationDate && <> · {t('benme.endedOn', { date: fmtDate(enrollment.terminationDate) })}</>}
         </div>
       </div>
       {active ? (
@@ -331,21 +307,21 @@ function EnrollmentRow({
           loading={busy}
         >
           <X className="h-4 w-4" />
-          Stop
+          {t('benme.stop')}
         </Button>
       ) : (
         <span className="inline-flex items-center gap-1 text-xs text-silver/70">
           <CheckCircle2 className="h-3 w-3" />
-          Ended
+          {t('benme.endedBadge')}
         </span>
       )}
 
       <ConfirmDialog
         open={showConfirm}
         onOpenChange={setShowConfirm}
-        title={`Stop ${enrollment.planName}?`}
-        description="The enrollment will end on the next payroll period. You can re-enroll later if you change your mind."
-        confirmLabel="Stop enrollment"
+        title={t('benme.stopTitle', { plan: enrollment.planName })}
+        description={t('benme.stopDesc')}
+        confirmLabel={t('benme.stopConfirm')}
         destructive
         busy={busy}
         onConfirm={stop}
@@ -363,6 +339,7 @@ function EnrollDialog({
   onOpenChange: (v: boolean) => void;
   onEnrolled: () => void;
 }) {
+  const { t } = useI18n();
   const [amount, setAmount] = useState('');
   const [amountError, setAmountError] = useState<string | null>(null);
   const [coverageStarts, setCoverageStarts] = useState(ymdLocal());
@@ -402,15 +379,15 @@ function EnrollDialog({
   const submit = async () => {
     if (!plan) return;
     if (!Number.isFinite(cents) || cents < 0) {
-      setAmountError('Enter a valid dollar amount.');
+      setAmountError(t('benme.amountInvalid'));
       return;
     }
     if (cents === 0 && !isLife) {
-      setAmountError('Election must be more than $0.00 — to stop contributing, don’t enroll (or end an existing enrollment).');
+      setAmountError(t('benme.amountZero'));
       return;
     }
     if (isLife && (!coverageValid || coverageCents < 100_000 || coverageCents > MAX_LIFE_COVERAGE_CENTS)) {
-      setCoverageError(`Enter the coverage amount, from $1,000 to ${fmtMoney(MAX_LIFE_COVERAGE_CENTS / 100)}.`);
+      setCoverageError(t('benme.coverageInvalid', { max: fmtMoney(MAX_LIFE_COVERAGE_CENTS / 100) }));
       return;
     }
     // Validate, but send the raw YYYY-MM-DD. Converting to an ISO
@@ -418,7 +395,7 @@ function EnrollDialog({
     // the previous calendar day for anyone at a positive UTC offset —
     // and a coverage start date is legally load-bearing.
     if (!parseYmd(coverageStarts)) {
-      setDateError('Pick a valid coverage start date.');
+      setDateError(t('benme.dateInvalid'));
       return;
     }
     setSubmitting(true);
@@ -430,11 +407,11 @@ function EnrollDialog({
         ...(isRetirement ? { rothElection: roth } : {}),
         ...(isLife ? { lifeCoverageCents: coverageCents } : {}),
       });
-      toast.success(`Enrolled in ${plan.name}.`);
+      toast.success(t('benme.enrolled', { plan: plan.name }));
       onEnrolled();
     } catch (err) {
-      toast.error('Could not enroll.', {
-        description: err instanceof Error ? err.message : 'Something went wrong.',
+      toast.error(t('benme.enrollFailed'), {
+        description: err instanceof ApiError ? err.message : t('benme.wentWrong'),
       });
     } finally {
       setSubmitting(false);
@@ -445,19 +422,16 @@ function EnrollDialog({
     <Dialog open={plan !== null} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Enroll in {plan?.name}</DialogTitle>
-          <DialogDescription>
-            Set your per-pay-period election. The first deduction comes out of
-            the first payroll run on or after your coverage start date.
-          </DialogDescription>
+          <DialogTitle>{t('benme.enrollTitle', { plan: plan?.name ?? '' })}</DialogTitle>
+          <DialogDescription>{t('benme.enrollDesc')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           {isLife && (
             <Field
-              label="Coverage amount (USD)"
+              label={t('benme.coverageLabel')}
               required
               error={coverageError}
-              hint="The face amount of the policy. Coverage over $50,000 is taxable: the IRS cost of the part over $50,000 is added to your taxable pay each check. It isn’t paid to you."
+              hint={t('benme.coverageHint')}
             >
               {(p) => (
                 <Input
@@ -476,15 +450,15 @@ function EnrollDialog({
             </Field>
           )}
           <Field
-            label={isLife ? 'Your share per check (USD)' : 'Election amount (USD/period)'}
+            label={isLife ? t('benme.shareLabel') : t('benme.amountLabel')}
             required
             error={amountError}
             hint={
               isLife
-                ? '0 when your employer pays the whole premium.'
+                ? t('benme.shareHint')
                 : isRetirement && roth
-                  ? 'Roth — taken after tax; qualified withdrawals are tax-free.'
-                  : 'Pre-tax — reduces your taxable wages on the paystub.'
+                  ? t('benme.rothHint')
+                  : t('benme.pretaxHint')
             }
           >
             {(p) => (
@@ -504,27 +478,21 @@ function EnrollDialog({
           </Field>
           {centsValid && (
             <p className="text-xs text-silver">
-              ≈ {fmtMoney((cents * 26) / 100)} per year across 26 pay periods
-              {employerMatchCents > 0 && (
-                <>
-                  {' '}
-                  — plus {fmtMoney((employerMatchCents * 26) / 100)}/yr employer
-                  match
-                </>
-              )}
-              .
+              {employerMatchCents > 0
+                ? t('benme.perYearMatch', { amount: fmtMoney((cents * 26) / 100), match: fmtMoney((employerMatchCents * 26) / 100) })
+                : t('benme.perYear', { amount: fmtMoney((cents * 26) / 100) })}
             </p>
           )}
           {isRetirement && (
             <label className="flex cursor-pointer items-start gap-2 text-sm text-silver">
               <input type="checkbox" checked={roth} onChange={(e) => setRoth(e.target.checked)} className="mt-0.5 rounded border-navy-secondary" />
               <span>
-                Make my contributions Roth (after tax)
-                <span className="block text-xs">The yearly limit is the same either way. From 2026, catch-up contributions are Roth for higher earners.</span>
+                {t('benme.roth')}
+                <span className="block text-xs">{t('benme.rothNote')}</span>
               </span>
             </label>
           )}
-          <Field label="Coverage starts" required error={dateError}>
+          <Field label={t('benme.coverageStarts')} required error={dateError}>
             {(p) => (
               <Input
                 type="date"
@@ -540,10 +508,10 @@ function EnrollDialog({
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('benme.cancel')}
           </Button>
           <Button onClick={submit} loading={submitting}>
-            Confirm enrollment
+            {t('benme.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>

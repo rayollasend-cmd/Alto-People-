@@ -4,7 +4,8 @@ import type { SessionUser } from '../types/express.js';
 import { detectHugoIntent, normalizeHugoText, type HugoContext } from './hugo.js';
 import { hugoTaskCounts, previewHugoTask } from './hugoTasks.js';
 import type { HugoLang } from './hugoWorkCopy.js';
-import { DEFAULT_TIMEZONE, addDaysInZone, localDateKey, zonedDayOfWeek } from './timezone.js';
+import { addDaysInZone, localDateKey, zonedDayOfWeek } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * Handing Hugo work from the chat (lib/hugoTasks). The words reach a task
@@ -142,7 +143,7 @@ async function coverTurn(user: SessionUser, t: string, lang: HugoLang, now: Date
     take: 10,
     select: { id: true, startsAt: true, locationRel: { select: { timezone: true } } },
   });
-  const tz = shifts[0]?.locationRel?.timezone ?? user.timezone ?? DEFAULT_TIMEZONE;
+  const tz = shifts[0]?.locationRel?.timezone ?? user.timezone ?? companyWorkweek().timezone;
   const day = dayAsked(t, tz, now);
   const picked = day ? shifts.filter((s) => localDateKey(s.startsAt, s.locationRel?.timezone ?? tz) === day) : [];
   const candidates = (picked.length ? picked : shifts).slice(0, 3);
@@ -163,7 +164,7 @@ async function tellMeWhenTurn(user: SessionUser, t: string, lang: HugoLang, now:
 }
 
 async function chaseTurn(user: SessionUser, t: string, lang: HugoLang, now: Date): Promise<TaskTurn> {
-  const tz = user.timezone ?? DEFAULT_TIMEZONE;
+  const tz = user.timezone ?? companyWorkweek().timezone;
   const date = dayAsked(t, tz, now) ?? undefined;
   const o = await offer(user, { kind: 'CHASE_CONFIRMATIONS', ...(date ? { date } : {}) }, now);
   return { intent: 'TASK_CHASE', reply: say(o ? WORDS.offerChase : WORDS.nothingToChase, lang), offers: o ? [o] : [] };

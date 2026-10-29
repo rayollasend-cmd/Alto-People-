@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { z } from 'zod';
 import {
@@ -56,12 +57,8 @@ const Id = z.string().uuid();
 const DateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const slug = (s: string) => s.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
-const csvCell = (v: string | number | null | undefined) => {
-  const s = v === null || v === undefined ? '' : String(v);
-  // A leading =, +, -, @ is a formula to a spreadsheet: neutralise it.
-  const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
-  return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-};
+// The shared escaper (@alto-people/shared): formula guard that leaves numbers numeric.
+const csvCell = (v: string | number | null | undefined) => sharedCsvCell(v);
 const csv = (rows: Array<Array<string | number | null | undefined>>) => rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
 
 programsRouter.get('/', VIEW, async (req, res, next) => {

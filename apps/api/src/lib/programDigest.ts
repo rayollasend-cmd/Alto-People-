@@ -11,13 +11,13 @@ import type { PrismaClient, Role } from '@prisma/client';
 import { tenantJob } from './tenantJobs.js';
 import { PROGRAM_TYPE_LABELS, ROLE_CAPABILITIES, type ProgramAlert } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
-import { startOfWeekUTC } from './timeAnomalies.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { startOfWeekUTC, companyWorkweek } from './timeAnomalies.js';
 import { notifyUser } from './notify.js';
 import { currentAlerts } from './programs.js';
 import { emitProgramAlert } from './webhookEvents.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { fmtDay } from './humanDates.js';
+import { logger } from './logger.js';
 
 export const PROGRAM_DIGEST_CATEGORY = 'program_digest';
 const SEND_AFTER_HOUR = 8;
@@ -62,7 +62,7 @@ export function programDigestBody(alerts: ProgramAlert[]): string {
 }
 
 export async function runProgramDigestSweep(prisma: PrismaClient = defaultPrisma, now: Date = new Date()): Promise<ProgramDigestResult> {
-  const { weekday, hour } = localParts(now, DEFAULT_TIMEZONE);
+  const { weekday, hour } = localParts(now, companyWorkweek().timezone);
   if (weekday !== 'Mon') return { sent: 0, skipped: 'not_monday' };
   if (hour < SEND_AFTER_HOUR) return { sent: 0, skipped: 'too_early' };
 
@@ -104,7 +104,7 @@ export function startProgramDigestCron(): void {
     void tenantJob('programDigest', runProgramDigestSweep, { module: 'programs' })().catch((err) => console.error('[alto-people/api] program digest sweep failed:', err));
   }, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(`[alto-people/api] program digest cron armed (every ${SWEEP_SECONDS}s, sends Mondays after ${SEND_AFTER_HOUR}:00 ${DEFAULT_TIMEZONE})`);
+  logger.info(`program digest cron armed (every ${SWEEP_SECONDS}s, sends Mondays after ${SEND_AFTER_HOUR}:00 company time)`);
 }
 
 export function stopProgramDigestCron(): void {

@@ -16,5 +16,6 @@ export function scopeParams(params: URLSearchParams, isPortal: boolean): URLSear
 /** YYYY-MM-DD ± days, calendar-safe. */
 export function shiftDays(ymd: string, days: number): string {
   const [y, m, d] = ymd.split('-').map(Number);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on a date key, never an instant.
   return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
 }

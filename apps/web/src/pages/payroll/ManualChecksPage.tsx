@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, ymdLocal } from '@/lib/format';
 import {
   getManualChecks,
   recordManualCheck,
@@ -38,7 +38,7 @@ import { useUrlParam } from '@/lib/useUrlState';
 type Tab = 'checks' | 'sick';
 const TABS: readonly Tab[] = ['checks', 'sick'];
 const r2 = (n: number) => Math.round(n * 100) / 100;
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => ymdLocal();
 
 export function ManualChecksPage() {
   const term = useTerm();

@@ -34,6 +34,13 @@ import { ErrorBanner } from './ErrorBanner';
  *               "We couldn't reach the server." + Retry.
  *   - any other 4xx (a rule the request broke) — the API's sentence, which
  *     is written for people, + Retry.
+ *
+ * A section that is only a part of the page (a tile row, a side panel) can
+ * pass `access="hide"`: a refusal then renders nothing, so the person reads
+ * the page they may see instead of a warning about the part they may not.
+ * Better still, skip the read: `enabled: useReadable(cap)` (lib/useReadable).
+ * A capability string ("view:org") is never rendered — lib/api's ApiError
+ * replaces the API's "Missing capability: …" with plain words.
  */
 export type QueryErrorKind = 'access' | 'notFound' | 'server' | 'offline' | 'rule';
 
@@ -76,15 +83,19 @@ export function QueryError({
   what,
   query,
   className,
+  access = 'explain',
 }: {
   what: string;
   query: { error: unknown; refetch: () => unknown; isFetching?: boolean };
   className?: string;
+  /** On a refusal: say so (default), or render nothing — for a part of a page, not the page. */
+  access?: 'explain' | 'hide';
 }) {
   const { t } = useI18n();
   const askKey = useAccessAskKey();
   const { error } = query;
   const kind = queryErrorKind(error);
+  if (kind === 'access' && access === 'hide') return null;
   const retry = (
     <Button size="xs" variant="secondary" loading={query.isFetching} onClick={() => query.refetch()}>
       {t('common.retry')}

@@ -5,11 +5,11 @@ import {
   ComposedChart,
   Line,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip as ChartTooltip,
   XAxis,
   YAxis,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE } from '@/components/ui/charts';
 
 /** The week-by-week standards drawing — fetched with the chart (lazyPlot), the only part that needs recharts. */

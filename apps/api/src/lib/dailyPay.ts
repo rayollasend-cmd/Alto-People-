@@ -10,6 +10,7 @@ import { payableMs } from './payroll.js';
 import type { AggregatorResult, ProjectedItem } from './payrollAggregator.js';
 import { computePaycheckTaxes, stateAwaitingReview } from './payrollTax.js';
 import { computeYtdWages } from './payrollYtd.js';
+import { runFetchRange, runPunchFilter } from './payrollRunCut.js';
 import { tenantJob } from './tenantJobs.js';
 import { booksAfterPayrollRun } from './books/posting/hooks.js';
 import { fmtDay } from './humanDates.js';
@@ -44,6 +45,7 @@ import { fmtDay } from './humanDates.js';
 type Db = PrismaClient | Prisma.TransactionClient;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column (stored at UTC midnight) or a UTC-midnight anchor.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const dayStart = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 
@@ -594,17 +596,25 @@ export async function reconcileDailySettlements(
   if (input.persist && input.runId) {
     await tx.dailyPaidTimeEntry.updateMany({ where: { reconciledRunId: input.runId }, data: { reconciledRunId: null } });
   }
-  const links = await tx.dailyPaidTimeEntry.findMany({
-    where: {
-      associateId: { in: associateIds },
-      OR: [{ reconciledRunId: null }, ...(input.runId ? [{ reconciledRunId: input.runId }] : [])],
-      timeEntry: {
-        clockInAt: { gte: input.periodStart, lt: input.periodEndExclusive },
-        ...(input.clientId ? { clientId: input.clientId } : {}),
+  // Exactly the punches the run paid (deep audit CODE-1): the projection's
+  // own cut — the site's day, the schedule's days — never UTC midnights.
+  const keep = runPunchFilter(projection.cut);
+  const links = (
+    await tx.dailyPaidTimeEntry.findMany({
+      where: {
+        associateId: { in: associateIds },
+        OR: [{ reconciledRunId: null }, ...(input.runId ? [{ reconciledRunId: input.runId }] : [])],
+        timeEntry: {
+          clockInAt: runFetchRange(projection.cut),
+          ...(input.clientId ? { clientId: input.clientId } : {}),
+        },
       },
-    },
-    include: { payrollItem: { select: { id: true, status: true, payrollRunId: true, payrollRun: { select: { status: true } } } } },
-  });
+      include: {
+        payrollItem: { select: { id: true, status: true, payrollRunId: true, payrollRun: { select: { status: true } } } },
+        timeEntry: { select: { associateId: true, clockInAt: true, location: { select: { timezone: true } } } },
+      },
+    })
+  ).filter((l) => keep(l.timeEntry));
   if (links.length === 0) return { reconciled: 0, shortfalls };
 
   // Counted: paid, or sent and in flight. Anything else never reached the

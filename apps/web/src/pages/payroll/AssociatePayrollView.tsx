@@ -27,6 +27,8 @@ import {
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTz, fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
+import { MyTaxDocsList } from '@/pages/me/MyTaxDocs';
+import { useMinWidth } from '@/lib/useViewport';
 import { enterStagger } from '@/lib/motion';
 import { statusTone } from '@/lib/status';
 import { useTenant } from '@/lib/auth';
@@ -48,6 +50,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Badge } from '@/components/ui/Badge';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
@@ -59,7 +62,6 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
-  FileText,
   HelpCircle,
   Settings,
   Wallet,
@@ -88,6 +90,7 @@ const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   PREMIUM: 'pay.kind.PREMIUM',
   DAILY_SETTLED: 'pay.kind.DAILY_SETTLED',
   IMPUTED_INCOME: 'pay.kind.IMPUTED_INCOME',
+  BACK_PAY: 'pay.kind.BACK_PAY',
 };
 
 // Labels stay i18n keys (this page is translated); tones come from the
@@ -132,11 +135,8 @@ export function AssociatePayrollView() {
   // undefined → still loading (skeleton); null (expected denial) → empty state.
   const items: PayrollItem[] | null =
     payQuery.data === undefined ? null : (payQuery.data?.items ?? []);
-  const error = payQuery.error
-    ? payQuery.error instanceof ApiError
-      ? payQuery.error.message
-      : t('pay.loadFailed')
-    : null;
+  // The failure decides the words (QueryError) — never "Internal error" (ASSOC-25).
+  const error = payQuery.isError;
 
   // The newest stub opens on its own; /payroll?item=<id> (the dashboard's
   // pay tile, the paystub email) opens that one instead and scrolls to it.
@@ -207,18 +207,7 @@ export function AssociatePayrollView() {
 
       <TaxAndPaySettings />
 
-      {error && (
-        <ErrorBanner
-          className="mb-4"
-          action={
-            <Button size="sm" variant="secondary" onClick={() => void payQuery.refetch()}>
-              {t('common.retry')}
-            </Button>
-          }
-        >
-          {error}
-        </ErrorBanner>
-      )}
+      {error && <QueryError className="mb-4" what={t('pay.whatPaychecks')} query={payQuery} />}
       {!items && !error && <SkeletonRows count={3} rowHeight="h-32" />}
       {items && items.length === 0 && (
         <EmptyState
@@ -468,14 +457,8 @@ function TaxAndPaySettings() {
               <PayoutMethodCard />
             </div>
           </div>
-          <Link
-            to="/me?tab=tax-docs"
-            className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy px-3 py-2.5 text-xs text-silver hover:text-gold coarse:min-h-11"
-          >
-            <FileText className="h-4 w-4 shrink-0 text-gold" />
-            <span className="font-medium text-white">{t('pay.taxDocs')}</span>
-            <span className="ml-auto text-silver/70">{t('pay.taxDocsHint')}</span>
-          </Link>
+          {/* Their tax forms here, in Pay — not a jump to My profile (ASSOC-30). */}
+          <MyTaxDocsList />
         </div>
       )}
     </div>
@@ -847,7 +830,7 @@ function PaystubGroup({
       open={defaultOpen}
       className="rounded-lg border border-navy-secondary bg-navy/40 [&[open]>summary>svg.chev]:rotate-90"
     >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-navy-secondary/40">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 coarse:min-h-11 text-xs hover:bg-navy-secondary/40">
         <ChevronRight className="chev h-4 w-4 text-silver/70 transition-transform" />
         <span className="font-medium text-white">{heading}</span>
         <span className="ml-auto text-silver/70">
@@ -1004,6 +987,7 @@ export function PaystubCard({
           <MoneySplit item={item} />
           <Section title={t('pay.earnings')}>
             <PaystubTable
+              label={t('pay.earnings')}
               headers={['', t('pay.colHours'), t('pay.colRate'), t('pay.colCurrent'), t('pay.colYtd')]}
               rows={(item.earnings.length > 0
                 ? item.earnings
@@ -1022,7 +1006,7 @@ export function PaystubCard({
                 key: e.id,
                 cells: [
                   t(KIND_KEY[e.kind]),
-                  e.hours == null ? '—' : e.hours.toFixed(2),
+                  e.hours == null ? '—' : fmtHours(e.hours),
                   e.rate == null ? '—' : fmtMoney(e.rate),
                   fmtMoney(e.amount),
                   fmtMoney(ytd.byKind[e.kind] ?? e.amount),
@@ -1034,6 +1018,7 @@ export function PaystubCard({
 
           <Section title={t('pay.deductions')}>
             <PaystubTable
+              label={t('pay.deductions')}
               headers={['', '', '', t('pay.colCurrent'), t('pay.colYtd')]}
               rows={[
                 {
@@ -1048,16 +1033,22 @@ export function PaystubCard({
                   key: 'medicare',
                   cells: [t('pay.medicare'), '', '', `−${fmtMoney(item.medicare)}`, `−${fmtMoney(ytd.medicare)}`],
                 },
-                {
-                  key: 'sit',
-                  cells: [
-                    `${t('pay.stateIncomeTax')}${item.taxState ? ` (${item.taxState})` : ''}`,
-                    '',
-                    '',
-                    `−${fmtMoney(item.stateWithholding)}`,
-                    `−${fmtMoney(ytd.stateWithholding)}`,
-                  ],
-                },
+                // A state with no income tax (FL, TX…) is no line at all —
+                // "State income tax (FL) −$0.00" read like a charge (ASSOC-30).
+                ...(item.stateWithholding > 0.004 || ytd.stateWithholding > 0.004
+                  ? [
+                      {
+                        key: 'sit',
+                        cells: [
+                          `${t('pay.stateIncomeTax')}${item.taxState ? ` (${item.taxState})` : ''}`,
+                          '',
+                          '',
+                          `−${fmtMoney(item.stateWithholding)}`,
+                          `−${fmtMoney(ytd.stateWithholding)}`,
+                        ],
+                      },
+                    ]
+                  : []),
                 ...programTaxes.map((p) => ({
                   key: `pgm-${p.code}`,
                   cells: [p.label, '', '', `−${fmtMoney(p.amount)}`, `−${fmtMoney(ytd.stateProgramTaxes?.[p.code] ?? p.amount)}`],
@@ -1150,6 +1141,7 @@ export function PaystubCard({
 
           <Section title={t('pay.employerContrib')}>
             <PaystubTable
+              label={t('pay.employerContrib')}
               headers={['', '', '', t('pay.colCurrent'), t('pay.colYtd')]}
               rows={[
                 {
@@ -1195,11 +1187,8 @@ export function PaystubCard({
             </div>
           </div>
 
-          {item.disbursementRef && (
-            <div className="text-xs text-silver/70">
-              {t('pay.disbursementRef', { ref: item.disbursementRef })}
-            </div>
-          )}
+          {/* No "Disbursement ref: ACH-20261016" on a worker's stub — bank
+              jargon (ASSOC-30). Payroll finds the payment from the check. */}
           {item.failureReason && (
             <div className="text-xs text-alert">{item.failureReason}</div>
           )}
@@ -1345,28 +1334,74 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function PaystubTable({
+  label,
   headers,
   rows,
   footer,
 }: {
+  /** The section's name — the table's caption and its region's label. */
+  label: string;
   headers: string[];
   rows: Array<{ key: string; cells: string[] }>;
   footer?: string[];
 }) {
+  const ytdHead = headers[4] ?? '';
+  // One layout mounted, by width (lib/useViewport — the house pattern for
+  // phone-vs-desk variants), so screen readers and tests meet one copy.
+  const wide = useMinWidth(640);
+  // On a phone each line is its own row: the label (with hours × rate under
+  // it), the amount, and YTD stacked under the amount. Five columns in a
+  // 314px box clipped YTD to "$2,151.0(" behind an invisible scroll (ASSOC-16).
+  const line = (cells: string[], strong = false) => {
+    const [name, hours, rate, current, ytd] = cells;
+    const sub = hours && hours !== '—' && rate && rate !== '—' ? `${hours} × ${rate}` : '';
+    return (
+      <>
+        <div className="min-w-0">
+          <div className={cn('text-silver', strong && 'font-medium text-silver/80')}>{name}</div>
+          {sub && <div className="text-2xs tabular-nums text-silver/70">{sub}</div>}
+        </div>
+        <div className="shrink-0 text-right">
+          <div className={cn('tabular-nums text-white', strong && 'font-medium')}>{current}</div>
+          {ytd && (
+            <div className="text-2xs tabular-nums text-silver/70">
+              {ytdHead} {ytd}
+            </div>
+          )}
+        </div>
+      </>
+    );
+  };
+  if (!wide) {
+    return (
+      <ul aria-label={label}>
+        {rows.map((r) => (
+          <li key={r.key} className="flex items-start justify-between gap-3 border-t border-navy-secondary/60 py-2 first:border-t-0">
+            {line(r.cells)}
+          </li>
+        ))}
+        {footer && (
+          <li className="flex items-start justify-between gap-3 border-t-2 border-silver/20 py-2">{line(footer, true)}</li>
+        )}
+      </ul>
+    );
+  }
   return (
-    // Wrapped in overflow-x-auto so the earnings/deductions/taxes
-    // breakdown can scroll horizontally on narrow phones instead of
-    // squishing the tabular-num columns into illegible 2-3 char cells.
-    <div className="-mx-2 overflow-x-auto sm:mx-0">
+    <>
+      {/* From sm the five columns fit; the region is focusable and named
+          in case a narrow window still scrolls it (axe
+          scrollable-region-focusable). */}
+      <div className="overflow-x-auto" role="region" aria-label={label} tabIndex={0}>
       {/* 13px, not 12 — these cells carry the associate's pay math, the
-          most load-bearing numbers in the app, read on phones at arm's
-          length. Still fits the 5-col grid at 320px. */}
-      <table className="w-full min-w-[20rem] text-xs">
+          most load-bearing numbers in the app. */}
+      <table className="w-full text-xs">
+      <caption className="sr-only">{label}</caption>
       <thead>
         <tr className="text-silver/70">
           {headers.map((h, i) => (
             <th
               key={i}
+              scope="col"
               className={cn('py-1 font-normal text-xs2 uppercase tracking-widest', i === 0 ? 'text-left' : 'text-right')}
             >
               {h}
@@ -1406,7 +1441,8 @@ function PaystubTable({
         </tfoot>
       )}
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 

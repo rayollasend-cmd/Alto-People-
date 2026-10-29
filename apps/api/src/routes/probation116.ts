@@ -13,6 +13,7 @@ import {
   probationAssociateTemplate,
   probationManagerTemplate,
 } from '../lib/emailTemplates.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 116 — Probation period tracking.
@@ -199,8 +200,8 @@ probation116Router.get('/probations', VIEW, async (req, res) => {
       associateName: `${p.associate.firstName} ${p.associate.lastName}`,
       associateEmail: p.associate.email,
       currentTitle: p.associate.jobProfile?.title ?? null,
-      startDate: p.startDate.toISOString().slice(0, 10),
-      endDate: p.endDate.toISOString().slice(0, 10),
+      startDate: dateColumnKey(p.startDate),
+      endDate: dateColumnKey(p.endDate),
       status: p.status,
       decision: p.decision,
       decidedAt: p.decidedAt?.toISOString() ?? null,
@@ -252,7 +253,7 @@ probation116Router.get('/probations/ending-soon', VIEW, async (req, res) => {
         managerName: p.associate.manager
           ? `${p.associate.manager.firstName} ${p.associate.manager.lastName}`
           : null,
-        endDate: p.endDate.toISOString().slice(0, 10),
+        endDate: dateColumnKey(p.endDate),
         daysUntil,
         overdue: daysUntil < 0,
       };

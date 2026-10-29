@@ -15,8 +15,8 @@ import {
 import { prisma as defaultPrisma } from '../../db.js';
 import { HttpError } from '../../middleware/error.js';
 import { createPlan, defaultDemandFor, seasonWeeks } from '../seasonPlanner.js';
-import { dateKeyInZone, startOfWeekForSite } from '../timeAnomalies.js';
-import { DEFAULT_TIMEZONE } from '../timezone.js';
+import { companyWorkweek, dateKeyInZone, orgDateKey, startOfWeekForSite } from '../timeAnomalies.js';
+import { dateColumnKey } from '../timezone.js';
 import { ALTO_TENANT_ID, currentTenantId } from '../tenant.js';
 import { addWeeks, backtest, DEFAULT_WEIGHTS, forecastSite, weeksBetween, type ForecastPoint, type SignalRow, type WeekSeries, type Weights } from './model.js';
 
@@ -32,7 +32,8 @@ type Db = PrismaClient;
 const HISTORY_WEEKS = 60;
 const DAY_MS = 86_400_000;
 const atUtc = (key: string) => new Date(`${key}T00:00:00.000Z`);
-const keyOf = (d: Date) => d.toISOString().slice(0, 10);
+/** A date column's YYYY-MM-DD (every week start here is one). */
+const keyOf = dateColumnKey;
 
 interface SiteRow {
   id: string;
@@ -63,7 +64,7 @@ export async function verifiedHoursBySite(
   to: Date,
 ): Promise<Map<string, Map<string, number>>> {
   const out = new Map<string, Map<string, number>>();
-  const tzOf = new Map(sites.map((s) => [s.id, s.timezone ?? DEFAULT_TIMEZONE]));
+  const tzOf = new Map(sites.map((s) => [s.id, s.timezone ?? companyWorkweek().timezone]));
   for (const s of sites) out.set(s.id, new Map());
   if (!sites.length) return out;
   const rows = await db.timeEntry.findMany({
@@ -77,7 +78,7 @@ export async function verifiedHoursBySite(
   });
   for (const r of rows) {
     if (!r.locationId || !r.clockOutAt) continue;
-    const tz = tzOf.get(r.locationId) ?? DEFAULT_TIMEZONE;
+    const tz = tzOf.get(r.locationId) ?? companyWorkweek().timezone;
     const week = dateKeyInZone(startOfWeekForSite(r.clockInAt, tz), tz);
     const hours = Math.max(0, (r.clockOutAt.getTime() - r.clockInAt.getTime()) / 3_600_000);
     const series = out.get(r.locationId)!;
@@ -85,7 +86,7 @@ export async function verifiedHoursBySite(
   }
   // A week inside the covered range with no entry is a true zero, not a gap.
   for (const s of sites) {
-    const tz = s.timezone ?? DEFAULT_TIMEZONE;
+    const tz = s.timezone ?? companyWorkweek().timezone;
     const series = out.get(s.id)!;
     const first = dateKeyInZone(startOfWeekForSite(from, tz), tz);
     const last = dateKeyInZone(startOfWeekForSite(new Date(to.getTime() - DAY_MS), tz), tz);
@@ -96,7 +97,7 @@ export async function verifiedHoursBySite(
 
 /** The org week (site-local start day) that contains `now` for a site. */
 export function anchorWeekFor(now: Date, timezone: string | null): string {
-  const tz = timezone ?? DEFAULT_TIMEZONE;
+  const tz = timezone ?? companyWorkweek().timezone;
   return dateKeyInZone(startOfWeekForSite(now, tz), tz);
 }
 
@@ -327,7 +328,7 @@ async function siteSummaries(
       locationId: s.id,
       siteName: s.name,
       clientName: s.client?.name ?? null,
-      timezone: s.timezone ?? DEFAULT_TIMEZONE,
+      timezone: s.timezone ?? companyWorkweek().timezone,
       next4WeeksHours: Math.round(next4 * 10) / 10,
       mapePct: m && m.n ? Math.round((m.sum / m.n) * 10) / 10 : null,
       historyWeeks,
@@ -425,7 +426,7 @@ export async function planFromForecast(db: Db, input: ForecastPlanInput, actorUs
     });
     return { locationId: s.id, bedsAvailable: 0, vanSeatsPerRun: 14, runsPerShift: 1, routeMinutes: 45, demand, taskDemand: [] };
   });
-  const note = `Demand from the forecast run of ${keyOf(run.generatedAt)} (${run.method}).${beyondHorizon ? ` ${beyondHorizon} site-week${beyondHorizon === 1 ? '' : 's'} past the 26-week horizon repeat the last forecast week.` : ''}`;
+  const note = `Demand from the forecast run of ${orgDateKey(run.generatedAt)} (${run.method}).${beyondHorizon ? ` ${beyondHorizon} site-week${beyondHorizon === 1 ? '' : 's'} past the 26-week horizon repeat the last forecast week.` : ''}`;
   return createPlan(
     db,
     {

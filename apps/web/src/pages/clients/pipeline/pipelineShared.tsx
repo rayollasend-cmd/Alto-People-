@@ -59,6 +59,7 @@ export function startsWithin90(p: ProspectRow, today: string): boolean {
   if (p.stage === 'LOST' || !p.expectedStartDate) return false;
   const horizon = new Date(`${today}T12:00:00Z`);
   horizon.setUTCDate(horizon.getUTCDate() + 90);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: noon UTC of `today`'s date key, plus 90 calendar days.
   return p.expectedStartDate >= today && p.expectedStartDate <= horizon.toISOString().slice(0, 10);
 }
 

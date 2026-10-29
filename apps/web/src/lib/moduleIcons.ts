@@ -84,6 +84,8 @@ import {
   Gavel as DisciplineIcon,
   FileBadge as MyNoticesIcon,
   GraduationCap as LearningIcon,
+  // The course catalog (People › Courses & training): certifications earned.
+  Trophy as CourseCatalogIcon,
   HandHeart as MentorshipIcon,
   Heart as VolunteerIcon,
   History as PortalHistoryIcon,
@@ -263,6 +265,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'mentorship': MentorshipIcon,
   'expirations': ExpirationsIcon,
   'learning-paths': LearningPathsIcon,
+  'learning-admin': CourseCatalogIcon,
   'succession': SuccessionIcon,
   'probation': ProbationIcon,
   'holidays': HolidayIcon,

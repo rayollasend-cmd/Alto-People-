@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Check, ChevronDown, Hand, PlayCircle, X } from '@/components/ui/icons';
 import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type AssignmentReason, type WorkTaskEventKind, type RankedCandidate, type WorkTaskAssignmentView, type WorkTaskDetailView } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { fmtDateTime, fmtMoney } from '@/lib/format';
 import { getTask, handOffTask, autoAssignTask, recordTaskEvent } from '@/lib/tasksApi';
 import { Badge, Button, Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle, EmptyState, Skeleton } from '@/components/ui';
@@ -19,6 +20,18 @@ import { HolderIcon } from './TasksBoard';
 
 const CAP_LABEL = new Map<string, string>(WORKER_CAPABILITIES.map((c) => [c.code, c.label]));
 const money = (cents: number) => fmtMoney(cents / 100);
+
+/**
+ * A person's task cost is their pay × the minutes (FLOOR-6): only a role
+ * that may see pay reads it. The API sends 0 for a person to everyone else;
+ * the drawer shows no figure at all rather than a misleading $0.00. A
+ * robot's or agent's cost is policy, not pay, and stays.
+ */
+function useCostShown(): (workerType: string) => boolean {
+  const { can } = useAuth();
+  const seesPay = can('view:comp') || can('process:payroll');
+  return (workerType) => seesPay || workerType !== 'PERSON';
+}
 
 const EVENT_KIND_LABEL: Record<WorkTaskEventKind, string> = {
   ASSIGNED: 'Assigned',
@@ -56,6 +69,7 @@ function ReasonList({ reasons }: { reasons: AssignmentReason[] }) {
 
 function Candidate({ c, chosen }: { c: RankedCandidate; chosen: boolean }) {
   const [open, setOpen] = useState(false);
+  const costShown = useCostShown();
   return (
     <li className={cn('rounded-md border px-3 py-2', chosen ? 'border-accent/60 bg-accent/[0.05]' : c.eligible ? 'border-line' : 'border-line opacity-80')}>
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex w-full items-center gap-2 text-left">
@@ -66,7 +80,7 @@ function Candidate({ c, chosen }: { c: RankedCandidate; chosen: boolean }) {
             Not eligible
           </Badge>
         )}
-        <span className="text-xs2 tabular-nums text-ink-muted">{money(c.costCents)}</span>
+        {costShown(c.workerType) && <span className="text-xs2 tabular-nums text-ink-muted">{money(c.costCents)}</span>}
         <span className="w-8 text-right text-sm font-semibold tabular-nums text-ink">{c.score}</span>
         <ChevronDown className={cn('h-4 w-4 text-ink-muted transition-transform', open && 'rotate-180')} aria-hidden="true" />
       </button>
@@ -80,6 +94,7 @@ function Candidate({ c, chosen }: { c: RankedCandidate; chosen: boolean }) {
 }
 
 function AssignmentCard({ a, title }: { a: WorkTaskAssignmentView; title: string }) {
+  const costShown = useCostShown();
   return (
     <section aria-label={title} className="rounded-lg border border-line bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -88,7 +103,8 @@ function AssignmentCard({ a, title }: { a: WorkTaskAssignmentView; title: string
           {a.workerName}
         </span>
         <span className="text-xs2 text-ink-muted">
-          {a.decidedBy === 'ENGINE' ? 'Assigned automatically' : a.decidedBy === 'HANDOFF' ? 'Handed off' : 'Chosen by a person'} · score {a.score} · {money(a.costCents)}
+          {a.decidedBy === 'ENGINE' ? 'Assigned automatically' : a.decidedBy === 'HANDOFF' ? 'Handed off' : 'Chosen by a person'} · score {a.score}
+          {costShown(a.workerType) ? ` · ${money(a.costCents)}` : ''}
         </span>
       </div>
       <div className="mt-3">
@@ -125,16 +141,20 @@ export function TaskDrawer({ taskId, onClose, onChanged, canManage }: { taskId: 
     <Drawer open onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
       <DrawerHeader>
         <DrawerTitle>{t ? t.type : 'Task'}</DrawerTitle>
-        <DrawerDescription>
-          {t ? (
-            <>
-              {t.locationName}
-              {t.area ? ` · ${t.area}` : ''} · {CAP_LABEL.get(t.capability) ?? t.capability} · {WORK_TASK_RISK_LABELS[t.risk]} · {t.estimatedMinutes} min
-              {t.reference ? ` · ${t.reference}` : ''}
-            </>
-          ) : (
-            <Skeleton className="h-4 w-64" />
-          )}
+        {/* A <div>, not the description's own <p>: the loading Skeleton is a
+            <div>, and a <div> inside a <p> is invalid markup (FLOOR-28). */}
+        <DrawerDescription asChild>
+          <div>
+            {t ? (
+              <>
+                {t.locationName}
+                {t.area ? ` · ${t.area}` : ''} · {CAP_LABEL.get(t.capability) ?? t.capability} · {WORK_TASK_RISK_LABELS[t.risk]} · {t.estimatedMinutes} min
+                {t.reference ? ` · ${t.reference}` : ''}
+              </>
+            ) : (
+              <Skeleton className="h-4 w-64" />
+            )}
+          </div>
         </DrawerDescription>
       </DrawerHeader>
       <DrawerBody>

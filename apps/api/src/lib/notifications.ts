@@ -8,6 +8,7 @@ import { SmsNotConfiguredError, SmsOptedOutError, sendSms } from './sms.js';
 import { pushConfigured, sendPushToUser } from './webPush.js';
 import { apnsConfigured, fcmConfigured } from './nativePush.js';
 import { withIdentityScope } from './tenant.js';
+import { logger } from './logger.js';
 
 /**
  * Thrown by send() for a PUSH row when no push transport (VAPID, APNs or
@@ -58,6 +59,27 @@ export const STUB_EMAIL_REF_PREFIX = 'STUB-EMAIL-';
 
 export function isLoggedOnlyEmail(row: { channel: string; externalRef: string | null }): boolean {
   return row.channel === 'EMAIL' && !!row.externalRef?.startsWith(STUB_EMAIL_REF_PREFIX);
+}
+
+/** An email the stub did not send (no provider connected), as it would have left. */
+export interface StubbedEmail {
+  to: string;
+  subject: string | null;
+  body: string;
+  attachments: string[];
+}
+const stubbedEmailListeners = new Set<(e: StubbedEmail) => void>();
+
+/**
+ * Hear every email the stub does not send — for tests that check what an
+ * email would have said. The body never reaches the log. Returns the
+ * unsubscribe.
+ */
+export function onStubbedEmail(fn: (e: StubbedEmail) => void): () => void {
+  stubbedEmailListeners.add(fn);
+  return () => {
+    stubbedEmailListeners.delete(fn);
+  };
 }
 
 /**
@@ -247,7 +269,7 @@ export interface SendInput {
    * fallback and what spam classifiers read.
    */
   html?: string;
-  /** EMAIL-only. Resend supports attachments; in stub mode we log size + name. */
+  /** EMAIL-only. Resend supports attachments; in stub mode only their count is logged. */
   attachments?: SendAttachment[];
   /**
    * EMAIL-only. When true, the message goes out with RFC 8058 one-click
@@ -432,20 +454,30 @@ async function sendEmail(input: SendInput): Promise<SendResult> {
     throw new EmailSuppressedError(to, suppressed);
   }
   if (!emailConfigured()) {
-    // Stubbed mode — print to the API console so the developer can copy
-    // the magic link from there. Never log raw secrets in production.
-    const attachmentsLine =
-      input.attachments && input.attachments.length > 0
-        ? `\n  Attachments: ${input.attachments
-            .map((a) => `${a.filename} (${a.contentType}, ${a.content.byteLength} bytes)`)
-            .join(', ')}`
-        : '';
-    console.log(
-      `\n[alto-people/api] STUBBED EMAIL → ${to}\n  Subject: ${input.subject ?? '(none)'}${attachmentsLine}\n  Body:\n${input.body
-        .split('\n')
-        .map((l) => '    ' + l)
-        .join('\n')}\n  (Set RESEND_API_KEY + RESEND_FROM in apps/api/.env to send for real.)\n`
+    // No provider connected: the email is NOT sent. Only that fact goes to
+    // the log — never the body: it carries magic links, invite tokens and
+    // one-time codes, and a log is read by more people than an inbox (audit
+    // 2026-10-29 CODE-34). The row is stored with a STUB- reference, which the
+    // Communications log shows as "Not sent — channel not connected"; its
+    // body is there for whoever may read it. Tests hear the message through
+    // onStubbedEmail().
+    logger.info(
+      { to, subject: input.subject ?? null, bodyChars: input.body.length, attachments: input.attachments?.length ?? 0 },
+      'email not sent: no email provider connected (set RESEND_API_KEY and RESEND_FROM to send)',
     );
+    const stubbed: StubbedEmail = {
+      to,
+      subject: input.subject ?? null,
+      body: input.body,
+      attachments: (input.attachments ?? []).map((a) => `${a.filename} (${a.contentType}, ${a.content.byteLength} bytes)`),
+    };
+    for (const fn of stubbedEmailListeners) {
+      try {
+        fn(stubbed);
+      } catch {
+        /* a listener never breaks a send */
+      }
+    }
     return {
       externalRef: `${STUB_EMAIL_REF_PREFIX}${Math.random().toString(36).slice(2, 10)}`,
       providerMessageId: null,

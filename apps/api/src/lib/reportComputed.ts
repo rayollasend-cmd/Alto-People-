@@ -3,7 +3,10 @@ import type { Capability } from '@alto-people/shared';
 import type { SessionUser } from '../types/express.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from './tenant.js';
-import { scopeAssociates, scopeAssociatesIncludingFormer, scopeCandidates, scopeTimeEntries } from './scope.js';
+import { effectiveClientIdFilter, scopeAssociates, scopeAssociatesIncludingFormer, scopeCandidates, scopeTimeEntries } from './scope.js';
+import { activeAssociateIds, placements, type ActiveScope } from './activeDefinition.js';
+import { peopleStandings } from './peopleStatus.js';
+import { isOnTheBooks, type WorkStatus } from '@alto-people/shared';
 import { startOfWeekForSite, startOfWeekUTC } from './timeAnomalies.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { splitByPerson, type HoursEntry } from './laborRules/hours.js';
@@ -12,8 +15,14 @@ import { splitByPerson, type HoursEntry } from './laborRules/hours.js';
  * The report builder's computed columns (HR walk 17, wave 2): the answers a
  * template needs that no single table column holds —
  *
- *   ASSOCIATE.store / client / active   where a person works now (their open
- *                                       placement) — headcount by store
+ *   ASSOCIATE.store / client            where a person is placed (lib/activeDefinition
+ *                                       placements: the open assignment, else an
+ *                                       approved application)
+ *   ASSOCIATE.active / workStatus /     where the person stands by the one rule
+ *     onTheBooks / placed               (lib/peopleStatus, lib/activeDefinition):
+ *                                       Working, On the books, Placed — the
+ *                                       metric dictionary's names (packages/shared
+ *                                       metrics.ts), the numbers every screen shows
  *   PAY_CHANGE                          compensation change records with the
  *                                       amount before and the change
  *   TIME_TO_FILL                        a hire against the posting it filled:
@@ -53,11 +62,69 @@ export interface ComputedEntity {
 /* ----- ASSOCIATE: where a person works now --------------------------------- */
 
 /** ASSOCIATE columns that only the in-memory path can serve. */
-export const ASSOCIATE_COMPUTED_COLUMNS = ['store', 'client', 'active'] as const;
+export const ASSOCIATE_COMPUTED_COLUMNS = ['store', 'client', 'active', 'workStatus', 'onTheBooks', 'placed'] as const;
 
-async function loadAssociates(db: Db, user: SessionUser): Promise<Row[]> {
+/**
+ * Where each person stands, by the one rule, read the way the caller's
+ * other screens read it (LEAD-9 / PEOPLE-23). `active` used to be account
+ * status (not separated, not paused): the "Headcount by store — people
+ * working now" template counted 44 where every other screen said 36.
+ *
+ *   active      Working — lib/activeDefinition: placed, and worked in the
+ *               active window or has a shift ahead
+ *   workStatus  the one status per person (lib/peopleStatus)
+ *   onTheBooks  hired and not separated
+ *   placed      an open assignment, or an approved application with none
+ *   store/client  that placement
+ *
+ * An office caller (company-wide or bound to sites) reads the company's
+ * one reading, as Analytics and the directory do; the rows are still only
+ * the people in their reach. A client-bound caller reads at their client
+ * (their store, when pinned to one): the placement and the work are the
+ * client's own, so no other client's store ever shows, and "working" means
+ * working there — the clamp Analytics' "Working" applies to them.
+ */
+async function peopleColumns(
+  db: Db,
+  user: SessionUser,
+  ids: string[],
+  now: Date,
+): Promise<Map<string, { active: boolean; workStatus: WorkStatus | null; onTheBooks: boolean; placed: boolean; locationId: string | null; clientId: string | null }>> {
+  const out = new Map<string, { active: boolean; workStatus: WorkStatus | null; onTheBooks: boolean; placed: boolean; locationId: string | null; clientId: string | null }>();
+  if (ids.length === 0) return out;
+  const tenantId = tenantIdForWrite();
+  const bounded = effectiveClientIdFilter(user, undefined);
+  if (bounded === null) return out; // bounded with no client on file: nothing (scopeAssociates already fails closed)
+  const pin = user.role === 'CLIENT_PORTAL' && bounded && user.locationId ? user.locationId : null;
+  const where: ActiveScope | null = bounded === undefined ? null : pin ? { tenantId, locationId: pin } : { tenantId, clientId: bounded };
+  // Company-wide: one reading of the tenant (no 50,000-id list); bounded: the caller's own people, at their client.
+  const [standings, placed, activeHere] = await Promise.all([
+    peopleStandings(where ? { tenantId, associateIds: ids } : { tenantId }, now, db),
+    placements(where ?? { tenantId }, db),
+    where ? activeAssociateIds(where, now, db) : Promise.resolve(null),
+  ]);
+  for (const id of ids) {
+    const s = standings.people.get(id);
+    const p = placed.get(id) ?? null;
+    let status: WorkStatus | null = s?.status ?? null;
+    // At a client, "working" is working there: placed there with no work there in the window reads "No recent shifts".
+    if (activeHere && status === 'ACTIVE' && !activeHere.has(id)) status = p ? 'PLACED_NOT_ACTIVE' : 'NOT_PLACED';
+    out.set(id, {
+      active: status === 'ACTIVE',
+      workStatus: status,
+      onTheBooks: status !== null && isOnTheBooks(status),
+      placed: p !== null,
+      locationId: p?.locationId ?? null,
+      clientId: p?.clientId ?? null,
+    });
+  }
+  return out;
+}
+
+async function loadAssociates(db: Db, user: SessionUser, now: Date): Promise<Row[]> {
+  const tenantId = tenantIdForWrite();
   const rows = await db.associate.findMany({
-    where: { AND: [scopeAssociates(user), { tenantId: tenantIdForWrite() }] },
+    where: { AND: [scopeAssociates(user), { tenantId, deletedAt: null }] },
     select: {
       id: true,
       firstName: true,
@@ -68,22 +135,30 @@ async function loadAssociates(db: Db, user: SessionUser): Promise<Row[]> {
       hireDate: true,
       employmentType: true,
       separatedAt: true,
-      deactivatedAt: true,
-      assignments: {
-        where: { endedAt: null },
-        orderBy: { startedAt: 'desc' },
-        take: 1,
-        select: { location: { select: { name: true, client: { select: { name: true } } } } },
-      },
     },
     take: 50_000,
   });
-  return rows.map(({ assignments, deactivatedAt, ...a }) => ({
-    ...a,
-    store: assignments[0]?.location.name ?? null,
-    client: assignments[0]?.location.client?.name ?? null,
-    active: a.separatedAt === null && deactivatedAt === null,
-  }));
+  const standing = await peopleColumns(db, user, rows.map((r) => r.id), now);
+  const siteIds = [...new Set([...standing.values()].map((v) => v.locationId).filter((x): x is string => !!x))];
+  const clientIds = [...new Set([...standing.values()].map((v) => v.clientId).filter((x): x is string => !!x))];
+  const [sites, clients] = await Promise.all([
+    siteIds.length ? db.site.findMany({ where: { tenantId, id: { in: siteIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
+    clientIds.length ? db.client.findMany({ where: { tenantId, id: { in: clientIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
+  ]);
+  const siteName = new Map(sites.map((x) => [x.id, x.name]));
+  const clientName = new Map(clients.map((x) => [x.id, x.name]));
+  return rows.map((a) => {
+    const st = standing.get(a.id);
+    return {
+      ...a,
+      store: st?.locationId ? (siteName.get(st.locationId) ?? null) : null,
+      client: st?.clientId ? (clientName.get(st.clientId) ?? null) : null,
+      active: st?.active ?? false,
+      workStatus: st?.workStatus ?? null,
+      onTheBooks: st?.onTheBooks ?? false,
+      placed: st?.placed ?? false,
+    };
+  });
 }
 
 /* ----- PAY_CHANGE: compensation changes with the amount before -------------- */
@@ -438,7 +513,7 @@ export async function loadComputedRows(
   where: Record<string, unknown>,
   now: Date,
 ): Promise<Row[]> {
-  if (entity === 'ASSOCIATE') return loadAssociates(db, user);
+  if (entity === 'ASSOCIATE') return loadAssociates(db, user, now);
   const def = COMPUTED_ENTITIES[entity];
   if (!def) throw new HttpError(400, 'invalid_entity', 'Unknown report entity.');
   return def.load(db, user, windowFrom(where, def.dateColumn, now, def.defaultDays), now);

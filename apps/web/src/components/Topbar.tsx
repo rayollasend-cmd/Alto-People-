@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, CircleHelp, Globe, IdCard, LogOut, Search, Sparkles, User, WifiOff, X } from '@/components/ui/icons';
 import { useI18n } from '@/lib/i18n';
 import { Link } from 'react-router-dom';
 import { useAuth, useRoleLabel } from '@/lib/auth';
-import { shortStoreName, useStoreScope } from '@/lib/storeScope';
+import { shortStoreName, useStoreScope, useStoreScopeFollowed } from '@/lib/storeScope';
 import { useHeroHidden, usePageBreadcrumbs, usePageTitle, usePageUp } from '@/lib/pageTitle';
 import { useNavLabel } from '@/lib/navTrail';
 import { offlineSessionSavedAt } from '@/lib/offlineSession';
@@ -43,9 +43,50 @@ interface TopbarProps {
 // (their scope is pinned server-side) and on small screens (the per-page
 // pickers still exist there).
 function StoreScopeBar() {
-  const { enabled, clients } = useStoreScope();
+  const { enabled, clients, clientId } = useStoreScope({ shell: true });
+  // Only on pages that follow it (LEAD-16). Between two of them a lazy page
+  // unmounts before the next mounts; the delay keeps the bar from blinking.
+  const followed = useSettled(useStoreScopeFollowed(), 400);
   if (!enabled || clients.length < 2) return null;
+  if (!followed) return clientId ? <StoreScopeNotHere name={clients.find((c) => c.id === clientId)?.name ?? ''} /> : null;
   return <StoreScopeControl />;
+}
+
+/** A value that turns false only after it has stayed false for `ms` (true at once). */
+function useSettled(value: boolean, ms: number): boolean {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    if (value) {
+      setSettled(true);
+      return;
+    }
+    const id = window.setTimeout(() => setSettled(false), ms);
+    return () => window.clearTimeout(id);
+  }, [value, ms]);
+  return settled;
+}
+
+/**
+ * On a page that always covers every client (the executive pages,
+ * Analytics, Reports, a home) with a client picked elsewhere: say so,
+ * instead of a picker the page would ignore.
+ */
+function StoreScopeNotHere({ name }: { name: string }) {
+  const { t } = useI18n();
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="hidden lg:inline-flex h-7 items-center rounded-md border border-navy-secondary px-2.5 text-xs text-silver"
+          data-testid="store-scope-not-here"
+          tabIndex={0}
+        >
+          {t('top.scopeAllHere')}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{t('top.scopeAllHereTip', { name: shortStoreName(name) })}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** The segmented bar holds at most this many clients… */
@@ -56,7 +97,7 @@ const segmentChars = (clients: readonly { name: string }[]) =>
   clients.reduce((n, c) => n + shortStoreName(c.name).length, 0);
 
 function StoreScopeControl() {
-  const { clients, clientId, setClientId } = useStoreScope();
+  const { clients, clientId, setClientId } = useStoreScope({ shell: true });
   const { t } = useI18n();
 
   // One picker. Below 1280px the segmented bar took ~510px of a 1024px
@@ -372,15 +413,14 @@ export function Topbar({ onOpenCommandPalette, onOpenHelp }: TopbarProps) {
                 <Link
                   to="/settings"
                   className="hidden items-center gap-1 rounded-md border border-navy-secondary px-2 py-1 text-2xs uppercase tracking-wider text-silver hover:text-white sm:inline-flex"
-                  aria-label={`Times are shown in ${displayZoneAbbrev()}. Change in settings.`}
+                  aria-label={t('top.zoneAria', { zone: displayZoneAbbrev() })}
                 >
                   <Globe className="h-3 w-3 text-gold" aria-hidden="true" />
                   {displayZoneAbbrev()}
                 </Link>
               </TooltipTrigger>
               <TooltipContent>
-                Times across the app are shown in {displayZoneAbbrev()}, your saved preference —
-                not this device&rsquo;s clock.
+                {t('top.zoneTip', { zone: displayZoneAbbrev() })}
               </TooltipContent>
             </Tooltip>
           )}
@@ -572,10 +612,13 @@ function AssistantButton() {
  * page as the whole company.
  */
 export function StoreScopeStrip() {
-  const { clients, clientId, setClientId } = useStoreScope();
+  const { clients, clientId, setClientId } = useStoreScope({ shell: true });
   const { t } = useI18n();
+  // Only where the page follows the choice (LEAD-16): on a company-wide page
+  // "Viewing Coastal" would describe numbers that are every client's.
+  const followed = useSettled(useStoreScopeFollowed(), 400);
   const chosen = clients.find((c) => c.id === clientId);
-  if (!chosen) return null;
+  if (!chosen || !followed) return null;
   // A slim strip under the top bar (the bar itself has no room on a phone).
   return (
     <div className="lg:hidden flex min-h-8 items-center gap-2 border-b border-gold/30 bg-gold/10 px-4 text-xs text-gold" role="status">

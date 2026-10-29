@@ -1,47 +1,16 @@
-import { Prisma, type W4FilingStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { weeklySplit } from './laborRules/hours.js';
+import { roundCents } from './roundCents.js';
 
-/**
- * PHASE 8 PLACEHOLDER WITHHOLDING.
- *
- * This is a flat-bracket approximation, NOT IRS-compliant. Real federal
- * withholding requires the wage-bracket or percentage-method tables from
- * IRS Pub 15-T plus state/local layers. We isolate the calculation here
- * so a Phase 9+ swap to real tables (or a SaaS like Symmetry) is one file.
- */
+// Federal income tax withholding is lib/payrollTax.ts computeFederalIncomeTax
+// (IRS Pub 15-T Worksheet 1A, percentage method, the W-4's steps), reached
+// through the tax engine (lib/taxEngine). The flat-bracket placeholder that
+// once sat here (computeFederalWithholding, 18/14/16%) was called by no pay
+// path — only its own unit test — and is gone so nothing can reach for it.
 
-const FLAT_BRACKETS: Record<W4FilingStatus, number> = {
-  SINGLE: 0.18,
-  MARRIED_FILING_JOINTLY: 0.14,
-  HEAD_OF_HOUSEHOLD: 0.16,
-};
-
-export interface WithholdingInput {
-  grossPay: number;
-  filingStatus: W4FilingStatus | null;
-  /** Per-paycheck additional withholding from W-4 line 4(c). */
-  extraWithholding?: number;
-}
-
-export function computeFederalWithholding(input: WithholdingInput): number {
-  const status = input.filingStatus ?? 'SINGLE';
-  const rate = FLAT_BRACKETS[status];
-  const base = Math.max(0, input.grossPay * rate);
-  const extra = Math.max(0, input.extraWithholding ?? 0);
-  return round2(base + extra);
-}
-
-export function computeNet(grossPay: number, withholding: number): number {
-  return round2(grossPay - withholding);
-}
-
+/** Dollars to the cent, half away from zero — integer-cent rounding (lib/roundCents; deep audit CODE-27). */
 export function round2(n: number): number {
-  // 1.005 in IEEE 754 is actually 1.00499…, so plain Math.round(n*100)/100
-  // and even toFixed produce 1.00 instead of the expected 1.01. The
-  // Number.EPSILON nudge is the standard JS workaround. For a real ledger
-  // we'd switch to decimal.js, but the dollar values payroll handles here
-  // never exceed safe-integer cents so this is fine.
-  return Math.round((n + Number.EPSILON) * 100) / 100;
+  return roundCents(n);
 }
 
 /** Convert milliseconds → fractional hours, rounded to 2 decimals. */

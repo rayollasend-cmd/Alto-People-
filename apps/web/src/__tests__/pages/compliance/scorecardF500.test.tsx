@@ -303,6 +303,13 @@ describe('<ComplianceScorecard> tiles', () => {
     expect(screen.getByRole('button', { name: /^All/ })).toHaveTextContent('235');
   });
 
+  it('names its population "placed" by the metric dictionary, never "active" (PEOPLE-23)', async () => {
+    renderScorecard();
+    const pop = await screen.findByTestId('scorecard-population');
+    expect(pop).toHaveTextContent('10 placed');
+    expect(pop.getAttribute('title')).toMatch(/placed at a site/i);
+  });
+
   it('shows the case count, not a TRIR of 322.95, on 1,239 hours', async () => {
     renderScorecard();
     expect(await screen.findByText(/2 recordables · rates shown after 20,000 h/)).toBeInTheDocument();
@@ -321,7 +328,8 @@ describe('<ComplianceScorecard> tiles', () => {
   it('says "No course linked" and links to Learning, without the code identifier', async () => {
     renderScorecard();
     expect(await screen.findByText('No course linked')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Link a course in Learning' })).toHaveAttribute('href', '/learning');
+    // The course catalog lives at /learning/catalog now (People › Courses & training, PEOPLE-19).
+    expect(screen.getByRole('link', { name: 'Link a course in Learning' })).toHaveAttribute('href', '/learning/catalog');
     expect(screen.queryByText(/complianceTag/)).not.toBeInTheDocument();
     expect(screen.queryByText('Tag a course')).not.toBeInTheDocument();
   });

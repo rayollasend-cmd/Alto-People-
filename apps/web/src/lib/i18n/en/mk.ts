@@ -109,6 +109,8 @@ export const enMk = {
   'mk.cat.isCert': 'This is an expiring certification (drives compliance alerts)',
   'mk.cat.cancel': 'Cancel',
   'mk.cat.save': 'Save',
+  'mk.pickingUp': 'Asking…',
+  'mk.pickupAlready': 'You already asked for this shift — your manager hasn\'t confirmed it yet.',
 } as const;
 
 registerEnglish(enMk);

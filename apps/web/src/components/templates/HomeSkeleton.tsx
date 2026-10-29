@@ -1,5 +1,6 @@
 import { cn } from '@/lib/cn';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * A page on its way: shown while the role's home chunk loads (Dashboard)
@@ -9,8 +10,9 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * templates in.
  */
 export function HomeSkeleton({ className }: { className?: string }) {
+  const { t } = useI18n();
   return (
-    <div className={cn('space-y-4', className)} aria-label="Loading">
+    <div className={cn('space-y-4', className)} aria-label={t('common.loading')}>
       <Skeleton className="h-8 w-1/3" />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Skeleton className="h-24" />

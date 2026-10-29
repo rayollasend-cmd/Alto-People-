@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import {
   RECRUITING_CHANNELS,
   RECRUITING_CHANNEL_LABELS,
@@ -23,6 +24,7 @@ import { HttpError } from '../middleware/error.js';
 import { activeAssociateIds } from './activeDefinition.js';
 import { currentStoreWindows } from './shiftWindows.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 import { loadRateCards, resolveRate } from './rateCards.js';
 import { policyFor } from './tasks/engine.js';
 import { proposeMix } from './tasks/mix.js';
@@ -52,9 +54,10 @@ import { proposeMix } from './tasks/mix.js';
 type Db = PrismaClient;
 
 const DAY_MS = 86_400_000;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** seasonStart/seasonEnd are @db.Date columns: their UTC date is the day. */
+const ymd = dateColumnKey;
 const atUtc = (s: string) => new Date(`${s}T00:00:00.000Z`);
-const addDays = (s: string, n: number) => ymd(new Date(atUtc(s).getTime() + n * DAY_MS));
+const addDays = addDaysToKey;
 
 const DEFAULT_MIX: ChannelPercent = { LOCAL: 25, J1_NORTH: 35, J1_SOUTH: 15, H2B: 25 };
 const DEFAULT_LEAD: ChannelWeeks = { LOCAL: 3, J1_NORTH: 10, J1_SOUTH: 12, H2B: 20 };
@@ -624,11 +627,8 @@ export async function duplicatePlan(db: Db, id: string, name: string, actorUserI
 
 /** Site × week rows, for the spreadsheet. */
 export function planCsv(plan: SeasonPlanComputed): string {
-  const cell = (v: string | number | null) => {
-    const s = v === null ? '' : String(v);
-    const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
-    return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-  };
+  // The shared escaper (@alto-people/shared): formula guard that leaves numbers numeric.
+  const cell = (v: string | number | null) => sharedCsvCell(v);
   const rows: Array<Array<string | number | null>> = [
     ['Plan', 'Site', 'Client', 'Week', 'Day', 'Evening', 'Overnight', 'Daily on floor', 'Shift slots', 'Associates needed', 'Beds needed', 'Beds available', 'Beds gap', 'Van seats needed', 'Van seats available', 'Van seats gap', 'Scheduled hours', 'Active headcount', 'Short days (forecast)', 'Task minutes', 'Robot tasks', 'Robots needed', 'People from tasks', 'Backup crew', 'Labor cost', 'Robot cost'],
   ];

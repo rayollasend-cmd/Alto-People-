@@ -24,27 +24,27 @@ export function LearningSummary() {
         value={s ? s.lapsed : '—'}
         hint="Training past its expiry — renewal overdue"
         tone={s && s.lapsed > 0 ? 'alert' : 'default'}
-        href="/learning?tab=expiring"
+        href="/learning/catalog?tab=expiring"
       />
       <MetricCard
         label="Expiring in 30 days"
         value={s ? s.expiring30 : '—'}
         hint={s ? `${n(s.expiring14)} within 14 days` : undefined}
         tone={s && s.expiring14 > 0 ? 'warning' : 'default'}
-        href="/learning?tab=expiring"
+        href="/learning/catalog?tab=expiring"
       />
       <MetricCard
         label="Not finished"
         value={s ? s.open : '—'}
         hint={s ? (s.openStale > 0 ? `${n(s.openStale)} assigned 30+ days ago` : 'Assigned or in progress') : undefined}
-        href="/learning?tab=enrollments&status=OPEN"
+        href="/learning/catalog?tab=enrollments&status=OPEN"
       />
       <MetricCard
         label="Completion rate · 30 days"
         value={s && s.completionRate30 !== null ? `${s.completionRate30}%` : '—'}
         hint={s && s.assigned30 > 0 ? `${n(s.completed30)} of ${n(s.assigned30)} assigned in the last 30 days` : undefined}
         nothing={s && s.completionRate30 === null ? 'Nothing assigned in 30 days' : undefined}
-        href="/learning?tab=enrollments"
+        href="/learning/catalog?tab=enrollments"
       />
     </MetricStrip>
   );

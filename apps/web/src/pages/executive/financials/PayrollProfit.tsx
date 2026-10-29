@@ -9,6 +9,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { BookOpen } from '@/components/ui/icons';
 import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { PALETTE, SparseReading, StackedBarChart, TREND_MIN_POINTS } from '@/components/ui/charts';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { fmtExecExact, fmtExecMoney, STATUS_DOT, STATUS_TEXT } from '@/lib/executiveFormat';
 import { fmtDateOnly, fmtDateOnlyRange, fmtMonth } from '@/lib/format';
@@ -86,6 +87,8 @@ export function PayrollCost({ runs }: { runs: Run[] }) {
  */
 export function ProfitCard({ profit }: { profit: ExecFinancials['profit'] }) {
   const { t } = useI18n();
+  // The books' reports and budgets read with view:books (not every executive role holds it).
+  const { can } = useAuth();
   if (!profit) {
     return (
       <Card className="min-w-0">
@@ -97,10 +100,15 @@ export function ProfitCard({ profit }: { profit: ExecFinancials['profit'] }) {
             title={t('execPortal.fin.profit.emptyTitle')}
             description={
               <>
-                {t('execPortal.fin.profit.emptyBody')}{' '}
-                <Link to="/books/reports" className="text-accent underline-offset-4 hover:underline">
-                  {t('execPortal.fin.profit.openBooks')}
-                </Link>
+                {t('execPortal.fin.profit.emptyBody')}
+                {can('view:books') && (
+                  <>
+                    {' '}
+                    <Link to="/books/reports" className="text-accent underline-offset-4 hover:underline">
+                      {t('execPortal.fin.profit.openBooks')}
+                    </Link>
+                  </>
+                )}
               </>
             }
           />
@@ -135,10 +143,12 @@ export function ProfitCard({ profit }: { profit: ExecFinancials['profit'] }) {
               {profit.budgetName && <span className="truncate text-ink-muted">{t('execPortal.fin.profit.budgetName', { name: profit.budgetName })}</span>}
             </div>
           </div>
-        ) : (
+        ) : can('view:books') ? (
           <Button asChild size="sm" variant="secondary">
             <Link to="/books/budgets">{t('execPortal.fin.profit.setBudget')}</Link>
           </Button>
+        ) : (
+          <p className="text-xs2 text-ink-muted">{t('execPortal.fin.profit.noBudget')}</p>
         )}
       </CardContent>
     </Card>

@@ -7,9 +7,11 @@ import { useTenant } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
 import { getMyEarnedWage, requestEarnedWage, type EwaAvailability } from '@/lib/earnedWageApi';
+import { useMyEarnings } from '@/components/EarningsCard';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/cn';
+import { useMoneyConfirmIfMounted } from '@/components/payroll/MoneyConfirm';
 import '@/lib/i18n/en/ewa';
 
 /**
@@ -33,6 +35,13 @@ export function EarnedWageCard() {
     enabled,
     staleTime: 60_000,
   });
+  // The period's money as Home shows it — one earned figure, one take-home
+  // (the tax engine on their W-4), one hours figure (ASSOC-4). "Earned" is
+  // the gross; the after-tax number is called what it is.
+  const earnings = useMyEarnings();
+  const period = earnings.data?.period ?? null;
+  // Money moves: the confirm names the amount, where it goes and when (deep audit MONEY-10's rule).
+  const confirmMoney = useMoneyConfirmIfMounted();
   const draw = useMutation({
     mutationFn: (n: number) => requestEarnedWage(n),
     onSuccess: (r) => {
@@ -76,7 +85,11 @@ export function EarnedWageCard() {
           <span className="text-xs text-silver">{t('ewa.available')}</span>
         </div>
         <p className="mt-1 text-sm text-silver">
-          {t('ewa.earned', { net: fmtMoney(a.earnedNet), hours: fmtHours(a.hoursWorked) })}
+          {period && period.earned > 0
+            ? period.takeHome && period.takeHome.net > 0
+              ? t('ewa.earnedGrossNet', { gross: fmtMoney(period.earned), hours: fmtHours(period.workedHours), net: fmtMoney(period.takeHome.net) })
+              : t('ewa.earnedGross', { gross: fmtMoney(period.earned), hours: fmtHours(period.workedHours) })
+            : t('ewa.earned', { net: fmtMoney(a.earnedNet), hours: fmtHours(a.hoursWorked) })}
           {pay && <> · {t('ewa.comesOff', { date: fmtDayShort(pay, { anchored: true }) })}</>}
         </p>
         {a.drawn > 0 && <p className="mt-1 text-xs text-silver/70 tabular-nums">{t('ewa.drawn', { amount: fmtMoney(a.drawn) })}</p>}
@@ -85,9 +98,23 @@ export function EarnedWageCard() {
         ) : (
           <form
             className="mt-3 flex items-end gap-2"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              if (valid) draw.mutate(Math.round(n * 100) / 100);
+              if (!valid || draw.isPending) return;
+              const amt = Math.round(n * 100) / 100;
+              const to = a.payoutTo?.last4
+                ? t(a.payoutTo.kind === 'CARD' ? 'ewa.toCard' : 'ewa.toBank', { last4: a.payoutTo.last4 })
+                : t('ewa.toAccount');
+              const ok = await confirmMoney({
+                title: t('ewa.confirmTitle', { amount: fmtMoney(amt) }),
+                amount: amt,
+                to,
+                when: pay ? t('ewa.whenNow', { date: fmtDayShort(pay, { anchored: true }) }) : t('ewa.whenNowNext'),
+                note: a.fee > 0 ? t('ewa.confirmFee', { fee: fmtMoney(a.fee) }) : undefined,
+                confirmLabel: t('ewa.get', { amount: fmtMoney(amt) }),
+                labels: { amount: t('ewa.confirmAmount'), to: t('ewa.confirmTo'), when: t('ewa.confirmWhen'), cancel: t('ewa.confirmCancel') },
+              });
+              if (ok) draw.mutate(amt);
             }}
           >
             <label className="block flex-1 text-xs text-silver">

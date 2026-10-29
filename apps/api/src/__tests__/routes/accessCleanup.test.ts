@@ -91,7 +91,8 @@ describe('the access report', () => {
     const csv = await admin.get('/admin/users/access-report?format=csv');
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toMatch(/text\/csv/);
-    expect(csv.text.split('\n')[0]).toMatch(/^"Email","Personal email","Role"/);
+    // The shared CSV writer quotes only cells that need it.
+    expect(csv.text.split('\n')[0]).toMatch(/^"?Email"?,"?Personal email"?,"?Role"?/);
     expect(csv.text).toMatch(/store\.manager@gmail\.com.*Client portal login on a personal email/);
     const assoc = await loginAs(agent(), ana1.email);
     expect((await assoc.get('/admin/users/access-report')).status).toBe(403);

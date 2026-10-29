@@ -331,8 +331,9 @@ describe('client statements', () => {
     expect(draft.body.snapshot.totals.hours).toBe(50);
     expect(draft.body.snapshot.totals.regularHours).toBe(40);
     expect(draft.body.snapshot.totals.otHours).toBe(10);
-    // 40 × 21.21 + 10 × 21.21 × 1.5 = 848.40 + 318.15 = 1166.55
-    expect(draft.body.snapshot.totals.amount).toBeCloseTo(1166.55, 2);
+    // The invoice prints each rate in cents and every line is hours × that rate (CODE-13):
+    // 40 × 21.21 + 10 × 31.82 (1.5 × 21.21 = 31.815 → 31.82) = 848.40 + 318.20 = 1166.60.
+    expect(draft.body.snapshot.totals.amount).toBeCloseTo(1166.6, 2);
 
     const fin = await a.post(
       `/clients/${client.id}/statements/${draft.body.id}/finalize`,
@@ -359,8 +360,9 @@ describe('client statements', () => {
     const csv = await a.get(`/clients/${client.id}/statements/${draft.body.id}.csv`);
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toContain('text/csv');
-    expect(csv.text).toContain('1166.55');
-    expect(csv.text).toContain('Overtime hours,10.00');
+    expect(csv.text).toMatch(/1166\.60?\b/);
+    // Numbers stay numbers in the CSV (the shared writer, MONEY-9): a spreadsheet sums them.
+    expect(csv.text).toMatch(/Overtime hours,10\r?\n/);
   });
 });
 

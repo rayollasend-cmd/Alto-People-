@@ -98,7 +98,7 @@ describe('the Books overview', () => {
     api.getBooksOverview.mockResolvedValue({
       asOf: '2026-10-19',
       cash: { total: 0, accounts: [{ id: CASH.id, code: '1000', name: 'Operating checking', subtype: 'BANK', balance: 0 }], connectedAccounts: 0 },
-      receivables: { total: 0, openOnStatements: 5760, aging, topClients: [{ clientId: 'c1', name: 'Harbor Grill', open: 5760, oldestDueAt: '2026-09-08' }] },
+      receivables: { total: 0, openOnStatements: 5760, aging, topClients: [{ clientId: 'c1', name: 'Harbor Grill', open: 5760, oldestDueAt: '2026-09-08' }], notInBooks: { count: 2, amount: 5760 } },
       payables: { total: 0, dueIn7Days: 0, overdue: 0, awaitingApproval: 0 },
       profit: { month: totals(), yearToDate: totals(), trend: [0, 1, 2, 3, 4, 5].map((i) => ({ key: `2026-0${i + 4}`, label: `M${i}`, income: 0, netIncome: 0 })) },
       close: { periodKey: '2026-09', status: 'OPEN', closedAt: null, tasksDone: 5, tasksTotal: 10 },
@@ -108,7 +108,7 @@ describe('the Books overview', () => {
     const { container } = renderAs('FINANCE_ACCOUNTANT', <BooksHome />, '/books');
     const kpi = (await screen.findByText('Clients owe')).parentElement!;
     expect(kpi).toHaveTextContent('$5,760.00');
-    expect(kpi).toHaveTextContent('The ledger shows $0.00: some older statements aren’t in it yet');
+    expect(kpi).toHaveTextContent('The ledger shows $0.00: 2 finalized statements aren’t in it yet');
     // The card shows the same total, and its buckets add up to it.
     expect(screen.getByText('$5,760.00 on finalized statements, by how late it is')).toBeInTheDocument();
     expect(Object.values(aging).reduce((a, b) => a + b, 0)).toBe(5760);
@@ -117,6 +117,38 @@ describe('the Books overview', () => {
     expect(screen.getByText('Nothing has posted to income or expenses in the last six months.')).toBeInTheDocument();
     // No NaN sparkline, ever.
     expect(container.innerHTML).not.toContain('NaN');
+  });
+
+  it('names the real cause when the books are HIGHER — statements marked paid with no payment — and offers the button that records them; an overdrawn account is flagged; profit compares month to date (audit 2026-10-29 MONEY-3/18/19)', async () => {
+    const aging = { current: 23760.63, days1to30: 0, days31to60: 0, days61to90: 0, over90: 0 };
+    api.getBooksOverview.mockResolvedValue({
+      asOf: '2026-10-29',
+      cash: { total: 181091.03, accounts: [{ id: CASH.id, code: '1000', name: 'Operating checking', subtype: 'BANK', balance: 185000 }, { id: 'pay', code: '1010', name: 'Payroll checking', subtype: 'BANK', balance: -3908.97 }], connectedAccounts: 0 },
+      receivables: { total: 92577.28, openOnStatements: 23760.63, aging, topClients: [], markedPaidWithoutPayment: { count: 6, amount: 68816.65 }, notInBooks: { count: 0, amount: 0 } },
+      payables: { total: 0, dueIn7Days: 0, overdue: 0, awaitingApproval: 0 },
+      profit: {
+        month: { ...totals(), netIncome: 57083.63 },
+        yearToDate: { ...totals(), netIncome: 40000 },
+        trend: [10, 20, 30, 50, -35.5, 57.08].map((v, i) => ({ key: `2026-0${i + 5}`, label: `M${i}`, income: 1, netIncome: v * 1000 })),
+        lastMonthToDate: { from: '2026-09-01', to: '2026-09-29', totals: { ...totals(), netIncome: -30000 } },
+      },
+      close: { periodKey: '2026-09', status: 'OPEN', closedAt: null, tasksDone: 5, tasksTotal: 10 },
+      quickbooks: { connected: false, status: null, companyName: null, lastPushAt: null, lastPullAt: null, openConflicts: 0, pending: 0, failed: 0 },
+      needsYou: [{ key: 'ar-paid-unrecorded', label: '6 statements were marked paid ($68,816.65) with no payment in the books', count: 6, to: '/books/receivables?view=payments', tone: 'warning' }],
+    } satisfies BooksOverview);
+    renderAs('FINANCE_ACCOUNTANT', <BooksHome />, '/books');
+    const kpi = (await screen.findByText('Clients owe')).parentElement!;
+    expect(kpi).toHaveTextContent('The ledger shows $92,577.28: 6 statements marked paid with no payment recorded');
+    expect(screen.getByRole('button', { name: /Record the payments/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add them to the books/ })).toBeNull();
+    // MONEY-18: the overdrawn account is named on the Cash tile and flagged on the card.
+    const strip = screen.getByRole('group', { name: 'The books at a glance' });
+    expect(within(strip).getByText('Cash').parentElement!).toHaveTextContent('Payroll checking overdrawn by $3,908.97');
+    expect(screen.getByText('Overdrawn')).toBeInTheDocument();
+    // MONEY-19: up $87k against September to the same day — not "down $36k last month" (Sep vs Aug).
+    const profit = within(strip).getByText('Profit this month').closest('a')!;
+    expect(profit).toHaveTextContent(/vs Sep 1\s?–\s?29/);
+    expect(profit).not.toHaveTextContent('last month');
   });
 
   it('the executive reads but gets no posting button', async () => {

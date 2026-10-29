@@ -36,6 +36,7 @@ const plain = (n: number) => n.toLocaleString();
 function addDays(ymd: string, n: number): string {
   const [y, m, d] = ymd.split('-').map(Number) as [number, number, number];
   const t = new Date(Date.UTC(y, m - 1, d + n));
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date-only arithmetic on a UTC-midnight date, no instant involved
   return t.toISOString().slice(0, 10);
 }
 

@@ -4,6 +4,8 @@ import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
 import { sourceKey } from './recruitingAnalytics.js';
 import { tenantIdForWrite } from './tenant.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 
 /**
  * Marketing's numbers and the referral bonus that becomes a paycheck line.
@@ -124,7 +126,7 @@ export async function computeMarketingOverview(
     const s = sourceKey(v.source) ?? null;
     viewsBySource.set(s, (viewsBySource.get(s) ?? 0) + v.count);
     if (v.slug) viewsBySlug.set(v.slug, (viewsBySlug.get(v.slug) ?? 0) + v.count);
-    const wk = weekKey(v.day);
+    const wk = weekKey(dateColumnKey(v.day));
     viewsByWeek.set(wk, (viewsByWeek.get(wk) ?? 0) + v.count);
   }
   const spendBySource = new Map<string | null, number>();
@@ -162,10 +164,10 @@ export async function computeMarketingOverview(
       if (c.stage === 'HIRED') p.hires += 1;
       bySlug.set(c.jobPosting.slug, p);
     }
-    const wk = weekKey(c.createdAt);
+    const wk = weekKey(orgDateKey(c.createdAt));
     appliedByWeek.set(wk, (appliedByWeek.get(wk) ?? 0) + 1);
     if (c.hiredAt && c.hiredAt >= from && c.hiredAt < to) {
-      const hk = weekKey(c.hiredAt);
+      const hk = weekKey(orgDateKey(c.hiredAt));
       hiresByWeek.set(hk, (hiresByWeek.get(hk) ?? 0) + 1);
     }
   }
@@ -230,12 +232,10 @@ export async function computeMarketingOverview(
   };
 }
 
-/** Monday of the UTC week containing `d`, as YYYY-MM-DD. */
-function weekKey(d: Date): string {
-  const day = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const dow = (day.getUTCDay() + 6) % 7;
-  day.setUTCDate(day.getUTCDate() - dow);
-  return day.toISOString().slice(0, 10);
+/** Monday of the week containing a calendar day (YYYY-MM-DD), as YYYY-MM-DD. */
+function weekKey(day: string): string {
+  const dow = (new Date(`${day}T00:00:00.000Z`).getUTCDay() + 6) % 7;
+  return addDaysToKey(day, -dow);
 }
 
 /* ===== Referral bonuses ==================================================== */

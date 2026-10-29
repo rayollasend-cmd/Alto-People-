@@ -30,6 +30,8 @@ export interface MassUpdatePreviewRow {
 export interface MassUpdateBatch {
   id: string;
   actorEmail: string | null;
+  /** The actor's name (display name, else their person record, else the email's local part). */
+  actorName?: string | null;
   changes: Record<string, unknown>;
   affectedCount: number;
   appliedAt: string;

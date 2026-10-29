@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { DAYS_TO_COLLECT_WINDOW_DAYS, daysToCollectOf } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { loadLiveRules } from './laborRules/live.js';
@@ -6,7 +7,7 @@ import { payFor, splitByPerson, type EntryHours, type HoursSplit, type LaborSite
 import { activeWindowDays, placements } from './activeDefinition.js';
 import { ageStatements } from './books/aging.js';
 import { statementAmounts } from './books/posting/statements.js';
-import { localDateKey } from './timezone.js';
+import { dateColumnKey, localDateKey } from './timezone.js';
 
 /**
  * The executive portal's money and labor engine (2026-10-27): the pieces
@@ -310,12 +311,16 @@ export function finalizedBetween(book: ArBook, from: Date, to: Date): number {
   return book.statements.reduce((n, s) => (s.finalizedAt && s.finalizedAt >= from && s.finalizedAt < to ? n + s.total : n), 0);
 }
 
-/** Days sales outstanding at an instant: open AR ÷ (the last 90 days' finalized statements ÷ 90). Null when nothing was billed. */
+/**
+ * Days to collect (METRICS.daysToCollect — days sales outstanding) at an
+ * instant: open AR ÷ (the last 90 days' finalized statements ÷ 90), by the
+ * dictionary's own formula. Null when nothing was billed. Not Books'
+ * "Average days to pay" (finalized → paid), a different measure.
+ */
 export function dsoAsOf(book: ArBook, at: Date): number | null {
-  const billed90 = finalizedBetween(book, new Date(at.getTime() - 90 * DAY_MS), at);
-  if (billed90 <= 0) return null;
+  const billed90 = finalizedBetween(book, new Date(at.getTime() - DAYS_TO_COLLECT_WINDOW_DAYS * DAY_MS), at);
   const ar = arAsOf(book, at).reduce((n, s) => n + s.open, 0);
-  return ar / (billed90 / 90);
+  return daysToCollectOf(ar, billed90, DAYS_TO_COLLECT_WINDOW_DAYS);
 }
 
 /** The aging of what is open now (lib/books/aging), oldest-and-largest first. */
@@ -358,7 +363,7 @@ export async function bankBalances(db: Db, tenantId: string, days: string[]): Pr
   const cents = (v: unknown) => Math.round(Number(v ?? 0) * 100);
   let bal = cents(opening._sum.debit) - cents(opening._sum.credit);
   const moves = lines
-    .map((l) => ({ day: l.entry.entryDate.toISOString().slice(0, 10), net: cents(l.debit) - cents(l.credit) }))
+    .map((l) => ({ day: dateColumnKey(l.entry.entryDate), net: cents(l.debit) - cents(l.credit) }))
     .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
   let i = 0;
   for (const d of sorted) {

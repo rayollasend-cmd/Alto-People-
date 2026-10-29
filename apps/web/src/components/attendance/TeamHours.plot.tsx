@@ -1,4 +1,5 @@
-import { Bar, BarChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { ChartTooltipContent, PALETTE, TICK } from '@/components/ui/charts';
 
 /** TeamHoursCard's drawing — fetched with the first chart (lazyPlot), the only part that needs recharts. */

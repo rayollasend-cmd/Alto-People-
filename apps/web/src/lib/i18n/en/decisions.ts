@@ -1,5 +1,7 @@
 // English for the pages that use 'decisions.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/decisions.ts).
+import '../es/decisions';
 
 export const enDecisions = {
   // Staff homes (Inbox, Recruiter, Manager, Admin, Executive, Payroll, Scheduling) — the staff slice is EN/ES/TR.

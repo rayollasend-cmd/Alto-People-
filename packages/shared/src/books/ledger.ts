@@ -363,9 +363,19 @@ export interface BooksOverview {
     /** Open finalized statements by age past due: current (not yet due), 1–30, 31–60, 61–90, over 90. */
     aging: { current: number; days1to30: number; days31to60: number; days61to90: number; over90: number };
     topClients: Array<{ clientId: string; name: string; open: number; oldestDueAt: string | null }>;
+    /** Statements marked paid with no payment in the books: the books still count them as owed (MONEY-3). */
+    markedPaidWithoutPayment?: { count: number; amount: number };
+    /** Finalized statements receivables in the books doesn't hold yet. */
+    notInBooks?: { count: number; amount: number };
   };
   payables: { total: number; dueIn7Days: number; overdue: number; awaitingApproval: number };
-  profit: { month: BooksPnlTotals; yearToDate: BooksPnlTotals; trend: Array<{ key: string; label: string; income: number; netIncome: number }> };
+  profit: {
+    month: BooksPnlTotals;
+    yearToDate: BooksPnlTotals;
+    trend: Array<{ key: string; label: string; income: number; netIncome: number }>;
+    /** Last month from its 1st to the same day of the month — what this month so far compares with (MONEY-19). */
+    lastMonthToDate?: { from: string; to: string; totals: BooksPnlTotals };
+  };
   close: { periodKey: string; status: 'OPEN' | 'CLOSED'; closedAt: string | null; tasksDone: number; tasksTotal: number };
   quickbooks: {
     connected: boolean;

@@ -1,15 +1,20 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { tenantIdForWrite } from './tenant.js';
-import { startOfWeekUTC } from './timeAnomalies.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { payableMs } from './payroll.js';
+import { paidPunchFilters } from './payrollRunCut.js';
+import { workDayOf } from './payrollSchedule.js';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
 /**
  * Billed, not paid (finance walk 11): the other direction of pay-and-bill.
  * Approved hours a FINAL client statement billed, by person and week, that
- * no locked paystub covers — the client was charged for work nobody was
- * paid for (a missed run, a person left off a schedule).
+ * no locked paystub PAID — the client was charged for work nobody was paid
+ * for (a missed run, a person left off a schedule, an evening shift a run's
+ * cut left out). Per punch, under each run's own cut (lib/payrollRunCut),
+ * not "the person had some check that period" (deep audit MONEY-1); the
+ * day and the week are the site's.
  */
 export interface BilledNotPaidRow {
   associateId: string;
@@ -22,8 +27,16 @@ export interface BilledNotPaidRow {
   statementNumber: number | null;
 }
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column (stored at UTC midnight) or a UTC-midnight anchor.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const DAY = 86_400_000;
+
+/** The first day of the company workweek (Saturday by default) holding a YYYY-MM-DD day. */
+function weekStartOf(day: string): string {
+  const d = new Date(`${day}T12:00:00.000Z`);
+  const back = (d.getUTCDay() - companyWorkweek().weekStartsOn + 7) % 7;
+  return ymd(new Date(d.getTime() - back * DAY));
+}
 
 export async function billedNotPaid(db: Db, input: { periodStart: Date; periodEnd: Date; clientId?: string | null; runWhere?: Prisma.PayrollRunWhereInput }): Promise<{ rows: BilledNotPaidRow[]; hours: number }> {
   const tenantId = tenantIdForWrite();
@@ -36,24 +49,29 @@ export async function billedNotPaid(db: Db, input: { periodStart: Date; periodEn
   if (statements.length === 0) return { rows: [], hours: 0 };
   const from = new Date(Math.max(input.periodStart.getTime(), Math.min(...statements.map((s) => s.periodStart.getTime()))));
   const to = new Date(Math.min(endEx.getTime(), Math.max(...statements.map((s) => s.periodEnd.getTime())) + DAY));
+  const fromDay = ymd(from);
+  const lastDay = ymd(new Date(to.getTime() - DAY));
   const [entries, runs] = await Promise.all([
     db.timeEntry.findMany({
-      where: { tenantId, status: 'APPROVED', clockInAt: { gte: from, lt: to }, clientId: { in: [...new Set(statements.map((s) => s.clientId))] } },
-      select: { associateId: true, clientId: true, status: true, clockInAt: true, clockOutAt: true, breaks: { select: { startedAt: true, endedAt: true } }, associate: { select: { firstName: true, lastName: true } } },
+      // A margin day each side: the day is the site's (an evening shift is the next UTC day).
+      where: { tenantId, status: 'APPROVED', clockInAt: { gte: new Date(from.getTime() - DAY), lt: new Date(to.getTime() + DAY) }, clientId: { in: [...new Set(statements.map((s) => s.clientId))] } },
+      select: { associateId: true, clientId: true, status: true, clockInAt: true, clockOutAt: true, location: { select: { timezone: true } }, breaks: { select: { startedAt: true, endedAt: true } }, associate: { select: { firstName: true, lastName: true } } },
       take: 100_000,
     }),
     db.payrollRun.findMany({
-      where: { AND: [input.runWhere ?? { tenantId }, { status: { in: ['FINALIZED', 'DISBURSED'] }, kind: { not: 'AMENDMENT' }, periodEnd: { gte: from }, periodStart: { lt: to } }] },
-      select: { periodStart: true, periodEnd: true, items: { where: { status: { not: 'VOIDED' } }, select: { associateId: true } } },
+      where: { AND: [input.runWhere ?? { tenantId }, { status: { in: ['FINALIZED', 'DISBURSED'] }, kind: { not: 'AMENDMENT' }, periodEnd: { gte: new Date(from.getTime() - DAY) }, periodStart: { lt: new Date(to.getTime() + DAY) } }] },
+      select: { id: true, periodStart: true, periodEnd: true, kind: true, clientId: true, payrollScheduleId: true, timeCut: true, items: { where: { status: { not: 'VOIDED' } }, select: { associateId: true } } },
     }),
   ]);
-  const paidOn = (associateId: string, day: string) => runs.some((r) => ymd(r.periodStart) <= day && day <= ymd(r.periodEnd) && r.items.some((i) => i.associateId === associateId));
+  const paidBy = await paidPunchFilters(db, runs);
+  const paid = (e: (typeof entries)[number]) => runs.some((r) => r.items.some((i) => i.associateId === e.associateId) && paidBy.get(r.id)!(e));
   const byKey = new Map<string, BilledNotPaidRow & { ms: number }>();
   for (const e of entries) {
-    const day = ymd(e.clockInAt);
+    const day = workDayOf(e.clockInAt, e.location?.timezone);
+    if (day < fromDay || day > lastDay) continue;
     const st = statements.find((s) => s.clientId === e.clientId && ymd(s.periodStart) <= day && day <= ymd(s.periodEnd));
-    if (!st || paidOn(e.associateId, day)) continue;
-    const week = ymd(startOfWeekUTC(e.clockInAt));
+    if (!st || paid(e)) continue;
+    const week = weekStartOf(day);
     const key = `${e.associateId}:${st.clientId}:${week}`;
     const row = byKey.get(key) ?? {
       associateId: e.associateId,

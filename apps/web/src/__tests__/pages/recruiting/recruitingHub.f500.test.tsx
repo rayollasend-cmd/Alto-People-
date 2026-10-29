@@ -25,6 +25,11 @@ vi.mock('@/lib/recruitingApi', async (importOriginal) => {
     listRemovedCandidates: vi.fn(async () => ({ removed: [] })),
   };
 });
+// The offer and posting pickers read GET /clients/options (PEOPLE-4).
+vi.mock('@/lib/onboardingApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/onboardingApi')>()),
+  listClientOptions: vi.fn(async () => ({ clients: [] })),
+}));
 vi.mock('@/lib/clientsApi', () => ({ listClients: vi.fn(async () => ({ clients: [] })) }));
 vi.mock('@/lib/positionsApi', () => ({ listPositions: vi.fn(async () => ({ positions: [] })) }));
 vi.mock('@/lib/savedViewsApi', () => ({ listSavedViews: vi.fn(async () => ({ views: [] })) }));
@@ -131,7 +136,8 @@ describe('recruiting hub', () => {
     const user = renderAt('/recruiting');
     const strip = await screen.findByRole('group', { name: 'Pipeline at a glance' });
     expect(within(strip).getByText('Interviewing').closest('a')).toHaveAttribute('href', '/recruiting?view=list&stage=INTERVIEW');
-    expect(within(strip).getByText('Open offers').closest('a')).toHaveAttribute('href', '/recruiting?view=list&stage=OFFER');
+    // Open offers are live offers waiting on an answer — they open the offers list (PEOPLE-13).
+    expect(within(strip).getByText('Open offers').closest('a')).toHaveAttribute('href', '/recruiting/extras?tab=offers');
     expect(within(strip).getByText('In funnel').closest('a')).toHaveAttribute('href', '/recruiting?view=board');
     expect(within(screen.getByRole('navigation', { name: 'Recruiting' })).getByRole('link', { name: 'Pipeline' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByPlaceholderText('Search candidates')).toBeInTheDocument();

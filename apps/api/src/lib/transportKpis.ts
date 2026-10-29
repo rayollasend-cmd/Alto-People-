@@ -24,6 +24,7 @@ const ON_TIME_GRACE_MS = 5 * 60_000;
 const addDays = (ymd: string, n: number) => {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
   return d.toISOString().slice(0, 10);
 };
 
@@ -31,6 +32,7 @@ const addDays = (ymd: string, n: number) => {
 const weekStartOf = (ymd: string) => {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 1) % 7));
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
   return d.toISOString().slice(0, 10);
 };
 
@@ -159,6 +161,7 @@ export async function transportKpis(date: string): Promise<TransportKpi[]> {
     t.seats += run.van.capacity;
     t.costCents += runDriverCents(run, rates);
   }
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: VanServiceEntry.occurredAt is a @db.Date
   for (const s of service) day(s.occurredAt.toISOString().slice(0, 10)).costCents += s.costCents;
 
   const sum = (a: string, b: string) => {

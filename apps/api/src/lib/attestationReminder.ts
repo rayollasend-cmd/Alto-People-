@@ -26,6 +26,8 @@ import {
   dueDateFor,
   periodForNow,
 } from './manualAttestation.js';
+import { logger } from './logger.js';
+import { dateColumnKey } from './timezone.js';
 
 const REMINDER_DEDUPE_HOURS = 24;
 export const DIGEST_CATEGORY = 'compliance.attestation.digest';
@@ -79,7 +81,8 @@ export async function runAttestationReminderSweep(
         key: config.key,
         label: config.label,
         overdue: status === 'overdue',
-        due: dueDateFor(config, periodStart).toISOString().slice(0, 10),
+        // periodStart is a @db.Date and the due day is whole days after it, so its UTC date is the day.
+        due: dateColumnKey(dueDateFor(config, periodStart)),
       });
     } catch (err) {
       errors.push({ key: config.key, error: err instanceof Error ? err.message : String(err) });
@@ -135,8 +138,8 @@ export function startAttestationReminderCron(): void {
     });
   }, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] attestation reminder cron armed (every ${seconds}s)`,
+  logger.info(
+    `attestation reminder cron armed (every ${seconds}s)`,
   );
 }
 

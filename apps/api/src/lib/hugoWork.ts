@@ -6,7 +6,7 @@ import { emitLiveEvent } from './liveEvents.js';
 import { notifyUser, notifyUserOn } from './notify.js';
 import { eligibleOpenShifts } from './openShiftEligibility.js';
 import { windowCovers } from './openShiftInvites.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * What Hugo's tasks (lib/hugoTasks) and notes (lib/hugoNotes) share: the
@@ -72,7 +72,7 @@ export function shiftRefOf(s: {
     id: s.id,
     startsAt: s.startsAt.toISOString(),
     endsAt: s.endsAt.toISOString(),
-    timezone: s.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+    timezone: s.locationRel?.timezone ?? companyWorkweek().timezone,
     site: s.locationRel?.name ?? s.client?.name ?? s.location ?? null,
     position: s.position ?? null,
   };
@@ -110,7 +110,7 @@ export async function openShiftsThatFit(associateId: string, opts: { before: Dat
       const inv = inviteOf.get(s.id);
       if (inv?.declinedAt) return false;
       if (opts.skipInvited && inv?.lastSentAt) return false;
-      return windows.length === 0 || windowCovers(windows, s, s.locationRel?.timezone ?? DEFAULT_TIMEZONE);
+      return windows.length === 0 || windowCovers(windows, s, s.locationRel?.timezone ?? companyWorkweek().timezone);
     })
     .map(shiftRefOf);
 }

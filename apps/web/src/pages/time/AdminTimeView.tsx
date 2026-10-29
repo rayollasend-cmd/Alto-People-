@@ -28,6 +28,7 @@ import {
   X,
 } from '@/components/ui/icons';
 import {
+  OVERTIME_RISK_HOURS,
   oldestPendingPeriod,
   type ActiveDashboardEntry,
   type PayPeriod,
@@ -77,7 +78,9 @@ import { useListKeyboard } from '@/lib/shortcuts';
 import { useSelection } from '@/lib/useSelection';
 import { TIME_ANOMALY_LABELS, timeAnomalyLabel } from '@/lib/timeLabels';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
+import { QueryError } from '@/components/ui/QueryError';
 import { ShiftTimeline } from './ShiftTimeline';
+import { isFlagged, reviewActions } from './entryActions';
 import { TimesheetWeeks } from './TimesheetWeeks';
 import { FocusToggle } from '@/pages/portal/FocusToggle';
 import { clockInInWindows, inWindows, useShiftFocus } from '@/pages/portal/shiftFocus';
@@ -690,7 +693,12 @@ function ClientSiteSelects({
   );
 }
 
-export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTimeViewProps) {
+export function AdminTimeView({ canManage, liveOnly: liveOnlyProp = false, personal }: AdminTimeViewProps) {
+  // Every queue, count, exception and pay-period read is manage:time's. A
+  // viewer without it (the chairman, finance) gets the live board only —
+  // the queue's reads would 403 and the tiles then said "Nothing waiting"
+  // when nothing could be read (deep audit CRAWL-10).
+  const liveOnly = liveOnlyProp || !canManage;
   const term = useTerm();
   const { moduleOn: moduleOnTime } = useTenant();
   // Active tab lives in ?tab= — shareable ("send me the queue"), and Back
@@ -998,6 +1006,14 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     refetchInterval: 5 * 60_000,
   });
   const exceptions = exceptionsQuery.data ?? null;
+  // The tiles' reads that failed with nothing to show: one banner, one Retry.
+  const exceptionsFailed = exceptionsQuery.isError && !exceptions;
+  const countsFailed = !liveOnly && (exceptionsFailed || (pendingQuery.isError && pendingCount === null));
+  const countsRetry = {
+    error: exceptionsFailed ? exceptionsQuery.error : pendingQuery.error,
+    isFetching: exceptionsQuery.isFetching || pendingQuery.isFetching,
+    refetch: () => Promise.all([exceptionsQuery.refetch(), pendingQuery.refetch()]),
+  };
 
   // A deep link that names the status (the shared "N timesheets" link
   // carries status=COMPLETED) sets the filter once, so the link opens on
@@ -1036,6 +1052,8 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     queryKey: ['time', 'pay-periods'],
     queryFn: () => listPayPeriods(),
     staleTime: 5 * 60_000,
+    // manage:time's read — the live board alone never needs it.
+    enabled: !liveOnly,
   });
   const payPeriods: PayPeriod[] | null = payPeriodsQuery.isError
     ? []
@@ -2240,29 +2258,41 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
               className: 'whitespace-nowrap',
               cell: (e) => {
                 const isPending = pendingId === e.id;
-                // FORGOT_CLOCKOUT + a scheduled end on a non-ACTIVE,
-                // approvable row → offer the one-click "approve at the
-                // scheduled end" correction.
-                const canApproveAtShiftEnd =
-                  (e.status === 'COMPLETED' || e.status === 'REJECTED') &&
-                  !!e.shiftEndsAt &&
-                  (e.anomalies ?? []).includes('FORGOT_CLOCKOUT') &&
-                  !isOwnEntry(e);
+                // One action set for a punch under review, shared with the
+                // Approvals hub's panel (./entryActions, deep audit FLOOR-22):
+                // a flagged punch leads with "Fix time"; "Approve at shift
+                // end" only when it would change the clock-out.
+                const own = isOwnEntry(e);
+                const actions = reviewActions(e, { own });
+                const flagged = isFlagged(e);
                 return (
                   // flex-wrap: on a phone the row is a card narrower than every action at once (the overflow sweep caught them off the left edge).
-                  <div className="inline-flex flex-wrap items-center justify-end gap-1 transition-opacity can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100">
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`Edit entry for ${e.associateName ?? 'associate'}`}
-                      title="Edit times"
-                      onClick={() => openEditRow(e)}
-                      disabled={isPending || bulkBusy}
-                      className="opacity-100 transition-opacity focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
-                    >
-                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                    </Button>
-                    {canApproveAtShiftEnd && (
+                  // A wide desk keeps the set on one line (Reject dropped under Fix time · Approve).
+                  <div className="inline-flex flex-wrap items-center justify-end gap-1 transition-opacity can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 xl:flex-nowrap">
+                    {flagged && actions.includes('fix') ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => openEditRow(e)}
+                        disabled={isPending || bulkBusy}
+                        title="Correct the times before deciding"
+                      >
+                        Fix time
+                      </Button>
+                    ) : (
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label={`Edit entry for ${e.associateName ?? 'associate'}`}
+                        title="Edit times"
+                        onClick={() => openEditRow(e)}
+                        disabled={isPending || bulkBusy}
+                        className="opacity-100 transition-opacity focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
+                      >
+                        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Button>
+                    )}
+                    {actions.includes('approveAtShiftEnd') && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -2271,15 +2301,15 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                         disabled={isPending || bulkBusy}
                         title="Approve with the clock-out corrected to the scheduled shift end"
                       >
-                        Approve at sched. end {fmtPunchTime(e.shiftEndsAt!, e.locationTimezone)}
+                        Approve at shift end {fmtPunchTime(e.shiftEndsAt!, e.locationTimezone)}
                       </Button>
                     )}
-                    {(e.status === 'COMPLETED' || e.status === 'REJECTED') && isOwnEntry(e) && (
+                    {(e.status === 'COMPLETED' || e.status === 'REJECTED') && own && (
                       <span className="text-2xs text-silver/70" title="Someone else approves your own time.">
                         Yours — someone else approves it
                       </span>
                     )}
-                    {(e.status === 'COMPLETED' || e.status === 'REJECTED') && !isOwnEntry(e) && (
+                    {actions.includes('approve') && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -2290,7 +2320,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                         Approve
                       </Button>
                     )}
-                    {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+                    {actions.includes('reject') && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -2369,9 +2399,7 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         subtitle={
           canManage
             ? `Review, approve, or reject time entries from ${term('workers').toLowerCase()}.`
-            : liveOnly
-              ? "Live floor view — who's clocked in at your site right now."
-              : 'Read-only view of time entries.'
+            : "Live floor view — who's clocked in right now."
         }
         // One primary action; the client's weekly hours sheet and the kiosk
         // are sibling pages, so they are links (F500 G2: "Timesheets" here
@@ -2446,7 +2474,17 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                 icon={ListChecks}
                 label="Pending review"
                 value={pendingCount === null ? '—' : String(pendingCount)}
-                hint={oldestPending && pendingCount ? `Oldest in ${periodLabel(oldestPending)}` : 'Nothing waiting'}
+                // "Nothing waiting" only when the count says 0 — a read that
+                // failed (or hasn't answered) is not an empty queue.
+                hint={
+                  pendingQuery.isError && pendingCount === null
+                    ? "Couldn't load the count"
+                    : pendingCount === null
+                      ? undefined
+                      : oldestPending && pendingCount
+                        ? `Oldest in ${periodLabel(oldestPending)}`
+                        : 'Nothing waiting'
+                }
                 tone="warning"
                 selected={tileSelected.pending}
                 onClick={openPendingTile}
@@ -2482,13 +2520,22 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
                 icon={TrendingUp}
                 label="Overtime risk"
                 value={exceptions ? String(exceptions.overtimeRisk.count) : '—'}
-                hint={`${exceptions?.overtimeRisk.thresholdHours ?? 36}h+ worked and scheduled this week`}
+                // One definition with My team and the manager's Home (FLOOR-23,
+                // packages/shared OVERTIME_RISK_HOURS) — this page counts
+                // everyone the viewer approves, and says so.
+                hint={`Everyone you approve · ${exceptions?.overtimeRisk.thresholdHours ?? OVERTIME_RISK_HOURS}h+ worked and scheduled this week`}
                 tone="warning"
                 selected={tileSelected.ot}
                 onClick={toggleOtTile}
               />
             ) : null}
           </MetricStrip>
+          {/* A count that couldn't be read says so, with Retry — the tiles
+              alone read "—" and the overtime list sat on a skeleton forever
+              (deep audit CODE-20). */}
+          {countsFailed && (
+            <QueryError what="the counts above" query={countsRetry} className="mb-[var(--d-stack)]" />
+          )}
               </>
         }
         drawer={
@@ -2779,7 +2826,11 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           </CardHeader>
           <CardContent className="pt-0">
             {!exceptions ? (
-              <SkeletonRows count={3} rowHeight="h-10" />
+              exceptionsQuery.isError ? (
+                <QueryError what="who is heading into overtime" query={exceptionsQuery} />
+              ) : (
+                <SkeletonRows count={3} rowHeight="h-10" />
+              )
             ) : exceptions.overtimeRisk.people.length === 0 ? (
               <p className="text-sm text-silver">
                 No one is on track for {exceptions.overtimeRisk.thresholdHours} hours this week.
@@ -3439,13 +3490,17 @@ function FocusTimesheet({
         if (!showSelect || selectableIds.length === 0) return null;
         const allDaySelected = selectableIds.every((id) => selected.has(id));
         return (
-          <input
-            type="checkbox"
-            aria-label={`Select all entries on ${day.key}`}
-            checked={allDaySelected}
-            onChange={() => onToggleMany(selectableIds, !allDaySelected)}
-            className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-          />
+          // The box stays 16px; the label around it is the finger's target
+          // (44px on touch — deep audit FLOOR-29), the DataGrid card's rule.
+          <label className="-m-2 grid shrink-0 cursor-pointer place-items-center p-2 coarse:-m-3.5 coarse:p-3.5">
+            <input
+              type="checkbox"
+              aria-label={`Select all entries on ${fmtDateOnly(day.key, { weekday: true, year: false })}`}
+              checked={allDaySelected}
+              onChange={() => onToggleMany(selectableIds, !allDaySelected)}
+              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+            />
+          </label>
         );
       }}
       renderEntry={(e) => (
@@ -3527,13 +3582,16 @@ function FocusEntryRow({
       {showSelect && (
         <span className="w-4 flex-none" data-no-row-click>
           {isSelectable && (
-            <input
-              type="checkbox"
-              aria-label={`Select entry starting ${fmtPunchTime(e.clockInAt, e.locationTimezone)}`}
-              checked={isSelected}
-              onChange={() => onToggleSelect(e.id)}
-              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-            />
+            // 16px box, 44px touch target (FLOOR-29).
+            <label className="-m-2 grid cursor-pointer place-items-center p-2 coarse:-m-3.5 coarse:p-3.5">
+              <input
+                type="checkbox"
+                aria-label={`Select entry starting ${fmtPunchTime(e.clockInAt, e.locationTimezone)}`}
+                checked={isSelected}
+                onChange={() => onToggleSelect(e.id)}
+                className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+              />
+            </label>
           )}
         </span>
       )}

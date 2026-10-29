@@ -1,12 +1,12 @@
 import { COLOR, createDoc, fmt, type Column } from './docKit/index.js';
 import { loadCurrentBrand, signatureRow } from './docKit/biz.js';
 import {
-  DEFAULT_TIMEZONE,
   localDateKey,
   formatDateInZone,
   formatDateTimeInZone,
   formatTimeInZone,
 } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * Phase 65 — time entry PDF renderer.
@@ -51,7 +51,8 @@ const statusColor = (st: string): string | undefined => (st === 'APPROVED' ? COL
 
 export async function renderTimeReportPdf(data: TimeReportData): Promise<Buffer> {
   const brand = await loadCurrentBrand();
-  const tz = data.entries[0]?.timezone ?? DEFAULT_TIMEZONE;
+  // The first entry's store clock, else the company's.
+  const tz = data.entries[0]?.timezone ?? companyWorkweek().timezone;
   const { k } = createDoc({ title: `Time report — ${rangeLabel(data.rangeFrom, data.rangeTo, tz)}`, author: brand.name, layout: 'landscape', margin: 36 });
   const sorted = [...data.entries].sort((a, b) => a.associateName.localeCompare(b.associateName) || a.clockInAt.getTime() - b.clockInAt.getTime());
   const hours = (list: TimeReportEntry[]) => list.reduce((t, e) => t + e.minutes, 0) / 60;
@@ -109,7 +110,7 @@ export async function renderTimeReportPdf(data: TimeReportData): Promise<Buffer>
 }
 
 /** "Oct 10 – Oct 16, 2026" for an end-exclusive range. */
-function rangeLabel(from: Date, toExclusive: Date, tz = DEFAULT_TIMEZONE): string {
+function rangeLabel(from: Date, toExclusive: Date, tz: string): string {
   const last = new Date(toExclusive.getTime() - 1);
   const a = localDateKey(from, tz);
   const b = localDateKey(last, tz);

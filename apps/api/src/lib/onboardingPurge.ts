@@ -480,8 +480,8 @@ export function startOnboardingPurgeCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] onboarding purge cron armed (every ${seconds}s; invites ${INVITE_PURGE_AFTER_DAYS}d, abandoned ${IDLE_PURGE_AFTER_DAYS}d idle, notice at ${FINAL_NOTICE_AFTER_DAYS}d)`,
+  logger.info(
+    `onboarding purge cron armed (every ${seconds}s; invites ${INVITE_PURGE_AFTER_DAYS}d, abandoned ${IDLE_PURGE_AFTER_DAYS}d idle, notice at ${FINAL_NOTICE_AFTER_DAYS}d)`,
   );
 }
 

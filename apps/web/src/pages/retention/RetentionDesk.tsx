@@ -145,6 +145,8 @@ function PersonRow({ item, onPlay }: { item: RetentionItem; onPlay: (k: PlayKind
   const done = useMutation({
     mutationFn: (id: string) => markPlayDone(id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['retention'] }),
+    // A failed "Done" said nothing and the play stayed open (CODE-29).
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not mark that done. Try again.'),
   });
   const open = item.recentPlays.find((p) => p.status === 'OPEN');
   return (

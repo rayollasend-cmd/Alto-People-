@@ -30,7 +30,12 @@ export function HelpSheet({
   const { t, lang } = useI18n();
   const { user } = useAuth();
   const location = useLocation();
-  const entry = helpFor(location.pathname, lang);
+  // The route entries (lib/help) are written for the desks — "Publish when the
+  // week is ready", "Open a run for its paystubs" — and in English and Spanish
+  // only. An associate or a driver gets the generic sheet, in their language,
+  // which still reaches the help center (deep audit 2026-10-29, ASSOC-11).
+  const frontline = user?.role === 'ASSOCIATE' || user?.role === 'DRIVER';
+  const entry = frontline ? null : helpFor(location.pathname, lang);
   const tour = tourFor(location.pathname);
 
   const articles = useQuery({

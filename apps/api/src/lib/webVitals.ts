@@ -137,6 +137,7 @@ type Bucket = {
 const buffer = new Map<string, Bucket>();
 let timer: NodeJS.Timeout | null = null;
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: WebVitalDaily is a platform-wide rollup keyed by UTC day (one row per day/route/metric across tenants; schema doc), like lib/usageTracker.
 const dayKey = (at: Date) => at.toISOString().slice(0, 10);
 
 /** Record one sample. Synchronous, cheap, never throws. */

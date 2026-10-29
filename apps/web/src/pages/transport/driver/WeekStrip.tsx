@@ -32,9 +32,10 @@ export function WeekStrip({ onRider }: { onRider: (associateId: string) => void 
   const q = useQuery({ queryKey: ['transport', 'driver', 'week', today], queryFn: () => getDriverWeek(today, 7), refetchInterval: 60_000 });
   // The driver's own shifts, day by day — the one schedule view.
   const shiftsQ = useQuery({ queryKey: ['transport', 'driver', 'shifts', 7, today], queryFn: () => getDriverShifts(today, 7), refetchInterval: 5 * 60_000 });
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
   const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(`${today}T12:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10));
   const [picked, setPicked] = useState(days[1]!);
-  if (q.isError) return <QueryError what="your week" query={q} />;
+  if (q.isError) return <QueryError what={t('drive.load.week')} query={q} />;
   if (q.isPending) return <Skeleton className="h-28 w-full rounded-lg" />;
   if (!q.data) return null;
   const runsOn = (d: string) => q.data.runs.filter((r) => r.serviceDate === d);

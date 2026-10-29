@@ -30,8 +30,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { fmtDate, fmtDateOnly, fmtDateTime, fmtMoney } from '@/lib/format';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { statusLabel } from '@/lib/status';
 import { CandidatePortalPanel } from './CandidatePortalPanel';
@@ -60,7 +60,7 @@ import {
   ScoreInterviewDialog,
   SubmitToClientDialog,
 } from './CandidateWorkPanels';
-import { SOURCE_LABEL, STAGE_LABEL, daysSince, ratingLabel } from './recruitingLabels';
+import { SOURCE_LABEL, STAGE_LABEL, daysSince, offerShownStatus, ratingLabel } from './recruitingLabels';
 
 /**
  * The full picture for one candidate: profile, where they came from, their
@@ -96,7 +96,8 @@ const SUBMITTAL_BADGE: Record<
   CandidateSubmittal['status'],
   { label: string; variant: 'pending' | 'success' | 'destructive' | 'outline' }
 > = {
-  PENDING: { label: 'Waiting on client', variant: 'pending' },
+  // "Waiting on client" — the client word comes from the tenant's terms at render.
+  PENDING: { label: 'Waiting on them', variant: 'pending' },
   APPROVED: { label: 'Approved', variant: 'success' },
   DECLINED: { label: 'Passed', variant: 'destructive' },
   WITHDRAWN: { label: 'Withdrawn', variant: 'outline' },
@@ -169,7 +170,8 @@ function StageTracker({ stage }: { stage: CandidateStage }) {
     );
   }
   return (
-    <ol className="flex items-center gap-1" aria-label="Pipeline progress">
+    // Wraps on a phone rather than cutting "Hired" off the edge (PEOPLE-11).
+    <ol className="flex flex-wrap items-center gap-x-1 gap-y-1.5" aria-label="Pipeline progress">
       {PIPELINE.map((s, i) => {
         const done = i < idx;
         const current = i === idx;
@@ -227,7 +229,14 @@ export function CandidateDetailDrawer({
   onNavigate?: (id: string) => void;
 }) {
   const { can } = useAuth();
+  const term = useTerm();
+  // A tenant without clients (a hotel running its own staff) has no client
+  // review and never reads "client" (PEOPLE-12).
+  const clientsOn = useTenant().moduleOn('clientPortal');
+  const clientWord = term('label.client').toLowerCase();
   const prompt = usePrompt();
+  // A note typed on the timeline and not yet added — closing asks first (PEOPLE-14).
+  const [noteDraft, setNoteDraft] = useState(false);
   const [interviews, setInterviews] = useState<InterviewRecord[] | null>(null);
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
   const [editing, setEditing] = useState(false);
@@ -428,12 +437,15 @@ export function CandidateDetailDrawer({
   const inStage = daysSince(candidate.stageChangedAt);
 
   return (
-    <Drawer open={candidate !== null} onOpenChange={onOpenChange} width="max-w-xl">
+    <Drawer open={candidate !== null} onOpenChange={onOpenChange} width="max-w-xl" confirmDiscard={() => noteDraft}>
       <DrawerHeader>
-        <div className="flex items-start gap-3">
+        {/* On a phone the controls drop under the name (PEOPLE-11): squeezed
+            beside it they left the subtitle one word per line, with the
+            chevrons over the name. */}
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
           <Avatar src={associatePhotoUrl(candidate.hiredAssociateId)} name={fullName} email={candidate.email} size="md" />
-          <div className="min-w-0 flex-1">
-            <DrawerTitle>{fullName}</DrawerTitle>
+          <div className="min-w-0 flex-1 basis-[calc(100%-4rem)] pr-10 sm:basis-0 sm:pr-0">
+            <DrawerTitle className="break-words">{fullName}</DrawerTitle>
             <DrawerDescription>
               {candidate.position ?? 'No position recorded'} · applied{' '}
               {fmtDate(candidate.createdAt)}
@@ -445,8 +457,9 @@ export function CandidateDetailDrawer({
               )}
             </DrawerDescription>
           </div>
+          <div className="flex w-full shrink-0 items-center justify-between gap-1.5 pl-[3.25rem] sm:w-auto sm:justify-end sm:pl-0">
           {onNavigate && order && order.length > 1 && at >= 0 && (
-            <div className={cn('flex shrink-0 items-center', !canManage && 'mr-10')} aria-label="Move between candidates">
+            <div className={cn('flex shrink-0 items-center', !canManage && 'sm:mr-10')} aria-label="Move between candidates">
               <Button
                 size="icon-sm"
                 variant="ghost"
@@ -470,8 +483,8 @@ export function CandidateDetailDrawer({
             </div>
           )}
           {canManage && (
-            // Clear of the drawer's own close button in the top corner.
-            <div className="mr-10 flex shrink-0 items-center gap-1.5">
+            // Clear of the drawer's own close button in the top corner (wide screens; a phone has its own row).
+            <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:ml-0 sm:mr-10">
               {/* Icon-only on a phone, so the name keeps the width. */}
               <Button size="sm" variant="outline" onClick={() => setEditing(true)} aria-label="Edit">
                 <Pencil className="h-3.5 w-3.5" />
@@ -500,8 +513,9 @@ export function CandidateDetailDrawer({
               </DropdownMenu>
             </div>
           )}
+          </div>
         </div>
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3">
           <StageTracker stage={candidate.stage} />
         </div>
       </DrawerHeader>
@@ -512,7 +526,7 @@ export function CandidateDetailDrawer({
         {candidate.stage === 'HIRED' && candidate.hiredAssociateId && (
           <div className="rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm text-white">
             <span className="font-medium text-success">Hired</span>
-            {candidate.hiredAt ? ` ${fmtDate(candidate.hiredAt)}` : ''} · associate
+            {candidate.hiredAt ? ` ${fmtDate(candidate.hiredAt)}` : ''} · {term('worker').toLowerCase()}{' '}
             record:{' '}
             <AssociateLink associateId={candidate.hiredAssociateId}>
               {fullName}
@@ -536,14 +550,15 @@ export function CandidateDetailDrawer({
         )}
 
         <Section title="Contact">
-          <div className="grid grid-cols-2 gap-4">
+          {/* One column on a phone: a long email ran into the phone number (PEOPLE-11). */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Email">
               <a
                 href={`mailto:${candidate.email}`}
-                className="inline-flex items-center gap-1.5 text-gold hover:underline"
+                className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-gold hover:underline"
               >
                 <Mail className="h-3.5 w-3.5 shrink-0" />
-                {candidate.email}
+                <span className="min-w-0 break-all">{candidate.email}</span>
               </a>
             </Field>
             <Field label="Phone">
@@ -695,8 +710,9 @@ export function CandidateDetailDrawer({
           )}
         </Section>
 
+        {clientsOn && (
         <Section
-          title="Client review"
+          title={`${term('label.client')} review`}
           action={
             canManage && !isTerminal ? (
               <Button size="sm" variant="outline" onClick={() => setSubmitting(true)}>
@@ -707,11 +723,11 @@ export function CandidateDetailDrawer({
           }
         >
           {submittalsQuery.error ? (
-            <ErrorBanner>Could not load the client reviews.</ErrorBanner>
+            <ErrorBanner>Could not load the {clientWord} reviews.</ErrorBanner>
           ) : submittals === null ? (
             <SkeletonRows count={1} />
           ) : submittals.length === 0 ? (
-            <p className="text-sm text-silver/70">Not put in front of a client yet.</p>
+            <p className="text-sm text-silver/70">Not put in front of a {clientWord} yet.</p>
           ) : (
             <ul className="space-y-2">
               {submittals.map((s) => (
@@ -721,12 +737,15 @@ export function CandidateDetailDrawer({
                       {s.clientName}
                       {s.locationName ? ` · ${s.locationName}` : ''}
                     </span>
-                    <Badge variant={SUBMITTAL_BADGE[s.status].variant}>{SUBMITTAL_BADGE[s.status].label}</Badge>
+                    <Badge variant={SUBMITTAL_BADGE[s.status].variant}>
+                      {s.status === 'PENDING' ? `Waiting on ${clientWord}` : SUBMITTAL_BADGE[s.status].label}
+                    </Badge>
                   </div>
                   <div className="mt-1 text-xs2 text-silver">
+                    {/* People by name, not email (PEOPLE-21). */}
                     Sent {fmtDate(s.createdAt)}
-                    {s.submittedByEmail ? ` by ${s.submittedByEmail}` : ''}
-                    {s.decidedAt ? ` · answered ${fmtDate(s.decidedAt)}${s.decidedByEmail ? ` by ${s.decidedByEmail}` : ''}` : ''}
+                    {s.submittedByName ?? s.submittedByEmail ? ` by ${s.submittedByName ?? s.submittedByEmail}` : ''}
+                    {s.decidedAt ? ` · answered ${fmtDate(s.decidedAt)}${s.decidedByName ?? s.decidedByEmail ? ` by ${s.decidedByName ?? s.decidedByEmail}` : ''}` : ''}
                   </div>
                   {s.feedback && (
                     <p className="mt-2 whitespace-pre-wrap rounded border border-navy-secondary bg-navy-secondary/30 px-2.5 py-1.5 text-sm text-silver">
@@ -740,7 +759,7 @@ export function CandidateDetailDrawer({
                       className="mt-1 -ml-2 text-silver"
                       onClick={() => setWithdrawing(s)}
                     >
-                      Withdraw from client
+                      Withdraw from {clientWord}
                     </Button>
                   )}
                 </li>
@@ -748,6 +767,7 @@ export function CandidateDetailDrawer({
             </ul>
           )}
         </Section>
+        )}
 
         <Section title="Offers">
           {offers === null && !error ? (
@@ -773,20 +793,34 @@ export function CandidateDetailDrawer({
                     <span className="text-sm text-white truncate">
                       {o.jobTitle}
                     </span>
-                    <Badge variant={OFFER_VARIANT[o.status]}>{statusLabel(o.status)}</Badge>
+                    {/* A lapsed offer reads expired, whatever the row still says (PEOPLE-13). */}
+                    <Badge variant={OFFER_VARIANT[offerShownStatus(o)]}>{statusLabel(offerShownStatus(o))}</Badge>
                   </div>
                   <div className="mt-1 text-xs2 text-silver">
-                    {o.clientName} · starts {o.startDate}
-                    {o.salary
-                      ? ` · ${o.currency} ${o.salary}/yr`
-                      : o.hourlyRate
-                        ? ` · ${o.currency} ${o.hourlyRate}/hr`
-                        : ''}
+                    {/* A calendar date and money in words, never "2026-10-23 · USD 15/hr" (PEOPLE-20). */}
+                    {[
+                      clientsOn ? o.clientName || null : null,
+                      `starts ${fmtDateOnly(o.startDate)}`,
+                      o.salary
+                        ? `${fmtMoney(o.salary, { currency: o.currency })}/yr`
+                        : o.hourlyRate
+                          ? `${fmtMoney(o.hourlyRate, { currency: o.currency })}/hr`
+                          : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </div>
                   {o.status === 'PENDING_APPROVAL' && o.approvalNote && (
                     <div className="mt-1 text-xs2 text-warning">Held for approval — {o.approvalNote}</div>
                   )}
-                  {o.status === 'SENT' && <div className="mt-1 text-xs2 text-silver">Awaiting their signature</div>}
+                  {offerShownStatus(o) === 'SENT' && (
+                    <div className="mt-1 text-xs2 text-silver">
+                      Awaiting their signature{o.expiresAt ? ` · link works until ${fmtDate(o.expiresAt)}` : ''}
+                    </div>
+                  )}
+                  {offerShownStatus(o) === 'EXPIRED' && o.expiresAt && (
+                    <div className="mt-1 text-xs2 text-silver">Lapsed {fmtDate(o.expiresAt)} unanswered</div>
+                  )}
                   {o.signedName && o.signedAt && (
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs2 text-silver">
                       Signed by {o.signedName}, {fmtDate(o.signedAt)}
@@ -812,6 +846,7 @@ export function CandidateDetailDrawer({
           <CandidateTimeline
             candidateId={candidate.id}
             canManage={canManage}
+            onDraftChange={setNoteDraft}
             // A stage move made by the page's own buttons lands here too.
             refreshKey={`${candidate.stage}|${candidate.stageChangedAt}|${bump}`}
           />

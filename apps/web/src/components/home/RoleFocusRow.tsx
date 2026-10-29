@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { ATTENDANCE_FILL_TARGET_PCT } from '@alto-people/shared';
+import { ATTENDANCE_FILL_TARGET_PCT, METRICS } from '@alto-people/shared';
 import { Briefcase, CalendarCheck, ClipboardList, Clock, ShieldAlert, Timer, Users, type LucideIcon } from '@/components/ui/icons';
 import { apiFetch } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
 import { getHeadcount } from '@/lib/positionsApi';
-import { laborCosts } from '@/lib/schedulingApi';
-import { fmtCount, ymdLocal } from '@/lib/format';
+import { getDashboardKPIs } from '@/lib/analyticsApi';
+import { fmtCount, fmtDateOnlyRange } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/Card';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
@@ -152,22 +152,18 @@ interface OverviewSlice {
 function OpsRow() {
   const term = useTerm();
   const overview = useQuery({ queryKey: ['workforce', 'overview'], queryFn: () => apiFetch<OverviewSlice>('/workforce/overview'), staleTime: 60_000 });
-  const weekStart = overview.data?.week.start ?? null;
-  const tomorrow = (() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return ymdLocal(d);
-  })();
-  const labor = useQuery({
-    queryKey: ['labor-costs', 'week', weekStart, tomorrow],
-    queryFn: () => laborCosts({ from: weekStart!, to: tomorrow }),
-    enabled: Boolean(weekStart),
-    staleTime: 5 * 60_000,
-  });
+  // "Hours this week" and "Scheduled hours" from the metric dictionary
+  // (packages/shared metrics.ts): the company week (Saturday → Friday,
+  // company zone) the API reads for Analytics too — one number on both
+  // pages. This tile used to re-add the labor-cost rows from a UTC Saturday
+  // to the browser's tomorrow and read 552h beside Analytics' 537h (LEAD-21).
+  // Same query key as the home's KPI read, so it is one request.
+  const kpis = useQuery({ queryKey: ['dashboard', 'kpis'], queryFn: () => getDashboardKPIs() });
   const positions = useQuery({ queryKey: ['positions', 'headcount'], queryFn: () => getHeadcount() });
   const o = overview.data;
-  const worked = labor.data ? Math.round(labor.data.rows.reduce((s, r) => s + r.workedMinutes, 0) / 60) : null;
-  const scheduled = labor.data ? Math.round(labor.data.rows.reduce((s, r) => s + r.scheduledMinutes, 0) / 60) : null;
+  const week = kpis.data?.week ?? null;
+  const worked = week ? Math.round(week.paidHours) : null;
+  const scheduled = week ? Math.round(week.scheduledHours) : null;
   const openSeats = positions.data ? (positions.data.byStatus.OPEN ?? 0) : null;
   const shiftsToday = o ? o.today.filled + o.today.open : 0;
   const fill = o?.week.fillRatePct ?? null;
@@ -203,12 +199,14 @@ function OpsRow() {
     },
     {
       key: 'labor',
-      label: 'Hours worked this week',
-      // One hours number on the ops home, with its unit (the snapshot's
-      // "last week" twin is gone from this role's page).
+      label: METRICS.hoursThisWeek.label,
+      // One hours number on the ops home, with its unit and its week.
       value: worked === null ? null : `${INT.format(worked)}h`,
       nothing: worked === 0 && scheduled === 0 ? 'No hours scheduled this week' : undefined,
-      hint: scheduled === null ? undefined : `of ${INT.format(scheduled)}h scheduled across ${term('sites').toLowerCase()}`,
+      hint:
+        week === null || scheduled === null
+          ? undefined
+          : `Paid, of ${INT.format(scheduled)}h scheduled across ${term('sites').toLowerCase()} · ${fmtDateOnlyRange(week.start, week.end)}`,
       to: '/labor-costs',
       icon: Clock,
     },

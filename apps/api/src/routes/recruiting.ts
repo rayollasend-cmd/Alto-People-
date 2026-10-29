@@ -24,16 +24,19 @@ import {
   hasCapability,
 } from '@alto-people/shared';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { CANDIDATE_SEARCH, idsMatching, searchWords } from '../lib/peopleSearch.js';
+import { expireLapsedOffers, liveSentOffer } from '../lib/offerExpiry.js';
+import { userDisplayName } from '../lib/clientProspects.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js';
 import {
-  DEFAULT_TIMEZONE,
   addDaysInZone,
   localDateKey,
   zonedWallTimeToUtcInstant,
 } from '../lib/timezone.js';
+import { companyWorkweek } from '../lib/timeAnomalies.js';
 import { inviteOneApplicant } from './onboarding.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import { notifyUser } from '../lib/notify.js';
@@ -99,14 +102,13 @@ const TERMINAL: ReadonlySet<CandidateStage> = new Set(['HIRED', 'WITHDRAWN', 'RE
 /**
  * The where-clause for the candidate list's filters. Search is every word
  * against name, email, phone and position — "kim cashier" finds Kim Phan
- * the cashier — case-insensitive.
+ * the cashier — case- and accent-insensitive, phone by digits
+ * (lib/peopleSearch, the same search as People).
  */
-function candidateWhere(f: CandidateFilters, now = new Date()): Prisma.CandidateWhereInput {
+async function candidateWhere(f: CandidateFilters, now = new Date()): Promise<Prisma.CandidateWhereInput> {
   const and: Prisma.CandidateWhereInput[] = [{ deletedAt: null }];
-  const words = (f.q ?? '').split(/\s+/).filter(Boolean).slice(0, 6);
-  for (const w of words) {
-    const has = { contains: w, mode: 'insensitive' as const };
-    and.push({ OR: [{ firstName: has }, { lastName: has }, { email: has }, { phone: has }, { position: has }] });
+  if (f.q && searchWords(f.q).length) {
+    and.push({ id: { in: await idsMatching(prisma, CANDIDATE_SEARCH, tenantIdForWrite(), f.q) } });
   }
   if (f.stage) {
     const stages = f.stage.split(',').filter((s): s is CandidateStage => (STAGES_ALL as string[]).includes(s));
@@ -157,12 +159,19 @@ recruitingRouter.get('/candidates', async (req, res, next) => {
     const f = CandidateFiltersSchema.parse(req.query);
     const limit = Math.max(1, pageParam(req.query.limit, 50, 200));
     const offset = pageParam(req.query.offset, 0, 1_000_000);
-    const where = candidateWhere(f);
-    const [rows, total] = await Promise.all([
+    const where = await candidateWhere(f);
+    // A search says where its matches sit in every stage, so a stage chip
+    // never hides one silently (PEOPLE-15).
+    const searching = !!f.q && searchWords(f.q).length > 0;
+    const [rows, total, byStage] = await Promise.all([
       prisma.candidate.findMany({ where, orderBy: candidateOrder(f.sort), skip: offset, take: limit }),
       prisma.candidate.count({ where }),
+      searching
+        ? candidateWhere({ ...f, stage: undefined }).then((w) => prisma.candidate.groupBy({ by: ['stage'], where: w, _count: { _all: true } }))
+        : Promise.resolve(null),
     ]);
-    res.json(CandidateListResponseSchema.parse({ candidates: rows.map(toCandidate), total, offset, limit }));
+    const stageCounts = byStage ? Object.fromEntries(byStage.map((g) => [g.stage, g._count._all])) : undefined;
+    res.json(CandidateListResponseSchema.parse({ candidates: rows.map(toCandidate), total, offset, limit, ...(stageCounts ? { stageCounts } : {}) }));
   } catch (err) {
     next(err);
   }
@@ -178,7 +187,7 @@ recruitingRouter.get('/candidates/board', async (req, res, next) => {
   try {
     const f = CandidateFiltersSchema.parse(req.query);
     const perStage = Math.max(1, pageParam(req.query.perStage, 25, 100));
-    const base = candidateWhere({ ...f, stage: undefined });
+    const base = await candidateWhere({ ...f, stage: undefined });
     const counts = await prisma.candidate.groupBy({ by: ['stage'], where: base, _count: { _all: true } });
     const totalOf = new Map(counts.map((c) => [c.stage, c._count._all]));
     const columns = await Promise.all(
@@ -215,7 +224,10 @@ recruitingRouter.get('/home', async (req, res, next) => {
 recruitingRouter.get('/summary', async (_req, res, next) => {
   try {
     const now = new Date();
-    const tz = DEFAULT_TIMEZONE;
+    // Lapsed offers are expired before anything counts them (PEOPLE-13).
+    await expireLapsedOffers(prisma, now);
+    // The company's day, not New York's (CODE-14).
+    const tz = companyWorkweek().timezone;
     const [y, m, d] = localDateKey(now, tz).split('-').map(Number) as [number, number, number];
     const startOfToday = zonedWallTimeToUtcInstant(y, m, d, 0, tz);
     const startOfTomorrow = addDaysInZone(startOfToday, 1, tz);
@@ -238,7 +250,7 @@ recruitingRouter.get('/summary', async (_req, res, next) => {
         where: { ...liveCandidate, completedAt: null, scheduledFor: { gte: now, lt: new Date(now.getTime() + 7 * DAY_MS) } },
       }),
       prisma.interview.count({ where: { ...liveCandidate, completedAt: null, scheduledFor: { lt: now } } }),
-      prisma.offer.count({ where: { status: 'SENT', candidate: { deletedAt: null } } }),
+      prisma.offer.count({ where: { ...liveSentOffer(now), candidate: { deletedAt: null } } }),
       prisma.offer.count({ where: { status: 'PENDING_APPROVAL', candidate: { deletedAt: null } } }),
       prisma.candidate.findMany({
         where: { deletedAt: null, stage: 'HIRED', hiredAt: { gte: new Date(now.getTime() - 90 * DAY_MS) } },
@@ -312,7 +324,7 @@ recruitingRouter.get('/candidates/:id/events', async (req, res, next) => {
       take: 200,
       include: {
         actor: {
-          select: { email: true, associate: { select: { firstName: true, lastName: true } } },
+          select: { email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } },
         },
       },
     });
@@ -324,11 +336,10 @@ recruitingRouter.get('/candidates/:id/events', async (req, res, next) => {
           fromStage: e.fromStage,
           toStage: e.toStage,
           body: e.body,
-          actorName: e.actor
-            ? e.actor.associate
-              ? `${e.actor.associate.firstName} ${e.actor.associate.lastName}`
-              : e.actor.email
-            : null,
+          // A person's name, never their email (PEOPLE-21): display name,
+          // their person record, else the email's first part.
+          actorName: e.actor ? userDisplayName(e.actor) : null,
+          actorEmail: e.actor?.email ?? null,
           createdAt: e.createdAt.toISOString(),
         })),
       }),
@@ -369,7 +380,8 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
  */
 recruitingRouter.get('/analytics', async (req, res, next) => {
   try {
-    const tz = DEFAULT_TIMEZONE;
+    // The company's day, not New York's (CODE-14).
+    const tz = companyWorkweek().timezone;
     const today = localDateKey(new Date(), tz);
     const toKey = typeof req.query.to === 'string' && YMD.test(req.query.to) ? req.query.to : today;
     const [ty, tm, td] = toKey.split('-').map(Number) as [number, number, number];
@@ -476,8 +488,8 @@ function submittalView(s: Prisma.CandidateSubmittalGetPayload<{
   include: {
     client: { select: { name: true } };
     location: { select: { name: true } };
-    submittedBy: { select: { email: true } };
-    decidedBy: { select: { email: true } };
+    submittedBy: { select: { email: true; displayName: true; associate: { select: { firstName: true; lastName: true } } } };
+    decidedBy: { select: { email: true; displayName: true; associate: { select: { firstName: true; lastName: true } } } };
   };
 }>) {
   return {
@@ -490,6 +502,9 @@ function submittalView(s: Prisma.CandidateSubmittalGetPayload<{
     feedback: s.feedback,
     submittedByEmail: s.submittedBy?.email ?? null,
     decidedByEmail: s.decidedBy?.email ?? null,
+    // Names for the screen (PEOPLE-21); the emails stay for a tooltip.
+    submittedByName: s.submittedBy ? userDisplayName(s.submittedBy) : null,
+    decidedByName: s.decidedBy ? userDisplayName(s.decidedBy) : null,
     decidedAt: s.decidedAt?.toISOString() ?? null,
     createdAt: s.createdAt.toISOString(),
   };
@@ -498,8 +513,8 @@ function submittalView(s: Prisma.CandidateSubmittalGetPayload<{
 const SUBMITTAL_INCLUDE = {
   client: { select: { name: true } },
   location: { select: { name: true } },
-  submittedBy: { select: { email: true } },
-  decidedBy: { select: { email: true } },
+  submittedBy: { select: { email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } },
+  decidedBy: { select: { email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } },
 } as const;
 
 recruitingRouter.get('/candidates/:id/submittals', async (req, res, next) => {

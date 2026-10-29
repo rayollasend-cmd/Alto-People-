@@ -9,8 +9,9 @@ import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import {
+  fmtDateOnlyRange,
   fmtDateTz,
-  displayLocale,
+  fmtHours,
   fmtMoney,
   fmtMoneyEst,
   fmtWeekdayTz,
@@ -18,6 +19,8 @@ import {
   ymdToIsoEndExclusive,
   ymdToIsoStart,
 } from '@/lib/format';
+import { useMyEarnings } from '@/components/EarningsCard';
+import { QueryError } from '@/components/ui/QueryError';
 import { fmtPunchTime } from './punchFormat';
 import { enterStagger } from '@/lib/motion';
 import { Button } from '@/components/ui/Button';
@@ -42,7 +45,6 @@ import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { cn } from '@/lib/cn';
 import { workweekStart } from '@/lib/workweek';
@@ -95,11 +97,11 @@ function weekStartMs(input: string | Date): number {
   return workweekStart(input).getTime();
 }
 
-// The app-wide hours dialect ("38.5h", locale-aware) — this page used to
-// print Fieldglass-style "38.50h"; that convention belongs on the admin
-// export, not an associate's phone.
-/** Hours with one decimal, like every hours figure in the app ("7.7h" sat beside "7.53h"). */
-const fmtH = (minutes: number) => `${(Math.round(minutes / 6) / 10).toLocaleString(displayLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h`;
+// The associate's hours dialect, one precision on every screen (ASSOC-28):
+// fmtHours — up to two decimals, the precision the paystub and the pay
+// preview carry ("7.53h", "8h"). One decimal here read 23.4h beside Home's
+// 23.43h for the same week.
+const fmtH = (minutes: number) => fmtHours(minutes / 60);
 
 /** "Wed, Jul 2" — the punch's day on its site's clock (display zone when
  *  the entry has no site), so the day and the times below it agree. */
@@ -107,9 +109,10 @@ function fmtEntryDay(iso: string, tz?: string | null): string {
   return `${fmtWeekdayTz(iso, tz)}, ${fmtDateTz(iso, tz)}`;
 }
 
-type Preset = 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
+type Preset = 'PAY_PERIOD' | 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
 
 const PRESETS: Array<[Preset, MessageKey]> = [
+  ['PAY_PERIOD', 'time.payPeriodChip'],
   ['THIS_WEEK', 'sched.thisWeek'],
   ['LAST_WEEK', 'time.lastWeek'],
   ['LAST14', 'time.last14'],
@@ -117,11 +120,28 @@ const PRESETS: Array<[Preset, MessageKey]> = [
 
 export function MyTimesheet() {
   const { t } = useI18n();
+  // The pay period running today, as Home counts it (GET /time/me/earnings
+  // `period`, the company's calendar day) — the page opens on it, and its
+  // hero is Home's "Earned this pay period", to the cent (ASSOC-3).
+  const earnings = useMyEarnings();
+  const period = earnings.data?.period ?? null;
+  const earningsSettled = earnings.isSuccess || earnings.isError;
   const [fromYmd, setFromYmd] = useState(daysAgoYmd(13));
   const [toYmd, setToYmd] = useState(ymdLocal(new Date()));
   // Which quick-range chip produced the current window; manual date
   // edits clear it so the chips never lie about what's shown.
-  const [activePreset, setActivePreset] = useState<Preset | null>('LAST14');
+  const [activePreset, setActivePreset] = useState<Preset | null>('PAY_PERIOD');
+  // Opening on the pay period: its dates once known; with no pay schedule
+  // (no period to open on) the last 14 days, labelled as such.
+  useEffect(() => {
+    if (activePreset !== 'PAY_PERIOD' || !earningsSettled) return;
+    if (period) {
+      setFromYmd(period.start);
+      setToYmd(period.end);
+    } else {
+      setActivePreset('LAST14');
+    }
+  }, [activePreset, earningsSettled, period]);
   const [disputeTarget, setDisputeTarget] = useState<TimeEntry | null>(null);
 
   // The From/To inputs are power-user furniture — hidden until the
@@ -132,6 +152,13 @@ export function MyTimesheet() {
     setActivePreset(p);
     setShowCustom(false);
     const now = new Date();
+    if (p === 'PAY_PERIOD') {
+      if (period) {
+        setFromYmd(period.start);
+        setToYmd(period.end);
+      }
+      return;
+    }
     if (p === 'LAST14') {
       setFromYmd(daysAgoYmd(13));
       setToYmd(ymdLocal(now));
@@ -161,6 +188,8 @@ export function MyTimesheet() {
 
   const query = useQuery({
     queryKey: ['me', 'timeEntries', fromYmd, toYmd],
+    // Opening on the pay period: wait for its dates rather than fetch 14 days first.
+    enabled: activePreset !== 'PAY_PERIOD' || (earningsSettled && (!period || (fromYmd === period.start && toYmd === period.end))),
     queryFn: async () => {
       try {
         return await listMyTimeEntries({
@@ -242,6 +271,26 @@ export function MyTimesheet() {
     return t('time.weekOf', { date: fmtDateTz(new Date(weekMs)) });
   };
 
+  // The hero names the window it adds up — never "This period" over the
+  // last 14 days (ASSOC-3). The pay period and this week are the server's
+  // own figures (Home's ring and earnings card), so the numbers agree.
+  const heroLabel =
+    activePreset === 'PAY_PERIOD' && period
+      ? t('time.heroPayPeriod', { range: fmtDateOnlyRange(period.start, period.end) })
+      : activePreset === 'THIS_WEEK'
+        ? t('sched.thisWeek')
+        : activePreset === 'LAST_WEEK'
+          ? t('time.lastWeek')
+          : activePreset === 'LAST14'
+            ? t('time.last14')
+            : fmtDateOnlyRange(fromYmd, toYmd);
+  const serverFigure =
+    activePreset === 'PAY_PERIOD' && period
+      ? { amount: period.earned, hours: period.workedHours }
+      : activePreset === 'THIS_WEEK' && earnings.data
+        ? { amount: earnings.data.earnedSoFar, hours: earnings.data.workedHours }
+        : null;
+
   // Nothing yet: the empty state on its own, never inside a bordered card.
   if (entries && entries.length === 0 && !query.isError) {
     return (
@@ -272,18 +321,22 @@ export function MyTimesheet() {
               className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
             />
             <div className="relative">
-              <span className="text-xs font-medium uppercase tracking-wider text-gold">
-                {t('time.thisPeriod')}
+              <span className="text-xs font-medium uppercase tracking-wider text-gold" data-testid="timesheet-hero-label">
+                {heroLabel}
               </span>
               <div className="mt-2 text-5xl font-bold tracking-tight tabular-nums text-white">
-                {grossEstimate !== null
-                  ? fmtMoney(grossEstimate)
-                  : fmtH(approvedMin)}
+                {serverFigure
+                  ? fmtMoney(serverFigure.amount)
+                  : grossEstimate !== null
+                    ? fmtMoney(grossEstimate)
+                    : fmtH(approvedMin)}
               </div>
               <p className="mt-1.5 text-sm text-silver tabular-nums">
-                {grossEstimate !== null
-                  ? t('time.heroLineGross', { hours: fmtH(approvedMin) })
-                  : t('time.heroLineHours')}
+                {serverFigure
+                  ? t('time.heroLineWorked', { hours: fmtHours(serverFigure.hours) })
+                  : grossEstimate !== null
+                    ? t('time.heroLineGross', { hours: fmtH(approvedMin) })
+                    : t('time.heroLineHours')}
                 {pendingMin > 0 && (
                   <span className="text-gold">
                     {' '}· {t('time.heroPending', { hours: fmtH(pendingMin) })}
@@ -300,7 +353,7 @@ export function MyTimesheet() {
             role="group"
             aria-label={t('time.rangeAria')}
           >
-            {PRESETS.map(([preset, key]) => {
+            {PRESETS.filter(([preset]) => preset !== 'PAY_PERIOD' || period).map(([preset, key]) => {
               const active = activePreset === preset;
               return (
                 <Button
@@ -367,20 +420,9 @@ export function MyTimesheet() {
           )}
         </div>
 
-        {query.isError && (
-          <ErrorBanner
-            className="mb-4"
-            action={
-              <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
-                {t('common.retry')}
-              </Button>
-            }
-          >
-            {query.error instanceof ApiError
-              ? query.error.message
-              : t('time.loadFailed')}
-          </ErrorBanner>
-        )}
+        {/* The failure decides the words: never the server's raw text
+            ("Internal error") on a worker's phone (ASSOC-25). */}
+        {query.isError && <QueryError className="mb-4" what={t('time.whatPunches')} query={query} />}
         {!entries && !query.isError && <SkeletonRows count={4} rowHeight="h-14" />}
         {entries && entries.length === 0 && (
           <EmptyState

@@ -154,6 +154,16 @@ const TASK_LABEL: Record<string, string> = {
   I9_VERIFICATION: 'I-9 verification',
 };
 
+/**
+ * "W-4 is marked done, but nothing is on file." — one line per DONE task
+ * whose evidence is missing (the API says which: ChecklistTask.evidence).
+ */
+export function missingEvidenceWarnings(tasks: ReadonlyArray<Pick<ChecklistTask, 'kind' | 'title' | 'evidence'>>): string[] {
+  return tasks
+    .filter((t) => t.evidence === 'missing')
+    .map((t) => `${TASK_LABEL[t.kind] ?? t.title} is marked done, but nothing is on file.`);
+}
+
 // Kinds whose skip is a one-click outline button (the historical set).
 // Every other kind is skippable too — the API accepts any kind — but the
 // remaining ones (profile, W-4, direct deposit, policy acks) carry payroll/
@@ -420,7 +430,8 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
         // admin can read them and either cancel or approve anyway. The
         // one-click header approve lands here with the dialog still closed,
         // so open it too (no-op when the dialog triggered the attempt).
-        setApproveWarnings(extractApprovalWarnings(err.details));
+        // The server's gaps, after any "marked done — nothing on file" lines.
+        setApproveWarnings([...missingEvidenceWarnings(detail.tasks), ...extractApprovalWarnings(err.details)]);
         setApproveOpen(true);
         return;
       }
@@ -510,8 +521,19 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
   const directApproveDate =
     startYmd && startYmd >= ymdLocal() && !hireUncovered ? startYmd : null;
 
+  // PEOPLE-17: tasks marked done with nothing on file. Approve doesn't go
+  // through in one click past them — the dialog lists them first.
+  const missingEvidence = missingEvidenceWarnings(detail.tasks);
+  const openApprove = () => {
+    if (missingEvidence.length > 0) setApproveWarnings((w) => w ?? missingEvidence);
+    setApproveOpen(true);
+  };
   const handleDirectApprove = async () => {
     if (!directApproveDate || directApproving) return;
+    if (missingEvidence.length > 0) {
+      openApprove();
+      return;
+    }
     setDirectApproving(true);
     try {
       await handleApprove(directApproveDate, false);
@@ -565,7 +587,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
               <DetailActions
                 detail={detail}
                 onResend={handleResend}
-                onApprove={() => setApproveOpen(true)}
+                onApprove={openApprove}
                 onReject={() => setRejectOpen(true)}
                 onCancel={() => setCancelOpen(true)}
                 onReopen={() => void handleReopen()}
@@ -590,7 +612,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
               <DetailActions
                 detail={detail}
                 onResend={handleResend}
-                onApprove={() => setApproveOpen(true)}
+                onApprove={openApprove}
                 onReject={() => setRejectOpen(true)}
                 onCancel={() => setCancelOpen(true)}
                 onReopen={() => void handleReopen()}
@@ -691,6 +713,16 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
                 count={counts.SKIPPED ?? 0}
                 total={detail.tasks.length}
                 tone="silver"
+              />
+            )}
+            {/* Of the done ones, how many have nothing on file (PEOPLE-17). */}
+            {missingEvidence.length > 0 && (
+              <CountChip
+                icon={AlertTriangle}
+                label="Marked done, nothing on file"
+                count={missingEvidence.length}
+                total={detail.tasks.length}
+                tone="warning"
               />
             )}
           </div>
@@ -826,7 +858,7 @@ export function ApplicationDetailBody({ applicationId, mode, onCancelled }: Appl
           Approve and Reject sat past a sideways-scrolling row. */}
       {canManage && <ApplicationDecisionBar
         detail={detail}
-        onApprove={() => (directApproveDate ? void handleDirectApprove() : setApproveOpen(true))}
+        onApprove={() => (directApproveDate ? void handleDirectApprove() : openApprove())}
         approveLabel={directApproveDate ? `Approve · starts ${fmtDateLabel(directApproveDate)}` : 'Approve'}
         approving={directApproving}
         onChangeDate={directApproveDate ? () => setApproveOpen(true) : undefined}
@@ -1627,6 +1659,17 @@ interface TaskTileProps {
   submittedOpen?: boolean;
 }
 
+/** A DONE task whose evidence isn't on file. */
+const UNBACKED_TONE = {
+  bg: 'bg-warning/[0.06]',
+  border: 'border-warning/40 hover:border-warning/70',
+  iconCx: 'text-warning',
+  icon: AlertTriangle,
+  badgeBg: 'bg-warning/15',
+  badgeText: 'text-warning',
+  label: 'Marked done — nothing on file',
+};
+
 const STATUS_TONE: Record<
   string,
   {
@@ -1757,8 +1800,11 @@ function taskDestination(
 }
 
 function TaskTile({ task, canSkip, quietSkip, onSkip, destination, submitted, submittedOpen = false }: TaskTileProps) {
-  const [showSubmitted, setShowSubmitted] = useState(submittedOpen);
-  const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
+  // Marked done with nothing on file (PEOPLE-17): the evidence, not the
+  // flag, sets the badge — a warning, open on what is (not) there.
+  const unbacked = task.status === 'DONE' && task.evidence === 'missing';
+  const [showSubmitted, setShowSubmitted] = useState(submittedOpen || unbacked);
+  const tone = unbacked ? UNBACKED_TONE : (STATUS_TONE[task.status] ?? STATUS_TONE.PENDING);
   const Icon = tone.icon;
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
 
@@ -1784,10 +1830,16 @@ function TaskTile({ task, canSkip, quietSkip, onSkip, destination, submitted, su
                 tone.badgeText
               )}
               data-status={task.status}
+              data-evidence={task.evidence}
             >
               {tone.label}
             </span>
           </div>
+          {unbacked && (
+            <div className="mt-1 text-xs text-warning">
+              Someone marked this done, but nothing is on file yet. Check it before approving.
+            </div>
+          )}
           {task.description && (
             <div className="text-xs text-silver mt-1 line-clamp-2">
               {task.description}

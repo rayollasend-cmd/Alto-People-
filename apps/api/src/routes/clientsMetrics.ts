@@ -10,6 +10,7 @@ import { statementAmounts } from '../lib/books/posting/statements.js';
 import { scopeClients } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * The clients list's account numbers and a client's Performance tab
@@ -119,7 +120,7 @@ export async function clientPerformanceHandler(req: Request, res: Response, next
     ]);
     if (!weeks) throw new HttpError(404, 'client_not_found', 'Client not found');
 
-    const ymd = (d: Date) => d.toISOString().slice(0, 10);
+    const ymd = (d: Date) => dateColumnKey(d);
     const openById = new Map((balances ?? []).map((b) => [b.statementId, b.open / 100]));
     const asOf = orgDateKey(now);
     const statementRows: ClientPerformanceStatement[] | undefined = statements

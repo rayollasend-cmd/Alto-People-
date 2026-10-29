@@ -12,7 +12,7 @@ import { afterRunSettled } from '../payrollSettled.js';
 import { describeBranchFailure } from '../achReturnCodes.js';
 import { tenantIdForWrite } from '../tenant.js';
 import type { DisbursementAdapter, DisbursementInput, DisbursementResult } from '../disbursement.js';
-import { bankingProfile, originate, ownAccount, usesOurAch, type EntryInput } from './ach.js';
+import { bankingProfile, LIVE_ENTRY_STATUSES, originate, ownAccount, usesOurAch, type EntryInput } from './ach.js';
 import { activeConnection } from '../providers/connections.js';
 import { applyFundingReturn, loadTenantHolidays, payDateFor } from './funding.js';
 import { addBankingDays, easternInstant, isBankingDay, onOrBeforeBankingDay, ymd } from './holidays.js';
@@ -173,6 +173,12 @@ export class AchRailAdapter implements DisbursementAdapter {
     // Payroll set this paycheck to pay by paper check this time: it never goes into an ACH file.
     const override = await this.db.payrollItemPayoutOverride.findUnique({ where: { payrollItemId: itemId }, select: { clearedAt: true } });
     if (override && !override.clearedAt) return { provider: 'ACH', externalRef: '', status: 'FAILED', failureReason: 'pay_by_check: this paycheck is set to pay by paper check' };
+    // Already in a live bank file (deep audit CODE-3): it is paid by that file — waiting for its upload, or sent. Never a second one.
+    const inFile = await this.db.achEntry.findFirst({
+      where: { payrollItemId: itemId, kind: 'CREDIT', status: { in: [...LIVE_ENTRY_STATUSES] }, file: { status: { not: 'REJECTED' } } },
+      select: { traceNumber: true },
+    });
+    if (inFile) return { provider: 'ACH', externalRef: inFile.traceNumber, status: 'PENDING', failureReason: null };
     const credits = await creditsFor(this.db, input, itemId);
     if ('error' in credits) return { provider: 'ACH', externalRef: '', status: 'FAILED', failureReason: credits.error };
     if (this.batch) {

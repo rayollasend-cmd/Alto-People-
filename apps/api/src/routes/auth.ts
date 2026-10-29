@@ -39,7 +39,7 @@ import {
   signSession,
   verifyMfaPending,
 } from '../lib/jwt.js';
-import { mfaPolicyAppliesTo } from '@alto-people/shared';
+import { EMAIL_LANGUAGES, mfaPolicyAppliesTo, type EmailLanguage } from '@alto-people/shared';
 import { ACCOUNT_PHOTO_SELECT, accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
 import {
@@ -125,6 +125,7 @@ import {
 import { getBrandingSync } from '../lib/branding.js';
 import { tenantForSession } from '../lib/tenantProfile.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 // Tolerate one full TOTP period of skew on either side (~30s before/after
 // the current window) so users with mildly drifted phone clocks still
@@ -294,7 +295,7 @@ function toAuthUser(u: {
     lastName: u.lastName ?? null,
     photoUrl: u.photoUrl ?? null,
     timezone: u.timezone ?? null,
-    language: u.language === 'en' || u.language === 'es' || u.language === 'tr' ? u.language : null,
+    language: (EMAIL_LANGUAGES as readonly string[]).includes(u.language ?? '') ? (u.language as EmailLanguage) : null,
     mfaEnabled: u.mfaEnabled ?? (u.mfaEnabledAt != null),
     ...(u.capabilities ? { capabilities: u.capabilities, tenantRoleName: u.tenantRoleName ?? null } : {}),
   };
@@ -1469,7 +1470,7 @@ authRouter.get('/me/data-export', requireAuth, async (req, res, next) => {
   try {
     const userId = req.user!.id;
     const entries = await buildDataExport(userId);
-    const datestamp = new Date().toISOString().slice(0, 10);
+    const datestamp = orgDateKey(new Date());
     const filename = `alto-data-export-${datestamp}.zip`;
 
     res.setHeader('Content-Type', 'application/zip');
@@ -1963,9 +1964,9 @@ authRouter.patch('/me/timezone', requireAuth, async (req, res, next) => {
 /**
  * PATCH /auth/me/language { language }
  *
- * The language Alto writes to this person in: English, Spanish or Turkish.
- * The app's toggle and the Settings card both land here; every
- * associate-facing email reads it and falls back to English.
+ * The language Alto writes to this person in (EMAIL_LANGUAGES: the app's six).
+ * The app's toggle and the Settings card both land here; every message that
+ * has the language uses it — emails and WhatsApp (en/es/tr) fall back to English.
  */
 authRouter.patch('/me/language', requireAuth, async (req, res, next) => {
   try {

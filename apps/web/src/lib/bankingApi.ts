@@ -8,7 +8,8 @@ export type AchSpeed = 'SAME_DAY' | 'NEXT_DAY' | 'TWO_DAY';
 export type Settlement = 'PREFUND' | 'OWN_ACCOUNT';
 export type FileFormat = 'UNBALANCED' | 'BALANCED';
 export type KybStatus = 'NOT_STARTED' | 'PENDING' | 'APPROVED' | 'REJECTED';
-export type FundingStatus = 'NOT_STARTED' | 'DRAFT' | 'AWAITING_APPROVAL' | 'SUBMITTED' | 'SETTLED' | 'RETURNED' | 'WIRE_PENDING' | 'WIRE_RECEIVED' | 'CANCELLED';
+/** SUBMITTING: a pull is being sent to the bank right now (a second pull answers 409 already_funding). */
+export type FundingStatus = 'NOT_STARTED' | 'DRAFT' | 'AWAITING_APPROVAL' | 'SUBMITTING' | 'SUBMITTED' | 'SETTLED' | 'RETURNED' | 'WIRE_PENDING' | 'WIRE_RECEIVED' | 'CANCELLED';
 export type AccountStatus = 'UNVERIFIED' | 'MICRODEPOSITS_SENT' | 'PRENOTE_SENT' | 'VERIFIED' | 'FAILED' | 'DISABLED';
 
 export interface BankingProfile {
@@ -258,6 +259,8 @@ export function fundingSentence(f: Funding, now = new Date()): string {
         : `Fund ${amount} by ${etDeadline(f.fundingDeadline)} for ${shortDay(f.payDate)} pay.`;
     case 'AWAITING_APPROVAL':
       return `${amount} is over a funding limit and waits for a second person.`;
+    case 'SUBMITTING':
+      return `${amount} is being pulled from your account now.`;
     case 'SUBMITTED':
       return `${amount} is on its way from your account and settles ${shortDay(f.debitEffectiveDate)}. Pay goes out after that.`;
     case 'SETTLED':
@@ -277,6 +280,7 @@ export const FUNDING_LABEL: Record<FundingStatus, string> = {
   NOT_STARTED: 'Not pulled',
   DRAFT: 'Not pulled',
   AWAITING_APPROVAL: 'Needs approval',
+  SUBMITTING: 'Being pulled',
   SUBMITTED: 'On its way',
   SETTLED: 'Funded',
   RETURNED: 'Returned',

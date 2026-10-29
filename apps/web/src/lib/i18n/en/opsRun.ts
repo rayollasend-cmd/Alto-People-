@@ -1,5 +1,7 @@
 // English for the pages that use 'opsRun.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/opsRun.ts).
+import '../es/opsRun';
 
 export const enOpsRun = {
   // Store Ops — the shift supervisor's SOP runner

@@ -2,10 +2,12 @@ import type { CandidateStage } from '@prisma/client';
 import { ROLE_LABELS, type RecruiterHome, can } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import type { SessionUser } from '../types/express.js';
-import { DEFAULT_TIMEZONE, addDaysInZone, localDateKey, zonedWallTimeToUtcInstant } from './timezone.js';
+import { addDaysInZone, localDateKey, zonedWallTimeToUtcInstant } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { closingSoon, closingStartsAt } from './recruitingCleanup.js';
 import { INVITE_EXPIRE_AFTER_DAYS } from './onboardingUndo.js';
 import { IDLE_PURGE_AFTER_DAYS, INVITE_PURGE_AFTER_DAYS, hasProtectedHistory } from './onboardingPurge.js';
+import { liveSentOffer } from './offerExpiry.js';
 
 /**
  * The recruiter's dashboard, in one round trip.
@@ -47,7 +49,8 @@ function median(xs: number[]): number | null {
 }
 
 export async function computeRecruiterHome(user: SessionUser, now = new Date()): Promise<RecruiterHome> {
-  const tz = DEFAULT_TIMEZONE;
+  // The company's day, not New York's (CODE-14).
+  const tz = companyWorkweek().timezone;
   const [y, mo, d] = localDateKey(now, tz).split('-').map(Number) as [number, number, number];
   const startOfToday = zonedWallTimeToUtcInstant(y, mo, d, 0, tz);
   const startOfTomorrow = addDaysInZone(startOfToday, 1, tz);
@@ -162,13 +165,14 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
     }),
     prisma.candidateSubmittal.count({ where: { status: 'PENDING', ...LIVE } }),
     prisma.offer.findMany({
-      where: { status: 'SENT', ...LIVE },
+      // Still answerable: a lapsed offer isn't waiting on anyone (PEOPLE-13).
+      where: { ...liveSentOffer(), ...LIVE },
       // Soonest to lapse first.
       orderBy: [{ expiresAt: { sort: 'asc', nulls: 'last' } }, { sentAt: 'asc' }],
       take: LIST,
       include: { candidate: { select: { id: true, firstName: true, lastName: true } } },
     }),
-    prisma.offer.count({ where: { status: 'SENT', ...LIVE } }),
+    prisma.offer.count({ where: { ...liveSentOffer(), ...LIVE } }),
     prisma.candidate.findMany({
       where: { deletedAt: null, stage: 'HIRED', hiredAssociateId: { not: null }, hiredAt: { gte: ago(60) } },
       select: { id: true, firstName: true, lastName: true, hiredAssociateId: true },
@@ -412,6 +416,7 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
         candidateName: nameOf(o.candidate),
         jobTitle: o.jobTitle,
         clientName: o.client?.name ?? '',
+        // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: Offer.startDate is a @db.Date column (UTC midnight)
         startDate: o.startDate.toISOString().slice(0, 10),
         acceptedAt: (o.signedAt ?? o.decidedAt)?.toISOString() ?? null,
       })),
@@ -497,6 +502,7 @@ export async function computeRecruiterHome(user: SessionUser, now = new Date()):
         clientName: p.client?.name ?? null,
         status: p.status,
         fteAuthorized: Number(p.fteAuthorized),
+        // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: Position.targetStartDate is a @db.Date column
         targetStartDate: p.targetStartDate ? p.targetStartDate.toISOString().slice(0, 10) : null,
         budgetAmount: p.budgetAmount === null ? null : Number(p.budgetAmount),
         budgetPeriod: p.budgetPeriod === 'MONTHLY' ? ('MONTHLY' as const) : p.budgetPeriod === 'ANNUAL' ? ('ANNUAL' as const) : null,

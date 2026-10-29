@@ -23,6 +23,8 @@ import { deliverFile, deliveryDeps, DeliveryError, describeConnection, openConne
 import { AckParseError, type AckError } from '../lib/ediAck.js';
 import { answerFor, decidingAck, ingestAcknowledgment, type FileAnswer } from '../lib/carrierAcks.js';
 import type { SessionUser } from '../types/express.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Benefit carrier feeds: a carrier connection per insurer, the plans it
@@ -37,7 +39,8 @@ export const benefitCarriersRouter = Router();
 const PROCESS = requireCapability('process:payroll');
 const EXPORT_PII = requireCapability('export:payroll-pii');
 
-const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+/** A date column's YYYY-MM-DD (coverage dates, birth and hire dates). */
+const ymd = (d: Date | null | undefined) => (d ? dateColumnKey(d) : null);
 
 function audit(req: Request, action: string, entityType: string, entityId: string, metadata: Record<string, unknown> = {}): void {
   enqueueAudit({ actorUserId: req.user!.id, action, entityType, entityId, metadata: metadata as Prisma.InputJsonObject }, 'benefitCarriers');
@@ -105,7 +108,7 @@ export async function feedHealthFor(carrierIds: string[], now: Date = new Date()
   const tenantId = tenantIdForWrite();
   const out = new Map<string, FeedHealth>();
   if (carrierIds.length === 0) return out;
-  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  const today = new Date(`${orgDateKey(now)}T00:00:00Z`);
   const [carriers, plans, newest, baselines, answers] = await Promise.all([
     prisma.benefitCarrier.findMany({ where: { tenantId, id: { in: carrierIds } }, select: { id: true, transport: true } }),
     prisma.benefitsPlan.findMany({ where: { tenantId, carrierId: { in: carrierIds } }, select: { id: true, carrierId: true } }),
@@ -266,7 +269,7 @@ interface BuildResult {
 /** Build the member loops for one carrier. */
 export async function membersFor(carrierId: string, mode: 'FULL' | 'CHANGE', since: Date | null, today: Date): Promise<BuildResult> {
   const tenantId = tenantIdForWrite();
-  const todayDate = new Date(`${today.toISOString().slice(0, 10)}T00:00:00Z`);
+  const todayDate = new Date(`${orgDateKey(today)}T00:00:00Z`);
   const plans = await prisma.benefitsPlan.findMany({ where: { tenantId, carrierId }, select: { id: true, kind: true, insuranceLineCode: true, carrierPlanCode: true } });
   const planById = new Map(plans.map((p) => [p.id, p]));
   const enrollmentWhere: Prisma.BenefitsEnrollmentWhereInput =
@@ -451,7 +454,7 @@ benefitCarriersRouter.post('/benefit-carriers/:id/files', PROCESS, async (req, r
     const control = bumped.lastControlNumber % 1_000_000_000;
     const built = build834(
       { senderQualifier: c.senderQualifier, senderId: c.senderId, receiverQualifier: c.receiverQualifier, receiverId: c.receiverId, usage: c.usageIndicator === 'P' ? 'P' : 'T', controlNumber: control, createdAt: now },
-      { mode, referenceId: `${c.id.slice(0, 8)}-${control}`, policyNumber: c.policyNumber, effectiveDate: now.toISOString().slice(0, 10), sponsorName: sponsor?.legalName ?? 'Employer', sponsorTaxId: c.sponsorTaxId ?? sponsor?.ein?.replace(/\D/g, '') ?? null, carrierName: c.name },
+      { mode, referenceId: `${c.id.slice(0, 8)}-${control}`, policyNumber: c.policyNumber, effectiveDate: orgDateKey(now), sponsorName: sponsor?.legalName ?? 'Employer', sponsorTaxId: c.sponsorTaxId ?? sponsor?.ein?.replace(/\D/g, '') ?? null, carrierName: c.name },
       members,
     );
     return tx.edi834File.create({
@@ -534,7 +537,7 @@ benefitCarriersRouter.post('/benefit-files/:id/send', PROCESS, async (req, res) 
   refuseNarrowed(req.user!);
   const f = await fileOr404(String(req.params.id));
   if (f.status === 'SENT') throw new HttpError(409, 'already_sent', 'This file was already sent.');
-  const name = `834_${f.carrier.receiverId}_${f.controlNumber}_${f.createdAt.toISOString().slice(0, 10).replace(/-/g, '')}.edi`;
+  const name = `834_${f.carrier.receiverId}_${f.controlNumber}_${orgDateKey(f.createdAt).replace(/-/g, '')}.edi`;
   try {
     const { reference } = await deliverFile(f.carrier.transport as Transport, openConnection(f.carrier.connectionEnc), name, decryptString(Buffer.from(f.content, 'base64')), 'application/edi-x12');
     const updated = await prisma.edi834File.update({ where: { id: f.id }, data: { status: 'SENT', sentAt: new Date(), error: null } });

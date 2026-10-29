@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { ApprovalDecideInputSchema, ApprovalDelegationInputSchema, ApprovalRequestKindSchema, type ApprovalDelegation } from '@alto-people/shared';
+import { ApprovalDecideInputSchema, ApprovalDelegationInputSchema, ApprovalRequestKindSchema, toDateOnly, type ApprovalDelegation } from '@alto-people/shared';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -12,6 +13,7 @@ import {
   decideApprovalRequest,
   listApprovalRequests,
   mayReadRecord,
+  mayViewRequest,
   recordPeople,
   shapeRequest,
   type Decider,
@@ -38,7 +40,8 @@ type SessionUser = NonNullable<Request['user']>;
 
 export function deciderFrom(user: SessionUser): Decider {
   const u = user as SessionUser & { capabilities?: Decider['capabilities'] };
-  return { id: u.id, role: u.role, capabilities: u.capabilities ?? null };
+  // The session rides along for the decider's reach (CODE-6).
+  return { id: u.id, role: u.role, capabilities: u.capabilities ?? null, reach: user };
 }
 
 const ListQuery = z.object({
@@ -107,7 +110,10 @@ approvalRequestsRouter.get('/requests/:id', requireAuth, async (req, res, next) 
   try {
     const id = z.string().uuid().parse(req.params.id);
     const row = await prisma.approvalRequest.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
-    if (!row) throw new HttpError(404, 'not_found', 'Approval request not found.');
+    // The requester, whoever decided it, its eligible deciders and the
+    // record's readers — inside their reach. Anyone else holding an id from
+    // a link learns nothing, not even that it exists (CODE-6).
+    if (!row || !(await mayViewRequest(prisma, row, deciderFrom(req.user!)))) throw new HttpError(404, 'not_found', 'Approval request not found.');
     res.json(await shapeRequest(prisma, row, deciderFrom(req.user!)));
   } catch (err) {
     next(err);
@@ -139,7 +145,8 @@ approvalRequestsRouter.post('/requests/:id/cancel', requireAuth, async (req, res
 
 const MAX_DELEGATION_DAYS = 90;
 const day = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+// startsOn/endsOn are @db.Date: the calendar day as stored.
+const ymd = (d: Date) => toDateOnly(d)!;
 const PERSON = { select: { id: true, email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } } as const;
 type Person = { id: string; email: string; displayName: string | null; associate: { firstName: string; lastName: string } | null };
 const nameOf = (u: Person) => u.displayName ?? (u.associate ? `${u.associate.firstName} ${u.associate.lastName}`.trim() : u.email);
@@ -180,7 +187,7 @@ approvalRequestsRouter.get('/delegations/candidates', requireAuth, async (req, r
 
 approvalRequestsRouter.get('/delegations/mine', requireAuth, async (req, res, next) => {
   try {
-    const today = day(ymd(new Date()));
+    const today = day(orgDateKey(new Date()));
     const rows = await prisma.approvalDelegation.findMany({
       where: { tenantId: tenantIdForWrite(), endsOn: { gte: today }, OR: [{ fromUserId: req.user!.id }, { toUserId: req.user!.id }] },
       orderBy: { startsOn: 'asc' },

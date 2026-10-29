@@ -10,6 +10,9 @@ import { onboardingReminderTemplate, inviteTemplate } from './emailTemplates.js'
 import { portalDisplayName, portalInviteTemplate, portalScopeForUser } from './portalInvite.js';
 import { publicBaseUrl } from './emailLayout.js';
 import { dueReminderItems, isTaskOpen, markItemsReminded, reminderCutoff } from './onboardingReminders.js';
+import { logger } from './logger.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Phase 17 — invite reminder sweep.
@@ -173,20 +176,20 @@ export async function sendReminderForUser(
         name: portalDisplayName(user.displayName, user.email),
         scope: portalScope,
         magicLink: acceptUrl,
-        linkExpiresAt: expiresAt.toISOString().slice(0, 10),
+        linkExpiresAt: orgDateKey(expiresAt),
       }).template
     : reason === 'manual'
       ? inviteTemplate({
           firstName,
           clientName,
           magicLink: acceptUrl,
-          linkExpiresAt: expiresAt.toISOString().slice(0, 10),
+          linkExpiresAt: orgDateKey(expiresAt),
         })
       : onboardingReminderTemplate({
           firstName,
           clientName,
           percentComplete: 0,
-          hireDate: user.associate?.hireDate ? user.associate.hireDate.toISOString().slice(0, 10) : null,
+          hireDate: user.associate?.hireDate ? dateColumnKey(user.associate.hireDate) : null,
           magicLink: acceptUrl,
         });
   const subject = tpl.subject;
@@ -415,8 +418,8 @@ export function startInviteReminderCron(): void {
   runBoth();
   timer = setInterval(runBoth, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] onboarding reminder cron armed (every ${seconds}s; invite threshold ${INVITE_REMINDER_AFTER_HOURS}h, progress threshold ${PROGRESS_REMINDER_AFTER_DAYS}d)`
+  logger.info(
+    `onboarding reminder cron armed (every ${seconds}s; invite threshold ${INVITE_REMINDER_AFTER_HOURS}h, progress threshold ${PROGRESS_REMINDER_AFTER_DAYS}d)`
   );
 }
 

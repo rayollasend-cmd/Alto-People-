@@ -4,8 +4,9 @@ import { Link } from 'react-router-dom';
 import { CalendarHeart, Download, ShieldCheck, Upload } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import { listMyLeave, myLeaveNoticeUrl, requestMyLeave, uploadLeaveDocument, type LeaveReason, type LeaveSchedule, type LeaveType, type MyLeaveCase } from '@/lib/leaveApi';
 import { ListTemplate } from '@/components/templates';
 import {
@@ -54,6 +55,9 @@ const CHOICES: Array<{ reason: LeaveReason; type: LeaveType }> = [
 
 export function MyLeave() {
   const { t } = useI18n();
+  const { can, user } = useAuth();
+  // /time-off opens for someone on the roster or the desk (view:time, and their own record or manage:time).
+  const opensTimeOff = can('view:time') && (!!user?.associateId || can('manage:time'));
   const q = useQuery({ queryKey: ['me', 'leave'], queryFn: listMyLeave });
   const [asking, setAsking] = useState(false);
 
@@ -92,12 +96,14 @@ export function MyLeave() {
         </ul>
       )}
       {/* Protected leave and everyday time off are two pages; each points to the other. */}
-      <p className="text-sm text-silver" data-testid="time-off-pointer">
-        {t('myLeave.timeOffPointer')}{' '}
-        <Link to="/time-off" className="text-gold underline-offset-2 hover:underline">
-          {t('myLeave.timeOffPointerLink')}
-        </Link>
-      </p>
+      {opensTimeOff && (
+        <p className="text-sm text-silver" data-testid="time-off-pointer">
+          {t('myLeave.timeOffPointer')}{' '}
+          <Link to="/time-off" className="text-gold underline-offset-2 hover:underline">
+            {t('myLeave.timeOffPointerLink')}
+          </Link>
+        </p>
+      )}
       {asking && <AskDialog onClose={() => setAsking(false)} />}
     </ListTemplate>
   );
@@ -195,7 +201,7 @@ function AskDialog({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [reason, setReason] = useState<LeaveReason>('OWN_HEALTH');
   const [schedule, setSchedule] = useState<LeaveSchedule>('CONTINUOUS');
-  const [start, setStart] = useState(new Date().toISOString().slice(0, 10));
+  const [start, setStart] = useState(() => ymdLocal());
   const [end, setEnd] = useState('');
   const [pattern, setPattern] = useState('');
   const [note, setNote] = useState('');

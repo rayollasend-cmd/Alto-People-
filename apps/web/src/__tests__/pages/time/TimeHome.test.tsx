@@ -7,9 +7,10 @@ import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shar
 import { AuthContext } from '@/lib/auth';
 
 vi.mock('@/pages/time/AdminTimeView', () => ({
-  AdminTimeView: ({ personal }: { personal?: ReactNode }) => (
+  AdminTimeView: ({ personal, liveOnly }: { personal?: ReactNode; liveOnly?: boolean }) => (
     <div>
       <h1>floor view</h1>
+      {liveOnly && <span>live board only</span>}
       {personal}
     </div>
   ),
@@ -45,7 +46,7 @@ import { TimeHome } from '@/pages/time/TimeHome';
 import { getMyCorrections } from '@/lib/laborLiveApi';
 import userEvent from '@testing-library/user-event';
 
-function renderAt(url: string, role: Role = 'SHIFT_SUPERVISOR') {
+function renderAt(url: string, role: Role = 'SHIFT_SUPERVISOR', associateId: string | null = 'a1') {
   const caps = ROLE_CAPABILITIES[role];
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -53,7 +54,7 @@ function renderAt(url: string, role: Role = 'SHIFT_SUPERVISOR') {
       value={{
         isInitializing: false,
         isOffline: false,
-        user: { id: 'u', email: 'dana@altohr.com', role, status: 'ACTIVE', clientId: 'c1', associateId: 'a1' },
+        user: { id: 'u', email: 'dana@altohr.com', role, status: 'ACTIVE', clientId: 'c1', associateId },
         role,
         capabilities: new Set<Capability>(caps),
         signIn: vi.fn(),
@@ -83,6 +84,15 @@ describe('<TimeHome> — one page for people who run the floor and punch', () =>
     expect(screen.getByText('personal full')).toBeInTheDocument();
     expect(screen.queryByText('floor view')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /the floor/i })).toHaveAttribute('href', '/time-attendance');
+  });
+});
+
+describe('<TimeHome> — read-only roles get the live board (deep audit CRAWL-10)', () => {
+  it('the chairman: live board only, and no "your clock is not set up" row', () => {
+    renderAt('/time-attendance', 'EXECUTIVE_CHAIRMAN', null);
+    expect(screen.getByText('floor view')).toBeInTheDocument();
+    expect(screen.getByText('live board only')).toBeInTheDocument();
+    expect(screen.queryByText(/clock is not set up/i)).not.toBeInTheDocument();
   });
 });
 

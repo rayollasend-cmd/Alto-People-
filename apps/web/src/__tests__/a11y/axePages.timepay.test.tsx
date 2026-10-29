@@ -73,6 +73,7 @@ vi.mock('@/lib/benefitsApi', () => ({
 // BenefitsHome pulls its client list from the onboarding API.
 vi.mock('@/lib/onboardingApi', () => ({
   listClients: vi.fn(async () => ({ clients: [] })),
+  listClientOptions: vi.fn(async () => ({ clients: [] })),
 }));
 
 vi.mock('@/lib/benefitsLifecycle92Api', () => ({

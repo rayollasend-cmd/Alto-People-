@@ -91,6 +91,21 @@ describe('/candidate/:token', () => {
     expect(screen.getByTestId('link-problem-contact')).toHaveTextContent('rosa@altohr.com');
   });
 
+  it('a confirm that fails never looks confirmed (CODE-20): it says so, and an expired link turns the page to "expired"', async () => {
+    vi.mocked(getCandidatePortal).mockResolvedValueOnce(PORTAL);
+    vi.mocked(confirmPortalInterview).mockRejectedValue(new ApiError(500, 'server_error', 'Something went wrong on our side.'));
+    const user = renderAt();
+    await user.click(await screen.findByRole('button', { name: /I’ll be there/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong on our side.');
+    expect(screen.queryByText(/You said you’ll be there/)).not.toBeInTheDocument();
+
+    // The link lapsed between loading and tapping: the page re-reads and says so.
+    vi.mocked(confirmPortalInterview).mockRejectedValue(new ApiError(410, 'link_expired', 'expired'));
+    vi.mocked(getCandidatePortal).mockRejectedValue(new ApiError(410, 'link_expired', 'expired', { recruiter: null }));
+    await user.click(screen.getByRole('button', { name: /I’ll be there/ }));
+    expect(await screen.findByText('This link has expired')).toBeInTheDocument();
+  });
+
   it('a link we never issued is "not valid", not "expired" (404)', async () => {
     vi.mocked(getCandidatePortal).mockRejectedValue(new ApiError(404, 'not_found', 'This link is not valid.'));
     renderAt();

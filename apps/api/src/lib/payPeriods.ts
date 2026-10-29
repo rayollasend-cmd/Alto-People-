@@ -14,6 +14,8 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { getCurrentPeriod, type ScheduleInput, type PeriodWindow } from './payrollSchedule.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 export interface PayPeriod {
   /** YYYY-MM-DD, inclusive. */
@@ -29,9 +31,8 @@ export interface PayPeriod {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function ymdUTC(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+/** A date column's YYYY-MM-DD (a run's period bounds). */
+const ymdUTC = dateColumnKey;
 
 function dayBefore(ymd: string): Date {
   return new Date(new Date(`${ymd}T00:00:00.000Z`).getTime() - DAY_MS);
@@ -61,7 +62,7 @@ export function mergePayPeriods(
   now: Date,
 ): PayPeriod[] {
   const byKey = new Map<string, PayPeriod>();
-  const nowKey = ymdUTC(now);
+  const nowKey = orgDateKey(now);
 
   const push = (start: string, end: string, hasRun: boolean) => {
     const key = `${start}|${end}`;

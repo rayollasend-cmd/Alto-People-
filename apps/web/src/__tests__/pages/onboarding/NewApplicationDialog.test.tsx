@@ -6,13 +6,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/onboardingApi', () => ({
   createApplication: vi.fn(),
-  listClients: vi.fn(),
+  listClientOptions: vi.fn(),
   listTemplates: vi.fn(),
 }));
 
 import {
   createApplication,
-  listClients,
+  listClientOptions,
   listTemplates,
 } from '@/lib/onboardingApi';
 import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
@@ -27,10 +27,10 @@ beforeEach(() => {
   // The dialog persists last-used picks under alto:invite.lastUsed.v1 —
   // clear between tests so one test's create doesn't seed the next.
   window.localStorage.clear();
-  vi.mocked(listClients).mockResolvedValue({
+  vi.mocked(listClientOptions).mockResolvedValue({
     clients: [
-      { id: CLIENT_A, name: 'Coastal Resort', industry: 'hospitality', status: 'ACTIVE', state: 'CA' },
-      { id: CLIENT_B, name: 'Mountain Lodge', industry: 'hospitality', status: 'ACTIVE', state: 'CO' },
+      { id: CLIENT_A, name: 'Coastal Resort', status: 'ACTIVE', state: 'CA' },
+      { id: CLIENT_B, name: 'Mountain Lodge', status: 'ACTIVE', state: 'CO' },
     ],
   });
   vi.mocked(listTemplates).mockResolvedValue({
@@ -75,7 +75,7 @@ describe('<NewApplicationDialog>', () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await waitFor(() => expect(listClients).toHaveBeenCalled());
+    await waitFor(() => expect(listClientOptions).toHaveBeenCalled());
     await waitFor(() => expect(listTemplates).toHaveBeenCalled());
 
     // No client picked → template picker is disabled.
@@ -103,7 +103,7 @@ describe('<NewApplicationDialog>', () => {
     const user = userEvent.setup();
     renderDialog(onCreated);
 
-    await waitFor(() => expect(listClients).toHaveBeenCalled());
+    await waitFor(() => expect(listClientOptions).toHaveBeenCalled());
 
     await user.type(screen.getByLabelText(/first name/i), 'Demo');
     await user.type(screen.getByLabelText(/last name/i), 'Hire');
@@ -152,7 +152,7 @@ describe('<NewApplicationDialog>', () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await waitFor(() => expect(listClients).toHaveBeenCalled());
+    await waitFor(() => expect(listClientOptions).toHaveBeenCalled());
 
     await user.type(screen.getByLabelText(/first name/i), 'Demo');
     await user.type(screen.getByLabelText(/last name/i), 'Hire');

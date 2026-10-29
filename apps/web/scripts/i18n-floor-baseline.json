@@ -21,7 +21,17 @@
   "src/components/floor/FloorWeekStrip.tsx": 0,
   "src/components/floor/HandoverBanner.tsx": 0,
   "src/components/floor/IncidentReportDialog.tsx": 0,
+  "src/components/floor/CrewCard.tsx": 0,
   "src/pages/transport/DriverHome.tsx": 0,
   "src/pages/transport/DriverTools.tsx": 0,
+  "src/pages/transport/driver/DriveHeader.tsx": 0,
+  "src/pages/transport/driver/DriveMap.tsx": 0,
+  "src/pages/transport/driver/DriveNow.tsx": 0,
+  "src/pages/transport/driver/EarningsSheet.tsx": 0,
+  "src/pages/transport/driver/HoldButton.tsx": 0,
+  "src/pages/transport/driver/LaterToday.tsx": 0,
+  "src/pages/transport/driver/WeekStrip.tsx": 0,
+  "src/pages/transport/driver/driveKit.tsx": 0,
+  "src/pages/transport/driver/vanLocation.tsx": 0,
   "src/pages/scheduling/AvailabilityEditor.tsx": 0
 }

@@ -155,7 +155,8 @@ describe('the sign-off', () => {
 
     const signed = await b.post(`/payroll/runs/${runId}/review/sign`).send({ fingerprint: report.report.fingerprint, note: 'Tied out to the time report.' });
     expect(signed.status).toBe(201);
-    expect(signed.body.signoff).toMatchObject({ signedByName: 'checker@example.com', note: 'Tied out to the time report.', soleReviewer: false });
+    // A name, never the email (deep audit MONEY-25); the email rides beside it.
+    expect(signed.body.signoff).toMatchObject({ signedByName: 'Checker', signedByEmail: 'checker@example.com', note: 'Tied out to the time report.', soleReviewer: false });
     const again = await b.post(`/payroll/runs/${runId}/review/sign`).send({ fingerprint: report.report.fingerprint });
     expect(again.body.error.code).toBe('already_signed');
     expect((await b.get('/payroll/reviews')).body.waiting).toHaveLength(0);
@@ -187,7 +188,7 @@ describe('the sign-off', () => {
 
     const status = (await a.get(`/payroll/runs/${runId}/review/status`)).body;
     expect(status.signoff.current).toBeNull();
-    expect(status.signoff.stale).toMatchObject({ signedByName: 'checker@example.com' });
+    expect(status.signoff.stale).toMatchObject({ signedByName: 'Checker' });
     const blocked = await a.post(`/payroll/runs/${runId}/disburse`).send({});
     expect(blocked.status).toBe(409);
     expect(blocked.body.error.code).toBe('review_stale');
@@ -229,7 +230,7 @@ describe('the sign-off', () => {
     const ok = await b.post(`/payroll/runs/${runId}/approve`);
     expect(ok.status).toBe(200);
     expect(ok.body.approvedAt).not.toBeNull();
-    expect((await a.get(`/payroll/runs/${runId}/review/status`)).body.signoff.current.signedByName).toBe('checker@example.com');
+    expect((await a.get(`/payroll/runs/${runId}/review/status`)).body.signoff.current.signedByName).toBe('Checker');
   });
 
   it('with the switch off, or for a daily settlement, nothing waits on a sign-off', async () => {

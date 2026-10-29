@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import type { CsvImportPreviewRow, CsvImportRowData } from '@alto-people/shared';
 import type { CsvRecord } from './csv.js';
+import { dateColumnKey } from './timezone.js';
 
 /** Data-row hard cap per file. Beyond this, ask for a split upload —
  *  parsing is cheap but per-row commit work (and the preview table) isn't. */
@@ -69,7 +70,7 @@ const YMD_RX = /^\d{4}-\d{2}-\d{2}$/;
 /** Strict calendar check — the regex alone lets 2026-02-30 through. */
 function isValidYmd(s: string): boolean {
   const d = new Date(`${s}T00:00:00.000Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  return !Number.isNaN(d.getTime()) && dateColumnKey(d) === s;
 }
 
 // Field-level checks. Blank cells are stripped to `undefined` BEFORE this

@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, PunchPhotoRule } from '@prisma/client';
 import { tenantIdForWrite } from './tenant.js';
+import { dayBoundsInTz, siteTimeZone, todayInTz } from './siteDay.js';
 
 /**
  * A photo at every kiosk punch, where a rule says so (2027-01).
@@ -24,7 +25,6 @@ type Db = PrismaClient | Prisma.TransactionClient;
 export type PhotoScope = 'COMPANY' | 'CLIENT' | 'SITE' | 'ASSOCIATE';
 const RANK: Record<PhotoScope, number> = { ASSOCIATE: 4, SITE: 3, CLIENT: 2, COMPANY: 1 };
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
 export interface PhotoPolicy {
@@ -48,10 +48,12 @@ export async function photoPolicyFor(
   on: Date = new Date(),
 ): Promise<PhotoPolicy> {
   const tenantId = tenantIdForWrite();
+  // "Today" is the punch's store day (its zone, else the company's), never UTC's.
+  const day = todayInTz(await siteTimeZone(target.siteId, db), on);
   const rules = await db.punchPhotoRule.findMany({
     where: {
       tenantId,
-      ...inForceOn(ymd(on)),
+      ...inForceOn(day),
       AND: [
         {
           OR: [
@@ -109,10 +111,12 @@ export function ruleLabel(r: { scope: string; required: boolean }, names: { clie
  */
 export async function noticeCameraDown(db: PrismaClient, deviceId: string, now: Date = new Date()): Promise<void> {
   const tenantId = tenantIdForWrite();
-  const device = await db.kioskDevice.findFirst({ where: { id: deviceId, tenantId }, select: { name: true, location: { select: { name: true } } } });
+  const device = await db.kioskDevice.findFirst({ where: { id: deviceId, tenantId }, select: { name: true, locationId: true, location: { select: { name: true } } } });
   if (!device) return;
   const linkUrl = `/time-attendance/kiosk?camera=${deviceId}`;
-  const since = new Date(`${ymd(now)}T00:00:00.000Z`);
+  // Once per store day: midnight on the kiosk's store clock, not UTC's.
+  const tz = await siteTimeZone(device.locationId, db);
+  const since = dayBoundsInTz(todayInTz(tz, now), tz).start;
   const already = await db.notification.findFirst({ where: { linkUrl, createdAt: { gte: since } }, select: { id: true } });
   if (already) return;
   const { notifyUser } = await import('./notify.js');

@@ -3,7 +3,7 @@ import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { HandCoins, Pause, Play, Send } from '@/components/ui/icons';
-import { AGING_BUCKET_KEYS, AGING_BUCKET_LABELS, type ReceivablesAgingRow } from '@alto-people/shared';
+import { AGING_BUCKET_KEYS, AGING_BUCKET_LABELS, METRICS, type ReceivablesAgingRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { usePrompt } from '@/lib/confirm';
 import { pauseClientDunning, resumeClientDunning } from '@/lib/clientsApi';
@@ -278,26 +278,26 @@ export function AgingByClientChart({ rows }: { rows: ReceivablesAgingRow[] }) {
   );
 }
 
-/** Days to collect, month by month: how long statements paid that month took. */
+/** Average days to pay, month by month: how long statements paid that month took (not DSO — see METRICS). */
 export function DsoTrendChart() {
   const q = useQuery({ queryKey: [...RECEIVABLES_KEY, 'dso'], queryFn: () => getDsoTrend(6) });
   const months = q.data?.months ?? [];
   if (!q.data) return null;
   const paid = months.filter((m) => m.days !== null);
   // Two points make a line floating on the axis, not a trend: draw it from
-  // three months with payments; until then the "Days to collect" tile says it.
+  // three months with payments; until then the tile's hint says it.
   if (paid.length < 3) return null;
   const summary = paid.length
-    ? `Days to collect over the last ${months.length} months: ${paid.map((m) => `${m.label} ${m.days}`).join(', ')}.`
+    ? `${METRICS.averageDaysToPay.label} over the last ${months.length} months: ${paid.map((m) => `${m.label} ${m.days}`).join(', ')}.`
     : 'No statements were paid in the last six months.';
   return (
     <ChartFrame
-      title="Days to collect"
-      description="For the statements paid each month, the average days from finalized to paid."
+      title={METRICS.averageDaysToPay.label}
+      description="For the statements paid each month, the average days from finalized to paid — not days to collect, which is what's owed against recent billing."
       summary={summary}
       columns={[
         { key: 'label', label: 'Month' },
-        { key: 'days', label: 'Days to collect', numeric: true, format: (v) => (v === null || v === undefined ? '—' : String(v)) },
+        { key: 'days', label: METRICS.averageDaysToPay.label, numeric: true, format: (v) => (v === null || v === undefined ? '—' : String(v)) },
         { key: 'statements', label: 'Statements paid', numeric: true },
         { key: 'collected', label: 'Collected', numeric: true, format: (v) => money(Number(v)) },
       ]}
@@ -306,7 +306,7 @@ export function DsoTrendChart() {
       height={200}
       empty={<p className="flex h-full items-center justify-center text-sm text-ink-muted">No statements were paid in the last six months.</p>}
     >
-      <TrendLineChart data={months as unknown as Array<Record<string, unknown>>} x="label" series={[{ key: 'days', name: 'Days to collect' }]} format={(v) => `${v}d`} zeroBased />
+      <TrendLineChart data={months as unknown as Array<Record<string, unknown>>} x="label" series={[{ key: 'days', name: METRICS.averageDaysToPay.label }]} format={(v) => `${v}d`} zeroBased />
     </ChartFrame>
   );
 }

@@ -215,6 +215,8 @@ const ANA: DirectoryEntry = {
   workplaceClientName: 'Coastal Resort',
   position: 'Housekeeper',
   startDate: '2026-10-26',
+  // Not hired yet: the application's planned start (PEOPLE-10, one hire date).
+  startDateSource: 'application',
   managerId: null,
   managerName: 'Dana Reyes',
   departmentId: null,
@@ -249,7 +251,7 @@ describe('the record’s Employment tab (the recruiter)', () => {
     // Where they work.
     expect(await screen.findByText('Placement')).toBeInTheDocument();
     for (const [label, value] of [
-      ['Start date', 'Oct 26, 2026'],
+      ['Planned start', 'Oct 26, 2026'],
       ['Employment type', 'W-2'],
       ['Position', 'Housekeeper'],
       ['Manager', 'Dana Reyes'],
@@ -295,7 +297,7 @@ describe('the record’s Employment tab (the recruiter)', () => {
     renderAs('INTERNAL_RECRUITER', <EmploymentTab associateId={P} associate={{ ...ANA, status: 'ACTIVE', startDate: null }} />, '/people');
     const row = await screen.findByRole('region', { name: 'Pay schedule' });
     // No planned start on the application: the open employment spell's hire date is their start.
-    const start = screen.getByText('Start date', { selector: 'dt' });
+    const start = screen.getByText('Hire date', { selector: 'dt' });
     expect(within(start.parentElement!).getByText('Sep 18, 2026')).toBeInTheDocument();
     expect(screen.getByText('Alto Etho LLC')).toBeInTheDocument();
     expect(within(row).getByText('Biweekly — Coastal')).toBeInTheDocument();

@@ -6,9 +6,9 @@ import { Button } from '@/components/ui/Button';
 import { ChevronLeft, ChevronRight, Plus } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
-import { fmtDayHeaderTz, fmtShiftTz, zonedDayKey } from '@/lib/format';
+import { fmtDayHeaderTz, fmtShiftSpanTz, zonedDayKey } from '@/lib/format';
 import { isOpenShift, wentUnfilled } from '@alto-people/shared';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { shiftHolderFace } from '@/lib/photoUrl';
 import { workweekStart } from '@/lib/workweek';
 
 /** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
@@ -73,11 +73,29 @@ interface Props {
   /** Jump to a day from the 7-day strip. */
   onPickDay?: (dayStart: Date) => void;
   onCreate: (dayStart: Date) => void;
+  /** The viewer works for one client (a store's supervisor): every card
+   *  naming "Coastal Resort Holdings" said nothing and cut off the store
+   *  that does (FLOOR-13), so the client is left out. */
+  hideClientName?: boolean;
 }
 
-/** Store wall-clock, with the zone's abbreviation when the viewer isn't in it. */
-function fmtTime(d: Date, timeZone?: string | null): string {
-  return fmtShiftTz(d, timeZone, { day: false });
+/**
+ * The card's "where · what" line, store first: "Front Beach 218 · Shift
+ * Lead". The client is named only for a viewer who works across clients.
+ */
+export function shiftCardPlace(
+  s: Pick<Shift, 'position' | 'clientName' | 'locationName' | 'location'>,
+  hideClientName: boolean,
+): string {
+  const store = s.locationName ?? s.location ?? null;
+  const client = hideClientName ? null : s.clientName;
+  return [store, s.position, client].filter((x): x is string => !!x && x.trim().length > 0).join(' · ');
+}
+
+/** Store wall-clock span, the zone named once at the end when the viewer
+ *  isn't in it: "6:00 AM–2:00 PM CDT", not "6:00 AM CDT – 2:00 PM CDT". */
+function fmtSpan(start: string, end: string, timeZone?: string | null): string {
+  return fmtShiftSpanTz(start, end, timeZone);
 }
 
 /** Local midnight `n` days from `d` (setDate absorbs 23h/25h DST days). */
@@ -111,6 +129,7 @@ export function MobileScheduleList({
   onNextDay,
   onPickDay,
   onCreate,
+  hideClientName = false,
 }: Props) {
   const associateById = useMemo(() => {
     const m = new Map<string, AssociateLite>();
@@ -301,8 +320,6 @@ export function MobileScheduleList({
       ) : (
         <ul className="mt-3 space-y-2">
           {todayShifts.map((s) => {
-            const start = new Date(s.startsAt);
-            const end = new Date(s.endsAt);
             const assignee = s.assignedAssociateId
               ? associateById.get(s.assignedAssociateId)
               : null;
@@ -330,7 +347,7 @@ export function MobileScheduleList({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-medium text-white tabular-nums text-sm">
-                          {fmtTime(start, s.timezone)} – {fmtTime(end, s.timezone)}
+                          {fmtSpan(s.startsAt, s.endsAt, s.timezone)}
                         </div>
                         {wentUnfilled(s) ? (
                           <Badge variant="default" title="Ended while still open">Unfilled</Badge>
@@ -340,20 +357,16 @@ export function MobileScheduleList({
                           </Badge>
                         )}
                       </div>
-                      {/* "Housekeeper · The Grand Hotel · Front Beach" — the
-                          card used to say only the position, so an open
-                          shift never said which store it was at. */}
-                      <div className="text-sm text-white mt-0.5 truncate">
-                        {s.position}
-                        {s.clientName && <span className="text-silver"> · {s.clientName}</span>}
-                        {(s.locationName ?? s.location) && (
-                          <span className="text-silver"> · {s.locationName ?? s.location}</span>
-                        )}
+                      {/* "Front Beach 218 · Shift Lead" — the store first, so
+                          it is the part a narrow card never cuts off; the
+                          client only for a viewer across clients (FLOOR-13). */}
+                      <div className="text-sm text-white mt-0.5 truncate" data-testid="mobile-shift-place">
+                        {shiftCardPlace(s, hideClientName)}
                       </div>
                       {assigneeName ? (
                         <div className="flex items-center gap-1.5 text-xs text-silver mt-1 min-w-0">
                           <Avatar
-                            src={associatePhotoUrl(s.assignedAssociateId)}
+                            src={shiftHolderFace(s)}
                             name={assigneeName}
                             email={assignee?.email}
                             size="xs"

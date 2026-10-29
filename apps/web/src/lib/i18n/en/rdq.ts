@@ -1,5 +1,7 @@
 // English for the pages that use 'rdq.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/rdq.ts).
+import '../es/rdq';
 
 export const enRdq = {
   'rdq.allClear': 'Nothing needs you.',

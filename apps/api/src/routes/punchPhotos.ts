@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
-import { can } from '@alto-people/shared';
+import { can, toDateOnly } from '@alto-people/shared';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyAssociate } from '../lib/notify.js';
-import { scopeAssociates } from '../lib/scope.js';
+import { assertClientInScope, assertCompanyWide, isInternallyScoped, isNarrowedCaller, scopeAssociates, scopeClients, scopeSites } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { inForceOn, photoPolicyFor, ruleLabel, type PhotoScope } from '../lib/punchPhotoPolicy.js';
 
@@ -30,7 +31,8 @@ export const punchPhotosRouter = Router();
 const MANAGE = requireCapability('manage:time');
 const PERSON = requireAnyCapability('manage:time', 'manage:team-time');
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+// startsOn/endsOn are @db.Date: the calendar day as stored; "today" is the company's (orgDateKey).
+const ymd = (d: Date) => toDateOnly(d)!;
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -75,22 +77,84 @@ async function shape(rules: RuleRow[]) {
   }));
 }
 
+type SessionUser = NonNullable<Express.Request['user']>;
+
+/**
+ * FLOOR-7 — whose rule is it? The company rule is a company-wide caller's
+ * (manage:time alone let a one-client supervisor switch photos on for the
+ * whole company). A client rule is for that client's own supervisor, or a
+ * company-wide caller — a store-bound office account names its stores
+ * instead, since a client rule would reach stores outside its reach. A
+ * location rule is for a location inside the caller's reach.
+ */
+async function assertRuleTargetInReach(user: SessionUser, t: { scope: string; clientId: string | null; siteId: string | null }): Promise<void> {
+  if (t.scope === 'COMPANY') {
+    assertCompanyWide(user, 'The company-wide photo rule is set by someone without a client or site limit. Set it for your own locations.');
+    return;
+  }
+  if (t.scope === 'CLIENT') {
+    if (isInternallyScoped(user)) throw new HttpError(403, 'company_wide', 'A client-wide rule reaches locations outside yours. Set it for your own locations.');
+    await assertClientInScope(prisma, user, t.clientId ?? '00000000-0000-0000-0000-000000000000');
+    return;
+  }
+  const site = t.siteId
+    ? await prisma.site.findFirst({ where: { AND: [{ id: t.siteId, tenantId: tenantIdForWrite() }, scopeSites(user)] }, select: { id: true } })
+    : null;
+  if (!site) throw new HttpError(404, 'site_not_found', 'Location not found.');
+}
+
 /** End whatever rule is in force for exactly this target (one per target at a time). */
 async function endCurrent(where: Prisma.PunchPhotoRuleWhereInput, userId: string, reason: string) {
   await prisma.punchPhotoRule.updateMany({ where: { tenantId: tenantIdForWrite(), endedAt: null, ...where }, data: { endedAt: new Date(), endedById: userId, endReason: reason.slice(0, 500) } });
 }
 
-punchPhotosRouter.get('/', requireCapability('manage:time'), async (_req, res, next) => {
+punchPhotosRouter.get('/', requireCapability('manage:time'), async (req, res, next) => {
   try {
+    const user = req.user!;
     const tenantId = tenantIdForWrite();
-    const today = ymd(new Date());
+    const today = orgDateKey(new Date());
+    // A narrowed caller reads the company rule (it applies to them) and the
+    // rules for their own clients, locations and people — not every client's.
+    const narrowed = isNarrowedCaller(user);
+    let reach: Prisma.PunchPhotoRuleWhereInput = {};
+    if (narrowed) {
+      const [clients, sites, people] = await Promise.all([
+        prisma.client.findMany({ where: { AND: [{ tenantId }, scopeClients(user)] }, select: { id: true } }),
+        prisma.site.findMany({ where: { AND: [{ tenantId }, scopeSites(user)] }, select: { id: true } }),
+        prisma.associate.findMany({ where: { AND: [{ tenantId }, scopeAssociates(user)] }, select: { id: true } }),
+      ]);
+      reach = {
+        OR: [
+          { scope: 'COMPANY' },
+          { scope: 'CLIENT', clientId: { in: clients.map((c) => c.id) } },
+          { scope: 'SITE', siteId: { in: sites.map((s) => s.id) } },
+          { scope: 'ASSOCIATE', associateId: { in: people.map((p) => p.id) } },
+        ],
+      };
+    }
     const [active, ended] = await Promise.all([
-      prisma.punchPhotoRule.findMany({ where: { tenantId, ...inForceOn(today) }, orderBy: [{ scope: 'asc' }, { createdAt: 'desc' }] }),
-      prisma.punchPhotoRule.findMany({ where: { tenantId, endedAt: { not: null } }, orderBy: { endedAt: 'desc' }, take: 50 }),
+      prisma.punchPhotoRule.findMany({ where: { AND: [{ tenantId, ...inForceOn(today) }, reach] }, orderBy: [{ scope: 'asc' }, { createdAt: 'desc' }] }),
+      prisma.punchPhotoRule.findMany({ where: { AND: [{ tenantId, endedAt: { not: null } }, reach] }, orderBy: { endedAt: 'desc' }, take: 50 }),
     ]);
     const shaped = await shape(active);
-    const missing30 = await prisma.kioskPunch.count({ where: { tenantId, anomalyKind: 'NO_PHOTO', createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) } } });
+    const missing30 = await prisma.kioskPunch.count({
+      where: { tenantId, anomalyKind: 'NO_PHOTO', createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) }, ...(narrowed ? { associate: { is: scopeAssociates(user) } } : {}) },
+    });
+    // The places a narrowed caller may name, so the picker is never empty for
+    // a supervisor whose stores have no kiosk listed yet.
+    const places = narrowed
+      ? await prisma.site.findMany({
+          where: { AND: [{ tenantId, deletedAt: null, isActive: true }, scopeSites(user)] },
+          select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
+          orderBy: { name: 'asc' },
+          take: 500,
+        })
+      : null;
     res.json({
+      // What the web may offer this caller (FLOOR-7): never a button the API refuses.
+      canSetCompanyRule: !narrowed,
+      canSetClientRules: !isInternallyScoped(user),
+      places: places ? places.map((p) => ({ id: p.id, name: p.name, clientId: p.clientId, clientName: p.client?.name ?? '' })) : null,
       company: shaped.find((r) => r.scope === 'COMPANY') ?? null,
       clients: shaped.filter((r) => r.scope === 'CLIENT'),
       sites: shaped.filter((r) => r.scope === 'SITE'),
@@ -117,12 +181,13 @@ punchPhotosRouter.put('/rules', MANAGE, async (req, res, next) => {
   try {
     const input = RuleInput.parse(req.body);
     const tenantId = tenantIdForWrite();
+    await assertRuleTargetInReach(req.user!, { scope: input.scope, clientId: input.clientId ?? null, siteId: input.siteId ?? null });
     if (input.clientId && !(await prisma.client.findFirst({ where: { id: input.clientId, tenantId }, select: { id: true } }))) throw new HttpError(404, 'client_not_found', 'Client not found.');
     if (input.siteId && !(await prisma.site.findFirst({ where: { id: input.siteId, tenantId }, select: { id: true } }))) throw new HttpError(404, 'site_not_found', 'Location not found.');
     const target: Prisma.PunchPhotoRuleWhereInput = { scope: input.scope, clientId: input.clientId ?? null, siteId: input.siteId ?? null, associateId: null };
     await endCurrent(target, req.user!.id, 'Replaced');
     const rule = await prisma.punchPhotoRule.create({
-      data: { tenantId, scope: input.scope, clientId: input.clientId ?? null, siteId: input.siteId ?? null, required: input.required, reason: input.reason || null, startsOn: dateOnly(ymd(new Date())), createdById: req.user!.id },
+      data: { tenantId, scope: input.scope, clientId: input.clientId ?? null, siteId: input.siteId ?? null, required: input.required, reason: input.reason || null, startsOn: dateOnly(orgDateKey(new Date())), createdById: req.user!.id },
     });
     const [shaped] = await shape([rule]);
     enqueueAudit({ actorUserId: req.user!.id, action: 'time.punch_photo.rule_set', entityType: 'PunchPhotoRule', entityId: rule.id, metadata: { scope: rule.scope, required: rule.required, clientId: rule.clientId, siteId: rule.siteId, summary: shaped!.label } }, 'punchPhotos');
@@ -140,6 +205,8 @@ punchPhotosRouter.delete('/rules/:id', MANAGE, async (req, res, next) => {
     const { reason } = EndInput.parse(req.body ?? {});
     const rule = await prisma.punchPhotoRule.findFirst({ where: { id, tenantId: tenantIdForWrite(), endedAt: null } });
     if (!rule || rule.scope === 'ASSOCIATE') throw new HttpError(404, 'rule_not_found', 'Rule not found.');
+    // Ending a rule is setting one: the same reach (FLOOR-7).
+    await assertRuleTargetInReach(req.user!, rule);
     await prisma.punchPhotoRule.update({ where: { id }, data: { endedAt: new Date(), endedById: req.user!.id, endReason: reason } });
     enqueueAudit({ actorUserId: req.user!.id, action: 'time.punch_photo.rule_ended', entityType: 'PunchPhotoRule', entityId: id, metadata: { scope: rule.scope, reason } }, 'punchPhotos');
     res.status(204).end();
@@ -191,7 +258,7 @@ punchPhotosRouter.get('/associates/:id', PERSON, async (req, res, next) => {
       location: placement?.location.name ?? null,
       required: policy.required,
       decidedBy: winning,
-      ownRule: shapedOwn.find((r) => !r.endedAt && (!r.endsOn || r.endsOn >= ymd(new Date()))) ?? null,
+      ownRule: shapedOwn.find((r) => !r.endedAt && (!r.endsOn || r.endsOn >= orgDateKey(new Date()))) ?? null,
       history: shapedOwn,
       recentPunches: recent.map((p) => ({
         id: p.id,
@@ -203,7 +270,7 @@ punchPhotosRouter.get('/associates/:id', PERSON, async (req, res, next) => {
         reviewStatus: p.reviewStatus,
       })),
       last30Days: { keptWithoutPhoto: noPhoto30, refusedWithoutPhoto: refused30 },
-      canSetCompanyRules: can(req.user!, 'manage:time'),
+      canSetCompanyRules: can(req.user!, 'manage:time') && !isNarrowedCaller(req.user!),
     });
   } catch (err) {
     next(err);
@@ -222,7 +289,7 @@ punchPhotosRouter.put('/associates/:id', PERSON, async (req, res, next) => {
   try {
     const person = await personInReach(req);
     const input = PersonInput.parse(req.body);
-    const today = ymd(new Date());
+    const today = orgDateKey(new Date());
     if (input.endsOn && input.endsOn < today) throw new HttpError(400, 'ends_in_past', 'The end date has to be today or later.');
     const tenantId = tenantIdForWrite();
     await endCurrent({ scope: 'ASSOCIATE', associateId: person.id }, req.user!.id, 'Replaced');

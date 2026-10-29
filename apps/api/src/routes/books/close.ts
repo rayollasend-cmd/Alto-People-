@@ -73,7 +73,7 @@ booksCloseRouter.post('/:periodKey/finalize-statements', MANAGE, async (req, res
 booksCloseRouter.post('/:periodKey/post-history', MANAGE, async (req, res) => {
   const periodKey = key(req);
   assertPeriodKey(periodKey);
-  const result = await backfillPosting(prisma, { since: new Date(`${periodKey}-01T00:00:00.000Z`) });
+  const result = await backfillPosting(prisma, { since: new Date(`${periodKey}-01T00:00:00.000Z`), userId: req.user!.id });
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, action: 'books.posting_backfilled', entityType: 'FiscalPeriod', entityId: periodKey, metadata: { ...result, failed: result.failed.length } }, 'books.close');
   res.json({ ...result, month: await closeDetail(prisma, periodKey, actor(req)) });
 });

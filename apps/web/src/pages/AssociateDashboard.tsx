@@ -22,16 +22,18 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
-import { getActiveTimeEntry, listMyTimeEntries } from '@/lib/timeApi';
+import { getActiveTimeEntry } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { listOpenShifts } from '@/lib/qualApi';
 import { fmtDate, fmtDayShort, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
-import { getMyNextPayday, listMyPayrollItems, type NextPayday } from '@/lib/payrollApi';
+import { getMyNextPayday, listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmergencyBanner } from '@/components/EmergencyBanner';
 import { Card, CardContent } from '@/components/ui/Card';
+import { queryErrorKind } from '@/components/ui/QueryError';
 import { HomeTemplate } from '@/components/templates';
 import { HugoSeat } from '@/components/home/HugoSeat';
 import {
@@ -169,7 +171,7 @@ export function AssociateDashboard() {
   // up, or nothing scheduled.
   const shiftHero =
     activeQuery.isError || shiftsQuery.isError ? (
-    <LoadFailedCard label={t('dash.nextShift')} icon={Timer} onRetry={refreshAll} className="mb-4" />
+    <LoadFailedCard label={t('dash.nextShift')} icon={Timer} onRetry={refreshAll} className="mb-4" error={activeQuery.error ?? shiftsQuery.error} />
     ) : (
     <MyShiftHero
       active={active}
@@ -234,7 +236,7 @@ export function AssociateDashboard() {
         }
         decisions={{ title: t('home.needsYou'), count: needs.count, content: <AssociateNeedsYou hide={needsHide} /> }}
         assistant={<HugoSeat />}
-        waysIn={<QuickActions />}
+        waysIn={<QuickActions openShiftCount={openShiftCount} />}
       >
         {openOnboarding && shiftHero}
         {/* Training in the flow of work: a required course still open, or a
@@ -251,7 +253,7 @@ export function AssociateDashboard() {
           payFailed={payQuery.isError}
           balances={balances}
           balanceFailed={balanceQuery.isError}
-          openShiftCount={openShiftCount}
+          sickAccrues={Boolean(balanceQuery.data?.sickAccrual)}
         />
         <div className="mb-4 space-y-4">
           <EarningsCard />
@@ -355,13 +357,17 @@ function LoadFailedCard({
   icon: Icon,
   onRetry,
   className,
+  error,
 }: {
   label: string;
   icon: typeof Clock;
   onRetry: () => void;
   className?: string;
+  /** What failed: only a request that never got an answer is "check your connection" (ASSOC-25). */
+  error?: unknown;
 }) {
   const { t } = useI18n();
+  const offline = queryErrorKind(error) === 'offline';
   return (
     <Card className={className}>
       <CardContent>
@@ -372,7 +378,7 @@ function LoadFailedCard({
         <div role="alert" className="text-xl text-white mt-2">
           {t('dash.loadFailed')}
         </div>
-        <p className="text-sm text-silver mt-1">{t('dash.checkConnection')}</p>
+        <p className="text-sm text-silver mt-1">{offline ? t('dash.checkConnection') : t('queryError.server')}</p>
         <Button variant="secondary" size="sm" className="mt-3" onClick={onRetry}>
           {t('common.retry')}
         </Button>
@@ -400,7 +406,7 @@ function EmployeeNumberLine() {
       <button
         type="button"
         onClick={() => setRevealed((v) => !v)}
-        className="font-mono text-sm tracking-[0.3em] text-white rounded px-1 coarse:min-h-9 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        className="font-mono text-sm tracking-[0.3em] text-white rounded px-2 -mx-1 inline-flex items-center coarse:min-h-11 coarse:min-w-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         aria-label={revealed ? t('dash.hideNumber') : t('dash.showNumber')}
       >
         {revealed ? data.employeeNumber : '••••'}
@@ -421,24 +427,26 @@ const CATEGORY_KEY: Record<string, MessageKey> = {
 };
 
 /**
- * Their numbers, as tiles — the last paycheck, time off, and the open
- * shifts they can grab. (The hours-this-week tile counted a different week
- * from the strip beside it; the next-14-days timeline and the pay-period
- * ring below replace both.) They replace two tall cards whose empty states
- * ("No paystubs yet", "No balance yet") filled a phone screen by themselves.
+ * Their numbers, as tiles — the last paycheck and time off, two across on a
+ * phone. (The hours-this-week tile counted a different week from the strip
+ * beside it; the next-14-days timeline and the pay-period ring below replace
+ * both. The open-shift count rides on the Open shifts quick link: as a third
+ * tile it sat alone on a full-width row — ASSOC-29.) They replace two tall
+ * cards whose empty states filled a phone screen by themselves.
  */
 function MyNumbers({
   paystub,
   payFailed,
   balances,
   balanceFailed,
-  openShiftCount,
+  sickAccrues,
 }: {
   paystub: PayrollItem | null | undefined;
   payFailed: boolean;
   balances: TimeOffBalance[] | null | undefined;
   balanceFailed: boolean;
-  openShiftCount: number | null;
+  /** A sick-leave accrual rule applies to them (GET /time-off/me/balance sickAccrual). */
+  sickAccrues: boolean;
 }) {
   const { t } = useI18n();
   // Before the first paycheck, the date it lands is the useful number.
@@ -456,11 +464,17 @@ function MyNumbers({
       ? t('tile.nextPayday', { date: fmtDayShort(parseYmd(nextPayday.payDate), { anchored: true }) ?? nextPayday.payDate })
       : t('tile.noPayYet')
     : undefined;
-  const noBalance = balances !== undefined && balances !== null && !primary && !balanceFailed ? t('tile.accrues') : undefined;
+  // "Accrues as you work" only when a sick-leave accrual applies to them;
+  // otherwise the Time off page's own words — never a promise the policy
+  // doesn't make (ASSOC-15).
+  const noBalance =
+    balances !== undefined && balances !== null && !primary && !balanceFailed
+      ? sickAccrues
+        ? t('tile.accrues')
+        : t('tile.noBalance')
+      : undefined;
   return (
     // One strip (two across on a phone, compact): no tile left alone on a row.
-    // Open shifts shows only when there are some — the shift hero already
-    // offers "Pick up a shift" then, and "0 · None right now" sat alone.
     <MetricStrip label={t('dash.myNumbers')} className="mb-4 animate-enter">
       <MetricCard
         href={paystub ? `/payroll?item=${paystub.id}` : '/payroll'}
@@ -492,93 +506,40 @@ function MyNumbers({
               : undefined
         }
       />
-      {openShiftCount !== null && openShiftCount > 0 && (
-        <MetricCard href="/marketplace" label={t('tile.openShifts')} value={openShiftCount} hint={t('tile.openSome')} />
-      )}
     </MetricStrip>
   );
 }
 
 /* ---- Earned this pay period ------------------------------------------- */
 
-const ymdOf = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const addDaysLocal = (ymd: string, n: number) => {
-  const d = parseYmd(ymd)!;
-  return ymdOf(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n));
-};
-const daysBetween = (a: string, b: string) =>
-  Math.round((parseYmd(b)!.getTime() - parseYmd(a)!.getTime()) / 86_400_000);
-
-/**
- * The pay period running today. The payday lookup answers for the NEXT
- * payday, whose period may already have closed (paid the Friday after);
- * the period after it runs the same length, so step forward to the one
- * that holds today.
- */
-export function currentPeriod(p: NextPayday, today: string = ymdOf(new Date())): { start: string; end: string; payDate: string } | null {
-  if (!parseYmd(p.periodStart) || !parseYmd(p.periodEnd) || !parseYmd(p.payDate)) return null;
-  const len = daysBetween(p.periodStart, p.periodEnd) + 1;
-  if (len < 1) return null;
-  let start = p.periodStart;
-  let end = p.periodEnd;
-  let pay = p.payDate;
-  for (let i = 0; i < 4 && today > end; i++) {
-    start = addDaysLocal(start, len);
-    end = addDaysLocal(end, len);
-    pay = addDaysLocal(pay, len);
-  }
-  return today >= start && today <= end ? { start, end, payDate: pay } : null;
-}
-
 /**
  * What this pay period has earned so far — a ring for how far into the
- * period they are, the money in the middle. A gross estimate from the
- * hours they clocked at their rate, and labelled as one; hidden when
- * there is no rate or no pay schedule to measure a period by.
+ * period they are, the money in the middle. The period, today's place in it
+ * and the money all come from GET /time/me/earnings `period`: counted on
+ * the company's calendar day (a phone in LA at 11 PM read "Day 5" beside a
+ * store already on Thursday), overtime-aware, and with the one take-home
+ * estimate Pay shows too. Hidden with no pay schedule or nothing clocked.
  */
 function EarnedThisPeriod() {
   const { t } = useI18n();
   const earnings = useMyEarnings();
-  const payday = useQuery({
-    queryKey: ['me', 'nextPayday'],
-    queryFn: () => getMyNextPayday().catch(() => ({ nextPayday: null })),
-    staleTime: 10 * 60_000,
-  });
-  const period = payday.data?.nextPayday ? currentPeriod(payday.data.nextPayday) : null;
-  const entries = useQuery({
-    queryKey: ['me', 'entries', 'period', period?.start, period?.end],
-    queryFn: () =>
-      listMyTimeEntries({
-        from: parseYmd(period!.start)!.toISOString(),
-        to: parseYmd(addDaysLocal(period!.end, 1))!.toISOString(),
-      }),
-    enabled: Boolean(period),
-    staleTime: 60_000,
-  });
-  const rate = earnings.data?.hourlyRate ?? 0;
-  if (!period || !(rate > 0) || !entries.data) return null;
-  const minutes = entries.data.entries
-    .filter((e) => e.status !== 'REJECTED')
-    .reduce((n, e) => n + (e.netMinutes ?? e.minutesElapsed), 0);
+  const period = earnings.data?.period ?? null;
   // Nothing clocked this period yet: no card. "$0.00 · 0h worked" beside a
   // "Day 13 of 14" ring read as progress (F500 G5).
-  if (minutes === 0) return null;
-  const hours = minutes / 60;
-  const earned = Math.round(hours * rate * 100) / 100;
-  const total = daysBetween(period.start, period.end) + 1;
-  const day = Math.min(total, daysBetween(period.start, ymdOf(new Date())) + 1);
+  if (!period || !(period.workedHours > 0)) return null;
   const short = (ymd: string) => fmtDayShort(parseYmd(ymd)!, { anchored: true }) ?? ymd;
+  const takeHome = period.takeHome && period.takeHome.net > 0 ? period.takeHome.net : null;
   return (
     <Card className="mb-4 animate-enter" data-testid="earned-this-period">
       <CardContent className="flex items-center gap-4">
-        <RingMeter percent={(day / total) * 100} label={t('earned.dayOf', { d: day, n: total })}>
-          <span className="text-2xs tabular-nums text-ink-muted">{t('earned.dayOf', { d: day, n: total })}</span>
+        <RingMeter percent={(period.day / period.days) * 100} label={t('earned.dayOf', { d: period.day, n: period.days })}>
+          <span className="text-2xs tabular-nums text-ink-muted">{t('earned.dayOf', { d: period.day, n: period.days })}</span>
         </RingMeter>
         <div className="min-w-0">
           <div className="text-xs text-ink-muted">{t('earned.title')}</div>
-          <div className="font-display text-2xl tabular-nums text-ink">{fmtMoney(earned)}</div>
-          <div className="text-xs text-ink-muted">{t('earned.hours', { hours: fmtHours(hours) })}</div>
+          <div className="font-display text-2xl tabular-nums text-ink">{fmtMoney(period.earned)}</div>
+          <div className="text-xs text-ink-muted">{t('earned.hours', { hours: fmtHours(period.workedHours) })}</div>
+          {takeHome !== null && <div className="text-xs tabular-nums text-ink">{t('earned.takeHome', { amount: fmtMoney(takeHome) })}</div>}
           <div className="mt-1 text-2xs text-ink-muted">
             {t('earned.period', { start: short(period.start), end: short(period.end), pay: short(period.payDate) })}
           </div>
@@ -599,7 +560,7 @@ const QUICK_LINKS: { to: string; labelKey: MessageKey; icon: typeof Clock }[] = 
   { to: '/time-off?new=1', labelKey: 'dash.requestTimeOff', icon: CalendarOff },
 ];
 
-function QuickActions() {
+function QuickActions({ openShiftCount }: { openShiftCount: number | null }) {
   const { t } = useI18n();
   return (
     <section>
@@ -613,6 +574,12 @@ function QuickActions() {
           >
             <Icon className="h-4 w-4 text-silver group-hover:text-gold transition-colors" aria-hidden="true" />
             <span className="min-w-0 flex-1 leading-tight">{t(labelKey)}</span>
+            {/* The open shifts they can pick up, counted on the door that opens them. */}
+            {to === '/marketplace' && openShiftCount !== null && openShiftCount > 0 && (
+              <Badge variant="accent" size="sm" className="tabular-nums" aria-label={t('tile.openCount', { count: openShiftCount })}>
+                {openShiftCount}
+              </Badge>
+            )}
             <ArrowRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-gold transition-colors" />
           </Link>
         ))}

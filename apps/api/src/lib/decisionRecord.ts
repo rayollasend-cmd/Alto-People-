@@ -6,6 +6,7 @@ import { notifyUser } from './notify.js';
 import { send, statusForSendError } from './notifications.js';
 import { enqueueAudit, recordCriticalAudit } from './audit.js';
 import { ALTO_TENANT_ID } from './tenant.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * Brief 2-6 step 3 — the automated-decision record
@@ -87,7 +88,7 @@ export async function decisionTypesFor(db: Db, workerId: string, capabilityKey: 
 
 /** The bias audit in force for an agent on a date, if any. */
 export async function auditInForce(db: Db, workerId: string, now: Date = new Date()) {
-  return db.agentBiasAudit.findFirst({ where: { workerId, conductedAt: { lte: now }, validUntil: { gte: new Date(now.toISOString().slice(0, 10)) } }, orderBy: { conductedAt: 'desc' } });
+  return db.agentBiasAudit.findFirst({ where: { workerId, conductedAt: { lte: now }, validUntil: { gte: new Date(`${orgDateKey(now)}T00:00:00Z`) } }, orderBy: { conductedAt: 'desc' } });
 }
 
 /** Ten business days (Monday to Friday) before a date. */

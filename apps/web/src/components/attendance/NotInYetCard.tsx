@@ -203,7 +203,8 @@ export function NotInYetCard({
                 {canCover && needsCover(p) && (
                   // The shift itself: it's still assigned to them, so the
                   // call-outs desk (confirmed, released shifts) wouldn't list it.
-                  <Button size="xs" asChild>
+                  // One gold button on the card: the first shift to cover; the rest are outlined.
+                  <Button size="xs" variant={p.shiftId === needCover[0]?.shiftId ? undefined : 'outline'} asChild>
                     <Link to={`/scheduling?shift=${p.shiftId}`}>
                       {p.status === 'no-show-risk' ? t('notIn.noShowCover') : t('notIn.findCover')}
                       <ArrowRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />

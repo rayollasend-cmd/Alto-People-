@@ -6,6 +6,8 @@ import { HttpError } from '../middleware/error.js';
 import { jurisdictionsFor, loadRulePool, rulesForSite, setsInForce, type StoredRuleSet } from '../lib/laborRules/index.js';
 import { ApprovalSchema, OverrideInputSchema, OverrideUpdateSchema, activateSet, createOverride, retireSet, updateDraft } from '../lib/laborRules/overrides.js';
 import { ALTO_TENANT_ID, tenantIdForWrite, withPlatformScope } from '../lib/tenant.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { EXEMPT_REASONS } from '../lib/predictabilityPay.js';
 import { validateRoundingInput } from '../lib/punchRounding.js';
@@ -36,7 +38,7 @@ export const laborRulesRouter = Router();
 // pay, the org's admins and the executive.
 const VIEW = requireAnyCapability('process:payroll', 'manage:org', 'view:executive');
 const DateQuery = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => orgDateKey(new Date());
 
 const setOut = (s: StoredRuleSet) => ({
   id: s.id,
@@ -130,8 +132,8 @@ laborRulesRouter.get('/shadow', VIEW, async (_req, res) => {
     runs: rows.map((r) => ({
       id: r.id,
       payrollRunId: r.payrollRunId,
-      periodStart: r.periodStart.toISOString().slice(0, 10),
-      periodEnd: r.periodEnd.toISOString().slice(0, 10),
+      periodStart: dateColumnKey(r.periodStart),
+      periodEnd: dateColumnKey(r.periodEnd),
       associates: r.associates,
       differences: r.differences,
       amountDifference: Number(r.amountDifference),
@@ -150,8 +152,8 @@ laborRulesRouter.get('/shadow/:id', VIEW, async (req, res) => {
   if (!run) throw new HttpError(404, 'shadow_run_not_found', 'Shadow run not found.');
   res.json({
     id: run.id,
-    periodStart: run.periodStart.toISOString().slice(0, 10),
-    periodEnd: run.periodEnd.toISOString().slice(0, 10),
+    periodStart: dateColumnKey(run.periodStart),
+    periodEnd: dateColumnKey(run.periodEnd),
     associates: run.associates,
     differences: run.diffs.map((d) => ({
       associateId: d.associateId,
@@ -228,7 +230,7 @@ const activationOut = (a: Awaited<ReturnType<typeof prisma.laborRuleActivation.f
     signedLabels: a.signedLabels,
     counselName: a.counselName,
     counselFirm: a.counselFirm,
-    counselSignedOn: a.counselSignedOn.toISOString().slice(0, 10),
+    counselSignedOn: dateColumnKey(a.counselSignedOn),
     changeReport: a.changeReport,
     approvalRequestId: a.approvalRequestId,
     requestedBy: a.requestedById ? names.get(a.requestedById) ?? null : null,
@@ -394,7 +396,7 @@ laborRulesRouter.get('/schedule-changes', VIEW, async (_req, res) => {
       associateId: r.associateId,
       name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
       siteName: r.siteId ? sites.get(r.siteId) ?? null : null,
-      workDate: r.workDate.toISOString().slice(0, 10),
+      workDate: dateColumnKey(r.workDate),
       change: r.change,
       noticeDays: Number(r.noticeDays),
       premiumHours: Number(r.premiumHours),

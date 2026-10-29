@@ -34,7 +34,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtDateTime, fmtMoneyWhole } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoneyWhole, ymdLocal } from '@/lib/format';
 import { PaymentRunsTab, StateFilingTab } from './ContractorPayments';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
@@ -271,7 +271,7 @@ function ContractorsTab() {
 
 function LogNoticeDialog({ c, onClose }: { c: ContractorRow | null; onClose: () => void }) {
   const qc = useQueryClient();
-  const [f, setF] = useState({ irsNoticeKind: 'CP2100' as 'CP2100' | 'CP2100A' | '972CG', irsNoticeReceivedOn: new Date().toISOString().slice(0, 10), tinLast4OnNotice: '' });
+  const [f, setF] = useState({ irsNoticeKind: 'CP2100' as 'CP2100' | 'CP2100A' | '972CG', irsNoticeReceivedOn: ymdLocal(), tinLast4OnNotice: '' });
   const save = useMutation({
     mutationFn: () => logBNotice(c!.associateId, { ...f, tinLast4OnNotice: f.tinLast4OnNotice || null }),
     onSuccess: (r) => {
@@ -378,7 +378,8 @@ function NoticesTab() {
   const confirm = useConfirm();
   const [show, setShow] = useState<'open' | 'all'>('open');
   const q = useQuery({ queryKey: ['contractors', 'notices', show], queryFn: () => listBNotices(show) });
-  const today = new Date().toISOString().slice(0, 10);
+  // Today is the user's own day, not UTC's (CODE-14): in the evening UTC already reads tomorrow.
+  const today = ymdLocal();
   const refresh = () => void qc.invalidateQueries({ queryKey: ['contractors'] });
   const sent = useMutation({ mutationFn: (n: BNoticeRow) => markBNoticeSent(n.id), onSuccess: () => (toast.success('Marked sent'), refresh()), onError: (e: Error) => toast.error(e.message) });
   const resolve = useMutation({

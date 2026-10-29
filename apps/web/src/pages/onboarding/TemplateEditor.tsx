@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import type {
-  ClientSummary,
+  ClientOption,
   OnboardingTemplate,
   OnboardingTrack,
   TaskKind,
@@ -22,12 +22,12 @@ import type {
 } from '@alto-people/shared';
 import {
   createTemplate,
-  listClients,
+  listClientOptions,
   listTemplates,
   updateTemplate,
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -139,13 +139,17 @@ export function TemplateEditor() {
   const justSavedRef = useRef(false);
 
   // Clients (always) + the source template (edit or duplicate).
+  // The onboarding-scoped picker: /clients needs view:clients (PEOPLE-4).
+  const clientsOn = useTenant().moduleOn('clientPortal');
   const clientsQuery = useQuery({
-    queryKey: ['TemplateEditor', 'clients'],
-    queryFn: () => listClients(),
+    queryKey: ['clients', 'options'],
+    queryFn: listClientOptions,
+    enabled: clientsOn,
+    staleTime: 5 * 60_000,
   });
   // Keep the form usable (global templates need no client) but say why
   // the client picker is empty instead of failing silently.
-  const clients: ClientSummary[] | null =
+  const clients: ClientOption[] | null =
     clientsQuery.data?.clients ?? (clientsQuery.isError ? [] : null);
   // No GET /templates/:id endpoint — list and pick. Cheap; only HR hits
   // this and templates are tens, not thousands. Not cached across mounts:

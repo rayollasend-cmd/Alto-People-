@@ -153,7 +153,8 @@ export interface TermsInput {
   notes?: string | null;
 }
 
-export const getPayPeriods = () => apiFetch<{ periods: Array<{ periodStart: string; periodEnd: string; runs: number }> }>('/pay-bill/periods');
+/** `gapPeriods`: `start:end` of every period with billable pay on no statement, oldest first. */
+export const getPayPeriods = () => apiFetch<{ periods: Array<{ periodStart: string; periodEnd: string; runs: number }>; gapPeriods?: string[] }>('/pay-bill/periods');
 
 export function getReconciliation(periodStart: string, periodEnd: string, clientId?: string | null): Promise<ReconReport> {
   const qs = new URLSearchParams({ periodStart, periodEnd });

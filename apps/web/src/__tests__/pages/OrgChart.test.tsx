@@ -136,6 +136,8 @@ describe('<OrgChart>', () => {
     const tree = await screen.findByRole('tree', { name: 'Field org chart' });
     expect(within(tree).getByText('3 of 4 shifts filled today')).toBeInTheDocument();
     expect(within(tree).getByText('Not yet placed')).toBeInTheDocument();
+    // The count names its population — the people placed here, not "people" (PEOPLE-23).
+    expect(screen.getByText(/^\d+ placed$/)).toHaveAttribute('title', expect.stringMatching(/^Employed and placed at a site/));
     await userEvent.click(within(tree).getAllByRole('treeitem').find((r) => r.textContent?.includes('Front Beach'))!.querySelector('button')!);
     expect(await within(tree).findByText(/Shift supervisor · Mornings/i)).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText('Client'), 'c2');

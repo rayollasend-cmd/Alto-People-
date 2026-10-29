@@ -34,10 +34,12 @@ const TAX_KEY: Record<PayPreview['taxes'][number]['kind'], MessageKey> = {
   MEDICARE: 'payx.preview.tax.MEDICARE',
   STATE: 'payx.preview.tax.STATE',
   LOCAL: 'payx.preview.tax.LOCAL',
+  STATE_PROGRAM: 'payx.preview.tax.STATE_PROGRAM',
 };
 const DED_KEY: Record<PayPreview['deductions'][number]['kind'], MessageKey> = {
   PRE_TAX: 'payx.preview.ded.PRE_TAX',
   POST_TAX: 'payx.preview.ded.POST_TAX',
+  RIDES: 'payx.preview.ded.RIDES',
 };
 
 interface FlagTarget {
@@ -168,6 +170,13 @@ export function PayPreviewCard() {
         <ul className="mt-2 border-t border-navy-secondary">
           {row({ line: 'net', label: t('payx.preview.net'), value: fmtMoney(p.net), kind: 'OTHER', strong: true })}
         </ul>
+        {/* Rides owed that this check can't take — the minimum-wage guard —
+            said here, so "Looks right" is asked of the whole story. */}
+        {p.rides && p.rides.held > 0 && (
+          <p className="mt-2 text-xs text-silver" data-testid="pay-preview-rides-held">
+            {t('payx.preview.ridesHeld', { amount: fmtMoney(p.rides.held), wage: fmtMoney(p.rides.minimumWage) })}
+          </p>
+        )}
 
         {p.check?.status === 'CONFIRMED' && (
           <p role="status" className="mt-3 flex items-center gap-1.5 text-sm font-medium text-success">

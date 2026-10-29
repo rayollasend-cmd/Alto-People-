@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
 import { enqueueAudit } from './audit.js';
 import { tenantJob } from './tenantJobs.js';
+import { armJob } from './jobs.js';
 import { notifyUser, trackNotificationWork } from './notify.js';
 import { actsAs } from './roleScope.js';
 import { fmtMomentInZone } from './humanDates.js';
@@ -115,19 +116,15 @@ export async function closeStuckRuns(now = new Date(), db: Db = prisma): Promise
   return out;
 }
 
-let timer: NodeJS.Timeout | null = null;
 const SWEEP_EVERY_MS = 60 * 60_000;
 
 /** Hourly check, daily in effect: a run is only ever stuck once. */
 export function startStuckRunSweepCron(): void {
-  if (timer) return;
   if (process.env.NODE_ENV === 'test') return;
-  const tick = () => {
-    void tenantJob('transportStuckRuns', () => closeStuckRuns(), { module: 'transportation' })().catch((err) =>
-      console.error('[alto-people/api] stuck-run sweep failed:', err),
-    );
-  };
-  tick();
-  timer = setInterval(tick, SWEEP_EVERY_MS);
-  timer.unref();
+  armJob({
+    name: 'transportStuckRuns',
+    label: 'Van runs left open past their last stop',
+    intervalSeconds: SWEEP_EVERY_MS / 1000,
+    run: tenantJob('transportStuckRuns', () => closeStuckRuns(), { module: 'transportation' }),
+  });
 }

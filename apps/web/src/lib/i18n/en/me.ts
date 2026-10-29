@@ -185,7 +185,7 @@ export const enMe = {
   'me.fld.notes': 'Notes',
   'me.submittedPrefix': 'Submitted {date}',
   'me.tax.emptyTitle': 'No tax documents yet',
-  'me.tax.emptyDesc': 'W-2 / 1099 forms will appear here after your first tax year on payroll.',
+  'me.tax.emptyDesc': 'Your year-end tax forms will appear here after your first tax year on payroll.',
   'me.th.form': 'Form',
   'me.th.taxYear': 'Tax year',
   'me.th.issued': 'Issued',
@@ -226,6 +226,7 @@ export const enMe = {
   'me.empType.business': 'Contractor (business)',
   'me.empType.employeeHint': 'Taxes are taken out of each paycheck.',
   'me.empType.contractorHint': 'No taxes are taken out — you file them yourself.',
+  'me.tax.what': 'your tax documents',
 } as const;
 
 registerEnglish(enMe);

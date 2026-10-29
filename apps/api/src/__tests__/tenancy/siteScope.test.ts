@@ -74,7 +74,20 @@ async function seedStore(clientId: string, siteId: string, tag: 'North' | 'South
   });
   const document = await prisma.documentRecord.create({ data: { associateId: person.id, kind: 'ID', filename: `${tag}.pdf`, mimeType: 'application/pdf', size: 10 } });
   const hrCase = await prisma.hrCase.create({ data: { associateId: person.id, category: 'OTHER', subject: `${tag} case`, description: 'x' } });
-  return { person, shift, entry, document, hrCase };
+  // Fix wave 2026-10-29 (CODE-7, CODE-6, CODE-8, FLOOR-9…): the models the
+  // suite used to pass over vacuously — a list with nothing at store B in
+  // it can't show store B. Each now has a row there.
+  const garnishment = await prisma.garnishment.create({ data: { associateId: person.id, kind: 'CHILD_SUPPORT', caseNumber: `${tag}-GARN-CASE`, amountPerRun: 50, startDate: new Date('2026-01-01') } });
+  const taxForm = await prisma.taxForm.create({ data: { kind: 'W2', taxYear: 2025, associateId: person.id, amounts: { box1: 1000 } } });
+  const reimbursement = await prisma.reimbursement.create({ data: { associateId: person.id, title: `${tag} expense report`, status: 'SUBMITTED', submittedAt: new Date(), totalAmount: 12 } });
+  const approval = await prisma.approvalRequest.create({
+    data: { kind: 'PAY_RATE_CHANGE', subjectType: 'Associate', subjectId: person.id, title: `${tag} pay raise`, proposed: { associateId: person.id, amount: 25 }, requesterUserId: null, approverCapability: 'manage:comp', associateId: person.id, clientId },
+  });
+  const task = await prisma.workTask.create({ data: { type: `${tag} restock task`, locationId: siteId, windowStart: new Date(Date.now() - 3_600_000), windowEnd: new Date(Date.now() + 3_600_000), capability: 'food-service', estimatedMinutes: 30, status: 'QUEUED' } });
+  const clockIn = await prisma.clockInRequest.create({ data: { associateId: person.id, clientId, locationId: siteId, requestedAt: new Date(Date.now() - 600_000) } });
+  const goal = await prisma.goal.create({ data: { associateId: person.id, title: `${tag} goal`, periodStart: new Date('2026-01-01'), periodEnd: new Date('2026-12-31') } });
+  const photoRule = await prisma.punchPhotoRule.create({ data: { scope: 'SITE', siteId, required: true, startsOn: new Date('2026-01-01') } });
+  return { person, shift, entry, document, hrCase, garnishment, taxForm, reimbursement, approval, task, clockIn, goal, photoRule };
 }
 
 describe.skipIf(process.env.SITE_SCOPE_SUITE === 'off')('site-scope suite (generated from the router)', () => {
@@ -92,7 +105,10 @@ describe.skipIf(process.env.SITE_SCOPE_SUITE === 'off')('site-scope suite (gener
     const skill = await prisma.skill.create({ data: { name: 'Forklift' } });
     await prisma.associateSkill.create({ data: { associateId: b.person.id, skillId: skill.id, level: 'EXPERT' } });
     // Everything that exists only at store B.
-    markers = [b.person.id, b.person.email, 'Southsider', b.shift.id, b.entry.id, b.document.id, b.hrCase.id];
+    markers = [
+      b.person.id, b.person.email, 'Southsider', b.shift.id, b.entry.id, b.document.id, b.hrCase.id,
+      b.garnishment.id, 'South-GARN-CASE', b.taxForm.id, b.reimbursement.id, b.approval.id, b.task.id, b.clockIn.id, b.goal.id, b.photoRule.id,
+    ];
 
     const { user } = await createUser({ role: 'OPERATIONS_MANAGER', email: 'ops.north@site-scope.example' });
     await prisma.user.update({ where: { id: user.id }, data: { scopeSiteIds: [north.id] } });

@@ -11,6 +11,7 @@ import { ListTemplate } from '@/components/templates';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
+import { NoAccess } from '@/components/ui/NoAccess';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
@@ -47,6 +48,11 @@ export function TimeOffHome() {
   if (isAssociate) {
     return <AssociateTimeOffView />;
   }
+  // The desk (the queue, entitlements, who is out) reads manage:time
+  // endpoints. Without it, someone on the roster gets their own time off;
+  // anyone else the access page — not a queue that answers "You don't have
+  // permission" (deep audit 2026-10-29, CRAWL-11).
+  if (!canManage) return hasOwnTimeOff ? <AssociateTimeOffView /> : <NoAccess />;
   // An answer without the day keys and counts is no summary (never a crash
   // or an "undefined" tile).
   const raw = summary.data;

@@ -6,6 +6,8 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
+import { dateColumnKey } from '../lib/timezone.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Phase 121 — Vaccination + medical records.
@@ -60,12 +62,12 @@ vaccination121Router.get('/vaccinations', VIEW, async (req, res) => {
       customLabel: r.customLabel,
       doseNumber: r.doseNumber,
       totalDoses: r.totalDoses,
-      administeredOn: r.administeredOn.toISOString().slice(0, 10),
+      administeredOn: dateColumnKey(r.administeredOn),
       administeredBy: r.administeredBy,
       manufacturer: r.manufacturer,
       lotNumber: r.lotNumber,
       documentUrl: r.documentUrl,
-      expiresOn: r.expiresOn?.toISOString().slice(0, 10) ?? null,
+      expiresOn: r.expiresOn ? dateColumnKey(r.expiresOn) : null,
       notes: r.notes,
     })),
   });
@@ -80,8 +82,8 @@ vaccination121Router.get(
     const days = z.coerce.number().int().min(1).max(365).default(60).parse(
       req.query.days,
     );
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    // Today on the company's calendar, as a DATE value (expiresOn is a DATE column).
+    const today = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
     const cutoff = new Date(today);
     cutoff.setUTCDate(cutoff.getUTCDate() + days);
 
@@ -117,7 +119,7 @@ vaccination121Router.get(
           associateName: `${r.associate.firstName} ${r.associate.lastName}`,
           kind: r.kind,
           customLabel: r.customLabel,
-          expiresOn: r.expiresOn?.toISOString().slice(0, 10) ?? null,
+          expiresOn: r.expiresOn ? dateColumnKey(r.expiresOn) : null,
           daysUntil,
           overdue: daysUntil < 0,
         };

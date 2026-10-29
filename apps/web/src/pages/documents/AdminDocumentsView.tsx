@@ -85,12 +85,16 @@ import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { nextInQueue } from '@/lib/queueNext';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { ListTemplate } from '@/components/templates';
 import { useSelection } from '@/lib/useSelection';
 import '@/lib/i18n/en/docs';
+
+/** A folder's face from its documents' payload: null there = no photo on file, so no request. */
+const docFace = (associateId: string, doc?: { associatePhotoUrl?: string | null }) =>
+  personPhotoUrl({ photoUrl: doc?.associatePhotoUrl, associateId });
 
 // Filter value space: the real DocumentStatuses plus two synthetic buckets.
 // 'ACTION_NEEDED' rolls up the states that require HR to do something —
@@ -1103,7 +1107,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 className="flex items-center gap-2.5 text-left transition-colors hover:text-white"
                 title="Open this associate's folder"
               >
-                <Avatar src={associatePhotoUrl(d.associateId)} name={d.associateName ?? '—'} size="xs" />
+                <Avatar src={docFace(d.associateId, d)} name={d.associateName ?? '—'} size="xs" />
                 <span className="truncate">{d.associateName ?? '—'}</span>
               </button>
             ),
@@ -1339,7 +1343,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     key: (d) => d.associateId,
                     header: (id, docs) => (
                       <span className="flex items-center gap-2">
-                        <Avatar src={associatePhotoUrl(id)} name={docs[0]?.associateName ?? '—'} size="xs" />
+                        <Avatar src={docFace(id, docs[0])} name={docs[0]?.associateName ?? '—'} size="xs" />
                         <span className="truncate text-xs font-medium text-white">
                           <AssociateLink associateId={id} tab="documents">
                             {docs[0]?.associateName ?? '—'}
@@ -1443,7 +1447,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   primary: true,
                   cell: (g) => (
                     <div className="flex items-center gap-2.5">
-                      <Avatar src={associatePhotoUrl(g.associateId)} name={g.associateName} size="sm" />
+                      <Avatar src={docFace(g.associateId, g.docs[0])} name={g.associateName} size="sm" />
                       <span className="text-white font-medium truncate">
                         <AssociateLink associateId={g.associateId} tab="documents">
                           {g.associateName}
@@ -1474,7 +1478,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           <>
             <DrawerHeader>
               <div className="flex items-center gap-3">
-                <Avatar src={associatePhotoUrl(folder.associateId)} name={folder.associateName} size="md" />
+                <Avatar src={docFace(folder.associateId, folder.docs[0])} name={folder.associateName} size="md" />
                 <div className="min-w-0">
                   <DrawerTitle className="truncate">
                     <AssociateLink associateId={folder.associateId} tab="documents">

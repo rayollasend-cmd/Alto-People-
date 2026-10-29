@@ -10,6 +10,7 @@ import { currentTenantId, runWithTenant, tenantIdForWrite } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
 import { createApprovalRequest, registerApplyHandler } from './approvalRequests.js';
 import { rolesHolding } from './approvalPolicy.js';
+import { logger } from './logger.js';
 
 /**
  * Workflow engine.
@@ -464,7 +465,7 @@ export function startWorkflowWorkerCron(): void {
   tick();
   timer = setInterval(tick, seconds * 1000);
   timer.unref();
-  console.log(`[alto-people/api] workflow worker armed (every ${seconds}s)`);
+  logger.info(`workflow worker armed (every ${seconds}s)`);
 }
 
 export function stopWorkflowWorkerCron(): void {

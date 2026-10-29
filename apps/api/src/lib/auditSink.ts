@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { assertSafeOutboundUrl } from './safeOutboundUrl.js';
 import { newWebhookSecret, openWebhookSecret, sealWebhookSecret, signatureV2 } from './webhookSecrets.js';
 import { platformJob } from './tenantJobs.js';
+import { armJob } from './jobs.js';
 
 /**
  * Brief 2-3 step 4 — the SIEM sink (decision 9: HTTPS JSON lines on the
@@ -122,10 +123,20 @@ export async function deliverAuditSinks(db: Db, now: Date = new Date()): Promise
   return total;
 }
 
-let timer: NodeJS.Timeout | null = null;
+export const AUDIT_SINK_JOB = 'auditSink';
+
+/**
+ * Every minute, each tenant's SIEM sink. Through the jobs registry: a slow
+ * SIEM used to let the next minute's tick start while this one was still
+ * sending, and both resent the same batch from the same cursor (audit
+ * 2026-10-29 CODE-23). armJob skips a tick while the last one runs.
+ */
 export function startAuditSinkCron(db: Db): void {
-  if (timer) return;
-  const tick = () => void platformJob('auditSink', () => deliverAuditSinks(db))().catch((err) => console.error('[alto-people/api] audit sink delivery failed:', err));
-  timer = setInterval(tick, 60_000);
-  timer.unref();
+  armJob({
+    name: AUDIT_SINK_JOB,
+    label: 'Audit log to SIEM sinks',
+    intervalSeconds: 60,
+    immediate: false,
+    run: platformJob(AUDIT_SINK_JOB, () => deliverAuditSinks(db)),
+  });
 }

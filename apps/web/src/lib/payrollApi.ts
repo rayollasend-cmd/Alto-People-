@@ -94,8 +94,9 @@ export function disbursePayrollRun(id: string): Promise<PayrollRunDetail> {
 export function retryRunFailures(
   id: string,
   itemIds?: string[],
-): Promise<{ retried: number; succeeded: number }> {
-  return apiFetch<{ retried: number; succeeded: number }>(
+): Promise<{ retried: number; succeeded: number; awaitingBankUpload?: number }> {
+  // awaitingBankUpload: retried paychecks written into an in-house bank file that waits for its upload (CODE-21).
+  return apiFetch<{ retried: number; succeeded: number; awaitingBankUpload?: number }>(
     `/payroll/runs/${id}/retry-failures`,
     {
       method: 'POST',
@@ -332,6 +333,12 @@ export interface PayrollYtdRow {
   fica: number;
   medicare: number;
   sit: number;
+  /** Local income tax withheld (older APIs leave it out). */
+  local?: number;
+  /** State programs withheld — SDI, TDI/FLI, PFML (older APIs leave it out). */
+  programs?: number;
+  /** Reimbursements paid, not wages (older APIs leave it out). */
+  reimbursements?: number;
   preTax: number;
   postTax: number;
   net: number;
@@ -360,6 +367,9 @@ export interface PayrollYtdResponse {
     fica: number;
     medicare: number;
     sit: number;
+    local?: number;
+    programs?: number;
+    reimbursements?: number;
     preTax: number;
     postTax: number;
     net: number;
@@ -388,6 +398,10 @@ export interface YearEndCloseResponse {
   taxYear: number;
   readyToClose: boolean;
   checks: YearEndCheck[];
+  /** No payroll was paid in the year: nothing to close (deep audit MONEY-27). */
+  noPayroll?: boolean;
+  /** Runs paid in the year. */
+  paidRuns?: number;
 }
 
 export function getYearEndClose(year?: number): Promise<YearEndCloseResponse> {

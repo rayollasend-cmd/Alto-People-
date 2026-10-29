@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { formatShiftLine, notifyShift } from './notifyShift.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -51,7 +51,7 @@ export async function nudgeUnconfirmedShifts(
       clientName: shift.client?.name ?? 'your site',
       startsAt: shift.startsAt,
       endsAt: shift.endsAt,
-      timezone: shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+      timezone: shift.locationRel?.timezone ?? companyWorkweek().timezone,
     });
     await notifyShift(db, {
       associateId: shift.assignedAssociateId!,

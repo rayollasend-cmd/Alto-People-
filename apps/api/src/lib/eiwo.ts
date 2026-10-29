@@ -1,5 +1,6 @@
 import type { GarnishmentKind } from '@prisma/client';
 import type { PayFrequency } from './garnishmentEngine.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * Electronic Income Withholding Orders (e-IWO).
@@ -433,7 +434,7 @@ export function buildAcknowledgment(employer: EmployerFacts, acks: AckInput[], n
         el('TerminationDate', a.terminationDate ?? null) +
         el('NewEmployerName', a.newEmployerName ?? null) +
         el('NewEmployerAddress', a.newEmployerAddress ?? null) +
-        el('EmployerSentDate', now.toISOString().slice(0, 10)) +
+        el('EmployerSentDate', orgDateKey(now)) +
         '  </Acknowledgment>\n'
       );
     })
@@ -482,7 +483,7 @@ export function buildTerminationNotice(employer: EmployerFacts, n: TerminationNo
     el('EmployeeLastKnownPhone', n.employeePhone ?? null) +
     el('NewEmployerName', n.newEmployerName ?? null) +
     el('NewEmployerAddress', n.newEmployerAddress ?? null) +
-    el('EmployerSentDate', now.toISOString().slice(0, 10)) +
+    el('EmployerSentDate', orgDateKey(now)) +
     '  </EmploymentTerminationNotice>\n';
   return `<?xml version="1.0" encoding="UTF-8"?>\n<EIWOAcknowledgmentFile>\n${header(employer, now, controlNumber)}${body}</EIWOAcknowledgmentFile>\n`;
 }
@@ -512,7 +513,7 @@ export function buildLumpSumNotice(employer: EmployerFacts, n: LumpSumNotice, no
     el('LumpSumPaymentType', n.paymentType) +
     el('LumpSumPaymentAmount', n.amount.toFixed(2)) +
     el('LumpSumPaymentDate', n.expectedPaymentDate) +
-    el('EmployerSentDate', now.toISOString().slice(0, 10)) +
+    el('EmployerSentDate', orgDateKey(now)) +
     '  </LumpSumPaymentNotice>\n';
   return `<?xml version="1.0" encoding="UTF-8"?>\n<EIWOAcknowledgmentFile>\n${header(employer, now, controlNumber)}${body}</EIWOAcknowledgmentFile>\n`;
 }

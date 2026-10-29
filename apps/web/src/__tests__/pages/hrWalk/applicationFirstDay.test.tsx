@@ -90,6 +90,18 @@ describe('<FirstDayCard> (HR 11)', () => {
     expect(await screen.findByText('Every shift at this store is taken')).toBeInTheDocument();
   });
 
+  it('with no start date, "Book one" asks for the open shifts once — not in a loop (CODE-11)', async () => {
+    const { listShifts } = await import('@/lib/schedulingApi');
+    vi.mocked(listShifts).mockClear();
+    vi.mocked(getFirstDay).mockResolvedValue({ ...FIRST_DAY, startDate: null });
+    renderAs('HR_ADMINISTRATOR', <FirstDayCard applicationId="app1" associateId="a1" clientId="c1" status="APPROVED" payScheduleName={null} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Book one' }));
+    expect(await screen.findByText('Every shift at this store is taken')).toBeInTheDocument();
+    // A fresh new Date() in the query key re-keyed every render: the list fetched forever.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(vi.mocked(listShifts)).toHaveBeenCalledTimes(1);
+  });
+
   it('before approval it says what waits for approval instead of offering a dead button', async () => {
     vi.mocked(getFirstDay).mockResolvedValue({ ...FIRST_DAY, employeeNumber: { issued: false, clientId: null, validAtClient: false, number: null } });
     renderAs('HR_ADMINISTRATOR', <FirstDayCard applicationId="app1" associateId="a1" clientId="c1" status="SUBMITTED" payScheduleName={null} />);

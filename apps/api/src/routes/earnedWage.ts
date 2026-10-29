@@ -9,6 +9,8 @@ import { ewaAvailability, loadEwaSettings, requestEarnedWageAdvance } from '../l
 import { orgSettingIdFor } from '../lib/branding.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { scopeAssociates } from '../lib/scope.js';
+import { idempotent } from '../middleware/idempotency.js';
+import { dateKeyInZone, orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Earned-wage access (lib/earnedWage.ts).
@@ -47,8 +49,8 @@ function row(a: {
 }) {
   return {
     id: a.id,
-    periodStart: a.periodStart.toISOString().slice(0, 10),
-    periodEnd: a.periodEnd.toISOString().slice(0, 10),
+    periodStart: dateKeyInZone(a.periodStart, 'UTC'),
+    periodEnd: dateKeyInZone(a.periodEnd, 'UTC'),
     amount: a.amountCents / 100,
     fee: a.feeCents / 100,
     status: a.status,
@@ -81,13 +83,15 @@ earnedWageRouter.get('/me/earned-wage', async (req, res, next) => {
       drawn: a.drawnCents / 100,
       available: a.availableCents / 100,
       fee: a.feeCents / 100,
+      payoutTo: a.payoutTo,
     });
   } catch (err) {
     next(err);
   }
 });
 
-earnedWageRouter.post('/me/earned-wage', async (req, res, next) => {
+// Money out: a retried request with the same Idempotency-Key replays the first answer instead of paying again.
+earnedWageRouter.post('/me/earned-wage', idempotent, async (req, res, next) => {
   try {
     const associateId = requireAssociate(req.user!);
     const amount = z.coerce.number().positive().max(10_000).parse(req.body?.amount);
@@ -119,7 +123,8 @@ earnedWageRouter.get('/me/earned-wage/history', async (req, res, next) => {
  *   people          distinct people who drew an advance in the last 90 days
  */
 async function ewaDeskStats(reach: Prisma.EarnedWageAdvanceWhereInput, now: Date = new Date()) {
-  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  // The pay period running today on the company's calendar (deep audit MONEY-16), as a DATE.
+  const today = new Date(`${orgDateKey(now)}T00:00:00.000Z`);
   const drawn: Prisma.EarnedWageAdvanceWhereInput = { ...reach, status: { in: ['REQUESTED', 'PAID', 'RECOVERED'] } };
   const [current, lastRecovered, rolled, recentPeople] = await Promise.all([
     prisma.earnedWageAdvance.aggregate({ where: { ...drawn, periodStart: { lte: today }, periodEnd: { gte: today } }, _sum: { amountCents: true }, _count: true }),
@@ -142,7 +147,7 @@ async function ewaDeskStats(reach: Prisma.EarnedWageAdvanceWhereInput, now: Date
         advances += 1;
       }
     }
-    lastRecovery = { runId, on: lastRecovered.recoveredAt!.toISOString().slice(0, 10), amount: cents / 100, advances };
+    lastRecovery = { runId, on: orgDateKey(lastRecovered.recoveredAt!), amount: cents / 100, advances };
   }
   const rolledOver = rolled.filter((r) => r.recoveredCents < r.amountCents + r.feeCents);
   return {

@@ -6,8 +6,10 @@ import { requireCapability } from '../middleware/auth.js';
 import { countStandings, hiresBetween, onTheBooksAt, peopleStandings, turnoverBetween } from '../lib/peopleStatus.js';
 import { isOnTheBooks } from '@alto-people/shared';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { HttpError } from '../middleware/error.js';
 import { internalSites, isClientBoundedRole, scopeAssociates, scopeShifts, scopeWhere } from '../lib/scope.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * People analytics (HR pack 2026-10): the canned reports the builder's
@@ -32,7 +34,11 @@ export const peopleAnalyticsRouter = Router();
 const DAY = 86_400_000;
 const VIEW = requireCapability('view:analytics');
 
-const monthStart = (now: Date, offset: number) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1));
+// The company's month: on the evening of the last day UTC is already in the next month.
+const monthStart = (now: Date, offset: number) => {
+  const [y, m] = orgDateKey(now).split('-').map(Number) as [number, number];
+  return new Date(Date.UTC(y, m - 1 - offset, 1));
+};
 const monthKey = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 const pct = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 1000) / 10 : null);
 
@@ -319,7 +325,7 @@ peopleAnalyticsRouter.get('/people-analytics', VIEW, async (req, res) => {
 
   res.json({
     months,
-    since: since.toISOString().slice(0, 10),
+    since: dateColumnKey(since),
     headcountByStore,
     turnoverGrid,
     survival,

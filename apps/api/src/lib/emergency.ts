@@ -25,8 +25,7 @@ import { smsAvailability } from './sms.js';
 import { notifyAssociate, notifyClientSupervisors, notifyUser } from './notify.js';
 import { moduleOn } from './tenantProfile.js';
 import { repairSoon } from './scheduleRepair.js';
-import { dateKeyInZone } from './timeAnomalies.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek, dateKeyInZone } from './timeAnomalies.js';
 
 /**
  * EMERGENCY MODE — one switch that protects the workforce.
@@ -158,7 +157,7 @@ export async function associatesInScope(db: Db, e: EmergencyRow): Promise<Scoped
       id,
       s.locationRel
         ? { ...s.locationRel }
-        : { id: null, name: s.client?.name ?? 'Unknown site', clientId: s.clientId, timezone: DEFAULT_TIMEZONE },
+        : { id: null, name: s.client?.name ?? 'Unknown site', clientId: s.clientId, timezone: companyWorkweek().timezone },
     );
   }
   const ids = [...siteByAssociate.keys()];

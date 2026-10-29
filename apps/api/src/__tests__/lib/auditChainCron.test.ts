@@ -55,7 +55,10 @@ describe('runAuditChainChecks', () => {
     expect(alerts[0]!.deliveredTo).toContain(`user:${admin.id}`);
     // The admin's bell carries it (the contact's email went out: 'security-contact' above;
     // the generic sender writes a row only for a failed send).
-    expect(await prisma.notification.findFirst({ where: { recipientUserId: admin.id, channel: 'IN_APP', subject: 'Security alert' } })).not.toBeNull();
+    const bell = await prisma.notification.findFirst({ where: { recipientUserId: admin.id, channel: 'IN_APP', subject: 'Security alert' } });
+    expect(bell).not.toBeNull();
+    // The link lands on the audit page (App.tsx 'audit'); '/admin/audit' was a 404 (audit 2026-10-29 CRAWL-2).
+    expect(bell!.linkUrl).toBe('/audit');
     expect(await prisma.notification.count({ where: { recipientEmail: 'security@example.test', status: { not: 'SENT' } } })).toBe(0);
 
     // The same break an hour later is one alert, not a nightly nag.

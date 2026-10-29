@@ -17,7 +17,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, ymdLocal } from '@/lib/format';
 
 /**
  * One prevailing-wage project: the weeks it owes (each opens to its
@@ -26,7 +26,8 @@ import { fmtDate, fmtMoney } from '@/lib/format';
  * contract facts.
  */
 
-const today = () => new Date().toISOString().slice(0, 10);
+// The user's own day (CODE-14): an evening "take off the project" was dated tomorrow in UTC.
+const today = () => ymdLocal();
 const FRINGE: Record<string, string> = { CASH: 'Fringe paid in cash', PLAN: 'Fringe paid to plans', MIXED: 'Fringe partly cash, partly plans' };
 
 export function WeekStatusBadge({ status }: { status: WeekRow['status'] }) {

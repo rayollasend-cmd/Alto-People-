@@ -435,7 +435,8 @@ describe('the money questions on /finance/overview', () => {
       periodEnd: addDays(LW, 13),
       payDate: addDays(LW, 20),
       schedule: 'Alto biweekly',
-      hours: { approved: 14, pending: 3 },
+      // pendingBefore: still waiting, worked before the period (MONEY-7) — none here.
+      hours: { approved: 14, pending: 3, pendingBefore: 0 },
       run: null,
     });
 

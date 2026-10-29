@@ -572,6 +572,12 @@ function CostCentersTab({
   onPickClient: () => void;
 }) {
   const term = useTerm();
+  const hasClients = useTenant().moduleOn('clientPortal');
+  const { clients } = useClients();
+  // A cost centre with no client (the HR office) is company-wide — say so
+  // in the "every client" view instead of leaving the cell blank.
+  const ownerOf = (c: CostCenter) =>
+    c.clientId ? (clients.find((x) => x.id === c.clientId)?.name ?? '') : 'Company-wide';
   const [drawerTarget, setDrawerTarget] = useState<CostCenter | 'new' | null>(null);
 
   const listQuery = useQuery({
@@ -647,6 +653,9 @@ function CostCentersTab({
           columns={[
             { key: 'code', header: 'Code', accessor: (c) => c.code, sortable: true, cardMeta: true, className: 'font-medium tabular-nums' },
             { key: 'name', header: 'Name', accessor: (c) => c.name, sortable: true, primary: true },
+            ...(hasClients && !clientId
+              ? [{ key: 'owner', header: term('label.client'), accessor: (c: CostCenter) => ownerOf(c), sortable: true, cardMeta: true, className: 'text-ink-muted' }]
+              : []),
             { key: 'associates', header: term('workers'), accessor: (c) => c.associateCount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums' },
           ]}
         />
@@ -863,7 +872,8 @@ function ShiftPositionsTab({
   const refresh = async () => {
     await listQuery.refetch();
   };
-  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? '';
+  // A company-wide position names no client (null) — no suffix for it.
+  const clientName = (id: string | null) => (id ? (clients.find((c) => c.id === id)?.name ?? '') : '');
   // The order is the order schedulers see in the shift dialog. It is set by
   // moving rows (drag, or the arrows from the keyboard and on a phone) —
   // never typed as a number. Only within one client: each client has its own list.

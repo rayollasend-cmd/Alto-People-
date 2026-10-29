@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import type { ExecFinancials, ExecFinanceWeek, ExecKpi, ExecWaterfallStep } from '@alto-people/shared';
+import { marginPctOf, type ExecFinancials, type ExecFinanceWeek, type ExecKpi, type ExecWaterfallStep } from '@alto-people/shared';
 import { prorateTarget } from './execPeriods.js';
 import { executiveMoney } from './executiveMoney.js';
 import { zonedWallTimeToUtcInstant, localDateKey } from './timezone.js';
@@ -53,7 +53,7 @@ export async function computeExecFinancials(
     compare: planMode ? marginTarget : overview.comparison.available && extras.compared ? extras.compared.margin : null,
     target: marginTarget,
     targetLabel: marginTarget !== null ? `${qLabel} plan ${execMoney(qMargin)}, prorated to ${w.period.complete ? fmtDayRange(w.period.start, w.period.end) : fmtDay(w.period.end)}` : null,
-    sub: current.billed > 0 ? `${((current.margin / current.billed) * 100).toFixed(1)}% of revenue` : null,
+    sub: current.billed > 0 ? `${marginPctOf(current.billed, current.cost)!.toFixed(1)}% of revenue` : null,
     trend: ctx.weekStarts.map((s, i) => ({ start: localDateKey(s, tz), value: extras.weekly[i]!.hours > 0 ? extras.weekly[i]!.margin : null })),
   });
   const kpis: ExecKpi[] = [byId.get('revenue')!, grossMargin, byId.get('marginPct')!, byId.get('overtimePct')!, byId.get('cash')!, byId.get('dso')!];
@@ -81,7 +81,7 @@ export async function computeExecFinancials(
       billed: r2(x.billed),
       cost: r2(x.cost),
       margin: r2(x.margin),
-      marginPct: x.billed > 0 ? Math.round((x.margin / x.billed) * 1000) / 10 : null,
+      marginPct: x.billed > 0 ? Math.round(marginPctOf(x.billed, x.cost)! * 10) / 10 : null,
       hours: r2(x.hours),
       otHours: r2(x.otHours),
     };

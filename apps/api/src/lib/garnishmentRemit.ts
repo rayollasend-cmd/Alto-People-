@@ -5,6 +5,7 @@ import { bankingProfile, originate, type EntryInput, type OriginateInput, type O
 import { isValidRouting } from './banking/nacha.js';
 import { addBankingDays, isBankingDay, onOrBeforeBankingDay } from './banking/holidays.js';
 import { booksAfterGarnishmentRemittance } from './books/posting/hooks.js';
+import { tenantIdForWrite } from './tenant.js';
 
 /**
  * Electronic remittance of withheld garnishments.
@@ -155,13 +156,20 @@ export function adviceText(payeeName: string, effectiveDate: string, lines: Remi
  * remittance must be on ACH or SDU EFT with the payee's bank details on
  * file; child support needs the employee's full SSN for the DED segment.
  */
+/** A send that claimed a remittance and never finished (a crash) lets go after this long. */
+export const REMIT_CLAIM_STALE_MS = 15 * 60_000;
+
 export async function remitElectronically(
   db: PrismaClient,
   remittanceIds: string[],
-  opts: { effectiveDate: string; actorUserId: string; payDateOf: (runId: string) => Promise<string>; sender?: RemittanceSender },
+  opts: { effectiveDate: string; actorUserId: string; payDateOf: (runId: string) => Promise<string>; sender?: RemittanceSender; now?: Date },
 ): Promise<RemitOutcome> {
+  remittanceIds = [...new Set(remittanceIds)];
+  const tenantId = tenantIdForWrite();
+  const now = opts.now ?? new Date();
+  const staleBefore = new Date(now.getTime() - REMIT_CLAIM_STALE_MS);
   const remittances = await db.garnishmentRemittance.findMany({
-    where: { id: { in: remittanceIds } },
+    where: { id: { in: remittanceIds }, tenantId },
     include: {
       deductions: {
         include: {
@@ -181,6 +189,7 @@ export async function remitElectronically(
   const payDates = new Map<string, string>();
   for (const r of remittances) {
     if (r.status === 'SENT') problems.push(`${r.payeeName}: already sent.`);
+    else if (r.sendingAt && r.sendingAt >= staleBefore) problems.push(`${r.payeeName}: being sent right now — wait for that send to finish.`);
     if (!payDates.has(r.payrollRunId)) payDates.set(r.payrollRunId, await opts.payDateOf(r.payrollRunId));
     const payDate = payDates.get(r.payrollRunId)!;
     const lines: RemitLine[] = [];
@@ -237,16 +246,57 @@ export async function remitElectronically(
   if (problems.length) throw new HttpError(409, 'remittance_not_ready', problems.join(' '), { problems });
   if (entries.length === 0) throw new HttpError(400, 'no_entries', 'There is nothing to send.');
 
-  const sender = opts.sender ?? achRemittanceSender;
-  const result = await sender.send(db, {
-    purpose: 'GARNISHMENT',
-    effectiveDate: opts.effectiveDate,
-    sameDay: false,
-    entryDescription: remittances.every((r) => r.deductions.every((d) => d.garnishment.kind === 'CHILD_SUPPORT')) ? 'CHILD SUPP' : 'GARNISH',
-    createdById: opts.actorUserId,
-    entries,
+  // A claim left by a send that never finished: if that send got as far as
+  // writing a bank file, the money may already be on its way — a person
+  // checks the bank files before anything is sent again.
+  const stale = remittances.filter((r) => r.sendingAt && r.sendingAt < staleBefore);
+  if (stale.length) {
+    const since = new Date(Math.min(...stale.map((r) => r.sendingAt!.getTime())));
+    const wrote = await db.achFile.findFirst({ where: { tenantId, purpose: 'GARNISHMENT', createdAt: { gte: since } }, select: { id: true } });
+    if (wrote) {
+      throw new HttpError(
+        409,
+        'remittance_send_unfinished',
+        `A send of ${stale.map((r) => r.payeeName).join(', ')} started earlier and wrote a bank file but never finished. Check the garnishment files on Payroll banking; if it went, mark the remittance sent by hand.`,
+      );
+    }
+  }
+
+  // Claim, then send (deep audit CODE-18). The status check above ran
+  // outside any lock: two sends at once both passed it and wrote two ACH
+  // files for the same child support. Now every remittance is claimed in one
+  // conditional update — still pending, and not claimed by a live send — and
+  // a send that can't claim all of them claims none.
+  const claimedAt = now;
+  await db.$transaction(async (tx) => {
+    const claimed = await tx.garnishmentRemittance.updateMany({
+      where: { id: { in: remittanceIds }, tenantId, status: 'PENDING', OR: [{ sendingAt: null }, { sendingAt: { lt: staleBefore } }] },
+      data: { sendingAt: claimedAt },
+    });
+    if (claimed.count !== remittanceIds.length) {
+      throw new HttpError(409, 'remittance_not_ready', 'Another send of these remittances is under way or already went. Nothing was sent twice.');
+    }
   });
+  const release = () =>
+    db.garnishmentRemittance.updateMany({ where: { id: { in: remittanceIds }, sendingAt: claimedAt, status: 'PENDING' }, data: { sendingAt: null } }).catch(() => undefined);
+
+  const sender = opts.sender ?? achRemittanceSender;
+  let result: OriginateResult;
+  try {
+    result = await sender.send(db, {
+      purpose: 'GARNISHMENT',
+      effectiveDate: opts.effectiveDate,
+      sameDay: false,
+      entryDescription: remittances.every((r) => r.deductions.every((d) => d.garnishment.kind === 'CHILD_SUPPORT')) ? 'CHILD SUPP' : 'GARNISH',
+      createdById: opts.actorUserId,
+      entries,
+    });
+  } catch (err) {
+    await release();
+    throw err;
+  }
   if (result.file.status === 'REJECTED') {
+    await release();
     throw new HttpError(502, 'remittance_rejected', `The bank refused the remittance file: ${result.file.error ?? 'no reason given'}.`);
   }
   const advice: Record<string, string> = {};
@@ -259,6 +309,7 @@ export async function remitElectronically(
     await db.garnishmentRemittance.update({
       where: { id: r.id },
       data: {
+        sendingAt: null,
         status: 'SENT',
         sentAt: new Date(),
         sentById: opts.actorUserId,

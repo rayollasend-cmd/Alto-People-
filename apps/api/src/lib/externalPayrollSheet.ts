@@ -9,6 +9,8 @@ import { tryDecryptString } from './crypto.js';
 import { readRoutingNumber } from './payoutMethod.js';
 import { PAYROLL_SHEET_ENTRY_INCLUDE, buildPayrollSheetForPay } from './payrollSheet.js';
 import { payFor } from './laborRules/hours.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * External payroll sheet — the handoff file for an outside payroll bureau.
@@ -359,10 +361,10 @@ export async function buildExternalPayrollSheet(
       );
     }
     for (const c of changesByAssociate.get(a.associateId) ?? []) {
-      const when = c.at.toISOString().slice(0, 10);
+      const when = orgDateKey(c.at);
       const state =
         c.status === 'VERIFIED'
-          ? `verified ${c.verifiedAt?.toISOString().slice(0, 10) ?? ''} by ${c.verifiedBy ?? 'Finance'}`
+          ? `verified ${c.verifiedAt ? orgDateKey(c.verifiedAt) : ''} by ${c.verifiedBy ?? 'Finance'}`
           : c.status === 'REJECTED'
             ? 'rejected'
             : c.status === 'HELD'
@@ -419,7 +421,7 @@ export async function buildExternalPayrollSheet(
       associateId: a.associateId,
       fullName: a.name,
       fullAddress: person ? oneLineAddress(person) : '',
-      dob: person?.dob ? person.dob.toISOString().slice(0, 10) : '',
+      dob: person?.dob ? dateColumnKey(person.dob) : '',
       email: person?.email ?? '',
       phone: person?.phone ?? '',
       ssn,

@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { getBlobStore, tenantBlobKey } from './blobStore.js';
 import { hashSignedPdf, renderSignedAgreement } from './esign.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * A candidate's offer: what it pays, whether that pay needs approval, the
@@ -69,7 +70,8 @@ export function offerLetterContext(input: {
       currency: input.offer.currency,
     },
     client: { name: input.clientName },
-    today: letterDate(new Date(new Date().toISOString().slice(0, 10))),
+    // The letter is dated on the company's calendar (letterDate reads a day held at UTC midnight).
+    today: letterDate(new Date(`${orgDateKey(new Date())}T00:00:00.000Z`)),
   };
 }
 

@@ -5,6 +5,9 @@ import { HttpError } from '../middleware/error.js';
 import type { SessionUser } from '../types/express.js';
 import { cardOn, loadRateCards } from './rateCards.js';
 import { tenantIdForWrite } from './tenant.js';
+import { compEffectiveDay } from './payChanges.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 
 /**
  * A new hire's starting pay (owner, 2026-10-23: "the internal recruiter
@@ -28,8 +31,13 @@ import { tenantIdForWrite } from './tenant.js';
 type Db = PrismaClient | Prisma.TransactionClient;
 
 const IN_FLIGHT = new Set(['DRAFT', 'SUBMITTED', 'IN_REVIEW']);
-const DAY_MS = 86_400_000;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A @db.Date column (hire date, start date) as the day it names. A moment uses orgDateKey. */
+const ymd = dateColumnKey;
+/** A pending approval's proposed effectiveFrom (an ISO string) as its day, read the way the record will be. */
+const proposedDay = (s: string): string => {
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? s.slice(0, 10) : compEffectiveDay(d);
+};
 const money = (n: number) => n.toFixed(2);
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
@@ -90,7 +98,7 @@ export async function hireFacts(db: Db, associateId: string): Promise<HireFacts 
     }),
     db.compensationRecord.count({ where: { associateId, tenantId, reason: { not: 'HIRE' } } }),
   ]);
-  const hiredOn = a.hireDate ? ymd(a.hireDate) : approved?.approvedAt ? ymd(approved.approvedAt) : null;
+  const hiredOn = a.hireDate ? ymd(a.hireDate) : approved?.approvedAt ? orgDateKey(approved.approvedAt) : null;
   return {
     associateId: a.id,
     name: `${a.firstName} ${a.lastName}`.trim(),
@@ -112,7 +120,7 @@ export function newHireWhy(f: HireFacts, now: Date = new Date()): HirePayWhy {
   if (f.separated) return 'SEPARATED';
   if (f.payChanged) return 'PAY_CHANGED';
   if (f.paid) return 'PAID';
-  const since = ymd(new Date(now.getTime() - NEW_HIRE_WINDOW_DAYS * DAY_MS));
+  const since = addDaysToKey(orgDateKey(now), -NEW_HIRE_WINDOW_DAYS);
   const hiredRecently = f.hiredOn !== null && f.hiredOn >= since;
   return f.onboarding || hiredRecently ? 'NEW_HIRE' : 'NOT_NEW_HIRE';
 }
@@ -163,7 +171,7 @@ export async function assertNewHireForPay(db: Db, associateId: string, now: Date
 }
 
 /** Per pay type, the most a starting wage may be before a compensation approver decides it. */
-export async function hirePayCeilings(db: Db, f: HireFacts, on: string, today: string = ymd(new Date())): Promise<HirePayStatus['ceilings']> {
+export async function hirePayCeilings(db: Db, f: HireFacts, on: string, today: string = orgDateKey(new Date())): Promise<HirePayStatus['ceilings']> {
   const bands = f.clientId
     ? await db.compBand.findMany({ where: { tenantId: tenantIdForWrite(), clientId: f.clientId, deletedAt: null, effectiveTo: null } })
     : [];
@@ -263,7 +271,7 @@ export async function hirePayStatus(db: Db, user: SessionUser, associateId: stri
   const out: HirePayStatus = {
     ...base,
     current: current
-      ? { id: current.id, payType: current.payType, amount: money(Number(current.amount)), effectiveFrom: ymd(current.effectiveFrom), reason: current.reason }
+      ? { id: current.id, payType: current.payType, amount: money(Number(current.amount)), effectiveFrom: compEffectiveDay(current.effectiveFrom), reason: current.reason }
       : null,
     pending:
       pendingRow && proposed?.payType && typeof proposed.amount === 'number'
@@ -272,12 +280,12 @@ export async function hirePayStatus(db: Db, user: SessionUser, associateId: stri
             title: pendingRow.title,
             payType: proposed.payType,
             amount: money(proposed.amount),
-            effectiveFrom: (proposed.effectiveFrom ?? pendingRow.createdAt.toISOString()).slice(0, 10),
+            effectiveFrom: proposed.effectiveFrom ? proposedDay(proposed.effectiveFrom) : orgDateKey(pendingRow.createdAt),
             requestedAt: pendingRow.createdAt.toISOString(),
           }
         : null,
   };
   if (!canSet) return out;
-  const ceilings = await hirePayCeilings(db, f, f.startDate ?? ymd(now), ymd(now));
+  const ceilings = await hirePayCeilings(db, f, f.startDate ?? orgDateKey(now), orgDateKey(now));
   return { ...out, ceilings, suggested: await hirePaySuggestion(db, f, ceilings) };
 }

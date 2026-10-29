@@ -106,7 +106,8 @@ export function PunchPhotoCard({ associateId }: { associateId: string }) {
               Exempt them
             </Button>
           ) : (
-            <Button size="sm" onClick={() => setDialog('require')}>
+            // A rule, not the tab's main action: secondary, so it doesn't lead the hours (PEOPLE-30).
+            <Button size="sm" variant="secondary" onClick={() => setDialog('require')}>
               <Camera className="h-4 w-4" aria-hidden="true" /> Require a photo
             </Button>
           )}

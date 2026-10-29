@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SettingsSwitch } from './SettingsSwitch';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import '@/lib/i18n/en/settings';
 
 /**
  * Access pack — WHEN things reach you. Quiet hours in your own time zone
@@ -22,13 +24,14 @@ import { SettingsSwitch } from './SettingsSwitch';
  * quiet hours" button mid-page while its selects saved at once).
  */
 
-const CHANNELS: Array<{ key: 'deliveryEmail' | 'deliveryPush' | 'deliverySms'; label: string }> = [
-  { key: 'deliveryEmail', label: 'Email' },
-  { key: 'deliveryPush', label: 'Push' },
-  { key: 'deliverySms', label: 'WhatsApp / SMS' },
+const CHANNELS: Array<{ key: 'deliveryEmail' | 'deliveryPush' | 'deliverySms'; label: MessageKey }> = [
+  { key: 'deliveryEmail', label: 'settings.delivery.email' },
+  { key: 'deliveryPush', label: 'settings.delivery.push' },
+  { key: 'deliverySms', label: 'settings.delivery.sms' },
 ];
 
 export function DeliveryCard() {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['me', 'notification-delivery'], queryFn: getDeliveryPrefs });
   const [quietOn, setQuietOn] = useState(false);
@@ -42,37 +45,37 @@ export function DeliveryCard() {
     if (q.data.quietHoursEnd !== null) setEnd(minutesToHhmm(q.data.quietHoursEnd));
   }, [q.data]);
 
-  const apply = async (patch: Partial<Omit<DeliveryPrefs, 'timezone'>>, ok = 'Saved.') => {
+  const apply = async (patch: Partial<Omit<DeliveryPrefs, 'timezone'>>, ok = t('settings.delivery.saved')) => {
     setSaving(true);
     try {
       const saved = await patchDeliveryPrefs(patch);
       qc.setQueryData(['me', 'notification-delivery'], saved);
       toast.success(ok);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+      toast.error(err instanceof ApiError ? err.message : t('settings.delivery.saveFailed'));
     } finally {
       setSaving(false);
     }
   };
   const turnQuiet = (on: boolean) => {
     setQuietOn(on);
-    if (!on) return void apply({ quietHoursStart: null, quietHoursEnd: null }, 'Quiet hours off.');
+    if (!on) return void apply({ quietHoursStart: null, quietHoursEnd: null }, t('settings.delivery.quietOff'));
     const s = hhmmToMinutes(start);
     const e = hhmmToMinutes(end);
     if (s === null || e === null) return;
-    void apply({ quietHoursStart: s, quietHoursEnd: e }, 'Quiet hours on.');
+    void apply({ quietHoursStart: s, quietHoursEnd: e }, t('settings.delivery.quietOn'));
   };
   // A time saves when the field is left, if it changed.
   const saveTime = (which: 'start' | 'end') => {
     const s = hhmmToMinutes(start);
     const e = hhmmToMinutes(end);
     if (s === null || e === null) {
-      toast.error('Use a time like 22:00.');
+      toast.error(t('settings.delivery.timeFormat'));
       return;
     }
     const savedValue = which === 'start' ? q.data?.quietHoursStart : q.data?.quietHoursEnd;
     if ((which === 'start' ? s : e) === savedValue) return;
-    void apply({ quietHoursStart: s, quietHoursEnd: e }, 'Quiet hours saved.');
+    void apply({ quietHoursStart: s, quietHoursEnd: e }, t('settings.delivery.quietSaved'));
   };
 
   return (
@@ -80,11 +83,9 @@ export function DeliveryCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Moon className="h-4 w-4 text-gold" />
-          When things reach you
+          {t('settings.delivery.title')}
         </CardTitle>
-        <CardDescription>
-          Quiet hours hold routine email, push and messages until the morning; a digest sends them together once an hour. Account security, formal HR notices, safety and pay always arrive at once.
-        </CardDescription>
+        <CardDescription>{t('settings.delivery.desc')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         {!q.data ? (
@@ -97,32 +98,34 @@ export function DeliveryCard() {
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-4">
                 <span id="quiet-hours-label" className="text-sm text-ink">
-                  Quiet hours
-                  <span className="block text-xs text-ink-muted">In {q.data.timezone ?? 'your device’s time zone'}</span>
+                  {t('settings.delivery.quiet')}
+                  <span className="block text-xs text-ink-muted">
+                    {q.data.timezone ? t('settings.delivery.inZone', { zone: q.data.timezone }) : t('settings.delivery.deviceZone')}
+                  </span>
                 </span>
                 <SettingsSwitch checked={quietOn} disabled={saving} onCheckedChange={turnQuiet} aria-labelledby="quiet-hours-label" />
               </div>
               {quietOn && (
                 <div className="flex flex-wrap items-end gap-3">
-                  <Field label="From">{(p) => <Input {...p} type="time" className="w-32" value={start} disabled={saving} onChange={(e) => setStart(e.target.value)} onBlur={() => saveTime('start')} />}</Field>
-                  <Field label="Until">{(p) => <Input {...p} type="time" className="w-32" value={end} disabled={saving} onChange={(e) => setEnd(e.target.value)} onBlur={() => saveTime('end')} />}</Field>
+                  <Field label={t('settings.delivery.from')}>{(p) => <Input {...p} type="time" className="w-32" value={start} disabled={saving} onChange={(e) => setStart(e.target.value)} onBlur={() => saveTime('start')} />}</Field>
+                  <Field label={t('settings.delivery.until')}>{(p) => <Input {...p} type="time" className="w-32" value={end} disabled={saving} onChange={(e) => setEnd(e.target.value)} onBlur={() => saveTime('end')} />}</Field>
                 </div>
               )}
             </div>
             <ul className="divide-y divide-line">
               {CHANNELS.map((c) => (
                 <li key={c.key} className="flex items-center justify-between gap-4 py-2">
-                  <span className="text-sm text-ink">{c.label}</span>
+                  <span className="text-sm text-ink">{t(c.label)}</span>
                   <Select
                     size="sm"
                     className="w-44"
-                    aria-label={`${c.label} delivery`}
+                    aria-label={t('settings.delivery.channelAria', { channel: t(c.label) })}
                     value={q.data![c.key]}
                     disabled={saving}
                     onChange={(e) => void apply({ [c.key]: e.target.value as DeliveryMode })}
                   >
-                    <option value="REALTIME">As it happens</option>
-                    <option value="DIGEST">Once an hour, together</option>
+                    <option value="REALTIME">{t('settings.delivery.realtime')}</option>
+                    <option value="DIGEST">{t('settings.delivery.digest')}</option>
                   </Select>
                 </li>
               ))}

@@ -62,7 +62,8 @@ describe('<YearEndReconciliation>', () => {
   });
 
   it('the people behind a variance open in a drawer, largest difference first', async () => {
-    renderAs('HR_ADMINISTRATOR', <YearEndReconciliation />, '/payroll/year-end/reconciliation');
+    // The page opens on the year with the work (2026 from October 1, MONEY-27): this case reads 2025.
+    renderAs('HR_ADMINISTRATOR', <YearEndReconciliation />, '/payroll/year-end/reconciliation?year=2025');
     await userEvent.click(await screen.findByRole('button', { name: /People behind Wages, tips/ }));
     expect(getPersonVariances).toHaveBeenCalledWith(2025, 'box1');
     const dialog = await screen.findByRole('dialog');

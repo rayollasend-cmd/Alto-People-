@@ -5,7 +5,7 @@ import { Calendar, Clock, MapPin, StickyNote, User, X } from '@/components/ui/ic
 import type { AutoFillCandidate, Shift } from '@alto-people/shared';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { shiftHolderFace } from '@/lib/photoUrl';
 import { cn } from '@/lib/cn';
 import { useLaborCostVisible } from '@/lib/useLaborCostVisible';
 import {
@@ -16,6 +16,7 @@ import {
   fmtWeekdayTz,
 } from '@/lib/format';
 import { colorForPosition } from '@/lib/positionColor';
+import { shiftEnded } from './shiftHistory';
 
 /**
  * Hover-card preview for shift chips.
@@ -242,11 +243,11 @@ export function ShiftHoverCard({
       <div className="px-4 py-3 space-y-2 text-sm overflow-auto">
         <Fact icon={Calendar} text={fmtTimeRange(shift)} />
         <Fact icon={Clock} text={fmtDuration(shift)} />
-        {shift.location && <Fact icon={MapPin} text={shift.location} />}
+        {(shift.locationName ?? shift.location) && <Fact icon={MapPin} text={shift.locationName ?? shift.location} />}
         {shift.assignedAssociateId ? (
           <div className="flex items-center gap-2 text-xs text-silver">
             <Avatar
-              src={associatePhotoUrl(shift.assignedAssociateId)}
+              src={shiftHolderFace(shift)}
               name={shift.assignedAssociateName}
               size="xs"
               className="-my-1"
@@ -284,8 +285,9 @@ export function ShiftHoverCard({
         )}
       </div>
 
-      {/* Actions */}
-      {canManage && shift.status !== 'CANCELLED' && shift.status !== 'COMPLETED' && (
+      {/* Actions — none on a shift that is over: it is the record of what
+          happened, not a slot to edit (FLOOR-18). */}
+      {canManage && shift.status !== 'CANCELLED' && shift.status !== 'COMPLETED' && !shiftEnded(shift) && (
         <div className="border-t border-navy-secondary p-2 flex flex-wrap gap-1.5">
           {canQuickAssign && topLoading && (
             <div className="basis-full px-1 py-0.5 text-2xs text-silver/60">

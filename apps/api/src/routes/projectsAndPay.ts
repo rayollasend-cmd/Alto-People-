@@ -7,6 +7,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireCapability } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
 import { assertClientInScope, effectiveClientIdFilter, scopeClients, scopeWhere } from '../lib/scope.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 86 — Projects, premium pay rules, tip pools.
@@ -320,7 +321,7 @@ projectsAndPayRouter.get('/tip-pools', VIEW_PAY, async (req, res) => {
       id: p.id,
       clientId: p.clientId,
       name: p.name,
-      shiftDate: p.shiftDate.toISOString().slice(0, 10),
+      shiftDate: dateColumnKey(p.shiftDate),
       totalAmount: p.totalAmount.toFixed(2),
       currency: p.currency,
       status: p.status,

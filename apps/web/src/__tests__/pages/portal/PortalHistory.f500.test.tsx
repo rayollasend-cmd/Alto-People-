@@ -88,7 +88,8 @@ describe('/portal/history (F500 G5)', () => {
     // "Delivered" is the grade's alone.
     expect(screen.getByText('509 of 4,800 contracted person-hours delivered')).toBeInTheDocument();
     // A percentage of contracted hours, never a letter grade (F500 2026-10-26).
-    expect(screen.getByText('Contracted hours delivered · this period')).toBeInTheDocument();
+    // The range is in the bar: the label fits its two lines at 1024 (LEAD-32).
+    expect(screen.getByText('Contract hours delivered')).toBeInTheDocument();
     expect(screen.queryByText(/^[ABCDF]$/)).toBeNull();
     expect(screen.queryByText(/Hours delivered/)).not.toBeInTheDocument();
   });

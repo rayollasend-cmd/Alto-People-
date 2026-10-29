@@ -57,3 +57,12 @@ export function daysSince(iso: string): number {
   if (Number.isNaN(t)) return 0;
   return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
 }
+
+/**
+ * An offer as the recruiter should read it (PEOPLE-13): a SENT offer past
+ * its expiry is expired — never "Awaiting their signature" with an Accept
+ * button — even before the server's on-read sweep has caught up.
+ */
+export function offerShownStatus<S extends string>(o: { status: S; expiresAt: string | null }, now: number = Date.now()): S | 'EXPIRED' {
+  return o.status === 'SENT' && o.expiresAt !== null && Date.parse(o.expiresAt) < now ? 'EXPIRED' : o.status;
+}

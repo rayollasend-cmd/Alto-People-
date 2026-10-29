@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { activeBreakdown, placements } from './activeDefinition.js';
 import { bucketFor, daysPastDue, dueOnFor } from './books/aging.js';
@@ -9,7 +10,8 @@ import { loadPayContext, type PayContext } from './laborRules/payContext.js';
 import { isEngineDoubleTime, overtimeRateOf, premiumCost } from './payBillLink.js';
 import { tenantIdForWrite } from './tenant.js';
 import { orgDateKey } from './timeAnomalies.js';
-import { companyWorkweek, dateKeyInZone, startOfWeekInZone, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone, startOfWeekInZone, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { loadPaidHours } from './paidHours.js';
 
 /**
  * How each client account is doing, in a few numbers (Clients rebuild,
@@ -21,10 +23,14 @@ import { companyWorkweek, dateKeyInZone, startOfWeekInZone, utcInstantOfLocalMid
  *   shiftsNext7    published, not cancelled shifts starting in the next 7
  *                  days; filled = someone is assigned. fillRatePct is null
  *                  when there are none (never a fake 0%).
- *   hoursThisWeek  worked hours (closed punches, not rejected, breaks
- *   hoursLastWeek  docked and punch rounding applied, as pay counts them)
- *                  at the client, the week starting on the CLIENT's
- *                  weekStartsOn, read on each site's own clock.
+ *   hoursThisWeek  paid hours (lib/paidHours: approved and completed closed
+ *   hoursLastWeek  punches, every break out, split by the labor engine)
+ *                  at the client, on the COMPANY week (its start day, in the
+ *                  company's time zone) — the metric dictionary's "Hours this
+ *                  week" (packages/shared metrics.ts). Each client's own
+ *                  weekStartsOn summed to 384.6h on the Clients page beside
+ *                  537h and 552h for the same question (LEAD-21); a
+ *                  client's own week is the Performance tab's (clientWeeks).
  *   overtimePct    (overtime + double time) ÷ worked hours at the client in
  *                  its last complete week, as the labor engine splits them
  *                  (each person's whole week, at every client — the split
@@ -81,7 +87,8 @@ export interface ClientMetricsOptions {
 const DAY_MS = 86_400_000;
 const round1 = (n: number) => Math.round((n + Number.EPSILON) * 10) / 10;
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A DATE column's day (Prisma reads it as UTC midnight). */
+const ymd = (d: Date) => toDateOnly(d)!;
 const dollars = (cents: number) => round2(cents / 100);
 const usd = (amount: number) => `$${Math.round(amount).toLocaleString('en-US')}`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -233,6 +240,7 @@ function weekKey(d: Date, tz: string, weekStartsOn: number): string {
 const addDays = (key: string, days: number) => {
   const d = new Date(`${key}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on a date key, never an instant.
   return d.toISOString().slice(0, 10);
 };
 
@@ -246,8 +254,7 @@ export async function clientMetrics(
   const now = opts.now ?? new Date();
   const tenantId = tenantIdForWrite();
 
-  const clients = await prisma.client.findMany({ where: { id: { in: ids }, tenantId }, select: { id: true, weekStartsOn: true, contractEndDate: true } });
-  const weekStartsOn = new Map(clients.map((c) => [c.id, c.weekStartsOn]));
+  const clients = await prisma.client.findMany({ where: { id: { in: ids }, tenantId }, select: { id: true, contractEndDate: true } });
   const contractEnds = new Map(clients.map((c) => [c.id, c.contractEndDate ? ymd(c.contractEndDate) : null]));
   const known = clients.map((c) => c.id);
   if (known.length === 0) return out;
@@ -261,7 +268,10 @@ export async function clientMetrics(
     publishedAt: { not: null },
   };
 
-  const [active, shiftTotals, shiftFilled, detractors, pay] = await Promise.all([
+  // This company week and last (LEAD-21): read whole, from the start of last week.
+  const thisStart = startOfWeekUTC(now);
+  const lastStart = startOfWeekUTC(new Date(thisStart.getTime() - 36 * 3_600_000));
+  const [active, shiftTotals, shiftFilled, detractors, workers] = await Promise.all([
     onAssignmentByClient(known, now),
     prisma.shift.groupBy({ by: ['clientId'], where: shiftWhere, _count: { _all: true } }),
     prisma.shift.groupBy({ by: ['clientId'], where: { ...shiftWhere, assignedAssociateId: { not: null } }, _count: { _all: true } }),
@@ -270,31 +280,35 @@ export async function clientMetrics(
       select: { clientId: true, score: true },
       take: 5000,
     }),
-    loadPayContext(prisma, tenantId),
+    // Everyone who worked at these clients in the two weeks: their whole
+    // weeks are read, so overtime splits over every client as pay splits it.
+    prisma.timeEntry.findMany({
+      where: { tenantId, ...CLOSED_WORK, clientId: { in: known }, clockInAt: { gte: lastStart, lt: now } },
+      select: { associateId: true },
+      distinct: ['associateId'],
+    }),
   ]);
 
-  // This week and last, on any site clock and any start day, lie inside 16 days back.
-  const work = await workAtClients(known, new Date(now.getTime() - 16 * DAY_MS), now, pay);
+  // "Hours this week" is the metric dictionary's one definition (packages/
+  // shared metrics.ts METRICS.hoursThisWeek): paid hours (lib/paidHours) on
+  // the COMPANY week. Each client's own weekStartsOn summed to 384.6 h on
+  // the Clients page beside 537 h and 552 h elsewhere (LEAD-21).
+  const shares = workers.length
+    ? await loadPaidHours(prisma, { tenantId, from: lastStart, to: now, where: { associateId: { in: workers.map((w) => w.associateId) } } })
+    : [];
+  const wanted = new Set(known);
   const hours = new Map<string, { thisWeek: number; lastWeek: number; lastOt: number }>();
-  const keyCache = new Map<string, { thisKey: string; lastKey: string }>();
-  for (const w of work) {
-    const ws = weekStartsOn.get(w.clientId)!;
-    const cacheKey = `${w.tz}|${ws}`;
-    let keys = keyCache.get(cacheKey);
-    if (!keys) {
-      const thisKey = weekKey(now, w.tz, ws);
-      keys = { thisKey, lastKey: addDays(thisKey, -7) };
-      keyCache.set(cacheKey, keys);
+  for (const sh of shares) {
+    const cid = sh.entry.clientId;
+    if (!cid || !wanted.has(cid)) continue;
+    const agg = hours.get(cid) ?? { thisWeek: 0, lastWeek: 0, lastOt: 0 };
+    // The punch belongs to the week its clock-in falls in (every consumer's rule).
+    if (sh.entry.clockInAt >= thisStart) agg.thisWeek += sh.hours;
+    else {
+      agg.lastWeek += sh.hours;
+      agg.lastOt += sh.otHours;
     }
-    // The punch belongs to the week its clock-in falls in (every consumer's rule), on its site's clock.
-    const k = weekKey(w.clockInAt, w.tz, ws);
-    const agg = hours.get(w.clientId) ?? { thisWeek: 0, lastWeek: 0, lastOt: 0 };
-    if (k === keys.thisKey) agg.thisWeek += w.workedHours;
-    else if (k === keys.lastKey) {
-      agg.lastWeek += w.workedHours;
-      agg.lastOt += w.overtimeHours;
-    }
-    hours.set(w.clientId, agg);
+    hours.set(cid, agg);
   }
 
   const totals = new Map(shiftTotals.map((r) => [r.clientId, r._count._all]));

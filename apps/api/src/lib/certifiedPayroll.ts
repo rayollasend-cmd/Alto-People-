@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, PrevailingWageProject, PrevailingWageRate, PrevailingWageWorker } from '@prisma/client';
-import { localDateKey } from './timezone.js';
+import { dateColumnKey, localDateKey } from './timezone.js';
+import { orgDateKey } from './timeAnomalies.js';
 import { fmtDay } from './humanDates.js';
 
 /**
@@ -31,7 +32,8 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 const DAY = 86_400_000;
 const round2 = (n: number) => Math.round(n * 100) / 100;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A date column's (or a UTC-midnight key's) YYYY-MM-DD. */
+const ymd = dateColumnKey;
 
 export interface WeekBounds {
   /** The seven dates, oldest first, ending on weekEnding. */
@@ -310,7 +312,7 @@ export async function computeCertifiedWeek(db: Db, project: ProjectWithParts, we
 /** Every reporting week from the project's first through the last one that has ended. */
 export function endedWeeks(project: { startDate: Date; endDate: Date | null; weekEndsOn: number }, now = new Date()): string[] {
   const first = weekEndingFor(project.startDate, project.weekEndsOn);
-  const today = ymd(now);
+  const today = orgDateKey(now);
   const stop = project.endDate ? weekEndingFor(project.endDate, project.weekEndsOn) : null;
   const out: string[] = [];
   for (let t = new Date(`${first}T00:00:00Z`).getTime(); ; t += 7 * DAY) {

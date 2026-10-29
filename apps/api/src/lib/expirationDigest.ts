@@ -9,6 +9,7 @@ import { buildExpirationsTile } from '../routes/complianceScorecard.js';
 import { publicBaseUrl } from './emailLayout.js';
 import { chaseItems } from './complianceAgent.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
+import { logger } from './logger.js';
 
 /**
  * Daily compliance-expiration digest.
@@ -164,8 +165,8 @@ export function startExpirationDigestCron(): void {
   tick();
   timer = setInterval(tick, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] expiration digest cron armed (every ${seconds}s, 30-day window)`,
+  logger.info(
+    `expiration digest cron armed (every ${seconds}s, 30-day window)`,
   );
 }
 

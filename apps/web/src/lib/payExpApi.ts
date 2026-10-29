@@ -171,8 +171,11 @@ export interface PayPreview {
   days: Array<{ date: string; hours: number; entries: Array<{ id: string; clockInAt: string; clockOutAt: string | null; siteName: string | null; approved: boolean }> }>;
   earnings: Array<{ line: string; kind: string; hours: number | null; rate: number | null; amount: number }>;
   gross: number;
-  taxes: Array<{ line: string; kind: 'FEDERAL' | 'SOCIAL_SECURITY' | 'MEDICARE' | 'STATE' | 'LOCAL'; amount: number }>;
-  deductions: Array<{ line: string; kind: 'PRE_TAX' | 'POST_TAX'; amount: number }>;
+  taxes: Array<{ line: string; kind: 'FEDERAL' | 'SOCIAL_SECURITY' | 'MEDICARE' | 'STATE' | 'LOCAL' | 'STATE_PROGRAM'; amount: number }>;
+  /** RIDES: van rides and no-show fees payroll takes from this check. */
+  deductions: Array<{ line: string; kind: 'PRE_TAX' | 'POST_TAX' | 'RIDES'; amount: number }>;
+  /** Van rides owed through the period's end: taken on this check, and held back by the minimum-wage guard. */
+  rides?: { owed: number; taken: number; held: number; minimumWage: number; state: string } | null;
   paidAhead: number;
   net: number;
   check: { status: 'CONFIRMED' | 'FLAGGED'; flags: PreviewFlag[]; at: string } | null;

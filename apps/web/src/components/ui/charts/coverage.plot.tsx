@@ -9,11 +9,11 @@ import {
   LabelList,
   ReferenceArea,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip as ChartTooltip,
   XAxis,
   YAxis,
 } from 'recharts';
+import { ResponsiveContainer } from './container.plot';
 import { ChartTooltipContent as PortalTooltip } from './ChartTooltip';
 import { CONCEPT, PALETTE, TICK as BASE_TICK } from './palette';
 import type { CoverageCurve, HourPoint, HoursChart, ReliabilityChart, StoreBarChart, WeekFillChart } from './coverage';
@@ -232,13 +232,18 @@ export function WeekFillPlot({ days, todayKey, labels, domain }: WeekFillProps &
 
 /* ---- Reliability -------------------------------------------------------- */
 
+/** Right margin that fits a short target label ("Target 88%") beside the plot. */
+const TARGET_LABEL_ROOM = 56;
+
 export function ReliabilityPlot({ weeks, labels }: ComponentProps<typeof ReliabilityChart>) {
   const series = { pct: { name: labels.fill, color: SERIES.primary } };
   // A 0% week drew nothing at all; the value label makes four zero weeks visibly zero.
   const data = weeks.map((w) => ({ ...w, pct: w.reliabilityPct, text: w.reliabilityPct === null ? '' : `${w.reliabilityPct}%` }));
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart accessibilityLayer={false} data={data} margin={{ ...MARGIN, top: 16, right: 4 }} barCategoryGap="35%">
+      {/* Room on the right for the target's label, outside the bars: inside, it
+          sat on the last week's value label ("Target 88%" over "73%", LEAD-25). */}
+      <BarChart accessibilityLayer={false} data={data} margin={{ ...MARGIN, top: 16, right: TARGET_LABEL_ROOM }} barCategoryGap="35%">
         <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
         <XAxis dataKey="label" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} />
         <YAxis
@@ -266,7 +271,7 @@ export function ReliabilityPlot({ weeks, labels }: ComponentProps<typeof Reliabi
           strokeDasharray="4 3"
           label={{
             value: labels.target,
-            position: 'insideTopRight',
+            position: 'right',
             fill: 'rgb(var(--color-silver) / 0.8)',
             fontSize: 10,
           }}
@@ -292,7 +297,7 @@ export function ReliabilityPlot({ weeks, labels }: ComponentProps<typeof Reliabi
 
 /* ---- Hours -------------------------------------------------------------- */
 
-export function HoursPlot({ days, labels, domain }: ComponentProps<typeof HoursChart> & { domain: [number, number] }) {
+export function HoursPlot({ days, labels, domain, ticks }: ComponentProps<typeof HoursChart> & { domain: [number, number]; ticks?: number[] }) {
   // Scheduled is the primary series in every staffing chart; delivered the second.
   const series = {
     scheduledHours: { name: labels.scheduled, color: CONCEPT.scheduled },
@@ -303,7 +308,7 @@ export function HoursPlot({ days, labels, domain }: ComponentProps<typeof HoursC
       <BarChart accessibilityLayer={false} data={days} margin={{ ...MARGIN, top: 8, right: 4 }} barCategoryGap="25%" barGap={2}>
         <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
         <XAxis dataKey="day" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} />
-        <YAxis tick={TICK} axisLine={false} tickLine={false} width={Y_WIDTH} domain={domain} allowDataOverflow tickFormatter={(v: number) => `${v}h`} />
+        <YAxis tick={TICK} axisLine={false} tickLine={false} width={Y_WIDTH} domain={domain} ticks={ticks} allowDataOverflow tickFormatter={(v: number) => `${v}h`} />
         <ChartTooltip
           cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.35)' }}
           content={
@@ -329,7 +334,9 @@ export function StoreBarPlot({ rows, labels }: ComponentProps<typeof StoreBarCha
   const data = rows.map((r) => ({ ...r, value: r.value ?? 0, text: r.value === null ? '—' : `${r.value}%` }));
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart accessibilityLayer={false} data={data} layout="vertical" margin={{ top: 4, right: 36, bottom: 0, left: 4 }} barCategoryGap="30%">
+      {/* The target's label goes above the plot, at the top of its line: beside it,
+          it sat on the value label of a store near the line ("89%", LEAD-25). */}
+      <BarChart accessibilityLayer={false} data={data} layout="vertical" margin={{ top: 16, right: 36, bottom: 0, left: 4 }} barCategoryGap="30%">
         <CartesianGrid stroke={GRID} strokeWidth={1} horizontal={false} />
         <XAxis
           type="number"
@@ -349,7 +356,7 @@ export function StoreBarPlot({ rows, labels }: ComponentProps<typeof StoreBarCha
           x={88}
           stroke={REF}
           strokeDasharray="4 3"
-          label={{ value: labels.target, position: 'insideTopRight', fill: 'rgb(var(--color-silver) / 0.8)', fontSize: 10 }}
+          label={{ value: labels.target, position: 'top', fill: 'rgb(var(--color-silver) / 0.8)', fontSize: 10 }}
         />
         <Bar dataKey="value" fill={SERIES.primary} maxBarSize={18} radius={[0, 4, 4, 0]} minPointSize={2} isAnimationActive={false}>
           {data.map((r) => (

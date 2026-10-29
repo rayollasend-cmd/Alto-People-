@@ -1,5 +1,6 @@
 import type { BenefitsPlanKind, Prisma, PrismaClient } from '@prisma/client';
 import { findInChunks } from './chunkedIn.js';
+import { priorChecksInTaxYear, taxYearWindow } from './payrollYtd.js';
 import { ageAtYearEnd, catchUpAllowance, isRothCatchUpHigherEarner, limitsFor, splitDeferral } from './contributionLimits.js';
 
 /**
@@ -140,22 +141,33 @@ function addInto(a: DeferralRecord, b: DeferralRecord): void {
 /**
  * Year-to-date deferrals and prior-year FICA wages for a set of people, for
  * the calendar year of `periodStart`, from checks paid before this period.
+ *
+ * A pay run passes `payBasis` (deep audit CODE-2): the first argument is
+ * then the check's PAY DATE, the year is the pay date's, and the year's
+ * prior checks are those paid in it (lib/payrollYtd priorChecksInTaxYear).
  */
 export async function loadDeferralContexts(
   tx: Tx,
   associateIds: string[],
   periodStart: Date,
+  payBasis?: { periodStart: Date; runId?: string | null },
 ): Promise<Map<string, PersonDeferralContext>> {
   const out = new Map<string, PersonDeferralContext>();
   if (associateIds.length === 0) return out;
   const year = periodStart.getUTCFullYear();
   const yearStart = new Date(Date.UTC(year, 0, 1));
   const priorStart = new Date(Date.UTC(year - 1, 0, 1));
+  const thisYearWhere: Prisma.PayrollItemWhereInput = payBasis
+    ? (() => {
+        const w = taxYearWindow(periodStart);
+        return priorChecksInTaxYear({ yearStart: w.yearStart, before: w.before, periodStart: payBasis.periodStart, runId: payBasis.runId });
+      })()
+    : { status: { not: 'VOIDED' }, payrollRun: { status: { notIn: ['CANCELLED', 'DRAFT'] }, periodStart: { gte: yearStart, lt: periodStart } } };
   const [people, thisYear, lastYear] = await Promise.all([
     findInChunks(associateIds, (chunk) => tx.associate.findMany({ where: { id: { in: chunk } }, select: { id: true, dob: true } })),
     findInChunks(associateIds, (chunk) =>
       tx.payrollItem.findMany({
-        where: { associateId: { in: chunk }, status: { not: 'VOIDED' }, payrollRun: { status: { notIn: ['CANCELLED', 'DRAFT'] }, periodStart: { gte: yearStart, lt: periodStart } } },
+        where: { associateId: { in: chunk }, ...thisYearWhere },
         select: { associateId: true, deferrals: true, preTaxRetirement: true },
       }),
     ),

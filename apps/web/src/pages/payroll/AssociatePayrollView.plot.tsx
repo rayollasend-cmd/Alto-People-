@@ -1,4 +1,5 @@
-import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { PALETTE } from '@/components/ui/charts';
 
 /** MoneySplit's one stacked bar — fetched with the check (lazyPlot), the only part that needs recharts. */

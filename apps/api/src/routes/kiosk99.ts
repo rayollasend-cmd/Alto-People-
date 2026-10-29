@@ -3332,7 +3332,7 @@ const punchHandler = async (req: Request, res: Response): Promise<void> => {
     // "You just added ~$X to your week" — to the associate's OWN
     // bell/push, never this shared screen (a dollar figure here would
     // leak their pay rate to the next person in line).
-    void notifyClockOutEarnings(prisma, result.timeEntry.id);
+    void notifyClockOutEarnings(prisma, result.timeEntry.id).catch((err: unknown) => console.error('[kiosk] clock-out earnings notice failed:', err));
     if (input.breakAttestation) {
       const e = await prisma.timeEntry.findUnique({ where: { id: result.timeEntry.id }, select: { id: true, associateId: true, clientId: true, locationId: true, clockInAt: true } });
       if (e) await recordBreakAttestation(prisma, { tenantId: tenantIdForWrite(), associateId: e.associateId, entry: e }, input.breakAttestation);

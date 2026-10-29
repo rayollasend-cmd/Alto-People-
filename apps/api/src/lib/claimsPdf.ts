@@ -1,5 +1,6 @@
 import { COLOR, SIZE, createDoc, fmt, type Brand } from './docKit/index.js';
 import { loadCurrentBrand, pinDocument, richHeight, richText } from './docKit/biz.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * A structured form: the leave notices (WH-381/WH-382 content), the
@@ -75,4 +76,5 @@ export async function renderFormPdf(input: {
   return k.finish({ reference: input.reference ?? `${input.title} · ${fmt.date(issuedAt)}`, note: brand.name });
 }
 
-export const fmtDay = (d: Date | null | undefined): string => (d ? d.toISOString().slice(0, 10) : '');
+/** A claim's @db.Date column (claim, notice, due, leave dates) as the YYYY-MM-DD it names. Not for a moment — use orgDateKey. */
+export const fmtDay = (d: Date | null | undefined): string => (d ? dateColumnKey(d) : '');

@@ -1,5 +1,7 @@
 // English for the pages that use 'reimbDesk.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/reimbDesk.ts).
+import '../es/reimbDesk';
 
 export const enReimbDesk = {
   'reimbDesk.newest200': 'The newest 200 reports. Search or pick a status to find older ones.',

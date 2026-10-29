@@ -454,12 +454,13 @@ describe('<AssociateDashboard> — their numbers and their week', () => {
     expect(within(quick).getByText('Open shifts').closest('a')).toHaveAttribute('href', '/marketplace');
   });
 
-  it('the open-shifts tile shows only when there are some (F500 G5)', async () => {
+  it('the open shifts they can pick up are counted on the Open shifts link — never a tile alone on a row (F500 G5, ASSOC-29)', async () => {
     vi.mocked(listOpenShifts).mockResolvedValue({ shifts: [{ id: 'o1' }, { id: 'o2' }] as never });
     renderDashboard();
+    const count = await screen.findByLabelText('2 open shifts you can pick up');
+    expect(count.closest('a')).toHaveAttribute('href', '/marketplace');
     const strip = await screen.findByRole('group', { name: 'My numbers' });
-    expect(await within(strip).findByText('Open shifts')).toBeInTheDocument();
-    expect(within(strip).getByText('Open shifts').closest('a')).toHaveAttribute('href', '/marketplace');
+    expect(within(strip).queryByText('Open shifts')).not.toBeInTheDocument();
   });
 
   it('nothing in the next 14 days is one line with the way to open shifts, not 14 empty cells (F500 G5)', async () => {

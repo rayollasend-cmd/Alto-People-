@@ -211,7 +211,8 @@ describe('the Fieldglass desk on Timesheets', () => {
 
     const table = screen.getByRole('table');
     expect(within(table).getByText('Not in Fieldglass')).toBeInTheDocument();
-    expect(within(table).getByText('Approved')).toBeInTheDocument();
+    // The Fieldglass chip, and the row's own status follows it (FLOOR-21): two "Approved".
+    expect(within(table).getAllByText('Approved')).toHaveLength(2);
     expect(within(table).getByText('Fieldglass 5.50h')).toBeInTheDocument();
     expect(within(table).getByText('WALTTS9')).toBeInTheDocument();
     expect(within(table).getByText('WKR1')).toBeInTheDocument();
@@ -280,7 +281,8 @@ describe('the Fieldglass desk on Timesheets', () => {
     });
     renderAs('FINANCE_ACCOUNTANT', <TimesheetsView />);
     const table = await screen.findByRole('table');
-    expect(within(table).getByText('Rejected')).toBeInTheDocument();
+    // The Fieldglass chip and the row status (FLOOR-21) both say it.
+    expect(within(table).getAllByText('Rejected')).toHaveLength(2);
     expect(within(table).getByText('“Missing Sunday”')).toBeInTheDocument();
     expect(within(table).getByLabelText('Note: Called the buyer')).toBeInTheDocument();
     // Every timesheet they've had, a tap away.

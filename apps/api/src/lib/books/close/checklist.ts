@@ -13,13 +13,15 @@ import { fmtDay } from '../../humanDates.js';
  * themselves against the books, live, each time the page is read:
  *
  *   bank_reconciled      every bank/card account reconciled through month end
+ *                        (a ledger bank account with activity and no feed fails)
  *   bank_reviewed        no bank or card line from the month left to review
  *   nothing_to_post      nothing the platform produced is missing from the ledger
  *   bills_approved       no bill dated in the month stuck in approval
  *   statements_final     every client statement for the month finalized
  *   depreciation_posted  every asset's depreciation for the month posted
- *   payroll_liabilities  the tax liability on the books at month end equals
- *                        the deposits still owed (finance walk 16)
+ *   payroll_liabilities  each tax payable on the books at month end equals
+ *                        what the tax desk still owed that agency kind
+ *                        (finance walk 16; like with like since MONEY-4)
  *   quickbooks_in_sync   no sync conflict open, nothing waiting to go over
  *
  * and two are a person's judgment, ticked by hand with a note:
@@ -51,7 +53,7 @@ export const CLOSE_TASKS: readonly TaskTemplate[] = [
   { key: 'statements_final', title: 'Finalize the month’s statements', detail: 'Every statement ending in the month is final, so revenue is booked.', auto: true, link: () => '/clients/statements' },
   { key: 'depreciation_posted', title: 'Post depreciation', detail: 'Every fixed asset’s depreciation for the month is on the books.', auto: true, link: () => '/books/assets' },
   { key: 'accruals_reviewed', title: 'Record accruals', detail: 'Expenses incurred but not yet billed (and wages earned but not yet paid) entered as accruals that reverse next month.', auto: false, link: (p) => `/books/close/${p}#accruals` },
-  { key: 'payroll_liabilities', title: 'Tie payroll liabilities to deposits', detail: 'The tax liability on the books at month end equals the tax deposits still owed; the payroll liabilities are listed beside it.', auto: true, link: () => '/payroll/taxes?tab=deposits' },
+  { key: 'payroll_liabilities', title: 'Tie payroll liabilities to deposits', detail: 'Each payroll tax payable on the books at month end equals what the tax desk still owes that agency — federal, unemployment, state and local, each against its own.', auto: true, link: () => '/payroll/taxes?tab=deposits' },
   { key: 'quickbooks_in_sync', title: 'QuickBooks in step', detail: 'No sync conflict waiting for a decision and nothing waiting to go to QuickBooks.', auto: true, link: () => '/books/quickbooks' },
   { key: 'budget_review', title: 'Review the month against budget', detail: 'Profit and loss read against the budget; big variances explained.', auto: false, link: () => '/books/budgets' },
 ];
@@ -88,6 +90,70 @@ export interface CheckResult {
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** Ledger bank and card accounts with posted activity in the month that no active bank feed covers. */
+async function activeLedgerBanksWithoutFeed(db: Db, tenantId: string, start: Date, end: Date, fed: Set<string>): Promise<Array<{ id: string; name: string; entries: number }>> {
+  const accounts = await db.ledgerAccount.findMany({ where: { tenantId, subtype: { in: ['BANK', 'CREDIT_CARD'] } }, select: { id: true, code: true, name: true }, orderBy: { code: 'asc' } });
+  const candidates = accounts.filter((a) => !fed.has(a.id));
+  if (candidates.length === 0) return [];
+  const activity = await db.journalLine.groupBy({ by: ['accountId'], where: { tenantId, accountId: { in: candidates.map((a) => a.id) }, entry: { status: 'POSTED', entryDate: { gte: start, lte: end } } }, _count: { _all: true } });
+  const count = new Map(activity.map((r) => [r.accountId, r._count._all]));
+  return candidates.filter((a) => (count.get(a.id) ?? 0) > 0).map((a) => ({ id: a.id, name: `${a.code} ${a.name}`, entries: count.get(a.id)! }));
+}
+
+/** The tax desk's agency kinds and the payable accounts the payroll entry credits for each. */
+const TAX_TIES = [
+  { kind: 'FEDERAL_WITHHOLDING', label: 'Federal withholding and FICA', keys: ['FIT_PAYABLE', 'FICA_PAYABLE'] },
+  { kind: 'FEDERAL_UNEMPLOYMENT', label: 'Federal unemployment', keys: ['FUTA_PAYABLE'] },
+  { kind: 'STATE_WITHHOLDING', label: 'State withholding', keys: ['SIT_PAYABLE'] },
+  { kind: 'STATE_UNEMPLOYMENT', label: 'State unemployment and programs', keys: ['SUTA_PAYABLE'] },
+  { kind: 'LOCAL', label: 'Local taxes', keys: ['LOCAL_TAX_PAYABLE'] },
+] as const;
+
+/**
+ * Per agency kind: the payable balance in the ledger at month end, and what
+ * the tax desk still owed at month end — its liabilities accrued by then and
+ * not paid by then (a payment dated after month end still owed at month
+ * end, as the ledger sees it), plus older per-run deposits for runs the desk
+ * never itemized (lib/books/posting/remittances posts those instead). Cents.
+ */
+export async function payrollTaxTies(db: Db, tenantId: string, end: Date): Promise<Array<{ kind: string; label: string; ledger: number; desk: number }>> {
+  const endEx = new Date(end.getTime() + 86_400_000);
+  const accounts = await db.ledgerAccount.findMany({ where: { tenantId, systemKey: { in: TAX_TIES.flatMap((t) => [...t.keys]) } }, select: { id: true, systemKey: true } });
+  const sums = accounts.length
+    ? await db.journalLine.groupBy({ by: ['accountId'], where: { tenantId, accountId: { in: accounts.map((a) => a.id) }, entry: { status: 'POSTED', entryDate: { lte: end } } }, _sum: { debit: true, credit: true } })
+    : [];
+  const keyOf = new Map(accounts.map((a) => [a.id, a.systemKey]));
+  const ledgerBy = new Map<string, number>();
+  for (const r of sums) {
+    const k = keyOf.get(r.accountId);
+    if (k) ledgerBy.set(k, (ledgerBy.get(k) ?? 0) + toCents(r._sum.credit) - toCents(r._sum.debit));
+  }
+  const liabilities = await db.taxLiability.findMany({
+    where: { tenantId, status: { not: 'VOID' }, liabilityDate: { lte: end } },
+    select: { kind: true, amount: true, status: true, payrollRunId: true, periodLabel: true, payment: { select: { paidAt: true, dueDate: true } } },
+  });
+  const deskBy = new Map<string, number>();
+  const add = (kind: string, c: number) => deskBy.set(kind, (deskBy.get(kind) ?? 0) + c);
+  for (const l of liabilities) {
+    const paidOn = l.status === 'PAID' ? (l.payment?.paidAt ?? l.payment?.dueDate ?? null) : null;
+    const owedAtEnd = l.status === 'OPEN' || l.status === 'SCHEDULED' || (l.status === 'PAID' && paidOn !== null && paidOn.getTime() >= endEx.getTime());
+    if (owedAtEnd) add(l.kind, toCents(l.amount));
+  }
+  // Older per-run deposits, where the desk never itemized the run (or, for FUTA, the year).
+  const itemizedRuns = new Set(liabilities.map((l) => l.payrollRunId).filter((id): id is string => !!id));
+  const futaYears = new Set(liabilities.filter((l) => l.kind === 'FEDERAL_UNEMPLOYMENT').map((l) => l.periodLabel.slice(0, 4)));
+  const deposits = await db.taxDeposit.findMany({
+    where: { tenantId, liabilityDate: { lte: end }, OR: [{ status: 'PENDING' }, { status: 'PAID', paidAt: { gte: endEx } }] },
+    select: { kind: true, amount: true, payrollRunId: true, periodLabel: true },
+  });
+  for (const d of deposits) {
+    if (String(d.kind) === 'FUTA') {
+      if (!futaYears.has(d.periodLabel.slice(0, 4))) add('FEDERAL_UNEMPLOYMENT', toCents(d.amount));
+    } else if (!d.payrollRunId || !itemizedRuns.has(d.payrollRunId)) add('FEDERAL_WITHHOLDING', toCents(d.amount));
+  }
+  return TAX_TIES.map((t) => ({ kind: t.kind, label: t.label, ledger: t.keys.reduce((n, k) => n + (ledgerBy.get(k) ?? 0), 0), desk: deskBy.get(t.kind) ?? 0 }));
+}
+
 /** Run every auto check for the month. */
 export async function runChecks(db: Db, periodKey: string): Promise<Map<string, CheckResult>> {
   const tenantId = tenantIdForWrite();
@@ -96,16 +162,30 @@ export async function runChecks(db: Db, periodKey: string): Promise<Map<string, 
   const out = new Map<string, CheckResult>();
 
   // Bank and card: every active feed account reconciled through month end; nothing left to review.
-  const feeds = await db.bankFeedAccount.findMany({ where: { tenantId, isActive: true }, select: { id: true, name: true } });
+  const feeds = await db.bankFeedAccount.findMany({ where: { tenantId, isActive: true }, select: { id: true, name: true, ledgerAccountId: true } });
   const recs = feeds.length
     ? await db.bankReconciliation.groupBy({ by: ['feedAccountId'], where: { tenantId, status: 'COMPLETED', statementEndDate: { gte: end } }, _count: { _all: true } })
     : [];
   const reconciled = new Set(recs.map((r) => r.feedAccountId));
   const notReconciled = feeds.filter((f) => !reconciled.has(f.id));
+  // A bank or card account in the ledger with activity in the month and no
+  // feed has nothing to reconcile it against (audit 2026-10-29 MONEY-5): the
+  // step used to pass on "no accounts connected" while Payroll checking was
+  // overdrawn. It fails until a feed or statement is in, or someone skips it
+  // with a note saying it was reconciled by hand.
+  const unfed = await activeLedgerBanksWithoutFeed(db, tenantId, start, end, new Set(feeds.map((f) => f.ledgerAccountId)));
+  const unfedItem = (a: (typeof unfed)[number]) => ({ label: `${a.name}: ${plural(a.entries, 'entry', 'entries')} this month and no bank feed — connect the account or import its statement, or skip this step with a note if you reconciled it by hand`, link: '/books/bank' });
+  const bankSummary = (() => {
+    if (feeds.length === 0 && unfed.length === 0) return 'No bank or card account had activity this month.';
+    const parts: string[] = [];
+    if (notReconciled.length) parts.push(`${plural(notReconciled.length, 'account')} not reconciled through month end`);
+    if (unfed.length) parts.push(`${plural(unfed.length, 'account')} with activity and no bank feed to reconcile ${unfed.length === 1 ? 'it' : 'them'}`);
+    return parts.length ? `${parts.join('; ')}.` : `All ${plural(feeds.length, 'account')} reconciled through ${fmtDay(end, { year: true })}.`;
+  })();
   out.set('bank_reconciled', {
-    passing: notReconciled.length === 0,
-    summary: feeds.length === 0 ? 'No bank or card accounts are connected to the books.' : notReconciled.length === 0 ? `All ${plural(feeds.length, 'account')} reconciled through ${fmtDay(end, { year: true })}.` : `${plural(notReconciled.length, 'account')} not reconciled through month end.`,
-    items: notReconciled.map((f) => ({ label: `Reconcile ${f.name}`, link: `/books/bank/${f.id}/reconcile` })),
+    passing: notReconciled.length === 0 && unfed.length === 0,
+    summary: bankSummary,
+    items: [...notReconciled.map((f) => ({ label: `Reconcile ${f.name}`, link: `/books/bank/${f.id}/reconcile` })), ...unfed.map(unfedItem)],
   });
   const toReview = feeds.length
     ? await db.bankTransaction.groupBy({ by: ['feedAccountId'], where: { tenantId, status: 'UNMATCHED', postedOn: { gte: start, lte: end } }, _count: { _all: true } })
@@ -113,9 +193,14 @@ export async function runChecks(db: Db, periodKey: string): Promise<Map<string, 
   const reviewCount = toReview.reduce((n, r) => n + r._count._all, 0);
   const feedName = new Map(feeds.map((f) => [f.id, f.name]));
   out.set('bank_reviewed', {
-    passing: reviewCount === 0,
-    summary: reviewCount === 0 ? 'Every line from the month is matched, categorized or excluded.' : `${plural(reviewCount, 'line')} from the month to review.`,
-    items: toReview.map((r) => ({ label: `${feedName.get(r.feedAccountId) ?? 'An account'}: ${plural(r._count._all, 'line')} to review`, link: `/books/bank/${r.feedAccountId}` })),
+    passing: reviewCount === 0 && unfed.length === 0,
+    summary:
+      reviewCount === 0 && unfed.length === 0
+        ? feeds.length === 0
+          ? 'No bank or card account had activity this month.'
+          : 'Every line from the month is matched, categorized or excluded.'
+        : [reviewCount ? `${plural(reviewCount, 'line')} from the month to review` : '', unfed.length ? `${plural(unfed.length, 'account')} with activity and no bank lines to review it against` : ''].filter(Boolean).join('; ') + '.',
+    items: [...toReview.map((r) => ({ label: `${feedName.get(r.feedAccountId) ?? 'An account'}: ${plural(r._count._all, 'line')} to review`, link: `/books/bank/${r.feedAccountId}` })), ...unfed.map(unfedItem)],
   });
 
   // The platform's own activity, posted.
@@ -144,26 +229,30 @@ export async function runChecks(db: Db, periodKey: string): Promise<Map<string, 
     action: drafts.length ? { kind: 'finalize_statements', label: `Finalize ${plural(drafts.length, 'statement')}` } : null,
   });
 
-  // Payroll liabilities tie to deposits: the tax liability accounts' balance at month end
-  // against the tax deposits still owed (PENDING, for liabilities up to month end).
-  const taxAccounts = await db.ledgerAccount.findMany({ where: { tenantId, subtype: 'TAX_LIABILITY' }, select: { id: true } });
-  const taxSums = taxAccounts.length
-    ? await db.journalLine.groupBy({ by: ['accountId'], where: { tenantId, accountId: { in: taxAccounts.map((a) => a.id) }, entry: { status: 'POSTED', entryDate: { lte: end } } }, _sum: { debit: true, credit: true } })
-    : [];
-  const onBooks = taxSums.reduce((n, r) => n + toCents(r._sum.credit) - toCents(r._sum.debit), 0);
-  const owed = await db.taxDeposit.findMany({ where: { tenantId, status: 'PENDING', liabilityDate: { lte: end } }, select: { id: true, amount: true, kind: true, periodLabel: true, dueDate: true } });
-  const owedCents = owed.reduce((n, d) => n + toCents(d.amount), 0);
-  const diff = onBooks - owedCents;
+  // Payroll liabilities tie to what the tax desk still owes, agency by agency
+  // (audit 2026-10-29 MONEY-4): each payable account in the ledger against
+  // the desk's own liabilities of that kind still unpaid at month end. It
+  // used to sum every tax account (state withholding and unemployment
+  // included) against TaxDeposit, which only knows Form 941 and FUTA, so a
+  // month with state unemployment owed could never tie.
+  const ties = await payrollTaxTies(db, tenantId, end);
   const money = (c: number) => fromCents(c).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-  const nothing = taxAccounts.length === 0 && owed.length === 0;
+  const off = ties.filter((t) => Math.abs(t.ledger - t.desk) >= 100);
+  const nothing = ties.every((t) => t.ledger === 0 && t.desk === 0);
+  const bookTotal = ties.reduce((n, t) => n + t.ledger, 0);
+  const deskTotal = ties.reduce((n, t) => n + t.desk, 0);
   out.set('payroll_liabilities', {
-    passing: nothing || Math.abs(diff) < 100,
+    passing: off.length === 0,
     summary: nothing
-      ? 'No payroll tax liabilities on the books and no deposits owed.'
-      : Math.abs(diff) < 100
-        ? `Tax liability on the books ${money(onBooks)} equals the ${plural(owed.length, 'deposit')} still owed (${money(owedCents)}).`
-        : `Tax liability on the books ${money(onBooks)}; deposits still owed ${money(owedCents)} — ${money(Math.abs(diff))} ${diff > 0 ? 'on the books with no deposit accrued' : 'owed with no liability on the books'}.`,
-    items: Math.abs(diff) < 100 ? [] : [{ label: diff > 0 ? `Accrue the deposit for ${money(diff)} on the tax desk` : `Post the payroll behind ${money(-diff)} of deposits`, link: diff > 0 ? '/payroll/taxes?tab=deposits' : '/books/receivables' }],
+      ? 'No payroll tax liabilities on the books and nothing owed on the tax desk.'
+      : off.length === 0
+        ? `Tax liabilities on the books (${money(bookTotal)}) equal what the tax desk still owes (${money(deskTotal)}), agency by agency.`
+        : off.map((t) => `${t.label}: ${money(t.ledger)} on the books, ${money(t.desk)} owed on the tax desk`).join('; ') + '.',
+    items: off.map((t) =>
+      t.ledger > t.desk
+        ? { label: `${t.label}: ${money(t.ledger - t.desk)} more on the books than the tax desk owes — a payment the books haven’t posted, or a payroll the desk hasn’t itemized`, link: '/payroll/taxes?tab=deposits' }
+        : { label: `${t.label}: ${money(t.desk - t.ledger)} owed on the tax desk and not on the books — post the payroll behind it`, link: '/books/journal' },
+    ),
   });
 
   // Depreciation due in the month and not posted.

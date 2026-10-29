@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
-import { paidMinutesForRange } from '@alto-people/shared';
+import { OVERTIME_RISK_HOURS, paidMinutesForRange } from '@alto-people/shared';
 import { pendingTimeWhere } from './pendingTime.js';
 import { scopeShifts, scopeTimeEntries } from './scope.js';
 import { tenantIdForWrite } from './tenant.js';
@@ -37,7 +37,8 @@ import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 type SessionUser = NonNullable<Request['user']>;
 
 export const LATE_GRACE_MINUTES = 5;
-export const OT_RISK_MINUTES = 36 * 60;
+/** The one overtime-risk line (packages/shared attendanceInsights), in minutes. */
+export const OT_RISK_MINUTES = OVERTIME_RISK_HOURS * 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface TimeExceptionsInput {

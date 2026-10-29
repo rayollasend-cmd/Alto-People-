@@ -13,7 +13,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { DetailsTable } from '@/components/ui/charts';
 import { AGING_COLORS, AgingBar, CashFlowChart, MarginChart } from './financeCharts';
-import type { BillingWeek, CashWeek, FinanceOverview, MarginTrend, PayCycle } from './financeTypes';
+import type { BillingWeek, CashWeek, FinanceOverview, MarginTrend, MarginWeek, PayCycle } from './financeTypes';
 import { useTenant } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
 import '@/lib/i18n/en/fin';
@@ -84,6 +84,22 @@ export function usePayrollBlock(cycle: PayCycle | null | undefined): PayrollBloc
 /** How late the oldest money is: "oldest 48 days past due", or "not yet due" (it read "oldest -11d past due"). */
 export const oldestText = (t: ReturnType<typeof useI18n>['t'], days: number) => (days <= 0 ? t('fin.arNotDue') : t('fin.arOldest', { count: days }));
 
+/**
+ * The "Billed at contract rates" tile's hint (deep audit 2026-10-29
+ * MONEY-20): once the week is on finalized statements, their figure — what
+ * Books and receivables carry — rides beside it, with why they differ (each
+ * shift's own rate and the overtime split, against one rate per person-week).
+ */
+export function revenueHint(t: ReturnType<typeof useI18n>['t'], w: MarginWeek): string {
+  const head = t('fin.kpiRevenueHint', { hours: hrs1(w.hours - w.unpricedHours) });
+  if (w.billedOnStatements != null) {
+    return Math.abs(w.billedOnStatements - w.revenue) >= 0.005
+      ? `${head} · ${t('fin.kpiRevenueOnStatements', { amount: fmtMoney(w.billedOnStatements) })}`
+      : `${head} · ${t('fin.kpiRevenueStatementsMatch')}`;
+  }
+  return w.inProgress ? head : `${head} · ${t('fin.kpiRevenueNotBilled')}`;
+}
+
 /** Re-render every minute — countdowns stay honest without a refetch. */
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
@@ -144,7 +160,9 @@ export function PayCycleHero({ data }: { data: FinanceOverview }) {
   const inbox = useInbox();
   const missed = inbox.data?.sources?.find((src) => src.key === 'payroll-missed-paydays');
   // Hours waiting from periods before this one (the close chase counts them all).
-  const earlierPending = cycle ? Math.max(0, data.close.pendingHours - cycle.hours.pending) : 0;
+  // Only time worked BEFORE the paying period is "from earlier periods" (MONEY-7) — the API counts it;
+  // everything pending minus the period also took in the next period's hours.
+  const earlierPending = cycle?.hours.pendingBefore ?? 0;
   const block = usePayrollBlock(cycle);
   const fixTo = block ? `/payroll/schedules/${block.scheduleId}` : null;
   const booked = !!data.cash?.opening && data.cash.opening.onFile !== false;
@@ -380,6 +398,16 @@ export function CashForecastCard({ cash }: { cash: FinanceOverview['cash'] }) {
             )}
           </p>
         )}
+        {/* An overdrawn account, which "Cash today" nets away (MONEY-18). */}
+        {booked &&
+          (cash.opening?.overdrawn ?? []).map((a) => (
+            <p key={a.id} className="mt-1 flex items-center gap-1.5 text-xs text-alert" data-testid="cash-overdrawn">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <Link to={`/books/accounts/${a.id}`} className="underline underline-offset-2">
+                {t('fin.cashOverdrawn', { account: a.name, amount: fmtMoney(-a.balance) })}
+              </Link>
+            </p>
+          ))}
         {cash.weeks.every((w) => w.inflow === 0 && w.outflow === 0) ? (
           <p className="mt-3 text-sm text-silver">{t('fin.cashEmpty')}</p>
         ) : (

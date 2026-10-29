@@ -1,4 +1,5 @@
 import type {
+  EmailLanguage,
   ChangePasswordInput,
   ConfirmEmailChangeInput,
   MfaDisableInput,
@@ -52,7 +53,7 @@ export function revokeOtherSessions(): Promise<void> {
   return apiFetch<void>('/auth/me/revoke-other-sessions', { method: 'POST' });
 }
 
-export function updateLanguage(language: 'en' | 'es' | 'tr' | null): Promise<void> {
+export function updateLanguage(language: EmailLanguage | null): Promise<void> {
   return apiFetch<void>('/auth/me/language', {
     method: 'PATCH',
     body: { language },

@@ -24,6 +24,7 @@ export function fmtWindow(w: StoreShiftWindow): string {
 
 function addDays(ymd: string, n: number): string {
   const [y, m, d] = ymd.split('-').map(Number);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
   return new Date(Date.UTC(y!, m! - 1, d! + n)).toISOString().slice(0, 10);
 }
 

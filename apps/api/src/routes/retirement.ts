@@ -13,6 +13,8 @@ import { autoEnrollProblems, mustAutoEnroll, parseMatchFormula, setDeferralRate,
 import { adapterFor, contributionTotals, RECORDKEEPERS, type CensusRow, type ContributionRow, type RecordkeeperId } from '../lib/recordkeepers.js';
 import { deliverFile, DeliveryError, describeConnection, openConnection, sealConnection, type Transport } from '../lib/fileDelivery.js';
 import type { SessionUser } from '../types/express.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * 401(k) plans per employer of record, the people in them, and the files
@@ -28,7 +30,10 @@ export const retirementRouter = Router();
 const PROCESS = requireCapability('process:payroll');
 const EXPORT_PII = requireCapability('export:payroll-pii');
 
-const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+/** A @db.Date column (birth, hire, plan, election, loan and pay dates) as the day it names. */
+const ymd = (d: Date | null | undefined) => (d ? dateColumnKey(d) : null);
+/** A moment (a separation, a file made) as the company's day it happened on. */
+const momentDay = (d: Date | null | undefined) => (d ? orgDateKey(d) : null);
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 function audit(req: Request, action: string, entityType: string, entityId: string, metadata: Record<string, unknown> = {}): void {
@@ -49,7 +54,7 @@ async function planOr404(id: string) {
 async function ratesFor(plan: { benefitsPlanId: string | null }, associateIds: string[]): Promise<Map<string, { pre: number; roth: number; flatCents: number | null }>> {
   const out = new Map<string, { pre: number; roth: number; flatCents: number | null }>();
   if (!plan.benefitsPlanId || !associateIds.length) return out;
-  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+  const today = new Date(`${orgDateKey(new Date())}T00:00:00Z`); // the company's day, as the @db.Date columns hold it
   const rows = await prisma.benefitsEnrollment.findMany({
     where: { planId: plan.benefitsPlanId, associateId: { in: associateIds }, effectiveDate: { lte: today }, OR: [{ terminationDate: null }, { terminationDate: { gte: today } }] },
     orderBy: { effectiveDate: 'desc' },
@@ -429,7 +434,7 @@ retirementRouter.post('/retirement/plans/:id/files/contributions', PROCESS, asyn
       lastName: c.associate.lastName,
       dob: ymd(c.associate.dob),
       hireDate: ymd(c.associate.hireDate),
-      termDate: ymd(c.associate.separatedAt),
+      termDate: momentDay(c.associate.separatedAt),
       payDate,
       grossPay: item ? Number(item.grossPay) : Number(c.eligibleComp),
       planComp: Number(c.eligibleComp),
@@ -453,7 +458,7 @@ retirementRouter.post('/retirement/plans/:id/files/contributions', PROCESS, asyn
 retirementRouter.post('/retirement/plans/:id/files/census', PROCESS, async (req, res) => {
   refuseNarrowed(req.user!);
   const plan = await planOr404(String(req.params.id));
-  const asOf = new Date().toISOString().slice(0, 10);
+  const asOf = orgDateKey(new Date());
   const yearStart = new Date(`${asOf.slice(0, 4)}-01-01T00:00:00Z`);
   const elections = await prisma.retirementElection.findMany({
     where: { planId: plan.id, tenantId: tenantIdForWrite() },
@@ -478,7 +483,7 @@ retirementRouter.post('/retirement/plans/:id/files/census', PROCESS, async (req,
     lastName: e.associate.lastName,
     dob: ymd(e.associate.dob),
     hireDate: ymd(e.associate.hireDate),
-    termDate: ymd(e.associate.separatedAt),
+    termDate: momentDay(e.associate.separatedAt),
     email: e.associate.email,
     addressLine1: e.associate.addressLine1,
     city: e.associate.city,
@@ -531,7 +536,7 @@ retirementRouter.post('/retirement/plans/:id/files/true-up', PROCESS, async (req
     const p = byId.get(o.associateId)!;
     return {
       ssn: ssns.get(o.associateId)!, employeeId: o.associateId, firstName: p.firstName, lastName: p.lastName,
-      dob: ymd(p.dob), hireDate: ymd(p.hireDate), termDate: ymd(p.separatedAt), payDate,
+      dob: ymd(p.dob), hireDate: ymd(p.hireDate), termDate: momentDay(p.separatedAt), payDate,
       grossPay: 0, planComp: 0, hours: null, preTax: 0, roth: 0, catchUpPreTax: 0, catchUpRoth: 0,
       employerMatch: o.amount, safeHarbor: 0, loans: [],
     };
@@ -560,7 +565,7 @@ retirementRouter.get('/retirement/files/:id/download', EXPORT_PII, async (req, r
   const adapter = adapterFor(f.plan.recordkeeper);
   audit(req, 'retirement.file_downloaded', 'RetirementFile', f.id, { kind: f.kind, rowCount: f.rowCount, authority });
   res.setHeader('Content-Type', adapter.extension === 'csv' ? 'text/csv; charset=utf-8' : 'text/plain; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${f.kind.toLowerCase()}-${ymd(f.payDate) ?? ymd(f.createdAt)}.${adapter.extension}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${f.kind.toLowerCase()}-${ymd(f.payDate) ?? momentDay(f.createdAt)}.${adapter.extension}"`);
   res.send(decryptString(Buffer.from(f.content, 'base64')));
 });
 
@@ -569,7 +574,7 @@ retirementRouter.post('/retirement/files/:id/send', PROCESS, async (req, res) =>
   const f = await fileOr404(String(req.params.id));
   if (f.status === 'SENT') throw new HttpError(409, 'already_sent', 'This file was already sent.');
   const adapter = adapterFor(f.plan.recordkeeper);
-  const name = `${f.plan.planNumber ?? 'plan'}-${f.kind.toLowerCase()}-${ymd(f.payDate) ?? ymd(f.createdAt)}.${adapter.extension}`;
+  const name = `${f.plan.planNumber ?? 'plan'}-${f.kind.toLowerCase()}-${ymd(f.payDate) ?? momentDay(f.createdAt)}.${adapter.extension}`;
   try {
     const { reference } = await deliverFile(adapter.transport as Transport, openConnection(f.plan.connectionEnc), name, decryptString(Buffer.from(f.content, 'base64')), adapter.extension === 'csv' ? 'text/csv' : 'text/plain');
     const updated = await prisma.retirementFile.update({ where: { id: f.id }, data: { status: 'SENT', sentAt: new Date(), error: null } });
@@ -612,7 +617,7 @@ retirementRouter.post('/retirement/plans/:id/deferral-changes', PROCESS, async (
       continue;
     }
     const optOut = c.optOut || (c.preTaxPercent === 0 && c.rothPercent === 0);
-    const effective = c.effectiveDate && c.effectiveDate > new Date().toISOString().slice(0, 10) ? new Date(`${c.effectiveDate}T00:00:00Z`) : new Date();
+    const effective = c.effectiveDate && c.effectiveDate > orgDateKey(new Date()) ? new Date(`${c.effectiveDate}T00:00:00Z`) : new Date();
     await prisma.$transaction(async (tx) => {
       await setDeferralRate(tx, plan, associateId, { preTaxPercent: c.preTaxPercent, rothPercent: c.rothPercent, optOut }, effective);
       await tx.retirementElection.update({

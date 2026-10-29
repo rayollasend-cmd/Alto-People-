@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Toaster as SonnerToaster, toast } from 'sonner';
+import { useI18n } from '@/lib/i18n';
 
 /** Small local matchMedia subscription — phones get bottom toasts. */
 function useIsPhone(): boolean {
@@ -26,8 +27,11 @@ function useIsPhone(): boolean {
  */
 export function Toaster() {
   const isPhone = useIsPhone();
+  const { t } = useI18n();
   return (
     <SonnerToaster
+      // Sonner's own English ("Notifications", "Close toast"), in the app language.
+      containerAriaLabel={t('common.toasts')}
       position={isPhone ? 'bottom-center' : 'top-right'}
       richColors
       closeButton
@@ -54,6 +58,7 @@ export function Toaster() {
         right: '0.75rem',
       }}
       toastOptions={{
+        closeButtonAriaLabel: t('common.close'),
         classNames: {
           toast:
             'group toast group-[.toaster]:bg-surface-overlay group-[.toaster]:text-white group-[.toaster]:border-navy-secondary group-[.toaster]:elev-2',

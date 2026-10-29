@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
 import { MODULES } from '@/lib/modules';
 
 /**
@@ -23,37 +24,41 @@ const APP = readFileSync(resolve(__dirname, '../../App.tsx'), 'utf8');
  * reason; the list only shrinks.
  */
 const UNGUARDED: Record<string, string> = {
-  '/onboarding': 'associates open their own onboarding from it; not yet checked per role',
-  '/time-attendance': 'the associate/driver punch view shares the route',
-  '/timesheets': "Finance's alias of /time-attendance",
-  '/time-off': 'self-service requests share the route',
   '/today': "the floor supervisor's Today; the page decides by role",
   '/portal/schedule': 'client portal page; the portal is gated by role, not capability',
-  '/scheduling': 'the associate schedule view shares the route',
   '/communications': "everyone's notifications share the route",
-  '/recruiting': 'not yet checked against every role that links to it',
-  '/holidays': 'not yet checked against every role that links to it',
-  '/marketplace': "associates' open shifts share the route",
   '/admin/access-certifications': 'any reviewer opens their own campaign; running one is gated in the page',
 };
 
 interface RouteGuard {
   path: string;
   guarded: boolean;
+  /** The outermost guard's capabilities (cap ∪ anyOf). */
   caps: string[];
+  /** Every nested guard, outermost first: a role passes when it holds one capability of EACH level. */
+  levels: string[][];
 }
 
 function routes(): RouteGuard[] {
   const out: RouteGuard[] = [];
   for (const m of APP.matchAll(/\{\s*path:\s*'([^']+)',\s*element:\s*(<[^\n]*)\},?\s*$/gm)) {
     const path = '/' + m[1]!.replace(/^\//, '');
-    const element = m[2]!;
-    const guard = /^<RequireCapability\s+cap="([^"]+)"(?:\s+anyOf=\{\[([^\]]*)\]\})?/.exec(element);
-    const caps = guard ? [guard[1]!, ...(guard[2] ?? '').split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)] : [];
-    out.push({ path, guarded: !!guard, caps });
+    let element = m[2]!;
+    const levels: string[][] = [];
+    for (;;) {
+      // cap, an optional anyOf, then any other props (notClientBounded, selfService="…") up to the tag's end.
+      const guard = /^<RequireCapability\s+cap="([^"]+)"(?:\s+anyOf=\{\[([^\]]*)\]\})?[^>]*>/.exec(element);
+      if (!guard) break;
+      levels.push([guard[1]!, ...(guard[2] ?? '').split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)]);
+      element = element.slice(guard[0].length);
+    }
+    out.push({ path, guarded: levels.length > 0, caps: levels[0] ?? [], levels });
   }
   return out;
 }
+
+const ROLES = Object.keys(ROLE_CAPABILITIES) as Role[];
+const holds = (role: Role, cap: string) => (ROLE_CAPABILITIES[role] as ReadonlySet<string>).has(cap);
 
 describe('route guards follow the modules', () => {
   const byPath = new Map(routes().map((r) => [r.path, r]));
@@ -79,9 +84,12 @@ describe('route guards follow the modules', () => {
     for (const mod of MODULES) {
       const r = byPath.get(mod.path);
       if (!r?.guarded) continue;
-      const needs = [mod.requires, ...(mod.requiresAny ?? [])];
-      const missing = needs.filter((c) => c !== 'view:dashboard' && !r.caps.includes(c));
-      if (missing.length) problems.push(`${mod.path}: guard ${r.caps.join('|')} misses ${missing.join(', ')}`);
+      const needs = [mod.requires, ...(mod.requiresAny ?? [])].filter((c) => c !== 'view:dashboard');
+      if (!needs.length) continue;
+      // Every role the module shows the page to must pass every nested guard on the route.
+      const shown = (role: Role) => needs.some((c) => holds(role, c)) && (!mod.alsoRequires || holds(role, mod.alsoRequires));
+      const lockedOut = ROLES.filter((role) => shown(role) && !r.levels.every((level) => level.some((c) => holds(role, c))));
+      if (lockedOut.length) problems.push(`${mod.path}: guard ${r.levels.map((l) => l.join('|')).join(' + ')} locks out ${lockedOut.join(', ')} (module needs ${needs.join('|')})`);
     }
     expect(problems).toEqual([]);
   });
@@ -89,6 +97,33 @@ describe('route guards follow the modules', () => {
   it('the pages the F500 audit found open are closed', () => {
     for (const p of ['/celebrations', '/assets', '/skills', '/mentorship', '/expirations', '/learning-paths', '/succession', '/probation', '/discipline', '/separations', '/vaccinations', '/ramp', '/compensation', '/workflows', '/headcount', '/team']) {
       expect(byPath.get(p)?.guarded, p).toBe(true);
+    }
+  });
+
+  // Deep audit 2026-10-29 (CRAWL-11/12): seven routes left open printed the
+  // API's "Missing capability: …" to roles outside them, and four guards were
+  // looser than the read their page makes on mount. Each guard now names the
+  // capability the page's first GET checks (lib/routes in apps/api); the
+  // self-service views (an associate's schedule, time, time off, onboarding,
+  // open shifts) live inside these, since associates hold them.
+  it('the routes the deep audit found open or loose carry their API’s capability', () => {
+    const want: Record<string, string[]> = {
+      '/onboarding': ['view:onboarding'],
+      '/time-attendance': ['view:time'],
+      '/timesheets': ['view:time'],
+      '/time-off': ['view:time'],
+      '/scheduling': ['view:scheduling'],
+      '/recruiting': ['view:recruiting'],
+      '/holidays': ['view:scheduling'],
+      '/marketplace': ['view:scheduling'],
+      '/reimbursements': ['view:payroll'],
+      '/scheduling/coverage': ['manage:scheduling', 'view:executive', 'process:payroll'],
+      '/call-outs': ['manage:scheduling', 'view:executive'],
+      '/performance/extras': ['view:hr-admin'],
+      '/admin/task-policy': ['view:time-live'],
+    };
+    for (const [path, caps] of Object.entries(want)) {
+      expect(byPath.get(path)?.caps, path).toEqual(caps);
     }
   });
 

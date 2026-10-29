@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { tenantIdForWrite } from '../../tenant.js';
+import { orgDateKey } from '../../timeAnomalies.js';
 import { entryForKey, voidEntry, type PostLine } from '../ledger.js';
 
 /**
@@ -11,7 +12,11 @@ import { entryForKey, voidEntry, type PostLine } from '../ledger.js';
 
 export type Db = PrismaClient | Prisma.TransactionClient;
 
+/** A calendar date already stored as a day (@db.Date, UTC midnight) as YYYY-MM-DD. */
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: @db.Date values are stored at UTC midnight.
 export const ymd = (d: Date): string => d.toISOString().slice(0, 10);
+/** The company's day an instant fell on (a payment's paidAt, a run's disbursedAt) — never UTC's, which is tomorrow after 8 PM Eastern. */
+export const dayOf = (d: Date): string => orgDateKey(d);
 export const cents = (v: Prisma.Decimal | number | string | null | undefined): number => Math.round(Number(v ?? 0) * 100);
 
 export interface Dims {

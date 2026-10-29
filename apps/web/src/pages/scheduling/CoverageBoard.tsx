@@ -27,6 +27,7 @@ const DAYS = 7;
 function addDays(ymd: string, n: number): string {
   const d = new Date(`${ymd}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on a date key pinned at UTC noon
   return d.toISOString().slice(0, 10);
 }
 

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Landmark, Scale } from '@/components/ui/icons';
 import { useAuth, useTerm } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDateOnlyRange, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { backToShadow, getChangeReport, getLaborActivations, getLaborLastRun, goLive, type ChangeReportPerson, type LaborActivation, type LaborJurisdiction, type LaborLastRun } from '@/lib/laborLiveApi';
 import {
   Badge,
@@ -238,7 +238,7 @@ function GoLiveDrawer({ j, attestation, onClose }: { j: LaborJurisdiction; attes
   const report = useQuery({ queryKey: ['labor-rules', 'change-report', j.jurisdiction, siteId], queryFn: () => getChangeReport(j.jurisdiction, siteId || null) });
   const [counselName, setCounselName] = useState('');
   const [counselFirm, setCounselFirm] = useState('');
-  const [signedOn, setSignedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  const [signedOn, setSignedOn] = useState(() => ymdLocal());
   const [attested, setAttested] = useState(false);
   const valid = counselName.trim().length >= 2 && counselFirm.trim().length >= 2 && /^\d{4}-\d{2}-\d{2}$/.test(signedOn) && attested;
   const save = useMutation({
@@ -346,7 +346,7 @@ function GoLiveDrawer({ j, attestation, onClose }: { j: LaborJurisdiction; attes
             {(p) => <Input {...p} value={counselFirm} maxLength={160} onChange={(e) => setCounselFirm(e.target.value)} autoComplete="off" />}
           </Field>
           <Field label="Signed on" required>
-            {(p) => <Input {...p} type="date" value={signedOn} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setSignedOn(e.target.value)} />}
+            {(p) => <Input {...p} type="date" value={signedOn} max={ymdLocal()} onChange={(e) => setSignedOn(e.target.value)} />}
           </Field>
           <label className="flex items-start gap-3 rounded-md border border-line p-3 text-sm text-ink coarse:min-h-11">
             <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 coarse:h-6 coarse:w-6" checked={attested} onChange={(e) => setAttested(e.target.checked)} />

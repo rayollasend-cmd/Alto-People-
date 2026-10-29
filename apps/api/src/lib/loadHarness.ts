@@ -86,6 +86,7 @@ export const SCENARIOS: readonly Scenario[] = [
     body: () => {
       const end = new Date();
       const start = new Date(end.getTime() - 14 * 86_400_000);
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: a synthetic load-test window (any 14 days serve), and the harness stays free of the app's branding/database imports.
       return { periodStart: start.toISOString().slice(0, 10), periodEnd: end.toISOString().slice(0, 10), defaultHourlyRate: 15 };
     },
     // One payroll admin at a time; it's the heaviest read in the product.

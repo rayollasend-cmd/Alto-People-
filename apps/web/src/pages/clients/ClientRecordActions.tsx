@@ -184,8 +184,11 @@ export function ClientRecordActions({
 /** The last 12 calendar months as statement periods, newest first. */
 function monthOptions(now = new Date()) {
   return Array.from({ length: 12 }, (_, i) => {
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i + 1, 0));
+    // This month on the reader's calendar (the UTC month turned over at 5 PM Pacific on the last day);
+    // the periods themselves are calendar dates, built at UTC midnight on purpose.
+    const start = new Date(Date.UTC(now.getFullYear(), now.getMonth() - i, 1));
+    const end = new Date(Date.UTC(now.getFullYear(), now.getMonth() - i + 1, 0));
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar dates built at UTC midnight above.
     return { key: start.toISOString().slice(0, 7), label: fmtMonthYearTz(start, 'UTC'), start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
   });
 }

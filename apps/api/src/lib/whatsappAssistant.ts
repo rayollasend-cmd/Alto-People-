@@ -7,7 +7,8 @@ import { nextPaydayFor } from './associatePayday.js';
 import { emitLiveEvent } from './liveEvents.js';
 import { placedClientIds } from './openShiftEligibility.js';
 import { resolveStoreForAssociate, storeSupervisors } from './readyToWork.js';
-import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from './timezone.js';
+import { formatDateInZone, formatTimeInZone } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { sendWhatsApp } from './whatsapp.js';
 import { discloserFor } from './agentDisclosure.js';
 import { inProcessAgent, logBuiltInAgentAction } from './agents.js';
@@ -86,7 +87,7 @@ export async function answerRide(db: Db, associateId: string, lang: WaLang, now:
     },
   });
   if (!ride) return WA_REPLY.noRide(lang);
-  const tz = ride.location.timezone ?? DEFAULT_TIMEZONE;
+  const tz = ride.location.timezone ?? companyWorkweek().timezone;
   const at = ride.pickupAt ?? ride.targetAt;
   const where = ride.direction === 'TO_WORK' ? (ride.stop?.name ?? ride.address ?? '—') : ride.location.name;
   return WA_REPLY.ride(lang, when(at, tz, lang), where, ride.run?.van.name ?? null);
@@ -101,7 +102,7 @@ export async function answerSchedule(db: Db, associateId: string, lang: WaLang, 
   });
   if (shifts.length === 0) return WA_REPLY.noShifts(lang);
   const lines = shifts.map((s) => {
-    const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+    const tz = s.locationRel?.timezone ?? companyWorkweek().timezone;
     return `• ${formatDateInZone(s.startsAt, tz)} ${formatTimeInZone(s.startsAt, tz)}–${formatTimeInZone(s.endsAt, tz)} · ${s.position} · ${s.locationRel?.name ?? s.client?.name ?? ''}`;
   });
   return WA_REPLY.schedule(lang, lines);
@@ -213,7 +214,7 @@ export async function handleInbound(received: InboundMessage, db: Db = defaultPr
     const { answerFromWhatsApp } = await import('./attendanceConfirm.js');
     const answered = await answerFromWhatsApp(db, associateId, yn, now);
     if (answered) {
-      const tz = answered.shift.timezone ?? DEFAULT_TIMEZONE;
+      const tz = answered.shift.timezone ?? companyWorkweek().timezone;
       const when = `${answered.shift.position}, ${formatDateInZone(answered.shift.startsAt, tz)} ${formatTimeInZone(answered.shift.startsAt, tz)}`;
       const intentYn: Intent = yn === 'YES' ? 'CONFIRM_YES' : 'CONFIRM_NO';
       return { intent: intentYn, reply: await say(yn === 'YES' ? WA_REPLY.confirmedYes(lang, when) : WA_REPLY.confirmedNo(lang, when), 'SYSTEM'), associateId };

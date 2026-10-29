@@ -1043,7 +1043,9 @@ describe('<RideStrip> — the van on Home', () => {
       if (path === '/transport/me/rides' && init?.method === 'POST') return { ride: ride({ id: 'n' }) };
     });
     renderAs('ASSOCIATE', <RideStrip />);
-    expect(await screen.findByText(/Need a ride to your .* shift\?/)).toBeInTheDocument();
+    // The relative day reads as a word in the sentence — never "your Tomorrow 6:00 AM shift" (ASSOC-23).
+    expect(await screen.findByText(/Need a ride to (your|tomorrow’s|today’s) .* shift\?/)).toBeInTheDocument();
+    expect(screen.queryByText(/your (Today|Tomorrow) /)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Round trip · $10.00' }));
     await waitFor(() => expect(vi.mocked(apiFetch).mock.calls.filter(([p]) => p === '/transport/me/rides')).toHaveLength(2));
   });

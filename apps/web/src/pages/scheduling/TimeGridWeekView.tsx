@@ -12,7 +12,7 @@ import {
 } from '@dnd-kit/core';
 import { GripVertical } from '@/components/ui/icons';
 import { wentUnfilled, type AssociateLite, type Shift } from '@alto-people/shared';
-import { dayIsPast, isCopyDrag, shiftTimesOnDay } from './weekGridFit';
+import { dayIsPast, isCopyDrag, shiftTimesOnDay, weekGridColumns } from './weekGridFit';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import {
@@ -36,7 +36,7 @@ import {
 } from './ShiftContextMenu';
 import { TEMPLATE_MIME } from './TemplatesRail';
 import { Avatar } from '@/components/ui/Avatar';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { associateFace } from '@/lib/photoUrl';
 import {
   GRIP_HIT,
   GRIP_ICON,
@@ -379,9 +379,10 @@ export function TimeGridWeekView({
   // roster — the single-grid version mounted every associate × day droppable
   // at once, so drag latency scaled with roster size (same disease the
   // pivot week view fixed).
-  const colStyle = {
-    gridTemplateColumns: `200px 40px repeat(${dayCount}, minmax(0, 1fr))`,
-  };
+  // The rail gives way before the days do (FLOOR-11): a full week fits in
+  // ~700px (1024 with the sidebar open) instead of hiding Thu–Fri.
+  const gridCols = weekGridColumns(dayCount, { railMaxPx: 200, betweenPx: 40, dayMinPx: 72 });
+  const colStyle = { gridTemplateColumns: gridCols.gridTemplateColumns };
 
   return (
     <DndContext
@@ -391,7 +392,7 @@ export function TimeGridWeekView({
       onDragCancel={() => setActiveDrag(null)}
     >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain">
-        <div style={{ minWidth: `${200 + 40 + dayCount * 100}px` }}>
+        <div style={{ minWidth: `${gridCols.minWidthPx}px` }}>
           {/* Header */}
           <div className="grid" style={colStyle}>
           <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver">
@@ -486,6 +487,7 @@ export function TimeGridWeekView({
                 key={a.id}
                 colStyle={colStyle}
                 associateId={a.id}
+                photoUrl={a.photoUrl}
                 firstName={a.firstName}
                 lastName={a.lastName}
                 scheduledMinutes={minutesByAssociate.get(a.id) ?? 0}
@@ -623,6 +625,7 @@ export function TimeGridWeekView({
 
 const Row = memo(function Row({
   associateId,
+  photoUrl,
   firstName,
   lastName,
   scheduledMinutes,
@@ -630,6 +633,8 @@ const Row = memo(function Row({
   children,
 }: {
   associateId: string;
+  /** The roster row's photo URL; null = none on file (no request). */
+  photoUrl?: string | null;
   firstName: string;
   lastName: string;
   /** Scheduled (non-CANCELLED) minutes within the visible range. */
@@ -648,7 +653,7 @@ const Row = memo(function Row({
     <div className="grid" style={colStyle}>
       <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 flex items-center gap-2.5">
         <Avatar
-          src={associatePhotoUrl(associateId)}
+          src={associateFace({ id: associateId, photoUrl })}
           name={`${firstName} ${lastName}`}
           className="h-7 w-7 bg-gold/15 text-gold text-2xs font-semibold"
         />

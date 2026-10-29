@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { fmtClock, opsTimeZone, opsTimeZoneCity, opsTimeZoneLabel, opsToday, setOpsTimeZone } from '@/pages/ops/opsTime';
+import { fmtClock, opsTimeZone, opsTimeZoneCity, opsTimeZoneLabel, opsToday, setOpsTimeZone, shiftDayKey } from '@/pages/ops/opsTime';
 
 /**
  * The ops pages read their clock from the zone the API names (F500 SH-4):
@@ -31,5 +31,15 @@ describe('the ops clock', () => {
     setOpsTimeZone('America/Chicago');
     expect(opsTimeZoneLabel(new Date('2026-10-22T18:03:00.000Z'))).toBe('Chicago (CDT)');
     expect(opsTimeZoneLabel(new Date('2026-12-22T18:03:00.000Z'))).toBe('Chicago (CST)');
+  });
+});
+
+describe('shiftDayKey', () => {
+  it('steps calendar days on the key, across a month, a year and the fall-back weekend', () => {
+    expect(shiftDayKey('2026-10-31', 1)).toBe('2026-11-01');
+    expect(shiftDayKey('2026-11-01', 1)).toBe('2026-11-02');
+    expect(shiftDayKey('2026-11-02', -7)).toBe('2026-10-26');
+    expect(shiftDayKey('2027-01-01', -1)).toBe('2026-12-31');
+    expect(shiftDayKey('2026-03-08', 0)).toBe('2026-03-08');
   });
 });

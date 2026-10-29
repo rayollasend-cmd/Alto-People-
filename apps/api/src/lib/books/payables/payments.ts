@@ -90,9 +90,30 @@ export async function payBills(db: PrismaClient, input: BooksBillPaymentInput, a
       },
       include: { applications: true },
     });
+    // Claim, then act (deep audit CODE-18). The checks above read the bills
+    // outside this transaction; two payments sent at once both passed them
+    // and both wrote `stale balance − amount` (a lost update — the bill paid
+    // twice, its balance down once). Each bill is now lowered by a
+    // conditional decrement that only lands while it is still payable and
+    // still owes at least this much: the second payment waits on the row
+    // lock, re-reads the lowered balance, matches nothing and rolls back
+    // whole — no payment row, no entry, no ACH file.
     for (const b of bills) {
-      const left = cents(b.balance) - want.get(b.id)!;
-      await tx.bill.update({ where: { id: b.id }, data: { balance: new Prisma.Decimal(dollars(left)), status: statusFor(left, cents(b.total)) } });
+      const amount = new Prisma.Decimal(dollars(want.get(b.id)!));
+      const claimed = await tx.bill.updateMany({
+        where: { id: b.id, tenantId, status: { in: ['APPROVED', 'PARTIALLY_PAID'] }, balance: { gte: amount } },
+        data: { balance: { decrement: amount } },
+      });
+      if (claimed.count !== 1) {
+        const now = await tx.bill.findUnique({ where: { id: b.id }, select: { balance: true, status: true } });
+        throw new HttpError(
+          409,
+          'bill_changed',
+          `Bill ${b.billNumber ?? b.id.slice(0, 8)} changed while this payment was being made${now ? ` — it now has ${money(dollars(cents(now.balance)))} left to pay` : ''}. Nothing was paid; look again and retry.`,
+        );
+      }
+      const after = await tx.bill.findUniqueOrThrow({ where: { id: b.id }, select: { balance: true, total: true } });
+      await tx.bill.update({ where: { id: b.id }, data: { status: statusFor(cents(after.balance), cents(after.total)) } });
     }
     return p;
   });
@@ -214,13 +235,21 @@ export async function voidPayment(db: PrismaClient, payment: PaymentWithApps, re
   }
   if (payment.journalEntryId) await voidEntry(db, payment.journalEntryId, { reason: `Payment voided: ${reason}`, userId: actorUserId });
   const updated = await db.$transaction(async (tx) => {
+    // Claim the void first (deep audit CODE-18): two voids at once used to
+    // both give the bills their money back. Only the one that flips the
+    // payment to VOID restores them.
+    const claimed = await tx.billPayment.updateMany({ where: { id: payment.id, status: { not: 'VOID' } }, data: { status: 'VOID', voidedAt: new Date() } });
+    if (claimed.count !== 1) throw new HttpError(409, 'payment_void', 'This payment is already void.');
     for (const a of payment.applications) {
-      const b = await tx.bill.findUniqueOrThrow({ where: { id: a.billId } });
-      if (b.status === 'VOID') continue;
-      const left = Math.min(cents(b.balance) + cents(a.amount), cents(b.total));
-      await tx.bill.update({ where: { id: b.id }, data: { balance: new Prisma.Decimal(dollars(left)), status: statusFor(left, cents(b.total)) } });
+      // An atomic increment (it takes the row lock), then the status from
+      // the balance as it now stands — never a read-then-write of a stale balance.
+      const bumped = await tx.bill.updateMany({ where: { id: a.billId, status: { not: 'VOID' } }, data: { balance: { increment: a.amount } } });
+      if (bumped.count !== 1) continue;
+      const b = await tx.bill.findUniqueOrThrow({ where: { id: a.billId }, select: { balance: true, total: true } });
+      const left = Math.min(cents(b.balance), cents(b.total));
+      await tx.bill.update({ where: { id: a.billId }, data: { balance: new Prisma.Decimal(dollars(left)), status: statusFor(left, cents(b.total)) } });
     }
-    return tx.billPayment.update({ where: { id: payment.id }, data: { status: 'VOID', voidedAt: new Date() }, include: { applications: true } });
+    return tx.billPayment.findUniqueOrThrow({ where: { id: payment.id }, include: { applications: true } });
   });
   enqueueAudit({ actorUserId, clientId: null, action: 'books.bill_payment_voided', entityType: 'BillPayment', entityId: payment.id, metadata: { reason, amount: Number(payment.amount) } }, 'books.payables');
   emitBooksChange({ localType: 'BillPayment', localId: payment.id, op: 'DELETE' });

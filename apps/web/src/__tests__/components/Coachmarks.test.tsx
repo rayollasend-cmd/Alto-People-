@@ -5,14 +5,17 @@ import { MemoryRouter } from 'react-router-dom';
 import { AuthContext } from '@/lib/auth';
 import { I18nProvider } from '@/lib/i18n';
 import { Coachmarks, overlayOpen, setCoachmarksArmDelayForTests } from '@/components/Coachmarks';
-import { TOURS } from '@/lib/tours';
+import { TOURS, stepCopy } from '@/lib/tours';
+import { defaultTenantProfile } from '@alto-people/shared';
 
-function renderShell(path = '/') {
+function renderShell(path = '/', opts: { role?: string; tenant?: unknown } = {}) {
+  const role = opts.role ?? 'HR_ADMINISTRATOR';
   const auth = {
     isInitializing: false,
     isOffline: false,
-    user: { id: 'u1', email: 'x@y.z', role: 'HR_ADMINISTRATOR', status: 'ACTIVE', clientId: null, associateId: null },
-    role: 'HR_ADMINISTRATOR',
+    user: { id: 'u1', email: 'x@y.z', role, status: 'ACTIVE', clientId: null, associateId: null },
+    role,
+    ...(opts.tenant ? { tenant: opts.tenant } : {}),
     capabilities: new Set(),
     signIn: vi.fn(),
     signOut: vi.fn(),
@@ -55,6 +58,15 @@ describe('coach marks', () => {
     }
   });
 
+  it('a reader whose search doesn\'t reach people (an associate) is told "pages and help", in every associate language', () => {
+    const search = TOURS[0]!.steps.find((st) => st.anchor === 'search')!;
+    expect(stepCopy(search, 'en', { clients: null, findsPeople: false }).body).toMatch(/^Search pages and help from here/);
+    for (const lang of ['es', 'tr', 'ht', 'pt', 'uk'] as const) {
+      expect(stepCopy(search, lang, { clients: null, findsPeople: false }).body).not.toBe(stepCopy(search, lang, { clients: null }).body);
+    }
+    expect(stepCopy(search, 'en', { clients: null }).body).toMatch(/pages and people/);
+  });
+
   it('walks the steps once and then stays quiet for that person', async () => {
     renderShell();
     expect(await screen.findByRole('dialog', { name: 'Jump anywhere' })).toBeInTheDocument();
@@ -94,6 +106,35 @@ describe('coach marks', () => {
     renderShell();
     expect(await screen.findByRole('dialog', { name: 'Jump anywhere' })).toBeInTheDocument();
     expect(overlayOpen()).toBe(false);
+  });
+
+  it('says "clients" in the search step only where search finds clients — never for a hotel or a client user (LEAD-13)', async () => {
+    // A staffing company's office: its own word for clients.
+    const first = renderShell();
+    expect(await screen.findByText('Search pages, people and clients from here — or press ⌘K (Ctrl+K) on any page.')).toBeInTheDocument();
+    first.unmount();
+    window.localStorage.clear();
+    // A hotel (a direct employer: no clients module).
+    const hotel = renderShell('/', { tenant: { id: 't-hotel', ...defaultTenantProfile('DIRECT_EMPLOYER') } });
+    expect(await screen.findByText('Search pages and people from here — or press ⌘K (Ctrl+K) on any page.')).toBeInTheDocument();
+    expect(screen.queryByText(/clients/i)).toBeNull();
+    hotel.unmount();
+    window.localStorage.clear();
+    // A client's own user can't search other clients.
+    renderShell('/', { role: 'CLIENT_PORTAL' });
+    expect(await screen.findByText('Search pages and people from here — or press ⌘K (Ctrl+K) on any page.')).toBeInTheDocument();
+  });
+
+  it('every step with a clients variant names the placeholder in both languages', () => {
+    for (const tour of TOURS) {
+      for (const s of tour.steps) {
+        if (!s.withClients) continue;
+        expect(s.withClients.en.body).toContain('{clients}');
+        expect(s.withClients.es.body).toContain('{clients}');
+        expect(s.en.body).not.toMatch(/client/i);
+        expect(s.es.body).not.toMatch(/client/i);
+      }
+    }
   });
 
   it('does not run on a route without a tour', async () => {

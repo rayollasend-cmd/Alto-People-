@@ -7,6 +7,7 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { HandCoins } from '@/components/ui/icons';
 import { PALETTE, TrendLineChart, isSparseTrend } from '@/components/ui/charts';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { fmtExecExact, fmtExecMoney } from '@/lib/executiveFormat';
 import { fmtDateOnly, fmtMonth, ymdLocal } from '@/lib/format';
@@ -39,6 +40,8 @@ export function Receivables({ ar }: { ar: Ar }) {
 
 function AgingCard({ ar }: { ar: Ar }) {
   const { t } = useI18n();
+  // The books' receivables are view:books (not every executive role holds it).
+  const { can } = useAuth();
   const slices = agingSlices(ar.buckets);
   const late = pastDue(ar.buckets);
   const total = ar.total;
@@ -54,9 +57,11 @@ function AgingCard({ ar }: { ar: Ar }) {
             exact={fmtExecExact(total, 'money')}
             sub={late > 0 && total > 0 ? t('execPortal.fin.ar.pastDue', { amount: fmtExecMoney(late), pct: pct1((late / total) * 100) }) : t('execPortal.fin.ar.nonePastDue')}
           />
-          <Link to="/books/receivables" className="text-sm text-accent underline-offset-4 hover:underline coarse:py-3">
-            {t('execPortal.fin.ar.openAll')}
-          </Link>
+          {can('view:books') && (
+            <Link to="/books/receivables" className="text-sm text-accent underline-offset-4 hover:underline coarse:py-3">
+              {t('execPortal.fin.ar.openAll')}
+            </Link>
+          )}
         </div>
         {total > 0 ? (
           <>

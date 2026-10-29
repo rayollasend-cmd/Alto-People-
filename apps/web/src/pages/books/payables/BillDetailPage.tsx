@@ -51,6 +51,7 @@ export function BillDetailPage() {
 const addDaysYmd = (s: string, n: number) => {
   const d = new Date(`${s}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: day arithmetic on a day key anchored at UTC.
   return d.toISOString().slice(0, 10);
 };
 

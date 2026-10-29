@@ -247,11 +247,18 @@ describe('FCRA adverse action for checks recorded by hand', () => {
   });
 
   it('the notice carries the CFPB summary of rights', () => {
-    const n = preAdverseNotice({ personName: 'Lee', orgName: 'Alto', providerName: 'Sterling', reportFileName: 'r.pdf', waitUntil: new Date('2026-11-01'), contactEmail: 'hr@example.com' });
+    // waitUntil is an instant (now + the wait); the letter names the company's day for it.
+    const n = preAdverseNotice({ personName: 'Lee', orgName: 'Alto', providerName: 'Sterling', reportFileName: 'r.pdf', waitUntil: new Date('2026-11-01T16:00:00Z'), contactEmail: 'hr@example.com' });
     expect(n.text).toContain('A Summary of Your Rights Under the Fair Credit Reporting Act');
     expect(n.text).toContain('Consumer Financial Protection Bureau');
     expect(n.text).toContain('2026-11-01');
     expect(n.html).toContain('<ol>');
+  });
+
+  it('the respond-by day is the company’s: 9 PM Eastern on Nov 1 is still Nov 1, not UTC’s Nov 2', () => {
+    const n = preAdverseNotice({ personName: 'Lee', orgName: 'Alto', providerName: 'Sterling', reportFileName: 'r.pdf', waitUntil: new Date('2026-11-02T01:00:00Z'), contactEmail: 'hr@example.com' });
+    expect(n.text).toContain('please tell us by 2026-11-01');
+    expect(n.text).not.toContain('2026-11-02');
   });
 
   it('a provider-ordered check is sent to the provider flow; withdraw clears a pending one', async () => {

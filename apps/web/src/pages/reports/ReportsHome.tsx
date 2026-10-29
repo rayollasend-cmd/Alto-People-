@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from '@/components/ui/icons';
-import { REPORT_PERIOD_LABELS, REPORT_PERIOD_TOKENS, type Capability } from '@alto-people/shared';
+import { METRICS, REPORT_PERIOD_LABELS, REPORT_PERIOD_TOKENS, WORK_STATUS_LABELS, type Capability, type WorkStatus } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { errorText } from '@/lib/errorText';
 import { fmtDateTime } from '@/lib/format';
@@ -126,6 +126,30 @@ const isDateColumn = (c: string) =>
   c === 'weekStart';
 
 const isAssociateColumn = (c: string) => c === 'associateId';
+
+/**
+ * Where a person stands, named as every other screen names it (the metric
+ * dictionary, packages/shared metrics.ts — PEOPLE-23 / LEAD-9). `active` is
+ * Working (the one definition of active), not account status; "On the
+ * books" and "Placed" are their own columns. The column keys stay stable so
+ * saved reports keep working; only the words on screen change.
+ */
+const COLUMN_LABELS: Record<string, { label: string; title: string }> = {
+  active: { label: METRICS.working.label, title: METRICS.working.definition },
+  onTheBooks: { label: METRICS.onTheBooks.label, title: METRICS.onTheBooks.definition },
+  placed: { label: METRICS.placed.label, title: METRICS.placed.definition },
+  workStatus: { label: 'Status', title: 'Where the person stands: Working, No recent shifts, Not placed, Onboarding, Paused or Separated.' },
+};
+const columnLabel = (c: string): string => COLUMN_LABELS[c]?.label ?? c;
+const columnTitle = (c: string): string | undefined => COLUMN_LABELS[c]?.title;
+
+/** A cell in plain words: a status by its label, a yes/no column as Yes/No. */
+function cellText(column: string, v: unknown): string {
+  if (v === null || v === undefined) return '—';
+  if (column === 'workStatus' && typeof v === 'string' && v in WORK_STATUS_LABELS) return WORK_STATUS_LABELS[v as WorkStatus];
+  if (COLUMN_LABELS[column] && typeof v === 'boolean') return v ? 'Yes' : 'No';
+  return String(v);
+}
 
 /** The columns sum/avg/min/max may roll up — mirrors NUMERIC_COLUMNS in apps/api/src/lib/reportRun.ts. */
 const NUMERIC_COLUMNS: Partial<Record<ReportEntity, readonly string[]>> = {
@@ -640,21 +664,22 @@ function ReportBuilder({
     : null;
   const loadColumns = () => void columnsQuery.refetch();
 
-  // On the initial render the seed (if any) already provides columns /
-  // filters / sorts for its entity — only wipe them when the admin
-  // switches to a different entity afterwards.
-  const firstRun = useRef(true);
-  useEffect(() => {
-    if (firstRun.current) {
-      firstRun.current = false;
-      return;
-    }
+  // The seed (if any) already provides columns / filters / sorts for its
+  // entity; they are wiped only when the person picks a different entity.
+  // This used to be an effect on [entity] behind a `firstRun` ref, which
+  // React.StrictMode's mount → unmount → mount ran twice: the second pass
+  // wiped every template's seed (LEAD-14, "Columns (0 selected)"). A reset
+  // in the change handler runs once per real change, in any render mode.
+  const changeEntity = (next: ReportEntity) => {
+    if (next === entity) return;
+    setEntity(next);
     setColumns([]);
     setFilters([]);
     setSorts([]);
     setGroupBy([]);
     setAggregates([]);
-  }, [entity]);
+    setPreview(null);
+  };
 
   const numericColumns = NUMERIC_COLUMNS[entity] ?? [];
   const toggleGroupBy = (col: string) =>
@@ -833,7 +858,7 @@ function ReportBuilder({
           <Select
             className="mt-1"
             value={entity}
-            onChange={(e) => setEntity(e.target.value as ReportEntity)}
+            onChange={(e) => changeEntity(e.target.value as ReportEntity)}
           >
             {ENTITIES.map((e) => (
               <option key={e} value={e}>
@@ -863,9 +888,10 @@ function ReportBuilder({
                   size="xs"
                   onClick={() => toggleColumn(c)}
                   aria-pressed={selected}
-                  className="font-mono"
+                  className={COLUMN_LABELS[c] ? undefined : 'font-mono'}
+                  title={columnTitle(c)}
                 >
-                  {c}
+                  {columnLabel(c)}
                 </Button>
               );
             })}
@@ -916,7 +942,7 @@ function ReportBuilder({
                     >
                       {allColumns.map((c) => (
                         <option key={c} value={c}>
-                          {c}
+                          {columnLabel(c)}
                         </option>
                       ))}
                     </Select>
@@ -1044,9 +1070,10 @@ function ReportBuilder({
                         size="xs"
                         onClick={() => toggleGroupBy(c)}
                         aria-pressed={selected}
-                        className="font-mono"
+                        className={COLUMN_LABELS[c] ? undefined : 'font-mono'}
+                        title={columnTitle(c)}
                       >
-                        {c}
+                        {columnLabel(c)}
                       </Button>
                     );
                   })}
@@ -1158,7 +1185,7 @@ function ReportBuilder({
                     >
                       {allColumns.map((c) => (
                         <option key={c} value={c}>
-                          {c}
+                          {columnLabel(c)}
                         </option>
                       ))}
                     </Select>
@@ -1430,8 +1457,8 @@ function RunResultDrawer({
             <thead className="bg-navy-secondary/40 text-silver">
               <tr>
                 {columns.map((c) => (
-                  <th key={c} className="text-left px-3 py-2 font-mono">
-                    {c}
+                  <th key={c} className={cn('text-left px-3 py-2', !COLUMN_LABELS[c] && 'font-mono')} title={columnTitle(c)}>
+                    {columnLabel(c)}
                   </th>
                 ))}
               </tr>
@@ -1441,7 +1468,7 @@ function RunResultDrawer({
                 <tr key={i} className="border-t border-navy-secondary">
                   {columns.map((c) => (
                     <td key={c} className="px-3 py-2 font-mono">
-                      {String(r[c] ?? '—')}
+                      {cellText(c, r[c])}
                     </td>
                   ))}
                 </tr>

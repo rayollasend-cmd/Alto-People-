@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Lock, RefreshCw } from '@/components/ui/icons';
 import { toast } from 'sonner';
-import type { ClientStatement } from '@alto-people/shared';
+import type { ClientPaymentMethodKind, ClientStatement } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtMoney, fmtMonthYearTz, fmtRelativeDate } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtMoney, fmtMonthYearTz, fmtRelativeDate, ymdLocal } from '@/lib/format';
+import { RECEIVABLES_KEY, getReceivablesAging } from '@/lib/books/receivablesApi';
+import { PaymentDialog } from '@/pages/books/receivables/receivablesKit';
 import { cn } from '@/lib/cn';
 import {
   clientServiceReportUrl,
@@ -45,26 +47,71 @@ import { Skeleton } from '@/components/ui/Skeleton';
 // Delegates to the shared formatter — private money formatters drift.
 const money = (v: number) => fmtMoney(v);
 
-/** Last 12 month options as {label, start, end} in YYYY-MM-DD. */
+/** Last 12 month options as {label, start, end} in YYYY-MM-DD — months of the local calendar, not UTC's. */
 function monthOptions(): Array<{ key: string; label: string; start: string; end: string }> {
   const out = [];
-  const now = new Date();
+  const [y, m] = ymdLocal().split('-').map(Number) as [number, number];
+  const pad = (n: number) => String(n).padStart(2, '0');
   for (let i = 0; i < 12; i++) {
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i + 1, 0));
+    const first = new Date(Date.UTC(y, m - 1 - i, 1));
+    const last = new Date(Date.UTC(y, m - i, 0));
+    const key = `${first.getUTCFullYear()}-${pad(first.getUTCMonth() + 1)}`;
     out.push({
-      key: start.toISOString().slice(0, 7),
-      label: fmtMonthYearTz(start, 'UTC'),
-      start: start.toISOString().slice(0, 10),
-      end: end.toISOString().slice(0, 10),
+      key,
+      label: fmtMonthYearTz(first, 'UTC'),
+      start: `${key}-01`,
+      end: `${key}-${pad(last.getUTCDate())}`,
     });
   }
   return out;
 }
 
-/** Inline statement viewer — the PDF's contents without the download. */
+/**
+ * The client's sign-off on the store weeks a statement bills (portal hours
+ * sign-off): a caution chip when a week is flagged — it links to the
+ * client's sign-off card — a quiet line when every signed week is signed,
+ * and nothing where the client portal is off (the field is absent).
+ */
+function HoursSignOffMark({ clientId, signOff }: { clientId: string; signOff: ClientStatement['hoursSignOff'] }) {
+  if (!signOff) return null;
+  if (signOff.flagged > 0) {
+    return (
+      <Link to={`/clients/${clientId}?tab=overview`} className="inline-flex" title="The store manager flagged these hours — see the client’s hours sign-off">
+        <Badge variant="pending">{signOff.flagged === 1 ? '1 week flagged' : `${signOff.flagged} weeks flagged`}</Badge>
+      </Link>
+    );
+  }
+  if (signOff.signed > 0) return <span className="text-2xs text-ink-muted">Hours signed by the client</span>;
+  return null;
+}
+
+/**
+ * A statement's money, read from any snapshot vintage — the PDF's own
+ * reading (api lib/statementPdf.statementMoney): services, adjustments,
+ * subtotal, tax and the total they add up to.
+ */
+export function statementMoney(snap: ClientStatement['snapshot']): { services: number; adjustments: number; subtotal: number; salesTax: number; salesTaxRate: number; total: number } {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const t = snap.totals;
+  const salesTax = t.salesTax ?? 0;
+  const subtotal = t.subtotal ?? r2(t.amount - salesTax);
+  const adjustments = t.adjustmentsAmount ?? r2((snap.adjustments ?? []).reduce((a, x) => a + x.amount, 0));
+  const services = t.hoursAmount ?? r2(subtotal - adjustments);
+  return { services, adjustments, subtotal, salesTax, salesTaxRate: t.salesTaxRatePct ?? 0, total: t.amount };
+}
+
+/**
+ * Inline statement viewer — the PDF's contents without the download. Every
+ * row the total includes is listed (deep audit MONEY-26: the "Total" row
+ * printed the amount with adjustments and tax beside lines that didn't
+ * carry them). The invoice's own lines keep the hundredth the PDF prints,
+ * so hours × rate = amount can be checked (CODE-13); summaries elsewhere
+ * read to one decimal (LEAD-28).
+ */
 function StatementDetail({ s }: { s: ClientStatement }) {
   const snap = s.snapshot;
+  const m = statementMoney(snap);
+  const adjustments = snap.adjustments ?? [];
   return (
     <div className="ml-6 mt-3 space-y-4 rounded-md border border-navy-secondary bg-navy/50 p-3">
       <div className="overflow-x-auto">
@@ -78,23 +125,55 @@ function StatementDetail({ s }: { s: ClientStatement }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-navy-secondary/50">
-            {snap.lines.map((l) => (
-              <tr key={l.label} className="text-white">
+            {snap.lines.map((l, i) => (
+              <tr key={`${l.label}-${i}`} className="text-ink">
                 <td className="py-1 pr-3">{l.label}</td>
                 <td className="py-1 px-2 text-right">{l.hours.toFixed(2)}</td>
                 <td className="py-1 px-2 text-right">{money(l.rate)}</td>
                 <td className="py-1 pl-2 text-right">{money(l.amount)}</td>
               </tr>
             ))}
-            <tr className="font-semibold text-white">
+            <tr className="font-medium text-ink">
               <td className="py-1.5 pr-3">
-                Total — {snap.totals.regularHours.toFixed(2)} reg +{' '}
-                {snap.totals.otHours.toFixed(2)} OT
+                Services — {snap.totals.regularHours.toFixed(2)} reg + {snap.totals.otHours.toFixed(2)} OT
                 {(snap.totals.doubleTimeHours ?? 0) > 0 && ` + ${snap.totals.doubleTimeHours!.toFixed(2)} DT`}
               </td>
               <td className="py-1.5 px-2 text-right">{snap.totals.hours.toFixed(2)}</td>
               <td />
-              <td className="py-1.5 pl-2 text-right">{money(snap.totals.amount)}</td>
+              <td className="py-1.5 pl-2 text-right">{money(m.services)}</td>
+            </tr>
+            {adjustments.map((a, i) => (
+              <tr key={`adj-${i}`} className="text-ink">
+                <td className="py-1 pr-3">
+                  {a.label}
+                  {a.basis ? <span className="text-silver"> · {a.basis}</span> : null}
+                </td>
+                <td className="py-1 px-2 text-right">{a.hours ? a.hours.toFixed(2) : ''}</td>
+                <td />
+                <td className="py-1 pl-2 text-right">{money(a.amount)}</td>
+              </tr>
+            ))}
+            {(m.adjustments !== 0 || m.salesTax !== 0) && (
+              <tr className="text-ink">
+                <td className="py-1 pr-3">Subtotal</td>
+                <td />
+                <td />
+                <td className="py-1 pl-2 text-right">{money(m.subtotal)}</td>
+              </tr>
+            )}
+            {m.salesTax !== 0 && (
+              <tr className="text-ink">
+                <td className="py-1 pr-3">Sales tax{m.salesTaxRate > 0 ? ` (${m.salesTaxRate}%)` : ''}</td>
+                <td />
+                <td />
+                <td className="py-1 pl-2 text-right">{money(m.salesTax)}</td>
+              </tr>
+            )}
+            <tr className="font-semibold text-ink">
+              <td className="py-1.5 pr-3">Total</td>
+              <td />
+              <td />
+              <td className="py-1.5 pl-2 text-right">{money(m.total)}</td>
             </tr>
           </tbody>
         </table>
@@ -144,13 +223,20 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<ClientStatement | null>(null);
+  // Recording a payment goes through the books (manage:books): the full dialog. Without it, "Mark paid"
+  // still asks when and how the money came (MONEY-17).
+  const canRecord = can('manage:books');
+  const [recording, setRecording] = useState<ClientStatement | null>(null);
+  const qc = useQueryClient();
+  const agingForPay = useQuery({ queryKey: [...RECEIVABLES_KEY, 'aging'], queryFn: () => getReceivablesAging(), enabled: !!recording });
 
   // Executives read statements (list + PDF/CSV); drafting and finalizing
   // stay with payroll.
   const canFinalize = can('process:payroll');
   const canBill = canFinalize || can('view:executive');
   const prompt = usePrompt();
-  const todayKey = new Date().toISOString().slice(0, 10);
+  // The local calendar day (CODE-14): UTC's rolled over at 8 PM Eastern and read "past due" a day early.
+  const todayKey = ymdLocal();
 
   // Keyed by client, so switching clients is a different cache entry (the
   // old effect reset rows by hand) and Back to a client is instant.
@@ -188,7 +274,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
     try {
       const r = await generateDueStatements();
       toast.success(
-        `Last week (${r.periodStart} → ${r.periodEnd}): ${r.generated} drafted, ${r.refreshed} refreshed${r.skippedFinal > 0 ? `, ${r.skippedFinal} already final` : ''}.`,
+        `Last week (${fmtDateOnlyRange(r.periodStart, r.periodEnd)}): ${r.generated} drafted, ${r.refreshed} refreshed${r.skippedFinal > 0 ? `, ${r.skippedFinal} already final` : ''}.`,
       );
       await load();
     } catch (err) {
@@ -198,10 +284,10 @@ export function StatementsSection({ clientId }: { clientId: string }) {
     }
   };
 
-  const markPaid = async (s: ClientStatement, ref: string | undefined) => {
+  const markPaid = async (s: ClientStatement, ref: string | undefined, paid: { receivedOn: string; method: ClientPaymentMethodKind }) => {
     setBusy(`paid-${s.id}`);
     try {
-      await markClientStatementPaid(clientId, s.id, ref);
+      await markClientStatementPaid(clientId, s.id, ref, paid);
       toast.success('Payment recorded — statement moved out of receivables.');
       setPayTarget(null);
       await load();
@@ -439,6 +525,8 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                         )}
                       </div>
                     </button>
+                    {/* Outside the row's button: the flagged chip is a link of its own. */}
+                    <HoursSignOffMark clientId={clientId} signOff={s.hoursSignOff} />
                     <div className="flex gap-2">
                       <Button
                         size="sm"
@@ -481,15 +569,15 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                           Terms
                         </Button>
                       )}
-                      {canFinalize && s.status === 'FINAL' && !s.paidAt && (
+                      {(canFinalize || canRecord) && s.status === 'FINAL' && !s.paidAt && (
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => setPayTarget(s)}
+                          onClick={() => (canRecord ? setRecording(s) : setPayTarget(s))}
                           loading={busy === `paid-${s.id}`}
                           disabled={busy !== null}
                         >
-                          Mark paid
+                          {canRecord ? 'Record payment' : 'Mark paid'}
                         </Button>
                       )}
                     </div>
@@ -510,10 +598,28 @@ export function StatementsSection({ clientId }: { clientId: string }) {
             : ''
         }
         busy={busy !== null && busy.startsWith('paid-')}
-        onConfirm={(ref) => {
-          if (payTarget) void markPaid(payTarget, ref);
+        onConfirm={(ref, paid) => {
+          if (payTarget) void markPaid(payTarget, ref, paid);
         }}
       />
+      {/* The full Record-payment dialog for the people who keep the books (MONEY-17): the same one as
+          Receivables and the statement week close — date, method, account, partial amounts. */}
+      {recording && agingForPay.data && (
+        <PaymentDialog
+          open
+          onOpenChange={(o) => {
+            if (!o) {
+              setRecording(null);
+              void load();
+              void qc.invalidateQueries({ queryKey: ['books'] });
+            }
+          }}
+          initialClientId={clientId}
+          initialStatementId={recording.id}
+          rows={agingForPay.data.rows}
+          statements={agingForPay.data.statements}
+        />
+      )}
     </Card>
   );
 }

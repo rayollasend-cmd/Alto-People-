@@ -5,7 +5,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, FileText, Printer, UserPlus } f
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDate, fmtDayHeaderTz, fmtShiftRangeTz, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDayHeaderTz, fmtShiftRangeTz, parseYmd, ymdLocal, zonedDayKey } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
@@ -18,6 +18,7 @@ import { CoverageHeatmap, DetailsTable, type HeatDay } from './portalCharts';
 import { coverageByHour } from './coverage';
 import { ListTemplate } from '@/components/templates';
 import { ServiceReportDialog } from './ServiceReportDialog';
+import { shiftDays } from './scope';
 import '@/lib/i18n/en/portal';
 
 /**
@@ -46,6 +47,8 @@ interface PortalSchedule {
   store: { id: string; name: string } | null;
   week: { start: string; end: string };
   days: Array<{ date: string; shifts: ScheduleShift[] }>;
+  /** The evening before the week, running into its first day — hours only. Absent from an older server. */
+  carryIn?: Array<Pick<ScheduleShift, 'startsAt' | 'endsAt' | 'timezone' | 'state'>>;
   filled: number;
   open: number;
   /** The contracted windows (store-local minutes; end <= start wraps midnight). Absent from an older server. */
@@ -77,10 +80,6 @@ const STATE_STYLE: Record<ScheduleShift['state'], string> = {
   open: 'text-alert',
 };
 
-function shiftDays(ymd: string, days: number): string {
-  const [y, m, d] = ymd.split('-').map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
-}
 
 function dayShort(ymd: string): string {
   return new Intl.DateTimeFormat(
@@ -97,7 +96,10 @@ export function PortalSchedule() {
   const canPreview = can('view:executive') || can('manage:org');
   const previewId = searchParams.get('clientId');
   const locationId = searchParams.get('locationId');
-  const week = searchParams.get('week') ?? ymdLocal();
+  // No ?week= is the store's own this-week, which the server answers with —
+  // late Friday in Pacific, a Chicago store is already in next week.
+  const weekParam = searchParams.get('week');
+  const week = weekParam ?? ymdLocal();
   const [openDays, setOpenDays] = useState<Set<string>>(new Set());
 
   const scopeQs = useMemo(() => {
@@ -106,7 +108,7 @@ export function PortalSchedule() {
     if (locationId) q.set('locationId', locationId);
     return q;
   }, [isPortal, previewId, locationId]);
-  const qs = `?${new URLSearchParams([...scopeQs.entries(), ['week', week]]).toString()}`;
+  const qs = `?${new URLSearchParams([...scopeQs.entries(), ...(weekParam ? ([['week', weekParam]] as [string, string][]) : [])]).toString()}`;
   const homeQs = scopeQs.toString() ? `?${scopeQs.toString()}` : '';
   const [reportOpen, setReportOpen] = useState(false);
 
@@ -136,10 +138,14 @@ export function PortalSchedule() {
   // of it — six days with nothing scheduled against a contract of 8 looked
   // neutral when only hours with a slot could be "below" (F500 G5).
   const contractByHour = useMemo(() => (data?.targets?.length ? hourlyContract(data.targets) : null), [data]);
+  // Every day reads the whole week (plus the evening before it): an
+  // overnight counts in the hours it covers on BOTH days, not only on the
+  // day it starts — 12a–6a read "0 scheduled" with two stockers on (LEAD-3).
   const heatDays: HeatDay[] = useMemo(
-    () =>
-      (data?.days ?? []).map((d) => {
-        const points = coverageByHour(d.shifts, d.date, tz);
+    () => {
+      const all = [...(data?.carryIn ?? []), ...(data?.days ?? []).flatMap((d) => d.shifts)];
+      return (data?.days ?? []).map((d) => {
+        const points = coverageByHour(all, d.date, tz);
         return {
           date: d.date,
           label: dayShort(d.date),
@@ -147,7 +153,8 @@ export function PortalSchedule() {
           open: points.map((p) => p.open),
           ...(contractByHour ? { target: contractByHour } : {}),
         };
-      }),
+      });
+    },
     [data, tz, contractByHour],
   );
   // The week in hours: scheduled (staffed shifts) against contracted (each window × its length × 7).
@@ -169,7 +176,7 @@ export function PortalSchedule() {
   const goWeek = (delta: number | null) => {
     const next = new URLSearchParams(searchParams);
     if (delta === null) next.delete('week');
-    else next.set('week', shiftDays(week, delta * 7));
+    else next.set('week', shiftDays(data?.week.start ?? week, delta * 7));
     setSearchParams(next, { replace: true });
   };
   const toggleDay = (date: string) =>
@@ -179,7 +186,8 @@ export function PortalSchedule() {
       else next.add(date);
       return next;
     });
-  const today = ymdLocal();
+  // The store's today (its zone when it has one), not the browser's.
+  const today = tz ? zonedDayKey(new Date(), tz) : ymdLocal();
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.

@@ -1,3 +1,5 @@
+import { ymdLocal } from '@/lib/format';
+
 /**
  * Time, on a board whose whole subject is what happened when.
  *
@@ -131,10 +133,11 @@ export function opsToday(): string {
 
 /** N days before a day key, as a day key. */
 export function shiftDayKey(key: string, days: number): string {
+  // Calendar math on the key itself: local noon of that day, stepped by calendar days.
   const [y, m, d] = key.split('-').map(Number);
-  const base = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12));
-  base.setUTCDate(base.getUTCDate() + days);
-  return base.toISOString().slice(0, 10);
+  const base = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12);
+  base.setDate(base.getDate() + days);
+  return ymdLocal(base);
 }
 
 /** "Sep 20" from an org day key — for chart ticks, where the weekday is

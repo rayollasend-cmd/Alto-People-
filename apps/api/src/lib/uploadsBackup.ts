@@ -10,6 +10,7 @@ import { env } from '../config/env.js';
 import { UPLOAD_ROOT } from './storage.js';
 import { platformJob } from './tenantJobs.js';
 import { recordEvidence } from './evidence.js';
+import { logger } from './logger.js';
 
 /**
  * Nightly off-site backup of the uploads volume.
@@ -134,7 +135,7 @@ let timer: NodeJS.Timeout | null = null;
 export function startUploadsBackupCron(): void {
   if (timer) return;
   if (env.STORAGE_DRIVER === 's3') {
-    console.log(
+    logger.info(
       '[backup] STORAGE_DRIVER=s3 — local uploads backup cron skipped ' +
         '(blobs live in the primary bucket; use bucket versioning/replication for backup)',
     );
@@ -156,7 +157,7 @@ export function startUploadsBackupCron(): void {
   const run = () => {
     void platformJob('uploadsBackup', runUploadsBackup)()
       .then(async (r) => {
-        console.log(
+        logger.info(
           `[backup] uploads backed up to ${r.key}` +
             (r.prunedOld ? ` (pruned ${r.prunedOld} old)` : ''),
         );
@@ -175,7 +176,7 @@ export function startUploadsBackupCron(): void {
   first.unref();
   timer = setInterval(run, env.BACKUP_INTERVAL_HOURS * 60 * 60 * 1000);
   timer.unref();
-  console.log(
+  logger.info(
     `[backup] uploads backup cron armed (every ${env.BACKUP_INTERVAL_HOURS}h, ` +
       `retention ${env.BACKUP_RETENTION_DAYS}d, bucket ${env.BACKUP_S3_BUCKET})`,
   );

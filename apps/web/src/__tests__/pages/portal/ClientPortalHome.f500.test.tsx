@@ -123,7 +123,9 @@ describe('the store home: Needs you', () => {
     // below keeps its own, as a secondary. One name for one action.
     expect(screen.getAllByRole('button', { name: /Make a request/ })).toHaveLength(2);
     expect(screen.queryByRole('button', { name: /Request coverage|Request staff/ })).toBeNull();
-    expect(screen.getByText('Scheduled vs contracted · this week')).toBeInTheDocument();
+    // One basis on both sides, and the card says which (LEAD-4): staffed shift hours, breaks in, against the gross contract.
+    expect(screen.getByText('Hours vs contract · this week')).toBeInTheDocument();
+    expect(screen.getByText(/^Staffed shift hours, meal breaks included · 0h worked so far$/)).toBeInTheDocument();
     expect(screen.getByText('/ 1,120h')).toBeInTheDocument();
     expect(screen.getByTestId('tomorrow-vs-contract')).toHaveTextContent('0 of 20 contracted scheduled');
     // The grade explains itself.

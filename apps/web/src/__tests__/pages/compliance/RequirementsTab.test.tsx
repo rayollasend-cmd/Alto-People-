@@ -21,10 +21,10 @@ vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(tr
 import { createCredentialRequirement } from '@/lib/credentialRequirementsApi';
 import { RequirementsTab } from '@/pages/compliance/RequirementsTab';
 
-function renderTab(canManage: boolean) {
+function renderTab(canManage: boolean, canReadQualifications = true) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <RequirementsTab canManage={canManage} />
+      <RequirementsTab canManage={canManage} canReadQualifications={canReadQualifications} />
     </QueryClientProvider>,
   );
 }
@@ -50,6 +50,14 @@ describe('<RequirementsTab>', () => {
     await waitFor(() =>
       expect(createCredentialRequirement).toHaveBeenCalledWith({ locationId: 's1', kind: 'TRAINING', label: 'Food handler', vaccinationKind: null, complianceTag: 'FOOD_HANDLER', qualificationId: null }),
     );
+  });
+
+  it('a role that cannot read the qualification catalog is not offered the Qualification kind (PEOPLE-16)', async () => {
+    renderTab(true, false);
+    await userEvent.click(await screen.findByRole('button', { name: 'Add requirement' }));
+    const dialog = await screen.findByRole('dialog');
+    const kinds = within(within(dialog).getByRole('combobox', { name: /Kind/ })).getAllByRole('option').map((o) => o.textContent);
+    expect(kinds).toEqual(['Vaccination', 'Training']);
   });
 
   it('a read-only desk sees the list and no form', async () => {

@@ -27,7 +27,9 @@ import { noteSearchLanded } from '@/lib/productEvents';
 import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useOverlayBackButton } from '@/lib/useOverlayBackButton';
 import { DASHBOARD_NAV, visibleModules, applyTerms, roleNavLabels } from '@/lib/modules';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { homeLabel, localizeModules } from '@/lib/navI18n';
+import '@/lib/i18n/en/top';
 import { useRecentModules } from '@/lib/navPersonalization';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
@@ -72,24 +74,24 @@ const RECORD_ICON: Record<SearchKind, LucideIcon> = {
  * nouns (a hotel says "Properties", a staffing firm "Stores"), so those two
  * come from `useTerm` rather than a literal.
  */
-function recordHeading(kind: SearchKind, term: (key: TermKey) => string): string {
+function recordHeading(kind: SearchKind, term: (key: TermKey) => string, t: (key: MessageKey) => string): string {
   switch (kind) {
     case 'people':
-      return 'People';
+      return t('top.groupPeople');
     case 'clients':
       return term('nav.clients');
     case 'locations':
       return term('sites');
     case 'applications':
-      return 'Applications';
+      return t('top.recApplications');
     case 'shifts':
-      return 'Shifts';
+      return t('top.recShifts');
     case 'documents':
-      return 'Documents';
+      return t('top.recDocuments');
     case 'statements':
-      return 'Statements';
+      return t('top.recStatements');
     case 'help':
-      return 'Help center';
+      return t('top.recHelp');
   }
 }
 
@@ -234,7 +236,8 @@ export function CommandPalette({
   const recentKeys = useRecentModules();
   const { t: tr } = useI18n();
   const nav = useMemo(
-    () => roleNavLabels(applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules), user?.role, tr),
+    // Named in the reader's language (lib/navI18n), as the sidebar names them.
+    () => localizeModules(roleNavLabels(applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules), user?.role, tr), tr),
     [user?.role, user?.regionId, can, tenant.modules, tenant.id, term, tr],
   );
   const items: PaletteItem[] = useMemo(() => [
@@ -246,7 +249,7 @@ export function CommandPalette({
             label: m.label,
             hint: m.description,
             icon: MODULE_ICONS[m.key],
-            keywords: m.description,
+            keywords: m.keywords ? `${m.description} ${m.keywords}` : m.description,
             group: 'Recent' as const,
             perform: ({ navigate, close }) => {
               navigate(m.path);
@@ -257,7 +260,7 @@ export function CommandPalette({
     }),
     {
       id: 'nav-dashboard',
-      label: DASHBOARD_NAV.label,
+      label: homeLabel(tr),
       icon: DASHBOARD_ICON,
       group: 'Navigation',
       perform: ({ navigate, close }) => {
@@ -273,7 +276,8 @@ export function CommandPalette({
       label: m.label,
       hint: m.description,
       icon: MODULE_ICONS[m.key],
-      keywords: m.description,
+      // The reader's own search words too ("direct deposit", "w2" — ASSOC-19).
+      keywords: m.keywords ? `${m.description} ${m.keywords}` : m.description,
       group: 'Navigation',
       perform: ({ navigate, close }) => {
         navigate(m.path);
@@ -286,8 +290,8 @@ export function CommandPalette({
       ? [
           {
             id: 'action-ask-assistant',
-            label: `Ask ${assistant.me.name}`,
-            hint: 'AI assistant — answers from your records',
+            label: tr('top.askAssistant', { name: assistant.me.name }),
+            hint: tr('top.askHint'),
             icon: Sparkles,
             keywords: 'ask assistant help ai question',
             group: 'Actions',
@@ -384,7 +388,7 @@ export function CommandPalette({
       : []),
     {
       id: 'account-copy-email',
-      label: 'Copy my email',
+      label: tr('top.copyEmail'),
       icon: User,
       group: 'Account',
       perform: ({ close }) => {
@@ -396,7 +400,7 @@ export function CommandPalette({
     },
     {
       id: 'account-sign-out',
-      label: 'Sign out',
+      label: tr('top.signOut'),
       icon: LogOut,
       group: 'Account',
       perform: async ({ signOut, navigate, close }) => {
@@ -407,8 +411,8 @@ export function CommandPalette({
     },
     {
       id: 'help-shortcuts',
-      label: 'Keyboard shortcuts',
-      hint: 'See every shortcut (also: press ?)',
+      label: tr('top.shortcuts'),
+      hint: tr('top.shortcutsHint'),
       icon: HelpCircle,
       group: 'Help',
       perform: ({ close }) => {
@@ -416,7 +420,7 @@ export function CommandPalette({
         onShowKeyboardShortcuts?.();
       },
     },
-  ], [can, user, onShowKeyboardShortcuts, nav, recentKeys, assistant]);
+  ], [can, user, onShowKeyboardShortcuts, nav, recentKeys, assistant, tr]);
 
   // Manual filtering (cmdk shouldFilter is off). Same fields the old
   // cmdk value string covered: label + keywords.
@@ -466,13 +470,12 @@ export function CommandPalette({
       {/* No bottom padding from the dialog: the footer is the last line (the sheet's
           sm:pb-6 left an empty band under it). The phone keeps the home-indicator inset. */}
       <DialogContent className="max-w-xl p-0 pt-5 sm:pt-0 pb-[env(safe-area-inset-bottom)] sm:pb-0 overflow-hidden gap-0 sm:rounded-lg elev-3 ring-1 ring-white/[0.06]">
-        <DialogTitle className="sr-only">Command palette</DialogTitle>
+        <DialogTitle className="sr-only">{tr('top.paletteTitle')}</DialogTitle>
         <DialogDescription className="sr-only">
-          Search to navigate, find people{tenant.moduleOn('clientPortal') ? ` and ${term('label.clients').toLowerCase()}` : ''}, run quick actions, or
-          access account controls.
+          {tenant.moduleOn('clientPortal') ? tr('top.paletteDescClients', { clients: term('label.clients').toLowerCase() }) : tr('top.paletteDesc')}
         </DialogDescription>
         <Command
-          label="Command palette"
+          label={tr('top.paletteTitle')}
           shouldFilter={false}
           className="bg-surface-overlay w-full min-w-0 overflow-hidden"
         >
@@ -482,7 +485,8 @@ export function CommandPalette({
               autoFocus
               value={search}
               onValueChange={setSearch}
-              placeholder={tenant.moduleOn('clientPortal') ? `Search pages, people, ${term('label.clients').toLowerCase()}, shifts, documents…` : 'Search pages, people, shifts, documents…'}
+              // Someone who can't search people (an associate, a driver) isn't promised them.
+              placeholder={!can('view:org') ? tr('top.placeholderSelf') : tenant.moduleOn('clientPortal') ? tr('top.placeholderClients', { clients: term('label.clients').toLowerCase() }) : tr('top.placeholder')}
               className={cn(
                 'flex h-12 w-full bg-transparent text-sm text-white placeholder:text-silver/70',
                 'outline-none border-0 focus:ring-0'
@@ -494,15 +498,15 @@ export function CommandPalette({
                 the list shows only the Searching… row, not both. */}
             {!hasAnyResult && !peopleSearching && (
               <Command.Empty className="py-8 text-center text-sm text-silver">
-                No results.
+                {tr('top.noResults')}
               </Command.Empty>
             )}
 
-            {renderStaticGroup('Recent', 'Recent')}
-            {renderStaticGroup('Navigation', 'Pages')}
+            {renderStaticGroup('Recent', tr('nav.recent'))}
+            {renderStaticGroup('Navigation', tr('top.groupPages'))}
 
             {showPeopleGroup && (
-              <Command.Group heading="People" className={GROUP_CLASS}>
+              <Command.Group heading={tr('top.groupPeople')} className={GROUP_CLASS}>
                 {people.map((p, i) => {
                   const fullName = `${p.firstName} ${p.lastName}`.trim();
                   const hint = [p.workplaceClientName, p.position]
@@ -570,7 +574,7 @@ export function CommandPalette({
                     role="status"
                   >
                     <Search className="h-4 w-4 shrink-0 animate-pulse" aria-hidden="true" />
-                    Searching…
+                    {tr('top.searching')}
                   </div>
                 )}
               </Command.Group>
@@ -603,7 +607,7 @@ export function CommandPalette({
             )}
 
             {extraGroups.map((g) => (
-              <Command.Group key={g.kind} heading={recordHeading(g.kind, term)} className={GROUP_CLASS}>
+              <Command.Group key={g.kind} heading={recordHeading(g.kind, term, tr)} className={GROUP_CLASS}>
                 {g.hits.map((hit) => {
                   const Icon = RECORD_ICON[g.kind];
                   return (
@@ -627,9 +631,9 @@ export function CommandPalette({
               </Command.Group>
             ))}
 
-            {renderStaticGroup('Actions', 'Actions')}
-            {renderStaticGroup('Account', 'Account')}
-            {renderStaticGroup('Help', 'Help')}
+            {renderStaticGroup('Actions', tr('top.groupActions'))}
+            {renderStaticGroup('Account', tr('top.groupAccount'))}
+            {renderStaticGroup('Help', tr('top.groupHelp'))}
           </Command.List>
           <div className="flex items-center justify-between border-t border-navy-secondary px-3 py-2 text-2xs text-silver/80">
             <div className="inline-flex items-center gap-1.5">
@@ -639,13 +643,13 @@ export function CommandPalette({
             <div className="hidden sm:inline-flex items-center gap-3">
               <span className="inline-flex items-center gap-1">
                 <Kbd>↑</Kbd>
-                <Kbd>↓</Kbd> navigate
+                <Kbd>↓</Kbd> {tr('top.kbNavigate')}
               </span>
               <span className="inline-flex items-center gap-1">
-                <Kbd>↵</Kbd> select
+                <Kbd>↵</Kbd> {tr('top.kbSelect')}
               </span>
               <span className="inline-flex items-center gap-1">
-                <Kbd>esc</Kbd> close
+                <Kbd>esc</Kbd> {tr('top.kbClose')}
               </span>
             </div>
           </div>

@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { decryptBytes, encryptBytes } from './crypto.js';
 import { armJob } from './jobs.js';
 import { platformJob } from './tenantJobs.js';
+import { logger } from './logger.js';
 
 /**
  * SOC 2 decision 7 (docs/soc2-controls-investigation.md): kiosk selfies and
@@ -103,7 +104,7 @@ export function startBiometricSealCron(db: PrismaClient = prisma): void {
     run: platformJob(BIOMETRIC_SEAL_JOB, async () => {
       const p = await backfillBiometricSeal(db);
       if (p.selfiesSealed || p.descriptorsSealed) {
-        console.log(`[alto-people/api] biometric seal: ${p.selfiesSealed} selfies and ${p.descriptorsSealed} face templates sealed; ${p.selfiesLeft + p.descriptorsLeft} left`);
+        logger.info(`biometric seal: ${p.selfiesSealed} selfies and ${p.descriptorsSealed} face templates sealed; ${p.selfiesLeft + p.descriptorsLeft} left`);
       }
       return p;
     }),

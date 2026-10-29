@@ -501,7 +501,7 @@ function ApplyForm({ slug, title, source }: { slug: string; title: string; sourc
           <Input {...p} type="url" inputMode="url" placeholder="https://" value={resumeUrl} onChange={(e) => setResumeUrl(e.target.value)} />
         )}
       </Field>
-      <Field label="Anything we should know?" hint="Optional — availability, which store you'd prefer, how you'll get to work.">
+      <Field label="Anything we should know?" hint="Optional — availability, which location you'd prefer, how you'll get to work.">
         {(p) => <Textarea {...p} rows={3} maxLength={4000} value={notes} onChange={(e) => setNotes(e.target.value)} />}
       </Field>
       <div aria-hidden="true" className="absolute -left-[10000px] h-px w-px overflow-hidden">

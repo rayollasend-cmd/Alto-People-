@@ -16,6 +16,11 @@ vi.mock('@/pages/recruiting/staffingGaps', async (orig) => ({
   getStaffingPlan: vi.fn(),
 }));
 vi.mock('@/lib/useClients', () => ({ useClients: () => ({ clients: [], error: null, reload: vi.fn() }) }));
+// The offer and posting pickers read GET /clients/options (PEOPLE-4).
+vi.mock('@/lib/onboardingApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/onboardingApi')>()),
+  listClientOptions: vi.fn().mockResolvedValue({ clients: [{ id: 'c1', name: 'Coastal Resort Holdings' }] }),
+}));
 vi.mock('@/lib/clientsApi', () => ({
   listClients: vi.fn().mockResolvedValue({ clients: [{ id: 'c1', name: 'Coastal Resort Holdings' }] }),
 }));

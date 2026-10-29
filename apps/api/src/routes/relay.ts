@@ -9,6 +9,7 @@ import { BATON_LABELS, computeRelayBoard, computeSingleLane } from '../lib/relay
 import { notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { isInternallyScoped, scopeAssociates } from '../lib/scope.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * THE RELAY + threads on the work.
@@ -558,7 +559,7 @@ relayRouter.get('/cohorts', STAFF, async (_req, res, next) => {
         name: c.name,
         clientName: c.client?.name ?? null,
         targetHeadcount: c.targetHeadcount,
-        landByDate: c.landByDate.toISOString().slice(0, 10),
+        landByDate: dateColumnKey(c.landByDate),
       })),
     });
   } catch (err) {

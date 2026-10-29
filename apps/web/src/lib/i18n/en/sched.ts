@@ -91,6 +91,7 @@ export const enSched = {
   'sched.calResetToast':
     'New link created. Re-subscribe in your calendar app — the old link no longer works.',
   'sched.calResetFailed': 'Could not reset the link.',
+  'sched.whatSchedule': 'your schedule',
 } as const;
 
 registerEnglish(enSched);

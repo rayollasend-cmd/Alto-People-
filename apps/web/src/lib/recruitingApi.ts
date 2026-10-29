@@ -115,6 +115,9 @@ export interface CandidateSubmittal {
   feedback: string | null;
   submittedByEmail: string | null;
   decidedByEmail: string | null;
+  /** Who, by name (PEOPLE-21); older servers send only the emails. */
+  submittedByName?: string | null;
+  decidedByName?: string | null;
   decidedAt: string | null;
   createdAt: string;
 }

@@ -30,7 +30,7 @@ type Check = { key: string; done: boolean; detail: string; href: string };
 const byKey = (checks: Check[]) => Object.fromEntries(checks.map((c) => [c.key, c]));
 
 describe('GET /payroll/year-end-close', () => {
-  it('a year with nothing to file can close: the filing and copy steps are done, in plain words', async () => {
+  it('a year with no payroll: every step is done, in plain words — and it says there is nothing to close (MONEY-27)', async () => {
     const a = await finance();
     const r = await a.get('/payroll/year-end-close?year=2024');
     expect(r.status).toBe(200);
@@ -39,11 +39,19 @@ describe('GET /payroll/year-end-close', () => {
     expect(c.copies_sent).toMatchObject({ done: true, detail: 'No recipient copies to send for 2024.' });
     expect(c.runs_disbursed).toMatchObject({ done: true, detail: 'No payroll run in 2024 is still waiting to be paid.' });
     expect(c.w2_generated.detail).toBe('No one was paid wages in 2024, so no W-2s are due.');
-    expect(r.body.readyToClose).toBe(true);
+    // Not "2024 is ready to close" over six green ticks: no payroll, nothing to close (deep audit MONEY-27).
+    expect(r.body).toMatchObject({ noPayroll: true, paidRuns: 0, readyToClose: false });
     // Never a raw status code or "(s)".
     for (const check of r.body.checks as Check[]) {
       expect(check.detail).not.toMatch(/\(s\)|DRAFT|FINALIZED|FILED/);
     }
+  });
+
+  it('a year whose payroll is all paid and filed is ready to close', async () => {
+    const a = await finance();
+    await prisma.payrollRun.create({ data: { periodStart: new Date('2024-06-01T00:00:00Z'), periodEnd: new Date('2024-06-14T00:00:00Z'), status: 'DISBURSED', disbursedAt: new Date('2024-06-21T15:00:00Z') } });
+    const r = await a.get('/payroll/year-end-close?year=2024');
+    expect(r.body).toMatchObject({ noPayroll: false, paidRuns: 1, readyToClose: true });
   });
 
   it('an open run keeps the year open and says how many, pluralised', async () => {

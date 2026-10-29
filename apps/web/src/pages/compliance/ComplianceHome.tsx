@@ -98,7 +98,7 @@ export function ComplianceHome() {
           </TabsContent>
         )}
         <TabsContent value="requirements">
-          <RequirementsTab canManage={canManage} />
+          <RequirementsTab canManage={canManage} canReadQualifications={can('view:scheduling')} />
         </TabsContent>
         {canAudit && (
           <TabsContent value="audit">

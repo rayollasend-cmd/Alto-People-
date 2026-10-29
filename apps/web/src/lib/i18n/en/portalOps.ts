@@ -1,5 +1,7 @@
 // English for the pages that use 'portalOps.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/portalOps.ts).
+import '../es/portalOps';
 
 export const enPortalOps = {
   'portalOps.title': 'Store operations',
@@ -145,6 +147,12 @@ export const enPortalOps = {
   'portalOps.production': 'Freight & production',
   'portalOps.productionEmpty': 'Counts show here as the team leads record them — pallets, cases, picks, claims.',
   'portalOps.handoffs': 'Shift handoffs',
+  'portalOps.state.expired': 'Never submitted',
+  'portalOps.expiredBy': '{name} · never submitted',
+  'portalOps.expiredAt': 'closed unsubmitted {time}',
+  'portalOps.neverSubmitted': '{count} never submitted',
+  'portalOps.photoUnavailable': 'Photo unavailable',
+  'portalOps.neverSubmitted_one': '{count} never submitted',
 } as const;
 
 registerEnglish(enPortalOps);

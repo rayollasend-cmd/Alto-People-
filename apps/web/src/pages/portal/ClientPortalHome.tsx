@@ -37,6 +37,7 @@ import {
   zonedMinutesOfDay,
 } from '@/lib/format';
 import { coverageByHour } from './coverage';
+import { HoursSignOffDialog, useHoursToSign } from './HoursSignOff';
 import { cn } from '@/lib/cn';
 import { userPhotoUrl } from '@/lib/photoUrl';
 import { enterStagger } from '@/lib/motion';
@@ -128,6 +129,8 @@ interface OpsRoll {
   taskTotal: number;
   tempAlerts: number;
   incomplete: number;
+  /** Closed by the expiry sweep — never submitted. Absent from an older server. */
+  expired?: number;
   photos: number;
 }
 
@@ -141,6 +144,7 @@ interface OpsDay {
   taskTotal: number;
   tempAlerts: number;
   incomplete: number;
+  expired?: number;
   photos: number;
   notes: Array<{ department: string; period: string; summary: string }>;
 }
@@ -176,7 +180,11 @@ interface PortalOverview {
     filled: number;
     open: number;
     fillRatePct: number | null;
+    /** Staffed shift hours, gross (meal breaks in) — the contract's basis. */
     hours: number;
+    /** The same staffed shifts, paid time (breaks out) — the punches' basis. Absent from an older server. */
+    paidHours?: number;
+    /** Punched so far, breaks out. */
     workedHours: number;
     /** Contracted person-hours for the whole week; null without windowed targets. */
     contractedHours?: number | null;
@@ -347,8 +355,11 @@ export function ClientPortalHome() {
   const canPreview = can('view:executive') || can('manage:org');
   const previewId = searchParams.get('clientId');
   const qs = scopeQuery(searchParams, isPortal);
+  // A client account's finished week waiting on its sign-off (a market account picks a store first).
+  const hoursToSign = useHoursToSign(qs, canAct);
   const [prefill, setPrefill] = useState<RequestPrefill | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+  const [hoursOpen, setHoursOpen] = useState(false);
   const queryClient = useQueryClient();
   const [marking, setMarking] = useState<string | null>(null);
   const markReviewed = async (kind: 'STATEMENT' | 'SERVICE_REPORT', key: string) => {
@@ -504,8 +515,11 @@ export function ClientPortalHome() {
     data.week.fillRatePct !== null && lastWeek && lastWeek.fillPct !== null
       ? data.week.fillRatePct - lastWeek.fillPct
       : null;
+  // Worked against scheduled on one basis — paid time, breaks out on both
+  // sides; the contract tile below is gross on both sides (LEAD-4).
+  const paidScheduled = data.week.paidHours ?? data.week.hours;
   const hoursPct =
-    data.week.hours > 0 ? Math.min(100, Math.round((data.week.workedHours / data.week.hours) * 100)) : null;
+    paidScheduled > 0 ? Math.min(100, Math.round((data.week.workedHours / paidScheduled) * 100)) : null;
   const tomorrowTotal = data.tomorrow.confirmed + data.tomorrow.unconfirmed + data.tomorrow.open;
   const weekScheduled = data.week.filled + data.week.open;
   // The card used to lead with LAST NIGHT and only fall back to today, so
@@ -599,6 +613,23 @@ export function ClientPortalHome() {
       icon: UserCheck,
       title: t('portal.needCandidates', { count: data.candidatesWaiting ?? 0 }),
       to: `/portal/candidates${qs}`,
+    });
+  }
+  // The last finished week's hours, waiting on the client's sign-off (or changed since it).
+  const hw = hoursToSign.data;
+  if (canAct && hw && hw.canSign && hw.signable && hw.people > 0 && (hw.state === 'unsigned' || hw.state === 'changed')) {
+    const range = fmtDateOnlyRange(hw.week.start, hw.week.end);
+    needs.push({
+      key: 'hours',
+      tone: hw.state === 'changed' ? 'warning' : 'gold',
+      icon: ClipboardCheck,
+      title: hw.state === 'changed' ? t('portal.needHoursChanged', { range }) : t('portal.needHours', { range }),
+      sub: t('portal.needHoursSub', { hours: fmtHours(hw.totalHours), people: t('portal.hoursPeople', { count: hw.people }) }),
+      action: (
+        <Button size="xs" variant="secondary" onClick={() => setHoursOpen(true)} className="coarse:min-h-11">
+          {t('portal.hoursReview')}
+        </Button>
+      ),
     });
   }
   if (canAct && data.requests && data.requests.overdue > 0) {
@@ -865,7 +896,7 @@ export function ClientPortalHome() {
                         </span>
                       );
                       const linkCls =
-                        'group -mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2.5 hover:bg-navy-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright';
+                        'group -mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2.5 hover:bg-navy-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright coarse:min-h-11';
                       return (
                         <li key={n.key} className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid={`need-${n.key}`}>
                           {n.to || n.href ? (
@@ -906,6 +937,7 @@ export function ClientPortalHome() {
         scope={new URLSearchParams(qs)}
         initial={{ kind: 'range', from: data.serviceReport.weekStart, to: shiftDays(data.serviceReport.weekStart, 6) }}
       />
+      {hoursOpen && <HoursSignOffDialog open={hoursOpen} onClose={() => setHoursOpen(false)} scopeQs={qs} />}
       {/* ---- Per-store strip for market managers ------------------------ */}
       {data.stores.length > 1 && !data.store && (
         <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 animate-enter">
@@ -998,13 +1030,13 @@ export function ClientPortalHome() {
                   contracted: Math.round(contractedHours4w).toLocaleString('en-US'),
                 })
               : pastWeeks.some((w) => w.total > 0)
-                ? t('portal.kpiGradeSub', { ncns: sum((w) => w.noCallNoShows), replaced: sum((w) => w.replaced) })
+                ? [t('portal.incNoShows', { count: sum((w) => w.noCallNoShows) }), t('portal.incCovered', { count: sum((w) => w.replaced) })].join(' · ')
                 : t('portal.relNoHistoryPlain')
           }
         />
         {/* Scheduled against the contract, this week — the gap the page used never to say. */}
         <MetricCard
-          label={contracted !== null ? t('portal.kpiSchedVsContract') : t('portal.kpiHours')}
+          label={contracted !== null ? t('portal.kpiHoursVsContract') : t('portal.kpiHours')}
           value={contracted !== null ? fmtHours(data.week.hours) : fmtHours(data.week.workedHours)}
           unit={contracted !== null ? `/ ${fmtHours(contracted)}` : undefined}
           tone={contracted !== null && data.week.hours < contracted ? 'warning' : 'default'}
@@ -1017,8 +1049,8 @@ export function ClientPortalHome() {
           }
           hint={
             contracted !== null
-              ? t('portal.kpiSchedVsContractSub', { worked: fmtHours(data.week.workedHours) })
-              : t('portal.kpiHoursSub', { scheduled: fmtHours(data.week.hours) })
+              ? t('portal.kpiHoursVsContractSub', { worked: fmtHours(data.week.workedHours) })
+              : t('portal.kpiHoursPaidSub', { scheduled: fmtHours(paidScheduled) })
           }
           href={scheduleTo}
         />
@@ -1073,7 +1105,7 @@ export function ClientPortalHome() {
                 className="mb-0"
                 title={t('portal.todayByShift')}
                 trailing={
-                  <Link to={`/portal/today${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
+                  <Link to={`/portal/today${qs}`} className="inline-flex items-center text-xs text-gold underline-offset-2 hover:underline coarse:min-h-11">
                     {t('portal.todayOpen')}
                   </Link>
                 }
@@ -1090,7 +1122,7 @@ export function ClientPortalHome() {
                       <li key={w.key}>
                         <Link
                           to={`/portal/today${qs}`}
-                          className="-mx-2 block rounded-md px-2 py-1 hover:bg-navy-secondary/30"
+                          className="-mx-2 block rounded-md px-2 py-1 hover:bg-navy-secondary/30 coarse:min-h-11"
                         >
                           <div className="flex items-baseline justify-between gap-3">
                             <span
@@ -1169,9 +1201,9 @@ export function ClientPortalHome() {
               </div>
               <p className="mt-2 text-sm text-silver tabular-nums">
                 {data.week.fillRatePct !== null
-                  ? t('portal.weekSentence', { pct: data.week.fillRatePct, hours: fmtHours(data.week.hours) })
-                  : t('portal.weekHoursOnly', { hours: fmtHours(data.week.hours) })}
-                <span className="text-silver/60"> · {t('portal.weekDelivered', { worked: fmtHours(data.week.workedHours) })}</span>
+                  ? t('portal.weekFilledGross', { pct: data.week.fillRatePct, hours: fmtHours(data.week.hours) })
+                  : t('portal.weekHoursGross', { hours: fmtHours(data.week.hours) })}
+                <span className="text-silver/60"> · {t('portal.weekWorkedNet', { worked: fmtHours(data.week.workedHours) })}</span>
               </p>
               <DetailsTable
                 label={t('portal.details')}
@@ -1287,7 +1319,7 @@ export function ClientPortalHome() {
                             href={`mailto:${p.email}`}
                             aria-label={t('portal.emailPerson', { name: p.name })}
                             title={p.email}
-                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/70 hover:text-gold print:hidden"
+                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-silver/70 hover:text-gold print:hidden coarse:h-11 coarse:w-11"
                           >
                             <Mail className="h-3.5 w-3.5" aria-hidden="true" />
                           </a>
@@ -1364,7 +1396,7 @@ export function ClientPortalHome() {
                   </>
                 }
                 trailing={
-                  <Link to={`/portal/ops${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
+                  <Link to={`/portal/ops${qs}`} className="inline-flex items-center text-xs text-gold underline-offset-2 hover:underline coarse:min-h-11">
                     {t('portal.opsOpen')}
                   </Link>
                 }
@@ -1410,10 +1442,11 @@ export function ClientPortalHome() {
                           photos: opsDay.photos,
                         })}
                       </p>
-                      {(opsDay.tempAlerts > 0 || opsDay.incomplete > 0 || opsDay.open > 0) && (
+                      {(opsDay.tempAlerts > 0 || opsDay.incomplete > 0 || (opsDay.expired ?? 0) > 0 || opsDay.open > 0) && (
                         <p className="mt-1 text-xs text-warning tabular-nums">
                           {[
                             opsDay.tempAlerts > 0 && t('portal.opsTemp', { count: opsDay.tempAlerts }),
+                            (opsDay.expired ?? 0) > 0 && t('portal.opsNeverSubmitted', { count: opsDay.expired ?? 0 }),
                             opsDay.incomplete > 0 && t('portal.opsIncomplete', { count: opsDay.incomplete }),
                             opsDay.open > 0 && t('portal.opsStillOpen', { count: opsDay.open }),
                           ]

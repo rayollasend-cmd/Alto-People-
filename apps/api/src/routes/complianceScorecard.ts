@@ -61,6 +61,8 @@ import { enqueueAudit } from '../lib/audit.js';
 import { ReportPdf } from '../lib/reportPdf.js';
 import { formatRef } from '../lib/emailTemplates.js';
 import { fmtDayInZone } from '../lib/humanDates.js';
+import { companyWorkweek, dateKeyInZone, orgDateKey } from '../lib/timeAnomalies.js';
+import { METRICS } from '@alto-people/shared';
 
 export const complianceScorecardRouter = Router();
 
@@ -465,6 +467,7 @@ export async function buildOnboardingTile(
             clientName: s.clientName,
             ...(dueBy
               ? {
+                  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: business days added to a @db.Date hire date
                   dueBy: dueBy.toISOString().slice(0, 10),
                   daysOverdue,
                 }
@@ -1143,10 +1146,13 @@ export async function localShiftLeadPresence(since: Date, clientId?: string | nu
       status: { in: ['ASSIGNED', 'COMPLETED'] },
       ...(clientId ? { clientId } : {}),
     },
-    select: { clientId: true, locationId: true, startsAt: true, position: true },
+    select: { clientId: true, locationId: true, startsAt: true, position: true, locationRel: { select: { timezone: true } } },
     take: 20_000,
   });
   if (shifts.length === 0) return null;
+  // A shift's day is its store's day (CODE-14): an evening shift in
+  // California is not tomorrow's.
+  const companyTz = companyWorkweek().timezone;
   const leadPositions = await prisma.shiftPosition.findMany({
     where: { tenantId, isLead: true, deletedAt: null, ...(clientId ? { clientId } : {}) },
     select: { clientId: true, name: true },
@@ -1163,7 +1169,7 @@ export async function localShiftLeadPresence(since: Date, clientId?: string | nu
   };
   const days = new Map<string, boolean>();
   for (const s of shifts) {
-    const key = `${s.clientId ?? '-'}|${s.locationId ?? '-'}|${s.startsAt.toISOString().slice(0, 10)}`;
+    const key = `${s.clientId ?? '-'}|${s.locationId ?? '-'}|${dateKeyInZone(s.startsAt, s.locationRel?.timezone ?? companyTz)}`;
     days.set(key, (days.get(key) ?? false) || isLead(s.clientId, s.position));
   }
   let covered = 0;
@@ -1211,6 +1217,10 @@ export async function localFieldglassOnTime(since: Date, clientId?: string | nul
   let onTime = 0;
   for (const r of rows) {
     const weekEnd = new Date(r.weekStart.getTime() + 6 * 24 * 3600 * 1000);
+    // weekStart is a @db.Date (UTC midnight of the store week's Saturday), so
+    // its UTC date IS the calendar day; the deadline is then Monday 2 PM
+    // Pacific of that week (fieldglassDueAt does the zone). CODE-14.
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a @db.Date column
     const deadline = fieldglassDueAt(weekEnd.toISOString().slice(0, 10));
     if (deadline.getTime() > now || deadline < since) continue;
     due += 1;
@@ -1641,6 +1651,7 @@ function previousPeriodFor(
 }
 
 function toDateKey(d: Date): string {
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: attestation periods are built and stored as UTC-midnight @db.Date anchors
   return d.toISOString().slice(0, 10);
 }
 
@@ -2363,6 +2374,7 @@ complianceScorecardRouter.get('/history', VIEW, async (req, res, next) => {
     });
 
     const points = rows.map((r) => ({
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: ComplianceScoreSnapshot.day is a @db.Date
       day: r.day.toISOString().slice(0, 10),
       score: r.score,
       criticalCount: r.criticalCount,
@@ -2426,7 +2438,8 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
         ...(weekAgo
           ? [{ label: 'vs last week', value: `${score - weekAgo.score >= 0 ? '+' : ''}${score - weekAgo.score} pts` }]
           : []),
-        { label: 'Active associates', value: String(onboarding.activeAssociateCount) },
+        // The population is everyone placed, not "active" (PEOPLE-23): the dictionary's name.
+        { label: METRICS.placed.label, value: String(onboarding.activeAssociateCount) },
         { label: 'Fully compliant', value: String(onboarding.fullyCompliantCount) },
       ],
     });
@@ -2528,6 +2541,7 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
           { label: 'Day', width: 110 },
           { label: 'Score', width: 60, align: 'right' },
         ],
+        // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: ComplianceScoreSnapshot.day is a @db.Date
         snaps.slice(-10).map((s) => [s.day.toISOString().slice(0, 10), s.score]),
       );
     }
@@ -2546,7 +2560,7 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="alto-compliance-scorecard-${new Date().toISOString().slice(0, 10)}.pdf"`,
+      `attachment; filename="alto-compliance-scorecard-${orgDateKey(new Date())}.pdf"`,
     );
     res.send(buffer);
   } catch (err) {

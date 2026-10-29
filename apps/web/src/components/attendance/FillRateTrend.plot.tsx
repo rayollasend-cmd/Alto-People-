@@ -1,4 +1,5 @@
-import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, ComposedChart, Line, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { ChartTooltipContent, PALETTE, TICK } from '@/components/ui/charts';
 
 /** FillRateTrendCard's drawing — fetched with the first chart (lazyPlot), the only part that needs recharts. */

@@ -85,8 +85,13 @@ const IncidentBody = z.object({
   occurredAt: z.string().datetime().optional(),
   /** The floor files what it saw; HR grades days away and restricted duty. */
   severity: z.enum(['FIRST_AID', 'MEDICAL_TREATMENT', 'RESTRICTED_DUTY', 'DAYS_AWAY']).default('FIRST_AID'),
-  /** No one was hurt — a hazard, a near miss. Kept in the log, not recordable. */
-  nearMiss: z.coerce.boolean().optional(),
+  /**
+   * No one was hurt — a hazard, a near miss. Kept in the log, not recordable.
+   * The form posts multipart, so it arrives as the text 'true' / 'false':
+   * z.coerce.boolean() read 'false' as true, and every injury filed from the
+   * floor was logged as a non-recordable near miss.
+   */
+  nearMiss: z.union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')]).optional(),
 });
 
 floorRouter.post('/floor/incidents', requireCapability('report:incident'), upload.single('photo'), async (req, res, next) => {
@@ -95,6 +100,10 @@ floorRouter.post('/floor/incidents', requireCapability('report:incident'), uploa
     const parsed = IncidentBody.safeParse(req.body ?? {});
     if (!parsed.success) throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     const i = parsed.data;
+    // A few minutes' grace for phone clocks; an incident can't be in the future.
+    if (i.occurredAt && Date.parse(i.occurredAt) > Date.now() + 5 * 60_000) {
+      throw new HttpError(400, 'occurred_in_future', 'When it happened can’t be in the future.');
+    }
     const client = await clientFor(user, i.clientId);
     const associate = i.associateId ? await associateAtClient(i.associateId, client.id) : null;
     const site = i.locationId

@@ -1,5 +1,7 @@
 // English for the pages that use 'fin.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/fin.ts).
+import '../es/fin';
 
 export const enFin = {
   // Finance cockpit
@@ -146,9 +148,9 @@ export const enFin = {
   'fin.cashLowAt': 'low point {amount}, week of {date}',
   'fin.cashBalance': 'Balance',
   'fin.guidedClose': 'Guided close',
-  'fin.kpiRevenue': 'Revenue · last week',
-  'fin.kpiRevenueHint': '{hours} at the bill rate',
-  'fin.kpiMargin': 'Gross margin · last week',
+  'fin.kpiRevenue': 'Billed at contract rates · last week',
+  'fin.kpiRevenueHint': '{hours} at contract rates',
+  'fin.kpiMargin': 'Margin after wages · last week',
   'fin.kpiMarginHint': '{amount} after wages',
   'fin.kpiRisk': 'Money at risk',
   'fin.kpiRiskHint': 'not in the VMS, rejected or not entered',
@@ -205,6 +207,10 @@ export const enFin = {
   'fin.arOldest_one': 'oldest {count} day past due',
   'fin.arNotDue': 'not yet due',
   'fin.arDso_one': 'avg {count} day to pay',
+  'fin.kpiRevenueOnStatements': '{amount} on finalized statements (each shift’s own rate)',
+  'fin.kpiRevenueNotBilled': 'not on a finalized statement yet',
+  'fin.cashOverdrawn': '{account} is overdrawn by {amount} — fund it before anything else clears',
+  'fin.kpiRevenueStatementsMatch': 'the same on finalized statements',
 } as const;
 
 registerEnglish(enFin);

@@ -410,6 +410,9 @@ function ExpirationsListView() {
             accent="text-alert"
             count={q ? expired.length : data.counts.expired}
             items={expired}
+            drawn={data.expired.length}
+            total={data.truncated?.expired ? data.counts.expired : null}
+            searching={!!q}
             emptyHint={q ? 'No matches.' : 'Nothing expired.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
@@ -421,6 +424,9 @@ function ExpirationsListView() {
             accent="text-warning"
             count={q ? dueSoon.length : data.counts.dueSoon}
             items={dueSoon}
+            drawn={data.dueSoon.length}
+            total={data.truncated?.dueSoon ? data.counts.dueSoon : null}
+            searching={!!q}
             emptyHint={q ? 'No matches.' : 'Nothing due soon.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
@@ -432,6 +438,9 @@ function ExpirationsListView() {
             accent="text-gold"
             count={q ? dueLater.length : data.counts.dueLater}
             items={dueLater}
+            drawn={data.dueLater.length}
+            total={data.truncated?.dueLater ? data.counts.dueLater : null}
+            searching={!!q}
             emptyHint={q ? 'No matches.' : 'Nothing further out.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
@@ -539,6 +548,9 @@ function Bucket({
   accent,
   count,
   items,
+  drawn = items.length,
+  total = null,
+  searching = false,
   emptyHint,
   canRenew,
   onRenew,
@@ -549,6 +561,11 @@ function Bucket({
   accent: string;
   count: number;
   items: ExpirationItem[];
+  /** How many rows the API drew for this column (before search). */
+  drawn?: number;
+  /** The column's real size when the API drew fewer than all of it (truncated); null when it drew everything. */
+  total?: number | null;
+  searching?: boolean;
   emptyHint: string;
   canRenew: boolean;
   onRenew: (item: ExpirationItem) => void;
@@ -651,7 +668,10 @@ function Bucket({
         <CardContent className="flex items-center gap-2 px-4 py-3">
           <Icon className="h-4 w-4 text-silver" aria-hidden="true" />
           <span className="text-sm uppercase tracking-wider text-silver">{title}</span>
-          <span className="text-sm text-silver/80">· {emptyHint}</span>
+          <span className="text-sm text-silver/80">
+            · {emptyHint}
+            {searching && total !== null && total > drawn ? ` (the search covered ${drawn.toLocaleString()} of ${total.toLocaleString()})` : ''}
+          </span>
         </CardContent>
       </Card>
     );
@@ -666,6 +686,13 @@ function Bucket({
           </div>
           <Badge variant="outline">{count}</Badge>
         </div>
+        {/* CODE-33: "812" over a 500-row list, and a search that silently missed the rest. */}
+        {total !== null && total > drawn && (
+          <p className="px-4 pb-2 text-xs text-ink-muted" data-testid="bucket-truncated">
+            Showing {drawn.toLocaleString()} of {total.toLocaleString()}
+            {searching ? ' — the search looks only through these.' : '.'} Narrow the window or show certifications only to see the rest.
+          </p>
+        )}
         <div className="px-3 pb-3">
           <DataGrid<ExpirationItem>
             id={`expirations-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}

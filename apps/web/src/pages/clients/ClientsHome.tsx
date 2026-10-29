@@ -11,6 +11,7 @@ import { fmtDate, fmtMoney, fmtRelativeDate, ymdLocal } from '@/lib/format';
 // Org-week helper — despite the name it starts weeks on SATURDAY, the
 // Sat→Fri week every payroll/report surface runs on.
 import { startOfWeekMonday } from '@/pages/scheduling/WeekCalendarView';
+import { workweekStart } from '@/lib/workweek';
 import { useAuth, useTerm } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { StatusBadge } from '@/lib/status';
@@ -750,6 +751,8 @@ function PortfolioStrip({ rows, canMoney, attention, onAttention, onActive }: { 
   const shifts = rows.reduce((n, c) => n + (c.shiftsNext7?.total ?? 0), 0);
   const stillOpen = rows.reduce((n, c) => n + (c.shiftsNext7 ? c.shiftsNext7.total - c.shiftsNext7.filled : 0), 0);
   const accounts = (n: number) => `${n.toLocaleString('en-US')} account${n === 1 ? '' : 's'}`;
+  // The company week (Saturday on), the one every "hours this week" reads (LEAD-21) — said, with its start.
+  const weekFrom = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(workweekStart());
   return (
     <MetricStrip label="All accounts">
       <MetricCard
@@ -770,7 +773,11 @@ function PortfolioStrip({ rows, canMoney, attention, onAttention, onActive }: { 
       <MetricCard
         label="On assignment"
         value={working.toLocaleString('en-US')}
-        hint={hours > 0 ? `${hours.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} hours worked this week` : 'No hours yet this week'}
+        hint={
+          hours > 0
+            ? `${hours.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} hours worked this week, since ${weekFrom}`
+            : `No hours yet this week (since ${weekFrom})`
+        }
       />
       {canMoney ? (
         <MetricCard

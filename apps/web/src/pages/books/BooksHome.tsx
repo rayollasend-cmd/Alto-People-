@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowRight, CalendarCheck, CheckCircle2, CircleAlert, Fi
 import type { BooksOverview } from '@alto-people/shared';
 import { useAuth, useTenant } from '@/lib/auth';
 import { getBooksOverview, listJournal } from '@/lib/books/ledgerApi';
-import { fmtDate, fmtDateTime, fmtMoney, fmtMoneyCompact, fmtMonthShortYear } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtDateTime, fmtMoney, fmtMoneyCompact, fmtMonthShortYear } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -20,7 +20,7 @@ import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { AGING_COLORS, AgingBar } from '@/pages/finance/financeCharts';
-import { Amount, PostHistoryButton, sourceLabel } from './ledger/ledgerKit';
+import { Amount, PostHistoryButton, RecordMarkedPaidButton, sourceLabel } from './ledger/ledgerKit';
 import { sinceMonthEndWords } from './close/closeKit';
 
 /**
@@ -57,7 +57,7 @@ export function BooksHome() {
       summary={
         o ? (
           <MetricStrip label="The books at a glance">
-            <MetricCard label="Cash" value={fmtMoney(o.cash.total)} hint={cashHint(o)} href="/books/bank" />
+            <MetricCard label="Cash" value={fmtMoney(o.cash.total)} hint={cashHint(o)} tone={overdrawn(o).length ? 'alert' : 'default'} href="/books/bank" />
             {/* The same number as the aging card below (the open statements); when the ledger holds a different AR balance, the hint says so. */}
             <MetricCard label={`${who.Many} owe`} value={fmtMoney(o.receivables.openOnStatements)} hint={receivablesHint(o)} tone={o.receivables.aging.over90 > 0 || Math.abs(o.receivables.openOnStatements - o.receivables.total) >= 0.01 ? 'warning' : 'default'} href="/books/receivables" />
             <MetricCard label="You owe" value={fmtMoney(o.payables.total)} hint={o.payables.overdue > 0 ? `${fmtMoney(o.payables.overdue)} past due` : `${fmtMoney(o.payables.dueIn7Days)} due this week`} tone={o.payables.overdue > 0 ? 'alert' : 'default'} href="/books/bills" />
@@ -163,6 +163,8 @@ function NeedsYou({ items }: { items: BooksOverview['needsYou'] }) {
                   {/* The books don't hold history yet: the fix is one press, here. */}
                   {/* The header's "Journal entry" is the page's one gold primary. */}
                   {n.key === 'ar-unposted' && <PostHistoryButton size="sm" variant="secondary" label="Add them to the books" className="ml-7 sm:ml-0" />}
+                  {/* Marked paid with no payment: the button records the payments, which is what the books are missing (MONEY-3). */}
+                  {n.key === 'ar-paid-unrecorded' && <RecordMarkedPaidButton size="sm" variant="secondary" className="ml-7 sm:ml-0" />}
                 </li>
               );
             })}
@@ -228,24 +230,43 @@ function ProfitTrend({ o }: { o: BooksOverview }) {
   );
 }
 
-/** The Cash card's hint: how many bank and card accounts are actually connected (the Bank page's list), not the ledger's. */
-function cashHint(o: BooksOverview): string {
+/** Bank accounts below zero — the Cash total nets them away, so they're named (MONEY-18). */
+export function overdrawn(o: BooksOverview): BooksOverview['cash']['accounts'] {
+  return o.cash.accounts.filter((a) => a.subtype === 'BANK' && a.balance < 0);
+}
+
+/** The Cash card's hint: an overdrawn account first; else how many bank and card accounts are actually connected (the Bank page's list), not the ledger's. */
+export function cashHint(o: BooksOverview): string {
+  const short = overdrawn(o);
+  if (short.length) return short.length === 1 ? `${short[0]!.name} overdrawn by ${fmtMoney(-short[0]!.balance)}` : `${short.length} accounts overdrawn`;
   const n = o.cash.connectedAccounts;
   return n > 0 ? `${n} ${n === 1 ? 'account' : 'accounts'} connected to the bank` : 'From the ledger — no bank connected yet';
 }
 
-function receivablesHint(o: BooksOverview): string {
+/** Why the ledger's receivables differ from the open statements, in the direction it runs (MONEY-3). */
+export function receivablesHint(o: BooksOverview): string {
   const r = o.receivables;
-  // The two numbers differ until older statements are posted to the books: say that, not "post history to match".
-  if (Math.abs(r.openOnStatements - r.total) >= 0.01) return `The ledger shows ${fmtMoney(r.total)}: some older statements aren’t in it yet`;
+  if (Math.abs(r.openOnStatements - r.total) >= 0.01) {
+    const paid = r.markedPaidWithoutPayment;
+    const missing = r.notInBooks;
+    if (paid?.count && r.total > r.openOnStatements) return `The ledger shows ${fmtMoney(r.total)}: ${paid.count} ${paid.count === 1 ? 'statement' : 'statements'} marked paid with no payment recorded`;
+    if (missing?.count && r.total < r.openOnStatements) return `The ledger shows ${fmtMoney(r.total)}: ${missing.count} finalized ${missing.count === 1 ? 'statement isn’t' : 'statements aren’t'} in it yet`;
+    return `The ledger shows ${fmtMoney(r.total)}`;
+  }
   return r.aging.over90 > 0 ? `${fmtMoney(r.aging.over90)} over 90 days` : 'nothing over 90 days';
 }
 
-/** The profit card's sparkline: net income by month; the change is last month against the one before (this month is still going). */
-function profitTrend(o: BooksOverview): MetricTrend | undefined {
+/**
+ * The profit card's sparkline: net income by month. The change compares
+ * like with like (MONEY-19): this month so far against last month to the
+ * same day, never two finished months under this month's headline.
+ */
+export function profitTrend(o: BooksOverview): MetricTrend | undefined {
   const series = o.profit.trend.map((t) => t.netIncome);
   if (series.length < 3 || !series.every((v) => Number.isFinite(v)) || series.every((v) => v === 0)) return undefined;
-  return { series, delta: series[series.length - 2]! - series[series.length - 3]!, deltaLabel: 'last month', format: (n) => fmtMoneyCompact(n), unit: 'month' };
+  const prev = o.profit.lastMonthToDate;
+  if (!prev) return { series, delta: 0, unit: 'month', format: (n) => fmtMoneyCompact(n) };
+  return { series, delta: o.profit.month.netIncome - prev.totals.netIncome, deltaLabel: `vs ${fmtDateOnlyRange(prev.from, prev.to)}`, format: (n) => fmtMoneyCompact(n), unit: 'month' };
 }
 
 /** The one aging palette (pages/finance/financeCharts) — 1–30 and 31–60 days read as two blocks, not one. */
@@ -340,6 +361,11 @@ function CashCard({ o }: { o: BooksOverview }) {
               <Link to={`/books/accounts/${a.id}`} className="min-w-0 truncate text-ink hover:text-accent">
                 {a.name}
                 {a.subtype === 'CREDIT_CARD' && <span className="ml-1 text-2xs text-ink-muted">card balance</span>}
+                {a.subtype === 'BANK' && a.balance < 0 && (
+                  <Badge variant="destructive" size="sm" className="ml-2">
+                    Overdrawn
+                  </Badge>
+                )}
               </Link>
               <Amount value={a.balance} />
             </li>

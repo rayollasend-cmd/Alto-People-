@@ -9,6 +9,10 @@ import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { assertSiteInScope, isInternallyScoped, scopeAssociates, scopeWhere } from '../lib/scope.js';
 import { profileMoveChanges } from '../lib/jobProfileMove.js';
+import { userDisplayName } from '../lib/clientProspects.js';
+import { loadWorld, periodStartOnOrAfter, ruleInForce, scheduleMembershipFor, todayYmd } from '../lib/payScheduleMembership.js';
+import { can } from '@alto-people/shared';
+import { assignPeople } from './paySchedules.js';
 import type { SessionUser } from '../types/express.js';
 
 /**
@@ -21,6 +25,12 @@ import type { SessionUser } from '../types/express.js';
  *   undo restores it exactly. A job profile that changes someone's overtime
  *   exemption, comp class or tipped code is a promotion (a second person
  *   decides it), so a batch that would do that for anyone is refused.
+ *
+ *   A pay schedule move is a payroll change (process:payroll) and goes
+ *   through the membership engine — an INDIVIDUAL rule from a date, never a
+ *   write to Associate.payrollScheduleId (only a mirror; the sweep would put
+ *   it back). Someone already on a schedule moves at the new schedule's next
+ *   period start; someone on none starts today. Undo ends those rules.
  *
  *   POST /people/mass-update/preview   { filter, changes } → the rows that would change
  *   POST /people/mass-update           { filter, changes } → { batchId, affected }
@@ -76,6 +86,48 @@ interface Before {
   costCenterName?: string | null;
   jobProfileId?: string | null;
   jobProfileName?: string | null;
+  /** Pay schedule moves: the day the batch's rule started, and whether they had their own (INDIVIDUAL) rule before. */
+  payrollScheduleFrom?: string;
+  payrollScheduleOwnRule?: boolean;
+}
+
+function payrollOnly(user: SessionUser, c: Changes): void {
+  if (c.payrollScheduleId !== undefined && !can(user, 'process:payroll')) {
+    throw new HttpError(403, 'payroll_only', 'Moving people to another pay schedule is a payroll change — someone with payroll access makes it.');
+  }
+}
+
+/** 'Nov 7' — the day a pay schedule move starts, said in words. */
+const dayWords = (ymd: string) => new Date(`${ymd}T12:00:00.000Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+/**
+ * The day each person's pay schedule move starts: the new schedule's next
+ * period start for anyone already on a schedule; today for someone on none
+ * (and for "let the rules decide"). The engine's own rule (assignPeople's
+ * defaultStartFor), for many people at once.
+ */
+async function payScheduleStarts(ids: string[], scheduleId: string | null): Promise<Map<string, string>> {
+  const today = todayYmd();
+  const out = new Map<string, string>(ids.map((id) => [id, today]));
+  if (!scheduleId || ids.length === 0) return out;
+  const target = await prisma.payrollSchedule.findFirst({ where: { id: scheduleId, tenantId: tenantIdForWrite() }, include: { versions: true } });
+  if (!target) return out;
+  const next = periodStartOnOrAfter(target, today);
+  const members = await scheduleMembershipFor(prisma, ids, today);
+  for (const id of ids) if (members.get(id)) out.set(id, next);
+  return out;
+}
+
+/** Run assignPeople once per (schedule, start day) group. */
+async function assignInGroups(user: SessionUser, moves: Array<{ associateId: string; scheduleId: string | null; from: string }>): Promise<void> {
+  const groups = new Map<string, { scheduleId: string | null; from: string; ids: string[] }>();
+  for (const m of moves) {
+    const key = `${m.scheduleId ?? 'rules'}|${m.from}`;
+    const g = groups.get(key) ?? { scheduleId: m.scheduleId, from: m.from, ids: [] };
+    g.ids.push(m.associateId);
+    groups.set(key, g);
+  }
+  for (const g of groups.values()) await assignPeople(user, g.ids, g.scheduleId, g.from);
 }
 
 /** Who the filter names, inside the caller's tenant and reach (AND, so no filter can overwrite the scope). */
@@ -253,6 +305,7 @@ const BodySchema = z.object({ filter: FilterSchema, changes: ChangesSchema });
 
 massUpdateRouter.post('/people/mass-update/preview', MANAGE, async (req, res) => {
   const { filter, changes } = BodySchema.parse(req.body);
+  payrollOnly(req.user!, changes);
   const before = await snapshot(filter, req.user!);
   const names = await resolveChanges(changes, req.user!, before.map((b) => b.associateId));
   await assertProfileMovesAllowed(before, changes);
@@ -265,8 +318,19 @@ massUpdateRouter.post('/people/mass-update/preview', MANAGE, async (req, res) =>
     jobProfile: names.jobProfileName,
   };
   const to = (field: string) => NAMED[field] ?? null;
+  const starts =
+    changes.payrollScheduleId !== undefined
+      ? await payScheduleStarts(before.filter((b) => b.payrollScheduleId !== changes.payrollScheduleId).map((b) => b.associateId), changes.payrollScheduleId)
+      : new Map<string, string>();
+  // A pay schedule move says when it starts ("Weekly from Nov 7"); "let the rules decide" says so.
+  const toFor = (b: Before, field: string) => {
+    if (field !== 'paySchedule') return to(field);
+    const from = starts.get(b.associateId);
+    const name = to(field) ?? 'Whatever the rules decide';
+    return from ? `${name} from ${dayWords(from)}` : name;
+  };
   const rows = before
-    .map((b) => ({ associateId: b.associateId, name: b.name, changes: changesFor(b, changes).map((d) => ({ ...d, to: to(d.field) })) }))
+    .map((b) => ({ associateId: b.associateId, name: b.name, changes: changesFor(b, changes).map((d) => ({ ...d, to: toFor(b, d.field) })) }))
     .filter((r) => r.changes.length > 0);
   res.json({ matched: before.length, willChange: rows.length, rows: rows.slice(0, 500) });
 });
@@ -276,7 +340,7 @@ async function applyOne(tx: Prisma.TransactionClient, b: Before, c: Changes, tod
   const data: Prisma.AssociateUncheckedUpdateInput = {};
   if (c.departmentId !== undefined && c.departmentId !== b.departmentId) data.departmentId = c.departmentId;
   if (c.managerId !== undefined && c.managerId !== b.managerId) data.managerId = c.managerId;
-  if (c.payrollScheduleId !== undefined && c.payrollScheduleId !== b.payrollScheduleId) data.payrollScheduleId = c.payrollScheduleId;
+  // Pay schedule: never here — the engine moves it after the batch (see assignInGroups).
   if (c.costCenterId !== undefined && c.costCenterId !== (b.costCenterId ?? null)) data.costCenterId = c.costCenterId;
   if (c.jobProfileId !== undefined && c.jobProfileId !== (b.jobProfileId ?? null)) data.jobProfileId = c.jobProfileId;
   if (Object.keys(data).length) await tx.associate.update({ where: { id: b.associateId }, data });
@@ -289,12 +353,24 @@ async function applyOne(tx: Prisma.TransactionClient, b: Before, c: Changes, tod
 
 massUpdateRouter.post('/people/mass-update', MANAGE, async (req, res) => {
   const { filter, changes } = BodySchema.parse(req.body);
+  payrollOnly(req.user!, changes);
   const before = (await snapshot(filter, req.user!)).filter((b) => changesFor(b, changes).length > 0);
   const names = await resolveChanges(changes, req.user!, before.map((b) => b.associateId));
   if (before.length === 0) throw new HttpError(400, 'nothing_to_change', 'No one matched with a different value.');
   await assertProfileMovesAllowed(before, changes);
   if (changes.managerId && before.some((b) => b.associateId === changes.managerId)) {
     throw new HttpError(400, 'self_manager', 'A person cannot be made their own manager.');
+  }
+  // Pay schedule moves: when each starts, and who had their own rule before (so undo can put it back).
+  const scheduleMoves = changes.payrollScheduleId !== undefined ? before.filter((b) => b.payrollScheduleId !== changes.payrollScheduleId) : [];
+  if (scheduleMoves.length) {
+    const starts = await payScheduleStarts(scheduleMoves.map((b) => b.associateId), changes.payrollScheduleId ?? null);
+    const todayKey = todayYmd();
+    const ownRule = new Set((await loadWorld(prisma)).rules.filter((r) => r.kind === 'INDIVIDUAL' && r.associateId && ruleInForce(r, todayKey)).map((r) => r.associateId!));
+    for (const b of scheduleMoves) {
+      b.payrollScheduleFrom = starts.get(b.associateId) ?? todayKey;
+      b.payrollScheduleOwnRule = ownRule.has(b.associateId);
+    }
   }
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
@@ -310,6 +386,9 @@ massUpdateRouter.post('/people/mass-update', MANAGE, async (req, res) => {
       },
     });
   });
+  if (scheduleMoves.length) {
+    await assignInGroups(req.user!, scheduleMoves.map((b) => ({ associateId: b.associateId, scheduleId: changes.payrollScheduleId ?? null, from: b.payrollScheduleFrom! })));
+  }
   enqueueAudit(
     { actorUserId: req.user!.id, action: 'people.mass_update', entityType: 'MassUpdateBatch', entityId: batch.id, metadata: { affected: before.length, changes: { ...changes, ...names }, associateIds: before.map((b) => b.associateId) } },
     'people.mass_update',
@@ -320,13 +399,18 @@ massUpdateRouter.post('/people/mass-update', MANAGE, async (req, res) => {
 massUpdateRouter.get('/people/mass-update/batches', MANAGE, async (_req, res) => {
   const rows = await prisma.massUpdateBatch.findMany({ where: { tenantId: tenantIdForWrite() }, orderBy: { appliedAt: 'desc' }, take: 50 });
   const actorIds = [...new Set(rows.map((r) => r.actorUserId).filter((x): x is string => Boolean(x)))];
-  const actors = actorIds.length ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, email: true } }) : [];
+  const actors = actorIds.length
+    ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } })
+    : [];
   const emailBy = new Map(actors.map((a) => [a.id, a.email]));
+  // Say who by name, not by email (the email stays for the tooltip).
+  const nameBy = new Map(actors.map((a) => [a.id, userDisplayName(a)]));
   const now = Date.now();
   res.json({
     batches: rows.map((r) => ({
       id: r.id,
       actorEmail: r.actorUserId ? emailBy.get(r.actorUserId) ?? null : null,
+      actorName: r.actorUserId ? nameBy.get(r.actorUserId) ?? null : null,
       changes: r.changes,
       affectedCount: r.affectedCount,
       appliedAt: r.appliedAt.toISOString(),
@@ -346,6 +430,7 @@ massUpdateRouter.post('/people/mass-update/:id/undo', MANAGE, async (req, res) =
   if (Date.now() - batch.appliedAt.getTime() >= UNDO_WINDOW_MS) throw new HttpError(409, 'undo_window_closed', 'The 24-hour undo window has closed.');
   const before = batch.affected as unknown as Before[];
   const changes = batch.changes as unknown as Changes;
+  payrollOnly(req.user!, changes);
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
   await prisma.$transaction(async (tx) => {
@@ -353,7 +438,6 @@ massUpdateRouter.post('/people/mass-update/:id/undo', MANAGE, async (req, res) =
       const data: Prisma.AssociateUncheckedUpdateInput = {};
       if (changes.departmentId !== undefined) data.departmentId = b.departmentId;
       if (changes.managerId !== undefined) data.managerId = b.managerId;
-      if (changes.payrollScheduleId !== undefined) data.payrollScheduleId = b.payrollScheduleId;
       if (changes.costCenterId !== undefined && b.costCenterId !== undefined) data.costCenterId = b.costCenterId;
       if (changes.jobProfileId !== undefined && b.jobProfileId !== undefined) data.jobProfileId = b.jobProfileId;
       if (Object.keys(data).length) await tx.associate.update({ where: { id: b.associateId }, data });
@@ -364,6 +448,20 @@ massUpdateRouter.post('/people/mass-update/:id/undo', MANAGE, async (req, res) =
     }
     await tx.massUpdateBatch.update({ where: { id }, data: { undoneAt: new Date(), undoneById: req.user!.id } });
   });
+  // Pay schedule: end the batch's rules through the engine. Someone who had
+  // their own rule gets it back from the same day; anyone else goes back to
+  // what the rules decide.
+  if (changes.payrollScheduleId !== undefined) {
+    const todayKey = todayYmd();
+    const moved = before.filter((b) => b.payrollScheduleId !== changes.payrollScheduleId);
+    await assignInGroups(
+      req.user!,
+      moved.map((b) => {
+        const from = b.payrollScheduleFrom && b.payrollScheduleFrom > todayKey ? b.payrollScheduleFrom : todayKey;
+        return { associateId: b.associateId, scheduleId: b.payrollScheduleOwnRule && b.payrollScheduleId ? b.payrollScheduleId : null, from };
+      }),
+    );
+  }
   enqueueAudit({ actorUserId: req.user!.id, action: 'people.mass_update_undone', entityType: 'MassUpdateBatch', entityId: id, metadata: { affected: before.length } }, 'people.mass_update_undone');
   res.json({ ok: true, restored: before.length });
 });

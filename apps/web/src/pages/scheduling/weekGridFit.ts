@@ -116,3 +116,32 @@ export function hourlyCoverage(
 export function dayIsPast(dayKey: string, displayTimeZone: string | null, now: Date = new Date()): boolean {
   return zonedDayKey(now, displayTimeZone) > dayKey;
 }
+
+/**
+ * The week grids' column template (FLOOR-11, deep audit 2026-10-29). At
+ * 1024 with the sidebar open the grid had ~700px and needed 948 (a fixed
+ * 248px name rail + 100px a day), so Thursday and Friday sat off-screen
+ * behind a sideways scroll. Now the name rail gives way first (248 → 150)
+ * and a day keeps a 78px floor: a full week fits in 700px, and a wide
+ * screen still gets the 248px rail (the browser grows the bounded rail
+ * before the flexible days) and wide days.
+ *
+ * `between` is an optional fixed track after the rail (the time grid's
+ * 40px hour gutter).
+ */
+export const WEEK_RAIL_MAX_PX = 248;
+export const WEEK_RAIL_MIN_PX = 150;
+export const WEEK_DAY_MIN_PX = 78;
+
+export function weekGridColumns(
+  dayCount: number,
+  opts: { railMaxPx?: number; betweenPx?: number; dayMinPx?: number } = {},
+): { gridTemplateColumns: string; minWidthPx: number } {
+  const railMax = Math.max(WEEK_RAIL_MIN_PX, opts.railMaxPx ?? WEEK_RAIL_MAX_PX);
+  const dayMin = opts.dayMinPx ?? WEEK_DAY_MIN_PX;
+  const between = opts.betweenPx ? `${opts.betweenPx}px ` : '';
+  return {
+    gridTemplateColumns: `minmax(${WEEK_RAIL_MIN_PX}px, ${railMax}px) ${between}repeat(${dayCount}, minmax(${dayMin}px, 1fr))`,
+    minWidthPx: WEEK_RAIL_MIN_PX + (opts.betweenPx ?? 0) + dayCount * dayMin,
+  };
+}

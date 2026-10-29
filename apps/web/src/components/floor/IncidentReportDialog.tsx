@@ -10,6 +10,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { cn } from '@/lib/cn';
+import { localInputToUtcIso, tzAbbrev, utcToZonedDatetimeInput } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import '@/lib/i18n/en/floorUi';
 
@@ -19,6 +20,19 @@ import '@/lib/i18n/en/floorUi';
  * log for HR (report:incident, no manage:compliance), and HR hears at once.
  * A near miss — nobody hurt — is kept in the log and never recorded.
  */
+
+/**
+ * "When did it happen?" (FLOOR-10): the form's datetime-local value read on
+ * the store's clock, checked against now. An injury filed at the end of the
+ * shift is logged when it happened, not when it was typed up — and never in
+ * the future. Null when the value is empty or unreadable.
+ */
+export function occurredAtFromInput(value: string, timeZone: string | null | undefined, now: Date = new Date()): { iso: string; future: boolean } | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+  const iso = localInputToUtcIso(value, timeZone);
+  // A minute's grace: "now" typed at 2:15:40 is 2:15, not the future.
+  return { iso, future: Date.parse(iso) > now.getTime() + 60_000 };
+}
 
 const SEVERITIES: Array<{ value: IncidentSeverity; label: MessageKey; hint: MessageKey }> = [
   { value: 'FIRST_AID', label: 'floorUi.sevFirstAid', hint: 'floorUi.sevFirstAidHint' },
@@ -32,11 +46,14 @@ export function IncidentReportDialog({
   onOpenChange,
   presetAssociate = null,
   onFiled,
+  timeZone = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   presetAssociate?: PickedAssociate | null;
   onFiled?: (id: string) => void;
+  /** The store's zone: "when" is typed and read on its clock (else the device's). */
+  timeZone?: string | null;
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -49,8 +66,14 @@ export function IncidentReportDialog({
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Defaults to now on the store's clock; the person moves it back.
+  const nowInput = () => utcToZonedDatetimeInput(new Date(), timeZone);
+  const [when, setWhen] = useState(nowInput);
+  const occurred = occurredAtFromInput(when, timeZone);
+  const whenError = !occurred ? t('floorUi.incWhenMissing') : occurred.future ? t('floorUi.incWhenFuture') : null;
 
   const reset = () => {
+    setWhen(nowInput());
     setDescription('');
     setLocation('');
     setNearMiss(false);
@@ -72,12 +95,17 @@ export function IncidentReportDialog({
       toast.error(t('floorUi.incSayWhat'));
       return;
     }
+    if (!occurred || occurred.future) {
+      toast.error(whenError ?? t('floorUi.incWhenMissing'));
+      return;
+    }
     setBusy(true);
     try {
       const r = await reportIncident({
         description: description.trim(),
         severity,
         nearMiss,
+        occurredAt: occurred.iso,
         location: location.trim() || undefined,
         associateId: nearMiss ? null : who?.id ?? null,
         photo,
@@ -161,6 +189,22 @@ export function IncidentReportDialog({
               />
             )}
           </Field>
+          <Field
+            label={t('floorUi.incWhen')}
+            required
+            error={whenError ?? undefined}
+            hint={whenError ? undefined : timeZone ? t('floorUi.incWhenHintZone', { zone: tzAbbrev(timeZone) }) : t('floorUi.incWhenHint')}
+          >
+            {(p) => (
+              <Input
+                {...p}
+                type="datetime-local"
+                value={when}
+                max={nowInput()}
+                onChange={(e) => setWhen(e.target.value)}
+              />
+            )}
+          </Field>
           <Field label={t('floorUi.incWhere')}>
             {(p) => <Input {...p} value={location} onChange={(e) => setLocation(e.target.value)} maxLength={200} placeholder={t('floorUi.incWherePh')} />}
           </Field>
@@ -205,7 +249,7 @@ export function IncidentReportDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={() => void submit()} loading={busy} disabled={busy || description.trim().length < 5}>
+          <Button onClick={() => void submit()} loading={busy} disabled={busy || description.trim().length < 5 || whenError !== null}>
             {nearMiss ? t('floorUi.incReportHazard') : t('floorUi.incFile')}
           </Button>
         </DialogFooter>

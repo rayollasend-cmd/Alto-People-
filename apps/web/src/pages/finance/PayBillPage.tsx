@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtDateOnlyRange, fmtMoney, fmtStatementNo } from '@/lib/format';
+import { fmtDate, fmtDateOnlyRange, fmtMoney, fmtStatementNo, ymdLocal } from '@/lib/format';
 import { useStoreScope } from '@/lib/storeScope';
 import { useUrlParam } from '@/lib/useUrlState';
 import { cn } from '@/lib/cn';
@@ -91,16 +91,20 @@ export function PayBillPage() {
 
 /**
  * The pay period is in the URL (?period=2026-09-05:2026-09-18), so a link
- * to one period's reconciliation is that period. With none, the newest
- * finalized payroll — and the picker says so.
+ * to one period's reconciliation is that period. With none, the oldest
+ * period holding billable pay on no statement — where the sidebar badge's
+ * money is (deep audit MONEY-2: it opened on the newest, which said "No
+ * gaps") — else the newest finalized payroll; the picker says which.
  */
 function PeriodScoped({ render }: { render: (p: { periodStart: string; periodEnd: string }) => React.ReactNode }) {
   const q = useQuery({ queryKey: ['pay-bill', 'periods'], queryFn: getPayPeriods });
   const [picked, setPicked] = useUrlParam<string>('period', '');
   const periods = q.data?.periods ?? [];
+  const gapPeriods = q.data?.gapPeriods ?? [];
   const latest = periods[0] ? `${periods[0].periodStart}:${periods[0].periodEnd}` : null;
   const valid = /^\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2}$/.test(picked) ? picked : '';
-  const value = valid || latest;
+  const opening = gapPeriods[0] ?? latest;
+  const value = valid || opening;
   if (q.isLoading) return <Skeleton className="h-40" />;
   if (q.isError) return <QueryError what="pay periods" query={q} />;
   if (!value) return <EmptyState title="No finalized payroll yet" description="Once a payroll is finalized, its paychecks are reconciled against client bills here." />;
@@ -110,11 +114,12 @@ function PeriodScoped({ render }: { render: (p: { periodStart: string; periodEnd
   return (
     <div className="space-y-4">
       <div className="max-w-sm">
-        <Field label="Pay period" hint={value === latest ? 'The newest finalized payroll.' : undefined}>
-          <Select value={value} onChange={(e) => setPicked(e.target.value === latest ? '' : e.target.value)}>
+        <Field label="Pay period" hint={periodHint(value, latest, gapPeriods)}>
+          <Select value={value} onChange={(e) => setPicked(e.target.value === opening ? '' : e.target.value)}>
             {options.map((p) => (
               <option key={`${p.periodStart}:${p.periodEnd}`} value={`${p.periodStart}:${p.periodEnd}`}>
                 {fmtDateOnlyRange(p.periodStart, p.periodEnd)}
+                {gapPeriods.includes(`${p.periodStart}:${p.periodEnd}`) ? ' · pay not billed' : ''}
               </option>
             ))}
           </Select>
@@ -123,6 +128,16 @@ function PeriodScoped({ render }: { render: (p: { periodStart: string; periodEnd
       {render({ periodStart, periodEnd })}
     </div>
   );
+}
+
+/** What the picker's hint says: which period this is, and how many hold pay on no statement. */
+export function periodHint(value: string, latest: string | null, gapPeriods: string[]): string | undefined {
+  const gaps = gapPeriods.length;
+  if (gaps > 0 && gapPeriods.includes(value)) {
+    return gaps === 1 ? 'Billable pay on no statement is in this period.' : `${gaps} periods have billable pay on no statement — ${value === gapPeriods[0] ? 'this is the oldest' : 'pick one marked “pay not billed”'}.`;
+  }
+  if (gaps > 0) return `${gaps} ${gaps === 1 ? 'period has' : 'periods have'} billable pay on no statement — marked “pay not billed”.`;
+  return value === latest ? 'The newest finalized payroll.' : undefined;
 }
 
 /* ----- Reconciliation ------------------------------------------------------- */
@@ -525,7 +540,8 @@ function Adjustments() {
 
 /* ----- Contract terms ------------------------------------------------------- */
 
-const todayYmd = () => new Date().toISOString().slice(0, 10);
+// The local calendar day (CODE-14), not UTC's: a term dated "today" after 5 PM Pacific was tomorrow.
+const todayYmd = () => ymdLocal();
 
 /** "Retro: Finance reviews · Overtime: 1.5× · …" — a version of the terms in one read. */
 function termsWords(h: { retroRebill: string; overtimeBilling: string; defaultMarkupPct: number | null; premiumRules: Record<PremiumKey, PremiumRule> }) {

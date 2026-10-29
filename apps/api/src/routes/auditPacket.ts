@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -14,6 +15,9 @@ import { ALTO_POLICIES } from '../lib/altoHrContent.js';
 import { buildPaystubDataFromItem, paystubItemInclude } from '../lib/paystubData.js';
 import { renderPaystubPdf } from '../lib/paystub.js';
 import { ReportPdf } from '../lib/reportPdf.js';
+import { logger } from '../lib/logger.js';
+import { companyWorkweek, dateKeyInZone, orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Client-audit packet generator.
@@ -79,15 +83,15 @@ const GenerateInputSchema = z.object({
 
 /* ----- small helpers ----------------------------------------------------- */
 
-const csvCell = (v: string | number | null | undefined): string => {
-  const s = v === null || v === undefined ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
+// The shared escaper (@alto-people/shared): quoting plus the formula guard, numbers kept numeric.
+const csvCell = (v: string | number | null | undefined): string => sharedCsvCell(v);
 const csv = (rows: Array<Array<string | number | null | undefined>>): string =>
   rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
 
-const ymd = (d: Date | null | undefined): string =>
-  d ? d.toISOString().slice(0, 10) : '';
+/** A moment (a verification, a case opened, a separation) dated on the company's calendar. */
+const ymd = (d: Date | null | undefined): string => (d ? orgDateKey(d) : '');
+/** A @db.Date column (pay period, pay date, start date, assignment span) as the day it names. */
+const day = (d: Date | null | undefined): string => (d ? dateColumnKey(d) : '');
 const iso = (d: Date | null | undefined): string => (d ? d.toISOString() : '');
 const money = (v: unknown): string =>
   v === null || v === undefined ? '' : `$${Number(v).toFixed(2)}`;
@@ -154,9 +158,13 @@ auditPacketRouter.post(
      * footprint columns stay populated. */
     const locations = await prisma.site.findMany({
       where: { ...(client ? { clientId: client.id } : {}), deletedAt: null },
-      select: { id: true, name: true },
+      select: { id: true, name: true, timezone: true },
     });
     const locationName = new Map(locations.map((l) => [l.id, l.name]));
+    // A punch's work date is its store's day (the company's when the store has no zone).
+    const locationZone = new Map(locations.map((l) => [l.id, l.timezone]));
+    const workDay = (at: Date, locationId: string | null): string =>
+      dateKeyInZone(at, (locationId ? locationZone.get(locationId) : null) ?? companyWorkweek().timezone);
     const associateFilter =
       input.scope === 'INDIVIDUAL' ? { associateId: input.associateId! } : {};
 
@@ -437,12 +445,12 @@ auditPacketRouter.post(
     // client's download fails visibly instead of hanging forever, and the
     // log names the failing section for ops.
     const startedAtMs = Date.now();
-    console.log('[audit-packet] start', {
+    logger.info({
       ref: refId,
       scope: input.scope,
       workers: associates.length,
       period: periodLabel,
-    });
+    }, '[audit-packet] start');
     try {
 
     const blobStore = getBlobStore();
@@ -513,8 +521,8 @@ auditPacketRouter.post(
       const open = rows.some((r) => r.endedAt === null);
       const to = open
         ? 'present'
-        : ymd(rows.reduce((m, r) => (r.endedAt! > m ? r.endedAt! : m), rows[0].endedAt!));
-      return `${ymd(from)} → ${to}`;
+        : day(rows.reduce((m, r) => (r.endedAt! > m ? r.endedAt! : m), rows[0].endedAt!));
+      return `${day(from)} → ${to}`;
     };
     const hiredSet = new Set(hiredForClient.map((h) => h.associateId));
     const basisFor = (associateId: string): string => {
@@ -641,7 +649,7 @@ auditPacketRouter.post(
             ymd(statusSinceOf(a)),
             statusReasonOf(a),
             statusSetByOf(a),
-            ymd(app?.startDate ?? null),
+            day(app?.startDate ?? null),
             sitesFor(a.id),
             assignmentSpanFor(a.id),
             basisFor(a.id),
@@ -840,7 +848,7 @@ auditPacketRouter.post(
         ['Worker', 'Date', 'Clock in (UTC)', 'Clock out (UTC)', 'Break minutes', 'Net worked minutes', 'Site', 'Status'],
         ...workedEntries.map((e) => [
           nameById.get(e.associateId) ?? e.associateId,
-          ymd(e.clockInAt),
+          workDay(e.clockInAt, e.locationId),
           iso(e.clockInAt),
           iso(e.clockOutAt),
           e.clockOutAt
@@ -874,8 +882,8 @@ auditPacketRouter.post(
         ['Worker', 'Period start', 'Period end', 'Run status', 'Hours', 'Gross', 'Federal tax', 'FICA', 'Medicare', 'State tax', 'Local tax', 'Net pay', 'Disbursed at'],
         ...payItems.map((it) => [
           `${it.associate.lastName}, ${it.associate.firstName}`,
-          ymd(it.payrollRun.periodStart),
-          ymd(it.payrollRun.periodEnd),
+          day(it.payrollRun.periodStart),
+          day(it.payrollRun.periodEnd),
           it.payrollRun.status,
           Number(it.hoursWorked).toFixed(2),
           Number(it.grossPay).toFixed(2),
@@ -977,7 +985,7 @@ auditPacketRouter.post(
         const data = await buildPaystubDataFromItem(prisma, it);
         const pdf = await renderPaystubPdf(data);
         append(pdf, {
-          name: `05-pay-records/paystubs/${safeName(`${it.associate.lastName}-${it.associate.firstName}`)}-${ymd(it.payrollRun.periodStart)}.pdf`,
+          name: `05-pay-records/paystubs/${safeName(`${it.associate.lastName}-${it.associate.firstName}`)}-${day(it.payrollRun.periodStart)}.pdf`,
         });
         stubCount += 1;
       } catch (err) {
@@ -991,9 +999,9 @@ auditPacketRouter.post(
           ['Worker', 'Period start', 'Period end', 'Pay date', 'Gross', 'Net', 'Method', 'Reference', 'Evidence files'],
           ...externalPayments.map((p) => [
             nameById.get(p.associateId) ?? p.associateId,
-            ymd(p.periodStart),
-            ymd(p.periodEnd),
-            ymd(p.payDate),
+            day(p.periodStart),
+            day(p.periodEnd),
+            day(p.payDate),
             p.grossAmount === null ? '' : Number(p.grossAmount).toFixed(2),
             p.netAmount === null ? '' : Number(p.netAmount).toFixed(2),
             p.method,
@@ -1005,7 +1013,7 @@ auditPacketRouter.post(
       );
       for (const p of externalPayments) {
         const worker = nameById.get(p.associateId) ?? p.associateId;
-        const stem = `05-pay-records/external-payments/${safeName(worker)}-${ymd(p.periodEnd)}`;
+        const stem = `05-pay-records/external-payments/${safeName(worker)}-${day(p.periodEnd)}`;
         // A letterheaded copy of the RECORD itself — the paystub-equivalent
         // for a period processed by the external payroll provider. The raw
         // evidence uploads accompany it under the same filename stem so an
@@ -1021,8 +1029,8 @@ auditPacketRouter.post(
         pdf.heading('Payment record');
         pdf.kv([
           { label: 'Worker', value: worker },
-          { label: 'Pay period', value: `${ymd(p.periodStart)} to ${ymd(p.periodEnd)}` },
-          { label: 'Pay date', value: ymd(p.payDate) || '—' },
+          { label: 'Pay period', value: `${day(p.periodStart)} to ${day(p.periodEnd)}` },
+          { label: 'Pay date', value: day(p.payDate) || '—' },
           { label: 'Gross amount', value: p.grossAmount === null ? '—' : money(p.grossAmount) },
           { label: 'Net amount', value: p.netAmount === null ? '—' : money(p.netAmount) },
           { label: 'Payment method', value: p.method.replace(/_/g, ' ') },
@@ -1326,14 +1334,14 @@ auditPacketRouter.post(
     }
 
     await archive.finalize();
-    console.log('[audit-packet] complete', {
+    logger.info({
       ref: refId,
       ms: Date.now() - startedAtMs,
       workers: associates.length,
       i9Docs: i9Docs.length,
       paystubs: stubCount,
       missingBlobs,
-    });
+    }, '[audit-packet] complete');
     } catch (err) {
       console.error('[audit-packet] generation failed mid-stream', {
         ref: refId,
@@ -1549,11 +1557,11 @@ auditPacketRouter.post(
     );
 
     const startedAtMs = Date.now();
-    console.log('[audit-packet] counsel-pdf start', {
+    logger.info({
       ref: refId,
       workers: associates.length,
       period: periodLabel,
-    });
+    }, '[audit-packet] counsel-pdf start');
 
     const blobStore = getBlobStore();
     const { PDFDocument } = await import('pdf-lib');
@@ -1563,7 +1571,7 @@ auditPacketRouter.post(
     // Breadcrumb per section — if generation dies (crash, OOM, kill),
     // the last logged section names the culprit in the server log.
     const logSection = (s: string): void =>
-      console.log('[audit-packet] counsel-pdf section', { ref: refId, section: s });
+      logger.info({ ref: refId, section: s }, '[audit-packet] counsel-pdf section');
 
     const addPdf = async (buf: Buffer | Uint8Array): Promise<void> => {
       const src = await PDFDocument.load(
@@ -2001,8 +2009,8 @@ auditPacketRouter.post(
       pdf.heading('Payment record');
       pdf.kv([
         { label: 'Worker', value: worker },
-        { label: 'Pay period', value: `${ymd(p.periodStart)} to ${ymd(p.periodEnd)}` },
-        { label: 'Pay date', value: ymd(p.payDate) || '—' },
+        { label: 'Pay period', value: `${day(p.periodStart)} to ${day(p.periodEnd)}` },
+        { label: 'Pay date', value: day(p.payDate) || '—' },
         { label: 'Gross amount', value: p.grossAmount === null ? '—' : money(p.grossAmount) },
         { label: 'Net amount', value: p.netAmount === null ? '—' : money(p.netAmount) },
         { label: 'Payment method', value: p.method.replace(/_/g, ' ') },
@@ -2171,7 +2179,7 @@ auditPacketRouter.post(
 
     logSection('assemble-and-save');
     const bytes = await merged.save();
-    console.log('[audit-packet] counsel-pdf complete', {
+    logger.info({
       ref: refId,
       ms: Date.now() - startedAtMs,
       workers: associates.length,
@@ -2180,7 +2188,7 @@ auditPacketRouter.post(
       missingBlobs,
       notEmbeddable,
       convertedDocs,
-    });
+    }, '[audit-packet] counsel-pdf complete');
     const fileName = `audit-response-${safeName(client.name)}-${input.periodStart}-to-${input.periodEnd}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);

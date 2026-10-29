@@ -29,6 +29,8 @@ import { matchClients } from '@/components/StoreScopeCombobox';
 import { cn } from '@/lib/cn';
 import '@/lib/i18n/en/tabs';
 import '@/lib/i18n/en/theme';
+import '@/lib/i18n/en/top';
+import { homeLabel, localizeModules, localizeShape } from '@/lib/navI18n';
 
 
 interface MobileNavProps {
@@ -51,7 +53,8 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const badgeFor = (rows: ModuleNav | ModuleNav[]): number | null => navBadgeFor(inbox.data, rows);
   const { pinned } = usePinnedModules();
   const recents = useRecentModules();
-  const visible = roleNavLabels(applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules), user?.role, t);
+  // Named in the reader's language (lib/navI18n): an associate's pages and doors.
+  const visible = localizeModules(roleNavLabels(applyTerms(visibleModules(user?.role, can, { regionId: user?.regionId, modules: tenant.modules, tenantId: tenant.id }), term, tenant.modules), user?.role, t), t);
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const pinnedModules = pinned
     .map((k) => byKey.get(k))
@@ -71,7 +74,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   // always-on rows, then the doors as headed sections. The client portal
   // keeps its own chrome, and the portal / region keys belong to its
   // BottomTabBar, so its rows are left to that.
-  const shape = navShapeFor(visible, user?.role, term);
+  const shape = localizeShape(navShapeFor(visible, user?.role, term), t);
   const coreItems = user?.role === 'CLIENT_PORTAL' ? [] : shape.rows;
 
   // Stay mounted through the closing animation. `if (!open) return null`
@@ -263,7 +266,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="-mr-2 grid h-10 w-10 place-items-center rounded text-silver hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="-mr-2 grid h-11 w-11 place-items-center rounded text-silver hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             aria-label={t('nav.closeMenu')}
           >
             <X className="h-5 w-5" />
@@ -281,7 +284,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
               className="flex h-11 w-full items-center gap-2.5 rounded-lg border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-silver transition-colors hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             >
               <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{t('nav.searchEverything')}</span>
+              <span className="truncate">{can('view:org') ? t('nav.searchEverything') : t('top.placeholderSelf')}</span>
             </button>
           </div>
         )}
@@ -289,7 +292,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
 
         <nav className="flex-1 overflow-y-auto overscroll-contain border-t border-navy-secondary py-2" onClick={onClose} aria-label={t('nav.mainAria')}>
           {!inTabBar.has(DASHBOARD_NAV.path) && (
-            <MobileLink to={DASHBOARD_NAV.path} active={activePath === DASHBOARD_NAV.path} label={DASHBOARD_NAV.label} icon={DASHBOARD_ICON} />
+            <MobileLink to={DASHBOARD_NAV.path} active={activePath === DASHBOARD_NAV.path} label={homeLabel(t)} icon={DASHBOARD_ICON} />
           )}
           {rows.map((m) => (
             <MobileLink key={m.key} to={m.path} active={activePath === m.path} label={m.label} icon={MODULE_ICONS[m.key]} badge={badgeFor(m)} />
@@ -332,8 +335,9 @@ function SheetGroup({ title, children }: { title: string; children: React.ReactN
 }
 
 function CountPill({ n }: { n: number }) {
+  const { t } = useI18n();
   return (
-    <span className="ml-auto grid h-5 min-w-[1.25rem] shrink-0 place-items-center rounded-full border border-gold/40 bg-gold/15 px-1.5 text-2xs font-semibold tabular-nums text-gold" aria-label={`${n} pending`}>
+    <span className="ml-auto grid h-5 min-w-[1.25rem] shrink-0 place-items-center rounded-full border border-gold/40 bg-gold/15 px-1.5 text-2xs font-semibold tabular-nums text-gold" aria-label={t('nav.pending', { n })}>
       {n > 99 ? '99+' : n}
     </span>
   );
@@ -496,6 +500,7 @@ interface MobileLinkProps {
 }
 
 function MobileLink({ to, label, icon: Icon, active, badge }: MobileLinkProps) {
+  const { t } = useI18n();
   return (
     <Link
       to={to}
@@ -506,7 +511,7 @@ function MobileLink({ to, label, icon: Icon, active, badge }: MobileLinkProps) {
       onTouchStart={() => prefetchRoute(to)}
       onMouseEnter={() => prefetchRoute(to)}
       className={cn(
-        'relative mx-2 my-0.5 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
+        'relative mx-2 my-0.5 flex min-h-11 items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
         'before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
         active
           ? 'bg-navy-secondary text-white before:opacity-100'
@@ -518,7 +523,7 @@ function MobileLink({ to, label, icon: Icon, active, badge }: MobileLinkProps) {
       {!!badge && (
         <span
           className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-2xs font-semibold tabular-nums"
-          aria-label={`${badge} pending`}
+          aria-label={t('nav.pending', { n: badge })}
         >
           {badge > 99 ? '99+' : badge}
         </span>

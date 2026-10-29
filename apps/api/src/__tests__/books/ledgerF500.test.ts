@@ -92,10 +92,24 @@ describe('the journal', () => {
     const csv = await f.get(`/books/journal.csv?accountId=${rent.id}&sort=amount&dir=asc`);
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toContain('text/csv');
-    const lines = (csv.text as string).split('\n');
-    expect(lines[0]).toBe('No.,Date,Memo,Accounts,From,Status,Amount,Reverses on');
-    expect(lines.slice(1).map((l) => l.split(',')[2])).toEqual(['Tiny', 'Small', 'Big']);
-    expect(lines[1]).toBe('3,2026-10-03,Tiny,Rent / Operating checking,Manual entry,Posted,50.00,');
+    // One row per LINE, through the shared writer (deep audit MONEY-22): BOM, CRLF, numbers numeric.
+    expect((csv.text as string).startsWith('\uFEFF')).toBe(true);
+    const lines = (csv.text as string).replace(/^\uFEFF/, '').split('\r\n');
+    expect(lines[0]).toBe('Entry,Date,Memo,Account,Account name,Debit,Credit,Line memo,Client,Site,From,Status,Reverses on');
+    expect(lines.slice(1).map((l) => l.split(',')[2])).toEqual(['Tiny', 'Tiny', 'Small', 'Small', 'Big', 'Big']);
+    const tiny = lines.slice(1, 3).map((l) => l.split(','));
+    expect(tiny.find((c) => c[4] === 'Rent')).toEqual(['3', '2026-10-03', 'Tiny', expect.any(String), 'Rent', '50', '0', '', '', '', 'Manual entry', 'Posted', '']);
+    expect(tiny.find((c) => c[4] === 'Operating checking')).toEqual(['3', '2026-10-03', 'Tiny', '1000', 'Operating checking', '0', '50', '', '', '', 'Manual entry', 'Posted', '']);
+    // Each entry's debits equal its credits in the file.
+    const sum = (col: number) => lines.slice(1).reduce((n, l) => n + Number(l.split(',')[col]), 0);
+    expect(sum(5)).toBe(sum(6));
+  });
+
+  it('a page past the end is empty, not a 500 (deep audit CODE-24)', async () => {
+    const f = await finance();
+    expect((await f.get('/books/journal?offset=1e20')).status).toBe(400);
+    expect((await f.get('/books/journal?offset=1.5')).status).toBe(400);
+    expect((await f.get('/books/journal?offset=5000')).body).toEqual({ entries: [], total: 0 });
   });
 
   it('the export is the books’: an executive reads it, marketing doesn’t', async () => {

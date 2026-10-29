@@ -21,7 +21,8 @@ import {
 } from '@/lib/timeApi';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { formatHM } from './punchFormat';
+import { fmtPunchTime, formatHM } from './punchFormat';
+import { reviewActions } from './entryActions';
 import '@/lib/i18n/en/pts';
 
 /** The /time-attendance entry editor, loaded only when "Fix time" opens it. */
@@ -140,6 +141,26 @@ export function PendingTimesheetsPanel({ className }: { className?: string }) {
       setBusy(null);
     }
   };
+  // A forgotten clock-out: approve with the clock-out set to the scheduled
+  // end in one call — the same shortcut the queue offers (./entryActions).
+  const approveAtShiftEnd = async (e: TimeEntry) => {
+    if (busy || isOwn(e) || !e.shiftEndsAt) return;
+    setBusy(e.id);
+    try {
+      await approveTimeEntry(e.id, { clockOutAt: e.shiftEndsAt });
+      toast.success(
+        t('pts.approvedAtEnd', {
+          name: e.associateName ?? t('pts.entry'),
+          time: fmtPunchTime(e.shiftEndsAt, e.locationTimezone),
+        }),
+      );
+      refresh();
+    } catch (err) {
+      fail(err, t('pts.couldNotApprove'));
+    } finally {
+      setBusy(null);
+    }
+  };
   const rejectOne = async (e: TimeEntry) => {
     const why = reason.trim();
     if (!why || busy) return;
@@ -222,6 +243,8 @@ export function PendingTimesheetsPanel({ className }: { className?: string }) {
             {shownFlagged.map((e) => {
               const mine = isOwn(e);
               const rowBusy = busy === e.id;
+              // One action set with the queue (./entryActions, deep audit FLOOR-22).
+              const actions = reviewActions(e, { own: mine });
               return (
                 <li
                   key={e.id}
@@ -264,17 +287,40 @@ export function PendingTimesheetsPanel({ className }: { className?: string }) {
                       </Button>
                     </span>
                   ) : (
-                    <span className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-1">
+                    <span
+                      className={cn(
+                        'grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-1',
+                        actions.includes('approveAtShiftEnd') ? 'grid-cols-2' : 'grid-cols-3',
+                      )}
+                    >
                       {/* A forgotten clock-out wants the right time, not a yes or no. */}
-                      <Button size="sm" variant="secondary" onClick={() => setFixing(e)} disabled={busy !== null}>
-                        {t('pts.fixTime')}
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => void approveOne(e)} loading={rowBusy} disabled={busy !== null}>
-                        {t('pts.approve')}
-                      </Button>
-                      <Button size="sm" variant="ghost" className="text-alert hover:bg-alert/10 hover:text-alert" onClick={() => setRejecting(e.id)} disabled={busy !== null}>
-                        {t('pts.reject')}
-                      </Button>
+                      {actions.includes('fix') && (
+                        <Button size="sm" variant="secondary" onClick={() => setFixing(e)} disabled={busy !== null}>
+                          {t('pts.fixTime')}
+                        </Button>
+                      )}
+                      {actions.includes('approveAtShiftEnd') && e.shiftEndsAt && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void approveAtShiftEnd(e)}
+                          loading={rowBusy}
+                          disabled={busy !== null}
+                          title={t('pts.approveAtEndTitle')}
+                        >
+                          {t('pts.approveAtEnd', { time: fmtPunchTime(e.shiftEndsAt, e.locationTimezone) })}
+                        </Button>
+                      )}
+                      {actions.includes('approve') && (
+                        <Button size="sm" variant="outline" onClick={() => void approveOne(e)} loading={rowBusy} disabled={busy !== null}>
+                          {t('pts.approve')}
+                        </Button>
+                      )}
+                      {actions.includes('reject') && (
+                        <Button size="sm" variant="ghost" className="text-alert hover:bg-alert/10 hover:text-alert" onClick={() => setRejecting(e.id)} disabled={busy !== null}>
+                          {t('pts.reject')}
+                        </Button>
+                      )}
                     </span>
                   )}
                 </li>

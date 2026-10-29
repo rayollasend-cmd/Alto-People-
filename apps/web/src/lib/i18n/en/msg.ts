@@ -41,6 +41,7 @@ export const enMsg = {
   'msg.tooLong': 'Messages are limited to {max} characters — shorten it, or send it as two.',
   'msg.recordNote': 'Messages can’t be edited or deleted — this thread is the record.',
   'msg.loadFailed': 'Messages could not load.',
+  'msg.thisConversation': 'this conversation',
 } as const;
 
 registerEnglish(enMsg);

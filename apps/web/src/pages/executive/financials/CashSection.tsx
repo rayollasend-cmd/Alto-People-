@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Landmark } from '@/components/ui/icons';
 import { fmtMoneyAxis } from '@/components/ui/charts/axes';
 import { PALETTE, TrendLineChart, isSparseTrend } from '@/components/ui/charts';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { fmtExecExact, fmtExecMoney } from '@/lib/executiveFormat';
 import { fmtDateOnly } from '@/lib/format';
@@ -35,6 +36,9 @@ export function lowPointSentence(cash: Cash, t: T): string | null {
  */
 export function CashSection({ cash }: { cash: ExecFinancials['cash'] }) {
   const { t } = useI18n();
+  // Desks open only for who can read them: the bank accounts are the
+  // books' (view:books), the cash forecast is payroll's (process:payroll).
+  const { can } = useAuth();
   if (!cash) {
     return (
       <Card>
@@ -44,9 +48,11 @@ export function CashSection({ cash }: { cash: ExecFinancials['cash'] }) {
             title={t('execPortal.fin.cash.connectTitle')}
             description={t('execPortal.fin.cash.connectBody')}
             action={
-              <Button asChild size="sm" variant="secondary">
-                <Link to="/books/bank">{t('execPortal.fin.cash.connectAction')}</Link>
-              </Button>
+              can('view:books') ? (
+                <Button asChild size="sm" variant="secondary">
+                  <Link to="/books/bank">{t('execPortal.fin.cash.connectAction')}</Link>
+                </Button>
+              ) : undefined
             }
           />
         </CardContent>
@@ -116,10 +122,15 @@ export function CashSection({ cash }: { cash: ExecFinancials['cash'] }) {
               title={t('execPortal.fin.cash.noForecast')}
               description={
                 <>
-                  {t('execPortal.fin.cash.noForecastBody')}{' '}
-                  <Link to="/finance/cash-forecast" className="text-accent underline-offset-4 hover:underline">
-                    {t('execPortal.fin.cash.openForecast')}
-                  </Link>
+                  {t('execPortal.fin.cash.noForecastBody')}
+                  {can('process:payroll') && (
+                    <>
+                      {' '}
+                      <Link to="/finance/cash-forecast" className="text-accent underline-offset-4 hover:underline">
+                        {t('execPortal.fin.cash.openForecast')}
+                      </Link>
+                    </>
+                  )}
                 </>
               }
             />

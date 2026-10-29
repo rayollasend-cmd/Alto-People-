@@ -4,6 +4,7 @@ import { createAssociate, createClient, createUser, prisma, truncateAll } from '
 import { ALTO_TENANT_ID, runWithTenant } from '../../lib/tenant.js';
 import { resolvePeriodWindow, runReport, type ReportSpec } from '../../lib/reportRun.js';
 import { rowMatches, runSpecOverRows } from '../../lib/reportComputed.js';
+import { activeHeadcount } from '../../lib/activeDefinition.js';
 import type { SessionUser } from '../../types/express.js';
 
 /**
@@ -64,29 +65,85 @@ describe('date-range presets', () => {
 });
 
 describe('headcount by store', () => {
-  it('counts the people working now by the store they are placed at', async () => {
+  // LEAD-9: the template "Headcount by store — people working now" counted
+  // account status (not separated, not paused): 44 where every other screen
+  // said 36. `active` is now Working — lib/activeDefinition, the number the
+  // executive home, Analytics and the clients list show.
+  it('counts the people WORKING now (the one definition of active) by the store they are placed at', async () => {
     const hr = await hrUser();
     const client = await createClient('Coastal');
     const a = await prisma.site.findFirstOrThrow({ where: { clientId: client.id } });
     await prisma.site.update({ where: { id: a.id }, data: { name: 'Front Beach' } });
     const b = await prisma.site.create({ data: { clientId: client.id, name: 'Harbor' } });
-    for (const [site, separated] of [[a.id, false], [a.id, false], [b.id, false], [b.id, true]] as const) {
+    const H = 3_600_000;
+    const recent = new Date('2026-10-20T12:00:00Z'); // inside the 14-day window before NOW
+    const stale = new Date('2026-09-01T12:00:00Z'); // outside it
+    const people: Array<[string, 'working' | 'stale' | 'separated' | 'paused']> = [
+      [a.id, 'working'],
+      [a.id, 'working'],
+      [a.id, 'stale'], // placed, no recent shifts: on the books, not working
+      [b.id, 'working'],
+      [b.id, 'separated'],
+      [b.id, 'paused'],
+    ];
+    for (const [site, kind] of people) {
       const p = await createAssociate();
       await placeAt(p.id, site);
-      if (separated) await prisma.associate.update({ where: { id: p.id }, data: { separatedAt: new Date('2026-09-01') } });
+      const at = kind === 'stale' ? stale : recent;
+      await prisma.timeEntry.create({ data: { associateId: p.id, clientId: client.id, locationId: site, clockInAt: at, clockOutAt: new Date(at.getTime() + 8 * H), status: 'APPROVED', anomalies: [] } });
+      if (kind === 'separated') await prisma.associate.update({ where: { id: p.id }, data: { separatedAt: new Date('2026-10-21T12:00:00Z') } });
+      if (kind === 'paused') await prisma.associate.update({ where: { id: p.id }, data: { deactivatedAt: new Date('2026-10-21T12:00:00Z') } });
     }
     const rows = await run('ASSOCIATE', { columns: ['store'], filters: [{ column: 'active', op: 'eq', value: true }], groupBy: ['store'], aggregates: [{ fn: 'count', column: null, alias: 'count' }] }, hr);
     expect(rows).toEqual([
       { store: 'Front Beach', count: 2 },
       { store: 'Harbor', count: 1 },
     ]);
+    // The same number the dashboards read (lib/activeDefinition).
+    const working = await runWithTenant(ALTO_TENANT_ID, 'job', () => activeHeadcount({ tenantId: ALTO_TENANT_ID }, NOW, prisma));
+    expect(rows.reduce((n, r) => n + Number(r.count), 0)).toBe(working);
+    // On the books (hired, not separated) and Placed are their own columns, named per the dictionary.
+    const standing = await run('ASSOCIATE', { columns: ['id', 'active', 'workStatus', 'onTheBooks', 'placed'], filters: [] }, hr);
+    expect(standing.filter((r) => r.onTheBooks === true)).toHaveLength(5);
+    expect(standing.filter((r) => r.placed === true)).toHaveLength(4);
+    expect(standing.map((r) => r.workStatus).sort()).toEqual(['ACTIVE', 'ACTIVE', 'ACTIVE', 'DEACTIVATED', 'PLACED_NOT_ACTIVE', 'SEPARATED']);
+
     // A list with the store beside the name, through the API with the builder's own validation.
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const http = await loginAs(agent(), user.email);
-    const r = await http.post('/reports/preview').send({ name: 'x', entity: 'ASSOCIATE', spec: { columns: ['firstName', 'store', 'client'], filters: [{ column: 'store', op: 'eq', value: 'Harbor' }], sort: [], limit: 50 } });
+    const r = await http.post('/reports/preview').send({ name: 'x', entity: 'ASSOCIATE', spec: { columns: ['firstName', 'store', 'client', 'active'], filters: [{ column: 'store', op: 'eq', value: 'Harbor' }], sort: [], limit: 50 } });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body.rows).toHaveLength(2);
+    // Only the placed person: the separated and the paused are placed nowhere.
+    expect(r.body.rows).toHaveLength(1);
     expect(r.body.rows[0]).toMatchObject({ store: 'Harbor', client: 'Coastal' });
+  });
+
+  it("a client's own account reads working at its client, and never another client's store", async () => {
+    const coastal = await createClient('Coastal');
+    const seaside = await createClient('Seaside');
+    const cSite = await prisma.site.findFirstOrThrow({ where: { clientId: coastal.id } });
+    const sSite = await prisma.site.findFirstOrThrow({ where: { clientId: seaside.id } });
+    const H = 3_600_000;
+    const recent = new Date('2026-10-20T12:00:00Z');
+    // Works at Coastal.
+    const here = await createAssociate();
+    await placeAt(here.id, cSite.id);
+    await prisma.timeEntry.create({ data: { associateId: here.id, clientId: coastal.id, locationId: cSite.id, clockInAt: recent, clockOutAt: new Date(recent.getTime() + 8 * H), status: 'APPROVED', anomalies: [] } });
+    // Placed at Coastal, but every recent shift was a Seaside fill-in.
+    const elsewhere = await createAssociate();
+    await placeAt(elsewhere.id, cSite.id);
+    await prisma.timeEntry.create({ data: { associateId: elsewhere.id, clientId: seaside.id, locationId: sSite.id, clockInAt: recent, clockOutAt: new Date(recent.getTime() + 8 * H), status: 'APPROVED', anomalies: [] } });
+
+    const { user } = await createUser({ role: 'CLIENT_PORTAL', clientId: coastal.id });
+    const portal = { ...user, primaryRole: user.role, availableRoles: [user.role], locationId: null, regionId: null, tokenVersion: 0, firstName: null, lastName: null, photoUrl: null, timezone: null } as unknown as SessionUser;
+    const rows = await run('ASSOCIATE', { columns: ['id', 'store', 'client', 'active'], filters: [] }, portal);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(here.id)).toMatchObject({ active: true, client: 'Coastal' });
+    // Working — at Seaside. At Coastal: placed, not working there; and Seaside's name never shows.
+    expect(byId.get(elsewhere.id)).toMatchObject({ active: false, client: 'Coastal' });
+    expect(rows.some((r) => r.client === 'Seaside' || r.store === sSite.name)).toBe(false);
+    const working = await runWithTenant(ALTO_TENANT_ID, 'job', () => activeHeadcount({ tenantId: ALTO_TENANT_ID, clientId: coastal.id }, NOW, prisma));
+    expect(rows.filter((r) => r.active === true)).toHaveLength(working);
   });
 });
 

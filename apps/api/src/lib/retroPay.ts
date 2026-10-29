@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { round2, sumApprovedHours } from './payroll.js';
 import { findInChunks } from './chunkedIn.js';
 import { payFor } from './laborRules/hours.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Retroactive pay.
@@ -39,7 +40,8 @@ export interface RetroCandidate {
   persistedId: string | null;
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** Run periods are date columns; a comp record's effectiveFrom is stored at its day's UTC midnight (read the same way on People → Compensation). */
+const ymd = dateColumnKey;
 const DAY_MS = 86_400_000;
 
 /**

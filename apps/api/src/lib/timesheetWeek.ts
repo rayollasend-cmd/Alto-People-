@@ -33,8 +33,8 @@ import type {
   TimesheetWeekResponse,
 } from '@alto-people/shared';
 import { paidMinutesForRange } from '@alto-people/shared';
-import { localDateKey, formatTimeInZone, DEFAULT_TIMEZONE } from './timezone.js';
-import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
+import { addDaysToKey, localDateKey, formatTimeInZone } from './timezone.js';
+import { companyWorkweek, netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
 import { attachFieldglass } from './fieldglassDesk.js';
 import { profilePhotoUrlFor } from './profilePhotoUrl.js';
@@ -70,7 +70,7 @@ export interface TimesheetSourceEntry {
   breaks: BreakFacts[];
   /**
    * The IANA timezone of the SITE where this entry was punched
-   * (Location.timezone, falling back to DEFAULT_TIMEZONE). Bucketing and
+   * (Location.timezone, falling back to the company's zone). Bucketing and
    * time display use this per entry — the sheet used to run everything
    * through a hardcoded America/New_York, so a Chicago site's Friday
    * 11:30pm clock-in read as Saturday 12:30am ET and migrated into the
@@ -99,14 +99,9 @@ export function saturdayWeek(instant: Date, timeZone: string): SaturdayWeek {
   const anchor = new Date(`${localKey}T12:00:00Z`);
   const dow = anchor.getUTCDay(); // 0=Sun … 6=Sat
   const daysBackToSat = (dow + 1) % 7; // Sat→0, Sun→1, … Fri→6
-  anchor.setUTCDate(anchor.getUTCDate() - daysBackToSat);
 
   const dateKeys: string[] = [];
-  for (let i = 0; i < 7; i += 1) {
-    const d = new Date(anchor);
-    d.setUTCDate(d.getUTCDate() + i);
-    dateKeys.push(d.toISOString().slice(0, 10));
-  }
+  for (let i = 0; i < 7; i += 1) dateKeys.push(addDaysToKey(localKey, i - daysBackToSat));
   return { weekStart: dateKeys[0], weekEnd: dateKeys[6], dateKeys };
 }
 
@@ -226,7 +221,7 @@ export async function buildTimesheetWeek(
     /** The billed dollars — never for a store-bound role. */
     showMoney?: boolean;
   },
-  timeZone: string = DEFAULT_TIMEZONE,
+  timeZone: string = companyWorkweek().timezone,
 ): Promise<TimesheetWeekResponse> {
   const week = saturdayWeek(input.weekStart, timeZone);
   const dateKeySet = new Set(week.dateKeys);
@@ -475,7 +470,7 @@ export async function fileTimesheetWeek(
     showMoney?: boolean;
   },
   filedById: string,
-  timeZone: string = DEFAULT_TIMEZONE,
+  timeZone: string = companyWorkweek().timezone,
 ): Promise<TimesheetWeekResponse> {
   const response = await buildTimesheetWeek(db, input, timeZone);
 
@@ -684,8 +679,8 @@ export function buildAssociateDays(
     let timeOutAt: Date | null = null;
     // Times render in the zone of the entry that produced them — the site's
     // wall clock, which is what the associate and their supervisor saw.
-    let timeInZone = DEFAULT_TIMEZONE;
-    let timeOutZone = DEFAULT_TIMEZONE;
+    let timeInZone = companyWorkweek().timezone;
+    let timeOutZone = timeInZone;
     const breaks: string[] = [];
     const shifts: Array<string | null> = [];
     let overnight = false;
@@ -755,7 +750,7 @@ export async function buildAssociateTimesheetDetail(
     clientId?: string;
     scopeWhere?: Prisma.TimeEntryWhereInput;
   },
-  timeZone: string = DEFAULT_TIMEZONE,
+  timeZone: string = companyWorkweek().timezone,
 ): Promise<TimesheetAssociateDetailResponse> {
   const week = saturdayWeek(input.weekStart, timeZone);
   const dateKeySet = new Set(week.dateKeys);

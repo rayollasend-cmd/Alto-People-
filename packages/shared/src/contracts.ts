@@ -255,6 +255,24 @@ export const ClientListResponseSchema = /* @__PURE__ */ (() => z.object({
 }))();
 export type ClientListResponse = z.infer<typeof ClientListResponseSchema>;
 
+/**
+ * GET /clients/options — the client picker for invites, applications,
+ * offers and bulk invites: id + name (+ status), scoped to the caller's
+ * clients, for anyone who may invite or onboard. No money, no counts.
+ */
+export const ClientOptionSchema = /* @__PURE__ */ (() => z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  status: ClientStatusSchema,
+  /** The client's home state, shown beside the name in pickers ("Acme — TX"). */
+  state: z.string().nullable(),
+}))();
+export type ClientOption = z.infer<typeof ClientOptionSchema>;
+export const ClientOptionsResponseSchema = /* @__PURE__ */ (() => z.object({
+  clients: z.array(ClientOptionSchema),
+}))();
+export type ClientOptionsResponse = z.infer<typeof ClientOptionsResponseSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Onboarding
  * -------------------------------------------------------------------------- */
@@ -270,6 +288,12 @@ export const ChecklistTaskSchema = /* @__PURE__ */ (() => z.object({
   completedAt: z.string().datetime().nullable(),
   /** Days before the application's start date this task is due. */
   dueOffsetDays: z.number().int().nullable().optional(),
+  /**
+   * For a DONE task that has something to show (W-4, direct deposit,
+   * policies, profile, I-9): whether it is actually on file. 'missing' =
+   * "marked done — nothing on file" (PEOPLE-17). Absent otherwise.
+   */
+  evidence: z.enum(['on_file', 'missing']).optional(),
 }))();
 export type ChecklistTask = z.infer<typeof ChecklistTaskSchema>;
 
@@ -582,13 +606,19 @@ export const RoleSchema = /* @__PURE__ */ (() => z.enum([
 
 export const UserStatusSchema = /* @__PURE__ */ (() => z.enum(['ACTIVE', 'DISABLED', 'INVITED']))();
 
-export const EMAIL_LANGUAGES = ['en', 'es', 'tr'] as const;
+// The account language (User.language): what Alto writes to this person in. Emails and
+// WhatsApp templates exist in en/es/tr and fall back to English; ride, call-out and
+// assistant messages speak all six (the app's associate languages).
+export const EMAIL_LANGUAGES = ['en', 'es', 'tr', 'ht', 'pt', 'uk'] as const;
 export const EmailLanguageSchema = /* @__PURE__ */ (() => z.enum(EMAIL_LANGUAGES))();
 export type EmailLanguage = z.infer<typeof EmailLanguageSchema>;
 export const EMAIL_LANGUAGE_LABELS: Record<EmailLanguage, string> = {
   en: 'English',
   es: 'Español',
   tr: 'Türkçe',
+  ht: 'Kreyòl ayisyen',
+  pt: 'Português',
+  uk: 'Українська',
 };
 
 export const AuthUserSchema = /* @__PURE__ */ (() => z.object({
@@ -1965,6 +1995,13 @@ export const ShiftSchema = /* @__PURE__ */ (() => z.object({
   // tied to a Location (legacy rows used the free-text `location` above).
   locationId: UuidSchema.nullable(),
   locationName: z.string().nullable(),
+  /** The store's street address on one line ("15495 Panama City Beach Pkwy,
+   *  Panama City Beach, FL 32413") and its point — what "Directions" opens,
+   *  never a search for the client and store code (ASSOC-10). Optional:
+   *  absent from older payloads; null when the site has none on file. */
+  locationAddress: z.string().nullable().optional(),
+  locationLat: z.number().nullable().optional(),
+  locationLng: z.number().nullable().optional(),
   // IANA timezone of the work site (from the shift's Location). The
   // calendar renders startsAt/endsAt in THIS zone so a manager viewing the
   // store from another timezone still sees the store's wall-clock times.
@@ -1988,6 +2025,8 @@ export const ShiftSchema = /* @__PURE__ */ (() => z.object({
   notes: z.string().nullable(),
   assignedAssociateId: UuidSchema.nullable(),
   assignedAssociateName: z.string().nullable(),
+  /** The holder's headshot URL; null when none is on file (no request, initials). Omitted by older paths. */
+  assignedAssociatePhotoUrl: z.string().nullable().optional(),
   assignedAt: z.string().datetime().nullable(),
   cancellationReason: z.string().nullable(),
   /** Server-computed convenience: minutes between startsAt and endsAt. */
@@ -2039,6 +2078,8 @@ export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
 export const ShiftTeammateSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   name: z.string(),
+  /** Their headshot URL; null when none is on file (no request, initials). */
+  photoUrl: z.string().nullable().optional(),
   position: z.string(),
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime(),
@@ -2879,6 +2920,8 @@ export const AssociateLiteSchema = /* @__PURE__ */ (() => z.object({
   firstName: z.string(),
   lastName: z.string(),
   email: z.string(),
+  /** The headshot URL (with its ?v= cache-buster), null when none is on file — no request, initials (web lib/photoUrl). */
+  photoUrl: z.string().nullable().optional(),
 }))();
 export type AssociateLite = z.infer<typeof AssociateLiteSchema>;
 
@@ -3098,6 +3141,8 @@ export const PayrollEarningKindSchema = /* @__PURE__ */ (() => z.enum([
   'DAILY_SETTLED',
   // Non-cash taxable income (group-term life over $50,000): taxed, never paid out. W-2 Box 12 C.
   'IMPUTED_INCOME',
+  // Wages owed for hours a past run never paid (the evening hours the old UTC pay-period cut missed). Regular wages.
+  'BACK_PAY',
 ]))();
 export type PayrollEarningKind = z.infer<typeof PayrollEarningKindSchema>;
 
@@ -3168,6 +3213,14 @@ export const PayrollItemSchema = /* @__PURE__ */ (() => z.object({
   /** State disability / paid-leave / employee UI contributions withheld (CA SDI, NJ TDI/FLI, WA PFML …):
    *  taxes with no column of their own, out of net. Absent when none. */
   stateProgramTaxes: z.array(z.object({ code: z.string(), label: z.string(), amount: z.number() })).optional(),
+  /** City / county / school-district income tax withheld (deep audit MONEY-12). A tax, out of net. */
+  localWithholding: z.number().nonnegative().optional(),
+  /** Expense reimbursements paid on the check: not wages, added to net (deep audit MONEY-12). */
+  reimbursementsTotal: z.number().nonnegative().optional(),
+  /** Every tax withheld from the check — federal, Social Security, Medicare, state, local and state
+   *  programs (deep audit MONEY-12). gross − taxesTotal − preTaxDeductions − postTaxDeductions +
+   *  reimbursementsTotal = netPay. */
+  taxesTotal: z.number().nonnegative().optional(),
   /** The kind of run that paid this check (REGULAR, OFF_CYCLE, AMENDMENT, DAILY, MANUAL) — on the associate's own list. */
   runKind: z.enum(['REGULAR', 'OFF_CYCLE', 'AMENDMENT', 'DAILY', 'MANUAL']).optional(),
   /** Van rides taken from this check (part of postTaxDeductions) — the
@@ -3898,6 +3951,8 @@ export const DocumentRecordSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
+  /** The owner's headshot URL; null when none is on file (no request, initials). */
+  associatePhotoUrl: z.string().nullable().optional(),
   clientId: UuidSchema.nullable(),
   kind: DocumentKindSchema,
   /** Federal catalog identity — null on legacy uploads + non-I-9 docs. */
@@ -4109,6 +4164,8 @@ export const BackgroundCheckSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string(),
+  /** The headshot URL; null when none is on file (no request, initials). */
+  associatePhotoUrl: z.string().nullable().optional(),
   clientId: UuidSchema.nullable(),
   /** Display name for clientId (the check's own client when recorded, else
    *  the associate's current placement) — feeds the client filter. */
@@ -4207,14 +4264,8 @@ export const BackgroundCheckListResponseSchema = /* @__PURE__ */ (() => z.object
 }))();
 export type BackgroundCheckListResponse = z.infer<typeof BackgroundCheckListResponseSchema>;
 
-export const BackgroundInitiateInputSchema = /* @__PURE__ */ (() => z.object({
-  associateId: UuidSchema,
-  provider: z.string().min(1).max(80).default('alto-stub'),
-  /** The provider's own reference (e.g. Checkr candidate/report id) so a
-   *  check ordered in an external portal is traceable from here. */
-  externalId: z.string().max(120).optional(),
-}))();
-export type BackgroundInitiateInput = z.infer<typeof BackgroundInitiateInputSchema>;
+// The stubbed POST /compliance/background is gone (deep audit, PEOPLE): orders go
+// through bulk-initiate, which checks the caller's reach.
 
 export const BackgroundUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   status: BgCheckStatusSchema,
@@ -4253,6 +4304,8 @@ export type BackgroundPendingResponse = z.infer<typeof BackgroundPendingResponse
 export const BackgroundBulkInitiateInputSchema = /* @__PURE__ */ (() => z.object({
   associateIds: z.array(UuidSchema).min(1).max(500),
   provider: z.string().min(1).max(80).default('checkr'),
+  /** The provider's own reference, for an order of ONE person placed in its portal. */
+  externalId: z.string().trim().max(120).optional(),
 }))();
 export type BackgroundBulkInitiateInput = z.infer<typeof BackgroundBulkInitiateInputSchema>;
 
@@ -4260,6 +4313,8 @@ export const BackgroundBulkInitiateResponseSchema = /* @__PURE__ */ (() => z.obj
   created: z.number().int().nonnegative(),
   /** Already had a check by the time this ran (raced with another admin). */
   skipped: z.number().int().nonnegative(),
+  /** The checks this call recorded. */
+  ids: z.array(UuidSchema).optional(),
 }))();
 export type BackgroundBulkInitiateResponse = z.infer<typeof BackgroundBulkInitiateResponseSchema>;
 
@@ -4323,12 +4378,7 @@ export const DrugTestListResponseSchema = /* @__PURE__ */ (() => z.object({
 }))();
 export type DrugTestListResponse = z.infer<typeof DrugTestListResponseSchema>;
 
-export const DrugTestInitiateInputSchema = /* @__PURE__ */ (() => z.object({
-  associateId: UuidSchema,
-  provider: z.string().min(1).max(80).default('checkr'),
-  externalId: z.string().max(120).optional(),
-}))();
-export type DrugTestInitiateInput = z.infer<typeof DrugTestInitiateInputSchema>;
+// The stubbed POST /compliance/drug-tests is gone (deep audit, PEOPLE): see bulk-initiate.
 
 export const DrugTestUpdateInputSchema = /* @__PURE__ */ (() => z.object({
   status: DrugTestStatusSchema,
@@ -4360,6 +4410,8 @@ export type DrugTestPendingResponse = z.infer<typeof DrugTestPendingResponseSche
 export const DrugTestBulkInitiateInputSchema = /* @__PURE__ */ (() => z.object({
   associateIds: z.array(UuidSchema).min(1).max(500),
   provider: z.string().min(1).max(80).default('checkr'),
+  /** The provider's own reference, for an order of ONE person placed in its portal. */
+  externalId: z.string().trim().max(120).optional(),
 }))();
 export type DrugTestBulkInitiateInput = z.infer<typeof DrugTestBulkInitiateInputSchema>;
 
@@ -4367,6 +4419,8 @@ export const DrugTestBulkInitiateResponseSchema = /* @__PURE__ */ (() => z.objec
   created: z.number().int().nonnegative(),
   /** Gained an open order by the time this ran (raced with another admin). */
   skipped: z.number().int().nonnegative(),
+  /** The orders this call recorded. */
+  ids: z.array(UuidSchema).optional(),
 }))();
 export type DrugTestBulkInitiateResponse = z.infer<typeof DrugTestBulkInitiateResponseSchema>;
 
@@ -4458,6 +4512,21 @@ export const DashboardKPIsSchema = /* @__PURE__ */ (() => z.object({
    *  `shiftsScheduled`, `applications`, `hires`). All-optional so older
    *  clients — and older servers — interop without a lockstep deploy. */
   trends: z.record(z.string(), KpiTrendSchema).optional(),
+  /** The company week so far (Saturday → Friday, company time zone) — the
+   *  dictionary's "Hours this week" and "Scheduled hours" (shared metrics.ts),
+   *  one source for Analytics and the ops director's home. `start`/`end` are
+   *  the week's first and last company days (YYYY-MM-DD). */
+  week: z
+    .object({
+      start: z.string(),
+      end: z.string(),
+      timezone: z.string(),
+      /** Paid hours clocked in since the week began (lib/paidHours). */
+      paidHours: z.number().nonnegative(),
+      /** Scheduled hours on the week's non-cancelled shifts (paidMinutesForRange). */
+      scheduledHours: z.number().nonnegative(),
+    })
+    .optional(),
 }))();
 export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
 
@@ -4705,6 +4774,11 @@ export const CandidateListResponseSchema = /* @__PURE__ */ (() => z.object({
   total: z.number().int(),
   offset: z.number().int(),
   limit: z.number().int(),
+  /**
+   * With a search: how many match in each stage, ignoring the stage filter —
+   * so the list can say "3 more in other stages" (PEOPLE-15).
+   */
+  stageCounts: z.partialRecord(CandidateStageSchema, z.number().int()).optional(),
 }))();
 export type CandidateListResponse = z.infer<typeof CandidateListResponseSchema>;
 
@@ -4915,6 +4989,8 @@ export const CandidateEventSchema = /* @__PURE__ */ (() => z.object({
   toStage: CandidateStageSchema.nullable(),
   body: z.string().nullable(),
   actorName: z.string().nullable(),
+  /** The actor's email — for a tooltip; the screen says their name (PEOPLE-21). */
+  actorEmail: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
 }))();
 export type CandidateEvent = z.infer<typeof CandidateEventSchema>;
@@ -5932,6 +6008,8 @@ export const TimeOffRequestSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
+  /** The requester's headshot URL; null when none is on file (no request, initials). */
+  associatePhotoUrl: z.string().nullable().optional(),
   category: TimeOffCategorySchema,
   startDate: z.string(),  // YYYY-MM-DD
   endDate: z.string(),
@@ -5977,7 +6055,8 @@ export type TimeOffAdminListQuery = z.infer<typeof TimeOffAdminListQuerySchema>;
 
 export const DepartmentSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
-  clientId: UuidSchema,
+  /** Null for a company-wide row (a direct employer's catalog names no client). */
+  clientId: UuidSchema.nullable(),
   parentId: UuidSchema.nullable(),
   name: z.string(),
   code: z.string().nullable(),
@@ -6003,7 +6082,8 @@ export type DepartmentInput = z.infer<typeof DepartmentInputSchema>;
 
 export const CostCenterSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
-  clientId: UuidSchema,
+  // null = a company-wide cost centre (e.g. the HR office) that belongs to no client.
+  clientId: UuidSchema.nullable(),
   code: z.string(),
   name: z.string(),
   description: z.string().nullable(),
@@ -6026,7 +6106,8 @@ export type CostCenterInput = z.infer<typeof CostCenterInputSchema>;
 
 export const JobProfileSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
-  clientId: UuidSchema,
+  /** Null for a company-wide row. */
+  clientId: UuidSchema.nullable(),
   code: z.string(),
   title: z.string(),
   family: z.string().nullable(),
@@ -6062,7 +6143,8 @@ export type JobProfileInput = z.infer<typeof JobProfileInputSchema>;
 // an admin-curated dropdown ("F&D Morning Shift", etc.).
 export const ShiftPositionSchema = /* @__PURE__ */ (() => z.object({
   id: UuidSchema,
-  clientId: UuidSchema,
+  /** Null for a company-wide row. */
+  clientId: UuidSchema.nullable(),
   name: z.string(),
   sortOrder: z.number().int(),
   /** Supervisor/lead position — drives the labor-cost report's
@@ -6194,6 +6276,12 @@ export const DirectoryEntrySchema = /* @__PURE__ */ (() => z.object({
   workplaceClientName: z.string().nullable(),
   position: z.string().nullable(),
   startDate: z.string().nullable(), // ISO date or null
+  /**
+   * Where startDate comes from (PEOPLE-10, one hire date): the employment
+   * record, the hire recorded at approval, or — not hired yet — the
+   * application's planned start (the only one the Profile edits).
+   */
+  startDateSource: z.enum(['employment', 'hire', 'application']).nullable().optional(),
   // Pay rate from the latest open CompensationRecord (effectiveTo=null).
   // Left out (not null) for a caller who may not read pay (view:comp):
   // null means "no rate on file", absent means "not yours to see".
@@ -6405,6 +6493,7 @@ export const APPROVAL_REQUEST_KINDS = [
   'VENDOR_BANK',
   'PERIOD_REOPEN',
   'PAY_RATE_BATCH',
+  'BACK_PAY',
 ] as const;
 export const ApprovalRequestKindSchema = /* @__PURE__ */ (() => z.enum(APPROVAL_REQUEST_KINDS))();
 export type ApprovalRequestKind = z.infer<typeof ApprovalRequestKindSchema>;
@@ -6429,6 +6518,7 @@ export const APPROVAL_REQUEST_KIND_LABELS: Record<ApprovalRequestKind, string> =
   VENDOR_BANK: 'Vendor bank account',
   PERIOD_REOPEN: 'Reopen a closed month',
   PAY_RATE_BATCH: 'Pay change for many people',
+  BACK_PAY: 'Back pay for missed hours',
 };
 
 export const ApprovalRequestStatusSchema = /* @__PURE__ */ (() => z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']))();
@@ -6659,6 +6749,8 @@ export const EVerifyRosterRowSchema = /* @__PURE__ */ (() => z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   associateEmail: z.string(),
+  /** The headshot URL; null when none is on file (no request, initials). */
+  associatePhotoUrl: z.string().nullable().optional(),
   /** The associate's current client (open assignment, else latest approved
    *  application) — feeds the client filter. Null mid-onboarding. */
   clientId: UuidSchema.nullable().optional(),
@@ -7519,6 +7611,8 @@ export const StatementSnapshotSchema = /* @__PURE__ */ (() => z.object({
   stores: z.array(
     z.object({ locationName: z.string(), hours: z.number(), amount: z.number() }),
   ),
+  /** Lines payroll passed through (retro pay rebilled, premiums billed by contract) — part of the total (deep audit MONEY-26). */
+  adjustments: z.array(z.object({ label: z.string(), basis: z.string().nullable().optional(), hours: z.number().nullable().optional(), amount: z.number() })).optional(),
   totals: z.object({
     hours: z.number(),
     regularHours: z.number(),
@@ -7564,6 +7658,8 @@ export const ClientStatementSchema = /* @__PURE__ */ (() => z.object({
   dueAt: z.string().nullable().optional(),
   reminderStage: z.number().int().optional(),
   lastReminderAt: z.string().datetime().nullable().optional(),
+  /** The client's sign-off on the store weeks this statement bills (portal hours sign-off) — present only where the client portal is on. */
+  hoursSignOff: z.object({ signed: z.number().int(), flagged: z.number().int() }).optional(),
 }))();
 export type ClientStatement = z.infer<typeof ClientStatementSchema>;
 

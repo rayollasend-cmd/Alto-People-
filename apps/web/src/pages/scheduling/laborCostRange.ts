@@ -38,6 +38,7 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
 export function isYmd(s: string | null | undefined): s is string {
   if (!s || !YMD.test(s)) return false;
   const d = new Date(`${s}T00:00:00Z`);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: round-trips a date key parsed at UTC midnight
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
@@ -45,6 +46,7 @@ export function isYmd(s: string | null | undefined): s is string {
 export function addDaysYmd(ymd: string, days: number): string {
   const [y, m, d] = ymd.split('-').map(Number);
   const dt = new Date(Date.UTC(y!, m! - 1, d! + days));
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on a date key built at UTC midnight
   return dt.toISOString().slice(0, 10);
 }
 

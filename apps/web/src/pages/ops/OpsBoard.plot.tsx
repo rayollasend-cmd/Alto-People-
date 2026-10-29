@@ -6,13 +6,13 @@ import {
   CartesianGrid,
   Cell,
   ReferenceArea,
-  ResponsiveContainer,
   Scatter,
   ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { PALETTE, TICK, TOOLTIP_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE, dateTicks } from '@/components/ui/charts';
 import type { getOpsInsights } from '@/lib/opsApi';
 

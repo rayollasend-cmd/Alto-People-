@@ -15,6 +15,9 @@ vi.mock('@/lib/onboardingApi', () => ({
   listClients: vi.fn().mockResolvedValue({
     clients: [{ id: 'c1', name: 'Coastal Resort', industry: 'hospitality', status: 'ACTIVE', state: 'FL' }],
   }),
+  listClientOptions: vi.fn().mockResolvedValue({
+    clients: [{ id: 'c1', name: 'Coastal Resort', industry: 'hospitality', status: 'ACTIVE', state: 'FL' }],
+  }),
   listTemplates: vi.fn().mockResolvedValue({ templates: [] }),
   payScheduleForHire: vi.fn(),
 }));

@@ -16,7 +16,7 @@ vi.mock('@/lib/learningPaths114Api', async (orig) => ({
 }));
 
 import { getLmsSummary, listEnrollments } from '@/lib/lms94Api';
-import { LearningHome } from '@/pages/learning/LearningHome';
+import { LearningCatalog } from '@/pages/learning/LearningCatalog';
 import { LearningPathsHome } from '@/pages/learningPaths/LearningPathsHome';
 
 /**
@@ -48,13 +48,13 @@ beforeEach(() => {
 
 describe('Learning (admin)', () => {
   it('opens on the numbers, each a link to the list behind it', async () => {
-    renderAs('HR_ADMINISTRATOR', <LearningHome />, '/learning');
+    renderAs('HR_ADMINISTRATOR', <LearningCatalog />, '/learning/catalog');
     const strip = await screen.findByRole('group', { name: 'Training at a glance' });
     await within(strip).findByText('1 within 14 days');
     const tile = (label: string) => within(strip).getByText(label).closest('a')!;
-    expect(tile('Lapsed')).toHaveAttribute('href', '/learning?tab=expiring');
+    expect(tile('Lapsed')).toHaveAttribute('href', '/learning/catalog?tab=expiring');
     expect(within(tile('Expiring in 30 days')).getByText('1 within 14 days')).toBeInTheDocument();
-    expect(tile('Not finished')).toHaveAttribute('href', '/learning?tab=enrollments&status=OPEN');
+    expect(tile('Not finished')).toHaveAttribute('href', '/learning/catalog?tab=enrollments&status=OPEN');
     expect(within(tile('Not finished')).getByText('1 assigned 30+ days ago')).toBeInTheDocument();
     expect(await within(tile('Completion rate · 30 days')).findByText('50%')).toBeInTheDocument();
     expect(within(tile('Completion rate · 30 days')).getByText('1 of 2 assigned in the last 30 days')).toBeInTheDocument();
@@ -63,19 +63,19 @@ describe('Learning (admin)', () => {
 
   it('says so when nothing was assigned in 30 days, instead of 0%', async () => {
     vi.mocked(getLmsSummary).mockResolvedValue({ lapsed: 1, expiring30: 0, expiring14: 0, open: 0, openStale: 0, assigned30: 0, completed30: 0, completionRate30: null });
-    renderAs('HR_ADMINISTRATOR', <LearningHome />, '/learning');
+    renderAs('HR_ADMINISTRATOR', <LearningCatalog />, '/learning/catalog');
     expect(await screen.findByText('Nothing assigned in 30 days')).toBeInTheDocument();
   });
 
   it('gives one quiet line instead of four zeros when there is nothing to chase', async () => {
     vi.mocked(getLmsSummary).mockResolvedValue({ lapsed: 0, expiring30: 0, expiring14: 0, open: 0, openStale: 0, assigned30: 0, completed30: 0, completionRate30: null });
-    renderAs('HR_ADMINISTRATOR', <LearningHome />, '/learning');
+    renderAs('HR_ADMINISTRATOR', <LearningCatalog />, '/learning/catalog');
     expect(await screen.findByText(/No training is open, lapsed or expiring/)).toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Training at a glance' })).not.toBeInTheDocument();
   });
 
   it('lands on the enrollments the "Not finished" tile names', async () => {
-    renderAs('HR_ADMINISTRATOR', <LearningHome />, '/learning?tab=enrollments&status=OPEN');
+    renderAs('HR_ADMINISTRATOR', <LearningCatalog />, '/learning/catalog?tab=enrollments&status=OPEN');
     expect(screen.getByRole('tab', { name: /Enrollments/, selected: true })).toBeInTheDocument();
     expect(await screen.findByText('Ana Ruiz')).toBeInTheDocument();
     expect(screen.getByText('Ben Cole')).toBeInTheDocument();
@@ -88,6 +88,7 @@ describe('Learning (admin)', () => {
     expect(await screen.findByText('No learning paths yet')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Search paths…')).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /New path/ }).length).toBeGreaterThan(0);
-    expect(screen.getByRole('link', { name: 'Courses & enrollments' })).toHaveAttribute('href', '/learning');
+    // The catalog lives at /learning/catalog now (People › Courses & training — PEOPLE-19).
+    expect(screen.getByRole('link', { name: 'Courses & enrollments' })).toHaveAttribute('href', '/learning/catalog');
   });
 });

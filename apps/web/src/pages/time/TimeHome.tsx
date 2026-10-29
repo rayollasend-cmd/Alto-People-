@@ -96,13 +96,25 @@ export function TimeHome() {
     return <AdminTimeView canManage={canManage} personal={<ClockNotSetUpStrip />} />;
   }
 
-  // Non-associate, non-manager roles with view:time (e.g. EXECUTIVE_CHAIRMAN,
-  // FINANCE_ACCOUNTANT) — read-only queue.
+  // Non-associate, non-manager roles with view:time (the EXECUTIVE_CHAIRMAN).
+  // Every queue read is manage:time's, so they get the
+  // live board — who's on the clock — and nothing that would only 403 and
+  // then read as "Nothing waiting" (deep audit CRAWL-10). A role that never
+  // punches (the chairman) isn't told her clock isn't set up.
   if (hasAssociateRecord) {
     return <AssociateTimeView />;
   }
-  return <AdminTimeView canManage={false} personal={<ClockNotSetUpStrip />} />;
+  return (
+    <AdminTimeView
+      canManage={false}
+      liveOnly
+      personal={user && NEVER_CLOCKS_IN.has(user.role) ? undefined : <ClockNotSetUpStrip />}
+    />
+  );
 }
+
+/** Roles that never clock in — no "your clock isn't set up" row for them. */
+const NEVER_CLOCKS_IN: ReadonlySet<string> = new Set(['EXECUTIVE_CHAIRMAN']);
 
 /** A staff viewer who may clock in from the app but has no person record
  *  linked yet: the server would refuse with no_associate_record, so say so

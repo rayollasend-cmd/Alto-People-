@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { personName } from './clientActivity.js';
 import type { PayrollRun, PayrollRunKind, Prisma, PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
@@ -137,6 +138,7 @@ export interface PayrollReviewReport {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const num = (d: Prisma.Decimal | number | null | undefined) => (d == null ? 0 : Number(d));
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column (stored at UTC midnight) or a UTC-midnight anchor.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 const ITEM_SELECT = {
@@ -450,11 +452,16 @@ export async function buildPayrollReview(db: Db, runId: string): Promise<Payroll
 
 export interface SignoffView {
   id: string;
+  /** The reviewer as people say them — never the email (deep audit MONEY-25); the email rides beside it. */
   signedByName: string | null;
+  signedByEmail?: string | null;
   signedAt: string;
   note: string | null;
   soleReviewer: boolean;
 }
+
+/** Who signed, with what a name is built from (lib/clientActivity.personName). */
+export const SIGNER_SELECT = { email: true, displayName: true, associate: { select: { firstName: true, lastName: true } } } as const;
 
 export interface ReviewState {
   /** The tenant (or the deployment) requires a sign-off before payout, and this kind of run is reviewed. */
@@ -474,8 +481,8 @@ export async function reviewRequired(db: Db, run: Pick<PayrollRun, 'kind'>): Pro
   return (await loadApprovalPolicy(db)).payrollReviewRequired;
 }
 
-function view(r: { id: string; signedAt: Date; note: string | null; soleReviewer: boolean; signedBy: { email: string } | null }): SignoffView {
-  return { id: r.id, signedByName: r.signedBy?.email ?? null, signedAt: r.signedAt.toISOString(), note: r.note, soleReviewer: r.soleReviewer };
+function view(r: { id: string; signedAt: Date; note: string | null; soleReviewer: boolean; signedBy: { email: string; displayName: string | null; associate: { firstName: string; lastName: string } | null } | null }): SignoffView {
+  return { id: r.id, signedByName: r.signedBy ? personName(r.signedBy) : null, signedByEmail: r.signedBy?.email ?? null, signedAt: r.signedAt.toISOString(), note: r.note, soleReviewer: r.soleReviewer };
 }
 
 /** Why this person can't sign this run, or null when they can. */
@@ -495,7 +502,7 @@ export async function reviewState(db: Db, run: Pick<PayrollRun, 'id' | 'kind' | 
       where: { payrollRunId: run.id },
       orderBy: { signedAt: 'desc' },
       take: 10,
-      select: { id: true, fingerprint: true, signedAt: true, note: true, soleReviewer: true, signedBy: { select: { email: true } } },
+      select: { id: true, fingerprint: true, signedAt: true, note: true, soleReviewer: true, signedBy: { select: SIGNER_SELECT } },
     }),
     signBlock(db, run, userId),
   ]);
@@ -536,7 +543,7 @@ export async function signPayrollReview(
         soleReviewer: sole,
         totals: { people: report.totals.people, gross: report.totals.gross, net: report.totals.net, cashRequired: report.cash.total } as Prisma.InputJsonValue,
       },
-      select: { id: true, signedAt: true, note: true, soleReviewer: true, signedBy: { select: { email: true } } },
+      select: { id: true, signedAt: true, note: true, soleReviewer: true, signedBy: { select: SIGNER_SELECT } },
     });
     // The sign-off is the run's approval: the existing "approved by" stays true to it.
     await tx.payrollRun.update({ where: { id: run.id }, data: { approvedById: input.userId, approvedAt: created.signedAt } });
@@ -562,7 +569,7 @@ export async function assertRunReviewed(db: Db, run: Pick<PayrollRun, 'id' | 'ki
   const latest = await db.payrollRunReview.findFirst({
     where: { payrollRunId: run.id },
     orderBy: { signedAt: 'desc' },
-    select: { fingerprint: true, signedAt: true, signedBy: { select: { email: true } } },
+    select: { fingerprint: true, signedAt: true, signedBy: { select: SIGNER_SELECT } },
   });
   if (!latest) {
     throw new HttpError(409, 'review_required', 'Someone needs to review this run’s report and sign off before it pays out.');
@@ -571,7 +578,7 @@ export async function assertRunReviewed(db: Db, run: Pick<PayrollRun, 'id' | 'ki
     throw new HttpError(
       409,
       'review_stale',
-      `The numbers changed after ${latest.signedBy?.email ?? 'the reviewer'} signed off. Review the report again before paying.`,
+      `The numbers changed after ${latest.signedBy ? personName(latest.signedBy) : 'the reviewer'} signed off. Review the report again before paying.`,
     );
   }
 }

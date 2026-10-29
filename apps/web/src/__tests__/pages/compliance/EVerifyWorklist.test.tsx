@@ -127,4 +127,30 @@ describe('E-Verify worklist (HR walk 3 and 22)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear the day filter' }));
     expect(screen.getByText('Bea Boone')).toBeInTheDocument();
   });
+
+  it('says "can\'t submit yet", not "blocked", and an unreadable SSN never reads as no SSN beside its last four (PEOPLE-27)', async () => {
+    vi.mocked(listEVerifyRoster).mockResolvedValue({
+      rows: [
+        row('a5', 'Rosa Vega', { ssnLast4: '6789', blockers: ['NO_SSN'], ready: false }),
+        row('a6', 'Tom Noss', { ssnLast4: null, blockers: ['NO_SSN'], ready: false }),
+        // Already authorized: what a new case would need doesn't apply.
+        row('a7', 'Ada Done', { status: 'EMPLOYMENT_AUTHORIZED', caseNumber: '2026999', caseOpenedAt: new Date().toISOString(), ssnLast4: null, blockers: ['NO_SSN'], ready: false }),
+      ],
+      counts: { total: 3, authorized: 1, pending: 0, nonconfirmation: 0, notRun: 2, overdue: 0, blocked: 3 },
+      truncated: false,
+    } as Awaited<ReturnType<typeof listEVerifyRoster>>);
+    renderAt('/compliance?tab=everify');
+    expect(await screen.findByText('Rosa Vega')).toBeInTheDocument();
+    expect(screen.getByText("Can't submit yet")).toBeInTheDocument();
+    // The total names who it counts (PEOPLE-23), not "Associates".
+    expect(screen.getByText('Hired or onboarding')).toBeInTheDocument();
+    expect(screen.queryByText('Associates')).toBeNull();
+    // Two with no case yet; the authorized one isn't counted.
+    expect(screen.getByText("Can't submit yet").nextElementSibling).toHaveTextContent('2');
+    expect(screen.queryByText('Blocked')).toBeNull();
+    expect(screen.getByText("SSN can't be read — collect it again")).toBeInTheDocument();
+    expect(screen.getAllByText('No SSN on file')).toHaveLength(1);
+    expect(screen.getByText('Case on file')).toBeInTheDocument();
+    expect(screen.queryByText(/No readable SSN/)).toBeNull();
+  });
 });

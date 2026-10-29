@@ -39,6 +39,9 @@ export const enPts = {
   'pts.daysAgo_one': '{count} day ago',
   'pts.period': 'pay period {range}',
   'pts.periodPaid': 'pay period {range}, paid',
+  'pts.approveAtEnd': 'Approve at shift end {time}',
+  'pts.approveAtEndTitle': 'Approve with the clock-out set to the scheduled shift end',
+  'pts.approvedAtEnd': '{name} approved — clock-out set to the scheduled {time}.',
 } as const;
 
 registerEnglish(enPts);

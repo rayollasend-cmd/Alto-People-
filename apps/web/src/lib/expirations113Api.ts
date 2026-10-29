@@ -19,6 +19,11 @@ export interface ExpirationsResponse {
   expired: ExpirationItem[];
   dueSoon: ExpirationItem[];
   dueLater: ExpirationItem[];
+  /**
+   * A column holding more than the 500 rows it draws says so (the counts are
+   * exact; search covers only the drawn rows). Older answers lack it.
+   */
+  truncated?: { expired: boolean; dueSoon: boolean; dueLater: boolean };
 }
 
 export const getExpirations = (params?: { days?: number; isCert?: boolean }) => {

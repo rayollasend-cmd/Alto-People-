@@ -6,6 +6,11 @@ import { NO_LIVE_RULES, payFor, splitHours, type HoursEntry, type PayRules } fro
 import { loadLiveRules } from './live.js';
 import { loadRulePool, rulesForSite } from './store.js';
 import type { RuleSetDef } from './params.js';
+import { logger } from '../logger.js';
+import { dateColumnKey } from '../timezone.js';
+import { paidPunchFilters } from '../payrollRunCut.js';
+import { punchFetchRange } from '../payrollSchedule.js';
+import { runWithTenant } from '../tenant.js';
 
 /**
  * Brief 2-2 step 3 — the engine in shadow (report §6.4).
@@ -81,16 +86,22 @@ export function shadowAssociate(pool: readonly RuleSetDef[], associateId: string
 
 /** Every paid associate of a run, compared. Reads only. */
 export async function shadowPayrollRun(db: Db, runId: string): Promise<{ run: { id: string; tenantId: string; periodStart: Date; periodEnd: Date }; results: ShadowResult[] }> {
-  const run = await db.payrollRun.findUniqueOrThrow({ where: { id: runId }, select: { id: true, tenantId: true, clientId: true, periodStart: true, periodEnd: true } });
+  const run = await db.payrollRun.findUniqueOrThrow({ where: { id: runId }, select: { id: true, tenantId: true, clientId: true, periodStart: true, periodEnd: true, payrollScheduleId: true, kind: true, timeCut: true } });
   const tenantId = run.tenantId ?? '00000000-0000-4000-8000-000000000001';
   const items = await db.payrollItem.findMany({ where: { payrollRunId: run.id }, select: { associateId: true, hourlyRate: true } });
   const [pool, live] = await Promise.all([loadRulePool(db, tenantId), loadLiveRules(db, tenantId)]);
-  const periodEndExclusive = new Date(run.periodEnd.getTime() + 86_400_000);
+  // The punches the run paid, cut as payroll cut them: by the site's day under
+  // the run's own timeCut (deploy carry-in included) — never by UTC midnights,
+  // which moved a Friday-evening shift into the next period. Under the run's
+  // tenant: the sweep runs platform-wide.
+  const paid = items.length ? (await runWithTenant(tenantId, 'job', () => paidPunchFilters(db, [run]))).get(run.id)! : () => false;
   const entries = items.length
-    ? await db.timeEntry.findMany({
-        where: { status: 'APPROVED', associateId: { in: items.map((i) => i.associateId) }, clockInAt: { gte: run.periodStart, lt: periodEndExclusive }, ...(run.clientId ? { clientId: run.clientId } : {}) },
-        select: { associateId: true, clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: { select: { id: true, state: true, city: true, timezone: true } } },
-      })
+    ? (
+        await db.timeEntry.findMany({
+          where: { status: 'APPROVED', associateId: { in: items.map((i) => i.associateId) }, clockInAt: punchFetchRange({ periodStart: dateColumnKey(run.periodStart), periodEnd: dateColumnKey(run.periodEnd) }), ...(run.clientId ? { clientId: run.clientId } : {}) },
+          select: { associateId: true, clientId: true, clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: { select: { id: true, state: true, city: true, timezone: true } } },
+        })
+      ).filter((e) => paid(e))
     : [];
   const byAssociate = new Map<string, ShadowEntry[]>();
   for (const e of entries) {
@@ -169,7 +180,7 @@ export function startLaborShadowCron(db: Db): void {
   tick();
   timer = setInterval(tick, SWEEP_MS);
   timer.unref();
-  console.log('[alto-people/api] labor rules shadow armed (hourly; finalized runs of the last 120 days)');
+  logger.info('labor rules shadow armed (hourly; finalized runs of the last 120 days)');
 }
 
 export function stopLaborShadowCron(): void {

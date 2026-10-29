@@ -138,14 +138,18 @@ describe('self-serve background check — never an automatic pass', () => {
     expect(row.status).not.toBe('PASSED');
   });
 
-  it('the manual compliance route still records a check, and a pass recorded by hand completes the task', async () => {
+  it('a check run elsewhere is recorded by hand, and a pass recorded by hand completes the task', async () => {
     const w = await world();
-    await consent(w); // NOT_RUN
-    const made = await w.hr.post('/compliance/background').send({ associateId: w.associate.id, provider: 'Sterling (portal)', externalId: 'ST-9' });
-    expect(made.status, JSON.stringify(made.body)).toBe(201);
-    expect(made.body).toMatchObject({ status: 'INITIATED', provider: 'Sterling (portal)', viaProvider: false });
+    const consented = await consent(w); // NOT_RUN — the consent's own check row
+    // The NOT_RUN row is the person's check: a pass recorded on it by hand completes the task.
+    // (The stubbed POST /compliance/background that wrote a second, 'alto-stub' row is gone.)
+    expect((await w.hr.post('/compliance/background').send({ associateId: w.associate.id, provider: 'Sterling (portal)' })).status).toBe(404);
+    const row = await prisma.backgroundCheck.findFirstOrThrow({ where: { associateId: w.associate.id } });
+    expect(consented.body.status).toBe('NOT_RUN');
+    const made = await w.hr.get(`/compliance/background/${row.id}`);
+    expect(made.body.check).toMatchObject({ viaProvider: false });
 
-    const passed = await w.hr.post(`/compliance/background/${made.body.id}/update`).send({ status: 'PASSED' });
+    const passed = await w.hr.post(`/compliance/background/${row.id}/update`).send({ status: 'PASSED' });
     expect(passed.status).toBe(200);
     expect((await prisma.onboardingTask.findUniqueOrThrow({ where: { id: w.bgTask.id } })).status).toBe('DONE');
   });

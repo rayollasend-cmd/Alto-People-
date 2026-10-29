@@ -8,7 +8,8 @@ import type { Request } from 'express';
 import { recordTimeEvent } from './audit.js';
 import { matchShiftForPunch } from './matchShiftForPunch.js';
 import { notifyAssociate } from './notify.js';
-import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
+import { siteTimeZone } from './siteDay.js';
+import { formatTimeInZone } from './timezone.js';
 
 const MAX_AGE_MS = 14 * 3_600_000;
 
@@ -68,9 +69,11 @@ export async function approveWalkInRequest(
     },
     req,
   });
+  // The time on the store's clock (the company's when the punch named no store).
+  const tz = await siteTimeZone(request.locationId, prisma);
   void notifyAssociate(request.associateId, {
     subject: "You're clocked in",
-    body: `Your supervisor approved your clock-in — you are on the clock as of ${formatTimeInZone(request.requestedAt, DEFAULT_TIMEZONE)}. No need to punch again; clock out at the kiosk as usual.`,
+    body: `Your supervisor approved your clock-in — you are on the clock as of ${formatTimeInZone(request.requestedAt, tz)}. No need to punch again; clock out at the kiosk as usual.`,
     category: 'time_entry',
     linkUrl: `/time-attendance?entry=${entry.id}`, // the entry just opened
   });

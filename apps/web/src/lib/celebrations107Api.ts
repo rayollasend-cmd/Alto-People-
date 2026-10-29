@@ -12,6 +12,8 @@ export interface CelebrationItem {
   siteName?: string | null;
   clientId?: string | null;
   clientName?: string | null;
+  /** The headshot URL; null when none is on file (no request, initials). */
+  photoUrl?: string | null;
 }
 
 export const listUpcomingCelebrations = (days = 60) =>

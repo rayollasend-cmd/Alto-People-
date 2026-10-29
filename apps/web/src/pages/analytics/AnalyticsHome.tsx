@@ -8,7 +8,7 @@ import {
   Download,
   ShieldCheck,
 } from '@/components/ui/icons';
-import type { DashboardKPIs, KpiTrend } from '@alto-people/shared';
+import { METRICS, type DashboardKPIs, type KpiTrend } from '@alto-people/shared';
 import { PALETTE } from '@/components/ui/charts/palette';
 import { TrendLineChart, fmtMoneyAxis } from '@/components/ui/charts';
 import { ChartFrame } from '@/components/ui/ChartFrame';
@@ -16,7 +16,7 @@ import { apiFetch } from '@/lib/api';
 import type { FinanceOverview, MarginWeek } from '@/pages/finance/financeTypes';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDateOnly, fmtMoney, fmtMoneyCompact, ymdLocal } from '@/lib/format';
+import { fmtDateOnly, fmtDateOnlyRange, fmtMoney, fmtMoneyCompact, ymdLocal } from '@/lib/format';
 import { urlNumber, useUrlState, type UrlCodec } from '@/lib/useUrlState';
 import { Card, CardContent } from '@/components/ui/Card';
 import { MetricCard, type MetricDelta, type TrendGood } from '@/components/ui/MetricCard';
@@ -97,9 +97,15 @@ export function AnalyticsHome() {
       ['Metric', 'Value'],
       ['Window (days)', kpis.windowDays],
       ...(kpis.onTheBooks !== undefined ? [['On the books', kpis.onTheBooks] as [string, number]] : []),
-      [`Working (${activeDays} days)`, kpis.activeAssociates],
-      [`${workers} clocked in`, kpis.associatesClockedIn],
-      [`Open shifts (next ${kpis.windowDays}d)`, kpis.openShiftsNext30d],
+      [`${METRICS.working.label} (${activeDays} days)`, kpis.activeAssociates],
+      [`${METRICS.onTheFloor.label} (${workers.toLowerCase()} clocked in)`, kpis.associatesClockedIn],
+      ...(kpis.week
+        ? [
+            [`${METRICS.hoursThisWeek.label} (${kpis.week.start} to ${kpis.week.end})`, kpis.week.paidHours] as [string, number],
+            [`${METRICS.scheduledHours.label} this week`, kpis.week.scheduledHours] as [string, number],
+          ]
+        : []),
+      [`${METRICS.openShifts.label} (next ${kpis.windowDays}d)`, kpis.openShiftsNext30d],
       ['Pending onboarding applications', kpis.pendingOnboardingApplications],
       ['Pending I-9 Section 2', kpis.pendingI9Section2],
       ['Pending document reviews', kpis.pendingDocumentReviews],
@@ -144,17 +150,25 @@ export function AnalyticsHome() {
                 {/* The two named numbers every page shows (apps/api/src/lib/peopleStatus.ts):
                     "On the books" and "Working", each with its definition. */}
                 {kpis.onTheBooks !== undefined && (
-                  <MetricCard label="On the books" value={kpis.onTheBooks.toString()} hint="Hired and not separated" href="/people" />
+                  <MetricCard
+                    label={METRICS.onTheBooks.label}
+                    value={fmtInt(kpis.onTheBooks)}
+                    valueTitle={METRICS.onTheBooks.definition}
+                    hint="Hired and not separated"
+                    href="/people"
+                  />
                 )}
                 <MetricCard
-                  label={`Working (${activeDays} days)`}
-                  value={kpis.activeAssociates.toString()}
+                  label={`${METRICS.working.label} (${activeDays} days)`}
+                  value={fmtInt(kpis.activeAssociates)}
+                  valueTitle={METRICS.working.definition}
                   hint={`Placed, and worked in the last ${activeDays} days or has a shift ahead`}
                   href="/people?workStatus=ACTIVE"
                 />
                 <MetricCard
-                  label="Clocked in right now"
-                  value={kpis.associatesClockedIn.toString()}
+                  label={METRICS.onTheFloor.label}
+                  value={fmtInt(kpis.associatesClockedIn)}
+                  valueTitle={METRICS.onTheFloor.definition}
                   hint={
                     kpis.activeAssociates > 0
                       ? `${Math.round((kpis.associatesClockedIn / kpis.activeAssociates) * 100)}% of those working`
@@ -164,9 +178,16 @@ export function AnalyticsHome() {
                 />
                 {kpis.trends?.hoursWorked && (
                   <MetricCard
-                    label="Hours worked · last week"
+                    label={`${METRICS.paidHours.label} · last week`}
                     value={fmtHours(lastComplete(kpis.trends.hoursWorked))}
-                    hint={`${fmtHours(kpis.trends.hoursWorked.series.at(-1) ?? 0)} so far this week`}
+                    valueTitle={METRICS.paidHours.definition}
+                    // "Hours this week" is the dictionary's: the company week
+                    // (Saturday → Friday) so far, the number the ops home shows.
+                    hint={
+                      kpis.week
+                        ? `${METRICS.hoursThisWeek.label}: ${fmtHours(kpis.week.paidHours)} of ${fmtHours(kpis.week.scheduledHours)} scheduled · ${fmtDateOnlyRange(kpis.week.start, kpis.week.end)}`
+                        : `${fmtHours(kpis.trends.hoursWorked.series.at(-1) ?? 0)} so far this week`
+                    }
                     href="/time-attendance"
                     delta={weekly(kpis.trends.hoursWorked, 'vs the week before', 'neutral', fmtHours)}
                   />
@@ -183,16 +204,17 @@ export function AnalyticsHome() {
             {kpis ? (
               <MetricStrip label="Scheduling and pay">
                 <MetricCard
-                  label={`Open shifts (next ${kpis.windowDays} days)`}
-                  value={kpis.openShiftsNext30d.toString()}
-                  hint={`Shifts without an assigned ${term('worker').toLowerCase()}`}
-                  href="/scheduling"
+                  label={`${METRICS.openShifts.label} (next ${kpis.windowDays} days)`}
+                  value={fmtInt(kpis.openShiftsNext30d)}
+                  valueTitle={METRICS.openShifts.definition}
+                  hint={`Published, with no ${term('worker').toLowerCase()} assigned yet`}
+                  href="/scheduling?open=1"
                 />
                 {kpis.trends?.shiftsScheduled && (
                   <MetricCard
                     label="Shifts scheduled · last week"
-                    value={lastComplete(kpis.trends.shiftsScheduled).toLocaleString()}
-                    hint={`${(kpis.trends.shiftsScheduled.series.at(-1) ?? 0).toLocaleString()} on this week's schedule`}
+                    value={fmtInt(lastComplete(kpis.trends.shiftsScheduled))}
+                    hint={`${fmtInt(kpis.trends.shiftsScheduled.series.at(-1) ?? 0)} on this week's schedule`}
                     href="/scheduling"
                     delta={weekly(kpis.trends.shiftsScheduled, 'vs the week before', 'neutral')}
                   />
@@ -223,20 +245,20 @@ export function AnalyticsHome() {
               <MetricStrip label="Onboarding and compliance">
                 <MetricCard
                   label="Pending applications"
-                  value={kpis.pendingOnboardingApplications.toString()}
+                  value={fmtInt(kpis.pendingOnboardingApplications)}
                   tone={kpis.pendingOnboardingApplications > 0 ? 'warning' : 'default'}
                   href="/onboarding"
                   delta={weekly(kpis.trends?.applications, 'new vs the week before', 'neutral')}
                 />
                 <MetricCard
                   label="I-9 Section 2 backlog"
-                  value={kpis.pendingI9Section2.toString()}
+                  value={fmtInt(kpis.pendingI9Section2)}
                   tone={kpis.pendingI9Section2 > 0 ? 'warning' : 'default'}
                   href="/compliance?tab=i9"
                 />
                 <MetricCard
                   label="Documents to review"
-                  value={kpis.pendingDocumentReviews.toString()}
+                  value={fmtInt(kpis.pendingDocumentReviews)}
                   tone={kpis.pendingDocumentReviews > 0 ? 'warning' : 'default'}
                   href="/documents"
                 />
@@ -278,7 +300,10 @@ function Section({ title, icon: Icon, description, children }: SectionProps) {
   );
 }
 
-const fmtHours = (n: number) => `${Math.round(n).toLocaleString()}h`;
+// Thousands separators on every count and hour (LEAD-28); Intl directly — toLocale* is lint-banned.
+const INT_FMT = new Intl.NumberFormat('en-US');
+const fmtInt = (n: number) => INT_FMT.format(n);
+const fmtHours = (n: number) => `${INT_FMT.format(Math.round(n))}h`;
 
 /** The last complete week (the final bucket is the week in progress). */
 function lastComplete(t: KpiTrend): number {
@@ -310,9 +335,9 @@ function ApplicationsTile({ counts }: { counts: Record<string, number> }) {
   return (
     <MetricCard
       label="Applications"
-      value={total.toLocaleString()}
+      value={fmtInt(total)}
       nothing={total === 0 ? 'No applications yet' : undefined}
-      hint={entries.map(([st, n]) => `${n.toLocaleString()} ${(STATUS_LABELS[st] ?? sentenceCase(st)).toLowerCase()}`).join(' · ')}
+      hint={entries.map(([st, n]) => `${fmtInt(n)} ${(STATUS_LABELS[st] ?? sentenceCase(st)).toLowerCase()}`).join(' · ')}
       meter={total > 0 ? { percent: Math.round((approved / total) * 100), tone: 'good' } : null}
       href="/onboarding"
     />
@@ -323,10 +348,16 @@ function ApplicationsTile({ counts }: { counts: Record<string, number> }) {
 const moneyChange = (n: number) => `${n < 0 ? '\u2212' : '+'}${fmtMoneyCompact(Math.abs(n))}`;
 
 /**
- * Revenue, labor cost and margin, week by week — the Finance home's
- * numbers (approved hours × bill rate against what payroll pays for them),
- * from the same read, so "Revenue · last week" is one figure on both pages.
- * Complete weeks only: the week in progress would dip every line.
+ * Billing and margin after wages, week by week — the Finance home's numbers
+ * (approved hours × the client's contract bill rate against the wages
+ * payroll pays for them), from the same read, so the two pages agree.
+ *
+ * Named by the metric dictionary (packages/shared metrics.ts): this is
+ * "Billed at contract rates" and "Margin after wages", NOT the executive
+ * pages' "Revenue" and "Gross margin" — those are priced at the standard
+ * rates and also take out employer burden and overhead, so they read
+ * lower (20.8% there against 30% here was one label on two measures,
+ * LEAD-5). Complete weeks only: the week in progress would dip every line.
  */
 function MoneySection() {
   const q = useQuery({ queryKey: ['finance', 'overview'], queryFn: () => apiFetch<FinanceOverview>('/finance/overview'), staleTime: 60_000, retry: false });
@@ -338,36 +369,46 @@ function MoneySection() {
   const rows = weeks.map((w) => ({ week: w.weekEnd, revenue: w.revenue, wages: w.wages, margin: pts(w) }));
   const sum = (k: 'revenue' | 'wages') => weeks.reduce((s, w) => s + w[k], 0);
   return (
-    <Section title="Revenue and margin" icon={DollarSign} description="Approved hours at the client's bill rate against what payroll pays for them, week by week.">
+    <Section
+      title="Billing and margin after wages"
+      icon={DollarSign}
+      description={METRICS.marginAfterWages.definition}
+    >
       {q.isError ? (
-        <QueryError what="revenue and margin" query={q} />
+        <QueryError what="billing and margin" query={q} />
       ) : !q.data ? (
         <SkeletonGrid count={4} />
       ) : !any || !last ? (
-        <MetricStrip label="Revenue and margin" empty="No approved hours in the last eight weeks yet, so there is no revenue or margin to show.">
+        <MetricStrip label="Billing and margin after wages" empty="No approved hours in the last eight weeks yet, so there is no billing or margin to show.">
           {null}
         </MetricStrip>
       ) : (
         <div className="space-y-3">
-          <MetricStrip label="Revenue and margin">
+          <MetricStrip label="Billing and margin after wages">
+            {/* The dictionary's names as the labels (they fit two lines at 1024);
+                the week goes in the hint, with its dates. */}
             <MetricCard
-              label="Revenue · last week"
+              label={METRICS.billedAtContractRates.label}
               value={fmtMoney(last.revenue)}
+              valueTitle={METRICS.billedAtContractRates.definition}
+              hint={`Last week, ${fmtDateOnlyRange(last.weekStart, last.weekEnd)}`}
               href="/labor-costs"
               delta={prev ? { value: last.revenue - prev.revenue, label: 'vs the week before', good: 'up', format: (n) => fmtMoneyCompact(Math.abs(n)) } : undefined}
             />
             <MetricCard
-              label="Labor cost · last week"
+              label="Wages"
               value={fmtMoney(last.wages)}
+              hint="Last week: what payroll pays for those hours, overtime included"
               href="/labor-costs"
               delta={prev ? { value: last.wages - prev.wages, label: 'vs the week before', good: 'neutral', format: (n) => fmtMoneyCompact(Math.abs(n)) } : undefined}
             />
             <MetricCard
-              label="Gross margin · last week"
+              label={METRICS.marginAfterWages.label}
               value={pts(last) === null ? '' : `${pts(last)}%`}
+              valueTitle={METRICS.marginAfterWages.definition}
               nothing={pts(last) === null ? 'No billed hours last week' : undefined}
               tone={pts(last) !== null && pts(last)! < 0 ? 'alert' : 'default'}
-              hint={`${fmtMoney(last.margin)} after wages`}
+              hint={`${fmtMoney(last.margin)} last week · before burden and overhead`}
               deltaText={
                 pts(last) !== null && pts(prev) !== null
                   ? { text: `${pts(last)! - pts(prev)! >= 0 ? '+' : '\u2212'}${Math.abs(pts(last)! - pts(prev)!)} pts vs the week before`, tone: pts(last)! >= pts(prev)! ? 'good' : 'bad' }
@@ -375,23 +416,23 @@ function MoneySection() {
               }
             />
             <MetricCard
-              label={`Revenue · ${weeks.length} weeks`}
+              label={`Billed over ${weeks.length} weeks`}
               value={fmtMoney(sum('revenue'))}
-              hint={`${moneyChange(sum('revenue') - sum('wages'))} after wages`}
+              hint={`At contract rates · ${moneyChange(sum('revenue') - sum('wages'))} after wages`}
               href="/labor-costs"
             />
           </MetricStrip>
           <div className="grid gap-3 lg:grid-cols-2">
             <ChartFrame
-              title="Revenue and labor cost by week"
-              summary={`Revenue ran ${fmtMoney(sum('revenue'))} over ${weeks.length} weeks against ${fmtMoney(sum('wages'))} in wages; last week ${fmtMoney(last.revenue)} against ${fmtMoney(last.wages)}.`}
+              title="Billed at contract rates and wages, by week"
+              summary={`Billing at contract rates ran ${fmtMoney(sum('revenue'))} over ${weeks.length} weeks against ${fmtMoney(sum('wages'))} in wages; last week ${fmtMoney(last.revenue)} against ${fmtMoney(last.wages)}.`}
               columns={[
                 { key: 'week', label: 'Week ending', format: (v) => fmtDateOnly(String(v), { year: 'auto' }) },
-                { key: 'revenue', label: 'Revenue', numeric: true, format: (v) => fmtMoney(Number(v)) },
-                { key: 'wages', label: 'Labor cost', numeric: true, format: (v) => fmtMoney(Number(v)) },
+                { key: 'revenue', label: METRICS.billedAtContractRates.label, numeric: true, format: (v) => fmtMoney(Number(v)) },
+                { key: 'wages', label: 'Wages', numeric: true, format: (v) => fmtMoney(Number(v)) },
               ]}
               rows={rows}
-              csvName="revenue-and-labor-cost"
+              csvName="billed-and-wages"
               height={240}
             >
               <TrendLineChart
@@ -400,21 +441,21 @@ function MoneySection() {
                 xDates="day"
                 heading={(v) => `Week ending ${fmtDateOnly(v, { year: 'auto' })}`}
                 series={[
-                  { key: 'revenue', name: 'Revenue', color: PALETTE.primary },
-                  { key: 'wages', name: 'Labor cost', color: PALETTE.secondary },
+                  { key: 'revenue', name: 'Billed', color: PALETTE.primary },
+                  { key: 'wages', name: 'Wages', color: PALETTE.secondary },
                 ]}
                 format={fmtMoneyAxis}
               />
             </ChartFrame>
             <ChartFrame
-              title="Gross margin by week"
-              summary={`Gross margin was ${pts(last) ?? 0}% last week${pts(prev) !== null ? `, ${pts(prev)}% the week before` : ''}.`}
+              title={`${METRICS.marginAfterWages.label}, by week`}
+              summary={`${METRICS.marginAfterWages.label} was ${pts(last) ?? 0}% last week${pts(prev) !== null ? `, ${pts(prev)}% the week before` : ''}.`}
               columns={[
                 { key: 'week', label: 'Week ending', format: (v) => fmtDateOnly(String(v), { year: 'auto' }) },
-                { key: 'margin', label: 'Margin', numeric: true, format: (v) => (v === null ? '' : `${v}%`) },
+                { key: 'margin', label: METRICS.marginAfterWages.label, numeric: true, format: (v) => (v === null ? '' : `${v}%`) },
               ]}
               rows={rows}
-              csvName="gross-margin-by-week"
+              csvName="margin-after-wages-by-week"
               height={240}
               zerosMeaningful
             >
@@ -423,9 +464,9 @@ function MoneySection() {
                 x="week"
                 xDates="day"
                 heading={(v) => `Week ending ${fmtDateOnly(v, { year: 'auto' })}`}
-                series={[{ key: 'margin', name: 'Gross margin', color: PALETTE.tertiary }]}
+                series={[{ key: 'margin', name: METRICS.marginAfterWages.label, color: PALETTE.tertiary }]}
                 format={(v) => `${v}%`}
-                zeroBased={false}
+                // From zero (LEAD-22): a 29–30% axis drew a one-point move as a cliff.
                 // The break-even line only where a week came near it: otherwise it sat on the axis, over the dates.
                 target={rows.some((r) => r.margin !== null && r.margin <= 2) ? { value: 0, label: 'Break-even' } : undefined}
               />

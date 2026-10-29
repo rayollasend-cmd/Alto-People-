@@ -1,5 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { tenantJob } from './tenantJobs.js';
+import { armJob, isJobArmed, stopJob } from './jobs.js';
+import { logger } from './logger.js';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { assertSafeOutboundUrl } from './safeOutboundUrl.js';
@@ -338,30 +340,31 @@ export async function deliverPendingDeliveries(
   return result;
 }
 
-let timer: NodeJS.Timeout | null = null;
+export const WEBHOOK_DELIVERY_JOB = 'webhookDelivery';
+
+/**
+ * Brief 2-4: plain-text secrets still on file are sealed once, before any
+ * delivery signs with them — per tenant: the webhook table is behind the
+ * tenancy wall, and the boot has no tenant of its own (CRAWL-5).
+ */
+export function sealLegacyWebhookSecretsEverywhere(db: PrismaClient = defaultPrisma): Promise<unknown> {
+  return tenantJob('webhookSecretSeal', () => sealLegacyWebhookSecrets(db))();
+}
 
 export function startWebhookDeliveryCron(): void {
-  if (timer) return;
+  if (isJobArmed(WEBHOOK_DELIVERY_JOB)) return;
   const seconds = env.WEBHOOK_DELIVERY_INTERVAL_SECONDS;
   if (seconds <= 0) return;
-  // Brief 2-4: plain-text secrets still on file are sealed once, before any delivery signs with them.
-  void sealLegacyWebhookSecrets(defaultPrisma).catch((err) => console.error('[alto-people/api] sealing webhook secrets failed:', err));
-  const tick = () => {
-    void tenantJob('webhookDispatch', deliverPendingDeliveries)().catch((err) => {
-      console.error('[alto-people/api] webhook delivery sweep failed:', err);
-    });
-  };
-  tick();
-  timer = setInterval(tick, seconds * 1000);
-  timer.unref();
-  console.log(
-    `[alto-people/api] webhook delivery cron armed (every ${seconds}s; ` +
-      `max ${MAX_DELIVERY_ATTEMPTS} attempts, backoff ${RETRY_BACKOFF_MINUTES.join('/')}min)`,
-  );
+  void sealLegacyWebhookSecretsEverywhere().catch((err) => logger.error({ err }, 'sealing webhook secrets failed'));
+  // Through the registry: a slow receiver can't make two ticks claim the same rows at once.
+  armJob({
+    name: WEBHOOK_DELIVERY_JOB,
+    label: `Webhook deliveries (max ${MAX_DELIVERY_ATTEMPTS} attempts, backoff ${RETRY_BACKOFF_MINUTES.join('/')} min)`,
+    intervalSeconds: seconds,
+    run: tenantJob('webhookDispatch', deliverPendingDeliveries),
+  });
 }
 
 export function stopWebhookDeliveryCron(): void {
-  if (!timer) return;
-  clearInterval(timer);
-  timer = null;
+  stopJob(WEBHOOK_DELIVERY_JOB);
 }

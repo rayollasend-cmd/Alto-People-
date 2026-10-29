@@ -87,6 +87,21 @@ describe('the statement week close', () => {
     await waitFor(() => expect(books.recordClientPayment).toHaveBeenCalledWith(expect.objectContaining({ clientId: C1, amount: 1000, depositAccountId: 'acc-op', applications: [{ statementId: FINAL, amount: 1000 }] })));
   });
 
+  it('at 1024 the bottom line stays in the table: period, hours, due and days late leave it first (deep audit MONEY-15)', async () => {
+    // The grid's own box at 1024 with the sidebar open (~674px).
+    const spy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(674);
+    renderAs('FINANCE_ACCOUNTANT', <ClientStatementsRollup />, '/clients/statements');
+    const table = await screen.findByRole('table', { name: 'Client statements' });
+    const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    expect(headers.some((h) => h.includes('Amount'))).toBe(true);
+    expect(headers.some((h) => h.includes('Actions'))).toBe(true);
+    expect(headers.some((h) => h.includes('Days late'))).toBe(false);
+    expect(headers.some((h) => h.includes('Period'))).toBe(false);
+    expect(headers.some((h) => h.includes('Hours'))).toBe(false);
+    expect(headers.some((h) => /^Due/.test(h))).toBe(false);
+    spy.mockRestore();
+  });
+
   it('deltaOf: the change and whether it is worth a look', () => {
     expect(deltaOf(52, 40)).toEqual({ diff: 12, pct: 0.3, flag: true });
     expect(deltaOf(42, 40)).toMatchObject({ diff: 2, flag: false });

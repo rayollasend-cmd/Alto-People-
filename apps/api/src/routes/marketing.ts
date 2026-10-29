@@ -16,6 +16,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyUser } from '../lib/notify.js';
 import { aggregateAndPersistRun } from './payroll.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Marketing: the careers site's funnel, the employer brand page, referral
@@ -234,8 +235,8 @@ function campaignOut(c: {
     bonusAmount: Number(c.bonusAmount),
     currency: c.currency,
     payAfterDays: c.payAfterDays,
-    startsOn: c.startsOn.toISOString().slice(0, 10),
-    endsOn: c.endsOn ? c.endsOn.toISOString().slice(0, 10) : null,
+    startsOn: dateColumnKey(c.startsOn),
+    endsOn: c.endsOn ? dateColumnKey(c.endsOn) : null,
     positions: c.positions,
     status: c.status as 'DRAFT' | 'ACTIVE' | 'CLOSED',
     referrals: c._count?.referrals ?? 0,
@@ -469,7 +470,7 @@ marketingRouter.get('/marketing/bonus-payouts', requireAuth, requireAnyCapabilit
     : [];
   res.json({
     payouts: rows.map(payoutOut),
-    draftRuns: runs.map((r) => ({ id: r.id, periodStart: r.periodStart.toISOString().slice(0, 10), periodEnd: r.periodEnd.toISOString().slice(0, 10), kind: r.kind })),
+    draftRuns: runs.map((r) => ({ id: r.id, periodStart: dateColumnKey(r.periodStart), periodEnd: dateColumnKey(r.periodEnd), kind: r.kind })),
   });
 });
 

@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { orgDateKey } from '../../timeAnomalies.js';
 import { tenantIdForWrite } from '../../tenant.js';
 import { lastEndedPeriod, runDepreciation } from '../assets/depreciation.js';
 import { reverseEntry } from '../ledger.js';
@@ -14,7 +15,8 @@ import { reverseEntry } from '../ledger.js';
  *     without it is posted into the first open month and flagged.
  */
 export async function runCloseJobs(db: PrismaClient, now: Date = new Date()): Promise<{ reversed: number; depreciation: number }> {
-  const today = now.toISOString().slice(0, 10);
+  // The company's day (CODE-14): an accrual reverses on the company's date, not UTC's.
+  const today = orgDateKey(now);
   const tenantId = tenantIdForWrite();
   const due = await db.journalEntry.findMany({
     where: { tenantId, status: 'POSTED', reverseOn: { lte: new Date(`${today}T00:00:00.000Z`) } },
@@ -27,6 +29,7 @@ export async function runCloseJobs(db: PrismaClient, now: Date = new Date()): Pr
   let reversed = 0;
   for (const e of due) {
     if (done.has(`reversal:${e.id}`)) continue;
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: reverseOn is a @db.Date stored at UTC midnight.
     await reverseEntry(db, e.id, { date: e.reverseOn!.toISOString().slice(0, 10), memo: `Reverses accrual #${e.number}${e.memo ? ` — ${e.memo}` : ''}` });
     reversed += 1;
   }

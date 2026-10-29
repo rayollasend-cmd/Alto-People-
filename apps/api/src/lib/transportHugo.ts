@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import type { WaLang } from './whatsappContent.js';
 
 /**
@@ -43,7 +43,7 @@ export async function answerDriverNextRun(db: Db, driverUserId: string, lang: Wa
   if (!run) {
     return lang === 'es' ? 'No tienes ninguna ruta planificada por ahora. Transporte te avisa cuando te asigne una.' : lang === 'tr' ? 'Şu an planlanmış bir rotan yok. Ulaşım bir rota atadığında haber verir.' : 'No run is planned for you right now. Transportation tells you when one is yours.';
   }
-  const tz = run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE;
+  const tz = run.rides[0]?.location.timezone ?? companyWorkweek().timezone;
   const store = run.rides[0]?.location.name ?? '';
   const n = run.rides.length;
   const when = fmt(run.departAt, tz, lang);
@@ -66,7 +66,7 @@ export async function answerDriverNextRun(db: Db, driverUserId: string, lang: Wa
 export async function answerDriverRiders(db: Db, driverUserId: string, lang: WaLang, now = new Date()): Promise<string> {
   const run = await nextRun(db, driverUserId, now);
   if (!run) return answerDriverNextRun(db, driverUserId, lang, now);
-  const tz = run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE;
+  const tz = run.rides[0]?.location.timezone ?? companyWorkweek().timezone;
   const lines = run.rides.map((r) => {
     const place = run.direction === 'TO_WORK' ? (r.stop?.name ?? r.address ?? '') : r.location.name;
     const at = r.pickupAt ? ` · ${new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(r.pickupAt)}` : '';

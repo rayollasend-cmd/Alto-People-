@@ -30,26 +30,6 @@
       "acceptedBy": "engineering (Brief 2-5 step 7), for owner review",
       "acceptedOn": "2026-10-15",
       "expires": "2027-01-15"
-    },
-    {
-      "package": "node-forge",
-      "via": "@alto-people/api > node-forge",
-      "severity": "high",
-      "advisory": "RSA PKCS#1 v1.5 signature verification accepts extra nested DigestAlgorithm elements (GHSA-86w9-cpqp-85rv)",
-      "reason": "Reached only by lib/appleWallet.ts, which uses node-forge to SIGN Apple Wallet passes with the company's own certificate; the advisory is in signature VERIFICATION, which this code never performs on anything. No fixed release is published yet (npm offers none); revisit when 1.4.1+ lands.",
-      "acceptedBy": "engineering, for owner review",
-      "acceptedOn": "2026-10-20",
-      "expires": "2027-01-20"
-    },
-    {
-      "package": "sharp",
-      "via": "@alto-people/api > sharp; @alto-people/web (build-time PWA icons only)",
-      "severity": "high",
-      "advisory": "Inherited libvips / libheif / librsvg vulnerabilities (GHSA-f88m-g3jw-g9cj, GHSA-rgj7-g3m4-5g8c, GHSA-wq5f-xc86-pv6w)",
-      "reason": "At run time sharp resizes only an associate's own stored profile photo (routes/nativeApp.ts, wallet passes), an image that was already accepted and stored by the photo upload with its type and size checks; the web app uses it only at build time on the repository's own icon. No fixed release is published yet (npm offers none); upgrade when one lands.",
-      "acceptedBy": "engineering, for owner review",
-      "acceptedOn": "2026-10-20",
-      "expires": "2027-01-20"
     }
   ]
 }

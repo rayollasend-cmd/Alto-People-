@@ -92,10 +92,6 @@ export function listPayNotices() {
   return apiFetch<{ notices: PayNotice[]; truncated: boolean }>('/pay-compliance/pay-notices');
 }
 
-export function issuePayNotice(associateId: string) {
-  return apiFetch<{ notice: PayNotice }>('/pay-compliance/pay-notices', { method: 'POST', body: { associateId } });
-}
-
 export function remindPayNotice(id: string) {
   return apiFetch<{ ok: true }>(`/pay-compliance/pay-notices/${id}/remind`, { method: 'POST' });
 }

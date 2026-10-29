@@ -52,11 +52,15 @@ export const ENTITY_COLUMNS: Record<string, Record<string, string>> = {
     hireDate: 'hireDate',
     employmentType: 'employmentType',
     separatedAt: 'separatedAt',
-    // Computed (lib/reportComputed): where the person works now, and whether
-    // they are still working (not separated, not paused) — headcount by store.
+    // Computed (lib/reportComputed): where the person is placed, and where
+    // they stand by the one rule — `active` is Working (lib/activeDefinition,
+    // the number every screen shows), not account status (LEAD-9).
     store: 'store',
     client: 'client',
     active: 'active',
+    workStatus: 'workStatus',
+    onTheBooks: 'onTheBooks',
+    placed: 'placed',
   },
   // The right-hand side must be a REAL Prisma scalar. Several of these
   // named columns that don't exist on the model (clockIn/clockOut,

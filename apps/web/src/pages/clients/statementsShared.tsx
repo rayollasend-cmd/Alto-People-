@@ -11,6 +11,10 @@ import {
 } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { DateField } from '@/components/ui/DateField';
+import { Select } from '@/components/ui/Select';
+import { CLIENT_PAYMENT_METHOD_LABELS, type ClientPaymentMethodKind } from '@alto-people/shared';
+import { ymdLocal } from '@/lib/format';
 
 /**
  * Bits shared between the per-client StatementsSection (ClientDetail) and
@@ -76,21 +80,28 @@ export function MarkPaidDialog({
   /** e.g. "Acme Stores — Mar 1, 2026 – Mar 31, 2026" */
   statementLabel: string;
   busy: boolean;
-  onConfirm: (paymentRef: string | undefined) => void | Promise<void>;
+  /** The reference, and when and how the money arrived (MONEY-17: never "today, Other" by default for a check from last week). */
+  onConfirm: (paymentRef: string | undefined, paid: { receivedOn: string; method: ClientPaymentMethodKind }) => void | Promise<void>;
 }) {
   const [paymentRef, setPaymentRef] = useState('');
+  const [receivedOn, setReceivedOn] = useState(ymdLocal());
+  const [method, setMethod] = useState<ClientPaymentMethodKind>('ACH');
 
-  // Clear the field whenever the dialog opens so one statement's check
+  // Clear the fields whenever the dialog opens so one statement's check
   // number never leaks onto the next.
   useEffect(() => {
-    if (open) setPaymentRef('');
+    if (open) {
+      setPaymentRef('');
+      setReceivedOn(ymdLocal());
+      setMethod('ACH');
+    }
   }, [open]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (busy) return;
+    if (busy || !receivedOn) return;
     const trimmed = paymentRef.trim();
-    await onConfirm(trimmed || undefined);
+    await onConfirm(trimmed || undefined, { receivedOn, method });
   };
 
   return (
@@ -104,6 +115,22 @@ export function MarkPaidDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Received on" required>
+              {(p) => <DateField value={receivedOn} max={ymdLocal()} clearable={false} onChange={setReceivedOn} {...p} />}
+            </Field>
+            <Field label="How">
+              {(p) => (
+                <Select value={method} onChange={(e) => setMethod(e.target.value as ClientPaymentMethodKind)} {...p}>
+                  {(Object.keys(CLIENT_PAYMENT_METHOD_LABELS) as ClientPaymentMethodKind[]).map((m) => (
+                    <option key={m} value={m}>
+                      {CLIENT_PAYMENT_METHOD_LABELS[m]}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          </div>
           <Field
             label="Payment reference (optional)"
             hint="Check or ACH number — shown on the External Payment Record in the audit packet."

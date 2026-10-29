@@ -2,6 +2,7 @@ import { prisma } from '../db.js';
 import { getBlobStore } from './blobStore.js';
 import { buildOpsPacket, periodLabel, type OpsPacket } from './opsPacket.js';
 import { orgDateKey } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 
 /**
  * THE STORE OPERATIONS REPORT — what a store manager takes into planning.
@@ -138,9 +139,7 @@ export interface OpsStoreReport {
 const PERIOD_ORDER = ['MORNING', 'EVENING', 'CLOSING', 'OVERNIGHT'];
 
 function addDays(key: string, n: number): string {
-  const d = new Date(`${key}T12:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+  return addDaysToKey(key, n);
 }
 
 function daysBetween(from: string, to: string): string[] {

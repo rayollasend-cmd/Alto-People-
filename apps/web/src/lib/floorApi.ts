@@ -12,6 +12,8 @@ export interface IncidentReportInput {
   description: string;
   severity: IncidentSeverity;
   nearMiss: boolean;
+  /** When it happened (ISO instant); the API files "now" without it. */
+  occurredAt?: string;
   location?: string;
   associateId?: string | null;
   clientId?: string | null;
@@ -23,7 +25,11 @@ export async function reportIncident(input: IncidentReportInput): Promise<{ id: 
   const fd = new FormData();
   fd.append('description', input.description);
   fd.append('severity', input.severity);
-  fd.append('nearMiss', input.nearMiss ? 'true' : 'false');
+  // Only when it IS a near miss: the API reads the form field with
+  // z.coerce.boolean(), and Boolean('false') is true — sending 'false' filed
+  // every injury as a non-recordable near miss.
+  if (input.nearMiss) fd.append('nearMiss', 'true');
+  if (input.occurredAt) fd.append('occurredAt', input.occurredAt);
   if (input.location) fd.append('location', input.location);
   if (input.associateId) fd.append('associateId', input.associateId);
   if (input.clientId) fd.append('clientId', input.clientId);

@@ -84,10 +84,11 @@ describe('earned-wage access', () => {
     expect(r.body.enabled).toBe(true);
     expect(r.body.hoursWorked).toBe(10);
     expect(r.body.earnedGross).toBe(200);
-    // 78% net estimate with no pay history, 50% cap.
-    expect(r.body.earnedNet).toBe(156);
-    expect(r.body.cap).toBe(78);
-    expect(r.body.available).toBe(78);
+    // The take-home estimate the associate's Home shows (lib/takeHome — Social
+    // Security and Medicare on $200; no income tax at that pay), 50% cap.
+    expect(r.body.earnedNet).toBe(184.7);
+    expect(r.body.cap).toBe(92.35);
+    expect(r.body.available).toBe(92.35);
     expect(r.body.blocker).toBeNull();
   });
 
@@ -133,7 +134,7 @@ describe('earned-wage access', () => {
 
     const after = await agent.get('/me/earned-wage');
     expect(after.body.drawn).toBe(50);
-    expect(after.body.available).toBe(28);
+    expect(after.body.available).toBe(42.35);
     const history = await agent.get('/me/earned-wage/history');
     expect(history.body.advances).toHaveLength(1);
 

@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { csvCell as sharedCsvCell } from '@/lib/csv';
 import { PunchPhotosTab } from './PunchPhotosTab';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -87,7 +88,7 @@ import {
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { statusLabel } from '@/lib/status';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { fmtPunchDateTime } from '@/pages/time/punchFormat';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
@@ -2544,10 +2545,8 @@ function LogTab() {
         );
       } while (cursor && all.length < EXPORT_CAP);
 
-      const esc = (v: unknown) => {
-        const s = v == null ? '' : String(v);
-        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      };
+      // The shared escaper (@/lib/csv): quoting plus the formula guard, numbers kept numeric.
+      const esc = (v: unknown) => sharedCsvCell(typeof v === 'number' ? v : v == null ? '' : String(v));
       const header = [
         'When (ISO)',
         'Device',
@@ -2592,7 +2591,7 @@ function LogTab() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `kiosk-punches-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `kiosk-punches-${ymdLocal()}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();

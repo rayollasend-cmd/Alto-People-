@@ -160,6 +160,22 @@ describe('each state’s last run, replayed', () => {
   });
 });
 
+describe('a run replayed by the site’s day', () => {
+  it('a Friday-evening shift in Pacific time is the run’s, though its UTC date is Saturday', async () => {
+    const { ana, entry } = await californiaDay();
+    // Fri Sep 25, 6 PM–4 AM Pacific: clock-in 01:00 UTC Saturday, the day after the period's UTC end.
+    await prisma.timeEntry.update({ where: { id: entry.id }, data: { clockInAt: new Date('2026-09-26T01:00:00Z'), clockOutAt: new Date('2026-09-26T11:00:00Z') } });
+    const run = await prisma.payrollRun.create({ data: { periodStart: new Date('2026-09-12T00:00:00Z'), periodEnd: new Date('2026-09-25T00:00:00Z'), status: 'FINALIZED', kind: 'REGULAR' } });
+    await prisma.payrollItem.create({
+      data: { payrollRunId: run.id, associateId: ana.id, hoursWorked: 10, hourlyRate: 20, grossPay: 200, federalWithholding: 0, fica: 0, medicare: 0, stateWithholding: 0, employerFica: 0, employerMedicare: 0, netPay: 200 },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const r = await (await loginAs(hr.email)).get('/labor-rules/last-run');
+    expect(r.status).toBe(200);
+    expect(r.body.states[0]).toMatchObject({ jurisdiction: 'US-CA', replayed: 1, people: 1, amountDifference: 60 });
+  });
+});
+
 describe('punch rounding', () => {
   it('rounds to the nearest increment by the neutral rule, or always in the worker’s favor', () => {
     const at = (hm: string) => new Date(`2026-09-14T${hm}:00Z`);

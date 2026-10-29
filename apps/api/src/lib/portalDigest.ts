@@ -4,6 +4,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { notifyUser } from './notify.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { logger } from './logger.js';
 
 /**
  * The morning note — the push side of the client portal.
@@ -31,6 +32,7 @@ const HOUR_FMT = new Intl.DateTimeFormat('en-US', {
 
 function nextKey(key: string, days: number): string {
   const [y, m, d] = key.split('-').map(Number);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on a date key, never an instant.
   return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
 }
 
@@ -190,7 +192,7 @@ export async function runPortalDigestSweep(
       {
         subject:
           risk > 0
-            ? `${storeName}: ${plural(risk, 'open slot')} need cover`
+            ? `${storeName}: ${plural(risk, 'open slot')} ${risk === 1 ? 'needs' : 'need'} cover`
             : c.mUnconfirmed > 0
               ? `${storeName}: staffed · ${c.mUnconfirmed} awaiting confirmation tomorrow`
               : `${storeName}: staffed and confirmed`,
@@ -227,8 +229,8 @@ export function startPortalDigestCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] portal digest cron armed (every ${seconds}s; sends after ${env.PORTAL_DIGEST_HOUR}:00 org time)`,
+  logger.info(
+    `portal digest cron armed (every ${seconds}s; sends after ${env.PORTAL_DIGEST_HOUR}:00 org time)`,
   );
 }
 

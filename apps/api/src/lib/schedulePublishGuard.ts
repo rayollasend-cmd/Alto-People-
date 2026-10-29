@@ -2,8 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { ageOn, evaluateSchedule, localParts, type ScheduleShift } from './laborRules/evaluate.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { loadRulePool, rulesForSite } from './laborRules/store.js';
-import { startOfWeekForSite } from './timeAnomalies.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { startOfWeekForSite, companyWorkweek } from './timeAnomalies.js';
 
 /**
  * The labor-rules engine at the publish gate (audit Tier 1 #11, scheduling
@@ -93,12 +92,12 @@ export async function evaluateDraftsForPublish(
   };
   for (const s of existing) {
     if (draftIds.has(s.id)) continue;
-    push(s.assignedAssociateId!, { startsAt: s.startsAt, endsAt: s.endsAt, timezone: s.locationRel?.timezone ?? DEFAULT_TIMEZONE });
+    push(s.assignedAssociateId!, { startsAt: s.startsAt, endsAt: s.endsAt, timezone: s.locationRel?.timezone ?? companyWorkweek().timezone });
   }
   const draftShift = (d: DraftForGuard): ScheduleShift => ({
     startsAt: d.startsAt,
     endsAt: d.endsAt,
-    timezone: siteById.get(d.locationId!)?.timezone ?? DEFAULT_TIMEZONE,
+    timezone: siteById.get(d.locationId!)?.timezone ?? companyWorkweek().timezone,
   });
 
   const out: LaborFinding[] = [];

@@ -1,5 +1,7 @@
 // English for the pages that use 'sup.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/sup.ts).
+import '../es/sup';
 
 export const enSup = {
   // Supervisor home (role walk floor 10).
@@ -59,6 +61,9 @@ export const enSup = {
   'sup.listNotOpen': 'Your shift’s checklist isn’t open yet',
   'sup.listRunningFor': 'You’re running {name}’s {window} checklist',
   'sup.theirList': '{name}’s {window} checklist',
+  'sup.contractBand': '{label} · {count}',
+  'sup.myShiftWindows': 'The shifts you lead',
+  'sup.contractCaption': 'Shaded: each shift’s contracted headcount.',
 } as const;
 
 registerEnglish(enSup);

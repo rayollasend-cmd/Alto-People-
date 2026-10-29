@@ -5,6 +5,8 @@ import { notifyAssociate, notifyManager } from './notify.js';
 import { setRateCard, type RateCard } from './rateCards.js';
 import { issuePayNoticeInBackground } from './payNotices.js';
 import { fmtDay } from './humanDates.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Every pay change on one path, with its own audit row. Finance reads
@@ -14,6 +16,18 @@ import { fmtDay } from './humanDates.js';
  */
 
 type Db = PrismaClient | Prisma.TransactionClient;
+
+/**
+ * The day a compensation record takes effect, as YYYY-MM-DD. The column is a
+ * timestamp holding one of two things: a named day ("effective Nov 1"), stored
+ * at that day's UTC midnight, or "effective now", an instant. A named day is
+ * its own UTC date; an instant is the company's calendar day it happened on —
+ * never UTC's, which reads tomorrow after 5 PM Pacific.
+ */
+export function compEffectiveDay(d: Date): string {
+  const utcMidnight = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return utcMidnight ? dateColumnKey(d) : orgDateKey(d);
+}
 
 export const PAY_RATE_AUDIT_ACTION = 'pay.rate_changed';
 export const BILL_RATE_AUDIT_ACTION = 'pay.bill_rate_changed';
@@ -63,7 +77,7 @@ export async function applyPayRateChange(db: Db, change: PayRateChange): Promise
     };
     return 'compensationRecord' in db && '$transaction' in db ? (db as PrismaClient).$transaction(run) : run(db);
   })();
-  const effectiveDate = change.effectiveFrom.toISOString().slice(0, 10);
+  const effectiveDate = compEffectiveDay(change.effectiveFrom);
   enqueueAudit(
     {
       actorUserId: change.actorUserId,

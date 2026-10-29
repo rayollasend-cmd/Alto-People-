@@ -88,10 +88,14 @@ export interface DsoResponse {
   months: DsoMonth[];
   /** Statements paid in the last 90 days: average days from finalized to paid (null with none). */
   last90: { days: number | null; statements: number };
-  /** Client payments received this calendar month, undone ones left out. */
+  /** Client payments received this company month, undone ones left out. */
   collectedThisMonth: { amount: number; payments: number };
+  /** Statements marked paid this month with no payment recorded behind them. */
+  markedPaidThisMonth?: { statements: number; amount: number };
 }
 export const getDsoTrend = (months = 6) => apiFetch<DsoResponse>(`${B}/dso?months=${months}`);
+/** Record the payment behind every statement marked paid without one (the books stop counting them as owed). */
+export const settleMarkedPaid = () => apiFetch<{ payments: number; amount: number; failed: Array<{ statementId: string; error: string }> }>(`${B}/settle-marked-paid`, { method: 'POST', body: {} });
 export const sendReminderNow = (clientId: string, statementId: string) =>
   apiFetch<{ stage: number; recipients: number }>(`/clients/${clientId}/dunning/send-now`, { method: 'POST', body: { statementId } });
 export const addCollectionNote = (

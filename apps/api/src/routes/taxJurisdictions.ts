@@ -6,6 +6,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { HttpError } from '../middleware/error.js';
 import { recordCriticalAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { assertAssociateInScope, scopeActiveAssociates, scopePayrollRuns, scopeWhere } from '../lib/scope.js';
 import { PROVIDERS } from '../lib/providers/catalog.js';
 import type { PayFrequency } from '../lib/payrollTax.js';
@@ -320,8 +321,8 @@ function profileView(a: ProfileRow) {
       : { residentPsdCode: null, residentMunicipality: null, residentSchoolDistrict: null, residentCountyJan1: null, residentLocalCode: null, notes: null, updatedAt: null },
     certificates: a.taxCertificates.map((c) => ({
       ...c,
-      signedOn: c.signedOn ? c.signedOn.toISOString().slice(0, 10) : null,
-      effectiveFrom: c.effectiveFrom ? c.effectiveFrom.toISOString().slice(0, 10) : null,
+      signedOn: c.signedOn ? dateColumnKey(c.signedOn) : null,
+      effectiveFrom: c.effectiveFrom ? dateColumnKey(c.effectiveFrom) : null,
       createdAt: c.createdAt.toISOString(),
     })),
     withholding,

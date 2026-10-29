@@ -23,6 +23,7 @@ import { useAuth } from '@/lib/auth';
 import { startLiveEvents, stopLiveEvents } from '@/lib/liveEvents';
 import { useChunkLoading } from '@/lib/chunkLoading';
 import { cn } from '@/lib/cn';
+import { useI18n } from '@/lib/i18n';
 import { AssistantProvider, useAssistant } from '@/lib/assistantContext';
 import { HugoLauncher } from '@/components/assistant/HugoLauncher';
 import { OfflineQueueBanner } from '@/components/OfflineQueueBanner';
@@ -72,8 +73,9 @@ function ShellAssistantPane() {
 // Uses Skeleton (which has the real shimmer overlay) so each tile reads
 // as actively loading instead of flat placeholder boxes.
 function RouteFallback() {
+  const { t } = useI18n();
   return (
-    <div className="space-y-4 p-4 md:p-6" aria-label="Loading">
+    <div className="space-y-4 p-4 md:p-6" aria-label={t('common.loading')}>
       <Skeleton className="h-8 w-1/3" />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <Skeleton className="h-24" />

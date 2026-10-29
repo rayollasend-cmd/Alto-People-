@@ -51,6 +51,7 @@ export const booksQuickbooksRouter = Router();
 const MANAGE = requireCapability('manage:books');
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: @db.Date values are stored at UTC midnight.
 const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
 
 async function connectedClient() {
@@ -183,44 +184,87 @@ booksQuickbooksRouter.post('/import-history', MANAGE, async (req, res, next) => 
 
 /* ---- What a local record is called, and where it lives -------------------- */
 
-async function describeLocal(localType: string, localId: string): Promise<{ label: string; link: string | null }> {
+type LocalLabel = { label: string; link: string | null };
+
+/**
+ * What local records are called, and where they live — one query per record
+ * type for a whole page of rows (deep audit CODE-28: the outbox made up to
+ * 200 × 1–2 sequential lookups). Keyed `${localType}:${localId}`.
+ */
+async function describeLocals(refs: Array<{ localType: string; localId: string }>): Promise<Map<string, LocalLabel>> {
   const tenantId = tenantIdForWrite();
-  switch (localType) {
-    case 'LedgerAccount': {
-      const a = await prisma.ledgerAccount.findFirst({ where: { id: localId, tenantId }, select: { code: true, name: true } });
-      return { label: a ? `Account ${a.code} ${a.name}` : 'An account', link: `/books/accounts/${localId}` };
+  const ids = (type: string) => [...new Set(refs.filter((r) => r.localType === type).map((r) => r.localId))];
+  const money = (n: unknown) => `$${Number(n).toFixed(2)}`;
+  const [accounts, vendors, clients, entries, bills, billPayments, statements, clientPayments] = await Promise.all([
+    ids('LedgerAccount').length ? prisma.ledgerAccount.findMany({ where: { id: { in: ids('LedgerAccount') }, tenantId }, select: { id: true, code: true, name: true } }) : [],
+    ids('Vendor').length ? prisma.vendor.findMany({ where: { id: { in: ids('Vendor') }, tenantId }, select: { id: true, name: true } }) : [],
+    ids('Client').length ? prisma.client.findMany({ where: { id: { in: ids('Client') }, tenantId }, select: { id: true, name: true } }) : [],
+    ids('JournalEntry').length ? prisma.journalEntry.findMany({ where: { id: { in: ids('JournalEntry') }, tenantId }, select: { id: true, number: true, memo: true } }) : [],
+    ids('Bill').length ? prisma.bill.findMany({ where: { id: { in: ids('Bill') }, tenantId }, select: { id: true, billNumber: true, total: true, vendor: { select: { name: true } } } }) : [],
+    ids('BillPayment').length ? prisma.billPayment.findMany({ where: { id: { in: ids('BillPayment') }, tenantId }, select: { id: true, amount: true, vendor: { select: { name: true } } } }) : [],
+    ids('ClientStatement').length ? prisma.clientStatement.findMany({ where: { id: { in: ids('ClientStatement') }, tenantId }, select: { id: true, number: true, client: { select: { name: true } } } }) : [],
+    ids('ClientPayment').length ? prisma.clientPayment.findMany({ where: { id: { in: ids('ClientPayment') }, tenantId }, select: { id: true, amount: true, clientId: true } }) : [],
+  ]);
+  const payerIds = [...new Set(clientPayments.map((p) => p.clientId))];
+  const payers = payerIds.length ? await prisma.client.findMany({ where: { id: { in: payerIds }, tenantId }, select: { id: true, name: true } }) : [];
+  const by = <T extends { id: string }>(rows: T[]) => new Map(rows.map((r) => [r.id, r]));
+  const [A, V, C, E, B, BP, S, CP, P] = [by(accounts), by(vendors), by(clients), by(entries), by(bills), by(billPayments), by(statements), by(clientPayments), by(payers)];
+  const out = new Map<string, LocalLabel>();
+  for (const { localType, localId } of refs) {
+    const key = `${localType}:${localId}`;
+    if (out.has(key)) continue;
+    let d: LocalLabel;
+    switch (localType) {
+      case 'LedgerAccount': {
+        const a = A.get(localId);
+        d = { label: a ? `Account ${a.code} ${a.name}` : 'An account', link: `/books/accounts/${localId}` };
+        break;
+      }
+      case 'Vendor': {
+        const v = V.get(localId);
+        d = { label: v ? `Vendor ${v.name}` : 'A vendor', link: `/books/vendors/${localId}` };
+        break;
+      }
+      case 'Client': {
+        const c = C.get(localId);
+        d = { label: c ? `Customer ${c.name}` : 'A client', link: `/clients/${localId}` };
+        break;
+      }
+      case 'JournalEntry': {
+        const e = E.get(localId);
+        d = { label: e ? `Journal entry #${e.number}${e.memo ? ` — ${e.memo.slice(0, 60)}` : ''}` : 'A journal entry', link: e ? `/books/journal/${localId}` : null };
+        break;
+      }
+      case 'Bill': {
+        const b = B.get(localId);
+        d = { label: b ? `Bill${b.billNumber ? ` ${b.billNumber}` : ''} — ${b.vendor.name}, ${money(b.total)}` : 'A bill', link: `/books/bills/${localId}` };
+        break;
+      }
+      case 'BillPayment': {
+        const p = BP.get(localId);
+        d = { label: p ? `Payment to ${p.vendor.name}, ${money(p.amount)}` : 'A bill payment', link: '/books/bills' };
+        break;
+      }
+      case 'ClientStatement': {
+        const st = S.get(localId);
+        d = { label: st ? `Statement${st.number ? ` ${String(st.number).padStart(4, '0')}` : ''} — ${st.client.name}` : 'A statement', link: '/books/receivables' };
+        break;
+      }
+      case 'ClientPayment': {
+        const p = CP.get(localId);
+        d = { label: p ? `Payment from ${P.get(p.clientId)?.name ?? 'a client'}, ${money(p.amount)}` : 'A client payment', link: '/books/receivables' };
+        break;
+      }
+      default:
+        d = { label: localType, link: null };
     }
-    case 'Vendor': {
-      const v = await prisma.vendor.findFirst({ where: { id: localId, tenantId }, select: { name: true } });
-      return { label: v ? `Vendor ${v.name}` : 'A vendor', link: `/books/vendors/${localId}` };
-    }
-    case 'Client': {
-      const c = await prisma.client.findFirst({ where: { id: localId, tenantId }, select: { name: true } });
-      return { label: c ? `Customer ${c.name}` : 'A client', link: `/clients/${localId}` };
-    }
-    case 'JournalEntry': {
-      const e = await prisma.journalEntry.findFirst({ where: { id: localId, tenantId }, select: { number: true, memo: true } });
-      return { label: e ? `Journal entry #${e.number}${e.memo ? ` — ${e.memo.slice(0, 60)}` : ''}` : 'A journal entry', link: e ? `/books/journal/${localId}` : null };
-    }
-    case 'Bill': {
-      const b = await prisma.bill.findFirst({ where: { id: localId, tenantId }, select: { billNumber: true, total: true, vendor: { select: { name: true } } } });
-      return { label: b ? `Bill${b.billNumber ? ` ${b.billNumber}` : ''} — ${b.vendor.name}, $${Number(b.total).toFixed(2)}` : 'A bill', link: `/books/bills/${localId}` };
-    }
-    case 'BillPayment': {
-      const p = await prisma.billPayment.findFirst({ where: { id: localId, tenantId }, select: { amount: true, vendor: { select: { name: true } } } });
-      return { label: p ? `Payment to ${p.vendor.name}, $${Number(p.amount).toFixed(2)}` : 'A bill payment', link: '/books/bills' };
-    }
-    case 'ClientStatement': {
-      const s = await prisma.clientStatement.findFirst({ where: { id: localId, tenantId }, select: { number: true, client: { select: { name: true } } } });
-      return { label: s ? `Statement${s.number ? ` ${String(s.number).padStart(4, '0')}` : ''} — ${s.client.name}` : 'A statement', link: '/books/receivables' };
-    }
-    case 'ClientPayment': {
-      const p = await prisma.clientPayment.findFirst({ where: { id: localId, tenantId }, select: { amount: true, clientId: true } });
-      const c = p ? await prisma.client.findFirst({ where: { id: p.clientId, tenantId }, select: { name: true } }) : null;
-      return { label: p ? `Payment from ${c?.name ?? 'a client'}, $${Number(p.amount).toFixed(2)}` : 'A client payment', link: '/books/receivables' };
-    }
+    out.set(key, d);
   }
-  return { label: localType, link: null };
+  return out;
+}
+
+async function describeLocal(localType: string, localId: string): Promise<LocalLabel> {
+  return (await describeLocals([{ localType, localId }])).get(`${localType}:${localId}`)!;
 }
 
 /* ---- Outbox and history ------------------------------------------------- */
@@ -229,11 +273,11 @@ booksQuickbooksRouter.get('/outbox', async (req, res, next) => {
   try {
     const q = z.object({ status: z.enum(['PENDING', 'DONE', 'FAILED', 'SKIPPED']).optional() }).parse(req.query);
     const rows = await prisma.qboOutbox.findMany({ where: { tenantId: tenantIdForWrite(), ...(q.status ? { status: q.status } : { status: { in: ['PENDING', 'FAILED'] } }) }, orderBy: { createdAt: 'desc' }, take: 200 });
-    const out: QboOutboxRow[] = [];
-    for (const r of rows) {
-      const d = await describeLocal(r.localType, r.localId);
-      out.push({ id: r.id, localType: r.localType, localId: r.localId, label: d.label, link: d.link, op: r.op as 'UPSERT' | 'DELETE', status: r.status as QboOutboxRow['status'], attempts: r.attempts, nextAttemptAt: r.nextAttemptAt.toISOString(), lastError: r.lastError, createdAt: r.createdAt.toISOString() });
-    }
+    const labels = await describeLocals(rows);
+    const out: QboOutboxRow[] = rows.map((r) => {
+      const d = labels.get(`${r.localType}:${r.localId}`)!;
+      return { id: r.id, localType: r.localType, localId: r.localId, label: d.label, link: d.link, op: r.op as 'UPSERT' | 'DELETE', status: r.status as QboOutboxRow['status'], attempts: r.attempts, nextAttemptAt: r.nextAttemptAt.toISOString(), lastError: r.lastError, createdAt: r.createdAt.toISOString() };
+    });
     res.json({ rows: out });
   } catch (err) {
     next(err);
@@ -320,11 +364,11 @@ function conflictFields(localType: string, site: Record<string, unknown>, e: Qbo
   return rows.filter(([, a, b]) => a !== null || b !== null).map(([label, a, b]) => ({ label, site: a, quickbooks: b, differs: a !== b }));
 }
 
-async function conflictRow(c: QboSyncConflict): Promise<QboConflictRow> {
+async function conflictRow(c: QboSyncConflict, labels?: Map<string, LocalLabel>): Promise<QboConflictRow> {
   const q = c.qboVersion as { type?: string; id?: string; entity?: QboEntity | null; reason?: string };
   const reason = (q.reason === 'DELETED_IN_QUICKBOOKS' || q.reason === 'SITE_PERIOD_CLOSED' || q.reason === 'BOOKS_CLOSED' ? q.reason : 'BOTH_CHANGED') as QboConflictRow['reason'];
   const by = c.resolvedById ? await prisma.user.findFirst({ where: { id: c.resolvedById }, select: { email: true, displayName: true } }) : null;
-  const d = await describeLocal(c.localType, c.localId);
+  const d = labels?.get(`${c.localType}:${c.localId}`) ?? (await describeLocal(c.localType, c.localId));
   return {
     id: c.id,
     localType: c.localType,
@@ -346,7 +390,8 @@ booksQuickbooksRouter.get('/conflicts', async (req, res, next) => {
   try {
     const q = z.object({ status: z.enum(['OPEN', 'KEPT_SITE', 'KEPT_QUICKBOOKS', 'DISMISSED', 'ALL']).default('OPEN') }).parse(req.query);
     const rows = await prisma.qboSyncConflict.findMany({ where: { tenantId: tenantIdForWrite(), ...(q.status === 'ALL' ? {} : { status: q.status }) }, orderBy: { createdAt: 'desc' }, take: 200 });
-    res.json({ conflicts: await Promise.all(rows.map(conflictRow)) });
+    const labels = await describeLocals(rows);
+    res.json({ conflicts: await Promise.all(rows.map((c) => conflictRow(c, labels))) });
   } catch (err) {
     next(err);
   }

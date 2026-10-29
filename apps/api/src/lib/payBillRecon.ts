@@ -7,6 +7,8 @@ import { payFor, splitByPerson } from './laborRules/hours.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { loadPayContext } from './laborRules/payContext.js';
 import { tenantIdForWrite } from './tenant.js';
+import { paidPunchFilters } from './payrollRunCut.js';
+import { workDayOf } from './payrollSchedule.js';
 
 /**
  * Margin per paycheck and the payroll-to-invoice reconciliation (BEYOND).
@@ -37,6 +39,7 @@ const DAY_MS = 86_400_000;
 export const UNBILLED_GRACE_DAYS = 10;
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column (stored at UTC midnight) or a UTC-midnight anchor.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 export type UnbilledReason =
@@ -122,6 +125,10 @@ interface EntryRow {
   associateId: string;
   clientId: string | null;
   clockInAt: Date;
+  /** The site's zone: the entry's day is its clock-in's day there (lib/payrollSchedule workDayOf). */
+  location: { timezone: string | null } | null;
+  /** That day, YYYY-MM-DD. */
+  workDay: string;
   minutes: number;
   /** The entry's share of the labor-rules engine's split (lib/laborRules/hours), in hours. */
   share: { regularHours: number; overtimeHours: number; doubleTimeHours: number };
@@ -162,7 +169,7 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
         input.clientId ? { OR: [{ clientId: input.clientId }, { clientId: null }] } : {},
       ],
     },
-    select: { id: true, periodStart: true, periodEnd: true, status: true, client: { select: { name: true } }, _count: { select: { items: true } } },
+    select: { id: true, periodStart: true, periodEnd: true, status: true, kind: true, clientId: true, payrollScheduleId: true, timeCut: true, client: { select: { name: true } }, _count: { select: { items: true } } },
     orderBy: { periodStart: 'asc' },
     take: 60,
   });
@@ -202,7 +209,8 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
   // Approved time behind every check, from the start of the first week touched (the OT line is weekly).
   // A day of slack: a site west of the company zone starts its week later (the engine weeks by the site's zone).
   const minStart = new Date(startOfWeekUTC(new Date(Math.min(...runs.map((r) => r.periodStart.getTime())))).getTime() - DAY_MS);
-  const maxEndEx = new Date(Math.max(...runs.map((r) => r.periodEnd.getTime())) + DAY_MS);
+  // A day past the last period's UTC end: an evening shift on its last day is the next UTC day (deep audit MONEY-1).
+  const maxEndEx = new Date(Math.max(...runs.map((r) => r.periodEnd.getTime())) + 2 * DAY_MS);
   const associateIds = [...new Set(items.map((i) => i.associateId))];
   const rawEntries = await db.timeEntry.findMany({
     where: { associateId: { in: associateIds }, status: 'APPROVED', clockInAt: { gte: minStart, lt: maxEndEx } },
@@ -226,6 +234,8 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
         associateId: e.associateId,
         clientId: e.clientId,
         clockInAt: e.clockInAt,
+        location: e.location,
+        workDay: workDayOf(e.clockInAt, e.location?.timezone),
         minutes: share.workedHours * 60,
         share,
         otMultiplier: byPerson.get(e.associateId)?.overtimeMultiplier ?? 1.5,
@@ -259,8 +269,8 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
     if (!termsCache.has(k)) termsCache.set(k, await termsFor(db, clientId, on));
     return termsCache.get(k)!;
   };
-  const statementFor = (clientId: string, day: Date) => {
-    const d = ymd(day);
+  // The entry's day is the SITE's (deep audit MONEY-1), as payroll and the statement count it.
+  const statementFor = (clientId: string, d: string) => {
     const hits = statements.filter((s) => s.clientId === clientId && ymd(s.periodStart) <= d && ymd(s.periodEnd) >= d);
     return hits.find((s) => s.status === 'FINAL') ?? hits[0] ?? null;
   };
@@ -274,15 +284,18 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
     return lead ? env.DEFAULT_LEAD_BILL_RATE : env.DEFAULT_ASSOCIATE_BILL_RATE;
   };
 
+  // Which hours each check paid: the run's own cut, as it was made (lib/payrollRunCut) — never UTC days.
+  const paidBy = await paidPunchFilters(db, runs);
+  const dayDate = (d: string) => new Date(`${d}T00:00:00.000Z`);
+
   const burdenPct = env.LABOR_BURDEN_PERCENT / 100;
   const overheadPerHour = env.LABOR_OVERHEAD_PER_HOUR;
 
   for (const item of items) {
     const run = runById.get(item.payrollRunId)!;
     const who = `${item.associate.firstName} ${item.associate.lastName}`;
-    const from = run.periodStart.getTime();
-    const toEx = run.periodEnd.getTime() + DAY_MS;
-    const mine = entries.filter((e) => e.associateId === item.associateId && e.clockInAt.getTime() >= from && e.clockInAt.getTime() < toEx);
+    const paidHere = paidBy.get(run.id)!;
+    const mine = entries.filter((e) => e.associateId === item.associateId && paidHere(e));
     const totalMin = mine.reduce((s, e) => s + e.minutes, 0);
     const gross = Number(item.grossPay);
     const employerTaxes = Number(item.employerFica) + Number(item.employerMedicare) + Number(item.employerFuta) + Number(item.employerSuta);
@@ -307,11 +320,11 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
       s.minutes += e.minutes;
       if (!e.clientId) continue;
       report.hours.paid += e.minutes / 60;
-      const st = statementFor(e.clientId, e.clockInAt);
-      const t = await terms(e.clientId, st ? st.periodEnd : e.clockInAt);
+      const st = statementFor(e.clientId, e.workDay);
+      const t = await terms(e.clientId, st ? st.periodEnd : dayDate(e.workDay));
       // Priced as the statement prices it: overtime and double-time hours at the contract's overtime billing.
       const otMult = t.overtimeBilling === 'STRAIGHT' ? 1 : e.otMultiplier;
-      const rate = billRate(e, st ? st.periodEnd : e.clockInAt);
+      const rate = billRate(e, st ? st.periodEnd : dayDate(e.workDay));
       const amount = e.share.regularHours * rate + (e.share.overtimeHours + e.share.doubleTimeHours) * rate * otMult;
       if (st) s.statements.set(st.id, { id: st.id, clientId: st.clientId, number: st.number, status: st.status });
       if (st?.status === 'FINAL') {
@@ -336,13 +349,13 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
           payAmount: 0,
           reason,
           reasonText: reasonText(reason, nameOf(e.clientId)),
-          workFrom: ymd(e.clockInAt),
-          workTo: ymd(e.clockInAt),
+          workFrom: e.workDay,
+          workTo: e.workDay,
         };
         row.hours += e.minutes / 60;
         row.payAmount += e.minutes * payPerMin;
-        if (row.workFrom! > ymd(e.clockInAt)) row.workFrom = ymd(e.clockInAt);
-        if (row.workTo! < ymd(e.clockInAt)) row.workTo = ymd(e.clockInAt);
+        if (row.workFrom! > e.workDay) row.workFrom = e.workDay;
+        if (row.workTo! < e.workDay) row.workTo = e.workDay;
         hourGaps.set(k, row);
       }
     }
@@ -514,11 +527,22 @@ export async function reconcilePayPeriod(db: Db, input: ReconInput): Promise<Rec
 }
 
 /** The Inbox's number: billable pay on no bill (gaps only) over the last `days` of finalized pay. */
-export async function unbilledGap(db: Db, runWhere: Prisma.PayrollRunWhereInput, now: Date = new Date(), days = 120): Promise<{ count: number; amount: number }> {
+export async function unbilledGap(db: Db, runWhere: Prisma.PayrollRunWhereInput, now: Date = new Date(), days = 120): Promise<UnbilledGap> {
   const start = new Date(now.getTime() - days * DAY_MS);
   const report = await reconcilePayPeriod(db, { periodStart: new Date(`${ymd(start)}T00:00:00.000Z`), periodEnd: new Date(`${ymd(now)}T00:00:00.000Z`), runWhere, now });
   const gaps = report.unbilled.filter((u) => GAP_REASONS.includes(u.reason));
-  return { count: gaps.length, amount: round2(gaps.reduce((s, u) => s + u.payAmount, 0)) };
+  // The pay periods the gaps fall in, oldest first — the link opens the page on the oldest (deep audit MONEY-2:
+  // a link without its period opened on the newest one, which said "No gaps").
+  const periodOf = (day: string | null) => (day ? report.runs.find((r) => r.periodStart <= day && r.periodEnd >= day) : undefined);
+  const periods = [...new Set(gaps.map((g) => periodOf(g.workFrom)).filter((r): r is NonNullable<typeof r> => !!r).map((r) => `${r.periodStart}:${r.periodEnd}`))].sort();
+  return { count: gaps.length, amount: round2(gaps.reduce((s, u) => s + u.payAmount, 0)), periods };
+}
+
+/** Billable pay on no statement: how many lines, how much, and the pay periods they fall in (`start:end`, oldest first). */
+export interface UnbilledGap {
+  count: number;
+  amount: number;
+  periods: string[];
 }
 
 /* ----- This week's running payroll cost, per store ----------------------- */
@@ -608,9 +632,9 @@ export async function runningPayrollCost(db: Db, entryWhere: Prisma.TimeEntryWhe
   };
 }
 
-const gapMemo = new Map<string, { at: number; value: Promise<{ count: number; amount: number }> }>();
+const gapMemo = new Map<string, { at: number; value: Promise<UnbilledGap> }>();
 /** unbilledGap, shared for five minutes per tenant and reach (the Inbox asks on every page). */
-export function unbilledGapCached(db: Db, key: string, runWhere: Prisma.PayrollRunWhereInput): Promise<{ count: number; amount: number }> {
+export function unbilledGapCached(db: Db, key: string, runWhere: Prisma.PayrollRunWhereInput): Promise<UnbilledGap> {
   const hit = gapMemo.get(key);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
   const value = unbilledGap(db, runWhere).catch((err) => {

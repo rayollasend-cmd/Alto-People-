@@ -106,7 +106,7 @@ function MoreLinks({ frame }: { frame: ExecFrame }) {
   const { t } = useI18n();
   const links = [
     { to: execHref('/executive/scenarios', frame), Icon: Calculator, name: t('execPortal.home.linkScenarios'), what: t('execPortal.home.linkScenariosWhat') },
-    { to: '/executive/operations', Icon: Activity, name: t('execPortal.home.linkOps'), what: t('execPortal.home.linkOpsWhat') },
+    { to: execHref('/executive/operations', frame), Icon: Activity, name: t('execPortal.home.linkOps'), what: t('execPortal.home.linkOpsWhat') },
   ];
   return (
     <nav aria-label={t('execPortal.home.moreAria')} className="grid gap-3 sm:grid-cols-2">

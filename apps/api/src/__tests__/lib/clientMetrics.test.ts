@@ -46,22 +46,25 @@ async function punch(associateId: string, clientId: string, locationId: string, 
   return e;
 }
 
-describe('hours by the client’s week, on the site’s clock', () => {
-  it('splits a Wednesday-start client’s week at midnight in Chicago, not in UTC or on the company’s Saturday', async () => {
+describe('hours this week: the company week, whatever the client’s own week (LEAD-21)', () => {
+  it('counts from the company’s Saturday in the company’s zone — the metric dictionary’s “Hours this week” — not the client’s Wednesday on the site’s clock', async () => {
     const { client: z, site } = await clientWith('Zenith Labs', { weekStartsOn: 3, timezone: 'America/Chicago' });
     const a = await createAssociate({ firstName: 'Ana' });
     const b = await createAssociate({ firstName: 'Bo' });
-    // Tuesday 23:00 in Chicago (already Wednesday in UTC): last week.
-    await punch(a.id, z.id, site.id, '2026-10-21T04:00:00.000Z', 4);
-    // Wednesday 01:00 in Chicago: this week.
-    await punch(b.id, z.id, site.id, '2026-10-21T06:00:00.000Z', 3);
+    // Friday 23:00 in New York: the company's last week.
+    await punch(a.id, z.id, site.id, '2026-10-17T03:00:00.000Z', 2);
+    // Saturday 01:00 in New York (midnight in Chicago): this company week — though
+    // the client's own Wednesday-start week would still call it last week.
+    await punch(b.id, z.id, site.id, '2026-10-17T05:00:00.000Z', 3);
+    // Wednesday 01:00 in Chicago: this week either way.
+    await punch(b.id, z.id, site.id, '2026-10-21T06:00:00.000Z', 4);
     // Neither a rejected punch nor one still open counts.
     await punch(b.id, z.id, site.id, '2026-10-21T15:00:00.000Z', 6, { status: 'REJECTED' });
     await punch(a.id, z.id, site.id, '2026-10-22T14:00:00.000Z', 0, { status: 'ACTIVE' });
 
     const m = (await clientMetrics([z.id], { range: OCTOBER, includeMoney: false, now: NOW })).get(z.id)!;
-    expect(m.hoursThisWeek).toBe(3);
-    expect(m.hoursLastWeek).toBe(4);
+    expect(m.hoursThisWeek).toBe(7);
+    expect(m.hoursLastWeek).toBe(2);
     expect(m.overtimePct).toBe(0);
   });
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import { getFederalW4, lockInLetterUrl, saveFederalW4, uploadLockInLetter, type FederalW4Facts, type FederalW4Input } from '@/lib/payrollDeskApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -155,7 +155,7 @@ export function FederalW4Card({ associateId }: { associateId: string }) {
               </Button>
             </div>
           ) : (
-            <Button variant="outline" size="sm" className="mt-2" onClick={() => setDraft({ ...draft, lockIn: { filingStatus: 'SINGLE', multipleJobs: false, effectiveDate: new Date().toISOString().slice(0, 10) } })}>
+            <Button variant="outline" size="sm" className="mt-2" onClick={() => setDraft({ ...draft, lockIn: { filingStatus: 'SINGLE', multipleJobs: false, effectiveDate: ymdLocal() } })}>
               Record a lock-in letter
             </Button>
           )}

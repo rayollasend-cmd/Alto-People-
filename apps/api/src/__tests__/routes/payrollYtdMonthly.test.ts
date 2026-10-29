@@ -70,3 +70,22 @@ describe('GET /payroll/ytd — runs not in the report (F500 G3)', () => {
     expect(res.body.notInReport).toEqual([{ id: orphan.id, periodStart: '2026-08-29', periodEnd: '2026-09-11', totalGross: 4054.5, totalNet: 3490.2, paychecks: 0 }]);
   });
 });
+
+describe('GET /payroll/ytd — every withholding (deep audit MONEY-12 / MONEY-22)', () => {
+  it('sums local tax, state programs and reimbursements per person and in the totals', async () => {
+    const client = await createClient();
+    const a = await createAssociate({ firstName: 'Nina', lastName: 'Park' });
+    const run = await prisma.payrollRun.create({ data: { clientId: client.id, periodStart: new Date('2026-05-01'), periodEnd: new Date('2026-05-14'), status: 'DISBURSED', kind: 'REGULAR', totalGross: 1000, totalNet: 800, disbursedAt: new Date('2026-05-21T15:00:00Z') } });
+    const item = await prisma.payrollItem.create({
+      data: { payrollRunId: run.id, associateId: a.id, hoursWorked: 40, hourlyRate: 25, grossPay: 1000, federalWithholding: 80, fica: 62, medicare: 14.5, stateWithholding: 30, localWithholding: 12, reimbursementsTotal: 45, netPay: 800, status: 'DISBURSED' },
+    });
+    await prisma.payrollItemTaxLine.create({ data: { payrollItemId: item.id, code: 'CA_SDI', kind: 'STATE_PROGRAM', label: 'CA SDI', wages: 1000, amount: 13, employer: false } });
+    await prisma.payrollItemTaxLine.create({ data: { payrollItemId: item.id, code: 'WA_PFML_ER', kind: 'STATE_PROGRAM', label: 'WA PFML (employer)', wages: 1000, amount: 3, employer: true } });
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const agent = request.agent(createApp());
+    expect((await agent.post('/auth/login').send({ email: user.email, password: DEFAULT_TEST_PASSWORD })).status).toBe(200);
+    const res = await agent.get('/payroll/ytd?year=2026');
+    expect(res.body.rows[0]).toMatchObject({ local: 12, programs: 13, reimbursements: 45 });
+    expect(res.body.totals).toMatchObject({ local: 12, programs: 13, reimbursements: 45 });
+  });
+});

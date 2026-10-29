@@ -17,10 +17,10 @@ import {
   pdfHelpers,
   pdfSafe,
 } from './docKit/biz.js';
-import { paidMinutesForRange } from '@alto-people/shared';
+import { inShiftWindow, paidMinutesForRange, toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { formatTimeInZone, zonedMinutes } from './timezone.js';
-import { opsShiftScope } from './portalOps.js';
+import { opsShiftScope, runExpired } from './portalOps.js';
 import {
   DAY,
   HOUR,
@@ -77,7 +77,8 @@ export interface ReportPerson {
 }
 
 export interface ReportWave {
-  name: WaveName;
+  /** The store's own name for the window the wave starts in (the screen's), else the time-of-day bucket. */
+  name: string;
   timeRange: string;
   startsAt: Date;
   endsAt: Date;
@@ -100,7 +101,10 @@ export interface OpsDaySnapshot {
   taskDone: number;
   taskTotal: number;
   tempAlerts: number;
+  /** Submitted short by a person. */
   incomplete: number;
+  /** Closed by the expiry sweep — never submitted (LEAD-2). */
+  expired: number;
   photos: number;
   notes: Array<{ department: string; period: string; summary: string }>;
 }
@@ -308,6 +312,7 @@ export async function buildPortalReport(
         taskTotal: true,
         tempAlerts: true,
         closedIncomplete: true,
+        closedById: true,
         closingSummary: true,
         _count: { select: { tasks: { where: { photos: { some: {} } } } } },
       },
@@ -385,7 +390,8 @@ export async function buildPortalReport(
       taskDone: sum((o) => o.taskDone),
       taskTotal: sum((o) => o.taskTotal),
       tempAlerts: sum((o) => o.tempAlerts),
-      incomplete: list.filter((o) => o.closedIncomplete).length,
+      incomplete: list.filter((o) => o.closedIncomplete && !runExpired(o)).length,
+      expired: list.filter((o) => runExpired(o)).length,
       photos: sum((o) => o._count.tasks),
       notes: list
         .filter((o) => o.closingSummary)
@@ -455,7 +461,15 @@ export async function buildPortalReport(
       };
     });
 
-    // Waves: every shift sharing the same start and end instant.
+    // Waves: every shift sharing the same start and end instant, named as the
+    // store names its window ("Afternoon"), as the live page does — the PDF
+    // said "Midday" for the screen's Afternoon (LEAD-33).
+    const windowName = (s: { locationId: string | null; startsAt: Date }, tz: string): string | null => {
+      const loc = s.locationId ? targets.find((t) => t.id === s.locationId) : undefined;
+      if (!loc) return null;
+      const minute = zonedMinutes(s.startsAt, loc.timezone || tz);
+      return loc.windows.find((w) => inShiftWindow(minute, { startMinute: w.start, endMinute: w.end }))?.label ?? null;
+    };
     type Bucketed = ReportWave & { buckets: Record<ReportWave['groups'][number]['key'], ReportPerson[]> };
     const byKey = new Map<string, Bucketed>();
     for (const { shift: s, person } of people) {
@@ -464,7 +478,7 @@ export async function buildPortalReport(
       let w = byKey.get(k);
       if (!w) {
         w = {
-          name: waveName(s.startsAt, tz),
+          name: windowName(s, tz) ?? waveName(s.startsAt, tz),
           timeRange: `${formatTimeInZone(s.startsAt, tz)} – ${formatTimeInZone(s.endsAt, tz)}`,
           startsAt: s.startsAt,
           endsAt: s.endsAt,
@@ -594,7 +608,12 @@ export async function buildPortalReport(
       filled: weekShifts.filter((s) => cal.key(s.startsAt) === d && s.status !== 'OPEN').length,
       open: weekShifts.filter((s) => cal.key(s.startsAt) === d && s.status === 'OPEN').length,
     }));
-    const scheduledMin = weekShifts.reduce((a, s) => a + paidMinutesForRange(s.startsAt, s.endsAt), 0);
+    // Worked is punched time, breaks out; scheduled is the same basis — the
+    // STAFFED shifts' paid time. Open slots were in it, so a fully worked
+    // week read short of its own schedule (LEAD-4).
+    const scheduledMin = weekShifts
+      .filter((s) => s.status !== 'OPEN')
+      .reduce((a, s) => a + paidMinutesForRange(s.startsAt, s.endsAt), 0);
     const workedMin = weekEntries
       .filter((e) => e.clockInAt >= weekStartD && e.clockInAt < weekEndD && e.clockInAt.getTime() < asOfMs)
       .reduce((a, e) => a + netMinutes({ ...e, clockOutAt: e.clockOutAt && e.clockOutAt.getTime() <= asOfMs ? e.clockOutAt : null }, asOf), 0);
@@ -683,8 +702,8 @@ export async function buildPortalReport(
           const line = scope.location ? ((snap?.stores ?? []).find((x) => x.locationName === scope.location!.name) ?? null) : null;
           return {
             number: st.number,
-            periodStart: st.periodStart.toISOString().slice(0, 10),
-            periodEnd: st.periodEnd.toISOString().slice(0, 10),
+            periodStart: toDateOnly(st.periodStart)!,
+            periodEnd: toDateOnly(st.periodEnd)!,
             // No fallback for a store account. When the statement has no
             // line for this store (renamed, or billed before the store
             // existed), the honest answer is nothing — the client total
@@ -1229,8 +1248,12 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
           };
         }
         if (w.phase === 'live') {
+          // One measure on both lines: who punched in for this wave as of the
+          // report's moment. `onFloor` is open punches at the minute the PDF
+          // was made, so a wave live at a past day's close read "0 of 2 in ·
+          // Everyone in" (LEAD-18).
           return {
-            main: `${w.onFloor} of ${w.expected} in`,
+            main: `${w.present} of ${w.expected} in`,
             detail: tail([notIn > 0 && `${notIn} not in yet`, w.open > 0 && `${w.open} unfilled`]) || 'Everyone in',
             color: w.open > 0 ? C.warn : notIn > 0 ? C.ink2 : C.good,
             parts: [
@@ -1315,7 +1338,12 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
       const empty = 'No checklist shifts were run.';
       const detail = o ? `${o.taskDone} of ${o.taskTotal} tasks · ${plural(o.photos, 'photo')} · ${plural(o.shifts, 'shift')}` : '';
       const flags = o
-        ? [o.tempAlerts > 0 && plural(o.tempAlerts, 'temperature alert'), o.incomplete > 0 && `${o.incomplete} closed incomplete`, o.open > 0 && `${o.open} still open`]
+        ? [
+            o.tempAlerts > 0 && plural(o.tempAlerts, 'temperature alert'),
+            o.expired > 0 && `${o.expired} never submitted`,
+            o.incomplete > 0 && `${o.incomplete} closed incomplete`,
+            o.open > 0 && `${o.open} still open`,
+          ]
             .filter(Boolean)
             .join(' · ')
         : '';

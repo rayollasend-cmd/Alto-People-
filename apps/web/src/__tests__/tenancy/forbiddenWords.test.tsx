@@ -107,6 +107,9 @@ import { AgreementsHome } from '@/pages/agreements/AgreementsHome';
 import { ApplicationsList } from '@/pages/onboarding/ApplicationsList';
 import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
 import { BulkInviteDialog } from '@/pages/onboarding/BulkInviteDialog';
+import { OnboardingAnalytics } from '@/pages/onboarding/OnboardingAnalytics';
+import { CandidateDetailDrawer } from '@/pages/recruiting/CandidateDetailDrawer';
+import { CareersListPage } from '@/pages/careers/CareersPage';
 import { Component as ReactComponent, type ComponentType, type ErrorInfo } from 'react';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -191,6 +194,15 @@ const DASHBOARD_FIXTURES: Record<string, unknown> = {
     bouncedSamples: [],
   },
   '/onboarding/templates': { templates: [{ id: '55555555-5555-4555-8555-555555555555', clientId: null, name: 'Hotel standard', track: 'STANDARD', tasks: [] }] },
+  // Onboarding analytics (PEOPLE-12): the subtitle named "associates" and a "Top clients" card.
+  '/analytics/onboarding': {
+    windowDays: 90,
+    byStatus: { DRAFT: 1, SUBMITTED: 0, IN_REVIEW: 1, APPROVED: 2, REJECTED: 0 },
+    completion: { medianDays: 3, p90Days: 6, sample: 2 },
+    byTrack: [{ track: 'STANDARD', count: 4, medianDays: 3, completed: 2 }],
+    byClient: [{ clientId: '66666666-6666-4666-8666-666666666666', clientName: 'Front desk', count: 4, medianDays: 3, completed: 2 }],
+    monthly: [],
+  },
   '/admin/sites': { sites: [{ id: '11111111-1111-4111-8111-111111111111', name: 'The Grand Hotel', type: 'PROPERTY', timezone: 'America/Chicago', state: 'FL', isActive: true, clientId: null, clientName: null, orgUnitId: null, orgUnitName: null, orgUnitType: null }] },
   '/analytics/dashboard': {
     activeAssociates: 42,
@@ -331,6 +343,13 @@ function offenders(surface: string, text: string): string[] {
 
 type Surface = { name: string; ui: () => ReactNode; route?: string; skip?: string; role?: HarnessRole };
 
+/** A hotel's candidate, hired (PEOPLE-12: the drawer said "client review", "associate record"). */
+const HOTEL_CANDIDATE = {
+  id: 'c1', firstName: 'Ana', lastName: 'Reyes', email: 'ana@example.com', phone: null, position: 'Housekeeper', source: 'referral',
+  stage: 'HIRED', notes: null, resumeUrl: null, linkedinUrl: null, hiredAssociateId: 'a9', hiredClientId: null, hiredAt: '2026-10-01T15:00:00.000Z',
+  rejectedReason: null, withdrawnReason: null, stageChangedAt: '2026-10-01T15:00:00.000Z', jobPostingId: null, createdAt: '2026-09-20T15:00:00.000Z',
+} as const;
+
 const SURFACES: Surface[] = [
   { name: 'Sidebar', ui: () => <Sidebar /> },
   { name: 'MobileNav', ui: () => <MobileNav open onClose={() => undefined} onOpenCommandPalette={() => undefined} /> },
@@ -353,6 +372,9 @@ const SURFACES: Surface[] = [
   { name: 'Onboarding list', ui: () => <ApplicationsList />, route: '/onboarding' },
   { name: 'Invite dialog', ui: () => <NewApplicationDialog open onOpenChange={() => undefined} onCreated={() => undefined} />, route: '/onboarding' },
   { name: 'Bulk invite dialog', ui: () => <BulkInviteDialog open onOpenChange={() => undefined} onCreated={() => undefined} />, route: '/onboarding' },
+  { name: 'Onboarding analytics', ui: () => <OnboardingAnalytics />, route: '/onboarding/analytics' },
+  { name: 'Candidate drawer', ui: () => <CandidateDetailDrawer candidate={HOTEL_CANDIDATE as never} onOpenChange={() => undefined} />, route: '/recruiting' },
+  { name: 'Public careers page', ui: () => <CareersListPage />, route: '/careers' },
   // The team member's own screens (the hotel e2e walk's second browser).
   { name: 'Team member: my profile', ui: () => <MeHome />, route: '/me', role: 'ASSOCIATE' },
   { name: 'Team member: time', ui: () => <TimeHome />, route: '/time-attendance', role: 'ASSOCIATE' },

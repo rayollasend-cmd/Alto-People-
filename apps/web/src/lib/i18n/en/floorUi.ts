@@ -1,5 +1,7 @@
 // English for the pages that use 'floorUi.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/floorUi.ts).
+import '../es/floorUi';
 
 export const enFloorUi = {
   'floorUi.onClockSince': 'On the clock since {time}',
@@ -176,6 +178,11 @@ export const enFloorUi = {
   'floorUi.clearedOn': 'Cleared {date}',
   'floorUi.waiting': 'Waiting',
   'floorUi.schedule': 'Schedule',
+  'floorUi.incWhen': 'When did it happen?',
+  'floorUi.incWhenHint': 'Now, unless you set it earlier.',
+  'floorUi.incWhenHintZone': 'Store time ({zone}). Now, unless you set it earlier.',
+  'floorUi.incWhenMissing': 'Say when it happened.',
+  'floorUi.incWhenFuture': 'That time hasn’t happened yet — pick when it happened.',
 } as const;
 
 registerEnglish(enFloorUi);

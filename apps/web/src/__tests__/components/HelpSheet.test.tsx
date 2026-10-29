@@ -15,12 +15,12 @@ vi.mock('@/lib/kb124Api', () => ({
   })),
 }));
 
-function renderSheet(path: string) {
+function renderSheet(path: string, role = 'HR_ADMINISTRATOR') {
   const auth = {
     isInitializing: false,
     isOffline: false,
-    user: { id: 'u1', email: 'x@y.z', role: 'HR_ADMINISTRATOR', status: 'ACTIVE', clientId: null, associateId: null },
-    role: 'HR_ADMINISTRATOR',
+    user: { id: 'u1', email: 'x@y.z', role, status: 'ACTIVE', clientId: null, associateId: null },
+    role,
     capabilities: new Set(),
     signIn: vi.fn(),
     signOut: vi.fn(),
@@ -62,6 +62,18 @@ describe('the help sheet', () => {
       '/help-center?article=reading-a-profile',
     );
     expect(screen.getByRole('link', { name: /Open the help center/ })).toHaveAttribute('href', '/help-center');
+  });
+
+  // The route entries are the desks' ("Publish when the week is ready"), in
+  // English and Spanish only; an associate or a driver gets the generic
+  // sheet in their language (deep audit 2026-10-29, ASSOC-11).
+  it('gives an associate and a driver the generic sheet, not the desk’s', () => {
+    for (const role of ['ASSOCIATE', 'DRIVER']) {
+      const { unmount } = renderSheet('/scheduling', role);
+      expect(screen.getByRole('heading', { name: 'Help' })).toBeInTheDocument();
+      expect(screen.queryByText(/Publish when the week is ready/)).not.toBeInTheDocument();
+      unmount();
+    }
   });
 
   it('falls back to the generic sheet on a page without an entry', () => {

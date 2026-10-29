@@ -7,6 +7,7 @@ import { send } from './notifications.js';
 import { runForEachTenant } from './tenantJobs.js';
 import { tenantIdForWrite } from './tenant.js';
 import { fmtDayInZone } from './humanDates.js';
+import { logger } from './logger.js';
 
 /**
  * Client NPS — the one question, once a quarter, to every store manager
@@ -272,7 +273,7 @@ let timer: NodeJS.Timeout | null = null;
 export async function quarterlyNpsSweep(now = new Date()): Promise<void> {
   if (!inSendWindow(now)) return;
   const out = await sendNpsWave({ sentById: null, now });
-  if ('waveId' in out) console.log(`[alto-people/api] client NPS wave ${out.quarter} sent to ${out.invited} store manager(s)`);
+  if ('waveId' in out) logger.info(`client NPS wave ${out.quarter} sent to ${out.invited} store manager(s)`);
 }
 
 export function startClientNpsCron(): void {
@@ -283,7 +284,7 @@ export function startClientNpsCron(): void {
     void tick().catch((err) => console.error('[alto-people/api] client NPS sweep failed:', err));
   }, SWEEP_MS);
   timer.unref();
-  console.log('[alto-people/api] client NPS cron armed (quarterly per tenant, checked every 6h)');
+  logger.info('client NPS cron armed (quarterly per tenant, checked every 6h)');
 }
 
 export function stopClientNpsCron(): void {

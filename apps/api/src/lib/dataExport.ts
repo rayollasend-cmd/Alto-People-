@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Self-serve data export — builds the contents of a user's downloadable
@@ -200,7 +201,7 @@ function serializeProfile(
           id: a.id,
           firstName: a.firstName,
           lastName: a.lastName,
-          dob: a.dob ? a.dob.toISOString().slice(0, 10) : null,
+          dob: a.dob ? dateColumnKey(a.dob) : null,
           email: a.email,
           phone: a.phone,
           ssnLast4: a.ssnLast4,
@@ -210,7 +211,7 @@ function serializeProfile(
           state: a.state,
           zip: a.zip,
           employmentType: a.employmentType,
-          hireDate: a.hireDate ? a.hireDate.toISOString().slice(0, 10) : null,
+          hireDate: a.hireDate ? dateColumnKey(a.hireDate) : null,
           createdAt: a.createdAt.toISOString(),
         }
       : null,
@@ -255,8 +256,8 @@ function serializePaystub(p: PaystubRow) {
   return {
     id: p.id,
     period: {
-      start: p.payrollRun.periodStart.toISOString().slice(0, 10),
-      end: p.payrollRun.periodEnd.toISOString().slice(0, 10),
+      start: dateColumnKey(p.payrollRun.periodStart),
+      end: dateColumnKey(p.payrollRun.periodEnd),
       finalizedAt: p.payrollRun.finalizedAt
         ? p.payrollRun.finalizedAt.toISOString()
         : null,

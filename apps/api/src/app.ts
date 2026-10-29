@@ -105,6 +105,7 @@ import { roleDecisionsRouter } from './routes/roleDecisions.js';
 import { inboxRouter } from './routes/inbox.js';
 import { positionsRouter } from './routes/positions.js';
 import { teamRouter } from './routes/team.js';
+import { crewRouter } from './routes/crew.js';
 import { workflowsRouter } from './routes/workflows.js';
 import { customFieldsRouter } from './routes/customFields.js';
 import { selfServiceRouter } from './routes/selfService.js';
@@ -707,6 +708,8 @@ export function createApp() {
   app.use('/positions', positionsRouter);
   // Phase 79 — manager-scoped approval queues.
   app.use('/team', teamRouter);
+  // FLOOR-17 — the read-only crew card a field lead opens on one of their people.
+  app.use('/crew', crewRouter);
   // Phase 80 — workflow definitions + run history.
   app.use('/workflows', workflowsRouter);
   // Phase 81 — custom field definitions + per-entity values.

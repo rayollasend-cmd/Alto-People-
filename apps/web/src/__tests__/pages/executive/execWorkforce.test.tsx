@@ -36,14 +36,14 @@ function people(over: Partial<ExecPeople> = {}): ExecPeople {
     period: PERIOD,
     comparison: COMPARISON,
     kpis: [
-      execKpi({ id: 'workforce', label: 'Active workforce', unit: 'count', value: 36, sub: 'of 44 on the books', delta: -1, deltaPct: -0.027, compare: 37 }),
+      execKpi({ id: 'workforce', label: 'Working', unit: 'count', value: 36, sub: 'of 44 on the books', delta: -1, deltaPct: -0.027, compare: 37 }),
       execKpi({ id: 'hires', label: 'Hires', unit: 'count', value: 3 }),
       execKpi({ id: 'turnover', label: 'Turnover', unit: 'pct', value: 12.4, betterWhen: 'down', target: 15, status: 'good', statusLabel: 'On plan' }),
       execKpi({ id: 'overtimePct', label: 'Overtime', unit: 'pct', value: 0.3 }),
     ],
     counts: { active: 36, onTheBooks: 44, onboarding: 3, deactivated: 3, placedNotActive: 2, notPlaced: 3 },
     weeks: weeks(13),
-    turnover: { annualizedPct: 12.4, targetPct: 15, separations90d: 1, estCost90d: 400 },
+    turnover: { annualizedPct: 12.4, targetPct: 15, separations90d: 1, estCost90d: 400, annualizedPct90d: 9.8 },
     attendance: {
       sites: [
         { id: 's1', name: 'Front Beach 218' },
@@ -95,6 +95,14 @@ describe('the Workforce page', () => {
     expect(turnover).toHaveTextContent('Turnover is running at 12.4% a year, inside the plan of 15.0%.');
     expect(turnover).toHaveTextContent('$400');
     expect(turnover).toHaveTextContent('1 separation at the standard cost of replacing someone.');
+    // LEAD-7: the headline is the PERIOD's rate and says so; the 90 days have their own heading,
+    // their own rate (METRICS.turnover90d) beside their own separations and cost.
+    expect(turnover).toHaveTextContent('Separations in this period over the average number on the books, annualized.');
+    expect(turnover).not.toHaveTextContent('Separations over the last 90 days');
+    const last90 = within(turnover).getByTestId('exec-turnover-90d');
+    expect(last90).toHaveTextContent('Last 90 days');
+    expect(last90).toHaveTextContent('9.8% a year');
+    expect(last90).toHaveTextContent('1 separation'); 
 
     // The heatmap: sites × weeks, a blank cell for a week with no shifts, a legend.
     expect(screen.getByRole('button', { name: /Front Beach 218, week of Oct 3: 6\.5 per 100 shifts \(4 events\)/ })).toBeInTheDocument();

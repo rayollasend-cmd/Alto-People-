@@ -67,10 +67,16 @@ export function useShareVanLocation(runId: string, active: boolean): SharingStat
     let lock: { release: () => Promise<void> } | null = null;
     const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } };
     const holdScreen = () => {
-      if (document.visibilityState === 'visible' && nav.wakeLock) {
+      if (!stopped && document.visibilityState === 'visible' && nav.wakeLock) {
         nav.wakeLock
           .request('screen')
           .then((l) => {
+            // The run ended (or the page left) while the lock was on its way:
+            // let it go now, or the screen stays awake with nobody holding it (CODE-29).
+            if (stopped) {
+              void l.release().catch(() => {});
+              return;
+            }
             lock = l;
           })
           .catch(() => {});

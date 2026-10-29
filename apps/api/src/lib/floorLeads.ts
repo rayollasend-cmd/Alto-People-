@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
 import { notifyUser } from './notify.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Floor supervisors and the shift supervisor in charge of them.
@@ -172,8 +173,8 @@ export async function promptShiftHandover(req: {
   if (!lead) return;
   const team = await floorTeamOf(prisma, lead);
   if (team.length === 0) return;
-  const from = req.startDate.toISOString().slice(0, 10);
-  const to = req.endDate.toISOString().slice(0, 10);
+  const from = dateColumnKey(req.startDate);
+  const to = dateColumnKey(req.endDate);
   const spanned = await prisma.shiftCover.findFirst({
     where: { leadUserId: lead.id, cancelledAt: null, fromDate: { lte: from }, toDate: { gte: to } },
     select: { id: true },

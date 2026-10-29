@@ -126,7 +126,8 @@ describe('the run record', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Aug 29 – Sep 11, 2026 run' })).toBeInTheDocument();
     // Facts in the header (and the money again on Overview's tiles).
     expect(screen.getAllByText('$4,054.50').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('$564.30').length).toBeGreaterThan(0);
+    // Taxes withheld are the paychecks' (120 + 99.20 + 23.20), state programs included (MONEY-12).
+    expect(screen.getAllByText('$242.40').length).toBeGreaterThan(0);
     expect(screen.getByText('Fri, Sep 18, 2026')).toBeInTheDocument();
     const next = screen.getByRole('link', { name: /Create the tax deposit/ });
     expect(next).toHaveAttribute('href', `/payroll/runs/${RUN}/close`);

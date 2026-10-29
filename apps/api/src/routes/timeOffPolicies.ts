@@ -8,6 +8,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { resolvePoliciesForAssociate, syncPolicyEntitlements } from '../lib/timeOffPolicy.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Time-off policies (lib/timeOffPolicy.ts): how leave is earned, for whom.
@@ -84,7 +85,7 @@ function toRow(p: {
     accrualPerHour: p.accrualPerHour ? Number(p.accrualPerHour) : null,
     minutesPerPeriod: p.minutesPerPeriod,
     annualMinutes: p.annualMinutes,
-    policyAnchorDate: p.policyAnchorDate.toISOString().slice(0, 10),
+    policyAnchorDate: dateColumnKey(p.policyAnchorDate),
     capMinutes: p.capMinutes,
     carryoverMaxMinutes: p.carryoverMaxMinutes,
     waitingPeriodDays: p.waitingPeriodDays,

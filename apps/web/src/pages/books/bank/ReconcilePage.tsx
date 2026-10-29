@@ -74,6 +74,7 @@ export function ReconcilePage() {
 
 function lastMonthEnd(): string {
   const d = new Date();
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: last month's last day of the local calendar, built with Date.UTC.
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), 0)).toISOString().slice(0, 10);
 }
 

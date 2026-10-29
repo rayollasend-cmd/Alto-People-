@@ -176,7 +176,9 @@ describe('the Financials page', () => {
     // Thirteen weeks, days to collect and payroll cost: each a number and a sentence.
     expect(sparse).toHaveLength(3);
     expect(sparse.map((s) => s.textContent).join(' | ')).toMatch(/the latest of 2 complete weeks on record/);
-    expect(screen.getByText('October 2026 is the first month with payments on record.')).toBeInTheDocument();
+    // Days to collect is DSO (open AR over 90 days' billing), so the months it can read are the
+    // months with finalized statements — not "payments", which is Books' Average days to pay (MONEY-8).
+    expect(screen.getByText('October 2026 is the first month with statements on record.')).toBeInTheDocument();
     expect(screen.getByText(/the latest of 2 runs on record — the chart draws from four\./)).toBeInTheDocument();
     expect(screen.getByText('No budget for this year')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open budgets' })).toHaveAttribute('href', '/books/budgets');

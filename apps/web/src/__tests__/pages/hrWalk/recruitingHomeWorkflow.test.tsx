@@ -55,6 +55,7 @@ vi.mock('@/lib/recruiting90Api', () => ({
 }));
 vi.mock('@/lib/onboardingApi', () => ({
   listClients: vi.fn(async () => ({ clients: [] })),
+  listClientOptions: vi.fn(async () => ({ clients: [] })),
   listTemplates: vi.fn(async () => ({ templates: [] })),
   createApplication: vi.fn(),
   payScheduleForHire: vi.fn(async () => ({ schedule: null, conflict: null })),

@@ -10,6 +10,7 @@ import { execRates } from '../../lib/execFinance.js';
 import { loadExecContext } from '../../lib/execFinanceContext.js';
 import { computeExecOverview } from '../../lib/execOverview.js';
 import { pinMidweekNoon } from '../../../test/clock.js';
+import { postEntry } from '../../lib/books/ledger.js';
 import { DEFAULT_TEST_PASSWORD, createAssociate, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 
 /**
@@ -101,6 +102,20 @@ describe('GET /executive/overview', () => {
     expect(byId(o, 'revenue').delta).toBeGreaterThan(0);
     expect(byId(o, 'workforce').value).toBe(1);
     expect(byId(o, 'workforce').sub).toBe('of 1 on the books');
+  });
+
+  it('cash reads "overdrawn" when a bank account is below zero, though the total is positive (MONEY-18)', async () => {
+    // Operating up $20,000; payroll checking paid out $3,908.97 with nothing transferred in.
+    await postEntry(prisma, { date: '2026-09-02', source: 'MANUAL', lines: [{ account: 'CASH_OPERATING', debit: 20000 }, { account: 'OWNER_EQUITY', credit: 20000 }] });
+    await postEntry(prisma, { date: '2026-10-09', source: 'MANUAL', lines: [{ account: 'WAGES_DIRECT', debit: 3908.97 }, { account: 'CASH_PAYROLL', credit: 3908.97 }] });
+    const { user } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
+    const exec = await loginAs(user.email);
+    const res = await exec.get('/executive/overview');
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const cash = (res.body as ExecOverview).scorecard.find((k) => k.id === 'cash')!;
+    expect(cash.status).toBe('bad');
+    expect(JSON.stringify(cash)).toMatch(/overdrawn/);
+    expect(JSON.stringify(cash)).not.toMatch(/Positive for 13 weeks/);
   });
 
   it('the chairman reads it; an office role without view:executive is refused; the period and comparison fall back to the defaults', async () => {

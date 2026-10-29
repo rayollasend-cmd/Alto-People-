@@ -9,6 +9,7 @@ import { notifyAssociate } from './notify.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { toWaLang, type WaLang } from './whatsappContent.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * The Compliance agent's `coverage.credentials` (agent families step 5;
@@ -144,7 +145,7 @@ export async function runCredentialCoverage(db: PrismaClient = defaultPrisma, no
       await notifyAssociate(associateId, { subject: ask.subject, body: ask.body, category: ASK_CATEGORY, linkUrl: ask.linkUrl, emailFallback: true });
       out.asked += 1;
     }
-    logAgentAction(agent, { action: 'agent.credentials.measured', entityType: 'CredentialRequirement', entityId: r.id, scopes: [...capabilityDef(COVERAGE_CREDENTIALS)!.scopes], metadata: { weekOf: weekOf.toISOString().slice(0, 10), population: population.length, missing: missing.length } });
+    logAgentAction(agent, { action: 'agent.credentials.measured', entityType: 'CredentialRequirement', entityId: r.id, scopes: [...capabilityDef(COVERAGE_CREDENTIALS)!.scopes], metadata: { weekOf: dateColumnKey(weekOf), population: population.length, missing: missing.length } });
   }
   return out;
 }

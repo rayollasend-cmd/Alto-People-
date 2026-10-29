@@ -7,6 +7,10 @@ import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { randomUUID } from 'node:crypto';
 import { fmtDay } from '../lib/humanDates.js';
+import { toDateOnly } from '@alto-people/shared';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { associatesInReach, scopeWhere } from '../lib/scope.js';
+import type { SessionUser } from '../types/express.js';
 
 /**
  * Phase 84 — Performance: Goals/OKRs, 1:1s, Kudos, PIPs, 360 reviews.
@@ -23,6 +27,37 @@ export const performance84Router = Router();
 // (Self-service "my goals" should hit /me/* routes, not these.)
 const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:performance');
+
+/**
+ * CODE-30 — the caller's reach. A person's goal or 1:1 follows the person:
+ * a store-bound HR lead reads and changes only their own people's; a
+ * company or team goal (no person) is everyone's to read. Writes by id load
+ * through these, so another store's (or tenant's) id is simply not found.
+ */
+function goalReach(user: SessionUser): Prisma.GoalWhereInput {
+  return scopeWhere<Prisma.GoalWhereInput>(
+    { tenantId: tenantIdForWrite(), deletedAt: null },
+    { OR: [{ associateId: null }, { associate: { is: associatesInReach(user) } }] },
+  );
+}
+function oneOnOneReach(user: SessionUser): Prisma.OneOnOneWhereInput {
+  return { tenantId: tenantIdForWrite(), associate: { is: associatesInReach(user) } };
+}
+async function goalInReach(user: SessionUser, id: string) {
+  const g = await prisma.goal.findFirst({ where: scopeWhere<Prisma.GoalWhereInput>({ id }, goalReach(user)) });
+  if (!g) throw new HttpError(404, 'not_found', 'Goal not found.');
+  return g;
+}
+async function oneOnOneInReach(user: SessionUser, id: string) {
+  const m = await prisma.oneOnOne.findFirst({ where: { AND: [{ id }, oneOnOneReach(user)] }, include: { actionItems: true } });
+  if (!m) throw new HttpError(404, 'not_found', '1:1 not found');
+  return m;
+}
+async function personInReach(user: SessionUser, associateId: string) {
+  const p = await prisma.associate.findFirst({ where: { AND: [{ id: associateId, tenantId: tenantIdForWrite(), deletedAt: null }, associatesInReach(user)] }, select: { id: true } });
+  if (!p) throw new HttpError(404, 'associate_not_found', 'No such person.');
+  return p;
+}
 
 // ----- Goals --------------------------------------------------------------
 
@@ -56,7 +91,7 @@ performance84Router.get('/goals', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const rows = await prisma.goal.findMany({
     take: GOAL_LIMIT + 1,
-    where: { tenantId: tenantIdForWrite(), deletedAt: null, ...(associateId ? { associateId } : {}) },
+    where: scopeWhere<Prisma.GoalWhereInput>(goalReach(req.user!), associateId ? { associateId } : null),
     include: {
       keyResults: true,
       associate: { select: { firstName: true, lastName: true } },
@@ -84,8 +119,8 @@ performance84Router.get('/goals', VIEW, async (req, res) => {
       title: g.title,
       description: g.description,
       parentGoalId: g.parentGoalId,
-      periodStart: g.periodStart.toISOString().slice(0, 10),
-      periodEnd: g.periodEnd.toISOString().slice(0, 10),
+      periodStart: toDateOnly(g.periodStart)!,
+      periodEnd: toDateOnly(g.periodEnd)!,
       status: g.status,
       progressPct: g.progressPct,
       keyResults: g.keyResults.map((k) => ({
@@ -113,10 +148,7 @@ performance84Router.post('/goals', VIEW, async (req, res) => {
   if (scope !== 'PERSON' && input.associateId) {
     throw new HttpError(400, 'no_person_for_shared_goal', 'A company or team goal belongs to no one person.');
   }
-  if (input.associateId) {
-    const person = await prisma.associate.findFirst({ where: { id: input.associateId, tenantId, deletedAt: null }, select: { id: true } });
-    if (!person) throw new HttpError(404, 'associate_not_found', 'No such person.');
-  }
+  if (input.associateId) await personInReach(req.user!, input.associateId);
   if (input.parentGoalId) {
     const parent = await prisma.goal.findFirst({ where: { id: input.parentGoalId, tenantId, deletedAt: null }, select: { id: true } });
     if (!parent) throw new HttpError(404, 'parent_not_found', 'The goal it aligns to doesn’t exist.');
@@ -139,12 +171,9 @@ performance84Router.post('/goals', VIEW, async (req, res) => {
 });
 
 performance84Router.put('/goals/:id', VIEW, async (req, res) => {
-  const id = req.params.id;
+  const id = String(req.params.id);
   const input = GoalUpdateSchema.parse(req.body);
-  const existing = await prisma.goal.findFirst({ where: { id, tenantId: tenantIdForWrite() } });
-  if (!existing || existing.deletedAt) {
-    throw new HttpError(404, 'not_found', 'Goal not found.');
-  }
+  await goalInReach(req.user!, id);
   if (input.parentGoalId) {
     // Walk up from the new parent; meeting this goal means a loop.
     let cursor: string | null = input.parentGoalId;
@@ -170,6 +199,7 @@ performance84Router.put('/goals/:id', VIEW, async (req, res) => {
 
 performance84Router.delete('/goals/:id', VIEW, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
+  await goalInReach(req.user!, id);
   const gone = await prisma.goal.updateMany({
     where: { id, tenantId: tenantIdForWrite(), deletedAt: null },
     data: { deletedAt: new Date() },
@@ -194,11 +224,13 @@ const KeyResultUpdateSchema = z.object({
 });
 
 performance84Router.post('/goals/:id/key-results', VIEW, async (req, res) => {
-  const goalId = req.params.id;
   const input = KeyResultCreateSchema.parse(req.body);
+  // The goal must be this tenant's and in reach — a nested goalId the tenant guard can't see (CODE-30).
+  const goal = await goalInReach(req.user!, String(req.params.id));
   const created = await prisma.keyResult.create({
     data: {
-      goalId,
+      goalId: goal.id,
+      tenantId: goal.tenantId,
       title: input.title,
       targetValue:
         input.targetValue !== undefined && input.targetValue !== null
@@ -211,10 +243,13 @@ performance84Router.post('/goals/:id/key-results', VIEW, async (req, res) => {
 });
 
 performance84Router.put('/key-results/:id', VIEW, async (req, res) => {
-  const id = req.params.id;
+  const id = String(req.params.id);
   const input = KeyResultUpdateSchema.parse(req.body);
+  // Through its goal's reach (CODE-30): never another store's — or tenant's — key result.
+  const kr = await prisma.keyResult.findFirst({ where: { id, goal: { is: goalReach(req.user!) } }, select: { id: true } });
+  if (!kr) throw new HttpError(404, 'not_found', 'Key result not found.');
   await prisma.keyResult.update({
-    where: { id },
+    where: { id: kr.id },
     data: {
       title: input.title ?? undefined,
       currentValue:
@@ -259,7 +294,7 @@ const actionItemView = (a: { id: string; text: string; ownerIsManager: boolean; 
 performance84Router.get('/one-on-ones', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const rows = await prisma.oneOnOne.findMany({
-    where: associateId ? { associateId } : {},
+    where: { AND: [oneOnOneReach(req.user!), associateId ? { associateId } : {}] },
     include: {
       associate: { select: { firstName: true, lastName: true } },
       manager: { select: { email: true } },
@@ -292,6 +327,9 @@ performance84Router.get('/one-on-ones', VIEW, async (req, res) => {
 
 performance84Router.post('/one-on-ones', VIEW, async (req, res) => {
   const input = OneOnOneCreateSchema.parse(req.body);
+  await personInReach(req.user!, input.associateId);
+  const manager = await prisma.user.findFirst({ where: { id: input.managerUserId, tenantId: tenantIdForWrite(), deletedAt: null }, select: { id: true } });
+  if (!manager) throw new HttpError(404, 'manager_not_found', 'No such manager.');
   const id = randomUUID();
   const created = await prisma.oneOnOne.create({
     data: {
@@ -309,10 +347,9 @@ performance84Router.post('/one-on-ones', VIEW, async (req, res) => {
 });
 
 performance84Router.put('/one-on-ones/:id', VIEW, async (req, res) => {
-  const id = req.params.id;
+  const id = String(req.params.id);
   const input = OneOnOneUpdateSchema.parse(req.body);
-  const before = await prisma.oneOnOne.findUnique({ where: { id }, include: { actionItems: true } });
-  if (!before) throw new HttpError(404, 'not_found', '1:1 not found');
+  const before = await oneOnOneInReach(req.user!, id);
   const completed = input.status === 'COMPLETED' && before.status !== 'COMPLETED';
   const cadence = input.cadence === undefined ? (before.cadence as 'WEEKLY' | 'BIWEEKLY' | null) : input.cadence;
   await prisma.oneOnOne.update({
@@ -432,8 +469,7 @@ const ActionItemUpdateSchema = z.object({
 
 performance84Router.post('/one-on-ones/:id/action-items', VIEW, async (req, res) => {
   const input = ActionItemCreateSchema.parse(req.body);
-  const meeting = await prisma.oneOnOne.findUnique({ where: { id: req.params.id }, select: { id: true, tenantId: true } });
-  if (!meeting) throw new HttpError(404, 'not_found', '1:1 not found');
+  const meeting = await oneOnOneInReach(req.user!, String(req.params.id));
   const item = await prisma.oneOnOneActionItem.create({
     data: { oneOnOneId: meeting.id, text: input.text, ownerIsManager: input.ownerIsManager ?? true, createdById: req.user!.id, tenantId: meeting.tenantId },
   });
@@ -442,7 +478,7 @@ performance84Router.post('/one-on-ones/:id/action-items', VIEW, async (req, res)
 
 performance84Router.patch('/one-on-one-action-items/:id', VIEW, async (req, res) => {
   const input = ActionItemUpdateSchema.parse(req.body);
-  const found = await prisma.oneOnOneActionItem.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  const found = await prisma.oneOnOneActionItem.findFirst({ where: { id: req.params.id, oneOnOne: { is: oneOnOneReach(req.user!) } }, select: { id: true } });
   if (!found) throw new HttpError(404, 'not_found', 'Action item not found');
   const item = await prisma.oneOnOneActionItem.update({
     where: { id: found.id },
@@ -455,7 +491,7 @@ performance84Router.patch('/one-on-one-action-items/:id', VIEW, async (req, res)
 });
 
 performance84Router.delete('/one-on-one-action-items/:id', VIEW, async (req, res) => {
-  const found = await prisma.oneOnOneActionItem.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  const found = await prisma.oneOnOneActionItem.findFirst({ where: { id: req.params.id, oneOnOne: { is: oneOnOneReach(req.user!) } }, select: { id: true } });
   if (!found) throw new HttpError(404, 'not_found', 'Action item not found');
   await prisma.oneOnOneActionItem.delete({ where: { id: found.id } });
   res.status(204).end();
@@ -553,8 +589,8 @@ performance84Router.get('/pips', VIEW, async (req, res) => {
         : null,
       managerUserId: p.managerUserId,
       sourceGoalId: p.sourceGoalId,
-      startDate: p.startDate.toISOString().slice(0, 10),
-      endDate: p.endDate.toISOString().slice(0, 10),
+      startDate: toDateOnly(p.startDate)!,
+      endDate: toDateOnly(p.endDate)!,
       reason: p.reason,
       expectations: p.expectations,
       supportPlan: p.supportPlan,
@@ -613,15 +649,16 @@ performance84Router.get('/pips/prefill-from-goal/:goalId', MANAGE, async (req, r
     where: { id: goalId, deletedAt: null },
   });
   if (!goal) throw new HttpError(404, 'not_found', 'Goal not found.');
-  const start = new Date();
-  start.setUTCHours(0, 0, 0, 0);
+  // Today on the company's calendar, and 60 days on (standard PIP window):
+  // date arithmetic on a UTC-midnight anchor of that day.
+  const start = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
   const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 60); // standard 60-day PIP window
+  end.setUTCDate(end.getUTCDate() + 60);
   res.json({
     associateId: goal.associateId,
     sourceGoalId: goal.id,
-    startDate: start.toISOString().slice(0, 10),
-    endDate: end.toISOString().slice(0, 10),
+    startDate: toDateOnly(start)!,
+    endDate: toDateOnly(end)!,
     reason: `At-risk goal: "${goal.title}". ${goal.description ?? ''}`.trim().slice(0, 4000),
     expectations: `Restore "${goal.title}" to on-track status. Current progress: ${goal.progressPct}%. Target: 100% by ${fmtDay(goal.periodEnd, { year: true })}.`.slice(0, 8000),
     supportPlan: null,
@@ -680,8 +717,8 @@ performance84Router.get('/reviews360', VIEW, async (req, res) => {
         ? `${r.subject.firstName} ${r.subject.lastName}`
         : null,
       requestedById: r.requestedById,
-      periodStart: r.periodStart.toISOString().slice(0, 10),
-      periodEnd: r.periodEnd.toISOString().slice(0, 10),
+      periodStart: toDateOnly(r.periodStart)!,
+      periodEnd: toDateOnly(r.periodEnd)!,
       status: r.status,
       feedbackCount: r._count.feedback,
     })),
@@ -844,11 +881,11 @@ performance84Router.get('/timeline', VIEW, async (req, res) => {
       id: g.id,
       title: g.title,
       status: g.status,
-      date: g.periodStart.toISOString().slice(0, 10),
+      date: toDateOnly(g.periodStart)!,
       parentId: g.parentGoalId,
       parentKind: g.parentGoalId ? 'GOAL' : null,
       link: `/performance?goalId=${g.id}`,
-      meta: { progressPct: g.progressPct, periodEnd: g.periodEnd.toISOString().slice(0, 10) },
+      meta: { progressPct: g.progressPct, periodEnd: toDateOnly(g.periodEnd)! },
     });
   }
   for (const p of pips) {
@@ -857,11 +894,11 @@ performance84Router.get('/timeline', VIEW, async (req, res) => {
       id: p.id,
       title: p.reason.slice(0, 80),
       status: p.status,
-      date: p.startDate.toISOString().slice(0, 10),
+      date: toDateOnly(p.startDate)!,
       parentId: p.sourceGoalId,
       parentKind: p.sourceGoalId ? 'GOAL' : null,
       link: `/performance?pipId=${p.id}`,
-      meta: { endDate: p.endDate.toISOString().slice(0, 10), outcomeNote: p.outcomeNote },
+      meta: { endDate: toDateOnly(p.endDate)!, outcomeNote: p.outcomeNote },
     });
   }
   for (const r of reviews) {
@@ -870,11 +907,11 @@ performance84Router.get('/timeline', VIEW, async (req, res) => {
       id: r.id,
       title: r.summary.slice(0, 80),
       status: r.status,
-      date: r.periodStart.toISOString().slice(0, 10),
+      date: toDateOnly(r.periodStart)!,
       parentId: r.sourcePipId,
       parentKind: r.sourcePipId ? 'PIP' : null,
       link: `/performance?reviewId=${r.id}`,
-      meta: { rating: r.overallRating, periodEnd: r.periodEnd.toISOString().slice(0, 10) },
+      meta: { rating: r.overallRating, periodEnd: toDateOnly(r.periodEnd)! },
     });
   }
   entries.sort((a, b) => a.date.localeCompare(b.date));
@@ -899,8 +936,8 @@ performance84Router.get('/reviews/prefill-from-pip/:pipId', MANAGE, async (req, 
   res.json({
     associateId: pip.associateId,
     sourcePipId: pip.id,
-    periodStart: pip.startDate.toISOString().slice(0, 10),
-    periodEnd: pip.endDate.toISOString().slice(0, 10),
+    periodStart: toDateOnly(pip.startDate)!,
+    periodEnd: toDateOnly(pip.endDate)!,
     overallRating: pip.status === 'PASSED' ? 3 : 2,
     summary: `Performance review following ${pip.status === 'PASSED' ? 'successful' : 'unsuccessful'} PIP completion.`,
     strengths: null,

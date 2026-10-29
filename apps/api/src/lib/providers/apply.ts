@@ -12,6 +12,8 @@ import { ProviderError } from './http.js';
 import { packageFor, screeningAdapter, type ScreeningReport } from './screening.js';
 import { mapEfileStatus, taxFilingAdapter, type FilableKind, type FilingResult } from './taxFiling.js';
 import { tenantIdForWrite } from '../tenant.js';
+import { orgDateKey } from '../timeAnomalies.js';
+import { dateColumnKey } from '../timezone.js';
 
 /**
  * What a provider's answer does to Alto's records — one function per
@@ -89,7 +91,10 @@ export async function submitEVerifyCase(conn: ProviderConnection, input: EVerify
   if (!i9.citizenshipStatus) throw new ProviderError('The I-9 has no citizenship status.', 409, 'no_citizenship');
   const firstDay = input.firstDayOfEmployment ?? a.hireDate;
   if (!firstDay) throw new ProviderError('No first day of employment on file.', 409, 'no_first_day');
-  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  // dob, work-authorization expiry and hire date are @db.Date columns: their UTC date is the day.
+  const ymd = dateColumnKey;
+  // A first day handed in is a moment (a typed day at noon UTC, or the first punch): the company's day it falls on.
+  const firstDayKey = input.firstDayOfEmployment ? orgDateKey(input.firstDayOfEmployment) : ymd(firstDay);
 
   const s = await withHealth(ctx, () =>
     everifyAdapter(conn.provider).createCase(ctx, {
@@ -105,7 +110,7 @@ export async function submitEVerifyCase(conn: ProviderConnection, input: EVerify
       alienNumber: i9.alienRegistrationNumberEnc ? tryDecryptString(i9.alienRegistrationNumberEnc) : null,
       workAuthExpiresAt: i9.workAuthExpiresAt ? ymd(i9.workAuthExpiresAt) : null,
       documentList: i9.documentList ?? null,
-      firstDayOfEmployment: ymd(firstDay),
+      firstDayOfEmployment: firstDayKey,
     }),
   );
   await prisma.i9Verification.update({ where: { id: i9.id }, data: { eVerifyDueBy: addBusinessDays(firstDay, 3) } });
@@ -276,7 +281,7 @@ export async function orderDrugTest(conn: ProviderConnection, testId: string, op
   const reason = opts.reason || 'PRE_EMPLOYMENT';
   const a = t.associate;
   const order = await withHealth(ctx, () =>
-    drugTestAdapter(conn.provider).order(ctx, { ref: t.id, firstName: a.firstName, lastName: a.lastName, email: a.email, phone: a.phone ?? null, zip: a.zip ?? null, dob: a.dob ? a.dob.toISOString().slice(0, 10) : null }, panel, reason),
+    drugTestAdapter(conn.provider).order(ctx, { ref: t.id, firstName: a.firstName, lastName: a.lastName, email: a.email, phone: a.phone ?? null, zip: a.zip ?? null, dob: a.dob ? dateColumnKey(a.dob) : null }, panel, reason),
   );
   await prisma.drugTest.update({
     where: { id: t.id },

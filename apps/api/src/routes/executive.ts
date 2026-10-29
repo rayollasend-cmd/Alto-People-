@@ -19,7 +19,7 @@ import { buildBoardPack } from '../lib/executiveBoardPack.js';
 import { notifyUser } from '../lib/notify.js';
 import { portalEngagementOverview } from '../lib/portalEngagement.js';
 import { computeAgentRoi } from '../lib/agentRoi.js';
-import { startOfWeekUTC } from '../lib/timeAnomalies.js';
+import { startOfWeekUTC, orgDateKey } from '../lib/timeAnomalies.js';
 import { loadLiveRules } from '../lib/laborRules/live.js';
 import { payFor, splitByPerson } from '../lib/laborRules/hours.js';
 import { env } from '../config/env.js';
@@ -29,6 +29,7 @@ import { loadExecContext } from '../lib/execFinanceContext.js';
 import { computeExecOverview, execCashForecast } from '../lib/execOverview.js';
 import { computeExecFinancials } from '../lib/execFinancials.js';
 import { computeExecRisks } from '../lib/execRisks.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Executive surfaces — the chairman's read-only layer.
@@ -390,8 +391,8 @@ executiveRouter.get(
         clientId: s.clientId,
         clientName: s.client.name,
         number: s.number,
-        periodStart: s.periodStart.toISOString().slice(0, 10),
-        periodEnd: s.periodEnd.toISOString().slice(0, 10),
+        periodStart: dateColumnKey(s.periodStart),
+        periodEnd: dateColumnKey(s.periodEnd),
         finalizedAt: s.finalizedAt?.toISOString() ?? null,
         dueOn,
         amount: s.amount,
@@ -639,7 +640,7 @@ executiveRouter.get('/board-pack.pdf', EXEC, async (req: Request, res: Response)
 
   const buf = await buildBoardPack({ tenantId: tenantIdForWrite(), now, ...frame }, refId);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="board-pack-${frame.period}-${now.toISOString().slice(0, 10)}.pdf"`);
+  res.setHeader('Content-Disposition', `attachment; filename="board-pack-${frame.period}-${orgDateKey(now)}.pdf"`);
   res.setHeader('Cache-Control', 'private, no-store');
   res.end(buf);
 });

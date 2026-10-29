@@ -62,8 +62,8 @@ export function CommunicationsHome() {
           </TabsTrigger>
           <TabsTrigger value="sends">
             {/* Three tabs fit a phone only with the short name. */}
-            <span className="sm:hidden">Sends</span>
-            <span className="hidden sm:inline">Sends & broadcasts</span>
+            <span className="sm:hidden">{t('inbox.tabSendsShort')}</span>
+            <span className="hidden sm:inline">{t('inbox.tabSendsLong')}</span>
           </TabsTrigger>
           <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
         </TabsList>

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { lazy, Suspense, type ComponentType, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import { useAuth } from '@/lib/auth';
@@ -20,7 +20,17 @@ import { useAuth } from '@/lib/auth';
  * Inline by design: drop it wherever the name already renders. Row onClick
  * handlers across the codebase already ignore clicks on <a>, so it nests
  * safely inside clickable table rows.
+ *
+ * A shift supervisor can't open People (no view:org) but may reach her own
+ * crew (message:crew): her names open the scoped crew card instead
+ * (components/floor/CrewCard — contact, availability, certifications, next
+ * shifts; never pay). It loads on first use, so this file stays free of
+ * import-time work.
  */
+type CrewLinkProps = { associateId: string; name: string | null; className?: string; children: ReactNode };
+let crewLink: ComponentType<CrewLinkProps> | null = null;
+const loadCrewLink = () => (crewLink ??= lazy(() => import('@/components/floor/CrewCard').then((m) => ({ default: m.CrewLink }))));
+
 export function AssociateLink({
   associateId,
   children,
@@ -51,6 +61,20 @@ export function AssociateLink({
 }) {
   const { can } = useAuth();
   const location = useLocation();
+  if (associateId && !can('view:org') && can('message:crew')) {
+    const CrewLink = loadCrewLink();
+    const plain = <span className={className}>{children}</span>;
+    return (
+      // The card opens from a button: keep its click from also firing a clickable row.
+      <span onClick={(e) => e.stopPropagation()}>
+        <Suspense fallback={plain}>
+          <CrewLink associateId={associateId} name={typeof children === 'string' ? children : null} className={className}>
+            {children}
+          </CrewLink>
+        </Suspense>
+      </span>
+    );
+  }
   if (!associateId || !can('view:org')) {
     return <span className={className}>{children}</span>;
   }

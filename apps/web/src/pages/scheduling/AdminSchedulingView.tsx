@@ -61,6 +61,8 @@ import { AssignCandidateFacts } from './AssignCandidateFacts';
 import { PublishReviewSheet } from './PublishReviewSheet';
 import { SchedulingToolbar, kpiParts, useHeaderCollapsed } from './SchedulingToolbar';
 import { shiftTimesOnDay } from './weekGridFit';
+import { ShiftActionSheetBody } from './ShiftActionSheet';
+import { oneWeekLater, shiftActions, shiftEnded } from './shiftHistory';
 import { getSiteForecast } from '@/lib/forecastApi';
 import { useMinWidth } from '@/lib/useViewport';
 import { urlDay, useUrlParam, useUrlState, useUrlWriter } from '@/lib/useUrlState';
@@ -188,7 +190,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { StatTile } from '@/pages/portal/portalCharts';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useClientBounded } from '@/lib/useClientBounded';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { associateFace, associatePhotoUrl, shiftHolderFace } from '@/lib/photoUrl';
 import '@/lib/i18n/en/schedHome';
 
 // Stable empties so derived lists keep their identity across renders
@@ -660,7 +662,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Open shifts only — the calendar views' lens for "who still needs
   // covering", set by ?open=1 and cleared from its chip.
   const [openOnly, setOpenOnly] = useState<boolean>(() => searchParams.get('open') === '1');
-  const focusedLink = Boolean(deepLinkAssociate || deepLinkShift || openOnly);
+  // High-risk only — the lens the Needs-you row "N of tomorrow's shifts are
+  // held by high-risk attendees" turns on with ?risk=1 (FLOOR-31): the day
+  // shows those shifts, said out loud, one click from the whole day.
+  const [riskOnly, setRiskOnly] = useState<boolean>(() => searchParams.get('risk') === '1');
+  const focusedLink = Boolean(deepLinkAssociate || deepLinkShift || openOnly || riskOnly);
   // View mode persists in the URL so deep links stay stable.
   const view: ViewMode = parseView(searchParams.get('view') ?? (searchParams.get('associate') ? 'week' : null));
   const setView = useCallback(
@@ -1440,13 +1446,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkShift, shiftJump.isPending, shiftJump.data, canManage]);
 
-  // ?open=1 / ?date= are read once at mount (state above); drop them from
-  // the address so the lens's chip, not a stale URL, says what's on.
+  // ?open=1 / ?risk=1 / ?date= are read once at mount (state above); drop
+  // them from the address so the lens's chip, not a stale URL, says what's on.
   useEffect(() => {
     if (deepLinkShift) return; // consumed with the shift above
-    if (!searchParams.get('open') && !searchParams.get('date')) return;
+    if (!searchParams.get('open') && !searchParams.get('date') && !searchParams.get('risk')) return;
     const next = new URLSearchParams(searchParams);
     next.delete('open');
+    next.delete('risk');
     next.delete('date');
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1680,6 +1687,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       ? (clientLocationsQuery.data?.locations ?? NO_LOCATIONS)
       : NO_LOCATIONS;
 
+  // The flagged shifts behind ?risk=1 (FLOOR-31), from the same radar as the
+  // Needs-you row, re-scoped to this caller on the server.
+  const riskQuery = useQuery({
+    queryKey: ['scheduling', 'high-risk'],
+    enabled: riskOnly,
+    queryFn: () => apiFetch<{ shifts: Array<{ shiftId: string; points: number }> }>('/scheduling/shifts/high-risk'),
+    staleTime: 60_000,
+  });
+  const riskIds = useMemo(
+    () => (riskQuery.data ? new Set(riskQuery.data.shifts.map((r) => r.shiftId)) : null),
+    [riskQuery.data],
+  );
+
   // Position is the only client-side narrowing left — client and location
   // are both filtered server-side (clientId + locationId params). Exact
   // (case/space-insensitive) match against the picked dropdown value.
@@ -1689,9 +1709,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // The open-only lens narrows the calendar views; the list view has its
     // own status chips (the link's ?open=1 sets them to Open as well).
     const lensOpen = openOnly && view !== 'list';
-    if (!pos && !lensOpen) return shifts;
-    return shifts.filter((s) => (!pos || s.position.trim().toLowerCase() === pos) && (!lensOpen || isOpenShift(s)));
-  }, [shifts, posFilter, openOnly, view]);
+    // The high-risk lens narrows every view to the flagged shifts, once
+    // they are known (until then the day shows whole, under a "finding" bar).
+    const lensRisk = riskOnly ? riskIds : null;
+    if (!pos && !lensOpen && !lensRisk) return shifts;
+    return shifts.filter(
+      (s) =>
+        (!pos || s.position.trim().toLowerCase() === pos) &&
+        (!lensOpen || isOpenShift(s)) &&
+        (!lensRisk || lensRisk.has(s.id)),
+    );
+  }, [shifts, posFilter, openOnly, view, riskOnly, riskIds]);
 
   // The complement of the position filter — shifts that exist in the loaded
   // window but are hidden from the grid. The week matrix shows a per-cell
@@ -2786,6 +2814,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     }
   };
 
+  // A click on a shift in the grids: a shift that is over opens its
+  // read-only record (worked or not, the time one tap away) — never the
+  // assign drawer, which would offer to reassign yesterday (FLOOR-18).
+  const openFromGrid = (s: Shift) => {
+    if (shiftEnded(s)) {
+      setMobileAction(s);
+      return;
+    }
+    if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') setAssignTarget(s);
+  };
+
   const onQuickDuplicate = async (s: Shift) => {
     try {
       await createShift({
@@ -3683,6 +3722,25 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {!canManage && rangeControls && <div className="no-print mb-3 flex">{rangeControls}</div>}
       {canManage && view === 'list' && !filtersOpen && !isPhone && rangeControls && <div className="no-print mb-3 flex">{rangeControls}</div>}
 
+      {/* The high-risk lens the Needs-you row turns on (FLOOR-31) — the
+          count and the way back to the whole day, like the open lens. */}
+      {riskOnly && (
+        <div className="no-print mb-3 flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-ink" role="status" data-testid="risk-lens">
+          <span className="min-w-0 flex-1">
+            {riskQuery.isError
+              ? t('schedHome.riskFailed')
+              : !riskIds || !filteredShifts
+                ? t('schedHome.riskLoading')
+                : filteredShifts.length === 0
+                  ? t('schedHome.riskNone')
+                  : t(filteredShifts.length === 1 ? 'schedHome.riskShowingOne' : 'schedHome.riskShowing', { count: filteredShifts.length })}
+          </span>
+          <Button size="xs" variant="ghost" onClick={() => setRiskOnly(false)}>
+            {t('schedHome.riskShowAll')}
+          </Button>
+        </div>
+      )}
+
       {/* The open-only lens a "needs cover" link turns on — said out loud,
           one click to drop it, so the grid never reads as half-empty. */}
       {openOnly && view !== 'list' && (
@@ -3760,6 +3818,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             dayAnchor={dayAnchor}
             displayTimeZone={gridTimeZone}
             canManage={canManage}
+            hideClientName={!!boundedClient || !clientsOn}
             onShiftClick={(s) => setMobileAction(s)}
             onPrevDay={() => setDayAnchor(addDaysLocal(dayAnchor, -1))}
             onNextDay={() => setDayAnchor(addDaysLocal(dayAnchor, 1))}
@@ -3790,9 +3849,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               toggleSelection(s.id);
               return;
             }
-            if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
-              setAssignTarget(s);
-            }
+            openFromGrid(s);
           }}
           onCellCreate={(start, associateId) => {
             setCreateInitialDate(start);
@@ -3850,9 +3907,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               toggleSelection(s.id);
               return;
             }
-            if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
-              setAssignTarget(s);
-            }
+            openFromGrid(s);
           }}
           onCellCreate={(dayStart, associateId) => {
             setCreateInitialDate(dayStart);
@@ -3893,11 +3948,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           dayAnchor={dayAnchor}
           displayTimeZone={gridTimeZone}
           canManage={canManage}
-          showAllAssociates={showAllAssociates}
+          // The high-risk lens is about the people holding those shifts:
+          // their columns only, not the whole roster's empty ones.
+          showAllAssociates={riskOnly && riskIds ? false : showAllAssociates}
           onShiftClick={(s) => {
-            if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
-              setAssignTarget(s);
-            }
+            openFromGrid(s);
           }}
           onCellCreate={(dayStart, associateId) => {
             setCreateInitialDate(dayStart);
@@ -3924,9 +3979,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setView('day');
           }}
           onShiftClick={(s) => {
-            if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
-              setAssignTarget(s);
-            }
+            openFromGrid(s);
           }}
           onCellCreate={(dayStart) => {
             setCreateInitialDate(dayStart);
@@ -4048,7 +4101,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 cell: (sh) =>
                   sh.assignedAssociateId && sh.assignedAssociateName ? (
                     <span className="flex items-center gap-2">
-                      <Avatar src={`/api/associates/${sh.assignedAssociateId}/photo`} name={sh.assignedAssociateName} email="" size="sm" />
+                      <Avatar src={shiftHolderFace(sh)} name={sh.assignedAssociateName} email="" size="sm" />
                       <span className="truncate text-white">{sh.assignedAssociateName}</span>
                     </span>
                   ) : (
@@ -4086,9 +4139,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                       align: 'right' as const,
                       stopRowClick: true,
                       className: 'whitespace-nowrap no-print',
-                      cell: (sh: NonNullable<typeof filteredShifts>[number]) => (
+                      cell: (sh: NonNullable<typeof filteredShifts>[number]) => {
+                        // One rule with the sheet and the menus: a shift that
+                        // is over is history, not a row to reassign (FLOOR-18).
+                        const acts = shiftActions(sh, canManage);
+                        return (
                         <div className="inline-flex gap-1.5">
-                          {(sh.status === 'OPEN' || sh.status === 'DRAFT') && !wentUnfilled(sh) && (
+                          {(sh.status === 'OPEN' || sh.status === 'DRAFT') && acts.assign && (
                             <>
                               <Button size="sm" variant="outline" onClick={() => onAutoFill(sh.id)} disabled={pendingId === sh.id}>
                                 <Sparkles className="h-3.5 w-3.5" />
@@ -4100,20 +4157,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                               </Button>
                             </>
                           )}
-                          {sh.status === 'ASSIGNED' && (
+                          {sh.status === 'ASSIGNED' && acts.unassign && (
                             <Button size="sm" variant="secondary" onClick={() => onUnassign(sh)} disabled={pendingId === sh.id}>
                               Unassign
                             </Button>
                           )}
-                          {wentUnfilled(sh) ? (
+                          {acts.closeOut ? (
                             // A past open shift isn't cancelled, it's closed out
                             // — the same verb as the bulk action above.
                             <Button size="sm" variant="ghost" onClick={() => void onCloseOutOne(sh)} disabled={pendingId === sh.id}>
                               Close out
                             </Button>
                           ) : (
-                            sh.status !== 'COMPLETED' &&
-                            sh.status !== 'CANCELLED' && (
+                            acts.cancel && (
                               // Quiet until it's meant: a red block on every row
                               // shouted louder than the work (the dialog confirms).
                               <Button size="sm" variant="ghost" className="text-alert hover:bg-alert/10" onClick={() => setCancelTarget(sh)} disabled={pendingId === sh.id}>
@@ -4123,7 +4179,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                             )
                           )}
                         </div>
-                      ),
+                        );
+                      },
                     },
                   ]
                 : []),
@@ -4184,96 +4241,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }}
       />
 
-      {/* Mobile action sheet — every desktop quick action, one tap away. */}
+      {/* The shift's sheet — every quick action one tap away on a phone,
+          and the read-only record of a shift that is over (FLOOR-18). */}
       <Dialog open={mobileAction !== null} onOpenChange={(o) => !o && setMobileAction(null)}>
         <DialogContent className="max-w-sm">
           {mobileAction && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{mobileAction.position}</DialogTitle>
-                <DialogDescription>
-                  {shiftPlace(mobileAction)} · {fmtShift(mobileAction)} ·{' '}
-                  {wentUnfilled(mobileAction) ? 'Went unfilled' : (STATUS_LABELS[mobileAction.status] ?? mobileAction.status)}
-                  {mobileAction.assignedAssociateName
-                    ? ` · ${mobileAction.assignedAssociateName}`
-                    : ''}
-                </DialogDescription>
-              </DialogHeader>
-              {(() => {
-                const s = mobileAction;
-                const terminal = s.status === 'COMPLETED' || s.status === 'CANCELLED';
-                const act = (fn: (shift: Shift) => Promise<void> | void) => () => {
-                  setMobileAction(null);
-                  void fn(s);
-                };
-                // Over and never filled: nothing to assign or edit — it closes out.
-                if (wentUnfilled(s)) {
-                  return (
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button variant="secondary" onClick={act(onCloseOutOne)}>
-                        Close out
-                      </Button>
-                      <Button variant="ghost" className="text-alert hover:text-alert" onClick={act(quickActions.onDelete)}>
-                        Delete
-                      </Button>
-                    </div>
-                  );
-                }
-                return (
-                  <div className="grid grid-cols-2 gap-2">
-                    {!terminal && (
-                      <Button variant="secondary" onClick={act(quickActions.onEdit)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                        Edit
-                      </Button>
-                    )}
-                    {!terminal && (
-                      <Button variant="secondary" onClick={act(quickActions.onAssign)}>
-                        <UserPlus className="h-3.5 w-3.5" />
-                        {s.assignedAssociateId ? 'Reassign' : 'Assign'}
-                      </Button>
-                    )}
-                    {!terminal && s.assignedAssociateId && (
-                      <Button variant="ghost" onClick={act(quickActions.onUnassign)}>
-                        Unassign
-                      </Button>
-                    )}
-                    {s.status === 'DRAFT' && (
-                      <Button variant="ghost" onClick={act(quickActions.onPublish)}>
-                        Publish
-                      </Button>
-                    )}
-                    {(s.status === 'OPEN' || s.status === 'ASSIGNED') && (
-                      <Button variant="ghost" onClick={act(quickActions.onUnpublish)}>
-                        Move to draft
-                      </Button>
-                    )}
-                    {!terminal && (
-                      <Button variant="ghost" onClick={act(quickActions.onDuplicate)}>
-                        <Copy className="h-3.5 w-3.5" />
-                        Duplicate
-                      </Button>
-                    )}
-                    {!terminal && (
-                      <Button
-                        variant="ghost"
-                        className="text-alert hover:text-alert"
-                        onClick={act(quickActions.onCancel)}
-                      >
-                        Cancel shift
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      className="text-alert hover:text-alert"
-                      onClick={act(quickActions.onDelete)}
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                );
-              })()}
-            </>
+            <ShiftActionSheetBody
+              shift={mobileAction}
+              canManage={canManage}
+              hideClientName={!!boundedClient || !clientsOn}
+              statusLabel={wentUnfilled(mobileAction) ? 'Went unfilled' : (STATUS_LABELS[mobileAction.status] ?? mobileAction.status)}
+              actions={quickActions}
+              onCloseOut={onCloseOutOne}
+              onCopyNextWeek={(sh) => onQuickDuplicate({ ...sh, ...oneWeekLater(sh) })}
+              onDone={() => setMobileAction(null)}
+            />
           )}
         </DialogContent>
       </Dialog>
@@ -4374,7 +4356,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                     className="flex items-center gap-2.5 rounded px-2 py-2 text-left hover:bg-navy-secondary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                   >
                     <Avatar
-                      src={associatePhotoUrl(a.id)}
+                      src={associateFace(a)}
                       name={`${a.firstName} ${a.lastName}`}
                       className="h-7 w-7 bg-gold/15 text-gold text-2xs font-semibold"
                     />
@@ -4972,7 +4954,7 @@ export function AssignDialog({
               <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06]">
                 <div className="flex items-center gap-2 min-w-0">
                   <Avatar
-                    src={associatePhotoUrl(picked.id)}
+                    src={associateFace(picked)}
                     name={`${picked.firstName} ${picked.lastName}`}
                     className="h-7 w-7 bg-gold/15 text-gold text-2xs font-semibold"
                   />
@@ -5037,7 +5019,7 @@ export function AssignDialog({
                         )}
                       >
                         <Avatar
-                          src={associatePhotoUrl(a.id)}
+                          src={associateFace(a)}
                           name={`${a.firstName} ${a.lastName}`}
                           className="h-6 w-6 bg-gold/10 text-gold text-3xs font-semibold"
                         />
@@ -7656,7 +7638,7 @@ function AutoScheduleRibbon({
     <div className="mb-3 flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-silver/30 bg-silver/[0.04]">
       <div className="text-sm text-white">
         <span className="font-medium tabular-nums">{count}</span>{' '}
-        open shift{count === 1 ? '' : 's'} this week need {withArticle(term('worker').toLowerCase())}.
+        open shift{count === 1 ? '' : 's'} this week need{count === 1 ? 's' : ''} {withArticle(term('worker').toLowerCase())}.
         <span className="text-silver/70 ml-1">
           Auto-schedule picks the best fit per shift — you still publish.
         </span>

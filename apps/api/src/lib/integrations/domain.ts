@@ -1,6 +1,8 @@
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma } from '../../db.js';
 import type { PayrollExportBatch, PayrollExportRow, ScheduleRecord, TimesheetRecord, WorkerRecord } from './adapter.js';
+import { companyWorkweek, dateKeyInZone, orgDateKey } from '../timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from '../timezone.js';
 
 /**
  * Brief 3-5: Alto's records as the adapters see them. Loaded once per sync,
@@ -8,7 +10,6 @@ import type { PayrollExportBatch, PayrollExportRow, ScheduleRecord, TimesheetRec
  */
 
 const DAY = 86_400_000;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 function listName(firstName: string, lastName: string): string {
   return `${lastName}, ${firstName}`;
@@ -47,8 +48,8 @@ export async function workersForSync(tenantId: string): Promise<WorkerRecord[]> 
       lastName: a.lastName,
       email: a.email,
       phone: a.phone,
-      hireDate: a.hireDate ? ymd(a.hireDate) : null,
-      separatedAt: a.separatedAt ? ymd(a.separatedAt) : null,
+      hireDate: a.hireDate ? dateColumnKey(a.hireDate) : null,
+      separatedAt: a.separatedAt ? orgDateKey(a.separatedAt) : null,
       employmentType: a.employmentType,
       clientName: placement?.client?.name ?? null,
       siteName: placement?.name ?? null,
@@ -92,13 +93,10 @@ export async function schedulesForSync(tenantId: string, now: Date): Promise<Sch
   }));
 }
 
-/** The company week ends on Friday (memory: org workweek); the week-ending date for a day. */
-function weekEndingFriday(day: Date): string {
-  const d = new Date(day.getTime());
-  const dow = d.getUTCDay(); // 0 Sun … 5 Fri, 6 Sat
-  const add = dow <= 5 ? 5 - dow : 6;
-  d.setUTCDate(d.getUTCDate() + add);
-  return ymd(d);
+/** The company week ends on Friday (memory: org workweek); the week-ending date for a day (YYYY-MM-DD). */
+function weekEndingFriday(day: string): string {
+  const dow = new Date(`${day}T00:00:00.000Z`).getUTCDay(); // 0 Sun … 5 Fri, 6 Sat
+  return addDaysToKey(day, dow <= 5 ? 5 - dow : 6);
 }
 
 /**
@@ -107,8 +105,9 @@ function weekEndingFriday(day: Date): string {
  * (the unpaid break on a long shift), so what is submitted is what is paid.
  */
 export async function timesheetsForPeriod(tenantId: string, periodStart: string, periodEnd: string): Promise<TimesheetRecord[]> {
-  const from = new Date(`${periodStart}T00:00:00.000Z`);
-  const to = new Date(new Date(`${periodEnd}T00:00:00.000Z`).getTime() + DAY);
+  // A day either side, then each punch kept by its site's own day (a 7 PM Pacific punch on the last day is in).
+  const from = new Date(new Date(`${periodStart}T00:00:00.000Z`).getTime() - DAY);
+  const to = new Date(new Date(`${periodEnd}T00:00:00.000Z`).getTime() + 2 * DAY);
   const entries = await prisma.timeEntry.findMany({
     where: { tenantId, status: 'APPROVED', clockInAt: { gte: from, lt: to }, clockOutAt: { not: null } },
     select: {
@@ -116,7 +115,7 @@ export async function timesheetsForPeriod(tenantId: string, periodStart: string,
       clockInAt: true,
       clockOutAt: true,
       associate: { select: { id: true, firstName: true, lastName: true, email: true } },
-      location: { select: { name: true, client: { select: { name: true, fieldglassSiteName: true, fieldglassBillRate: true } } } },
+      location: { select: { name: true, timezone: true, client: { select: { name: true, fieldglassSiteName: true, fieldglassBillRate: true } } } },
     },
     orderBy: { clockInAt: 'asc' },
     take: 50_000,
@@ -124,7 +123,8 @@ export async function timesheetsForPeriod(tenantId: string, periodStart: string,
   const byKey = new Map<string, TimesheetRecord>();
   for (const e of entries) {
     if (!e.clockOutAt) continue;
-    const day = ymd(e.clockInAt);
+    const day = dateKeyInZone(e.clockInAt, e.location?.timezone ?? companyWorkweek().timezone);
+    if (day < periodStart || day > periodEnd) continue;
     const key = `${e.associate.id}:${day}`;
     const hours = Math.round((paidMinutesForRange(e.clockInAt, e.clockOutAt) / 60) * 100) / 100;
     const existing = byKey.get(key);
@@ -139,7 +139,7 @@ export async function timesheetsForPeriod(tenantId: string, periodStart: string,
       workerEmail: e.associate.email,
       workerListName: listName(e.associate.firstName, e.associate.lastName),
       day,
-      weekEnding: weekEndingFriday(e.clockInAt),
+      weekEnding: weekEndingFriday(day),
       hours,
       site: e.location?.client?.fieldglassSiteName ?? e.location?.name ?? null,
       billRate: e.location?.client?.fieldglassBillRate ? Number(e.location.client.fieldglassBillRate) : null,
@@ -151,13 +151,10 @@ export async function timesheetsForPeriod(tenantId: string, periodStart: string,
 
 /** The last period that has ended, biweekly Saturday to Friday, anchored on the org workweek; the caller may override. */
 export function lastClosedPeriod(now: Date): { periodStart: string; periodEnd: string } {
-  const d = new Date(now.getTime());
-  const dow = d.getUTCDay();
-  const daysSinceSaturday = (dow + 1) % 7;
-  const thisWeekStart = new Date(d.getTime() - daysSinceSaturday * DAY);
-  const periodStart = new Date(thisWeekStart.getTime() - 14 * DAY);
-  const periodEnd = new Date(thisWeekStart.getTime() - DAY);
-  return { periodStart: ymd(periodStart), periodEnd: ymd(periodEnd) };
+  const today = orgDateKey(now);
+  const dow = new Date(`${today}T00:00:00.000Z`).getUTCDay();
+  const thisWeekStart = addDaysToKey(today, -((dow + 1) % 7));
+  return { periodStart: addDaysToKey(thisWeekStart, -14), periodEnd: addDaysToKey(thisWeekStart, -1) };
 }
 
 /** A finalized or disbursed run as the export rows a payroll system imports, with the run's own totals to reconcile to. */
@@ -166,15 +163,15 @@ export async function payrollExportBatch(tenantId: string, runId: string | null)
     ? await prisma.payrollRun.findFirst({ where: { id: runId, tenantId, status: { in: ['FINALIZED', 'DISBURSED'] } }, include: { items: { include: { associate: { select: { id: true, firstName: true, lastName: true, email: true } } } } } })
     : await prisma.payrollRun.findFirst({ where: { tenantId, status: { in: ['FINALIZED', 'DISBURSED'] } }, orderBy: { periodEnd: 'desc' }, include: { items: { include: { associate: { select: { id: true, firstName: true, lastName: true, email: true } } } } } });
   if (!run) return null;
-  const payDate = run.disbursedAt ? ymd(run.disbursedAt) : ymd(new Date(run.periodEnd.getTime() + 7 * DAY));
+  const payDate = run.disbursedAt ? orgDateKey(run.disbursedAt) : addDaysToKey(dateColumnKey(run.periodEnd), 7);
   const rows: PayrollExportRow[] = run.items.map((i) => ({
     ref: i.id,
     workerRef: i.associate.id,
     workerEmail: i.associate.email,
     workerName: listName(i.associate.firstName, i.associate.lastName),
     payDate,
-    periodStart: ymd(run.periodStart),
-    periodEnd: ymd(run.periodEnd),
+    periodStart: dateColumnKey(run.periodStart),
+    periodEnd: dateColumnKey(run.periodEnd),
     hours: Number(i.hoursWorked),
     gross: Number(i.grossPay),
     net: Number(i.netPay),
@@ -189,8 +186,8 @@ export async function payrollExportBatch(tenantId: string, runId: string | null)
   return {
     runId: run.id,
     payDate,
-    periodStart: ymd(run.periodStart),
-    periodEnd: ymd(run.periodEnd),
+    periodStart: dateColumnKey(run.periodStart),
+    periodEnd: dateColumnKey(run.periodEnd),
     rows,
     totals: {
       gross: round(Number(run.totalGross)),

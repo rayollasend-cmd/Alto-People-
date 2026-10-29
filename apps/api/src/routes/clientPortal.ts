@@ -1,11 +1,11 @@
 import { requireModule } from '../lib/tenantProfile.js';
 import { Router } from 'express';
 import { regionSiteIds, regionUnitPath } from '../lib/orgUnits.js';
-import type { OpsPeriod } from '@prisma/client';
+import type { OpsPeriod, Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { paidMinutesForRange, can } from '@alto-people/shared';
+import { paidMinutesForRange, can, toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { accountPhotoUrlFor, profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
@@ -20,8 +20,21 @@ import { notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { auditRecruiting, recordCandidateEvent } from '../lib/candidateEvents.js';
 import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
-import { buildStoreOps, opsShiftScope, scopedOpsPhoto } from '../lib/portalOps.js';
+import { buildStoreOps, opsShiftScope, runExpired, scopedOpsPhoto } from '../lib/portalOps.js';
 import { getBlobStore } from '../lib/blobStore.js';
+import {
+  SIGNOFF_LOOKBACK_WEEKS,
+  lastFinishedWeek,
+  signOffState,
+  signOffView,
+  signableWeek,
+  storeWeekHours,
+  storeWeekKey,
+  weekDate,
+  type SignOffFlag,
+} from '../lib/portalHoursSignOff.js';
+import { DOWNLOAD_ROLES, ENGAGEMENT_CATEGORY, notifyRoles } from '../lib/portalEngagement.js';
+import { fmtDayRange } from '../lib/humanDates.js';
 import { daysPastDue, unpaidStatementsWhere, waitingCandidatesWhere } from '../lib/portalNeedsYou.js';
 import {
   DAY,
@@ -40,8 +53,10 @@ import {
   netMinutes,
   nextKey,
   portalCalendar,
+  readAll,
   reviewerName,
   shiftScope,
+  storeCalendar,
   type PortalScope,
 } from '../lib/portalMetrics.js';
 
@@ -223,13 +238,13 @@ function portalStatementRow(
   const storeLine = scope.location
     ? (snap?.stores ?? []).find((s) => s.locationName === scope.location!.name) ?? null
     : null;
-  const dueKey = st.dueAt ? st.dueAt.toISOString().slice(0, 10) : null;
+  const dueKey = toDateOnly(st.dueAt);
   const pastDue = st.paidAt ? null : daysPastDue(st.dueAt, opts.todayKey);
   return {
     id: st.id,
     number: st.number,
-    periodStart: st.periodStart.toISOString().slice(0, 10),
-    periodEnd: st.periodEnd.toISOString().slice(0, 10),
+    periodStart: toDateOnly(st.periodStart)!,
+    periodEnd: toDateOnly(st.periodEnd)!,
     amount: ownsTotals ? (snap?.totals?.amount ?? null) : null,
     hours: ownsTotals ? (snap?.totals?.hours ?? null) : null,
     storeHours: storeLine ? storeLine.hours : storeScoped && opts.singleStore ? (snap?.totals?.hours ?? null) : null,
@@ -323,8 +338,10 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     // this one (rendered separately as "so far").
     const trendStart = cal.midnight(nextKey(thisWeekKey, -4 * 7));
     const monthStart = cal.midnight(`${todayKey.slice(0, 7)}-01`);
-    // Store Ops keys its shifts by the org day it opened on.
-    const opsTodayKey = orgDateKey(now);
+    // Store Ops files a store window's run under the STORE day its window
+    // opened on (lib/portalOps runDayKey) — the store's today, not the
+    // company's: at 11:30 PM Pacific a Chicago store is already tomorrow.
+    const opsTodayKey = todayKey;
     const opsYesterdayKey = nextKey(opsTodayKey, -1);
 
     const shifts = shiftScope(scope);
@@ -380,11 +397,14 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         orderBy: { startsAt: 'asc' },
         take: 300,
       }),
-      prisma.shift.findMany({
-        where: { ...shifts, startsAt: { gte: trendStart, lt: weekEnd } },
-        select: { id: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
-        take: 5000,
-      }),
+      // Five weeks of a market's shifts, read whole (no silent cap — CODE-19).
+      readAll((page) =>
+        prisma.shift.findMany({
+          where: { ...shifts, startsAt: { gte: trendStart, lt: weekEnd } },
+          select: { id: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
+          ...page,
+        }),
+      ).then((r) => r.rows),
       prisma.shift.findMany({
         where: { ...shifts, startsAt: { gte: tomorrowStart, lt: dayAfterStart } },
         select: { status: true, acknowledgedAt: true },
@@ -429,19 +449,22 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         select: { shiftId: true },
         take: 500,
       }),
-      prisma.timeEntry.findMany({
-        where: {
-          ...entries,
-          status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
-          clockInAt: { gte: weekStart, lt: weekEnd },
-        },
-        select: {
-          clockInAt: true,
-          clockOutAt: true,
-          breaks: { select: { startedAt: true, endedAt: true } },
-        },
-        take: 5000,
-      }),
+      readAll((page) =>
+        prisma.timeEntry.findMany({
+          where: {
+            ...entries,
+            status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
+            clockInAt: { gte: weekStart, lt: weekEnd },
+          },
+          select: {
+            id: true,
+            clockInAt: true,
+            clockOutAt: true,
+            breaks: { select: { startedAt: true, endedAt: true } },
+          },
+          ...page,
+        }),
+      ).then((r) => r.rows),
       // Alto's leadership at this store: the supervisor accounts bound to
       // the client. Phone rides on the linked associate record.
       prisma.user.findMany({
@@ -496,6 +519,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           openedById: true,
           openedAt: true,
           closedAt: true,
+          closedById: true,
           sopDone: true,
           sopTotal: true,
           taskDone: true,
@@ -651,7 +675,14 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     const dayKeys: string[] = [];
     for (let i = 0; i < 7; i++) dayKeys.push(nextKey(thisWeekKey, i));
     const dayMap = new Map(dayKeys.map((k) => [k, { date: k, filled: 0, open: 0 }]));
+    // This week's STAFFED shifts, two ways (LEAD-4): gross wall-clock time —
+    // the contract's own basis (each window's headcount × its length, meal
+    // breaks inside it) — and paid time, breaks out, the basis punches are
+    // counted on. Open slots are in neither: an unfilled shift delivers
+    // nothing. The tile compared paid-with-open-slots against the gross
+    // contract, so a fully staffed store read 502h of 560h in orange.
     let weekMinutes = 0;
+    let weekPaidMinutes = 0;
     const weekAssociateIds = new Set<string>();
     for (const s of trendShifts) {
       const wk = weekAgg.get(weekKeyOf(s.startsAt));
@@ -672,7 +703,10 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           if (s.status === 'OPEN') bucket.open += 1;
           else bucket.filled += 1;
         }
-        weekMinutes += paidMinutesForRange(s.startsAt, s.endsAt);
+        if (s.status !== 'OPEN') {
+          weekMinutes += (s.endsAt.getTime() - s.startsAt.getTime()) / 60_000;
+          weekPaidMinutes += paidMinutesForRange(s.startsAt, s.endsAt);
+        }
         if (s.assignedAssociateId) weekAssociateIds.add(s.assignedAssociateId);
       }
     }
@@ -680,7 +714,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     // names, not an instant read on the store's clock — through the zone, a
     // Saturday's no-show landed in the week before.
     const dayWeekKey = (d: Date) =>
-      weekKeyOf(new Date(cal.midnight(d.toISOString().slice(0, 10)).getTime() + DAY / 2));
+      weekKeyOf(new Date(cal.midnight(toDateOnly(d)!).getTime() + DAY / 2));
     for (const e of trendEvents) {
       const wk = weekAgg.get(dayWeekKey(e.occurredOn));
       if (!wk) continue;
@@ -815,7 +849,10 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         taskDone: sum((o) => o.taskDone),
         taskTotal: sum((o) => o.taskTotal),
         tempAlerts: sum((o) => o.tempAlerts),
-        incomplete: rows.filter((o) => o.closedIncomplete).length,
+        // Submitted incomplete by a person; the expiry sweep's closes are
+        // "never submitted", counted apart (LEAD-2).
+        incomplete: rows.filter((o) => o.closedIncomplete && !runExpired(o)).length,
+        expired: rows.filter((o) => runExpired(o)).length,
         photos: sum((o) => o._count.tasks),
       };
     };
@@ -846,7 +883,8 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         taskDone: sum((o) => o.taskDone),
         taskTotal: sum((o) => o.taskTotal),
         tempAlerts: sum((o) => o.tempAlerts),
-        incomplete: rows.filter((o) => o.closedIncomplete).length,
+        incomplete: rows.filter((o) => o.closedIncomplete && !runExpired(o)).length,
+        expired: rows.filter((o) => runExpired(o)).length,
         photos: sum((o) => o._count.tasks),
         notes: rows
           .filter((o) => o.closingSummary)
@@ -970,8 +1008,12 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       today: {
         date: todayKey,
         roster,
-        filled: roster.filter((r) => r.state !== 'open').length,
-        open: roster.filter((r) => r.state === 'open').length,
+        // Today's shifts are the ones that START today on the store's clock —
+        // the Schedule's day. The roster also lists last night's overnight
+        // still finishing, but it is last night's shift: counted here it read
+        // "12 filled" beside Schedule's "10 of 11" for the same day (LEAD-3).
+        filled: todayShifts.filter((s) => s.status !== 'OPEN' && cal.key(s.startsAt) === todayKey).length,
+        open: todayShifts.filter((s) => s.status === 'OPEN' && cal.key(s.startsAt) === todayKey).length,
       },
       week: {
         start: thisWeekKey,
@@ -981,7 +1023,11 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         open: thisWeek.total - thisWeek.filled,
         fillRatePct:
           thisWeek.total > 0 ? Math.round((thisWeek.filled / thisWeek.total) * 100) : null,
+        /** Staffed shift hours this week, gross (meal breaks in) — the contract's basis. */
         hours: Math.round((weekMinutes / 60) * 10) / 10,
+        /** The same staffed shifts, paid time (unpaid meal breaks out) — the punches' basis. */
+        paidHours: Math.round((weekPaidMinutes / 60) * 10) / 10,
+        /** Punched so far this week, breaks out. */
         workedHours: Math.round((workedMinutes / 60) * 10) / 10,
         /** Contracted person-hours for the whole week (windowed targets × 7 days); null without windows. */
         contractedHours: weeklyContractHours(targetLocations),
@@ -1109,7 +1155,7 @@ clientPortalRouter.get('/client-portal/schedule', requireAuth, async (req, res, 
     const now = new Date();
     const startKey = cal.key(weekStart);
 
-    const [rows, live] = await Promise.all([
+    const [rows, live, carry] = await Promise.all([
       prisma.shift.findMany({
         where: { ...shiftScope(scope), startsAt: { gte: weekStart, lt: weekEnd } },
         select: {
@@ -1129,6 +1175,17 @@ clientPortalRouter.get('/client-portal/schedule', requireAuth, async (req, res, 
       prisma.timeEntry.findMany({
         where: { ...entryScope(scope), status: 'ACTIVE' },
         select: { associateId: true },
+        take: 500,
+      }),
+      // The week before's last overnight, still on the floor in Saturday's
+      // first hours: the heatmap counts it there (LEAD-3). Hours only.
+      prisma.shift.findMany({
+        where: {
+          ...shiftScope(scope),
+          startsAt: { gte: new Date(weekStart.getTime() - DAY), lt: weekStart },
+          endsAt: { gt: weekStart },
+        },
+        select: { startsAt: true, endsAt: true, status: true, locationRel: { select: { timezone: true } } },
         take: 500,
       }),
     ]);
@@ -1166,6 +1223,13 @@ clientPortalRouter.get('/client-portal/schedule', requireAuth, async (req, res, 
       store: scope.location ? { id: scope.location.id, name: scope.location.name } : null,
       week: { start: startKey, end: nextKey(startKey, 6) },
       days: [...days.entries()].map(([date, shifts]) => ({ date, shifts })),
+      /** Shifts from the evening before the week that run into its first day — for the heatmap's hours only. */
+      carryIn: carry.map((s) => ({
+        startsAt: s.startsAt.toISOString(),
+        endsAt: s.endsAt.toISOString(),
+        timezone: s.locationRel?.timezone ?? ORG_TZ,
+        state: s.status === 'OPEN' ? ('open' as const) : ('done' as const),
+      })),
       filled: rows.filter((r) => r.status !== 'OPEN').length,
       open: rows.filter((r) => r.status === 'OPEN').length,
       // The contracted windows (store-local minutes; end <= start wraps
@@ -1306,7 +1370,7 @@ clientPortalRouter.get(
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader(
         'Content-Disposition',
-        `attachment; filename="statement-${row.periodStart.toISOString().slice(0, 10)}${
+        `attachment; filename="statement-${toDateOnly(row.periodStart)}${
           row.number !== null ? `-no${String(row.number).padStart(4, '0')}` : ''
         }.pdf"`,
       );
@@ -1377,7 +1441,7 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
           assignedAssociateId: true,
           // The phone rides along only for the shift supervisor (below); a
           // store account never sees it.
-          assignedAssociate: { select: { firstName: true, lastName: true, phone: true, user: { select: { id: true, status: true, deletedAt: true } } } },
+          assignedAssociate: { select: { firstName: true, lastName: true, phone: true, photoS3Key: true, photoUpdatedAt: true, user: { select: { id: true, status: true, deletedAt: true } } } },
           locationId: true,
           locationRel: { select: { name: true, timezone: true } },
         },
@@ -1402,7 +1466,7 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
             select: {
               associateId: true,
               clockInAt: true,
-              associate: { select: { firstName: true, lastName: true } },
+              associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
               shift: { select: { position: true } },
             },
             orderBy: { clockInAt: 'asc' },
@@ -1442,6 +1506,8 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
         shiftId: s.id,
         associateId: s.assignedAssociateId,
         name: s.assignedAssociate ? fullName(s.assignedAssociate) : null,
+        // The face wall asks for a photo only when one is on file (null: initials, no request).
+        photoUrl: s.assignedAssociateId && s.assignedAssociate ? profilePhotoUrlFor({ id: s.assignedAssociateId, ...s.assignedAssociate }) : null,
         // Field roles (2026-10): the shift supervisor reaches their crew
         // from the face wall — call, text, message. Nobody else gets the
         // number here: not the store, not the watch-only floor lead.
@@ -1501,6 +1567,7 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
       onFloorNow: liveEntries.map((e) => ({
         associateId: e.associateId,
         name: fullName(e.associate),
+        photoUrl: profilePhotoUrlFor({ id: e.associateId, ...e.associate }),
         clockInAt: e.clockInAt.toISOString(),
         position: e.shift?.position ?? null,
       })),
@@ -1585,38 +1652,48 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
     const spanDays = Math.round((toExclusive.getTime() - from.getTime()) / DAY);
     if (spanDays > 92) throw new HttpError(400, 'range_too_long', 'Pick 92 days or fewer.');
 
-    const shifts = await prisma.shift.findMany({
-      where: { ...shiftScope(scope), startsAt: { gte: from, lt: toExclusive } },
-      select: { id: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
-      take: 20000,
-    });
+    // No silent caps (CODE-19): every row is read in pages, or aggregated in
+    // SQL; `truncated` says so if a hard ceiling ever stops a read.
+    const { rows: shifts, truncated: shiftsCut } = await readAll((page) =>
+      prisma.shift.findMany({
+        where: { ...shiftScope(scope), startsAt: { gte: from, lt: toExclusive } },
+        select: { id: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
+        ...page,
+      }),
+    );
     const shiftIds = shifts.map((s) => s.id);
     // Same store clamp as the overview: Store Ops is a per-building record.
     const opsWhere = await opsShiftScope(scope);
     const dayKeys = new Set<string>();
     for (let k = fromKey; k <= toKey; k = nextKey(k, 1)) dayKeys.add(k);
 
-    const [events, { punched, entries: rangeEntries }, worked, claims, ops, incidents, openIncidents, statements] =
+    const eventWhere = { ...attendanceWhere(scope, from, shiftIds), occurredOn: { gte: from, lt: toExclusive } };
+    const opsRangeWhere = { ...opsWhere, dateKey: { in: [...dayKeys] } };
+    const [eventKinds, ncnsRead, { punched, entries: rangeEntries, truncated: punchesCut }, workedRead, claims, opsAgg, opsIncomplete, opsPhotos, incidents, openIncidents, statements] =
       await Promise.all([
-        prisma.attendanceEvent.findMany({
-          where: { ...attendanceWhere(scope, from, shiftIds), occurredOn: { gte: from, lt: toExclusive } },
-          select: { kind: true, shiftId: true },
-          take: 5000,
-        }),
+        // Counted in SQL, by kind.
+        prisma.attendanceEvent.groupBy({ by: ['kind'], where: eventWhere, _count: { _all: true } }),
+        // The no-show shifts themselves, which the showed-up rate excludes.
+        readAll((page) =>
+          prisma.attendanceEvent.findMany({ where: { ...eventWhere, kind: 'NO_CALL_NO_SHOW' }, select: { id: true, shiftId: true }, ...page }),
+        ),
         loadPunches(scope, from, toExclusive, now),
-        prisma.timeEntry.findMany({
-          where: {
-            ...entryScope(scope),
-            status: { in: ['COMPLETED', 'APPROVED'] },
-            clockInAt: { gte: from, lt: toExclusive },
-          },
-          select: {
-            clockInAt: true,
-            clockOutAt: true,
-            breaks: { select: { startedAt: true, endedAt: true } },
-          },
-          take: 20000,
-        }),
+        readAll((page) =>
+          prisma.timeEntry.findMany({
+            where: {
+              ...entryScope(scope),
+              status: { in: ['COMPLETED', 'APPROVED'] },
+              clockInAt: { gte: from, lt: toExclusive },
+            },
+            select: {
+              id: true,
+              clockInAt: true,
+              clockOutAt: true,
+              breaks: { select: { startedAt: true, endedAt: true } },
+            },
+            ...page,
+          }),
+        ),
         prisma.openShiftClaim.count({
           where: {
             status: 'APPROVED',
@@ -1624,19 +1701,19 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
             shift: { clientId: scope.clientId, ...(scope.locationId ? { locationId: scope.locationId } : {}) },
           },
         }),
-        prisma.opsShift.findMany({
-          where: { ...opsWhere, dateKey: { in: [...dayKeys] } },
-          select: {
-            sopDone: true,
-            sopTotal: true,
-            taskDone: true,
-            taskTotal: true,
-            tempAlerts: true,
-            closedIncomplete: true,
-            _count: { select: { tasks: { where: { photos: { some: {} } } } } },
-          },
-          take: 2000,
+        // The checklist roll-up, summed in SQL.
+        prisma.opsShift.aggregate({
+          where: opsRangeWhere,
+          _count: { _all: true },
+          _sum: { sopDone: true, sopTotal: true, taskDone: true, taskTotal: true, tempAlerts: true },
         }),
+        // Submitted short by a person; the expiry sweep's closes (no closer) are "never submitted".
+        prisma.opsShift.groupBy({
+          by: ['closedById'],
+          where: { ...opsRangeWhere, closedIncomplete: true, status: 'CLOSED' },
+          _count: { _all: true },
+        }),
+        prisma.opsTask.count({ where: { opsShift: { is: opsRangeWhere }, photos: { some: {} } } }),
         prisma.oshaIncident.count({
           where: { ...incidentWhere(scope), occurredAt: { gte: from, lt: toExclusive } },
         }),
@@ -1665,7 +1742,9 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
         }),
       ]);
 
-    const ncnsIds = new Set(events.filter((e) => e.kind === 'NO_CALL_NO_SHOW' && e.shiftId).map((e) => e.shiftId));
+    const ncnsIds = new Set(ncnsRead.rows.filter((e) => e.shiftId).map((e) => e.shiftId));
+    const worked = workedRead.rows;
+    const truncated = shiftsCut || punchesCut || ncnsRead.truncated || workedRead.truncated;
     const targetLocations = await loadTargets(scope, now);
     const rangeHours = coverageByHours({
       locations: targetLocations,
@@ -1696,15 +1775,11 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
         take: 200,
       });
       if (locations.length > 1) {
-        const shiftLoc = await prisma.shift.findMany({
-          where: { id: { in: shiftIds } },
-          select: { id: true, locationId: true },
-          take: 20000,
-        });
-        const locOf = new Map(shiftLoc.map((s) => [s.id, s.locationId]));
+        // The shifts already carry their store: a second capped read of the
+        // same rows for their locationId was the third silent cap here.
         storeRows = locations
           .map((l) => {
-            const mine = shifts.filter((s) => locOf.get(s.id) === l.id);
+            const mine = shifts.filter((s) => s.locationId === l.id);
             const published = mine.length;
             const filled = mine.filter((s) => s.status !== 'OPEN').length;
             const endedRows = mine.filter((s) => s.endsAt.getTime() <= now.getTime());
@@ -1764,8 +1839,12 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       if (!d) continue;
       d.published += 1;
       if (s.status === 'OPEN') d.open += 1;
-      else d.filled += 1;
-      d.scheduledHours += paidMinutesForRange(s.startsAt, s.endsAt) / 60;
+      else {
+        d.filled += 1;
+        // Staffed shifts' paid time — the basis worked hours are counted on
+        // (breaks out); an open slot is not hours anyone was scheduled for.
+        d.scheduledHours += paidMinutesForRange(s.startsAt, s.endsAt) / 60;
+      }
       if (s.endsAt.getTime() <= now.getTime()) {
         d.ended += 1;
         if (s.status !== 'OPEN' && !ncnsIds.has(s.id) && punched(s)) d.showed += 1;
@@ -1799,8 +1878,10 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
     const published = sum((d) => d.published);
     const filled = sum((d) => d.filled);
     const graded = gradeWeeks(dayRows);
-    const count = (kind: string) => events.filter((e) => e.kind === kind).length;
-    const opsSum = (f: (o: (typeof ops)[number]) => number) => ops.reduce((a, o) => a + f(o), 0);
+    const count = (kind: string) => eventKinds.find((e) => e.kind === kind)?._count._all ?? 0;
+    const opsCount = opsAgg._count._all;
+    const expiredOps = opsIncomplete.find((g) => g.closedById === null)?._count._all ?? 0;
+    const incompleteOps = opsIncomplete.reduce((a, g) => a + g._count._all, 0) - expiredOps;
 
     // One service report per store week the range touches.
     const weekStarts: string[] = [];
@@ -1817,6 +1898,8 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       store: scope.location ? { id: scope.location.id, name: scope.location.name } : null,
       range: { from: fromKey, to: toKey, days: spanDays },
       generatedAt: now.toISOString(),
+      /** True only when a read hit the hard ceiling — the figures are then partial. */
+      truncated,
       days: dayRows,
       totals: {
         published,
@@ -1850,16 +1933,17 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
         replacementsFound: claims,
       },
       ops:
-        ops.length > 0
+        opsCount > 0
           ? {
-              shifts: ops.length,
-              sopDone: opsSum((o) => o.sopDone),
-              sopTotal: opsSum((o) => o.sopTotal),
-              taskDone: opsSum((o) => o.taskDone),
-              taskTotal: opsSum((o) => o.taskTotal),
-              tempAlerts: opsSum((o) => o.tempAlerts),
-              incomplete: ops.filter((o) => o.closedIncomplete).length,
-              photos: opsSum((o) => o._count.tasks),
+              shifts: opsCount,
+              sopDone: opsAgg._sum.sopDone ?? 0,
+              sopTotal: opsAgg._sum.sopTotal ?? 0,
+              taskDone: opsAgg._sum.taskDone ?? 0,
+              taskTotal: opsAgg._sum.taskTotal ?? 0,
+              tempAlerts: opsAgg._sum.tempAlerts ?? 0,
+              incomplete: incompleteOps,
+              expired: expiredOps,
+              photos: opsPhotos,
             }
           : null,
       safety: { incidents, open: openIncidents },
@@ -1984,6 +2068,164 @@ clientPortalRouter.post('/client-portal/acknowledge', requireAuth, async (req, r
       key: input.key,
       reviewedAt: row.createdAt.toISOString(),
       reviewedBy: reviewerName(row.user),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== The week's hours, signed off ====================================== */
+
+/**
+ * The store a sign-off is about. Hours are signed store by store: a store
+ * account's own store (never one named in the request), a client-wide or
+ * region account's store when it names one inside its reach (resolveScope
+ * checks), or a one-store client's only store.
+ */
+async function signOffStore(scope: PortalScope) {
+  if (scope.location) return { id: scope.location.id, name: scope.location.name, timezone: scope.location.timezone };
+  const stores = await prisma.site.findMany({
+    where: { clientId: scope.clientId, deletedAt: null, isActive: true },
+    select: { id: true, name: true, timezone: true },
+    take: 2,
+  });
+  if (stores.length === 1) return stores[0]!;
+  throw new HttpError(400, 'store_required', 'Pick a store: hours are signed off store by store.');
+}
+
+/**
+ * GET /client-portal/hours?week=YYYY-MM-DD — a finished store week's worked
+ * hours, person by person, and its sign-off. `week` is any day in the week
+ * (default: the last finished week). Hours only — no rates.
+ */
+clientPortalRouter.get('/client-portal/hours', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user!, req.query);
+    const store = await signOffStore(scope);
+    const cal = storeCalendar(store.timezone);
+    const now = new Date();
+    const weekKey = req.query.week === undefined ? lastFinishedWeek(cal, now) : storeWeekKey(cal, parseDayKey(req.query.week, 'week'));
+    const [hours, record] = await Promise.all([
+      storeWeekHours({ clientId: scope.clientId, locationId: store.id }, cal, weekKey, now),
+      prisma.clientHoursSignOff.findUnique({
+        where: { tenantId_locationId_weekStart: { tenantId: tenantIdForWrite(), locationId: store.id, weekStart: weekDate(weekKey) } },
+      }),
+    ]);
+    res.json({
+      store: { id: store.id, name: store.name },
+      week: { start: weekKey, end: nextKey(weekKey, 6) },
+      /** The other weeks that can be signed, newest first. */
+      weeks: Array.from({ length: SIGNOFF_LOOKBACK_WEEKS }, (_, i) => nextKey(lastFinishedWeek(cal, now), -7 * i)),
+      signable: signableWeek(cal, weekKey, now),
+      // Only the client signs its hours; an admin's preview reads them.
+      canSign: req.user!.role === 'CLIENT_PORTAL',
+      ...hours,
+      state: signOffState(hours, record),
+      signOff: signOffView(record),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const SignHoursSchema = z.object({
+  week: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** The lines the manager questions, each with why. Empty = signed as is. */
+  flags: z
+    .array(z.object({ associateId: z.string().uuid(), note: z.string().trim().min(3).max(500) }))
+    .max(500)
+    .default([]),
+  note: z.string().trim().max(1000).optional(),
+  /** The total the manager reviewed: if the hours moved meanwhile, nothing is signed. */
+  expectTotalHours: z.number().nonnegative().optional(),
+});
+
+/**
+ * POST /client-portal/hours/sign — the client signs a finished store week's
+ * hours off, or flags lines. Re-signing replaces the record. Client accounts
+ * only, and only stores inside their own reach (resolveScope).
+ */
+clientPortalRouter.post('/client-portal/hours/sign', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user!.role !== 'CLIENT_PORTAL') {
+      throw new HttpError(403, 'client_only', 'Only the client signs its hours off.');
+    }
+    const input = SignHoursSchema.parse(req.body);
+    const scope = await resolveScope(req.user!, req.query);
+    const store = await signOffStore(scope);
+    const cal = storeCalendar(store.timezone);
+    const now = new Date();
+    const weekKey = storeWeekKey(cal, input.week);
+    if (!signableWeek(cal, weekKey, now)) {
+      throw new HttpError(
+        409,
+        'week_not_signable',
+        weekKey >= cal.key(cal.weekStart(now))
+          ? 'This week is still under way. Its hours can be signed off once the week ends.'
+          : `Only the last ${SIGNOFF_LOOKBACK_WEEKS} weeks can be signed off.`,
+      );
+    }
+    const hours = await storeWeekHours({ clientId: scope.clientId, locationId: store.id }, cal, weekKey, now);
+    if (input.expectTotalHours !== undefined && Math.abs(input.expectTotalHours - hours.totalHours) > 0.005) {
+      throw new HttpError(409, 'hours_changed', 'The hours changed while you were reviewing them. Reload and sign again.');
+    }
+    const byId = new Map(hours.lines.map((l) => [l.associateId, l]));
+    const flags: SignOffFlag[] = [];
+    for (const f of input.flags) {
+      const line = byId.get(f.associateId);
+      if (!line) throw new HttpError(400, 'unknown_line', 'A flagged line is not in this week’s hours.');
+      flags.push({ associateId: line.associateId, name: line.name, hours: line.hours, note: f.note });
+    }
+    // The name the account carries (its invite's display name) — never an email as a name.
+    const signedByName =
+      [req.user!.firstName, req.user!.lastName].filter(Boolean).join(' ').trim() ||
+      (scope.location && req.user!.locationId ? 'Store manager' : 'Client manager');
+    const data = {
+      clientId: scope.clientId,
+      status: flags.length > 0 ? ('FLAGGED' as const) : ('SIGNED' as const),
+      signedById: req.user!.id,
+      signedByName: signedByName.slice(0, 200),
+      signedAt: now,
+      totalHours: hours.totalHours,
+      people: hours.people,
+      lines: hours.lines as unknown as Prisma.InputJsonValue,
+      flags: flags as unknown as Prisma.InputJsonValue,
+      note: input.note || null,
+    };
+    const tenantId = tenantIdForWrite();
+    const record = await prisma.clientHoursSignOff.upsert({
+      where: { tenantId_locationId_weekStart: { tenantId, locationId: store.id, weekStart: weekDate(weekKey) } },
+      create: { tenantId, locationId: store.id, weekStart: weekDate(weekKey), ...data },
+      update: data,
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: scope.clientId,
+        action: flags.length > 0 ? 'client.hours_flagged' : 'client.hours_signed_off',
+        entityType: 'ClientHoursSignOff',
+        entityId: record.id,
+        metadata: { locationId: store.id, week: weekKey, totalHours: hours.totalHours, people: hours.people, flags: flags.length },
+      },
+      'clients.hours_signoff',
+    );
+    // A flag is a question from the client: the desks that answer it hear it.
+    if (flags.length > 0) {
+      void trackNotificationWork(
+        notifyRoles(DOWNLOAD_ROLES, {
+          subject: `${store.name}: ${flags.length} ${flags.length === 1 ? 'line' : 'lines'} of hours questioned`,
+          body:
+            `${signedByName} flagged hours for ${fmtDayRange(weekKey, nextKey(weekKey, 6))} at ${store.name}:\n` +
+            flags.map((f) => `· ${f.name} (${f.hours}h): ${f.note}`).join('\n'),
+          linkUrl: `/clients/${scope.clientId}?section=overview`,
+          category: ENGAGEMENT_CATEGORY,
+        }).then(() => undefined),
+      );
+    }
+    res.status(201).json({
+      week: { start: weekKey, end: nextKey(weekKey, 6) },
+      state: signOffState(hours, record),
+      signOff: signOffView(record),
     });
   } catch (err) {
     next(err);

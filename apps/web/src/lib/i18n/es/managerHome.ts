@@ -1,0 +1,55 @@
+// Spanish for 'managerHome.*' — a staff desk's words, registered with its English (en/managerHome.ts
+// imports this file), so it rides in that desk's own chunk: a Spanish-reading associate
+// never downloads it, and es.ts stays the associate's pack. Add 'managerHome.*' Spanish HERE.
+import { registerTranslations } from '../english';
+import type { enManagerHome } from '../en/managerHome';
+
+export const esManagerHome: Record<keyof typeof enManagerHome, string> = {
+  'managerHome.oneReport': 'Tienes 1 persona a tu cargo en tu equipo.',
+  'managerHome.nReports': 'Tienes {n} personas a tu cargo en tu equipo.',
+  'managerHome.teamScoped': 'Tu resumen, acotado a tu equipo.',
+  'managerHome.queuesError': 'No se pudieron cargar tus colas de aprobación',
+  'managerHome.inboxZero': 'Bandeja vacía',
+  'managerHome.inboxZeroBody': 'no hay hojas de tiempo ni solicitudes de ausencia pendientes.',
+  'managerHome.teamClear': 'Tu equipo está al día',
+  'managerHome.companyWaiting': '{n} pendientes de la empresa esperan en la Bandeja →',
+  'managerHome.teamSnapshot': 'Resumen del equipo',
+  'managerHome.onClockError': 'No se pudo cargar quién está fichado ahora.',
+  'managerHome.onClockNow': 'Fichados ahora',
+  'managerHome.xOfY': '{a} de {b}',
+  'managerHome.pendingTimesheets': 'Hojas de tiempo pendientes',
+  'managerHome.inboxClear': 'Bandeja al día.',
+  'managerHome.pendingTimeOff': 'Ausencias pendientes',
+  'managerHome.nothingWaiting': 'Nada pendiente.',
+  'managerHome.directReports': 'Personas a tu cargo',
+  'managerHome.noReports': 'Actualmente nadie reporta a ti.',
+  'managerHome.noTeamTitle': 'Todavía no tienes un equipo aquí',
+  'managerHome.noTeamBody': 'Recursos Humanos te asigna personas como su {manager}. Cuando lo haga, esta página mostrará quién está fichado, quién está ausente y qué vence en tu equipo.',
+  'managerHome.openMyTeam': 'Abrir Mi equipo',
+  'managerHome.messageHr': 'Escribir a RR. HH.',
+  'managerHome.ofTeam': 'de {n} en tu equipo',
+  'managerHome.scheduledToday': 'Programados hoy',
+  'managerHome.scheduledHint': 'Turnos de tu equipo hoy',
+  'managerHome.nobodyScheduled': 'Nadie programado hoy',
+  'managerHome.outToday': 'Ausentes hoy',
+  'managerHome.onLeave': 'Con ausencia aprobada',
+  'managerHome.everyoneIn': 'Todos presentes',
+  'managerHome.dueThisMonth': 'Vence este mes',
+  'managerHome.dueHint': 'Evaluaciones, 1:1, periodos de prueba y vencimientos',
+  'managerHome.nothingDue': 'Nada vence este mes',
+  'managerHome.myTeam': 'Mi equipo',
+  'managerHome.openTeamPage': 'Abrir página del equipo',
+  'managerHome.timesheetsHint': 'Aprueba para que la nómina incluya las horas.',
+  'managerHome.openQueue': 'Abrir cola',
+  'managerHome.approveAllN': 'Aprobar las {n}',
+  'managerHome.timeOffHint': 'Aprueba o rechaza antes de las fechas solicitadas.',
+  'managerHome.openRequests': 'Abrir solicitudes',
+  'managerHome.teamTimesheet': 'Hoja de tiempo de tu equipo',
+  'managerHome.teamTimesheets': 'Hojas de tiempo de tu equipo',
+  'managerHome.timesheetsInAll': '{n} en total entre todas las personas que apruebas.',
+  'managerHome.seeEveryTimesheet': 'Ver todas las hojas de tiempo',
+  'managerHome.teamTimeOffWaiting': 'Solicitud de ausencia de tu equipo',
+  'managerHome.teamTimeOffsWaiting': 'Solicitudes de ausencia de tu equipo',
+};
+
+registerTranslations('es', esManagerHome);

@@ -1,5 +1,6 @@
 import { tenantJob } from '../tenantJobs.js';
 import { monthlyForecastSweep } from './run.js';
+import { logger } from '../logger.js';
 
 /**
  * Brief 3-4: once a month per tenant (checked every six hours, so a restart
@@ -17,7 +18,7 @@ export function startForecastCron(): void {
     void tick().catch((err) => console.error('[alto-people/api] forecast sweep failed:', err));
   }, SWEEP_MS);
   timer.unref();
-  console.log('[alto-people/api] forecast cron armed (monthly per tenant, checked every 6h)');
+  logger.info('forecast cron armed (monthly per tenant, checked every 6h)');
 }
 
 export function stopForecastCron(): void {

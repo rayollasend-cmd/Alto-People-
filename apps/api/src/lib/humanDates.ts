@@ -1,4 +1,5 @@
-import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
+import { localDateKey } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * Dates the way a person reads them, for text the API writes itself — a
@@ -39,7 +40,7 @@ export function calendarDay(value: DayValue): Date | null {
 }
 
 function thisYear(now: Date): number {
-  return Number(localDateKey(now, DEFAULT_TIMEZONE).slice(0, 4));
+  return Number(localDateKey(now, companyWorkweek().timezone).slice(0, 4));
 }
 
 function showYear(d: Date, opts: DayFormat): boolean {
@@ -81,7 +82,7 @@ export function fmtDayRange(from: DayValue, to: DayValue, opts: Omit<DayFormat, 
 }
 
 /** The day an instant fell on in a zone: "Oct 26" · "Mon, Oct 26" · "Oct 26, 2025". */
-export function fmtDayInZone(at: Date, timeZone: string = DEFAULT_TIMEZONE, opts: DayFormat = {}): string {
+export function fmtDayInZone(at: Date, timeZone: string = companyWorkweek().timezone, opts: DayFormat = {}): string {
   return fmtDay(localDateKey(at, timeZone), opts);
 }
 
@@ -92,7 +93,7 @@ export function sentenceFromCode(code: string): string {
 }
 
 /** An instant as a person reads it, with its zone: "Mon, Oct 26, 6:00 PM EDT". */
-export function fmtMomentInZone(at: Date, timeZone: string = DEFAULT_TIMEZONE): string {
+export function fmtMomentInZone(at: Date, timeZone: string = companyWorkweek().timezone): string {
   return new Intl.DateTimeFormat('en-US', {
     timeZone,
     weekday: 'short',

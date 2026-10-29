@@ -18,6 +18,7 @@ import { recordPayrollEvent } from '../lib/audit.js';
 import { payrollCalendar } from '../lib/banking/calendar.js';
 import { achTimeline, SAME_DAY_WINDOWS, type AchSpeed } from '../lib/banking/holidays.js';
 import { isValidRouting, parseReturnFile } from '../lib/banking/nacha.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Payroll banking (Pay & finance → Payroll banking).
@@ -112,8 +113,8 @@ function fundingView(f: PayrollFunding) {
     status: f.status,
     amountCents: Number(f.amountCents),
     breakdown: f.breakdown,
-    payDate: f.payDate.toISOString().slice(0, 10),
-    debitEffectiveDate: f.debitEffectiveDate.toISOString().slice(0, 10),
+    payDate: dateColumnKey(f.payDate),
+    debitEffectiveDate: dateColumnKey(f.debitEffectiveDate),
     fundingDeadline: f.fundingDeadline.toISOString(),
     achSpeed: f.achSpeed,
     bankAccountId: f.bankAccountId,
@@ -133,7 +134,7 @@ function fileView(f: AchFile & { _count?: { entries: number } }, returns = 0) {
     purpose: f.purpose,
     provider: f.provider,
     status: f.status,
-    effectiveDate: f.effectiveDate.toISOString().slice(0, 10),
+    effectiveDate: dateColumnKey(f.effectiveDate),
     sameDay: f.sameDay,
     entryCount: f.entryCount,
     totalDebitCents: Number(f.totalDebitCents),
@@ -201,8 +202,8 @@ bankingRouter.get('/summary', async (req, res, next) => {
       ? await Promise.all(
           runs.map(async (r) => ({
             runId: r.id,
-            periodStart: r.periodStart.toISOString().slice(0, 10),
-            periodEnd: r.periodEnd.toISOString().slice(0, 10),
+            periodStart: dateColumnKey(r.periodStart),
+            periodEnd: dateColumnKey(r.periodEnd),
             clientName: r.client?.name ?? null,
             funding: byRun.has(r.id) ? fundingView(byRun.get(r.id)!) : await fundingPreview(profile, r.id),
           })),
@@ -435,7 +436,7 @@ bankingRouter.get('/files/:id/download', PROCESS, async (req, res, next) => {
     const content = fileContent(f);
     await prisma.achFile.update({ where: { id: f.id }, data: { status: f.status === 'CREATED' ? 'DOWNLOADED' : f.status } });
     enqueueAudit({ actorUserId: req.user!.id, action: 'payroll.ach_file_downloaded', entityType: 'AchFile', entityId: f.id, metadata: { purpose: f.purpose, entries: f.entryCount, sha256: f.sha256 } }, 'banking');
-    const name = `ach-${f.purpose.toLowerCase()}-${f.effectiveDate.toISOString().slice(0, 10)}-${f.fileIdModifier}.txt`;
+    const name = `ach-${f.purpose.toLowerCase()}-${dateColumnKey(f.effectiveDate)}-${f.fileIdModifier}.txt`;
     res.setHeader('Content-Type', 'text/plain; charset=us-ascii');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
     res.setHeader('Cache-Control', 'no-store');
@@ -475,7 +476,7 @@ bankingRouter.get('/entries', PROCESS, async (req, res, next) => {
         traceNumber: e.traceNumber,
         kind: e.kind,
         purpose: e.file.purpose,
-        effectiveDate: e.file.effectiveDate.toISOString().slice(0, 10),
+        effectiveDate: dateColumnKey(e.file.effectiveDate),
         amountCents: Number(e.amountCents),
         name: e.individualName,
         accountLast4: e.accountLast4,
@@ -570,7 +571,7 @@ bankingRouter.get('/calendar', async (req, res, next) => {
     const profile = await bankingProfile(prisma);
     const cal = await payrollCalendar(prisma, profile, year);
     const overrides = await prisma.bankHolidayOverride.findMany({ where: { tenantId: tenantIdForWrite(), date: { gte: new Date(`${year}-01-01T00:00:00Z`), lte: new Date(`${year}-12-31T00:00:00Z`) } }, orderBy: { date: 'asc' } });
-    res.json({ ...cal, overrides: overrides.map((o) => ({ id: o.id, date: o.date.toISOString().slice(0, 10), name: o.name, closed: o.closed })) });
+    res.json({ ...cal, overrides: overrides.map((o) => ({ id: o.id, date: dateColumnKey(o.date), name: o.name, closed: o.closed })) });
   } catch (err) {
     next(err);
   }
@@ -598,7 +599,7 @@ bankingRouter.delete('/holidays/:id', PROCESS, async (req, res, next) => {
     const row = await prisma.bankHolidayOverride.findFirst({ where: { id: req.params.id, tenantId: tenantIdForWrite() } });
     if (!row) throw new HttpError(404, 'override_not_found', 'That day isn’t on the calendar.');
     await prisma.bankHolidayOverride.delete({ where: { id: row.id } });
-    enqueueAudit({ actorUserId: req.user!.id, action: 'payroll.bank_holiday_removed', entityType: 'BankHolidayOverride', entityId: row.id, metadata: { date: row.date.toISOString().slice(0, 10) } }, 'banking');
+    enqueueAudit({ actorUserId: req.user!.id, action: 'payroll.bank_holiday_removed', entityType: 'BankHolidayOverride', entityId: row.id, metadata: { date: dateColumnKey(row.date) } }, 'banking');
     res.status(204).end();
   } catch (err) {
     next(err);

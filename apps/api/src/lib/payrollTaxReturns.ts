@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient, TaxAgencyKind } from '@prisma/client';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
 import { tryDecryptString } from './crypto.js';
 import { annualDueDate, periodBounds, quarterlyDueDate } from './payrollTaxCalendar.js';
@@ -6,6 +7,7 @@ import { NO_INCOME_TAX_STATES, STATE_NAMES, localJurisdictionOf } from './payrol
 import { FUTA_CREDIT_REDUCTION, futaCreditReduction, sutaDefaults } from './payrollTax.js';
 import { loadItemBases, type ItemBases } from './wageBases.js';
 import { tenantIdForWrite } from './tenant.js';
+import { cutOf, punchesInPeriod, workDayOf } from './payrollSchedule.js';
 
 /**
  * Returns, generated from what payroll actually paid.
@@ -142,6 +144,7 @@ function cappedThisPeriod(prior: number, now: number, cap: number): number {
   return Math.max(0, Math.min(cap, prior + now) - Math.min(cap, prior));
 }
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: the same UTC basis as the quarter's window on disbursedAt, so a pay day never falls outside its quarter.
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
 
 export interface GeneratedReturn {
@@ -514,13 +517,17 @@ export async function generateReturn(db: Db, kind: ReturnKind, jurisdiction: str
 
 /** Weeks and hours worked in a period, from approved time (several states ask for one or the other). */
 async function weeksAndHours(db: Db, ids: string[], from: Date, toExclusive: Date): Promise<{ weeks: Map<string, Set<string>>; hours: Map<string, number> }> {
+  // The pay-period cut (deep audit CODE-1): a shift counts on its clock-in's day at the site.
   const entries = ids.length
-    ? await db.timeEntry.findMany({ where: { associateId: { in: ids }, status: 'APPROVED', clockInAt: { gte: from, lt: toExclusive }, clockOutAt: { not: null } }, select: { associateId: true, clockInAt: true, clockOutAt: true } })
+    ? await punchesInPeriod(cutOf(from, toExclusive), null, (clockInAt) =>
+        db.timeEntry.findMany({ where: { associateId: { in: ids }, status: 'APPROVED', clockInAt, clockOutAt: { not: null } }, select: { associateId: true, clockInAt: true, clockOutAt: true, location: { select: { timezone: true } } } }),
+      )
     : [];
   const weeks = new Map<string, Set<string>>();
   const hours = new Map<string, number>();
   for (const e of entries) {
-    const d = new Date(Date.UTC(e.clockInAt.getUTCFullYear(), e.clockInAt.getUTCMonth(), e.clockInAt.getUTCDate()));
+    const d = new Date(`${workDayOf(e.clockInAt, e.location?.timezone)}T00:00:00.000Z`);
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: arithmetic on the site day's UTC-midnight anchor.
     const weekStart = new Date(d.getTime() - d.getUTCDay() * 86_400_000).toISOString().slice(0, 10);
     const set = weeks.get(e.associateId) ?? new Set<string>();
     set.add(weekStart);
@@ -558,10 +565,8 @@ export const ROW_COLUMN_ORDER = ['day', 'liability', 'state', 'ssn', 'ssnLast4',
 /** CSV for a return: the figures, then the per-person rows. SSNs appear only when `withSsn` (a bulk-PII export). */
 export function returnCsv(r: { kind: string; jurisdiction: string; periodLabel: string; data: unknown }, withSsn: boolean): string {
   const data = r.data as { totals?: Record<string, number>; rows?: Array<Record<string, unknown>>; notes?: string[] };
-  const esc = (v: unknown) => {
-    const s = v === null || v === undefined ? '' : String(v);
-    return /[",\n]/.test(s) || /^[=+\-@]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  // The shared escaper (@alto-people/shared): quoting alone doesn't stop a spreadsheet running a formula.
+  const esc = (v: unknown) => sharedCsvCell(typeof v === 'number' ? v : v === null || v === undefined ? '' : String(v));
   const lines: string[] = [];
   lines.push(`# ${RETURN_LABEL[r.kind as ReturnKind] ?? r.kind} · ${r.jurisdiction} · ${r.periodLabel}`);
   if (r.kind === 'SUI_WAGE_REPORT' || r.kind === 'LOCAL_QUARTERLY' || r.kind === 'STATE_PROGRAM_REPORT') lines.push('# CONFIRM format: each agency prescribes its own electronic layout; these columns carry every field it asks for.');

@@ -18,6 +18,7 @@ import type { enCap } from './cap';
 import type { enCareer } from './career';
 import type { enClock } from './clock';
 import type { enCrewText } from './crewText';
+import type { enCrew } from './crew';
 import type { enDash } from './dash';
 import type { enDecisions } from './decisions';
 import type { enDocs } from './docs';
@@ -74,6 +75,7 @@ import type { enPortal } from './portal';
 import type { enPortalOps } from './portalOps';
 import type { enPts } from './pts';
 import type { enPush } from './push';
+import type { enPw } from './pw';
 import type { enRdq } from './rdq';
 import type { enRecord } from './record';
 import type { enRecruiterHome } from './recruiterHome';
@@ -106,6 +108,8 @@ import type { enTour } from './tour';
 import type { enTrain } from './train';
 import type { enW4est } from './w4est';
 import type { enW9 } from './w9';
+import type { enIjobs } from './ijobs';
+import type { enBenme } from './benme';
 import type { enWallet } from './wallet';
 import type { enWeek } from './week';
 import type { enWf } from './wf';
@@ -132,6 +136,7 @@ export type EnglishKey =
   | keyof typeof enCareer
   | keyof typeof enClock
   | keyof typeof enCrewText
+  | keyof typeof enCrew
   | keyof typeof enDash
   | keyof typeof enDecisions
   | keyof typeof enDocs
@@ -188,6 +193,7 @@ export type EnglishKey =
   | keyof typeof enPortalOps
   | keyof typeof enPts
   | keyof typeof enPush
+  | keyof typeof enPw
   | keyof typeof enRdq
   | keyof typeof enRecord
   | keyof typeof enRecruiterHome
@@ -220,6 +226,8 @@ export type EnglishKey =
   | keyof typeof enTrain
   | keyof typeof enW4est
   | keyof typeof enW9
+  | keyof typeof enIjobs
+  | keyof typeof enBenme
   | keyof typeof enWallet
   | keyof typeof enWeek
   | keyof typeof enWf

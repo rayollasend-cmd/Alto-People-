@@ -5,6 +5,7 @@ import { env } from '../config/env.js';
 import { notifyUser } from './notify.js';
 import { orgDateKey } from './timeAnomalies.js';
 import { formatTimeInZone } from './timezone.js';
+import { logger } from './logger.js';
 
 /**
  * "Your 6am shift is 5 short and it's 6:15" — an alert, not a dashboard
@@ -189,8 +190,17 @@ export async function runPortalCoverageAlertSweep(
   const startLabel = (w: ShortWave) => formatTimeInZone(w.startsAt, w.timezone);
   const todayLink = (w: ShortWave, withStore: boolean) =>
     `/portal/today?${withStore && w.locationId ? `locationId=${w.locationId}&` : ''}date=${orgDateKey(w.startsAt)}&wave=${encodeURIComponent(w.startsAt.toISOString())}`;
+  const slots = (n: number) => `${n} slot${n === 1 ? '' : 's'}`;
+  // A wave with nobody assigned is unfilled, not "0 of 0 expected on the
+  // floor" titled "1 short" (LEAD-24).
   const line = (w: ShortWave) =>
-    `${w.present} of ${w.expected} expected on the floor${w.open > 0 ? `, ${w.open} slot${w.open === 1 ? '' : 's'} unfilled` : ''}`;
+    w.expected === 0
+      ? `${slots(w.open)} still unfilled`
+      : `${w.present} of ${w.expected} expected on the floor${w.open > 0 ? `, ${slots(w.open)} unfilled` : ''}`;
+  const shortTitle = (w: ShortWave) =>
+    w.expected === 0
+      ? `the ${startLabel(w)} shift has ${slots(w.open)} still unfilled`
+      : `the ${startLabel(w)} shift is ${w.short} short`;
 
   const supervisorsByClient = new Map<string, string[]>();
   const supervisorsOf = async (clientId: string) => {
@@ -210,7 +220,7 @@ export async function runPortalCoverageAlertSweep(
 
   for (const w of shortWaves) {
     const sups = await supervisorsOf(w.clientId);
-    const subject = `${storeName(w)}: the ${startLabel(w)} shift is ${w.short} short`;
+    const subject = `${storeName(w)}: ${shortTitle(w)}`;
 
     // Store managers: their own store's shift, one alert each.
     const storeManagers = portalUsers.filter((u) => u.clientId === w.clientId && !!w.locationId && u.locationId === w.locationId);
@@ -270,7 +280,7 @@ export async function runPortalCoverageAlertSweep(
       userId,
       {
         subject: one
-          ? `${storeName(one)}: the ${startLabel(one)} shift is ${one.short} short`
+          ? `${storeName(one)}: ${shortTitle(one)}`
           : `${newWaves.length} shifts short across ${stores.size === 1 ? [...stores][0] : `${stores.size} stores`}`,
         body:
           newWaves.map((w) => `${storeName(w)}, ${startLabel(w)} shift: ${line(w)}.`).join('\n') +
@@ -299,8 +309,8 @@ export function startPortalCoverageAlertCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] portal coverage alert cron armed (every ${seconds}s; ${env.PORTAL_COVERAGE_ALERT_GRACE_MINUTES} min grace; ${env.PORTAL_COVERAGE_ALERT_MIN_SHORT_PCT}% short threshold)`,
+  logger.info(
+    `portal coverage alert cron armed (every ${seconds}s; ${env.PORTAL_COVERAGE_ALERT_GRACE_MINUTES} min grace; ${env.PORTAL_COVERAGE_ALERT_MIN_SHORT_PCT}% short threshold)`,
   );
 }
 

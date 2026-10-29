@@ -58,7 +58,15 @@ describe('state programs on the paycheck', () => {
     // Through a real run: the line is saved and the paystub names it as a tax.
     const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
     const a = await loginAs(user.email);
-    expect((await a.post('/payroll/runs').send({ periodStart: '2026-04-13', periodEnd: '2026-04-19' })).status).toBe(201);
+    const created = await a.post('/payroll/runs').send({ periodStart: '2026-04-13', periodEnd: '2026-04-19' });
+    expect(created.status).toBe(201);
+    // "Taxes withheld" on the run and each check's taxes include the state program (deep audit MONEY-12),
+    // so every Paychecks row adds up: gross − taxes − deductions + reimbursements = net.
+    expect(Number(created.body.totalTax)).toBeCloseTo(taxes, 2);
+    const dto = created.body.items.find((i: { associateId: string }) => i.associateId === p.id);
+    expect(dto.taxesTotal).toBeCloseTo(taxes, 2);
+    expect(dto).toMatchObject({ localWithholding: 0, reimbursementsTotal: 0 });
+    expect(dto.grossPay - dto.taxesTotal - (dto.preTaxDeductions ?? 0) - dto.postTaxDeductions + dto.reimbursementsTotal).toBeCloseTo(dto.netPay, 2);
     const saved = await prisma.payrollItem.findFirstOrThrow({ where: { associateId: p.id }, include: { taxLines: true } });
     expect(saved.taxLines.find((l) => l.code === 'CA_SDI')).toMatchObject({ kind: 'STATE_PROGRAM', employer: false });
     expect(Number(saved.netPay)).toBeCloseTo(item.netPay, 2);

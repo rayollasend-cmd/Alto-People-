@@ -56,8 +56,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { cn } from '@/lib/cn';
-import { fmtDate, fmtDateTime } from '@/lib/format';
-import { useI18n } from '@/lib/i18n';
+import { fmtDateTime, fmtRelativeDate } from '@/lib/format';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { en } from '@/lib/i18n/english';
 import { useMediaQuery } from '@/lib/useViewport';
 import '@/lib/i18n/en/bell';
 
@@ -104,14 +105,23 @@ const BUCKET_LABEL: Record<string, string> = Object.fromEntries(
 function categoryMeta(raw: string | null): {
   Icon: LucideIcon;
   label: string | null;
+  bucket: NotificationCategory | null;
   urgent: boolean;
 } {
   const bucket = bucketForCategory(raw);
   return {
     Icon: bucket ? BUCKET_ICON[bucket] : Bell,
     label: bucket ? (BUCKET_LABEL[bucket] ?? null) : null,
+    bucket,
     urgent: isUrgentCategory(raw),
   };
+}
+
+/** A bucket's name in the app language (bell.cat.<bucket>); the shared English label if a new bucket has no key yet. */
+function bucketLabel(bucket: NotificationCategory | null, english: string | null, t: (key: MessageKey) => string): string | null {
+  if (!bucket || !english) return english;
+  const key = `bell.cat.${bucket}` as MessageKey;
+  return en[key] ? t(key) : english;
 }
 
 
@@ -223,7 +233,7 @@ export function NotificationsBell() {
   // The full inbox page is a communications screen; portal accounts read
   // their notifications here in the panel only.
   const { can, user } = useAuth();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const hasInboxPage = can('view:communications');
   // A tooltip is a hover affordance. On touch the first tap both opened the
   // "Notifications" tooltip and the panel, and the tooltip sat on top of
@@ -236,7 +246,8 @@ export function NotificationsBell() {
   // aria-live announcement text — screen readers hear arrivals without
   // the panel being open.
   const [announcement, setAnnouncement] = useState('');
-  const prevUnseenRef = useRef(0);
+  // null until the first answer: the count a page load finds is not an arrival.
+  const prevUnseenRef = useRef<number | null>(null);
   // One-shot swing on arrival; cleared by onAnimationEnd so a later
   // arrival can replay it.
   const [swing, setSwing] = useState(false);
@@ -305,19 +316,21 @@ export function NotificationsBell() {
   const unseenCount = badge.count;
   const unreadCount = (items ?? []).filter((n) => !n.readAt).length;
 
-  // Screen-reader announcement when new items arrive in the background.
+  // Screen-reader announcement when new items arrive in the background —
+  // not for what was already waiting when the page loaded (deep audit
+  // 2026-10-29, ASSOC-24: "11 new notifications" on every page load).
   useEffect(() => {
-    if (unseenCount > prevUnseenRef.current) {
-      const delta = unseenCount - prevUnseenRef.current;
-      setAnnouncement(
-        `${delta} new notification${delta === 1 ? '' : 's'} — ${unseenCount} unseen`,
-      );
+    if (items === null) return;
+    const prev = prevUnseenRef.current;
+    prevUnseenRef.current = unseenCount;
+    if (prev !== null && unseenCount > prev) {
+      const delta = unseenCount - prev;
+      setAnnouncement(delta === 1 ? t('bell.oneNew') : t('bell.nNew', { n: delta }));
       // Visual twin of the SR announcement: one bell swing per arrival.
       // Never loops; flattened by the global reduced-motion block.
       setSwing(true);
     }
-    prevUnseenRef.current = unseenCount;
-  }, [unseenCount]);
+  }, [unseenCount, items, t]);
 
   // Installed-app icon badge (Badging API — Android/desktop PWA; iOS 16.4+
   // installed). Mirrors the bell count; silent no-op where unsupported.
@@ -360,7 +373,7 @@ export function NotificationsBell() {
         setItems((prev) =>
           prev?.map((x) => (x.id === n.id ? { ...x, readAt: null } : x)) ?? null
         );
-        toast.error('Could not mark as read');
+        toast.error(t('bell.markFailed'));
       });
     }
     // Deeplink if the notification has one (e.g., payroll failure → run drawer).
@@ -382,7 +395,7 @@ export function NotificationsBell() {
       await markAllRead();
     } catch {
       setItems(before);
-      toast.error('Could not mark as read');
+      toast.error(t('bell.markFailed'));
     }
   };
 
@@ -393,7 +406,7 @@ export function NotificationsBell() {
     const now = new Date().toISOString();
     setItems((prev) => prev?.map((x) => (ids.has(x.id) ? { ...x, readAt: now, seenAt: x.seenAt ?? now } : x)) ?? null);
     markAllRead([...ids]).catch(() => {
-      toast.error('Could not mark as read');
+      toast.error(t('bell.markFailed'));
       refresh();
     });
   };
@@ -421,7 +434,8 @@ export function NotificationsBell() {
   }, [open, rows.length, openGroups, filter, measureEnd]);
 
   const renderItem = (n: Notification, nested = false) => {
-    const meta = categoryMeta(n.category);
+    const raw = categoryMeta(n.category);
+    const meta = { ...raw, label: bucketLabel(raw.bucket, raw.label, t) };
     return (
       <DropdownMenuItem
         key={n.id}
@@ -496,7 +510,14 @@ export function NotificationsBell() {
     const meta = categoryMeta(newest.category);
     const isOpen = openGroups.has(key);
     const unread = group.filter((x) => !x.readAt).length;
-    const title = groupTitle(group.length, newest.category, meta.label);
+    // English builds its sentence ("4 schedule changes"); the other languages
+    // name the bucket and count it ("Cambios de horario (4)").
+    const title =
+      lang === 'en'
+        ? groupTitle(group.length, newest.category, meta.label)
+        : meta.bucket && meta.label
+          ? t('bell.groupOf', { label: bucketLabel(meta.bucket, meta.label, t) ?? meta.label, count: group.length })
+          : t('bell.groupMany', { count: group.length });
     return (
       <div key={`group:${key}`}>
         <DropdownMenuItem
@@ -740,16 +761,7 @@ export function NotificationsBell() {
   );
 }
 
+/** "9h ago" in the app language (lib/format); "1d ago", never "yesterday", in a list of times. */
 function fmt(iso: string): string {
-  const d = new Date(iso);
-  const now = Date.now();
-  const diff = now - d.getTime();
-  const min = 60 * 1000;
-  const hr = 60 * min;
-  const day = 24 * hr;
-  if (diff < min) return 'just now';
-  if (diff < hr) return `${Math.floor(diff / min)}m ago`;
-  if (diff < day) return `${Math.floor(diff / hr)}h ago`;
-  if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
-  return fmtDate(d);
+  return fmtRelativeDate(iso, { yesterday: false });
 }

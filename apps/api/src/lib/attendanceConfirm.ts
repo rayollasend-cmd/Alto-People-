@@ -18,8 +18,8 @@ import { dayKeyInZone } from './shiftAssign.js';
 import { siteSupervisorRecipients, supervisorRecipients } from './shiftWindows.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { moduleOn } from './tenantProfile.js';
-import { utcInstantOfLocalMidnight } from './timeAnomalies.js';
-import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
+import { utcInstantOfLocalMidnight, companyWorkweek } from './timeAnomalies.js';
+import { formatTimeInZone, addDaysToKey } from './timezone.js';
 import {
   ATTENDANCE_CONFIRM,
   SHIFT_SELECT,
@@ -82,10 +82,9 @@ type AskShift = Prisma.ShiftGetPayload<{ select: typeof SHIFT_SELECT & { assigne
 
 /** 10:00 site time on the day before the shift's site-local date. */
 export function askFrom(shift: { startsAt: Date; locationRel: { timezone: string | null } | null }): Date {
-  const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
-  const day = new Date(`${dayKeyInZone(shift.startsAt, tz)}T12:00:00Z`);
-  day.setUTCDate(day.getUTCDate() - 1);
-  return new Date(utcInstantOfLocalMidnight(day.toISOString().slice(0, 10), tz).getTime() + ASK_LOCAL_HOUR * HOUR_MS);
+  const tz = shift.locationRel?.timezone ?? companyWorkweek().timezone;
+  const dayBefore = addDaysToKey(dayKeyInZone(shift.startsAt, tz), -1);
+  return new Date(utcInstantOfLocalMidnight(dayBefore, tz).getTime() + ASK_LOCAL_HOUR * HOUR_MS);
 }
 
 export const cutoffOf = (startsAt: Date) => new Date(startsAt.getTime() - CUTOFF_MS);
@@ -144,7 +143,7 @@ export async function selectAskable(db: Db, tenantId: string, now: Date, opts: {
 }
 
 function cutoffLabel(shift: { startsAt: Date; locationRel: { timezone: string | null } | null }): string {
-  const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+  const tz = shift.locationRel?.timezone ?? companyWorkweek().timezone;
   const at = cutoffOf(shift.startsAt);
   const day = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(at);
   return `${day} ${formatTimeInZone(at, tz)}`;
@@ -184,7 +183,7 @@ async function ask(db: Db, agent: AgentContext, shift: AskShift, points: number,
       template: 'alto_shift_confirm',
       params: (lang) => {
         const locale = lang === 'es' ? 'es-US' : lang === 'tr' ? 'tr-TR' : 'en-US';
-        const zone = tz ?? DEFAULT_TIMEZONE;
+        const zone = tz ?? companyWorkweek().timezone;
         const day = new Intl.DateTimeFormat(locale, { timeZone: zone, weekday: 'short', month: 'short', day: 'numeric' }).format(shift.startsAt);
         const time = (d: Date) => new Intl.DateTimeFormat(locale, { timeZone: zone, hour: 'numeric', minute: '2-digit' }).format(d);
         const cutDay = new Intl.DateTimeFormat(locale, { timeZone: zone, weekday: 'short' }).format(cutoffAt);

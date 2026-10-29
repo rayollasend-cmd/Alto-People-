@@ -16,16 +16,18 @@ import {
 } from './executiveDecisions.js';
 import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import {
+  companyWorkweek,
   orgDateKey,
   startOfWeekUTC,
   utcInstantOfLocalMidnight,
 } from './timeAnomalies.js';
-
-const ORG_TZ = 'America/New_York';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 const DAY_MS = 24 * 3600_000;
 
 export interface ExecutiveBriefing {
   generatedAt: string;
+  /** The company time zone "today" and "as of" are read in (the page prints its abbreviation). */
+  timezone: string;
   today: {
     dateKey: string;
     shiftsTotal: number;
@@ -91,15 +93,17 @@ export async function computeExecutiveBriefing(
   opts: { tenantId?: string } = {},
 ): Promise<ExecutiveBriefing> {
   const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
+  // Today is the company's day, on the company's clock (companyWorkweek),
+  // never a fixed zone and never the viewer's browser: at 11:30 PM Pacific
+  // an Eastern company is already on tomorrow.
+  const ORG_TZ = companyWorkweek().timezone;
   const todayKey = orgDateKey(now);
   const dayStart = utcInstantOfLocalMidnight(todayKey, ORG_TZ);
   // Org-local midnights for today+1 … today+7 — day boundaries for the
   // end of today and each outlook day.
   const dayBounds: Date[] = [dayStart];
   for (let i = 1; i <= 7; i++) {
-    const k = new Date(`${todayKey}T12:00:00Z`);
-    k.setUTCDate(k.getUTCDate() + i);
-    dayBounds.push(utcInstantOfLocalMidnight(k.toISOString().slice(0, 10), ORG_TZ));
+    dayBounds.push(utcInstantOfLocalMidnight(addDaysToKey(todayKey, i), ORG_TZ));
   }
   const dayEnd = dayBounds[1];
 
@@ -430,7 +434,7 @@ export async function computeExecutiveBriefing(
         name: `${a.firstName} ${a.lastName}`,
         photoUrl: profilePhotoUrlFor(a),
         years,
-        date: anniv.toISOString().slice(0, 10),
+        date: dateColumnKey(anniv),
       });
     }
   }
@@ -438,6 +442,7 @@ export async function computeExecutiveBriefing(
 
   return {
     generatedAt: now.toISOString(),
+    timezone: ORG_TZ,
     today: {
       dateKey: todayKey,
       shiftsTotal: todayShifts.length,

@@ -34,6 +34,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useConfirm } from '@/lib/confirm';
+import { useMoneyConfirm } from '@/components/payroll/MoneyConfirm';
 import { fmtDate, fmtDateOnlyRange, fmtMoney } from '@/lib/format';
 import { useUrlParam } from '@/lib/useUrlState';
 import { DueBadge, KIND_SHORT, LiabilityBadge, PaymentBadge, ReturnBadge, dueText, localToday, quarterName } from './taxShared';
@@ -258,6 +259,35 @@ function InHouseBanner() {
 
 /* ----- Overview ----------------------------------------------------------------- */
 
+/** The next deposit: everything due on the next due date that hasn't passed, summed across agencies. */
+export interface NextDeposit {
+  dueDate: string;
+  amount: number;
+  agencies: string[];
+  lines: number;
+}
+
+/**
+ * Deep audit MONEY-28: the card read "Feb 1, 2027 · $384.09 · IRS" while
+ * Florida's $1,728.36 was due the same day. The API sums it (`nextDeposit`);
+ * an older answer without it is summed here the same way.
+ */
+export function nextDepositSummary(o: Pick<TaxOverview, 'today' | 'dueSoon' | 'upcoming'> & { nextDeposit?: NextDeposit | null }): NextDeposit | null {
+  if (o.nextDeposit !== undefined) return o.nextDeposit;
+  const ahead = [...(o.dueSoon ?? []), ...(o.upcoming ?? [])].filter((l) => l.dueDate >= o.today && l.amount > 0);
+  if (ahead.length === 0) return null;
+  const dueDate = ahead.map((l) => l.dueDate).sort()[0]!;
+  const that = ahead.filter((l) => l.dueDate === dueDate);
+  const cents = that.reduce((sum, l) => sum + Math.round(l.amount * 100), 0);
+  return { dueDate, amount: cents / 100, agencies: [...new Set(that.map((l) => l.agency))], lines: that.length };
+}
+
+/** "$384.09 to IRS" for one agency, "$2,112.45 to 2 agencies" for several. */
+export function nextDepositHint(n: NextDeposit): string {
+  return n.agencies.length === 1 ? `${fmtMoney(n.amount)} to ${n.agencies[0]}` : `${fmtMoney(n.amount)} to ${n.agencies.length} agencies`;
+}
+
+
 function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOverview>>; onTab: (t: Tab) => void }) {
   const [paying, setPaying] = useState<DepositLine | null>(null);
   if (query.isError) return <QueryError what="payroll taxes" query={query} />;
@@ -266,7 +296,7 @@ function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOv
   const owed = [...(o.overdue ?? []), ...(o.dueSoon ?? [])];
   const checklist = [...(o.returns?.previous?.items ?? []), ...(o.returns?.current?.items ?? [])];
   const returnItems = checklist.filter((r) => r.status !== 'FILED' && r.status !== 'ACCEPTED');
-  const next = [...(o.dueSoon ?? []), ...(o.upcoming ?? [])][0] ?? null;
+  const next = nextDepositSummary(o);
   const unposted = o.unposted?.count ?? 0;
   const late = o.totals?.overdue ?? 0;
   const dueSoon = o.totals?.dueSoon ?? 0;
@@ -295,7 +325,7 @@ function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOv
           label="Next deposit"
           value={next ? fmtDate(next.dueDate) : '—'}
           nothing={next ? undefined : unposted > 0 ? 'None posted yet' : 'None scheduled'}
-          hint={next ? `${fmtMoney(next.amount)} · ${next.agency}` : undefined}
+          hint={next ? nextDepositHint(next) : undefined}
           href="/payroll/taxes?tab=deposits"
         />
         <MetricCard
@@ -318,7 +348,12 @@ function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOv
               // "Paid up" only means something once taxes have posted.
               <EmptyState size="sm" icon={CalendarCheck2} title="No deposits due yet" description={unposted > 0 ? 'The paid payroll above hasn’t posted its taxes, so nothing is listed to pay.' : 'Deposits appear here as payroll runs are paid.'} />
             ) : (
-              <EmptyState size="sm" icon={CalendarCheck2} title="You’re paid up" description={(o.upcoming ?? []).length ? `The next deposit is ${dueText(o.upcoming[0]?.dueDate, o.today).toLowerCase()}.` : 'Every tax posted so far is paid.'} />
+              // "Paid up" only when nothing at all is owed; a deposit further out is named with everything due that day (MONEY-28).
+              next ? (
+                <EmptyState size="sm" icon={CalendarCheck2} title="Nothing due in the next 14 days" description={`Next: ${nextDepositHint(next)}, ${dueText(next.dueDate, o.today).replace(/^Due /, 'due ')}.`} />
+              ) : (
+                <EmptyState size="sm" icon={CalendarCheck2} title="You’re paid up" description="Every tax posted so far is paid." />
+              )
             )
           ) : (
             <ul className="divide-y divide-navy-secondary">
@@ -365,7 +400,7 @@ function OverviewTab({ query, onTab }: { query: ReturnType<typeof useQuery<TaxOv
                   <li key={`${r.kind}|${r.jurisdiction}|${r.periodLabel}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-ink">{`${r.label} · ${r.agency}`}</p>
-                      <p className="text-xs text-ink-muted">{`${r.periodLabel} · ${dueText(r.dueDate, o.today)}`}</p>
+                      <p className="text-xs text-ink-muted">{`${quarterName(r.periodLabel)} · ${dueText(r.dueDate, o.today)}`}</p>
                     </div>
                     <ReturnBadge status={r.status} />
                   </li>
@@ -478,6 +513,7 @@ function DepositsTab({ provider, providerLabel }: { provider: boolean; providerL
   const [view, setView] = useState<DepositView>('to-pay');
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const confirmMoney = useMoneyConfirm();
   const today = localToday();
   const liabilities = useQuery({ queryKey: ['payroll-taxes', 'liabilities', 'OPEN'], queryFn: () => listLiabilities({ status: 'OPEN' }), enabled: view === 'to-pay' });
   const payments = useQuery({ queryKey: ['payroll-taxes', 'payments'], queryFn: () => listPayments(), enabled: view === 'payments' });
@@ -508,7 +544,7 @@ function DepositsTab({ provider, providerLabel }: { provider: boolean; providerL
 
   const payCols: GridColumn<TaxPayment>[] = [
     { key: 'agency', header: 'Agency', primary: true, accessor: (p) => p.agency, cell: (p) => <span className="font-medium text-ink">{p.agency}</span>, sortable: true },
-    { key: 'period', header: 'Period', accessor: (p) => p.periodLabel, cardMeta: true },
+    { key: 'period', header: 'Period', accessor: (p) => p.periodLabel, cell: (p) => quarterName(p.periodLabel), csv: (p) => quarterName(p.periodLabel), cardMeta: true },
     { key: 'due', header: 'Due', accessor: (p) => p.dueDate, cell: (p) => <span className="flex flex-wrap items-center gap-2">{fmtDate(p.dueDate)}<DueBadge due={p.dueDate} today={today} done={p.status === 'PAID' || p.status === 'CANCELLED'} /></span>, sortable: true },
     { key: 'amount', header: 'Amount', accessor: (p) => p.amount, cell: (p) => fmtMoney(p.amount), align: 'right', sortable: true, className: 'tabular-nums' },
     { key: 'how', header: 'How', accessor: (p) => (p.method === 'PROVIDER' ? (providerLabel ?? 'Provider') : p.method === 'EFTPS' ? 'EFTPS' : 'Agency site') },
@@ -539,7 +575,23 @@ function DepositsTab({ provider, providerLabel }: { provider: boolean; providerL
             </Button>
           )}
           {p.status === 'FAILED' && p.method === 'PROVIDER' && (
-            <Button size="xs" onClick={() => retry.mutate(p.id)} loading={retry.isPending && retry.variables === p.id}>
+            <Button
+              size="xs"
+              onClick={async () => {
+                // A resend is real money to an agency (MONEY-21): confirm with the amount, the agency and why it failed.
+                const ok = await confirmMoney({
+                  title: `Send the ${p.agency} payment again?`,
+                  amount: p.amount,
+                  from: providerLabel ?? 'Your payroll provider',
+                  to: p.agency,
+                  when: `For ${quarterName(p.periodLabel)} · ${dueText(p.dueDate, today)}`,
+                  note: p.failureReason ? `Last time it failed: ${p.failureReason}` : 'Last time it failed.',
+                  confirmLabel: `Send ${fmtMoney(p.amount)} again`,
+                });
+                if (ok) retry.mutate(p.id);
+              }}
+              loading={retry.isPending && retry.variables === p.id}
+            >
               Send again
             </Button>
           )}
@@ -604,8 +656,21 @@ function DepositsTab({ provider, providerLabel }: { provider: boolean; providerL
             actions: (selected, clear) => (
               <Button
                 size="sm"
-                onClick={() => {
-                  pay.mutate(selected, { onSuccess: clear });
+                onClick={async () => {
+                  // Paying taxes moves money (with a provider) — the total and the agencies first.
+                  const rows = (liabilities.data?.liabilities ?? []).filter((l) => selected.includes(l.id));
+                  const agencies = [...new Set(rows.map((l) => l.agency))];
+                  const total = rows.reduce((sum, l) => sum + Math.round(l.amount * 100), 0) / 100;
+                  const earliest = rows.map((l) => l.dueDate).sort()[0];
+                  const ok = await confirmMoney({
+                    title: `Pay ${selected.length} tax${selected.length === 1 ? '' : 'es'}?`,
+                    amount: total,
+                    to: agencies.join(', ') || null,
+                    when: earliest ? dueText(earliest, today) : null,
+                    note: provider ? 'Your provider sends it after a second person approves.' : 'You pay it on EFTPS or the agency’s site, then record the confirmation here.',
+                    confirmLabel: `Pay ${fmtMoney(total)}`,
+                  });
+                  if (ok) pay.mutate(selected, { onSuccess: clear });
                 }}
                 loading={pay.isPending}
               >
@@ -652,7 +717,7 @@ function RecordPaymentDialog({ payment, onClose, onDone }: { payment: TaxPayment
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{`Record the ${payment.agency} payment`}</DialogTitle>
-          <DialogDescription>{`${fmtMoney(payment.amount)} for ${payment.periodLabel} · ${dueText(payment.dueDate)}`}</DialogDescription>
+          <DialogDescription>{`${fmtMoney(payment.amount)} for ${quarterName(payment.periodLabel)} · ${dueText(payment.dueDate)}`}</DialogDescription>
         </DialogHeader>
         <form
           className="space-y-3"

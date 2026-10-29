@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import { orgDateKey } from '../../lib/timeAnomalies.js';
 import multer from 'multer';
 import { z } from 'zod';
 import {
@@ -227,7 +228,7 @@ booksPayablesRouter.get('/bills/:id/attachment', async (req, res) => {
 
 booksPayablesRouter.get('/bank-sources', async (_req, res) => {
   const profile = await bankingProfile(prisma);
-  const cash = await cashOnHand(prisma, new Date().toISOString().slice(0, 10));
+  const cash = await cashOnHand(prisma, orgDateKey(new Date()));
   res.json({ accounts: await payFromAccounts(prisma), ownAch: usesOurAch(profile), cashOnHand: cash.accounts ? cash.total : null });
 });
 
@@ -245,7 +246,7 @@ booksPayablesRouter.get('/payables/options', async (_req, res) => {
     prisma.site.findMany({ where: { tenantId, deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true, clientId: true }, take: 5000 }),
     bankingProfile(prisma),
   ]);
-  const cash = await cashOnHand(prisma, new Date().toISOString().slice(0, 10));
+  const cash = await cashOnHand(prisma, orgDateKey(new Date()));
   res.json({ accounts, payFrom, clients, sites, ownAch: usesOurAch(profile), cashOnHand: cash.accounts ? cash.total : null });
 });
 

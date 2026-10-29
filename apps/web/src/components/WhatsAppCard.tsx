@@ -11,13 +11,16 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Skeleton } from '@/components/ui/Skeleton';
 import '@/lib/i18n/en/emergency';
 import '@/lib/i18n/en/settings';
 
 /**
  * WhatsApp updates, on or off (Brief 1C-4). Consent is the associate's own
  * word: the number, the checkbox, the button. STOP by reply works too.
+ *
+ * Only where WhatsApp is connected (the API's `configured`): before, an
+ * environment without it showed a card that said "coming soon" and offered
+ * nothing (code audit 2026-10-29). No card at all is the honest answer.
  */
 export function WhatsAppCard() {
   const { t } = useI18n();
@@ -38,6 +41,8 @@ export function WhatsAppCard() {
 
   const on = q.data?.consent?.status === 'OPTED_IN';
   const phoneValue = phone ?? q.data?.phoneOnFile ?? '';
+  // Not connected here (or not readable): nothing to turn on, so no card.
+  if (!q.data?.configured) return null;
 
   return (
     <Card>
@@ -49,11 +54,7 @@ export function WhatsAppCard() {
         <CardDescription>{t('settings.whatsapp.languageNote')}</CardDescription>
       </CardHeader>
       <CardContent>
-        {q.isLoading ? (
-          <Skeleton className="h-16" />
-        ) : q.isError || !q.data ? null : !q.data.configured ? (
-          <p className="text-sm text-silver">{t('settings.whatsapp.comingSoon')}</p>
-        ) : on ? (
+        {on ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-white">
               {t('settings.whatsapp.onSince', { phone: `…${q.data.consent!.phone.slice(-4)}`, date: fmtDate(q.data.consent!.optedInAt) })}

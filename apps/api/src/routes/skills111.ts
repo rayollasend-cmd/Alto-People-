@@ -7,6 +7,8 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
+import { companyWorkweek, dateKeyInZone, orgDateKey, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 111 — Skills & competencies.
@@ -376,9 +378,14 @@ skills111Router.get('/skills/search', VIEW, async (req, res) => {
   // What a staffer needs beside the level: where they work now, the next
   // day they're free, and the certifications they hold.
   const ids = [...new Set(filtered.map((c) => c.associate.id))];
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  const horizon = new Date(today.getTime() + 14 * 86_400_000);
+  // The next two weeks on the company's calendar (not UTC's, which turns over
+  // at 5 PM Pacific): day keys for the dates, local midnights for the shifts.
+  const tz = companyWorkweek().timezone;
+  const todayKey = orgDateKey(new Date());
+  const today = new Date(`${todayKey}T00:00:00.000Z`); // as the @db.Date columns hold it
+  const horizon = new Date(`${addDaysToKey(todayKey, 14)}T00:00:00.000Z`);
+  const shiftFrom = utcInstantOfLocalMidnight(todayKey, tz);
+  const shiftTo = utcInstantOfLocalMidnight(addDaysToKey(todayKey, 14), tz);
   const [placements, shifts, leave, quals] = ids.length
     ? await Promise.all([
         prisma.associateAssignment.findMany({
@@ -387,7 +394,7 @@ skills111Router.get('/skills/search', VIEW, async (req, res) => {
           select: { associateId: true, location: { select: { id: true, name: true, client: { select: { name: true } } } } },
         }),
         prisma.shift.findMany({
-          where: { assignedAssociateId: { in: ids }, status: { not: 'CANCELLED' }, startsAt: { gte: today, lt: horizon } },
+          where: { assignedAssociateId: { in: ids }, status: { not: 'CANCELLED' }, startsAt: { gte: shiftFrom, lt: shiftTo } },
           select: { assignedAssociateId: true, startsAt: true },
         }),
         prisma.timeOffRequest.findMany({
@@ -404,15 +411,14 @@ skills111Router.get('/skills/search', VIEW, async (req, res) => {
   for (const p of placements) {
     if (!placeOf.has(p.associateId)) placeOf.set(p.associateId, { locationId: p.location.id, siteName: p.location.name, clientName: p.location.client?.name ?? null });
   }
-  const ymd = (d: Date) => d.toISOString().slice(0, 10);
   const nextFree = (id: string): string | null => {
-    const busy = new Set(shifts.filter((x) => x.assignedAssociateId === id).map((x) => ymd(x.startsAt)));
+    const busy = new Set(shifts.filter((x) => x.assignedAssociateId === id).map((x) => dateKeyInZone(x.startsAt, tz)));
     const away = leave.filter((l) => l.associateId === id);
     for (let i = 0; i < 14; i++) {
-      const day = new Date(today.getTime() + i * 86_400_000);
-      const key = ymd(day);
+      const key = addDaysToKey(todayKey, i);
       if (busy.has(key)) continue;
-      if (away.some((l) => ymd(l.startDate) <= key && key <= ymd(l.endDate))) continue;
+      // Leave dates are @db.Date columns: their UTC date is the day.
+      if (away.some((l) => dateColumnKey(l.startDate) <= key && key <= dateColumnKey(l.endDate))) continue;
       return key;
     }
     return null;
@@ -424,7 +430,7 @@ skills111Router.get('/skills/search', VIEW, async (req, res) => {
       nextFreeDay: nextFree(c.associate.id),
       certifications: quals
         .filter((qq) => qq.associateId === c.associate.id)
-        .map((qq) => ({ name: qq.qualification.name, isCert: qq.qualification.isCert, expiresAt: qq.expiresAt ? ymd(qq.expiresAt) : null })),
+        .map((qq) => ({ name: qq.qualification.name, isCert: qq.qualification.isCert, expiresAt: qq.expiresAt ? dateColumnKey(qq.expiresAt) : null })),
       associateId: c.associate.id,
       name: `${c.associate.firstName} ${c.associate.lastName}`,
       email: c.associate.email,

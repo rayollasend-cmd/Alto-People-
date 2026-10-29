@@ -20,6 +20,7 @@ import type {
   DocumentRecord,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { QueryError } from '@/components/ui/QueryError';
@@ -657,7 +658,7 @@ function ApproveDialog({
   defaultDate: string | null;
   onConfirm: (hireDate: string) => Promise<void>;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = ymdLocal();
   const [hireDate, setHireDate] = useState(defaultDate ?? today);
   const [busy, setBusy] = useState(false);
 

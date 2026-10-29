@@ -7,6 +7,7 @@ import { can } from '@alto-people/shared';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit, recordComplianceEvent } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { scopeAssociates, scopeBackgroundChecks, scopeDrugTests, scopeWhere } from '../lib/scope.js';
 import { activeConnection } from '../lib/providers/connections.js';
 import { providerInfo } from '../lib/providers/catalog.js';
@@ -131,7 +132,7 @@ async function i9For(req: Request) {
   return a;
 }
 
-const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+const ymd = (d: Date | null | undefined) => (d ? dateColumnKey(d) : null);
 
 async function firstDayWorked(associateId: string): Promise<Date | null> {
   const first = await prisma.timeEntry.findFirst({ where: { associateId }, orderBy: { clockInAt: 'asc' }, select: { clockInAt: true } });

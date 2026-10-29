@@ -11,6 +11,7 @@ import { hash1095cPdf, render1095cPdf, type F1095cMonth } from '../lib/f1095cPdf
 import { buildAcaAirXml, type AirEmployee } from '../lib/acaAir.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { fmtDay } from '../lib/humanDates.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 92 — Benefits lifecycle: open enrollment, QLE, COBRA, ACA.
@@ -50,9 +51,9 @@ benefitsLifecycle92Router.get('/open-enrollment', VIEW, async (req, res) => {
       clientId: w.clientId,
       clientName: w.client.name,
       name: w.name,
-      startsOn: w.startsOn.toISOString().slice(0, 10),
-      endsOn: w.endsOn.toISOString().slice(0, 10),
-      effectiveOn: w.effectiveOn.toISOString().slice(0, 10),
+      startsOn: dateColumnKey(w.startsOn),
+      endsOn: dateColumnKey(w.endsOn),
+      effectiveOn: dateColumnKey(w.effectiveOn),
       status: w.status,
       createdAt: w.createdAt.toISOString(),
     })),
@@ -148,8 +149,8 @@ benefitsLifecycle92Router.get('/qles', VIEW, async (req, res) => {
       associateId: q.associateId,
       associateName: `${q.associate.firstName} ${q.associate.lastName}`,
       kind: q.kind,
-      eventDate: q.eventDate.toISOString().slice(0, 10),
-      allowedUntil: q.allowedUntil.toISOString().slice(0, 10),
+      eventDate: dateColumnKey(q.eventDate),
+      allowedUntil: dateColumnKey(q.allowedUntil),
       evidenceUrl: q.evidenceUrl,
       notes: q.notes,
       status: q.status,
@@ -243,9 +244,9 @@ benefitsLifecycle92Router.get('/cobra', VIEW, async (_req, res) => {
       associateId: c.associateId,
       associateName: `${c.associate.firstName} ${c.associate.lastName}`,
       qualifyingEvent: c.qualifyingEvent,
-      qeDate: c.qeDate.toISOString().slice(0, 10),
-      electionDeadline: c.electionDeadline.toISOString().slice(0, 10),
-      coverageEndsOn: c.coverageEndsOn.toISOString().slice(0, 10),
+      qeDate: dateColumnKey(c.qeDate),
+      electionDeadline: dateColumnKey(c.electionDeadline),
+      coverageEndsOn: dateColumnKey(c.coverageEndsOn),
       noticedAt: c.noticedAt.toISOString(),
       electedAt: c.electedAt?.toISOString() ?? null,
       premiumPerMonth: c.premiumPerMonth?.toString() ?? null,
@@ -555,7 +556,7 @@ benefitsLifecycle92Router.get('/aca/air.xml', MANAGE, async (req, res) => {
       firstName: f.associate!.firstName,
       lastName: f.associate!.lastName,
       ssn,
-      dob: f.associate!.dob ? f.associate!.dob.toISOString().slice(0, 10) : null,
+      dob: f.associate!.dob ? dateColumnKey(f.associate!.dob) : null,
       addressLine1: f.associate!.addressLine1,
       city: f.associate!.city,
       state: f.associate!.state,

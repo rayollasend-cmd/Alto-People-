@@ -9,6 +9,26 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
 /**
+ * Whether a tax year had no payroll at all. The API says so (`noPayroll`);
+ * an answer without it is read from the checklist: no run left open, and no
+ * one owed a W-2, a 1099-NEC or a 1099-MISC.
+ */
+export function yearHasNoPayroll(data: YearEndCloseResponse): boolean {
+  if (typeof data.noPayroll === 'boolean') return data.noPayroll;
+  const byKey = new Map(data.checks.map((c) => [c.key, c]));
+  const none = (key: string, prefix: string) => {
+    const c = byKey.get(key);
+    return !!c && c.done && c.detail.startsWith(prefix);
+  };
+  return (
+    byKey.get('runs_disbursed')?.done === true &&
+    none('w2_generated', 'No one was paid wages') &&
+    none('nec_generated', 'No contractor was paid') &&
+    none('misc_generated', 'No one was paid')
+  );
+}
+
+/**
  * The Year-end page's Checklist tab: is the tax year wrapped up — every run
  * paid, every W-2 and 1099 made, filed and sent? Each open step links to
  * where it's fixed. (It was its own page, /payroll/year-end-close; one of
@@ -32,6 +52,15 @@ export function YearEndChecklist({ year }: { year: number }) {
     );
   }
   const open = data.checks.filter((c) => !c.done).length;
+  // A year with no payroll has nothing to close: say so, not "ready to close" over six green ticks (MONEY-27).
+  if (yearHasNoPayroll(data)) {
+    return (
+      <div role="status" className="flex items-center gap-2 rounded-lg border border-line bg-surface-raised px-4 py-3 text-sm text-ink-muted" data-testid="year-end-empty">
+        <Circle className="h-5 w-5 shrink-0" aria-hidden="true" />
+        {`No payroll in ${year} — nothing to close.`}
+      </div>
+    );
+  }
   return (
     <div className="space-y-3">
       <div

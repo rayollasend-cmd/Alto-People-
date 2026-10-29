@@ -11,7 +11,7 @@ import {
   LEDGER_SUBTYPES,
   LedgerAccountCreateInputSchema,
   LedgerAccountUpdateInputSchema,
-  csvCell,
+  toCsv,
   type BooksDimensions,
   type BooksJournalEntryDetail,
   type BooksJournalRow,
@@ -20,7 +20,8 @@ import {
   type LedgerAccountType,
 } from '@alto-people/shared';
 import { prisma } from '../../db.js';
-import { agingReport } from '../../lib/books/posting/receivables.js';
+import { agingReport, paidWithoutPayment } from '../../lib/books/posting/receivables.js';
+import { statementAmounts, statementKey } from '../../lib/books/posting/statements.js';
 import { closeProgress } from '../../lib/books/close/period.js';
 import { HttpError } from '../../middleware/error.js';
 import { requireCapability } from '../../middleware/auth.js';
@@ -55,6 +56,7 @@ export const booksLedgerRouter = Router();
 const MANAGE = requireCapability('manage:books');
 
 const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: entry and bill dates are @db.Date values stored at UTC midnight; today is orgDateKey.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 // The company's calendar day (statements, the close and the reports count on it, not UTC's).
 const today = () => orgDateKey(new Date());
@@ -124,6 +126,24 @@ function sendFile(res: Response, buf: Buffer, name: string, kind: 'pdf' | 'xlsx'
   res.send(buf);
 }
 
+/** Finalized statements with an amount that receivables in the books doesn't hold yet (cents). */
+async function unpostedStatements(tenantId: string): Promise<{ count: number; amount: number }> {
+  const rows = await prisma.clientStatement.findMany({ where: { tenantId, status: 'FINAL' }, select: { id: true, snapshot: true } });
+  if (rows.length === 0) return { count: 0, amount: 0 };
+  const posted = new Set(
+    (await prisma.journalEntry.findMany({ where: { tenantId, status: 'POSTED', sourceKey: { in: rows.map((r) => statementKey(r.id)) } }, select: { sourceKey: true } })).map((e) => e.sourceKey),
+  );
+  let count = 0;
+  let amount = 0;
+  for (const r of rows) {
+    const total = statementAmounts(r.snapshot).total;
+    if (total === 0 || posted.has(statementKey(r.id))) continue;
+    count += 1;
+    amount += total;
+  }
+  return { count, amount };
+}
+
 /* ---- Overview --------------------------------------------------------------- */
 
 const zeroTotals = { income: 0, costOfServices: 0, grossProfit: 0, grossMarginPct: null, expenses: 0, operatingIncome: 0, otherIncome: 0, otherExpenses: 0, netIncome: 0 };
@@ -168,7 +188,11 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
     // Profit: this month, the year to date, and the last six months.
     const monthStart = `${asOf.slice(0, 7)}-01`;
     const yearStart = `${asOf.slice(0, 4)}-01-01`;
-    const [month, ytd] = await Promise.all([profitAndLoss(prisma, monthStart, asOf), profitAndLoss(prisma, yearStart, asOf)]);
+    // Last month to the same day: what this month's profit so far is compared with (MONEY-19).
+    const prevStart = ymd(new Date(Date.UTC(Number(asOf.slice(0, 4)), Number(asOf.slice(5, 7)) - 2, 1)));
+    const prevLastDay = new Date(Date.UTC(Number(asOf.slice(0, 4)), Number(asOf.slice(5, 7)) - 1, 0)).getUTCDate();
+    const prevToDate = `${prevStart.slice(0, 8)}${String(Math.min(Number(asOf.slice(8, 10)), prevLastDay)).padStart(2, '0')}`;
+    const [month, ytd, lastMonthToDate] = await Promise.all([profitAndLoss(prisma, monthStart, asOf), profitAndLoss(prisma, yearStart, asOf), profitAndLoss(prisma, prevStart, prevToDate)]);
     const sixBack = new Date(Date.UTC(Number(asOf.slice(0, 4)), Number(asOf.slice(5, 7)) - 6, 1));
     const trendReport = await profitAndLoss(prisma, ymd(sixBack), asOf, {}, { columns: 'month' });
     const trend = monthsBetween(ymd(sixBack), asOf).map((m) => {
@@ -198,13 +222,38 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
     if (conflicts) needsYou.push({ key: 'conflicts', label: `${conflicts} QuickBooks ${conflicts === 1 ? 'change needs' : 'changes need'} a decision`, count: conflicts, to: '/books/quickbooks', tone: 'alert' });
     if (failed) needsYou.push({ key: 'sync-failed', label: `${failed} ${failed === 1 ? 'record' : 'records'} didn’t reach QuickBooks`, count: failed, to: '/books/quickbooks', tone: 'alert' });
     // The books' receivables and the open statements should be the same money. When they aren't,
-    // history hasn't been posted (a new set of books) or something failed to post — say so.
+    // name the actual cause, in the direction it runs (audit 2026-10-29 MONEY-3): statements marked
+    // paid with no payment in the books leave the BOOKS higher; finalized statements not yet posted
+    // leave them lower. Each cause has a button that fixes it (Post history records both).
     const openOnStatements = aging.current + aging.days1to30 + aging.days31to60 + aging.days61to90 + aging.over90;
+    const fmt = (c: number) => fromCents(c).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    const markedPaid = await paidWithoutPayment(prisma);
+    const markedPaidCents = markedPaid.reduce((n, b) => n + b.total, 0);
+    const unposted = await unpostedStatements(tenantId);
     if (Math.abs(openOnStatements - arTotal) >= 1) {
-      const fmt = (c: number) => fromCents(c).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-      // First: until history is posted, every other number on the page is short of it.
-      // Plain words (F500 audit 2026-10-26): what differs, and why, without "receivables in the books" and "post history".
-      needsYou.unshift({ key: 'ar-unposted', label: `Clients owe ${fmt(openOnStatements)} on their statements, but the books show ${fmt(arTotal)}: older statements haven’t been added to the books yet`, count: 1, to: '/books/receivables', tone: 'warning' });
+      // First: until these are in, every other number on the page is off by them.
+      if (unposted.count > 0) {
+        needsYou.unshift({ key: 'ar-unposted', label: `${unposted.count} finalized ${unposted.count === 1 ? 'statement' : 'statements'} (${fmt(unposted.amount)}) ${unposted.count === 1 ? 'isn’t' : 'aren’t'} in the books yet, so the books show ${fmt(arTotal)} owed against ${fmt(openOnStatements)} on open statements`, count: unposted.count, to: '/books/receivables', tone: 'warning' });
+      }
+      if (markedPaid.length > 0) {
+        needsYou.unshift({ key: 'ar-paid-unrecorded', label: `${markedPaid.length} ${markedPaid.length === 1 ? 'statement was' : 'statements were'} marked paid (${fmt(markedPaidCents)}) with no payment in the books, so the books still count ${markedPaid.length === 1 ? 'it' : 'them'} as owed: ${fmt(arTotal)} against ${fmt(openOnStatements)} on open statements`, count: markedPaid.length, to: '/books/receivables?view=payments', tone: 'warning' });
+      }
+      if (unposted.count === 0 && markedPaid.length === 0) {
+        needsYou.unshift({ key: 'ar-differs', label: `The books show ${fmt(arTotal)} owed by clients; the open statements add up to ${fmt(openOnStatements)} — compare them in the receivables account`, count: 1, to: '/books/receivables', tone: 'warning' });
+      }
+    }
+    // A bank account below zero (audit 2026-10-29 MONEY-18): the Cash total nets it away, so it is
+    // named here, with where the money could come from.
+    for (const a of cashAccounts.filter((x) => x.subtype === 'BANK' && x.balance < 0)) {
+      const short = toCents(-a.balance);
+      const source = cashAccounts.filter((x) => x.subtype === 'BANK' && x.id !== a.id && toCents(x.balance) >= short).sort((x, y) => y.balance - x.balance)[0];
+      needsYou.unshift({
+        key: `overdrawn-${a.id}`,
+        label: `${a.name} is overdrawn by ${fmt(short)}${source ? ` — move ${fmt(short)} from ${source.name} before anything else clears` : ' — fund it before anything else clears'}`,
+        count: 1,
+        to: `/books/accounts/${a.id}`,
+        tone: 'alert',
+      });
     }
     if (aging.over90 > 0) needsYou.push({ key: 'ar-90', label: `${fromCents(aging.over90).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} owed by clients for over 90 days`, count: 1, to: '/books/receivables', tone: 'alert' });
     if (period.status !== 'CLOSED' && Number(asOf.slice(8, 10)) >= 5) needsYou.push({ key: 'close', label: `${new Date(`${lastMonth}-01T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })} isn’t closed yet`, count: 1, to: `/books/close/${lastMonth}`, tone: 'info' });
@@ -218,9 +267,11 @@ booksLedgerRouter.get('/overview', async (_req, res, next) => {
         openOnStatements: fromCents(openOnStatements),
         aging: { current: fromCents(aging.current), days1to30: fromCents(aging.days1to30), days31to60: fromCents(aging.days31to60), days61to90: fromCents(aging.days61to90), over90: fromCents(aging.over90) },
         topClients: byClient.slice(0, 5).map((c) => ({ ...c, open: fromCents(c.open) })),
+        markedPaidWithoutPayment: { count: markedPaid.length, amount: fromCents(markedPaidCents) },
+        notInBooks: { count: unposted.count, amount: fromCents(unposted.amount) },
       },
       payables: { total: fromCents(apTotal), dueIn7Days: fromCents(apDue7), overdue: fromCents(apOverdue), awaitingApproval },
-      profit: { month: month.totals ?? zeroTotals, yearToDate: ytd.totals ?? zeroTotals, trend },
+      profit: { month: month.totals ?? zeroTotals, yearToDate: ytd.totals ?? zeroTotals, trend, lastMonthToDate: { from: prevStart, to: prevToDate, totals: lastMonthToDate.totals ?? zeroTotals } },
       close: {
         periodKey: lastMonth,
         status: period.status === 'CLOSED' ? 'CLOSED' : 'OPEN',
@@ -433,7 +484,8 @@ const JournalFilterQuery = z.object({
 });
 const JournalQuery = JournalFilterQuery.extend({
   limit: z.coerce.number().int().min(1).max(500).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
+  // Bounded (deep audit CODE-24): 1e20 parsed as an integer and overflowed the database's skip.
+  offset: z.coerce.number().int().min(0).max(2_000_000_000).default(0),
 });
 type JournalFilter = z.infer<typeof JournalFilterQuery>;
 
@@ -503,7 +555,10 @@ const JOURNAL_EXPORT_CAP = 50_000;
 
 /**
  * GET /books/journal.csv — every entry the filters match, in the grid's
- * order (not just the page on screen), one row per entry.
+ * order (not just the page on screen), ONE ROW PER LINE (deep audit
+ * MONEY-22): entry number, date and memo, the account, debit and credit,
+ * the line's client and site — what an accountant ties out or loads
+ * elsewhere. Through the shared writer: numbers stay numbers, BOM and CRLF.
  */
 booksLedgerRouter.get('/journal.csv', async (req, res, next) => {
   try {
@@ -511,18 +566,42 @@ booksLedgerRouter.get('/journal.csv', async (req, res, next) => {
     const where = journalWhere(q);
     const [total, entries] = await Promise.all([
       prisma.journalEntry.count({ where }),
-      prisma.journalEntry.findMany({ where, orderBy: journalOrder(q), take: JOURNAL_EXPORT_CAP, include: { lines: { select: { accountId: true }, orderBy: { lineNo: 'asc' } } } }),
+      prisma.journalEntry.findMany({
+        where,
+        orderBy: journalOrder(q),
+        take: JOURNAL_EXPORT_CAP,
+        include: { lines: { select: { accountId: true, debit: true, credit: true, memo: true, clientId: true, siteId: true }, orderBy: { lineNo: 'asc' } } },
+      }),
     ]);
-    const rows = await journalRows(entries);
-    const lines = [['No.', 'Date', 'Memo', 'Accounts', 'From', 'Status', 'Amount', 'Reverses on'].map(csvCell).join(',')];
-    for (const r of rows) {
-      lines.push([r.number, r.date, r.memo ?? '', r.accounts, r.origin === 'QUICKBOOKS' ? 'QuickBooks' : (JOURNAL_SOURCE_LABELS[r.source] ?? r.source), r.status === 'VOID' ? 'Void' : 'Posted', r.amount.toFixed(2), r.reverseOn ?? ''].map((c) => csvCell(c)).join(','));
+    const { byId } = await accountIndex(prisma);
+    const names = await nameMaps({ clients: entries.flatMap((e) => e.lines.map((l) => l.clientId ?? '')), sites: entries.flatMap((e) => e.lines.map((l) => l.siteId ?? '')) });
+    const rows: Array<Array<string | number>> = [['Entry', 'Date', 'Memo', 'Account', 'Account name', 'Debit', 'Credit', 'Line memo', 'Client', 'Site', 'From', 'Status', 'Reverses on']];
+    for (const e of entries) {
+      const from = e.origin === 'QUICKBOOKS' ? 'QuickBooks' : (JOURNAL_SOURCE_LABELS[e.source] ?? e.source);
+      for (const l of e.lines) {
+        const a = byId.get(l.accountId);
+        rows.push([
+          e.number,
+          ymd(e.entryDate),
+          e.memo ?? '',
+          a?.code ?? '',
+          a?.name ?? '',
+          fromCents(toCents(l.debit)),
+          fromCents(toCents(l.credit)),
+          l.memo ?? '',
+          l.clientId ? (names.clients.get(l.clientId) ?? '') : '',
+          l.siteId ? (names.sites.get(l.siteId) ?? '') : '',
+          from,
+          e.status === 'VOID' ? 'Void' : 'Posted',
+          e.reverseOn ? ymd(e.reverseOn) : '',
+        ]);
+      }
     }
-    if (total > rows.length) lines.push(csvCell(`First ${rows.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} entries — narrow the dates for the rest.`));
+    if (total > entries.length) rows.push([`First ${entries.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} entries — narrow the dates for the rest.`]);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName(`journal-${q.from ?? 'start'}-to-${q.to ?? today()}`, 'csv')}"`);
     res.setHeader('Cache-Control', 'private, no-store');
-    res.send(lines.join('\n'));
+    res.send(toCsv(rows));
   } catch (err) {
     next(err);
   }

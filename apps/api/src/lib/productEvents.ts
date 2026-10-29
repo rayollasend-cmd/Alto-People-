@@ -19,6 +19,7 @@ type Bucket = { day: string; role: string; kind: ProductEventKind; count: number
 const buffer = new Map<string, Bucket>();
 let timer: NodeJS.Timeout | null = null;
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: platform telemetry rolled up across tenants (no tenant's calendar), read on UTC days like WebVitalDaily.
 const dayKey = (at: Date) => at.toISOString().slice(0, 10);
 
 /** Record one event. Synchronous, cheap, never throws. */
@@ -80,7 +81,8 @@ const ONE_DAY_MS = 86_400_000;
 
 /** The three measures over the window, from the rollup. */
 export async function productEventsReport(days: number, now: Date = new Date()): Promise<ProductEventsResponse> {
-  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  // UTC day, matching the rollup's buckets (dayKey above).
+  const today = new Date(`${dayKey(now)}T00:00:00.000Z`);
   const from = new Date(today.getTime() - (days - 1) * ONE_DAY_MS);
   const rows = await prisma.productEventDaily.groupBy({ by: ['role', 'kind'], where: { day: { gte: from } }, _sum: { count: true, sum: true } });
   const n = (role: string | null, kind: ProductEventKind) =>

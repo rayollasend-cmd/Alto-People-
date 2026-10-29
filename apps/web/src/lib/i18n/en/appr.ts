@@ -1,5 +1,7 @@
 // English for the pages that use 'appr.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/appr.ts).
+import '../es/appr';
 
 export const enAppr = {
   'appr.subtitle': 'Everything waiting on your decision, in one place.',
@@ -65,6 +67,9 @@ export const enAppr = {
   'appr.over40': 'Over 40h',
   'appr.proposalsEmptyTitle': 'No AI suggestions waiting',
   'appr.proposalsEmptyBody': 'When an AI agent suggests filling a shift, opening a case or another step that needs a person, it lands here with its reasons. Nothing happens until you decide.',
+  'appr.gated.sent': 'Sent for approval',
+  'appr.gated.waiting': '{title} — nothing changes until a second person approves it.',
+  'appr.gated.view': 'View request',
 } as const;
 
 registerEnglish(enAppr);

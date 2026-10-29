@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/pw';
 
 /**
  * Public — kicks off the password-reset flow. The API ALWAYS returns
@@ -17,6 +19,7 @@ import { Input } from '@/components/ui/Input';
  * defending against.
  */
 export function ForgotPassword() {
+  const { t } = useI18n();
   const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -36,13 +39,13 @@ export function ForgotPassword() {
       setDone(true);
     } catch (err) {
       if (err instanceof NetworkError) {
-        setError('Network error — check your connection and try again.');
+        setError(t('login.errNetwork'));
       } else if (err instanceof ApiError && err.status === 429) {
-        setError("Too many reset requests. Try again in an hour.");
+        setError(t('pw.tooMany'));
       } else {
         // Other backend errors are rare here (the route is permissive);
         // surface a generic message instead of dumping the code.
-        setError("Couldn't send the reset email. Try again in a minute.");
+        setError(t('pw.sendFailed'));
       }
     } finally {
       setSubmitting(false);
@@ -55,18 +58,16 @@ export function ForgotPassword() {
       {done ? (
         <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
           <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-          <AuthCardTitle size="md">Check your email</AuthCardTitle>
+          <AuthCardTitle size="md">{t('pw.checkEmail')}</AuthCardTitle>
           <p className="text-silver text-sm mb-6">
-            If an Alto People account exists for{' '}
-            <span className="text-white">{email.trim()}</span>, a reset link
-            is on its way. The link works once and expires in 1 hour.
+            {t('pw.sentBefore')}<span className="text-white">{email.trim()}</span>{t('pw.sentAfter')}
           </p>
           <Link
             to="/login"
             className="inline-flex items-center gap-1.5 text-gold hover:text-gold-bright text-sm"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
-            Back to sign in
+            {t('pw.backToSignIn')}
           </Link>
         </div>
       ) : (
@@ -76,13 +77,12 @@ export function ForgotPassword() {
           className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
           noValidate
         >
-          <AuthCardTitle>Forgot password?</AuthCardTitle>
+          <AuthCardTitle>{t('login.forgot')}</AuthCardTitle>
           <p className="text-silver text-sm mb-6">
-            Enter the email tied to your Alto People account. We'll send a
-            link that lets you choose a new password.
+            {t('pw.forgotIntro')}
           </p>
 
-          <Field label="Email" required>
+          <Field label={t('login.email')} required>
             {(p) => (
               <div className="relative">
                 <Mail
@@ -111,7 +111,7 @@ export function ForgotPassword() {
             loading={submitting}
             className="w-full mt-6"
           >
-            {submitting ? 'Sending…' : 'Send reset link'}
+            {submitting ? t('pw.sending') : t('pw.sendLink')}
           </Button>
 
           <div className="mt-6 text-center">
@@ -120,7 +120,7 @@ export function ForgotPassword() {
               className="inline-flex items-center gap-1.5 text-silver hover:text-white text-sm"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
-              Back to sign in
+              {t('pw.backToSignIn')}
             </Link>
           </div>
         </form>

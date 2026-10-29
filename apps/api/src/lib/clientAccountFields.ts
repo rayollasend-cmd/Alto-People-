@@ -1,6 +1,7 @@
 import type { PrismaClient, Prisma } from '@prisma/client';
 import { can, type ClientUpdateInput, type Role } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * The account fields of a client (CL-A, 2026-10-22): who owns the account,
@@ -11,7 +12,8 @@ import { HttpError } from '../middleware/error.js';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-const ymd = (d: Date | null | undefined): string | null => (d ? d.toISOString().slice(0, 10) : null);
+/** The contract dates are DATE columns: their own day. */
+const ymd = (d: Date | null | undefined): string | null => (d ? dateColumnKey(d) : null);
 const day = (s: string): Date => new Date(`${s}T00:00:00.000Z`);
 
 export interface AccountSummaryRow {

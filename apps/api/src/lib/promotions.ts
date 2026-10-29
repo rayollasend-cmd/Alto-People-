@@ -12,6 +12,7 @@ import { tenantIdForWrite } from './tenant.js';
 import { createApprovalRequest, type Decider } from './approvalRequests.js';
 import { applyPayRateChange, currentComp } from './payChanges.js';
 import { fmtDay } from './humanDates.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * A promotion as one record: the new seat (job profile, title, level), the
@@ -46,7 +47,7 @@ export async function shapePromotion(db: Db, p: Prisma.PromotionGetPayload<Recor
     payType: p.payType,
     amount: p.amount ? p.amount.toFixed(2) : null,
     currentAmount: current ? current.amount.toFixed(2) : null,
-    effectiveFrom: p.effectiveFrom.toISOString().slice(0, 10),
+    effectiveFrom: dateColumnKey(p.effectiveFrom),
     notes: p.notes,
     status: p.status,
     approvalRequestId: p.approvalRequestId,
@@ -124,7 +125,7 @@ export async function applyPromotion(db: PrismaClient, promotionId: string, deci
   if (p.status === 'APPLIED') return;
   const associate = await db.associate.findUniqueOrThrow({ where: { id: p.associateId } });
   const who = `${associate.firstName} ${associate.lastName}`.trim();
-  const effective = p.effectiveFrom.toISOString().slice(0, 10);
+  const effective = dateColumnKey(p.effectiveFrom);
 
   if (p.amount != null) {
     await applyPayRateChange(db, {

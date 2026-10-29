@@ -134,6 +134,7 @@ export interface DayPlan {
   counts: DayCounts;
 }
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC anchor
 const dayBefore = (ymd: string) => new Date(Date.parse(`${ymd}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 const byDepart = (a: RideRun, b: RideRun) => Date.parse(a.departAt) - Date.parse(b.departAt);
 

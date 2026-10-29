@@ -12,8 +12,8 @@ import { WhatsAppCard } from '@/components/WhatsAppCard';
 
 /**
  * Consent is the associate's own word: the number, the checkbox, the
- * button. Off is one tap. Before Meta is wired the card says so and
- * asks nothing.
+ * button. Off is one tap. Where WhatsApp isn't connected there is no card
+ * (it used to say "coming soon" and offer nothing).
  */
 
 function renderCard() {
@@ -62,10 +62,22 @@ describe('WhatsAppCard', () => {
     expect(await screen.findByRole('button', { name: /turn on/i })).toBeInTheDocument();
   });
 
-  it('says it is coming soon while Meta is not wired, and asks nothing', async () => {
+  it('shows no card at all where WhatsApp is not connected', async () => {
     vi.mocked(getMyWhatsApp).mockResolvedValue({ configured: false, phoneOnFile: null, consent: null });
-    renderCard();
-    expect(await screen.findByText(/coming soon/i)).toBeInTheDocument();
+    const { container } = renderCard();
+    await vi.waitFor(() => expect(getMyWhatsApp).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+
+  it('shows nothing while it reads, or when the read fails', async () => {
+    vi.mocked(getMyWhatsApp).mockRejectedValue(new Error('down'));
+    const { container } = renderCard();
+    expect(container).toBeEmptyDOMElement();
+    await vi.waitFor(() => expect(getMyWhatsApp).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container).toBeEmptyDOMElement();
   });
 });

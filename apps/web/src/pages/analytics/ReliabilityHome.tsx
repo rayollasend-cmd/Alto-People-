@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Bus, Gauge, HeartPulse, RefreshCw, ScanFace } from '@/components/ui/icons';
 import type { ReliabilityIssueRow, ReliabilityRouteRow, ReliabilityWeekRow } from '@alto-people/shared';
 import { getReliability } from '@/lib/reliabilityApi';
-import { fmtDateOnly, fmtDateTime } from '@/lib/format';
+import { fmtDateOnly, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -57,7 +57,10 @@ const endpoint = (r: ReliabilityRouteRow) => `${r.method} ${r.route}`;
  */
 export function weekLabel(w: Pick<ReliabilityWeekRow, 'weekStart' | 'weekEnd'>, now: Date = new Date()): string {
   const first = w.weekStart.slice(0, 10);
-  const last = new Date(new Date(w.weekEnd).getTime() - 86_400_000).toISOString().slice(0, 10);
+  // The exclusive end's calendar day, one day back (calendar math on the key, read like `first`).
+  const endDay = parseYmd(w.weekEnd) ?? new Date(w.weekEnd);
+  endDay.setDate(endDay.getDate() - 1);
+  const last = ymdLocal(endDay);
   const y1 = Number(first.slice(0, 4));
   const y2 = Number(last.slice(0, 4));
   const short = (ymd: string) => fmtDateOnly(ymd, { year: false });

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
-import { can } from '@alto-people/shared';
+import { can, toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -108,6 +108,27 @@ function reportsInReach(user: SessionUser): Prisma.ReimbursementWhereInput {
   return scopeWhere<Prisma.ReimbursementWhereInput>({ tenantId: tenantIdForWrite() }, { associate: scopeAssociatesIncludingFormer(user) });
 }
 
+/**
+ * CODE-8 — every by-id route loads the report through reportsInReach: a
+ * store-A manager neither reads nor decides a store-B report, and an id
+ * from another tenant is simply not found.
+ */
+async function reportInReach<I extends Prisma.ReimbursementInclude>(user: SessionUser, id: string, include?: I) {
+  const r = await prisma.reimbursement.findFirst({
+    where: scopeWhere<Prisma.ReimbursementWhereInput>({ id }, reportsInReach(user)),
+    ...(include ? { include } : {}),
+  });
+  if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
+  return r as Prisma.ReimbursementGetPayload<{ include: I }>;
+}
+
+/** The filer's own report — lines, submit and removal are theirs alone, whoever else may read it. */
+function assertFiler(user: SessionUser, r: { associateId: string }): void {
+  if (!user.associateId || r.associateId !== user.associateId) {
+    throw new HttpError(403, 'forbidden', 'Only the person who filed this report can change it.');
+  }
+}
+
 reimbursements97Router.get('/reimbursements', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const status = z
@@ -210,17 +231,10 @@ reimbursements97Router.post('/reimbursements', SUBMIT, async (req, res) => {
  * GET /reimbursements/:id — full detail incl. lines.
  */
 reimbursements97Router.get('/reimbursements/:id', VIEW, async (req, res) => {
-  const r = await prisma.reimbursement.findUnique({
-    where: { id: req.params.id },
-    include: {
-      associate: { select: { firstName: true, lastName: true, email: true } },
-      lines: { orderBy: { incurredOn: 'asc' } },
-    },
+  const r = await reportInReach(req.user!, String(req.params.id), {
+    associate: { select: { firstName: true, lastName: true, email: true } },
+    lines: { orderBy: { incurredOn: 'asc' } },
   });
-  if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
-  if (req.user!.role === 'ASSOCIATE' && r.associateId !== req.user!.associateId) {
-    throw new HttpError(404, 'not_found', 'Reimbursement not found.');
-  }
   res.json({
     id: r.id,
     associateId: r.associateId,
@@ -246,7 +260,7 @@ reimbursements97Router.get('/reimbursements/:id', VIEW, async (req, res) => {
       id: l.id,
       kind: l.kind,
       description: l.description,
-      incurredOn: l.incurredOn.toISOString().slice(0, 10),
+      incurredOn: toDateOnly(l.incurredOn),
       amount: l.amount.toString(),
       miles: l.miles?.toString() ?? null,
       ratePerMile: l.ratePerMile?.toString() ?? null,
@@ -264,11 +278,8 @@ reimbursements97Router.get('/reimbursements/:id', VIEW, async (req, res) => {
  */
 reimbursements97Router.post('/reimbursements/:id/lines', SUBMIT, async (req, res) => {
   const input = LineInputSchema.parse(req.body);
-  const r = await prisma.reimbursement.findUnique({ where: { id: req.params.id } });
-  if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
-  if (r.associateId !== req.user!.associateId && req.user!.role === 'ASSOCIATE') {
-    throw new HttpError(403, 'forbidden', 'Not yours.');
-  }
+  const r = await reportInReach(req.user!, String(req.params.id));
+  assertFiler(req.user!, r);
   if (r.status !== 'DRAFT' && r.status !== 'REJECTED') {
     throw new HttpError(
       409,
@@ -311,17 +322,12 @@ reimbursements97Router.post('/reimbursements/:id/lines', SUBMIT, async (req, res
  * DELETE /expense-lines/:id — remove a line from a DRAFT/REJECTED.
  */
 reimbursements97Router.delete('/expense-lines/:id', SUBMIT, async (req, res) => {
-  const line = await prisma.expenseLine.findUnique({
-    where: { id: req.params.id },
+  const line = await prisma.expenseLine.findFirst({
+    where: { id: req.params.id, reimbursement: { is: reportsInReach(req.user!) } },
     include: { reimbursement: true },
   });
   if (!line) throw new HttpError(404, 'not_found', 'Line not found.');
-  if (
-    req.user!.role === 'ASSOCIATE' &&
-    line.reimbursement.associateId !== req.user!.associateId
-  ) {
-    throw new HttpError(403, 'forbidden', 'Not yours.');
-  }
+  assertFiler(req.user!, line.reimbursement);
   if (
     line.reimbursement.status !== 'DRAFT' &&
     line.reimbursement.status !== 'REJECTED'
@@ -343,14 +349,8 @@ reimbursements97Router.delete('/expense-lines/:id', SUBMIT, async (req, res) => 
  * line is required.
  */
 reimbursements97Router.post('/reimbursements/:id/submit', SUBMIT, async (req, res) => {
-  const r = await prisma.reimbursement.findUnique({
-    where: { id: req.params.id },
-    include: { _count: { select: { lines: true } } },
-  });
-  if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
-  if (req.user!.role === 'ASSOCIATE' && r.associateId !== req.user!.associateId) {
-    throw new HttpError(403, 'forbidden', 'Not yours.');
-  }
+  const r = await reportInReach(req.user!, String(req.params.id), { _count: { select: { lines: true } } });
+  assertFiler(req.user!, r);
   if (r.status !== 'DRAFT' && r.status !== 'REJECTED') {
     throw new HttpError(409, 'invalid_state', `Cannot submit ${r.status}.`);
   }
@@ -418,10 +418,11 @@ reimbursements97Router.post(
   APPROVE,
   async (req, res) => {
     const input = ManagerApproveBodySchema.parse(req.body ?? {});
-    const r = await prisma.reimbursement.findUnique({
-      where: { id: req.params.id },
-    });
-    if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
+    const r = await reportInReach(req.user!, String(req.params.id));
+    // Maker ≠ checker (CODE-8): nobody approves their own expenses.
+    if (req.user!.associateId && r.associateId === req.user!.associateId) {
+      throw new HttpError(403, 'maker_checker', 'You filed this report; someone else has to approve it.');
+    }
     if (r.status !== 'SUBMITTED') {
       throw new HttpError(409, 'invalid_state', `Cannot manager-approve ${r.status}.`);
     }
@@ -514,6 +515,15 @@ async function settleOne(
     include: { lines: true },
   });
   if (!r) throw new SettleRefused(404, 'not_found', 'Reimbursement not found.');
+  // Three people, never fewer (CODE-8): the filer, the approver, the settler.
+  // Money paid through payroll — an HR admin who files, approves and settles
+  // alone pays themselves with no second person.
+  if (user.associateId && r.associateId === user.associateId) {
+    throw new SettleRefused(403, 'maker_checker', 'You filed this report; someone else has to settle it.');
+  }
+  if (r.managerApprovedById && r.managerApprovedById === user.id) {
+    throw new SettleRefused(403, 'maker_checker', 'You approved this report; a second person settles it.');
+  }
   if (r.status !== 'MANAGER_APPROVED') {
     throw new SettleRefused(409, 'invalid_state', `Cannot settle ${r.status}.`);
   }
@@ -633,10 +643,7 @@ reimbursements97Router.post('/reimbursements/:id/reject', requireAuth, async (re
     throw new HttpError(403, 'forbidden', 'Insufficient capability to reject.');
   }
   const input = RejectBodySchema.parse(req.body ?? {});
-  const r = await prisma.reimbursement.findUnique({
-    where: { id: req.params.id },
-  });
-  if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
+  const r = await reportInReach(user, String(req.params.id));
   // Manager rejects SUBMITTED; HR rejects MANAGER_APPROVED. SETTLED + PAID
   // are terminal — no rejection from there (use void/amend at the payroll
   // layer if the issue is found post-settle).

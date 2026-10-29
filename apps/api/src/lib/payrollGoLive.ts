@@ -23,6 +23,7 @@ import { postingGaps } from './books/posting/gaps.js';
 type Db = PrismaClient | Prisma.TransactionClient;
 
 const DAY = 86_400_000;
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column (stored at UTC midnight) or a UTC-midnight anchor.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 const done = (key: string, title: string, detail: string, fix: GoLiveCheck['fix'] = null): GoLiveCheck => ({ key, title, status: 'DONE', detail, fix });

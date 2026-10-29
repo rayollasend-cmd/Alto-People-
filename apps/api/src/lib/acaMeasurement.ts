@@ -1,5 +1,6 @@
 import type { AcaClassification, AcaCoverageOffer, Prisma, PrismaClient } from '@prisma/client';
 import { tenantIdForWrite } from './tenant.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * ACA look-back measurement (TAXCOMP 2026-10) — Treas. Reg. §54.4980H-3.
@@ -205,7 +206,8 @@ export interface Measurement {
   offerDue: { stabilityStart: string; stabilityEnd: string; dueBy: string; reason: 'measured_full_time' | 'projected_full_time' | 'hired_full_time' } | null;
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A window's day: the dates here are calendar days held at UTC midnight (utcDay, addMonths). */
+const ymd = (d: Date) => dateColumnKey(d);
 
 /** Where one person stands today. */
 export function measure(c: AcaConfig, p: PersonInput, asOf: Date): Measurement {

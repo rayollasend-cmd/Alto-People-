@@ -203,3 +203,24 @@ export function formatDateTimeInZone(date: Date, timeZone: string): string {
     hour12: true,
   }).format(date);
 }
+
+/**
+ * The calendar day a DATE column holds (Prisma `@db.Date` reads back as UTC
+ * midnight), as YYYY-MM-DD. This is the one place a date's UTC day is the
+ * right answer — use it for date-only columns, never for "now" or a punch
+ * (those are orgDateKey / dateKeyInZone / localDateKey).
+ */
+export function dateColumnKey(d: Date): string {
+  // UTC on purpose: a @db.Date value is UTC midnight of its calendar day (this file is the rule's one exemption).
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Calendar arithmetic on a YYYY-MM-DD: n days later (negative: earlier).
+ * Done in UTC on purpose — a date string has no zone, so no DST hour moves it.
+ */
+export function addDaysToKey(ymd: string, n: number): string {
+  const d = new Date(`${ymd}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}

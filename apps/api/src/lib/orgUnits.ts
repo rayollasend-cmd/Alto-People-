@@ -63,6 +63,15 @@ const toView = (u: Prisma.OrgUnitGetPayload<{ select: typeof SELECT }>): OrgUnit
   legacyCostCenterId: u.legacyCostCenterId,
 });
 
+/**
+ * A nested `connect: { id }` is invisible to the tenant guard (CODE-30): the
+ * client a unit names must be this tenant's, checked before the write.
+ */
+async function assertClientInTenant(db: Db, clientId: string, tenantId: string): Promise<void> {
+  const client = await db.client.findFirst({ where: { id: clientId, tenantId, deletedAt: null }, select: { id: true } });
+  if (!client) throw new HttpError(400, 'client_not_found', 'That client does not exist.');
+}
+
 /** "Under this unit, this one included": the filter a site or a user carries. */
 export function underPath(path: string): Prisma.StringFilter {
   return { startsWith: path };
@@ -89,6 +98,7 @@ export async function createOrgUnit(
     if (!parent) throw new HttpError(400, 'parent_not_found', 'That parent unit does not exist.');
     parentPath = parent.path;
   }
+  if (input.clientId) await assertClientInTenant(db, input.clientId, tenantId);
   const created = await db.orgUnit.create({
     data: { tenantId, type: input.type, name: input.name.trim(), parentId: input.parentId ?? null, code: input.code ?? null, glCode: input.glCode ?? null, clientId: input.clientId ?? null, legacyRegionId: input.legacyRegionId ?? null, legacyCostCenterId: input.legacyCostCenterId ?? null, path: '' },
     select: { id: true },
@@ -110,6 +120,7 @@ export async function updateOrgUnit(
   if (input.code !== undefined) data.code = input.code;
   if (input.glCode !== undefined) data.glCode = input.glCode;
   if (input.isActive !== undefined) data.isActive = input.isActive;
+  if (input.clientId) await assertClientInTenant(db, input.clientId, unit.tenantId);
   if (input.clientId !== undefined) data.client = input.clientId ? { connect: { id: input.clientId } } : { disconnect: true };
   if (input.parentId !== undefined && input.parentId !== unit.parentId) {
     let parentPath = '';

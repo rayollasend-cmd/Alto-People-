@@ -7,6 +7,7 @@ import { ASSOCIATE_CTX_SELECT, renderTemplateTokens, toAssociateCtx } from './of
 import { tenantJob } from './tenantJobs.js';
 import { env } from '../config/env.js';
 import { fmtDay } from './humanDates.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Policy campaigns (HR pack 2026-10).
@@ -80,7 +81,7 @@ export async function launchCampaign(campaignId: string, db: PrismaClient = defa
     const rows: Prisma.PolicyCampaignRecipientCreateManyInput[] = page.map((a) => ({
       campaignId,
       associateId: a.id,
-      renderedBody: renderTemplateTokens(campaign.version.body, { associate: toAssociateCtx(a), campaign: { name: campaign.name, dueOn: campaign.dueOn.toISOString().slice(0, 10) } }).text,
+      renderedBody: renderTemplateTokens(campaign.version.body, { associate: toAssociateCtx(a), campaign: { name: campaign.name, dueOn: dateColumnKey(campaign.dueOn) } }).text,
     }));
     if (rows.length) created += (await db.policyCampaignRecipient.createMany({ data: rows, skipDuplicates: true })).count;
     people.push(...page);

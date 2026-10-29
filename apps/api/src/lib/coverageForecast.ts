@@ -7,8 +7,8 @@ import { registerCapabilityMetrics, registerCapabilityRunner } from './agentCapa
 import { benchFor } from './scope.js';
 import { ALTO_TENANT_ID, currentTenantId } from './tenant.js';
 import { moduleOn } from './tenantProfile.js';
-import { dateKeyInZone, utcInstantOfLocalMidnight } from './timeAnomalies.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek, dateKeyInZone, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 import { WORKFORCE_AGENT_KEY } from './workforceAgent.js';
 
 /**
@@ -62,7 +62,7 @@ type TargetRow = { locationId: string; label: string | null; targetCount: number
 export function demandOn(targets: readonly TargetRow[], dayKey: string): number | null {
   const newest = new Map<string, TargetRow>();
   for (const t of targets) {
-    if (t.effectiveFrom.toISOString().slice(0, 10) > dayKey) continue;
+    if (dateColumnKey(t.effectiveFrom) > dayKey) continue;
     const k = t.label ?? '';
     const cur = newest.get(k);
     if (!cur || cur.effectiveFrom < t.effectiveFrom) newest.set(k, t);
@@ -76,11 +76,7 @@ export function demandOn(targets: readonly TargetRow[], dayKey: string): number 
 function dayKeys(now: Date, tz: string): string[] {
   const first = dateKeyInZone(now, tz);
   const out: string[] = [];
-  const d = new Date(`${first}T12:00:00Z`);
-  for (let i = 0; i <= FORECAST_LEADS; i++) {
-    out.push(d.toISOString().slice(0, 10));
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
+  for (let i = 0; i <= FORECAST_LEADS; i++) out.push(addDaysToKey(first, i));
   return out;
 }
 
@@ -103,10 +99,10 @@ export async function computeCoverageForecast(db: Db, now: Date, opts: { tenantI
   const sites = await db.site.findMany({ where: { id: { in: siteIds }, tenantId: opts.tenantId, deletedAt: null }, select: { id: true, name: true, timezone: true, clientId: true }, orderBy: { name: 'asc' } });
   const out: ForecastSite[] = [];
   for (const site of sites) {
-    const tz = site.timezone ?? DEFAULT_TIMEZONE;
+    const tz = site.timezone ?? companyWorkweek().timezone;
     const keys = dayKeys(now, tz);
     const starts = keys.map((k) => utcInstantOfLocalMidnight(k, tz));
-    const end = utcInstantOfLocalMidnight(new Date(new Date(`${keys[keys.length - 1]}T12:00:00Z`).getTime() + DAY_MS).toISOString().slice(0, 10), tz);
+    const end = utcInstantOfLocalMidnight(addDaysToKey(keys[keys.length - 1]!, 1), tz);
     const shifts = await db.shift.findMany({
       where: { tenantId: opts.tenantId, locationId: site.id, publishedAt: { not: null }, status: { in: ['OPEN', 'ASSIGNED'] }, startsAt: { gte: starts[0]!, lt: end } },
       select: { startsAt: true, status: true, assignedAssociateId: true },
@@ -180,7 +176,7 @@ export async function runCoverageForecast(db: PrismaClient = defaultPrisma, now:
   const withTargets = await db.staffingTarget.findMany({ where: { tenantId, location: { deletedAt: null } }, select: { locationId: true, location: { select: { timezone: true } } }, distinct: ['locationId'] });
   const due: string[] = [];
   for (const t of withTargets) {
-    const forecastOn = new Date(`${dateKeyInZone(now, t.location.timezone ?? DEFAULT_TIMEZONE)}T00:00:00Z`);
+    const forecastOn = new Date(`${dateKeyInZone(now, t.location.timezone ?? companyWorkweek().timezone)}T00:00:00Z`);
     if (!(await db.coverageForecastDay.count({ where: { locationId: t.locationId, forecastOn } }))) due.push(t.locationId);
   }
   if (!due.length) return out;
@@ -241,17 +237,17 @@ export async function latestCoverageGaps(db: Db, now: Date, tenantId: string): P
   const today = new Map<string, string>();
   const live = rows.filter((r) => {
     if (r.forecastOn.getTime() !== newest.get(r.locationId)!.getTime()) return false;
-    const t = today.get(r.locationId) ?? dateKeyInZone(now, r.location.timezone ?? DEFAULT_TIMEZONE);
+    const t = today.get(r.locationId) ?? dateKeyInZone(now, r.location.timezone ?? companyWorkweek().timezone);
     today.set(r.locationId, t);
-    const day = r.targetDay.toISOString().slice(0, 10);
-    return day >= t && day < new Date(new Date(`${t}T12:00:00Z`).getTime() + FORECAST_LEADS * DAY_MS).toISOString().slice(0, 10);
+    const day = dateColumnKey(r.targetDay);
+    return day >= t && day < addDaysToKey(t, FORECAST_LEADS);
   });
   const short = live.filter((r) => r.gap > 0).sort((a, b) => a.targetDay.getTime() - b.targetDay.getTime() || b.gap - a.gap);
   const f = short[0];
   return {
     shortDays: short.length,
     headsShort: short.reduce((a, r) => a + r.gap, 0),
-    first: f ? { date: f.targetDay.toISOString().slice(0, 10), locationId: f.locationId, name: f.location.name, gap: f.gap } : null,
+    first: f ? { date: dateColumnKey(f.targetDay), locationId: f.locationId, name: f.location.name, gap: f.gap } : null,
   };
 }
 

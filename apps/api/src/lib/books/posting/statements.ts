@@ -1,7 +1,8 @@
 import { tenantIdForWrite } from '../../tenant.js';
+import { periodWords } from '../words.js';
 import { emitBooksChange } from '../events.js';
 import { postEntry } from '../ledger.js';
-import { LineBook, cents, voidByKey, ymd, type Db } from './common.js';
+import { LineBook, cents, dayOf, voidByKey, ymd, type Db } from './common.js';
 
 /**
  * A finalized client statement in the books, dated the day it was issued:
@@ -69,8 +70,8 @@ export async function postStatement(db: Db, statementId: string): Promise<'poste
 
   const label = st.number !== null ? `Statement No. ${String(st.number).padStart(4, '0')}` : 'Statement';
   await postEntry(db, {
-    date: ymd(st.finalizedAt ?? st.periodEnd),
-    memo: `${label} · ${ymd(st.periodStart)} – ${ymd(st.periodEnd)}`,
+    date: st.finalizedAt ? dayOf(st.finalizedAt) : ymd(st.periodEnd),
+    memo: `${label} · ${periodWords(ymd(st.periodStart), ymd(st.periodEnd))}`,
     source: 'STATEMENT',
     sourceType: 'ClientStatement',
     sourceId: st.id,

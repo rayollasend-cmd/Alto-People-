@@ -1,10 +1,12 @@
 import type { PayCheck, Prisma, PrismaClient } from '@prisma/client';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { HttpError } from '../middleware/error.js';
 import { createApprovalRequest, registerApplyHandler } from './approvalRequests.js';
 import { enqueueAudit } from './audit.js';
 import { tryDecryptString } from './crypto.js';
 import { notifyUser } from './notify.js';
 import { tenantIdForWrite } from './tenant.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Paper checks: the one-time "pay this paycheck by check" decision, the
@@ -142,7 +144,7 @@ export async function myPayByCheck(db: Db, associateId: string): Promise<MyPayBy
     db.approvalRequest.findFirst({ where: { kind: 'PAY_BY_CHECK', subjectType: 'PayrollItem', subjectId: open.id }, orderBy: { createdAt: 'desc' } }),
   ]);
   return {
-    openPaycheck: { itemId: open.id, periodStart: open.payrollRun.periodStart.toISOString().slice(0, 10), periodEnd: open.payrollRun.periodEnd.toISOString().slice(0, 10) },
+    openPaycheck: { itemId: open.id, periodStart: dateColumnKey(open.payrollRun.periodStart), periodEnd: dateColumnKey(open.payrollRun.periodEnd) },
     override: ov && !ov.clearedAt ? { reason: ov.reason, source: ov.source as 'PAYROLL' | 'ASSOCIATE' } : null,
     request: req ? { id: req.id, status: req.status, reason: req.summary, decidedReason: req.reason, createdAt: req.createdAt.toISOString() } : null,
   };
@@ -345,10 +347,8 @@ export async function markPrinted(db: Db, checkIds: string[], actorUserId: strin
 
 /* ---- Positive pay -------------------------------------------------------- */
 
-const csvCell = (v: string | number) => {
-  const s = String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
+// One escaper for every export (@alto-people/shared): quoting, formula guard, numbers kept numeric.
+const csvCell = (v: string | number) => sharedCsvCell(v);
 const mmddyyyy = (d: Date) => `${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}${d.getUTCFullYear()}`;
 
 /**

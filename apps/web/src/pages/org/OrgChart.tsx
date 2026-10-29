@@ -8,6 +8,8 @@ import { useClients } from '@/lib/useClients';
 import { useMediaQuery } from '@/lib/useViewport';
 import { downloadCsv } from '@/lib/csv';
 import { ymdLocal } from '@/lib/format';
+import { METRICS } from '@alto-people/shared';
+import { termizeText } from '@/lib/modules';
 import { ListTemplate } from '@/components/templates';
 import {
   Button,
@@ -404,7 +406,19 @@ export function OrgChart() {
         ) : (
           <>
             <p className="text-xs text-ink-muted">
-              {stats.people.toLocaleString()} people
+              {/* Say who is counted (PEOPLE-23): the company chart is staff and
+                  everyone in a reporting line; the field chart is the people
+                  placed at its stores (metrics.ts → placed) — neither is
+                  "Working" or "On the books". */}
+              {view === 'field' ? (
+                <span title={termizeText(METRICS.placed.definition, term)}>
+                  {stats.people.toLocaleString()} {METRICS.placed.label.toLowerCase()}
+                </span>
+              ) : (
+                <span title="Office accounts, and anyone with a manager — the people this chart draws.">
+                  {stats.people.toLocaleString()} {stats.people === 1 ? 'person' : 'people'} on the company chart
+                </span>
+              )}
               {view === 'field' && ` · ${stats.stores} ${stats.stores === 1 ? term('label.store').toLowerCase() : term('label.stores').toLowerCase()}`}
               {stats.seats > 0 && ` · ${stats.seats} open ${stats.seats === 1 ? 'seat' : 'seats'}`}
               {view === 'company' && chart.data.fieldOnly > 0 && (

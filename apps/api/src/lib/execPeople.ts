@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { ON_THE_BOOKS_STATUSES, type ExecKpi, type ExecPeople, type ExecPeopleWeek, type ExecTrendPoint } from '@alto-people/shared';
+import { ON_THE_BOOKS_STATUSES, TURNOVER_TRAILING_DAYS, type ExecKpi, type ExecPeople, type ExecPeopleWeek, type ExecTrendPoint } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { placements } from './activeDefinition.js';
 import { activeCountsAt, fillCounts, loadPlan, plural, wholeHours } from './execFinance.js';
@@ -11,7 +11,7 @@ import { countStandings, hiresBetween, onTheBooksAt, peopleStandings, separation
 import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { tenantIdForWrite } from './tenant.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
-import { localDateKey } from './timezone.js';
+import { localDateKey, addDaysToKey, dateColumnKey } from './timezone.js';
 
 /**
  * The chairman's workforce page (GET /executive/people, and the board
@@ -64,11 +64,7 @@ const HIRES_SPEC = {
 
 const pct = (a: number, b: number): number | null => (b > 0 ? (a / b) * 100 : null);
 const pct1 = (a: number, b: number): number | null => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
-const addDaysKey = (key: string, days: number): string => {
-  const d = new Date(`${key}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-};
+const addDaysKey = (key: string, days: number): string => addDaysToKey(key, days);
 
 export const TENURE_BANDS = ['Under 90 days', '3–12 months', '1–2 years', '2 years or more'] as const;
 
@@ -152,7 +148,7 @@ export async function computeExecPeople(db: Db, w: ExecWindow): Promise<ExecPeop
   const unexcusedByWeek = new Array<number>(TREND_WEEKS).fill(0);
   const eventsBy = new Map<string, number>();
   for (const e of events) {
-    const i = weekOfKey(e.occurredOn.toISOString().slice(0, 10));
+    const i = weekOfKey(dateColumnKey(e.occurredOn));
     if (i < 0) continue;
     unexcusedByWeek[i]! += 1;
   }
@@ -231,7 +227,7 @@ export async function computeExecPeople(db: Db, w: ExecWindow): Promise<ExecPeop
     shiftsBy.set(k, (shiftsBy.get(k) ?? 0) + 1);
   }
   for (const e of events) {
-    const i = attIndex(e.occurredOn.toISOString().slice(0, 10));
+    const i = attIndex(dateColumnKey(e.occurredOn));
     if (i < 0) continue;
     const site = (e.shiftId ? known.get(e.shiftId) : null) ?? placed.get(e.associateId)?.locationId ?? NO_STORE;
     const k = `${site}|${i}`;
@@ -281,7 +277,7 @@ export async function computeExecPeople(db: Db, w: ExecWindow): Promise<ExecPeop
 
   const topFrom = weekStarts[TREND_WEEKS - TOP_WEEKS]!;
   const topFromKey = weekKeys[TREND_WEEKS - TOP_WEEKS]!;
-  const flagged = new Set(events.filter((e) => e.occurredOn.toISOString().slice(0, 10) >= topFromKey).map((e) => e.associateId));
+  const flagged = new Set(events.filter((e) => dateColumnKey(e.occurredOn) >= topFromKey).map((e) => e.associateId));
   const onBooksIds = new Set(onBooks.map((p) => p.id));
   const hoursBy = new Map<string, number>();
   for (const s of shares) {
@@ -308,7 +304,7 @@ export async function computeExecPeople(db: Db, w: ExecWindow): Promise<ExecPeop
   /** The hire date as a calendar day: the one on file, else the day peopleStatus dates the hire. */
   const hireKey = (id: string): string | null => {
     const raw = face.get(id)?.hireDate;
-    if (raw) return raw.toISOString().slice(0, 10);
+    if (raw) return dateColumnKey(raw);
     const h = standings.people.get(id)?.hiredOn;
     return h ? localDateKey(h, tz) : null;
   };
@@ -345,7 +341,11 @@ export async function computeExecPeople(db: Db, w: ExecWindow): Promise<ExecPeop
   }
   anniversaries.sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
 
-  const separations90d = separationsBetween(standings, new Date(now.getTime() - 90 * DAY_MS), now);
+  // The trailing 90 days (METRICS.turnover90d): the rate, the count and the
+  // cost all read the same span, so the card's number and its words agree.
+  const since90 = new Date(now.getTime() - TURNOVER_TRAILING_DAYS * DAY_MS);
+  const separations90d = separationsBetween(standings, since90, now);
+  const turnover90d = turnoverBetween(standings, since90, now);
 
   return {
     period: w.period,
@@ -365,6 +365,7 @@ export async function computeExecPeople(db: Db, w: ExecWindow): Promise<ExecPeop
       targetPct: turnTarget,
       separations90d,
       estCost90d: round2(separations90d * env.EXEC_COST_PER_SEPARATION),
+      annualizedPct90d: turnover90d.annualizedPct,
     },
     attendance,
     tenure,

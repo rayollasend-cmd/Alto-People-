@@ -1,4 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import multer from 'multer';
 import { z } from 'zod';
 import type { Prisma, TaxAgencyKind } from '@prisma/client';
@@ -10,6 +11,7 @@ import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { filingMode, withProvider } from '../lib/embeddedPayroll/index.js';
 import { isDepositFrequency, quarterLabel } from '../lib/payrollTaxCalendar.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 import {
   KIND_LABEL,
   NO_INCOME_TAX_STATES,
@@ -18,6 +20,7 @@ import {
   cancelPayment,
   createPayment,
   markPaymentPaid,
+  nextDepositDue,
   rebuildLiabilities,
   refreshProviderPayments,
   registrationsNeeded,
@@ -43,8 +46,12 @@ import { safeContentDisposition, sanitizeUploadFilename, verifyFileMagic } from 
 export const payrollTaxesRouter = Router();
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+// A DATE column (stored as UTC midnight) as YYYY-MM-DD. Instants (paidAt, disbursedAt) use orgDateKey.
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: Postgres DATE columns are UTC midnights
 const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
-const today = () => new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+// The company's day (deep audit MONEY-16): after 8 PM Eastern the UTC date is already tomorrow,
+// which made a deposit due today read "late" and the quarter roll over early.
+const today = () => new Date(orgDateKey(new Date()) + 'T00:00:00Z');
 const AGENCY_KINDS = ['FEDERAL_WITHHOLDING', 'FEDERAL_UNEMPLOYMENT', 'STATE_WITHHOLDING', 'STATE_UNEMPLOYMENT', 'LOCAL'] as const;
 const PERIOD = z.string().regex(/^\d{4}(-Q[1-4])?$/, 'Give a quarter like 2026-Q4 or a year like 2026.');
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-15.');
@@ -102,7 +109,8 @@ function paymentView(p: Prisma.TaxPaymentGetPayload<object>) {
     confirmationNumber: p.confirmationNumber,
     submittedAt: p.submittedAt?.toISOString() ?? null,
     paidAt: p.paidAt?.toISOString() ?? null,
-    late: !!p.paidAt && ymd(p.paidAt)! > ymd(p.dueDate)!,
+    // Paid on the due date in the company's day is on time (an evening payment read late on UTC's).
+    late: !!p.paidAt && orgDateKey(p.paidAt) > ymd(p.dueDate)!,
     failureReason: p.failureReason,
     createdAt: p.createdAt.toISOString(),
   };
@@ -229,7 +237,7 @@ async function unpostedPaidRuns(tenantId: string) {
     const paychecksMissing = !g && stored > 0;
     const amount = paychecksMissing ? stored : fromPaychecks;
     if (amount <= 0) continue;
-    out.push({ id: r.id, periodStart: ymd(r.periodStart), periodEnd: ymd(r.periodEnd), paidOn: ymd(r.disbursedAt), amount, paychecksMissing });
+    out.push({ id: r.id, periodStart: ymd(r.periodStart), periodEnd: ymd(r.periodEnd), paidOn: r.disbursedAt ? orgDateKey(r.disbursedAt) : null, amount, paychecksMissing });
   }
   return { count: out.length, amount: round2(out.reduce((a, r) => a + r.amount, 0)), runs: out.slice(0, 20) };
 }
@@ -292,6 +300,9 @@ payrollTaxesRouter.get(
       overdue,
       dueSoon,
       upcoming: all.filter((l) => l.dueDate > ymd(in14)!).slice(0, 10),
+      // Everything due on the next due date, summed across agencies (deep audit MONEY-28: the card
+      // read "$384.09 · IRS" and "You're paid up" while Florida's $1,728.36 was due the same day).
+      nextDeposit: nextDepositDue(all, ymd(now)!),
       returns: { previous: { periodLabel: prevQuarter, items: await returnsChecklist(prevQuarter) }, current: { periodLabel: currentQuarter, items: await returnsChecklist(currentQuarter) } },
       registrations,
       noticesDue: noticesDue.map((n) => ({ id: n.id, agencyName: n.agencyName, noticeType: n.noticeType, responseDueAt: ymd(n.responseDueAt), amountDue: n.amountDue === null ? null : Number(n.amountDue) })),
@@ -457,10 +468,8 @@ payrollTaxesRouter.get(
     const profile = await prisma.submitterProfile.findFirst({ where: { tenantId } });
     const ein = p.account?.employerOrgId ? ((await prisma.employerOrganization.findFirst({ where: { id: p.account.employerOrgId, tenantId }, select: { ein: true } }))?.ein ?? profile?.ein) : profile?.ein;
     const taxForm = p.kind === 'FEDERAL_WITHHOLDING' ? '941' : p.kind === 'FEDERAL_UNEMPLOYMENT' ? '940' : KIND_LABEL[p.kind];
-    const esc = (v: unknown) => {
-      const s = v === null || v === undefined ? '' : String(v);
-      return /[",\n]/.test(s) || /^[=+\-@]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
+    // The shared escaper (@alto-people/shared): quoting alone doesn't stop a spreadsheet running a formula.
+    const esc = (v: unknown) => sharedCsvCell(typeof v === 'number' ? v : v === null || v === undefined ? '' : String(v));
     const lines = [
       p.kind.startsWith('FEDERAL') ? '# EFTPS: pay as a business tax payment (Form, tax period, amount). CONFIRM format if you batch-upload.' : '# Pay on the agency’s site with the account number below. CONFIRM format if the agency takes a file.',
       'agency,account_number,ein,tax_form,tax_period,due_date,amount',

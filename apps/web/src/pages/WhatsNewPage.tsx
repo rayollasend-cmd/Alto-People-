@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { RELEASE_NOTE_AUDIENCES, type ReleaseNote, type ReleaseNoteAudience, type ReleaseNoteInput, type ReleaseNoteItem } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, parseYmd } from '@/lib/format';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { createReleaseNote, deleteReleaseNote, listReleaseNotes, updateReleaseNote } from '@/lib/releaseNotesApi';
 import { Badge } from '@/components/ui/Badge';
@@ -48,7 +48,7 @@ type Draft = { id: string | null; day: string; items: ReleaseNoteItem[]; publish
 function draftFrom(note: ReleaseNote | null): Draft {
   return note
     ? { id: note.id, day: note.day, items: note.items.map((i) => ({ ...i })), published: note.publishedAt !== null }
-    : { id: null, day: new Date().toISOString().slice(0, 10), items: [{ ...EMPTY_ITEM }], published: false };
+    : { id: null, day: ymdLocal(), items: [{ ...EMPTY_ITEM }], published: false };
 }
 
 export function WhatsNewPage() {

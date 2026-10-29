@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 /**
  * The scheduled-jobs registry.
  *
@@ -118,7 +119,7 @@ export function armJob(def: JobDefinition): boolean {
   rec.timer.unref();
   rec.nextRunAt = new Date(Date.now() + def.intervalSeconds * 1000);
   if (def.immediate !== false) void tick(rec);
-  console.log(`[alto-people/api] ${def.label} armed (every ${def.intervalSeconds}s)`);
+  logger.info(`${def.label} armed (every ${def.intervalSeconds}s)`);
   return true;
 }
 

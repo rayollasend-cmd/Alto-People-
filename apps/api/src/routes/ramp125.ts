@@ -7,6 +7,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 125 — New-hire ramp plans (30/60/90).
@@ -58,7 +59,7 @@ ramp125Router.get(
         id: plan.id,
         associateId: plan.associateId,
         associateName: `${plan.associate.firstName} ${plan.associate.lastName}`,
-        startDate: plan.startDate.toISOString().slice(0, 10),
+        startDate: dateColumnKey(plan.startDate),
         template: plan.template,
         managerEmail: plan.manager?.email ?? null,
         managerName: plan.manager?.associate
@@ -151,7 +152,7 @@ ramp125Router.get('/ramp-plans', VIEW, async (req, res) => {
         associateId: p.associateId,
         associateName: `${p.associate.firstName} ${p.associate.lastName}`,
         associateEmail: p.associate.email,
-        startDate: p.startDate.toISOString().slice(0, 10),
+        startDate: dateColumnKey(p.startDate),
         managerEmail: p.manager?.email ?? null,
         managerName: p.manager?.associate
           ? `${p.manager.associate.firstName} ${p.manager.associate.lastName}`

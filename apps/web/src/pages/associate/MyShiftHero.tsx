@@ -8,12 +8,13 @@ import { ApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
-import { fmtMoney, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, fmtTimeTz, fmtWeekday, mapsUrl, parseYmd, zonedDayKey } from '@/lib/format';
+import { fmtMoney, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, fmtTimeTz, fmtWeekday, directionsUrl, parseYmd, zonedDayKey } from '@/lib/format';
 import { fmtPunchTime } from '@/pages/time/punchFormat';
 import { acknowledgeMyShift, getMyShiftDetail } from '@/lib/schedulingApi';
 import { listMyCallOuts, withinADay } from '@/lib/callOutsApi';
 import { CallOutDialog } from '@/components/callouts/CallOutDialog';
 import { Avatar } from '@/components/ui/Avatar';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -45,7 +46,8 @@ import '@/lib/i18n/en/week';
  * Associates punch at the store tablet only; nothing here clocks anyone in.
  */
 
-const photoUrl = (associateId: string | null) => (associateId ? `/api/associates/${associateId}/photo` : undefined);
+/** The payload's photoUrl decides (null = none on file: initials, no request that 404s); the bare path only for an older payload. */
+const photoUrl = (p: { associateId: string | null; photoUrl?: string | null }) => personPhotoUrl(p);
 const MIN = 60_000;
 
 // Same definition of "next" as the schedule page (endsAt >= now): a shift in
@@ -280,10 +282,10 @@ export function MyShiftHero({
                 <MapPin className="h-4 w-4 shrink-0 text-silver/70" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate">{place}</span>
                 <a
-                  href={mapsUrl([next.clientName, next.locationName, next.location].filter(Boolean).join(' '))}
+                  href={directionsUrl({ address: next.locationAddress, lat: next.locationLat, lng: next.locationLng, names: [next.clientName, next.locationName ?? next.location] })}
                   target="_blank"
                   rel="noreferrer"
-                  className="shrink-0 text-sm text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9 inline-flex items-center"
+                  className="shrink-0 -my-2 px-2 -mr-2 text-sm text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-11 inline-flex items-center"
                 >
                   {t('shift.directions')}
                 </a>
@@ -291,7 +293,7 @@ export function MyShiftHero({
             )}
             {supervisors.length > 0 && (
               <div className="flex items-center gap-2.5">
-                <Avatar src={supervisors[0]!.photoUrl ?? photoUrl(supervisors[0]!.associateId)} name={supervisors[0]!.name} email="" size="sm" />
+                <Avatar src={photoUrl(supervisors[0]!)} name={supervisors[0]!.name} email="" size="sm" />
                 <div className="min-w-0 text-sm">
                   <span className="text-silver/70">{t('hero.supervisor')} · </span>
                   <span className="text-white">{supervisors.map((s) => s.name).join(', ')}</span>
@@ -302,7 +304,7 @@ export function MyShiftHero({
               <div className="flex items-center gap-2.5">
                 <div className="flex -space-x-2" aria-hidden="true">
                   {teammates.slice(0, 5).map((m) => (
-                    <Avatar key={m.associateId} src={photoUrl(m.associateId)} name={m.name} email="" size="sm" ringed />
+                    <Avatar key={m.associateId} src={photoUrl(m)} name={m.name} email="" size="sm" ringed />
                   ))}
                 </div>
                 <span className="flex items-center gap-1 text-xs text-silver">

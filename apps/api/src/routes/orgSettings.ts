@@ -19,6 +19,7 @@ import {
 } from '../lib/branding.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { env } from '../config/env.js';
+import { mayManageIdentity } from '../lib/roleGrant.js';
 
 /**
  * Org branding (Phase: settings audit row #8), one row per tenant. The
@@ -145,6 +146,11 @@ orgSettingsRouter.patch(
     const body = UpdateOrgBrandingInputSchema.parse(req.body);
     if (Object.keys(body).length === 0) {
       throw new HttpError(400, 'no_changes', 'Request body has no fields to update.');
+    }
+    // Two-step sign-in is the identity desk's (lib/roleGrant): manage:org
+    // alone let the workforce manager switch it off for everyone (PEOPLE-2).
+    if (body.mfaRequirement !== undefined && !mayManageIdentity(req.user!)) {
+      throw new HttpError(403, 'forbidden', 'Two-step sign-in is set by an administrator who manages sign-in.');
     }
     const tenantId = tenantIdForWrite();
     const row = rowFor(tenantId);

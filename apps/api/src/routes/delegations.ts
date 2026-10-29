@@ -6,6 +6,8 @@ import { enqueueAudit } from '../lib/audit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { personDisplayName, realName } from '../lib/displayName.js';
+import { dateColumnKey } from '../lib/timezone.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 export const delegationsRouter = Router();
 
@@ -32,7 +34,8 @@ const InputSchema = z.object({
 });
 
 const day = (ymd: string) => new Date(`${ymd}T00:00:00.000Z`);
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** startsOn / endsOn are DATE columns: their own day. */
+const ymd = (d: Date) => dateColumnKey(d);
 
 function shape(d: {
   id: string;
@@ -59,7 +62,7 @@ const PERSON = { select: { id: true, email: true, role: true, displayName: true,
 /** GET /delegations/mine — cover I have given and cover I am providing, current and upcoming. */
 delegationsRouter.get('/mine', TEAM, async (req, res, next) => {
   try {
-    const today = day(ymd(new Date()));
+    const today = day(orgDateKey(new Date()));
     const [given, received] = await Promise.all([
       prisma.teamDelegation.findMany({ where: { fromUserId: req.user!.id, endsOn: { gte: today } }, orderBy: { startsOn: 'asc' }, include: { from: PERSON, to: PERSON } }),
       prisma.teamDelegation.findMany({ where: { toUserId: req.user!.id, endsOn: { gte: today } }, orderBy: { startsOn: 'asc' }, include: { from: PERSON, to: PERSON } }),

@@ -1,4 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 // Agent families step 1: the in-process Workforce agent's executor, fixture runner and metrics.
 import '../lib/workforceAgent.js';
 import { z } from 'zod';
@@ -33,6 +34,8 @@ import { assertTenantAgent, createAgent, decideApproval, ensureBuiltInAgents, ge
 import { addScenario, certifyAgent, controlState, listScenarios, removeScenario, resumeAgent, resumeAllAgents, runScenarios, scorecard, suspendAgent, suspendAllAgents } from '../lib/agentControls.js';
 import { capabilityScorecard, listAgentCapabilities, listProposals, resumeCapability, resumeTenantAgents, suspendCapability, suspendTenantAgents, tenantControlState } from '../lib/agentCapabilities.js';
 import { decidableIdsAmong, mayDecideApproval } from '../lib/proposalDecisions.js';
+import { addDaysToKey, dateColumnKey } from '../lib/timezone.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * The agent registry, for people (Brief 1D-2).
@@ -545,16 +548,18 @@ async function decisionRecordOf(workerId: string) {
   const rows = await prisma.automatedDecisionRecord.findMany({ where: { workerId, tenantId }, orderBy: { createdAt: 'desc' }, take: 500 });
   const people = await prisma.associate.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.subjectAssociateId).filter((x): x is string => !!x))] } }, select: { id: true, firstName: true, lastName: true } });
   const nameOf = new Map(people.map((p) => [p.id, `${p.firstName} ${p.lastName}`.trim()]));
-  const dayMs = 86_400_000;
+  // An audit's dates are DATE columns; it is in force through its last day on the company's calendar.
+  const today = orgDateKey(now);
+  const soon = addDaysToKey(today, 30);
   return {
     profiles,
     audits: audits.map((a) => ({
       id: a.id,
       auditorName: a.auditorName,
-      conductedAt: a.conductedAt.toISOString().slice(0, 10),
-      validUntil: a.validUntil.toISOString().slice(0, 10),
-      inForce: a.conductedAt <= now && a.validUntil.getTime() + dayMs > now.getTime(),
-      expiresSoon: a.validUntil.getTime() + dayMs > now.getTime() && a.validUntil.getTime() - now.getTime() < 30 * dayMs,
+      conductedAt: dateColumnKey(a.conductedAt),
+      validUntil: dateColumnKey(a.validUntil),
+      inForce: dateColumnKey(a.conductedAt) <= today && dateColumnKey(a.validUntil) >= today,
+      expiresSoon: dateColumnKey(a.validUntil) >= today && dateColumnKey(a.validUntil) <= soon,
       dataKind: a.dataKind,
       summaryUrl: a.summaryUrl,
     })),
@@ -591,10 +596,8 @@ agentsRouter.get('/:id/decision-record', VIEW, ownAgent, async (req, res, next) 
 agentsRouter.get('/:id/decision-record.csv', VIEW, ownAgent, async (req, res, next) => {
   try {
     const { decisions } = await decisionRecordOf(Id.parse(req.params.id));
-    const cell = (v: unknown) => {
-      const t = String(v ?? '');
-      return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
-    };
+    // The shared escaper (@alto-people/shared): quoting plus the formula guard.
+    const cell = (v: unknown) => sharedCsvCell(typeof v === 'number' ? v : String(v ?? ''));
     const head = ['at', 'capability', 'decisionType', 'subject', 'outcome', 'summary', 'jurisdictions', 'humanDecidedAt', 'biasAuditId', 'noticeGivenAt', 'explanationSentAt', 'reviewRequestedAt', 'reviewResolvedAt', 'dataRequestAt', 'dataSentAt'];
     const lines = decisions.map((d) => [d.at, d.capabilityKey, d.decisionType, d.subject, d.outcome, d.summary, d.jurisdictionTags.join(' '), d.humanDecidedAt, d.auditId, d.noticeGivenAt, d.explanationSentAt, d.reviewRequestedAt, d.reviewResolvedAt, d.dataRequestAt, d.dataSentAt].map(cell).join(','));
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -617,7 +620,7 @@ agentsRouter.put('/:id/decision-profiles/:key', MANAGE, ownAgent, async (req, re
 agentsRouter.post('/:id/bias-audits', MANAGE, ownAgent, async (req, res, next) => {
   try {
     const row = await addBiasAudit(prisma, tenantIdForWrite(), Id.parse(req.params.id), BiasAuditInputSchema.parse(req.body), req.user!.id);
-    res.status(201).json({ id: row.id, validUntil: row.validUntil.toISOString().slice(0, 10) });
+    res.status(201).json({ id: row.id, validUntil: dateColumnKey(row.validUntil) });
   } catch (err) {
     next(err);
   }

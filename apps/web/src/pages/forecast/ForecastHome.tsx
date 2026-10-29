@@ -7,7 +7,7 @@ import { FORECAST_SIGNAL_KINDS, FORECAST_SIGNAL_LABELS, type ForecastResponse, t
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { listClients } from '@/lib/clientsApi';
-import { fmtDate, fmtDateOnly } from '@/lib/format';
+import { fmtDate, fmtDateOnly, ymdLocal } from '@/lib/format';
 import { createPlanFromForecast, getSiteForecast, listForecastSites, removeForecastSignal, runForecast, setForecastSignal } from '@/lib/forecastApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -443,10 +443,12 @@ function SignalsDialog({ locationId, data, weeks, onClose }: { locationId: strin
 /* ----------------------------------------------------------------- plan */
 
 function defaultSeason(): { start: string; end: string } {
-  const d = new Date();
-  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 7));
-  const end = new Date(start.getTime() + 12 * 7 * 86_400_000);
-  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  // A week from today (the person's own calendar), twelve weeks long.
+  const start = new Date();
+  start.setDate(start.getDate() + 7);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 12 * 7);
+  return { start: ymdLocal(start), end: ymdLocal(end) };
 }
 
 function PlanDialog({ sites, onClose }: { sites: ForecastSiteSummary[]; onClose: () => void }) {

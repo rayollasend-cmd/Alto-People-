@@ -10,6 +10,11 @@ vi.mock('@/lib/timeApi', () => ({
 vi.mock('@/lib/hrCases123Api', () => ({
   fileCase: vi.fn(),
 }));
+// The pay period as Home counts it (GET /time/me/earnings `period`); none = no pay schedule.
+const earningsState: { data: unknown } = { data: { earnedSoFar: 0, workedHours: 0, period: null } };
+vi.mock('@/components/EarningsCard', () => ({
+  useMyEarnings: () => ({ data: earningsState.data, isSuccess: true, isError: false }),
+}));
 
 import { listMyTimeEntries } from '@/lib/timeApi';
 import { MyTimesheet } from '@/pages/time/MyTimesheet';
@@ -61,6 +66,7 @@ function renderSheet() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  earningsState.data = { earnedSoFar: 0, workedHours: 0, period: null };
 });
 
 describe('<MyTimesheet>', () => {
@@ -86,12 +92,14 @@ describe('<MyTimesheet>', () => {
     // approved hours + pending folded into the one sentence under it.
     expect(await screen.findByText('$150.67')).toBeInTheDocument();
     expect(
-      screen.getByText(/7\.5h approved — estimated gross, before taxes/),
+      screen.getByText(/7\.53h approved — estimated gross, before taxes/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/4\.0h awaiting review/)).toBeInTheDocument();
-    // Rows: hours with one decimal, like every hours figure (F500 2026-10-26) + badges.
-    expect(screen.getByText('7.5h')).toBeInTheDocument();
-    expect(screen.getByText('4.0h')).toBeInTheDocument();
+    expect(screen.getByText(/4h awaiting review/)).toBeInTheDocument();
+    // No pay schedule: the window is the last 14 days and the hero says so — never "This period".
+    expect(screen.getByTestId('timesheet-hero-label')).toHaveTextContent('Last 14 days');
+    // Rows: hours as every associate screen writes them (fmtHours, up to 2 decimals — ASSOC-28) + badges.
+    expect(screen.getByText('7.53h')).toBeInTheDocument();
+    expect(screen.getByText('4h')).toBeInTheDocument();
     expect(screen.getByText('Approved')).toBeInTheDocument();
     expect(screen.getByText('Pending review')).toBeInTheDocument();
     expect(screen.getByText(/0\.5h break/)).toBeInTheDocument();
@@ -119,8 +127,8 @@ describe('<MyTimesheet>', () => {
       ],
     });
     renderSheet();
-    expect(await screen.findByText('includes 4.0h overtime')).toBeInTheDocument();
-    expect(screen.getByText('and 1.0h double time')).toBeInTheDocument();
+    expect(await screen.findByText('includes 4h overtime')).toBeInTheDocument();
+    expect(screen.getByText('and 1h double time')).toBeInTheDocument();
     // 8 × $20 + 4 × $30 + 1 × $40 = $320 — what the paycheck pays, not 13 × $20.
     expect(screen.getAllByText('$320.00').length).toBeGreaterThan(0);
   });
@@ -133,8 +141,26 @@ describe('<MyTimesheet>', () => {
     });
     renderSheet();
     await waitFor(() => expect(listMyTimeEntries).toHaveBeenCalled());
-    await screen.findAllByText('9.0h');
+    await screen.findAllByText('9h');
     expect(screen.queryByText(/overtime/)).not.toBeInTheDocument();
+  });
+
+  it('opens on the pay period Home counts, and its hero is Home’s number (ASSOC-3)', async () => {
+    earningsState.data = {
+      earnedSoFar: 351.45,
+      workedHours: 23.43,
+      period: { start: '2026-10-24', end: '2026-11-06', payDate: '2026-11-13', today: '2026-10-29', day: 6, days: 14, workedHours: 23.43, earned: 351.45, takeHome: null },
+    };
+    vi.mocked(listMyTimeEntries).mockResolvedValue({ entries: [entryFixture({ clockInAt: '2026-10-26T11:00:00.000Z', clockOutAt: '2026-10-26T19:00:00.000Z' })] });
+    renderSheet();
+    await waitFor(() => expect(listMyTimeEntries).toHaveBeenCalled());
+    // The range asked for is the period, not the last 14 days.
+    const range = vi.mocked(listMyTimeEntries).mock.calls[0]![0] as { from: string; to: string };
+    expect(new Date(range.from).getDate()).toBe(24);
+    expect(await screen.findByTestId('timesheet-hero-label')).toHaveTextContent('This pay period · Oct 24 – Nov 6, 2026');
+    expect(await screen.findByText('$351.45')).toBeInTheDocument();
+    expect(screen.getByText(/23\.43h worked — estimated gross, before taxes/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'This pay period', pressed: true })).toBeInTheDocument();
   });
 
   it('renders the empty state when there are no punches', async () => {

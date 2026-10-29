@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ensureCostCenterUnit } from '../lib/orgUnits.js';
-import type { Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import {
   AssociateDeactivateInputSchema,
   AssociateOrgAssignmentInputSchema,
@@ -30,7 +30,7 @@ import { activeAssociateIds } from '../lib/activeDefinition.js';
 import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
-import { atClient, effectiveClientIdFilter, scopeAssociates, scopeWhere } from '../lib/scope.js';
+import { assertSiteInScope, atClient, effectiveClientIdFilter, loadInScope, scopeAssociates, scopeWhere } from '../lib/scope.js';
 import type { Prisma } from '@prisma/client';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
@@ -56,6 +56,7 @@ import { assertSameTenant } from '../lib/sameTenant.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { emitWorkerStatusChanged } from '../lib/webhookEvents.js';
 import { profileMoveChanges } from '../lib/jobProfileMove.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 export const orgRouter = Router();
 
@@ -76,6 +77,25 @@ const PAYROLL_OR_HR = requireCapability('process:payroll');
  * artifact and now names HR and Finance.
  */
 const EXPORT_PII = requireCapability('export:payroll-pii');
+
+/**
+ * CODE-5 — every /associates/:id/* handler loads the person through the
+ * caller's reach (lib/scope loadInScope) before anything else: a store-bound
+ * account answering for store A gets a 404 for a store-B person's SSN, bank
+ * account, W-4, history, deactivation, erasure or transfer — the tenant
+ * check alone (assertSameTenant) let it act on anyone in the company.
+ */
+function inReach(opts: { includeDeleted?: boolean } = {}) {
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      await loadInScope(prisma, 'associate', String(req.params.id), req.user!, opts);
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+const IN_REACH = inReach();
 
 function audit(
   req: Request,
@@ -134,8 +154,8 @@ orgRouter.get('/departments', VIEW, async (req: Request, res: Response) => {
   );
   const departments: Department[] = rows.map((r) => ({
     id: r.id,
-    // A direct employer's catalog names no client; the contract still says string.
-    clientId: r.clientId ?? '',
+    // A direct employer's catalog names no client: null, never '' (which failed the UUID schema).
+    clientId: r.clientId ?? null,
     parentId: r.parentId,
     name: r.name,
     code: r.code,
@@ -272,7 +292,8 @@ orgRouter.get('/cost-centers', VIEW, async (req: Request, res: Response) => {
   );
   const costCenters: CostCenter[] = rows.map((r) => ({
     id: r.id,
-    clientId: r.clientId ?? '',
+    // A company-wide cost centre has no client — say null, never '' (which failed UuidSchema → 400 for everyone).
+    clientId: r.clientId,
     code: r.code,
     name: r.name,
     description: r.description,
@@ -392,7 +413,7 @@ orgRouter.get('/job-profiles', VIEW, async (req: Request, res: Response) => {
   );
   const jobProfiles: JobProfile[] = rows.map((r) => ({
     id: r.id,
-    clientId: r.clientId ?? '',
+    clientId: r.clientId ?? null,
     code: r.code,
     title: r.title,
     family: r.family,
@@ -534,7 +555,7 @@ orgRouter.get(
   });
   const shiftPositions: ShiftPosition[] = rows.map((r) => ({
     id: r.id,
-    clientId: r.clientId ?? '',
+    clientId: r.clientId ?? null,
     name: r.name,
     sortOrder: r.sortOrder,
     isLead: r.isLead,
@@ -946,6 +967,7 @@ orgRouter.put(
 orgRouter.get(
   '/associates/:id/history',
   VIEW,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const id = req.params.id;
@@ -979,6 +1001,7 @@ orgRouter.get(
 orgRouter.get(
   '/associates/:id/as-of',
   VIEW,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const id = req.params.id;
@@ -1016,6 +1039,7 @@ orgRouter.get(
 orgRouter.patch(
   '/associates/:id',
   MANAGE,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const id = req.params.id;
@@ -1095,6 +1119,7 @@ orgRouter.patch(
 orgRouter.post(
   '/associates/:id/deactivate',
   MANAGE,
+  IN_REACH,
   async (req: Request, res: Response) => {
     const id = z.string().uuid().parse(req.params.id);
     const input = AssociateDeactivateInputSchema.parse(req.body);
@@ -1143,6 +1168,7 @@ orgRouter.post(
 orgRouter.post(
   '/associates/:id/reactivate',
   MANAGE,
+  IN_REACH,
   async (req: Request, res: Response) => {
     const id = z.string().uuid().parse(req.params.id);
     const existing = await prisma.associate.findUnique({
@@ -1233,6 +1259,7 @@ async function loadPrimaryPayoutMethod(associateId: string) {
 orgRouter.get(
   '/associates/:id/payout-method',
   PAYROLL_OR_HR,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const { payout } = await loadPrimaryPayoutMethod(req.params.id);
@@ -1271,6 +1298,7 @@ orgRouter.get(
 orgRouter.post(
   '/associates/:id/payout-method/reveal',
   PAYROLL_OR_HR,
+  IN_REACH,
   piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Belt-and-braces: also require process:payroll explicitly here so
@@ -1371,6 +1399,7 @@ const PayoutBankNameSchema = z.object({
 orgRouter.patch(
   '/associates/:id/payout-method',
   PAYROLL_OR_HR,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const { bankName } = PayoutBankNameSchema.parse(req.body ?? {});
@@ -1480,6 +1509,7 @@ function formatTaxId(digits: string, kind: 'SSN' | 'EIN'): string {
 orgRouter.get(
   '/associates/:id/ssn',
   PAYROLL_OR_HR,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const { associate, cipher, source } = await loadSsnSource(req.params.id);
@@ -1494,6 +1524,7 @@ orgRouter.get(
 orgRouter.post(
   '/associates/:id/ssn/reveal',
   PAYROLL_OR_HR,
+  IN_REACH,
   piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the payout reveal.
@@ -1568,6 +1599,7 @@ orgRouter.post(
 orgRouter.get(
   '/associates/:id/personal-info',
   PAYROLL_OR_HR,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const associate = await prisma.associate.findUnique({
@@ -1622,6 +1654,7 @@ const HrW4UpdateSchema = z.object({
 orgRouter.get(
   '/associates/:id/w4',
   PAYROLL_OR_HR,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const associate = await prisma.associate.findUnique({
@@ -1665,6 +1698,7 @@ orgRouter.get(
 orgRouter.patch(
   '/associates/:id/w4',
   PAYROLL_OR_HR,
+  IN_REACH,
   async (req: Request, res: Response) => {
     await assertSameTenant('associate', String(req.params.id));
     const input = HrW4UpdateSchema.parse(req.body);
@@ -1763,6 +1797,7 @@ const EraseAssociateSchema = z.object({
 orgRouter.post(
   '/associates/:id/erase',
   requireCapability('view:hr-admin'),
+  inReach({ includeDeleted: true }),
   async (req: Request, res: Response) => {
     const input = EraseAssociateSchema.parse(req.body);
     const associate = await prisma.associate.findUnique({
@@ -1847,8 +1882,9 @@ function csvCell(value: string | null | undefined): string {
   return sharedCsvCell(value);
 }
 
+// DOB and hire date are calendar days (@db.Date): as stored.
 function isoDate(d: Date | null | undefined): string {
-  return d ? d.toISOString().slice(0, 10) : '';
+  return toDateOnly(d) ?? '';
 }
 
 orgRouter.post(
@@ -1986,7 +2022,7 @@ orgRouter.post(
     );
 
     const csv = [CENSUS_HEADERS.join(','), ...rows].join('\r\n') + '\r\n';
-    const stamp = new Date().toISOString().slice(0, 10);
+    const stamp = orgDateKey(new Date());
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
@@ -2034,6 +2070,7 @@ orgRouter.post(
 orgRouter.post(
   '/associates/:id/transfer',
   MANAGE,
+  IN_REACH,
   async (req: Request, res: Response) => {
     const id = req.params.id;
     const input = AssociateTransferInputSchema.parse(req.body);
@@ -2041,8 +2078,8 @@ orgRouter.post(
     if (!associate || associate.deletedAt) {
       throw new HttpError(404, 'not_found', 'Associate not found.');
     }
-    const target = await prisma.site.findUnique({
-      where: { id: input.locationId },
+    const target = await prisma.site.findFirst({
+      where: { id: input.locationId, tenantId: tenantIdForWrite() },
       select: {
         id: true,
         clientId: true,
@@ -2055,6 +2092,10 @@ orgRouter.post(
     if (!target || target.deletedAt || !target.isActive) {
       throw new HttpError(404, 'location_not_found', 'Target location not found.');
     }
+    // The TARGET is inside the caller's reach too (CODE-5): a store-A lead
+    // cannot move someone into store B (nor, by tenant, into another
+    // company's site — assertSiteInScope reads the caller's own sites).
+    await assertSiteInScope(prisma, req.user!, target.id);
     const open = await prisma.associateAssignment.findFirst({
       where: { associateId: id, endedAt: null },
       select: { id: true, location: { select: { clientId: true } } },
@@ -2246,7 +2287,7 @@ orgRouter.post(
       associateId: created.associateId,
       locationId: created.locationId,
       locationName: target.name,
-      startedAt: created.startedAt.toISOString().slice(0, 10),
+      startedAt: toDateOnly(created.startedAt)!,
       clientId: target.clientId ?? '',
       clientName: target.client?.name ?? '',
       crossClient,

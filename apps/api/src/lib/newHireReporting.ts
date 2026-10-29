@@ -1,8 +1,10 @@
 import type { NewHireReport, Prisma, PrismaClient } from '@prisma/client';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { tryDecryptString } from './crypto.js';
 import { employerFor } from './employment.js';
 import { workStateOf } from './payNotices.js';
 import { tenantIdForWrite } from './tenant.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * New-hire reporting to the state directory, per hire and per state.
@@ -195,8 +197,8 @@ export async function buildNewHireRecords(
       city: a.city ?? '',
       state: a.state ?? '',
       zip: a.zip ?? '',
-      dob: a.dob ? a.dob.toISOString().slice(0, 10) : '',
-      hireDate: r.hireDate.toISOString().slice(0, 10),
+      dob: a.dob ? dateColumnKey(a.dob) : '',
+      hireDate: dateColumnKey(r.hireDate),
       stateOfHire: r.state,
     });
   }
@@ -210,7 +212,8 @@ const CSV_HEADER = [
 ];
 
 export function newHireCsv(records: NewHireRecord[]): string {
-  const esc = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  // The shared escaper (@alto-people/shared): names and addresses are typed by associates.
+  const esc = (v: string) => sharedCsvCell(v);
   const rows = [CSV_HEADER.join(',')];
   for (const r of records) {
     rows.push(

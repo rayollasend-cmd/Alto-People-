@@ -124,14 +124,16 @@ const HR_TABS: TabDef[] = [
   { path: '/onboarding', labelKey: 'tabs.onboarding', icon: ClipboardList, requires: 'view:onboarding' },
 ];
 
-/** The line manager (HR pack 2026-10): their team's approvals are the
- *  team inbox — timesheets, time off, reimbursements, goals at risk — not
- *  the scheduling desk, which is a supervisor's queue. */
+/** The line manager: Approvals is the whole queue they decide — the
+ *  sidebar's Approvals, with its badge (FLOOR-14: the tab labelled
+ *  "Approvals" opened My team, 9 waiting, while the sidebar's Approvals held
+ *  17) — and My team is their team's own inbox, named as such. Time off
+ *  lives under More. */
 const MANAGER_TABS: TabDef[] = [
   HOME_TAB,
-  { path: '/team', labelKey: 'tabs.approvals', icon: CheckCheck, requires: 'view:my-team' },
+  { path: '/approvals', labelKey: 'tabs.approvals', icon: CheckCheck, requires: 'manage:scheduling', badge: 'approvals' },
+  { path: '/team', labelKey: 'tabs.myTeam', icon: Users, requires: 'view:my-team' },
   { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
-  { path: '/time-off', labelKey: 'tabs.timeOff', icon: CalendarOff, requires: 'view:time' },
 ];
 
 /** The recruiter: their day on Home, the pipeline, messages, and the new

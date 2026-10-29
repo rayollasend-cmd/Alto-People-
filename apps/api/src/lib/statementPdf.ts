@@ -133,6 +133,7 @@ export async function statementContext(db: Db, o: { statementId: string; clientI
     paidAt: row?.paidAt ?? null,
     paymentRef: row?.paymentRef ?? null,
     aging,
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: statement periods are @db.Date values stored at UTC midnight.
     period: row ? { start: row.periodStart.toISOString().slice(0, 10), end: row.periodEnd.toISOString().slice(0, 10) } : null,
   };
 }
@@ -146,19 +147,46 @@ const OT_NOTE = (s: Pick<StatementSnapshot, 'overtimeBilling' | 'totals'>): stri
   `overtime is the part of a person's week paid as overtime — past 40 hours across all assignments, or a state's daily line where it applies — ${s.overtimeBilling === 'STRAIGHT' ? 'billed at straight time per the contract' : 'billed at 1.5× per the contract'}${(s.totals.doubleTimeHours ?? 0) > 0 ? '; double-time hours bill like overtime, and any double-time premium per the contract' : ''}`;
 
 /**
+ * Rows whose rounded amounts miss their total by a few cents (snapshots
+ * frozen before the lines were apportioned, CODE-13) carry the difference a
+ * cent at a time on the largest rows, so a frozen invoice's lines still add
+ * up to the total it billed. A gap bigger than a cent a row is not rounding,
+ * and is left as it is rather than hidden.
+ */
+export function carryCents<T extends { amount: number }>(rows: T[], total: number, key: (r: T) => string): T[] {
+  const cents = rows.map((r) => Math.round(r.amount * 100));
+  let diff = Math.round(total * 100) - cents.reduce((a, b) => a + b, 0);
+  if (diff === 0 || rows.length === 0 || Math.abs(diff) > rows.length) return rows;
+  const order = rows.map((_, i) => i).sort((a, b) => Math.abs(cents[b]!) - Math.abs(cents[a]!) || key(rows[a]!).localeCompare(key(rows[b]!)));
+  const out = rows.map((r) => ({ ...r }));
+  const step = diff > 0 ? 1 : -1;
+  for (let k = 0; diff !== 0; k = (k + 1) % order.length) {
+    const i = order[k]!;
+    cents[i]! += step;
+    out[i]!.amount = cents[i]! / 100;
+    diff -= step;
+  }
+  return out;
+}
+
+/**
  * Older and seeded snapshots can lack fields (the SLA block, the split
  * totals); the invoice — and every screen — reads a complete one.
  */
 export function completeStatementSnapshot(snap: StatementSnapshot, fallbackName: string, period?: { start: string; end: string } | null): StatementSnapshot {
   const s = (snap ?? {}) as Partial<StatementSnapshot>;
   const t = (s.totals ?? {}) as Partial<StatementSnapshot['totals']>;
+  // The services total the lines must add up to (older snapshots: amount less adjustments and tax).
+  const servicesTotal = t.hoursAmount ?? (t.amount !== undefined ? Math.round(((t.subtotal ?? t.amount - (t.salesTax ?? 0)) - (t.adjustmentsAmount ?? (s.adjustments ?? []).reduce((a, x) => a + x.amount, 0))) * 100) / 100 : undefined);
+  const lines = s.lines ?? [];
+  const stores = s.stores ?? [];
   return {
     ...s,
     clientName: s.clientName ?? fallbackName,
     periodStart: s.periodStart ?? period?.start ?? '',
     periodEnd: s.periodEnd ?? period?.end ?? '',
-    lines: s.lines ?? [],
-    stores: s.stores ?? [],
+    lines: servicesTotal !== undefined ? carryCents(lines, servicesTotal, (l) => l.label) : lines,
+    stores: servicesTotal !== undefined ? carryCents(stores, servicesTotal, (st) => st.locationName) : stores,
     totals: {
       hours: t.hours ?? 0,
       regularHours: t.regularHours ?? t.hours ?? 0,
@@ -172,6 +200,64 @@ export function completeStatementSnapshot(snap: StatementSnapshot, fallbackName:
     },
     sla: s.sla ?? { publishedShifts: 0, assignedShifts: 0, fillRatePct: null, punctualPct: null, noShows: 0, pendingEntries: 0 },
   };
+}
+
+/**
+ * The statement as CSV rows — the PDF's twin (audit 2026-10-29 MONEY-22):
+ * the same invoice facts (number, dates, due date, PO), every billed line,
+ * the adjustments, subtotal, sales tax and total, so the rows add up to the
+ * total the file prints. Amounts are numbers (the shared writer keeps them
+ * numeric); dates read the way the invoice prints them.
+ */
+export function statementCsvRows(
+  raw: StatementSnapshot,
+  meta: { status: string; number: number | null; finalizedAt?: Date | null; dueDate?: Date | null; paidAt?: Date | null; paymentRef?: string | null; poNumber?: string | null; termsDays?: number | null; period?: { start: string; end: string } | null },
+): Array<Array<string | number>> {
+  const s = completeStatementSnapshot(raw, 'Client', meta.period);
+  const { hoursAmount, adjustmentsAmount, subtotal, salesTax, salesTaxRate, total } = statementMoney(s);
+  const paid = !!meta.paidAt;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const rows: Array<Array<string | number>> = [
+    ['Client', s.clientName],
+    ['Statement', invoiceLabel(meta.status, meta.number)],
+    ['Service period', periodLabel(s.periodStart, s.periodEnd)],
+    ['Invoice date', meta.finalizedAt ? fmt.date(meta.finalizedAt) : 'Not finalized'],
+    ['Due date', paid ? 'Paid' : meta.dueDate ? fmt.date(meta.dueDate) : meta.termsDays ? `Net ${meta.termsDays}` : 'On receipt'],
+    ...(meta.poNumber ? [['Purchase order', meta.poNumber]] : []),
+    [],
+    ['Service', 'Hours', 'Rate', 'Amount'],
+    ...s.lines.filter((l) => r2(l.hours) !== 0 || r2(l.amount) !== 0).map((l) => [l.label, r2(l.hours), r2(l.rate), r2(l.amount)]),
+    ['Services subtotal', r2(s.totals.hours), '', r2(hoursAmount)],
+  ];
+  if ((s.adjustments ?? []).length > 0) {
+    rows.push([], ['Adjustment', 'Basis', 'Hours', 'Amount']);
+    for (const a of s.adjustments!) rows.push([a.label, a.basis ?? '', a.hours ? r2(a.hours) : '', r2(a.amount)]);
+    rows.push(['Adjustments subtotal', '', '', r2(adjustmentsAmount)]);
+  }
+  rows.push(
+    [],
+    ['Subtotal', '', '', r2(subtotal)],
+    [salesTaxRate > 0 ? `Sales tax (${salesTaxRate}%)` : 'Sales tax', '', '', r2(salesTax)],
+    ['Total', '', '', r2(total)],
+  );
+  if (paid) rows.push(['Payments received', '', '', -r2(total)], ['Balance due', '', '', 0]);
+  else rows.push([meta.status === 'FINAL' ? 'Amount due' : 'Estimated total', '', '', r2(total)]);
+  rows.push(
+    [],
+    ['Regular hours', r2(s.totals.regularHours)],
+    ['Overtime hours', r2(s.totals.otHours)],
+    ...((s.totals.doubleTimeHours ?? 0) > 0 ? [['Double-time hours', r2(s.totals.doubleTimeHours!)]] : []),
+  );
+  if (s.stores.length > 0) {
+    rows.push([], ['Work site', 'Hours', 'Amount']);
+    for (const st of s.stores) rows.push([st.locationName, r2(st.hours), r2(st.amount)]);
+  }
+  rows.push([], ['Shifts published', s.sla.publishedShifts], ['Shifts filled', s.sla.assignedShifts]);
+  if (s.sla.fillRatePct !== null) rows.push(['Fill rate %', s.sla.fillRatePct]);
+  if (s.sla.punctualPct !== null) rows.push(['On-time %', s.sla.punctualPct]);
+  rows.push(['No-shows', s.sla.noShows]);
+  if (s.sla.pendingEntries > 0) rows.push(['Entries pending approval (not billed here)', s.sla.pendingEntries]);
+  return rows;
 }
 
 export async function renderStatementPdf(raw: StatementPdfInput): Promise<Buffer> {

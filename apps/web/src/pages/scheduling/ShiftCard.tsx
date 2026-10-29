@@ -29,10 +29,8 @@ import {
   fmtMoneyEst,
   fmtShiftRangeTz,
   fmtWeekdayTz,
-  mapsUrl,
+  directionsUrl,
   ymdLocal,
-  displayTimeZone,
-  tzAbbrev,
 } from '@/lib/format';
 import { Link } from 'react-router-dom';
 import { ArrowLeftRight, CalendarOff, Check, ChevronDown, MapPin, Users, X } from '@/components/ui/icons';
@@ -40,15 +38,10 @@ import { hapticConfirm } from '@/lib/haptics';
 import { enterStagger } from '@/lib/motion';
 import { useI18n, type Translate } from '@/lib/i18n';
 import { accentTint, colorForPosition } from '@/lib/positionColor';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { statusLabelClass, statusTileClass } from './shiftTile';
 import '@/lib/i18n/en/sched';
 import '@/lib/i18n/en/shift';
-
-/** " CDT" when the shift's store sits in a zone the viewer isn't in — the
- *  same rule as fmtShiftTz, so a remote reader never misreads the time. */
-function zoneSuffix(timeZone: string | null | undefined, at: string): string {
-  return timeZone && timeZone !== displayTimeZone() ? ` ${tzAbbrev(timeZone, at)}` : '';
-}
 
 export function statusBadge(
   status: Shift['status'],
@@ -341,7 +334,6 @@ export function ShiftCard({
             </div>
             <div className="mt-0.5 text-sm text-silver tabular-nums">
               {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
-              {zoneSuffix(shift.timezone, shift.startsAt)}
               <span className="text-silver/60">
                 {' '}· {fmtDuration(shift.scheduledMinutes)}
               </span>
@@ -386,7 +378,6 @@ export function ShiftCard({
               </>
             )}
             {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
-            {zoneSuffix(shift.timezone, shift.startsAt)}
             {/* Shift length at a glance — associates plan their day around
                 it, and it used to hide behind the expand tap. */}
             <span className="text-silver/60">
@@ -530,7 +521,7 @@ function TeamFaces({ teammates, timezone }: { teammates: ShiftTeammate[]; timezo
                 picked === m.associateId && 'z-10 ring-2 ring-gold',
               )}
             >
-              <Avatar src={`/api/associates/${m.associateId}/photo`} name={m.name} email="" size="sm" ringed />
+              <Avatar src={personPhotoUrl(m)} name={m.name} email="" size="sm" ringed />
             </button>
           ))}
           {extra > 0 && (
@@ -599,7 +590,7 @@ function ShiftDetail({
           {/* The address is a destination, not decoration — one tap opens
               the phone's maps app with the site pre-searched. */}
           <a
-            href={mapsUrl([shift.clientName, shift.locationName, shift.location].filter(Boolean).join(' '))}
+            href={directionsUrl({ address: shift.locationAddress, lat: shift.locationLat, lng: shift.locationLng, names: [shift.clientName, shift.locationName ?? shift.location] })}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center text-gold hover:text-gold-bright underline underline-offset-2 coarse:min-h-11"

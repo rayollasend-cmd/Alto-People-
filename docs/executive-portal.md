@@ -27,7 +27,7 @@ Eight measures, each with its value, the comparison and the change, the plan and
 |---|---|---|
 | Revenue | approved/completed paid hours at the standard bill rate, overtime at the pay multipliers | est. |
 | Gross margin % | revenue less pay, employer burden and overhead, as a share of revenue | est. |
-| Active workforce | the one definition of active (lib/activeDefinition), "of N on the books" (lib/peopleStatus) | live |
+| Working | the one definition of active (lib/activeDefinition), "of N on the books" (lib/peopleStatus) | live |
 | Fill rate | published shifts in the period with someone assigned | live |
 | Turnover | separations over the average on the books, annualized | live |
 | Overtime | overtime and double-time hours as a share of paid hours | live |
@@ -37,6 +37,46 @@ Eight measures, each with its value, the comparison and the change, the plan and
 Labor cost % is 100 − margin %, so it lives in Financials, not as a second tile. "What changed" is 3–5 sentences ranked by significance; decisions come from the existing decision queue.
 
 **One definition everywhere.** Paid hours (`lib/paidHours.ts`) are the same on the executive pages, the summary and Analytics; headcount uses peopleStatus/activeDefinition, the same as the People directory and Analytics.
+
+## The metric dictionary
+
+`packages/shared/src/metrics.ts` (`METRICS`, fix wave 2026-10-29) holds one name and one definition for every measure that more than one screen shows, with its unit, basis and the API function that computes it. A label names exactly one measure: a screen that shows a different basis uses that basis's own entry and its own words, never the same label with a different number. Card hints, tooltips and the board pack's definitions read the `definition` sentence; the shared test (`packages/shared/src/__tests__/metrics.test.ts`) fails on two measures sharing a label.
+
+| Id | Label | Definition (short) | Computed by |
+|---|---|---|---|
+| `revenue` | Revenue (badge: est.) | paid hours at the standard bill rate, overtime at the multipliers | `execFinance.laborBetween().billed` |
+| `billedAtContractRates` | Billed at contract rates | approved hours at each client's contract bill rate | `financeCockpit.marginTrend` |
+| `billedStatements` | Billed on statements | finalized statements whose period ends in the range | `clientMetrics` `billedInRange` |
+| `grossMargin` / `grossMarginPct` | Gross margin / Gross margin % | revenue less pay, employer burden and overhead (standard rates) | `execFinance.laborBetween().margin` |
+| `marginAfterWages` | Margin after wages | billed at contract rates less wages only (no burden, no overhead) | `financeCockpit.marginTrend` |
+| `scheduledMarginAfterWages` | Scheduled margin after wages | scheduled hours at contract bill rates less scheduled pay | `GET /scheduling/labor-costs` |
+| `statementMargin` | Margin on statements | statement hours against the wages and employer taxes paid for them | `clientMetrics.marginByClient` |
+| `daysToCollect` | Days to collect | DSO: open AR ÷ the last 90 days' average daily billing | `execFinance.dsoAsOf` |
+| `averageDaysToPay` | Average days to pay | statements paid in the window, finalized → paid, averaged | `GET /books/receivables/dso` |
+| `working` | Working | placed, and worked in the active window or has a shift ahead | `activeDefinition.activeHeadcount` |
+| `onTheBooks` | On the books | hired and not separated | `peopleStatus.workStatusCounts().onTheBooks` |
+| `placed` | Placed | open assignment (or approved application with none), working or not | `activeDefinition.placements` |
+| `onTheFloor` | On the floor now | an open punch right now | `GET /analytics/dashboard` |
+| `turnover` | Turnover | separations in the selected period ÷ average on the books, annualized | `peopleStatus.turnoverBetween` |
+| `turnover90d` | Turnover, last 90 days | the same over the trailing 90 days | `peopleStatus.turnoverBetween` |
+| `openShifts` | Open shifts | published, no one assigned, not ended (status OPEN only) | `GET /analytics/dashboard` |
+| `fillRate` | Fill rate | published shifts in the period with someone assigned | `execFinance.fillCounts` |
+| `paidHours` | Paid hours | approved/completed closed punches, breaks out, split as pay splits | `paidHours.loadPaidHours` |
+| `hoursThisWeek` | Hours this week | paid hours since the company week began (Saturday, company zone) | `GET /analytics/dashboard` `week` |
+| `scheduledHours` | Scheduled hours | non-cancelled shifts, start to end less the one-hour meal over six hours | `paidMinutesForRange` |
+| `overtimeShare` | Overtime | OT + DT hours as a share of paid hours | `execFinance.laborBetween` |
+| `overtimeRisk` | Overtime risk | worked + still-scheduled hours this week reach 36 (`OVERTIME_RISK_HOURS`) | `timeExceptions().overtimeRisk` |
+| `projectedOvertime` | Heading into overtime | on the floor, and the week with its schedule already includes overtime | `GET /scheduling/floor-now` |
+
+Overtime risk's line is `OVERTIME_RISK_HOURS` / `isOvertimeRisk()` in `attendanceInsights.ts` (36, beside the 40-hour `ATTENDANCE_OVERTIME_THRESHOLD_HOURS`). The math helpers `marginPctOf` and `daysToCollectOf` are the formulas the API uses.
+
+Which screens read which: the executive pages read `revenue`, `grossMargin(Pct)`, `working`/`onTheBooks`, `fillRate`, `turnover`/`turnover90d`, `overtimeShare`, `daysToCollect`. Analytics reads `working`, `onTheBooks`, `onTheFloor`, `hoursThisWeek`, `openShifts`, and for money `billedAtContractRates` + `marginAfterWages` (the Finance home's figures — not gross margin). Labor costs reads `scheduledHours`, `scheduledMarginAfterWages`, `projectedOvertime`. The ops director's home reads `hoursThisWeek` / `scheduledHours` from the same `GET /analytics/dashboard` week as Analytics. The report builder's people columns (`lib/reportComputed`) are `working` (the `active` column), `onTheBooks`, `placed` and the one status, under the dictionary's labels — the "People working now" template counts what every other screen calls Working. Books' receivables tile is `averageDaysToPay`; the executive tile is `daysToCollect`.
+
+**Where a risk opens.** A risk's `href` is always readable by every `view:executive` role: an executive page, a page all of them hold the view for, or `/executive/risk?open=<id>`, the in-place detail with the records behind the number (`items`; never names, leave reasons or claim facts). The working desk rides in `desk {href, label, requires}` and shows only to a viewer holding `requires`. Operations pulse batons follow the same rule: a baton the viewer can't open is a plain count naming its desk.
+
+**The frame on links and the clock.** `execHref` keeps `?period=&compare=` only on `/` and `/executive/*`. "As of" prints on the company clock with its zone (`ExecPeriod.timezone`, `ExecRisks.timezone`, the briefing's `timezone`; `fmtExecAsOf` on the web).
+
+**Turnover on Workforce.** The card's headline is the period rate (`METRICS.turnover`); "Last 90 days" shows `annualizedPct90d` (`METRICS.turnover90d`) beside `separations90d` and its estimated cost.
 
 ## Pages
 

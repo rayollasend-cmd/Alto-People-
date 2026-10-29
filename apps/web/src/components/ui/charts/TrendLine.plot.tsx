@@ -1,4 +1,5 @@
-import { Area, CartesianGrid, ComposedChart, Line, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, CartesianGrid, ComposedChart, Line, ReferenceDot, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from './container.plot';
 import { ChartTooltipContent } from './ChartTooltip';
 import { AXIS, Y_AXIS_WIDTH, xAxisLabel, yAxisLabel } from './axes';
 import { PALETTE, TICK } from './palette';

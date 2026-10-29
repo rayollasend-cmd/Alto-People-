@@ -24,6 +24,7 @@ import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins } from '../lib/notify.js';
 import { readyToWorkForAssociate } from '../lib/readyToWork.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { fmtDay, sentenceFromCode } from '../lib/humanDates.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 82 — Self-service post-onboarding.
@@ -829,7 +830,7 @@ selfServiceRouter.get('/me/attendance', async (req, res) => {
       shiftId: r.shiftId,
       kind: r.kind,
       points: Number(r.points),
-      occurredOn: r.occurredOn.toISOString().slice(0, 10),
+      occurredOn: dateColumnKey(r.occurredOn),
       source: r.source,
       note: r.note,
       excused: r.excusedAt !== null,

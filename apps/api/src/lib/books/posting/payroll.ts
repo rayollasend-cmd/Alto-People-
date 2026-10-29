@@ -1,7 +1,8 @@
 import type { Prisma } from '@prisma/client';
+import { periodWords } from '../words.js';
 import { tenantIdForWrite } from '../../tenant.js';
 import { postEntry } from '../ledger.js';
-import { LineBook, cents, voidByKey, ymd, type Db, type Dims } from './common.js';
+import { LineBook, cents, dayOf, voidByKey, ymd, type Db, type Dims } from './common.js';
 
 /**
  * A payroll run in the books — two entries per run, both idempotent:
@@ -180,7 +181,7 @@ export async function postPayrollRun(db: Db, runId: string): Promise<RunPostingR
     }
   }
 
-  const period = `${ymd(run.periodStart)} – ${ymd(run.periodEnd)}`;
+  const period = periodWords(ymd(run.periodStart), ymd(run.periodEnd));
   const kind = run.kind === 'REGULAR' ? 'Payroll' : `${run.kind.charAt(0)}${run.kind.slice(1).toLowerCase().replace(/_/g, ' ')} payroll`;
   let accrual: RunPostingResult['accrual'];
   if (!book.isEmpty()) {
@@ -212,7 +213,7 @@ export async function postPayrollRun(db: Db, runId: string): Promise<RunPostingR
       pay.credit('CASH_PAYROLL', cents(i.netPay));
     }
     await postEntry(db, {
-      date: ymd(when),
+      date: dayOf(when),
       memo: `${kind} paid ${period} — ${paid.length} ${paid.length === 1 ? 'check' : 'checks'}`,
       source: 'PAYROLL_DISBURSEMENT',
       sourceType: 'PayrollRun',

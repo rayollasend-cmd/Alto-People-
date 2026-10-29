@@ -1,6 +1,6 @@
 import { inShiftWindow, minuteOfDayInZone } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { formatTimeInZone, localDateKey } from './timezone.js';
+import { formatTimeInZone, localDateKey, dateColumnKey } from './timezone.js';
 import { currentClientOf } from './fieldglassNotify.js';
 import { currentStoreWindows, type StoreWindow } from './shiftWindows.js';
 import { fieldglassSecurityId, type SecurityId } from './fieldglassSecurityId.js';
@@ -186,7 +186,7 @@ export async function buildFieldglassPacket(associateId: string): Promise<Fieldg
       listName: `${a.lastName}, ${a.firstName}${a.middleInitial ? ` ${a.middleInitial}` : ''}`,
       email: a.email,
       phone: a.phone,
-      dob: a.dob ? a.dob.toISOString().slice(0, 10) : null,
+      dob: a.dob ? dateColumnKey(a.dob) : null,
       ssnLast4: a.ssnLast4,
       travelDocLast4: a.travelDocLast4,
       securityId: fieldglassSecurityId(a),

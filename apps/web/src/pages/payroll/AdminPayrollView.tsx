@@ -1,9 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DisburseFacts, useDisbursePreview } from './DisburseFacts';
 import { MissedPaydaysStrip } from './MissedPaydaysStrip';
+import { BackPayCard } from './BackPayCard';
+import { bulkDisburseMessage, disburseOutcome, retryMessage, waitsOnBankUpload } from './disburseOutcome';
+import { useMoneyConfirm } from '@/components/payroll/MoneyConfirm';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { quoteGrossUp } from '@/lib/payExpApi';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Ban,
@@ -100,6 +103,7 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { FirstLoadGate, ListTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { QueryError } from '@/components/ui/QueryError';
 import { DataGrid } from '@/components/ui/DataGrid';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
@@ -246,7 +250,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // Four-eyes config flag — when true, Disburse is gated on approvedAt.
   // Read once; a failed read just leaves the gate off (server still
   // enforces it with a 409).
-  const configQuery = useQuery({ queryKey: ['payroll', 'config'], queryFn: () => getPayrollConfig() });
+  // GET /payroll/config needs process:payroll — the chairman's read-only view never asks (CRAWL-15).
+  const configQuery = useQuery({ queryKey: ['payroll', 'config'], queryFn: () => getPayrollConfig(), enabled: canProcess });
   // Now: a signed review report before payout (the pre-payroll review).
   const requireSecondApproval = Boolean(configQuery.data?.requireSecondApproval);
   // Where the open run's sign-off stands: none, current, or stale (numbers changed since).
@@ -275,6 +280,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const confirm = useConfirm();
+  const confirmMoney = useMoneyConfirm();
+  const navigate = useNavigate();
   const prompt = usePrompt();
   const queryClient = useQueryClient();
   // Who is paid by paper check this time (lib/paperChecks), keyed by paycheck.
@@ -350,7 +357,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     const sel = (runs ?? []).filter((r) => bulkSelected.has(r.id));
     return {
       finalize: sel.filter((r) => r.status === 'DRAFT'),
-      disburse: sel.filter((r) => r.status === 'FINALIZED'),
+      // A run whose bank file waits for the upload is not disbursed again: a second press wrote
+      // a second file with the same paychecks (deep audit CODE-3).
+      disburse: sel.filter((r) => r.status === 'FINALIZED' && !waitsOnBankUpload(r)),
     };
   }, [runs, bulkSelected]);
 
@@ -371,16 +380,30 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       );
       return;
     }
-    const ok = await confirm({
-      title: `${label} ${targets.length} run${targets.length === 1 ? '' : 's'}?`,
-      description:
-        `${targets.length} of ${bulkSelected.size} selected run${bulkSelected.size === 1 ? ' is' : 's are'} eligible and will be processed a few at a time.` +
-        (skippedApproval > 0
-          ? ` ${skippedApproval} will be skipped: ${skippedApproval === 1 ? 'it needs' : 'they need'} a signed review first.`
-          : ''),
-      confirmLabel: `${label} (${targets.length})`,
-      destructive: action === 'disburse',
-    });
+    const howMany =
+      `${targets.length} of ${bulkSelected.size} selected run${bulkSelected.size === 1 ? ' is' : 's are'} eligible and will be processed a few at a time.` +
+      (skippedApproval > 0
+        ? ` ${skippedApproval} will be skipped: ${skippedApproval === 1 ? 'it needs' : 'they need'} a signed review first.`
+        : '');
+    // Paying out is money: the confirm names the total (the money-confirm rule).
+    const total = targets.reduce((sum, r) => sum + Math.round(r.totalNet * 100), 0) / 100;
+    const ok =
+      action === 'disburse'
+        ? await confirmMoney({
+            title: `Disburse ${targets.length} run${targets.length === 1 ? '' : 's'}?`,
+            amount: total,
+            amountLabel: 'Net pay',
+            to: `${targets.reduce((n, r) => n + r.itemCount, 0)} paychecks`,
+            when: 'Now',
+            note: howMany,
+            confirmLabel: `Disburse ${fmtMoney(total)}`,
+            destructive: true,
+          })
+        : await confirm({
+            title: `${label} ${targets.length} run${targets.length === 1 ? '' : 's'}?`,
+            description: howMany,
+            confirmLabel: `${label} (${targets.length})`,
+          });
     if (!ok) return;
     setBulkBusy(true);
     // Bounded concurrency (4 in flight) — each target is a distinct run,
@@ -395,6 +418,21 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     setBulkBusy(false);
     setBulkSelected(new Set());
     refresh();
+    if (action === 'disburse') {
+      // Say what each run did — paid, or a bank file written that pays no one until it's uploaded.
+      const after = await Promise.all(
+        results.map((r, i) =>
+          r.status === 'fulfilled'
+            ? (r.value as PayrollRunDetail).status === 'DISBURSED'
+              ? Promise.resolve(r.value as PayrollRunDetail)
+              : getPayrollRun(targets[i]!.id).catch(() => r.value as PayrollRunDetail)
+            : Promise.resolve(null),
+        ),
+      );
+      const out = bulkDisburseMessage(after.filter((x): x is PayrollRunDetail => x !== null), failed, skippedApproval);
+      (out.tone === 'error' ? toast.error : toast.success)(out.message);
+      return;
+    }
     const parts = [`${succeeded} succeeded`];
     if (failed > 0) parts.push(`${failed} failed`);
     if (skippedApproval > 0)
@@ -638,14 +676,29 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     // 5–15 s. We replace the body with an explicit "Processing payouts"
     // copy below.
     try {
-      const updated = await disbursePayrollRun(selected.id);
+      const paid = await disbursePayrollRun(selected.id);
+      // The disburse answer carries no lifecycle: a run still FINALIZED is read again to say what it waits on.
+      const updated = paid.status === 'DISBURSED' ? paid : await getPayrollRun(selected.id).catch(() => paid);
       setSelected(updated);
-      // A disbursed run leaves the default Open view: keep a way to it.
-      toast.success('Run disbursed.', { action: { label: 'View in All', onClick: () => setFilter('ALL') } });
+      const out = disburseOutcome(updated);
+      if (out.tone === 'success') {
+        // A disbursed run leaves the default Open view: keep a way to it.
+        toast.success(out.message, { action: { label: 'View in All', onClick: () => setFilter('ALL') } });
+      } else if (out.waitingOnBank) {
+        toast.info(out.message, { action: { label: 'Open bank files', onClick: () => navigate('/payroll/banking?tab=files') } });
+      } else {
+        (out.tone === 'error' ? toast.error : toast.info)(out.message);
+      }
       refresh();
       setConfirmDisburse(false);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Disburse failed.');
+      // Already disbursed into a bank file that waits for its upload: the run is read again, the dialog closes.
+      if (err instanceof ApiError && err.code === 'awaiting_bank_upload') {
+        setConfirmDisburse(false);
+        void openRun(selected.id);
+        refresh();
+      }
       // Leave the dialog open on failure so the user can retry without
       // re-traversing the action menu.
     } finally {
@@ -658,17 +711,28 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // payments card).
   const onRetryFailures = async (itemIds?: string[]) => {
     if (!selected || busy) return;
+    // Retrying pays people: confirm with the amount (the money-confirm rule).
+    const toRetry = selected.items.filter((i) => i.status === 'HELD' && (!itemIds || itemIds.includes(i.id)));
+    if (toRetry.length > 0) {
+      const amount = toRetry.reduce((sum, i) => sum + Math.round(i.netPay * 100), 0) / 100;
+      const ok = await confirmMoney({
+        title: `Retry ${toRetry.length} held paycheck${toRetry.length === 1 ? '' : 's'}?`,
+        amount,
+        to: toRetry.length === 1 ? (toRetry[0]!.associateName ?? 'One person') : `${toRetry.length} people`,
+        when: 'Now, through the usual payout',
+        note: toRetry.length === 1 && toRetry[0]!.failureReason ? `Held because: ${toRetry[0]!.failureReason}` : 'Fix why they were held first, or they fail again.',
+        confirmLabel: `Retry ${fmtMoney(amount)}`,
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     try {
       const result = await retryRunFailures(selected.id, itemIds);
       const updated = await getPayrollRun(selected.id);
       setSelected(updated);
       refresh();
-      if (result.retried === 0) {
-        toast.success('No failed items to retry.');
-      } else {
-        toast.success(`Retried ${result.retried} — ${result.succeeded} succeeded.`);
-      }
+      const out = retryMessage(result);
+      (out.tone === 'error' ? toast.error : out.tone === 'info' ? toast.info : toast.success)(out.message);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Retry failed.');
     } finally {
@@ -877,6 +941,9 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               }}
             />
           )}
+
+          {/* Back pay: the evening hours the old UTC cut never paid (?backPay=1 opens on it). */}
+          <BackPayCard canProcess={canProcess} focus={searchParams.get('backPay') === '1'} />
 
           <PayrollCostChart onOpenRun={(id) => void openRun(id)} />
 
@@ -1175,7 +1242,15 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                       </Button>
                     )}
                     {selected.status === 'FINALIZED' &&
-                      (reviewBlocksPayout ? (
+                      (waitsOnBankUpload(selected) ? (
+                        // The bank file is written; paying again would write a second one (CODE-3).
+                        <Button asChild variant="primary">
+                          <Link to="/payroll/banking?tab=files">
+                            <Send className="h-4 w-4" />
+                            Waiting for the bank upload
+                          </Link>
+                        </Button>
+                      ) : reviewBlocksPayout ? (
                         // Honesty gate — the server would 409 the disbursement
                         // anyway; don't let the admin walk the whole ceremony
                         // into it. The Approve button renders right beside this.
@@ -1380,8 +1455,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 },
                 { key: 'schedule', header: 'Pay schedule', accessor: (r) => r.payrollScheduleName ?? '', sortable: true, defaultHidden: true, cell: (r) => r.payrollScheduleName ?? '—' },
                 // A labelled field on a phone card ("Payday —"), not a bare dash beside the count.
-                { key: 'payday', header: 'Payday', accessor: (r) => r.payDate ?? '', csv: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : ''), sortable: true, searchable: false, className: 'tabular-nums text-ink-muted whitespace-nowrap', cell: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : '—') },
-                { key: 'kind', header: 'Kind', accessor: (r) => r.kind, sortable: true, searchable: false, cell: (r) => (r.kind === 'REGULAR' ? <span className="text-ink-muted">Regular</span> : <RunKindBadge kind={r.kind} />) },
+                { key: 'payday', header: 'Payday', hideBelow: 820, accessor: (r) => r.payDate ?? '', csv: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : ''), sortable: true, searchable: false, className: 'tabular-nums text-ink-muted whitespace-nowrap', cell: (r) => (r.payDate ? fmtDate(parseYmd(r.payDate)) : '—') },
+                { key: 'kind', header: 'Kind', hideBelow: 1050, accessor: (r) => r.kind, sortable: true, searchable: false, cell: (r) => (r.kind === 'REGULAR' ? <span className="text-ink-muted">Regular</span> : <RunKindBadge kind={r.kind} />) },
                 {
                   key: 'nextStep',
                   header: 'Next step',
@@ -1416,8 +1491,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   ),
                 },
                 // "0 paystubs", never a bare "0" on a phone card.
-                { key: 'paystubs', header: 'Paystubs', accessor: (r) => r.itemCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-ink-muted', cell: (r) => (desktopTable ? r.itemCount : fmtCount(r.itemCount, 'paystub')) },
-                { key: 'gross', header: 'Gross', accessor: (r) => r.totalGross, csv: (r) => fmtMoney(r.totalGross), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-ink-muted', cell: (r) => fmtMoney(r.totalGross) },
+                { key: 'paystubs', header: 'Paystubs', hideBelow: 1000, accessor: (r) => r.itemCount, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums text-ink-muted', cell: (r) => (desktopTable ? r.itemCount : fmtCount(r.itemCount, 'paystub')) },
+                { key: 'gross', header: 'Gross', hideBelow: 900, accessor: (r) => r.totalGross, csv: (r) => fmtMoney(r.totalGross), sortable: true, searchable: false, align: 'right', className: 'tabular-nums text-ink-muted', cell: (r) => fmtMoney(r.totalGross) },
                 { key: 'net', header: 'Net', accessor: (r) => r.totalNet, csv: (r) => fmtMoney(r.totalNet), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums font-medium text-ink', cell: (r) => fmtMoney(r.totalNet) },
               ]}
             />
@@ -2167,7 +2242,7 @@ const ADD_ON_KINDS: { value: RunAddOnKind; label: string }[] = [
   { value: 'VACATION', label: 'PTO / vacation payout' },
 ];
 
-function DraftAddOnsSection({
+export function DraftAddOnsSection({
   runId,
   runItems,
   onChanged,
@@ -2177,7 +2252,13 @@ function DraftAddOnsSection({
   onChanged: () => Promise<void> | void;
 }) {
   const term = useTerm();
-  const [addOns, setAddOns] = useState<RunAddOn[] | null>(null);
+  const qc = useQueryClient();
+  // The run's extra earnings. A failed read says so, with a retry, and blocks adding: it used to
+  // read as "no add-ons", which invited adding the same bonus a second time (deep audit CODE-29).
+  const addOnsQuery = useQuery({ queryKey: ['payroll', 'run-add-ons', runId], queryFn: () => listRunAddOns(runId) });
+  // Lines removed in the undo window: gone from the list at once, back on Undo.
+  const [removedIds, setRemovedIds] = useState<ReadonlySet<string>>(new Set());
+  const addOns: RunAddOn[] | null = addOnsQuery.data ? addOnsQuery.data.addOns.filter((a) => !removedIds.has(a.id)) : null;
   const [open, setOpen] = useState(false);
   // Multi-associate: chips accumulate via repeated pick-and-add; the
   // "everyone" toggle instead targets every associate in the run.
@@ -2214,11 +2295,8 @@ function DraftAddOnsSection({
   }, [runItems, term]);
 
   const load = useCallback(() => {
-    listRunAddOns(runId)
-      .then((r) => setAddOns(r.addOns))
-      .catch(() => setAddOns([]));
-  }, [runId]);
-  useEffect(load, [load]);
+    void qc.invalidateQueries({ queryKey: ['payroll', 'run-add-ons', runId] });
+  }, [qc, runId]);
 
   const submit = async () => {
     const amt = Number(amount);
@@ -2272,9 +2350,8 @@ function DraftAddOnsSection({
   // Gmail-style: the line leaves the list at once and the delete commits
   // when the undo window closes; Undo puts the line back without a request.
   const remove = (addOnId: string) => {
-    const before = addOns;
     const line = addOns?.find((a) => a.id === addOnId);
-    setAddOns((prev) => (prev ? prev.filter((a) => a.id !== addOnId) : prev));
+    setRemovedIds((prev) => new Set(prev).add(addOnId));
     performWithUndo({
       message: line ? `Removed ${fmtMoney(line.amount)} for ${line.associateName}.` : 'Earning line removed.',
       onCommit: async () => {
@@ -2285,7 +2362,12 @@ function DraftAddOnsSection({
           await onChanged();
         }
       },
-      onUndo: () => setAddOns(before),
+      onUndo: () =>
+        setRemovedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(addOnId);
+          return next;
+        }),
       commitFailedMessage: "Couldn't remove the earning line.",
     });
   };
@@ -2297,12 +2379,14 @@ function DraftAddOnsSection({
           Extra earnings (bonus, commission, tips, PTO)
         </div>
         {!open && (
-          <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+          <Button size="sm" variant="ghost" onClick={() => setOpen(true)} disabled={!addOnsQuery.isSuccess} title={addOnsQuery.isError ? 'Load the earnings already on this run first' : undefined}>
             <Plus className="h-4 w-4" />
             Add line
           </Button>
         )}
       </div>
+
+      {addOnsQuery.isError && <QueryError what="the extra earnings already on this run" query={addOnsQuery} className="mb-2" />}
 
       {addOns && addOns.length > 0 && (
         <div className="mb-2 space-y-1">

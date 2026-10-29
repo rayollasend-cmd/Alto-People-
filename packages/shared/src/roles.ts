@@ -943,3 +943,21 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
 export function capabilityLabel(cap: string): string {
   return (CAPABILITY_LABELS as Record<string, string>)[cap] ?? cap;
 }
+
+/* ===== Never grant more than you hold (fix wave 2026-10-29) ============ */
+
+/**
+ * The capabilities giving someone `role` would hand over that `actor` does
+ * not hold — empty when granting it is no escalation. The ONE copy of the
+ * rule every path that sets a role answers to: a role change, a staff
+ * invite, onboarding's "Hire as", a directory group's mapping.
+ */
+export function roleEscalation(actor: CapabilityHolder, role: Role): Capability[] {
+  const mine = capabilitiesOf(actor);
+  return [...ROLE_CAPABILITIES[role]].filter((c) => !mine.has(c));
+}
+
+/** May `actor` give someone `role`? Never more than they hold themselves. */
+export function mayGrantRole(actor: CapabilityHolder, role: Role): boolean {
+  return roleEscalation(actor, role).length === 0;
+}

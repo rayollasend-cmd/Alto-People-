@@ -17,7 +17,6 @@ import type {
 import {
   bulkInitiateBackgroundChecks,
   getBackgroundCheckDetail,
-  initiateBackgroundCheck,
   listAdverseActions,
   listBackgroundChecks,
   listPendingBackgroundChecks,
@@ -32,8 +31,8 @@ import { uploadAdminDocument } from '@/lib/documentsApi';
 import { DocumentThumbnails } from '@/components/DocumentViewer';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { associatePhotoUrl } from '@/lib/photoUrl';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { personPhotoUrl } from '@/lib/photoUrl';
+import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useStoreScope } from '@/lib/storeScope';
 import {
@@ -385,7 +384,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
               </Button>
               <Button onClick={() => setShowInitiate(true)} size="sm">
                 <Plus className="h-4 w-4" />
-                Initiate check
+                Record a check
               </Button>
             </>
           )
@@ -511,7 +510,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
             canManage ? (
               <Button onClick={() => setShowInitiate(true)} size="sm">
                 <Plus className="h-4 w-4" />
-                Initiate check
+                Record a check
               </Button>
             ) : undefined
           }
@@ -546,7 +545,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
               className: 'font-medium',
               cell: (x) => (
                 <div className="flex items-center gap-2.5">
-                  <Avatar src={associatePhotoUrl(x.associateId)} name={x.associateName} size="sm" />
+                  <Avatar src={personPhotoUrl({ photoUrl: x.associatePhotoUrl, associateId: x.associateId })} name={x.associateName} size="sm" />
                   <div className="min-w-0">
                     <div className="truncate">{x.associateName}</div>
                     {x.clientName && <div className="text-2xs text-silver/60 truncate">{x.clientName}</div>}
@@ -692,7 +691,7 @@ function BackgroundCheckDetailPanel({
     <>
       <DrawerHeader>
         <div className="flex items-center gap-3">
-          <Avatar src={associatePhotoUrl(check.associateId)} name={check.associateName} size="md" />
+          <Avatar src={personPhotoUrl({ photoUrl: check.associatePhotoUrl, associateId: check.associateId })} name={check.associateName} size="md" />
           <div className="min-w-0">
             <DrawerTitle className="truncate">{check.associateName}</DrawerTitle>
             <DrawerDescription>{check.provider}</DrawerDescription>
@@ -981,7 +980,7 @@ function BulkOrderDialog({
 
   const download = () => {
     if (rows.length === 0) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ymdLocal(); // the file is named for the reader's day, not UTC's
     // Header names exactly as the provider's template expects them.
     downloadCsv(`background-bulk-order-${today}.csv`, [
       ['email', 'first name', 'phone number'],
@@ -1145,30 +1144,38 @@ function InitiateCheckDialog({
   onError,
 }: InitiateCheckDialogProps) {
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
+  const [provider, setProvider] = useState('');
   const [externalId, setExternalId] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
       setAssociate(null);
+      setProvider('');
       setExternalId('');
     }
   }, [open]);
 
+  // Records an order placed in the provider's portal: the same record the
+  // bulk CSV order makes (the old single "initiate" was a stub that wrote a
+  // fake 'alto-stub' provider). With a provider connected, the check's
+  // drawer orders it through the connection.
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!associate || busy) return;
     setBusy(true);
     try {
       const ref = externalId.trim();
-      await initiateBackgroundCheck({
-        associateId: associate.id,
-        provider: 'alto-stub',
+      const r = await bulkInitiateBackgroundChecks({
+        associateIds: [associate.id],
+        provider: provider.trim() || 'none',
         ...(ref ? { externalId: ref } : {}),
       });
+      if (r.created === 0) toast.message(`${associate.name} already has a background check on file. Open it in the list.`);
+      else toast.success(`Recorded. Open ${associate.name}’s check to order it through a connected provider or record the result.`);
       onCreated();
     } catch (err) {
-      onError(err instanceof ApiError ? err.message : 'Initiate failed.');
+      onError(err instanceof ApiError ? err.message : 'Could not record the order.');
     } finally {
       setBusy(false);
     }
@@ -1178,10 +1185,10 @@ function InitiateCheckDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Initiate background check</DialogTitle>
+          <DialogTitle>Record a background check</DialogTitle>
           <DialogDescription>
-            Manual initiation is reserved for back-fills. New hires get a check
-            automatically when they reach the BACKGROUND_CHECK onboarding task.
+            For a check ordered outside Alto, in the provider’s own portal.
+            New hires get theirs when they give consent in onboarding.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-3">
@@ -1190,6 +1197,14 @@ function InitiateCheckDialog({
               value={associate}
               onChange={setAssociate}
               placeholder="Search by name…"
+            />
+          </Field>
+          <Field label="Provider (optional)">
+            <Input
+              placeholder="e.g. Sterling portal"
+              maxLength={80}
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
             />
           </Field>
           <Field label="Provider reference / external ID (optional)">
@@ -1214,7 +1229,7 @@ function InitiateCheckDialog({
               loading={busy}
               disabled={busy || !associate}
             >
-              Initiate check
+              Record check
             </Button>
           </DialogFooter>
         </form>

@@ -36,11 +36,20 @@ export function OwedCard({ data, onLedger }: { data: MyTransport; onLedger?: () 
     );
   }
   const due = s.cents - s.laterCents;
-  const when = s.payDate
-    ? s.laterCents > 0
-      ? t('ride.owe.split', { due: cents(due), date: paydayText(s.payDate), later: cents(s.laterCents) })
-      : t('ride.owe.payday', { date: paydayText(s.payDate) })
-    : t('ride.owe.noPayday');
+  // What payroll will really take: never a fare below the minimum wage (API lib/ridePayrollOutlook).
+  const when =
+    s.keptReason === 'MINIMUM_WAGE'
+      ? t('ride.owe.minimumWage')
+      : s.payDate && s.keptReason === 'CHECK_TOO_SMALL'
+        ? (s.dueCents ?? 0) > 0
+          ? t('ride.owe.partKept', { due: cents(s.dueCents ?? 0), date: paydayText(s.payDate), kept: cents(s.keptCents) })
+          : t('ride.owe.noneThisCheck', { date: paydayText(s.payDate) })
+        : s.payDate
+          ? s.laterCents > 0
+            ? t('ride.owe.split', { due: cents(due), date: paydayText(s.payDate), later: cents(s.laterCents) })
+            : t('ride.owe.payday', { date: paydayText(s.payDate) })
+          : t('ride.owe.noPayday');
+  const long = s.laterCents > 0 || s.keptCents > 0;
   const what = [
     s.rides > 0 ? t('ride.owe.rides', { count: s.rides }) : null,
     s.noShows > 0 ? t('ride.owe.noShows', { count: s.noShows }) : null,
@@ -57,7 +66,7 @@ export function OwedCard({ data, onLedger }: { data: MyTransport; onLedger?: () 
           <div className="text-2xs font-semibold uppercase tracking-[0.18em] text-ink-muted">{t('ride.owe.title')}</div>
           <p className="mt-1 text-ink">
             <span className="text-2xl font-semibold tabular-nums">{cents(s.cents)}</span>
-            {s.laterCents > 0 ? (
+            {long ? (
               <span className="block text-base text-ink-muted tabular-nums">{when}</span>
             ) : (
               <span className="text-base text-ink-muted"> · {when}</span>

@@ -10,6 +10,8 @@ import { defaultEmployerOrg } from '../lib/employment.js';
 import { buildEcprXml, computeCertifiedWeek, endedWeeks, weekBounds, weekEndingFor, type CertifiedWeek } from '../lib/certifiedPayroll.js';
 import { hashWh347, renderWh347Pdf } from '../lib/wh347Pdf.js';
 import type { SessionUser } from '../types/express.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Certified payroll desk: public-works projects, their wage determination
@@ -22,7 +24,8 @@ import type { SessionUser } from '../types/express.js';
 export const certifiedPayrollRouter = Router();
 
 const DAY = 86_400_000;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** Project, rate, worker and week-ending dates are @db.Date columns: their UTC date is the day. */
+const ymd = dateColumnKey;
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD.');
 const money = z.coerce.number().min(0).max(9999);
 
@@ -447,7 +450,7 @@ certifiedPayrollRouter.post('/projects/:id/weeks/:weekEnding/sign', async (req, 
     const input = SignInput.parse(req.body);
     const project = await loadProject(req, req.params.id!);
     const weekEnding = parseWeek(project, String(req.params.weekEnding));
-    if (weekEnding >= ymd(new Date())) throw new HttpError(409, 'week_not_over', "This week hasn't ended yet.");
+    if (weekEnding >= orgDateKey(new Date())) throw new HttpError(409, 'week_not_over', "This week hasn't ended yet.");
     const weekDate = new Date(`${weekEnding}T00:00:00Z`);
     const existing = await prisma.certifiedPayrollReport.findFirst({ where: { tenantId: tenantIdForWrite(), projectId: project.id, weekEnding: weekDate } });
     if (existing && existing.status !== 'DRAFT') throw new HttpError(409, 'already_signed', 'This week is already signed.');

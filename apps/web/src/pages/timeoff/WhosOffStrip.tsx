@@ -1,5 +1,6 @@
 import type { TimeOffCategory } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
+import { parseYmd, ymdLocal } from '@/lib/format';
 import type { TimeOffSummary, WhosOffRow } from '@/lib/timeOffApi';
 
 /**
@@ -25,10 +26,11 @@ const MONTH_DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numer
 /** The 14 day keys starting at `from`. */
 export function stripDays(from: string, count = 14): string[] {
   const out: string[] = [];
-  const d = new Date(`${from}T12:00:00Z`);
+  const d = parseYmd(from);
+  if (!d) return out;
   for (let i = 0; i < count; i++) {
-    out.push(d.toISOString().slice(0, 10));
-    d.setUTCDate(d.getUTCDate() + 1);
+    out.push(ymdLocal(d));
+    d.setDate(d.getDate() + 1);
   }
   return out;
 }

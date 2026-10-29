@@ -24,6 +24,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { ClientContactsCard } from './ClientContactsCard';
 import { termsLabel } from './ClientBasicsCard';
 import { useCanSeeClientPerformance } from './ClientPerformance';
+import { HoursSignOffCard } from './HoursSignOffCard';
 
 /**
  * The client's Overview — the first screen of the account (CL-A,
@@ -106,7 +107,9 @@ export function ClientOverview({
           <ClientContactsCard clientId={client.id} clientName={client.name} contacts={o.contacts} canManage={canManage} />
           <LocationsCard o={o} onOpenTab={onOpenTab} />
         </div>
-        <div className="min-w-0 lg:col-start-1 lg:row-start-2">
+        <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-2">
+          {/* The client's sign-off on its stores' weekly hours (client portal tenants only). */}
+          <HoursSignOffCard clientId={client.id} />
           <ActivityCard items={o.recentActivity} />
         </div>
       </div>

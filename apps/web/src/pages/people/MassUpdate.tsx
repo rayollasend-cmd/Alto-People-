@@ -73,7 +73,11 @@ export function MassUpdate() {
   const sites = useOrgSites(true);
   const { clients } = useClients({ enabled: tenant.modules.clientPortal });
   const departments = useQuery({ queryKey: ['org', 'departments'], queryFn: () => listDepartments() });
-  const schedules = useQuery({ queryKey: ['payroll', 'schedules'], queryFn: () => listPayrollSchedules() });
+  // Pay schedules are payroll's (the API refuses a move without
+  // process:payroll, and GET /payroll/schedules needs it too): the field
+  // and its filter are shown only to payroll.
+  const canPaySchedule = can('process:payroll');
+  const schedules = useQuery({ queryKey: ['payroll', 'schedules'], queryFn: () => listPayrollSchedules(), enabled: canPaySchedule });
   // Cost center and job profile: the bulk "assign org fields" that lived on
   // Departments & job profiles › People now lives here, with the rest.
   const costCenters = useQuery({ queryKey: ['org', 'cost-centers', 'all'], queryFn: () => listCostCenters() });
@@ -156,7 +160,7 @@ export function MassUpdate() {
       c.siteName !== undefined && c.siteId ? `Site → ${String(c.siteName)}` : null,
       c.departmentName !== undefined ? `Department → ${c.departmentName ? String(c.departmentName) : 'none'}` : null,
       c.managerName !== undefined ? `Manager → ${c.managerName ? String(c.managerName) : 'none'}` : null,
-      c.payrollScheduleName !== undefined ? `Pay schedule → ${c.payrollScheduleName ? String(c.payrollScheduleName) : 'none'}` : null,
+      c.payrollScheduleName !== undefined ? `Pay schedule → ${c.payrollScheduleName ? String(c.payrollScheduleName) : 'the schedule rules'}` : null,
       c.costCenterName !== undefined ? `Cost center → ${c.costCenterName ? String(c.costCenterName) : 'none'}` : null,
       c.jobProfileName !== undefined ? `Job profile → ${c.jobProfileName ? String(c.jobProfileName) : 'none'}` : null,
     ]
@@ -166,7 +170,7 @@ export function MassUpdate() {
   return (
     <ListTemplate
       title="Mass update"
-      subtitle={`Move a group of ${term('workers').toLowerCase()} between ${term('sites').toLowerCase()}, departments, managers, pay schedules, cost centers or job profiles in one step, with one audit entry and a day to undo.`}
+      subtitle={`Move a group of ${term('workers').toLowerCase()} between ${term('sites').toLowerCase()}, departments, managers, ${canPaySchedule ? 'pay schedules, ' : ''}cost centers or job profiles in one step, with one audit entry and a day to undo.`}
       breadcrumbs={[{ label: term('nav.people'), to: '/people' }, { label: 'Mass update' }]}
     >
       <Stepper steps={[{ label: 'Who and what' }, { label: 'Preview' }, { label: 'Done' }]} current={step + 1} />
@@ -210,7 +214,9 @@ export function MassUpdate() {
               <Field label={term('site')}>{(p) => <Select {...p} value={siteId} onChange={(e) => setSiteId(e.target.value)}><option value="">Any</option>{(sites ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
               <Field label="Department">{(p) => <Select {...p} value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}><option value="">Any</option>{(departments.data?.departments ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select>}</Field>
               <Field label="Manager">{(p) => <div {...p}><AssociatePicker value={manager} onChange={setManager} placeholder="Any manager" /></div>}</Field>
-              <Field label="Pay schedule">{(p) => <Select {...p} value={scheduleId} onChange={(e) => setScheduleId(e.target.value)}><option value="">Any</option>{(schedules.data?.schedules ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
+              {canPaySchedule && (
+                <Field label="Pay schedule">{(p) => <Select {...p} value={scheduleId} onChange={(e) => setScheduleId(e.target.value)}><option value="">Any</option>{(schedules.data?.schedules ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
+              )}
             </CardContent>
           </Card>
           )}
@@ -233,7 +239,11 @@ export function MassUpdate() {
                   </div>
                 )}
               </Field>
-              <Field label="Pay schedule">{(p) => <Select {...p} value={newScheduleId} onChange={(e) => setNewScheduleId(e.target.value)}><option value="">Leave as is</option><option value="__none__">Clear</option>{(schedules.data?.schedules ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}</Field>
+              {canPaySchedule && (
+                <Field label="Pay schedule" hint="Someone already on a schedule moves at the new schedule's next pay period; someone on none starts today. The preview says the date.">
+                  {(p) => <Select {...p} value={newScheduleId} onChange={(e) => setNewScheduleId(e.target.value)}><option value="">Leave as is</option><option value="__none__">Let the schedule rules decide</option>{(schedules.data?.schedules ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>}
+                </Field>
+              )}
               <Field label="Cost center">{(p) => <Select {...p} value={newCostCenterId} onChange={(e) => setNewCostCenterId(e.target.value)}><option value="">Leave as is</option><option value="__none__">Clear</option>{(costCenters.data?.costCenters ?? []).map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}</Select>}</Field>
               <Field label="Job profile" hint="A move that changes overtime exemption, comp class or tipped code is a promotion — send it from the person's record.">
                 {(p) => <Select {...p} value={newJobProfileId} onChange={(e) => setNewJobProfileId(e.target.value)}><option value="">Leave as is</option><option value="__none__">Clear</option>{(jobProfiles.data?.jobProfiles ?? []).map((j) => <option key={j.id} value={j.id}>{j.code} · {j.title}</option>)}</Select>}
@@ -309,7 +319,7 @@ export function MassUpdate() {
               urlState={false}
               columns={[
                 { key: 'when', header: 'Applied', accessor: (b) => b.appliedAt, sortable: true, primary: true, className: 'text-sm', cell: (b) => fmtDateTime(b.appliedAt) },
-                { key: 'by', header: 'By', accessor: (b) => b.actorEmail ?? '', className: 'text-xs text-ink-muted' },
+                { key: 'by', header: 'By', accessor: (b) => b.actorName ?? b.actorEmail ?? '', className: 'text-xs text-ink-muted', cell: (b) => <span title={b.actorEmail ?? undefined}>{b.actorName ?? b.actorEmail ?? ''}</span> },
                 { key: 'changes', header: 'Changes', accessor: (b) => summarizeChanges(b.changes), className: 'text-sm' },
                 { key: 'count', header: 'People', accessor: (b) => b.affectedCount, align: 'right', className: 'tabular-nums' },
                 {

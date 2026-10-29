@@ -8,6 +8,7 @@
 
 import type { PayrollFrequency } from '@prisma/client';
 import { adjustPayDate } from './banking/holidays.js';
+import { companyWorkweek, dateKeyInZone } from './timeAnomalies.js';
 
 export interface ScheduleInput {
   frequency: PayrollFrequency;
@@ -62,7 +63,10 @@ function daysBetween(a: Date, b: Date): number {
  */
 export function getCurrentPeriod(schedule: ScheduleInput, today: Date = new Date()): PeriodWindow {
   const anchor = toUtcDate(schedule.anchorDate);
-  const now = toUtcDate(today);
+  // A date value (UTC midnight) is its own day; a moment — "now" — is the company's day,
+  // not UTC's (after 8 PM Eastern on a period's last day, UTC already says the next period).
+  const isDateValue = today.getUTCHours() === 0 && today.getUTCMinutes() === 0 && today.getUTCSeconds() === 0 && today.getUTCMilliseconds() === 0;
+  const now = isDateValue ? toUtcDate(today) : toUtcDate(dateKeyInZone(today, companyWorkweek().timezone));
 
   switch (schedule.frequency) {
     // DAILY (PAYEXP): each day is paid by a daily settlement; the period here
@@ -139,18 +143,89 @@ export function getPeriodAfter(schedule: ScheduleInput, w: PeriodWindow): Period
   return getCurrentPeriod(schedule, addDays(toUtcDate(w.periodEnd), 1));
 }
 
-/** The calendar day a shift counts on: its clock-in, on the site's clock (Eastern when unknown). */
+/** The calendar day a shift counts on: its clock-in, on the site's clock (the company's zone when the site's is unknown). */
 export function workDayOf(clockInAt: Date, timezone: string | null | undefined): string {
   try {
-    return new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(clockInAt);
+    return dateKeyInZone(clockInAt, timezone || companyWorkweek().timezone);
   } catch {
-    return clockInAt.toISOString().slice(0, 10);
+    // An unknown zone name on a site: the company's day, never UTC's.
+    try {
+      return dateKeyInZone(clockInAt, companyWorkweek().timezone);
+    } catch {
+      return dateKeyInZone(clockInAt, 'America/New_York');
+    }
   }
 }
 
 /** Whether a day is inside one of a person's windows on a pay schedule (lib/payScheduleMembership). */
 export const inWindows = (windows: Map<string, Array<{ start: string; end: string }>>, associateId: string, day: string): boolean =>
   (windows.get(associateId) ?? []).some((w) => w.start <= day && day <= w.end);
+
+/**
+ * THE pay-period cut (deep audit CODE-1). A punch belongs to a period when
+ * its clock-in's day ON THE SITE'S CLOCK is one of the period's days — and,
+ * on a pay schedule's run, one of the person's days on that schedule. Runs
+ * (schedule and legacy), payroll exceptions, the pay-and-bill check, the
+ * period ledger and the earned-wage card all slice time this one way, so a
+ * 7 PM Friday clock-in in Chicago (Saturday 00:30 UTC) is paid exactly once,
+ * in the period whose last day is that Friday.
+ */
+export interface PayPeriodCut {
+  /** YYYY-MM-DD, inclusive. */
+  periodStart: string;
+  /** YYYY-MM-DD, inclusive. */
+  periodEnd: string;
+}
+
+/** A pay schedule's membership: per person, the inclusive YYYY-MM-DD windows they were on it (lib/payScheduleMembership). */
+export type MembershipWindows = Map<string, Array<{ start: string; end: string }>>;
+
+/** What a punch needs for the cut: who, when, and the site's zone. */
+export interface PunchLike {
+  associateId: string;
+  clockInAt: Date;
+  location?: { timezone?: string | null } | null;
+}
+
+/**
+ * The clock-in range to FETCH for a period: a margin day on each side of
+ * its UTC midnights, because membership is decided on the site's clock
+ * (UTC−10 to UTC+14 all fit inside one day). Never pay from this range
+ * directly — filter with punchInPeriod.
+ */
+export function punchFetchRange(period: PayPeriodCut): { gte: Date; lt: Date } {
+  const start = toUtcDate(period.periodStart).getTime();
+  const end = toUtcDate(period.periodEnd).getTime();
+  return { gte: new Date(start - DAY_MS), lt: new Date(end + 2 * DAY_MS) };
+}
+
+/** Whether a punch belongs to the period (and, on a schedule's run, to the person's days on the schedule). */
+export function punchInPeriod(p: PunchLike, period: PayPeriodCut, windows?: MembershipWindows | null): boolean {
+  const day = workDayOf(p.clockInAt, p.location?.timezone);
+  if (day < period.periodStart || day > period.periodEnd) return false;
+  return windows ? inWindows(windows, p.associateId, day) : true;
+}
+
+/**
+ * The punches a period pays: fetch with the margin, keep what the cut says.
+ * `fetch` runs the caller's own query (its status filter, includes and
+ * reach) over the clock-in range it is handed; the rows must carry
+ * `location.timezone`. `schedule` is the run's membership windows, or null
+ * for a run that isn't for one pay schedule.
+ */
+export async function punchesInPeriod<T extends PunchLike>(
+  period: PayPeriodCut,
+  schedule: MembershipWindows | null | undefined,
+  fetch: (clockInAt: { gte: Date; lt: Date }) => Promise<T[]>,
+): Promise<T[]> {
+  const rows = await fetch(punchFetchRange(period));
+  return rows.filter((p) => punchInPeriod(p, period, schedule));
+}
+
+/** A period given as Date bounds (UTC midnight of its first day, exclusive UTC midnight after its last) as YYYY-MM-DD days. */
+export function cutOf(periodStart: Date, periodEndExclusive: Date): PayPeriodCut {
+  return { periodStart: fmt(toUtcDate(periodStart)), periodEnd: fmt(new Date(toUtcDate(periodEndExclusive).getTime() - DAY_MS)) };
+}
 
 /** A window between explicit dates — a period cut short where a schedule's pattern changes. */
 export function windowBetween(periodStart: string, periodEnd: string, payOffset: number): PeriodWindow {

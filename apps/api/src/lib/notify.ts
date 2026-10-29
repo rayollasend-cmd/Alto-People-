@@ -165,7 +165,11 @@ const inFlight: Set<Promise<unknown>> = new Set();
 
 function track<T>(p: Promise<T>): Promise<T> {
   inFlight.add(p);
-  p.finally(() => inFlight.delete(p));
+  // .finally() makes a new promise that rejects when p does, and nobody holds
+  // it: without this catch a failed notice was an unhandled rejection even when
+  // the caller caught p — which exits Node when no handler is installed (audit
+  // 2026-10-29 CODE-22). The caller still gets p, rejection and all.
+  p.finally(() => inFlight.delete(p)).catch(() => undefined);
   return p;
 }
 

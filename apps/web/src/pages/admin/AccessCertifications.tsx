@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth, useRoleLabel } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import { INBOX_QUERY_KEY } from '@/lib/inboxApi';
 import { useUrlParam } from '@/lib/useUrlState';
 import {
@@ -80,7 +80,11 @@ type Tab = (typeof TABS)[number];
 function OpenDrawer({ onClose, onOpened }: { onClose: () => void; onOpened: (id: string) => void }) {
   const [name, setName] = useState('');
   const [scope, setScope] = useState<CertificationScope>('INTERNAL');
-  const inTwoWeeks = useMemo(() => new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10), []);
+  const inTwoWeeks = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 14);
+    return ymdLocal(d);
+  }, []);
   const [due, setDue] = useState(inTwoWeeks);
   const open = useMutation({
     mutationFn: () => openCertification({ name: name.trim(), scope, dueAt: new Date(`${due}T23:59:59`).toISOString() }),
@@ -107,7 +111,7 @@ function OpenDrawer({ onClose, onOpened }: { onClose: () => void; onOpened: (id:
             </Select>
           )}
         </Field>
-        <Field label="Due" hint="Overdue campaigns remind their reviewers once a day.">{(p) => <Input {...p} type="date" value={due} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setDue(e.target.value)} />}</Field>
+        <Field label="Due" hint="Overdue campaigns remind their reviewers once a day.">{(p) => <Input {...p} type="date" value={due} min={ymdLocal()} onChange={(e) => setDue(e.target.value)} />}</Field>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>

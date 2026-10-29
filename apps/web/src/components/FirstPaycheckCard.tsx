@@ -46,6 +46,22 @@ const STAGE_KEY: Record<StageKey, MessageKey> = {
   paycheck: 'lane.paycheck',
 };
 
+/** How long the "first paycheck has landed" moment stays on Home. */
+export const LANE_KEPT_DAYS = 14;
+
+/**
+ * The lane shows while the road is being travelled, and for two weeks
+ * after the first check lands — then it is done (ASSOC-18: it still sat
+ * on Home four weeks after the check, with no end).
+ */
+export function laneShowing(lane: Pick<MyLane, 'completed' | 'stages'>, now: number = Date.now()): boolean {
+  if (!lane.completed) return true;
+  const paid = lane.stages.find((s) => s.key === 'paycheck')?.at ?? null;
+  const landed = paid ? Date.parse(paid) : NaN;
+  if (!Number.isFinite(landed)) return false;
+  return now - landed < LANE_KEPT_DAYS * 86_400_000;
+}
+
 export function FirstPaycheckCard() {
   const { t } = useI18n();
   const query = useQuery({
@@ -54,7 +70,7 @@ export function FirstPaycheckCard() {
     staleTime: 5 * 60_000,
   });
   const lane = query.data?.lane;
-  if (!lane) return null;
+  if (!lane || !laneShowing(lane)) return null;
 
   const current = lane.stages.find((s) => s.key === lane.currentStage) ?? null;
 

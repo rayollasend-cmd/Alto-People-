@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { computePaycheckTaxes } from './payrollTax.js';
+import { computePaycheckTaxes, type PayFrequency } from './payrollTax.js';
 import { computeYtdWages } from './payrollYtd.js';
 
 /**
@@ -34,7 +34,19 @@ export interface TakeHomeEstimate {
   basis: 'W4' | 'NO_W4' | 'NO_WITHHOLDING';
 }
 
-export async function estimateTakeHome(prisma: PrismaClient, associateId: string, gross: number, now: Date = new Date()): Promise<TakeHomeEstimate> {
+/**
+ * `opts.payFrequency` / `opts.days`: figure the gross as the check it will be
+ * on — a biweekly period's earnings as a biweekly check, with that many
+ * days' share of the last check's deductions. Omitted: a weekly check of a
+ * week's share (the original "this week" reading).
+ */
+export async function estimateTakeHome(
+  prisma: PrismaClient,
+  associateId: string,
+  gross: number,
+  now: Date = new Date(),
+  opts: { payFrequency?: PayFrequency; days?: number } = {},
+): Promise<TakeHomeEstimate> {
   const [assoc, lastCheck, advances] = await Promise.all([
     prisma.associate.findUnique({
       where: { id: associateId },
@@ -64,13 +76,14 @@ export async function estimateTakeHome(prisma: PrismaClient, associateId: string
     return { gross: round2(gross), taxes: 0, ...zero, deductions: 0, advances: round2(owed), net: round2(Math.max(0, gross - owed)), basis: 'NO_WITHHOLDING' };
   }
 
-  // A week's share of the last check's deductions.
+  // A week's (or the period's) share of the last check's deductions.
+  const spanDays = opts.days && opts.days > 0 ? opts.days : 7;
   let preTax = 0;
   let preTaxRetirement = 0;
   let postTax = 0;
   if (lastCheck) {
     const days = Math.max(1, Math.round((lastCheck.payrollRun.periodEnd.getTime() - lastCheck.payrollRun.periodStart.getTime()) / DAY_MS) + 1);
-    const perWeek = 7 / days;
+    const perWeek = spanDays / days;
     preTax = Math.min(gross, Number(lastCheck.preTaxDeductions) * perWeek);
     preTaxRetirement = Math.min(preTax, Number(lastCheck.preTaxRetirement) * perWeek);
     postTax = Number(lastCheck.postTaxDeductions) * perWeek;
@@ -85,7 +98,7 @@ export async function estimateTakeHome(prisma: PrismaClient, associateId: string
     grossPay: round2(Math.max(0, gross - preTax)),
     ficaMedicareGross: round2(Math.max(0, gross - (preTax - preTaxRetirement))),
     filingStatus: w4?.filingStatus ?? null,
-    payFrequency: 'WEEKLY',
+    payFrequency: opts.payFrequency ?? 'WEEKLY',
     state,
     ytdWages: ytd,
     ytdMedicareWages: ytd,

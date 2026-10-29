@@ -3,10 +3,11 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryError } from '@/components/ui/QueryError';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
-import { fmtTime } from '@/lib/format';
+import { fmtExecAsOf } from '@/lib/executiveFormat';
 import { useI18n } from '@/lib/i18n';
 import { floorNow } from '@/lib/schedulingApi';
 import '@/lib/i18n/en/execPortal';
+import { useLegacyBriefing } from './execLegacyApi';
 import { PulseCard } from './opsShared';
 
 /**
@@ -18,13 +19,15 @@ import { PulseCard } from './opsShared';
 export function LiveFloorCard({ showClient }: { showClient: boolean }) {
   const { t } = useI18n();
   const q = useQuery({ queryKey: ['executive', 'legacy', 'floor-now'], queryFn: () => floorNow(), refetchInterval: 120_000, staleTime: 60_000 });
+  // The pulse's clock: the company's, from the briefing the page already reads.
+  const tz = useLegacyBriefing().data?.timezone;
   const rows = q.data?.rows ?? null;
   const onFloor = rows ? rows.reduce((n, r) => n + r.clockedIn, 0) : 0;
   const expected = rows ? rows.reduce((n, r) => n + (r.expected ?? r.totalTarget ?? 0), 0) : 0;
   return (
     <PulseCard
       title={t('execPortal.ops.floorTitle')}
-      description={q.data ? t('execPortal.ops.floorDesc', { time: fmtTime(q.data.generatedAt) }) : undefined}
+      description={q.data ? t('execPortal.ops.floorDesc', { time: fmtExecAsOf(q.data.generatedAt, tz) }) : undefined}
       link={{ to: '/labor-costs', label: t('execPortal.ops.floorLink') }}
       testId="exec-ops-floor"
     >

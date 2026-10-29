@@ -3,11 +3,12 @@ import { RULE_SPECIFICITY, becauseSentence, type ScheduleRuleKind } from '@alto-
 import { prisma as defaultPrisma } from '../db.js';
 import { enqueueAudit } from './audit.js';
 import { notifyUser } from './notify.js';
-import { getCurrentPeriod, windowBetween, type PeriodWindow, type ScheduleInput } from './payrollSchedule.js';
+import { getCurrentPeriod, punchesInPeriod, windowBetween, type PeriodWindow, type ScheduleInput } from './payrollSchedule.js';
 export { inWindows, workDayOf } from './payrollSchedule.js';
 import { rolesHolding } from './approvalPolicy.js';
 import { runWithTenant, tenantIdForWrite } from './tenant.js';
 import { setScheduleRecomputeHandler, type ScheduleTrigger } from './payScheduleTriggers.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * Who is paid on which pay schedule, and from when.
@@ -39,10 +40,12 @@ const DAY = 86_400_000;
 
 /* ---- Dates ---------------------------------------------------------------- */
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column (stored at UTC midnight); today is todayYmd below.
 export const ymd = (d: Date): string => d.toISOString().slice(0, 10);
 export const dateOnly = (s: string): Date => new Date(`${s}T00:00:00.000Z`);
 export const addDaysYmd = (s: string, n: number): string => ymd(new Date(dateOnly(s).getTime() + n * DAY));
-export const todayYmd = (now: Date = new Date()): string => ymd(now);
+/** Today on the COMPANY's calendar (deep audit MONEY-16): after 8 PM Eastern UTC is already tomorrow, and the schedules, the period ledger and payroll's "today" must not flip early. */
+export const todayYmd = (now: Date = new Date()): string => orgDateKey(now);
 
 /* ---- Patterns and periods (version-aware) ---------------------------------- */
 
@@ -728,11 +731,14 @@ export async function membershipWindowsFor(db: Db, ranges: ReadonlyArray<{ sched
 
 /** People with approved time in the period who are on no schedule for those days. */
 export async function unscheduledWithTime(db: Db, from: string, to: string, clientId: string | null): Promise<Array<{ associateId: string; name: string }>> {
-  const entries = await db.timeEntry.findMany({
-    where: { status: 'APPROVED', clockInAt: { gte: dateOnly(from), lt: dateOnly(addDaysYmd(to, 1)) }, ...(clientId ? { clientId } : {}) },
-    select: { associateId: true, associate: { select: { firstName: true, lastName: true, payrollScheduleId: true } } },
-    distinct: ['associateId'],
-  });
+  // The pay-period cut (deep audit CODE-1): the clock-in's day on the site's clock.
+  const punches = await punchesInPeriod({ periodStart: from, periodEnd: to }, null, (clockInAt) =>
+    db.timeEntry.findMany({
+      where: { status: 'APPROVED', clockInAt, ...(clientId ? { clientId } : {}) },
+      select: { associateId: true, clockInAt: true, location: { select: { timezone: true } }, associate: { select: { firstName: true, lastName: true, payrollScheduleId: true } } },
+    }),
+  );
+  const entries = [...new Map(punches.map((p) => [p.associateId, p])).values()];
   if (entries.length === 0) return [];
   const ids = entries.map((e) => e.associateId);
   // Covered by the one membership rule (scheduleMembershipFor below): an

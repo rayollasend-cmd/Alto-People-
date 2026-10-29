@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
@@ -161,6 +162,7 @@ accessCertificationsRouter.get('/admin/access-certifications/:id/export.csv', MA
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId: cert.tenantId, action: 'http.export', entityType: 'AccessCertification', entityId: id, metadata: { rows: rows.length } }, 'accessCertification');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="access-certification-${id.slice(0, 8)}.csv"`);
-  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  // The shared escaper (@alto-people/shared): quoting alone doesn't stop a spreadsheet running a formula.
+  const esc = (v: string) => sharedCsvCell(v);
   res.send([['account', 'role', 'reviewer', 'decision', 'note', 'decided by', 'decided at'], ...rows].map((r) => r.map(esc).join(',')).join('\n'));
 });

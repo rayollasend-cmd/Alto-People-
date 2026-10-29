@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import multer from 'multer';
 import { randomUUID, createHash } from 'node:crypto';
 import { extname } from 'node:path';
@@ -28,6 +29,7 @@ import {
   type Messenger,
   placedClientsOf,
 } from '../lib/messaging.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * The in-app messenger.
@@ -70,7 +72,8 @@ function clip(s: string, max: number): string {
 
 /** RFC-4180 cell: quote when needed, double embedded quotes. */
 function csvCell(v: string): string {
-  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  // The shared escaper (@alto-people/shared) also guards formulas: message bodies are typed by anyone.
+  return sharedCsvCell(v);
 }
 
 const USER_SELECT = {
@@ -645,7 +648,7 @@ messagesRouter.get('/conversations/:id/transcript.csv', requireAuth, async (req,
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="messages-${title.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv"`,
+      `attachment; filename="messages-${title.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-${orgDateKey(new Date())}.csv"`,
     );
     res.send(`\uFEFF${lines.join('\r\n')}`);
   } catch (err) {

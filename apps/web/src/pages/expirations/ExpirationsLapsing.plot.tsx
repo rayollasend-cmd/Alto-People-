@@ -1,4 +1,5 @@
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from '@/components/ui/charts/container.plot';
 import { CHART } from '@/components/ui/ChartFrame';
 
 /** The Timeline's "Lapsing each week" drawing — fetched with the chart (lazyPlot), the only part that needs recharts. */

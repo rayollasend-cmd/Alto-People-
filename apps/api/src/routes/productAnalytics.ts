@@ -14,6 +14,7 @@ import {
 } from '../lib/webVitals.js';
 import { computeReliability, isLongLivedRoute } from '../lib/reliability.js';
 import { productEventsReport } from '../lib/productEvents.js';
+import { dayKey as usageDayKey } from '../lib/usageTracker.js';
 
 export const productAnalyticsRouter = Router();
 
@@ -87,13 +88,18 @@ productAnalyticsRouter.get('/reliability', VIEW_RELIABILITY, platformOperatorOnl
   }
 });
 
-/** UTC midnight `days` ago, inclusive of today. */
+/** The start of the day `days` ago, inclusive of today, on the rollups' clock. */
 function windowStart(days: number, now = new Date()): Date {
-  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const today = new Date(`${dayKey(now)}T00:00:00.000Z`);
   return new Date(today.getTime() - (days - 1) * ONE_DAY_MS);
 }
 
-const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+/**
+ * Platform analytics read on one clock: the day the usage rollups are written
+ * under (lib/usageTracker dayKey — UTC, across every tenant's zone). A DATE
+ * row is its own day there too.
+ */
+const dayKey = (d: Date) => usageDayKey(d);
 
 /**
  * GET /product-analytics/active-users?days=30

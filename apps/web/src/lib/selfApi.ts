@@ -1,5 +1,6 @@
 import { ApiError, apiFetch, NetworkError } from './api';
 import { forgetMissingPhotos } from './photoUrl';
+import type { Gated } from './approvalRequestsApi';
 
 export interface SelfProfile {
   id: string;
@@ -91,18 +92,20 @@ export const deleteEmergency = (id: string) =>
 
 export const listDependents = () =>
   apiFetch<{ dependents: Dependent[] }>('/self/me/dependents');
+// Dependents can wait for HR (the self-service approval switch): these
+// answer 202 { pending, approvalId } then — branch on isPending (CODE-32).
 export const createDependent = (input: Omit<Dependent, 'id'>) =>
-  apiFetch<{ id: string }>('/self/me/dependents', {
+  apiFetch<Gated<{ id: string }>>('/self/me/dependents', {
     method: 'POST',
     body: input,
   });
 export const updateDependent = (id: string, input: Partial<Dependent>) =>
-  apiFetch<{ ok: true }>(`/self/me/dependents/${id}`, {
+  apiFetch<Gated<{ ok: true }>>(`/self/me/dependents/${id}`, {
     method: 'PUT',
     body: input,
   });
 export const deleteDependent = (id: string) =>
-  apiFetch<void>(`/self/me/dependents/${id}`, { method: 'DELETE' });
+  apiFetch<Gated<void>>(`/self/me/dependents/${id}`, { method: 'DELETE' });
 
 export const listBeneficiaries = () =>
   apiFetch<{ beneficiaries: Beneficiary[] }>('/self/me/beneficiaries');

@@ -921,7 +921,7 @@ opsRouter.get('/shift-preview', RUN, async (req, res, next) => {
             position: true,
             locationId: true,
             location: true,
-            locationRel: { select: { name: true } },
+            locationRel: { select: { name: true, timezone: true } },
           },
         })
       : null;
@@ -992,19 +992,23 @@ opsRouter.get('/shift-preview', RUN, async (req, res, next) => {
           endsAt: true,
           position: true,
           assignedAssociate: { select: { firstName: true, lastName: true } },
+          locationRel: { select: { timezone: true } },
         },
       }),
     ]);
 
+    // Times read on the store's clock: the shift's store, else the one the crew is at.
+    const storeZone = myShift?.locationRel?.timezone ?? crew.find((c) => c.locationRel?.timezone)?.locationRel?.timezone ?? orgTimeZone();
     res.json({
       dateKey,
-      timezone: orgTimeZone(),
+      timezone: storeZone,
       myShift: myShift
         ? {
             startsAt: myShift.startsAt.toISOString(),
             endsAt: myShift.endsAt.toISOString(),
             position: myShift.position,
             store: myShift.locationRel?.name ?? myShift.location ?? null,
+            timezone: myShift.locationRel?.timezone ?? storeZone,
           }
         : null,
       handover: handover.map((h) => ({
@@ -1034,6 +1038,7 @@ opsRouter.get('/shift-preview', RUN, async (req, res, next) => {
         position: c.position,
         startsAt: c.startsAt.toISOString(),
         endsAt: c.endsAt.toISOString(),
+        timezone: c.locationRel?.timezone ?? storeZone,
       })),
     });
   } catch (err) {

@@ -18,6 +18,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { enqueueAudit } from './audit.js';
 import { orgDateKey } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 import type { SessionUser } from '../types/express.js';
 
 /**
@@ -68,9 +69,7 @@ export function userDisplayName(u: { email: string; displayName?: string | null;
 
 /** YYYY-MM-DD `days` after a YYYY-MM-DD. */
 function addDays(day: string, days: number): string {
-  const d = new Date(`${day}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  return addDaysToKey(day, days);
 }
 
 export function toProspectRow(p: ProspectWithRelations, now: Date, money: boolean): ProspectRow {

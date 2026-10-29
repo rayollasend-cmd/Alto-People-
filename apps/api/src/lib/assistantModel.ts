@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { betaTool } from '@anthropic-ai/sdk/helpers/beta/json-schema';
 import { env } from '../config/env.js';
+import { companyWorkweek, orgDateKey } from './timeAnomalies.js';
 
 /**
  * The assistant's model (Claude), behind the same front door as the intent
@@ -102,7 +103,8 @@ function stableSystem(id: AssistantIdentity): string {
 function liveSystem(id: AssistantIdentity, page: AssistantPage | null, now: Date): string {
   const lines = [
     `The person asking is a ${id.roleLabel} (audience: ${id.audience}). Reply in the language with code "${id.lang}".`,
-    `Today is ${now.toISOString().slice(0, 10)} (UTC).`,
+    // The company's calendar day (its zone named): from 5 PM Pacific the UTC date is already tomorrow.
+    `Today is ${orgDateKey(now)} (${companyWorkweek().timezone}).`,
   ];
   if (page) {
     lines.push(`They are on the page "${page.title ?? page.path}" (${page.path}).`);

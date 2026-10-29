@@ -27,6 +27,8 @@ export interface WaveRow {
   shiftId: string;
   associateId: string | null;
   name: string | null;
+  /** The headshot URL; null when none is on file (no request, initials). */
+  photoUrl?: string | null;
   position: string;
   isLead: boolean;
   clockInAt: string | null;

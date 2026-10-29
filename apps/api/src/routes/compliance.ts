@@ -8,7 +8,6 @@ import {
   BackgroundBulkInitiateResponseSchema,
   BackgroundCheckDetailSchema,
   BackgroundCheckListResponseSchema,
-  BackgroundInitiateInputSchema,
   BackgroundPendingResponseSchema,
   BackgroundUpdateInputSchema,
   I9ListResponseSchema,
@@ -24,7 +23,7 @@ import { env } from '../config/env.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeAssociates, scopeAssociatesIncludingFormer, scopeBackgroundChecks } from '../lib/scope.js';
+import { scopeAssociates, scopeAssociatesIncludingFormer, scopeBackgroundChecks, scopeWhere } from '../lib/scope.js';
 import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
 import {
   adverseStageOf,
@@ -52,6 +51,7 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { everifyRouter } from './everify.js';
 import { drugTestsRouter } from './drugTests.js';
 import { fmtDay } from '../lib/humanDates.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 export const complianceRouter = Router();
 
@@ -68,7 +68,9 @@ complianceRouter.use('/everify', everifyRouter);
 // same guard and prefix.
 complianceRouter.use('/drug-tests', drugTestsRouter);
 
+/** A @db.Date column's calendar day (hire dates, program dates, work-auth expiry) — never "today" (that is orgDateKey). */
 function ymd(d: Date): string {
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date-only columns are stored at UTC midnight
   return d.toISOString().slice(0, 10);
 }
 
@@ -120,10 +122,10 @@ function toI9(
     // which of 40 pending I-9s is due tomorrow vs next week, and
     // expiring work authorizations were invisible here.
     startDate: row.associate.applications[0]?.startDate
-      ? row.associate.applications[0].startDate.toISOString().slice(0, 10)
+      ? ymd(row.associate.applications[0].startDate)
       : null,
     workAuthExpiresAt: row.workAuthExpiresAt
-      ? row.workAuthExpiresAt.toISOString().slice(0, 10)
+      ? ymd(row.workAuthExpiresAt)
       : null,
     // Retention and reverification (audit 2026-10-21 #14, lib/hiringCompliance).
     retainUntil: dateOrNull(i9RetainUntil(row.associate.hireDate, row.associate.separatedAt)),
@@ -330,7 +332,7 @@ complianceRouter.post('/i9/:associateId', MANAGE, async (req, res, next) => {
         section2: !!row.section2CompletedAt,
         documentList: row.documentList,
         workAuthExpiresAt: row.workAuthExpiresAt
-          ? row.workAuthExpiresAt.toISOString().slice(0, 10)
+          ? ymd(row.workAuthExpiresAt)
           : null,
       },
       req,
@@ -348,6 +350,13 @@ type RawBg = Prisma.BackgroundCheckGetPayload<{
   include: { associate: { select: { firstName: true; lastName: true } } };
 }>;
 
+/** The person's photo URL when the include read the photo columns (BG_INCLUDE does); omitted otherwise. */
+function bgAssociatePhoto(row: RawBg): { associatePhotoUrl?: string | null } {
+  const a = row.associate as { photoS3Key?: string | null; photoUpdatedAt?: Date | null };
+  if (a.photoS3Key === undefined) return {};
+  return { associatePhotoUrl: profilePhotoUrlFor({ id: row.associateId, photoS3Key: a.photoS3Key, photoUpdatedAt: a.photoUpdatedAt ?? null }) };
+}
+
 function toBg(
   row: RawBg,
   reportCount?: number,
@@ -357,6 +366,7 @@ function toBg(
     id: row.id,
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
+    ...bgAssociatePhoto(row),
     clientId: client?.clientId ?? row.clientId,
     clientName: client?.clientName ?? null,
     provider: row.provider,
@@ -382,7 +392,7 @@ const viaProvider = (c: { externalId: string | null; connectionId: string | null
 const BG_REPORT_KIND = 'BACKGROUND_CHECK_RESULT' as const;
 
 const BG_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true } },
+  associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
 } as const;
 
 complianceRouter.get('/background', async (req, res, next) => {
@@ -507,10 +517,14 @@ complianceRouter.get('/background/pending', MANAGE, async (req, res, next) => {
 });
 
 /**
- * Record that a bulk order was actually placed — called AFTER the CSV upload
- * to the provider succeeds, never on download. Creates INITIATED rows so the
+ * Record that an order was actually placed in the provider's portal — one
+ * person (with the provider's reference) or a bulk CSV upload, called AFTER
+ * the upload succeeds, never on download. Creates INITIATED rows so the
  * queue reflects the order; associates who gained a check in the meantime
- * (another admin racing) are skipped, not duplicated.
+ * (another admin racing) are skipped, not duplicated. With a provider
+ * connected, the check's drawer orders it through the connection instead
+ * (routes/providerActions). This replaced the stubbed POST
+ * /compliance/background that wrote an 'alto-stub' provider (10-21 audit).
  */
 complianceRouter.post('/background/bulk-initiate', MANAGE, async (req, res, next) => {
   try {
@@ -518,9 +532,13 @@ complianceRouter.post('/background/bulk-initiate', MANAGE, async (req, res, next
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
+    if (parsed.data.externalId && parsed.data.associateIds.length !== 1) {
+      throw new HttpError(400, 'external_id_one_person', 'A provider reference belongs to one person’s order.');
+    }
     const associates = await prisma.associate.findMany({
       take: 500,
-      where: { id: { in: parsed.data.associateIds }, deletedAt: null },
+      // The people in the caller's reach only (scope-every-list).
+      where: scopeWhere<Prisma.AssociateWhereInput>({ id: { in: parsed.data.associateIds }, deletedAt: null }, scopeAssociates(req.user!)),
       select: {
         id: true,
         // Same clientId derivation as single initiate.
@@ -534,15 +552,20 @@ complianceRouter.post('/background/bulk-initiate', MANAGE, async (req, res, next
     const alreadyChecked = new Set(existing.map((e) => e.associateId));
     const toCreate = associates.filter((a) => !alreadyChecked.has(a.id));
 
-    if (toCreate.length > 0) {
-      await prisma.backgroundCheck.createMany({
-        data: toCreate.map((a) => ({
-          associateId: a.id,
-          clientId: a.applications[0]?.clientId ?? null,
-          provider: parsed.data.provider,
-          status: 'INITIATED' as const,
-        })),
-      });
+    const made = toCreate.length > 0
+      ? await prisma.backgroundCheck.createManyAndReturn({
+          data: toCreate.map((a) => ({
+            associateId: a.id,
+            clientId: a.applications[0]?.clientId ?? null,
+            provider: parsed.data.provider,
+            externalId: parsed.data.externalId || null,
+            status: 'INITIATED' as const,
+          })),
+          select: { id: true },
+        })
+      : [];
+    if (parsed.data.associateIds.length === 1 && associates.length === 0) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found');
     }
 
     await recordComplianceEvent({
@@ -564,6 +587,7 @@ complianceRouter.post('/background/bulk-initiate', MANAGE, async (req, res, next
       BackgroundBulkInitiateResponseSchema.parse({
         created: toCreate.length,
         skipped: parsed.data.associateIds.length - toCreate.length,
+        ids: made.map((m) => m.id),
       })
     );
   } catch (err) {
@@ -619,51 +643,6 @@ complianceRouter.get('/background/:id', async (req, res, next) => {
         reports,
       })
     );
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * Initiate a background check. STUBBED: real provider integration (Checkr,
- * Sterling, etc.) lives here in a future phase. We just create the record
- * with INITIATED status; HR can flip it manually via /update.
- */
-complianceRouter.post('/background', MANAGE, async (req, res, next) => {
-  try {
-    const parsed = BackgroundInitiateInputSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
-    }
-    const associate = await prisma.associate.findFirst({
-      where: { id: parsed.data.associateId, deletedAt: null },
-      include: { applications: { select: { clientId: true }, take: 1 } },
-    });
-    if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
-
-    const created = await prisma.backgroundCheck.create({
-      data: {
-        associateId: associate.id,
-        clientId: associate.applications[0]?.clientId ?? null,
-        provider: parsed.data.provider,
-        externalId: parsed.data.externalId ?? null,
-        status: 'INITIATED',
-      },
-      include: BG_INCLUDE,
-    });
-
-    await recordComplianceEvent({
-      actorUserId: req.user!.id,
-      action: 'compliance.background_initiated',
-      entityType: 'BackgroundCheck',
-      entityId: created.id,
-      associateId: associate.id,
-      clientId: created.clientId,
-      metadata: { provider: created.provider, stub: true },
-      req,
-    });
-
-    res.status(201).json(toBg(created));
   } catch (err) {
     next(err);
   }
@@ -849,7 +828,8 @@ complianceRouter.post('/background/:id/final-adverse', MANAGE, async (req, res, 
       throw new HttpError(
         409,
         'waiting_period',
-        `They still have until ${c.adverseWaitUntil ? fmtDay(ymd(c.adverseWaitUntil), { weekday: true }) : 'the end of the waiting period'} to respond to the pre-adverse notice.`,
+        // An instant, said on the company's calendar (CODE-14), not UTC's.
+        `They still have until ${c.adverseWaitUntil ? fmtDay(orgDateKey(c.adverseWaitUntil), { weekday: true }) : 'the end of the waiting period'} to respond to the pre-adverse notice.`,
       );
     }
     const attachment = await reportAttachment(c.associateId);
@@ -970,7 +950,7 @@ complianceRouter.get('/eeo/applicant-report', MANAGE, async (req, res, next) => 
         to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       })
       .parse(req.query);
-    const to = q.to ?? ymd(new Date());
+    const to = q.to ?? orgDateKey(new Date()); // the company's today, not UTC's
     const from = q.from ?? ymd(new Date(new Date(`${to}T00:00:00.000Z`).getTime() - 365 * 86_400_000));
     const start = new Date(`${from}T00:00:00.000Z`);
     const end = new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 86_400_000);

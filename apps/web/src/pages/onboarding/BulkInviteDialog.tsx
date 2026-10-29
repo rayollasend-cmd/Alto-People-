@@ -5,13 +5,13 @@ import { toast } from 'sonner';
 import type {
   BulkInviteApplicant,
   BulkInviteResultRow,
-  ClientSummary,
+  ClientOption,
   LocationSummary,
   EmploymentType,
   OnboardingTemplate,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { bulkInvite, createApplication, listClients, listInviteLocations, listTemplates } from '@/lib/onboardingApi';
+import { bulkInvite, createApplication, listClientOptions, listInviteLocations, listTemplates } from '@/lib/onboardingApi';
 import { useTenant, useTerm } from '@/lib/auth';
 import { useOrgSites } from '@/lib/useOrgSites';
 import { Button } from '@/components/ui/Button';
@@ -67,6 +67,7 @@ const DATE_RX = /^\d{4}-\d{2}-\d{2}$/;
 function isValidYmd(s: string): boolean {
   if (!DATE_RX.test(s)) return false;
   const d = new Date(`${s}T00:00:00.000Z`);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: a round-trip check of a typed calendar date built at UTC midnight, not "today"
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
@@ -224,14 +225,16 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
     setResults(null);
   };
 
+  // GET /clients/options: the invite-scoped picker. /clients needs
+  // view:clients, which the shift supervisor lacks (FLOOR-1).
   const clientsQuery = useQuery({
-    queryKey: ['BulkInviteDialog', 'clients'],
-    queryFn: () => listClients(),
+    queryKey: ['clients', 'options'],
+    queryFn: listClientOptions,
     enabled: open && clientsOn,
   });
   // Failure ≠ "no clients exist" — say so instead of rendering an
   // unsubmittable empty picker.
-  const clients: ClientSummary[] | null =
+  const clients: ClientOption[] | null =
     clientsQuery.data?.clients ?? (clientsQuery.isError ? [] : null);
   const clientsFailed = clientsQuery.isError;
   useEffect(() => {

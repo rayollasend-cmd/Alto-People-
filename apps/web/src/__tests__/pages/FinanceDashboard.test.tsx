@@ -147,9 +147,26 @@ describe('the finance cockpit', () => {
     expect(within(today).getByRole('link', { name: /Client statements to finalize: 1/ })).toBeInTheDocument();
   });
 
+  it('once last week is on finalized statements, their figure rides beside the contract-rate one, with why they differ (deep audit MONEY-20)', async () => {
+    const base = overview();
+    const weeks = base.margin!.weeks.map((w, i) => (i === 6 ? { ...w, revenue: 23772.27, billedOnStatements: 23760.63 } : w));
+    renderDashboard(overview({ margin: { ...base.margin!, weeks } }));
+    const tile = (await screen.findByText('Billed at contract rates · last week')).closest('a')!;
+    expect(tile).toHaveTextContent('$23,772.27');
+    expect(tile).toHaveTextContent('$23,760.63 on finalized statements (each shift’s own rate)');
+  });
+
+  it('a finished week not yet on a statement says so', async () => {
+    renderDashboard(overview());
+    const tile = (await screen.findByText('Billed at contract rates · last week')).closest('a')!;
+    expect(tile).toHaveTextContent('128.0h at contract rates · not on a finalized statement yet');
+  });
+
   it('the numbers: revenue and margin last week, money at risk, receivables by age', async () => {
     renderDashboard(overview());
-    expect(await screen.findByText('Revenue · last week')).toBeInTheDocument();
+    // The metric dictionary's names (METRICS.billedAtContractRates / marginAfterWages).
+    expect(await screen.findByText('Billed at contract rates · last week')).toBeInTheDocument();
+    expect(screen.getByText('Margin after wages · last week')).toBeInTheDocument();
     expect(screen.getAllByText('31%')).toHaveLength(2); // the tile, and last week's bar
     expect(screen.getByText('$1,377.00 after wages')).toBeInTheDocument();
     // At risk: last week's $2,328.75 plus the $720 rejected earlier.
@@ -171,7 +188,7 @@ describe('the finance cockpit', () => {
     vi.mocked(apiFetch).mockImplementation(async (path: string) => {
       if (path === '/finance/overview') {
         return overview({
-          payCycle: { periodStart: ymd(-7), periodEnd: ymd(6), payDate: ymd(13), schedule: 'Biweekly', hours: { approved: 0, pending: 0 }, run: null },
+          payCycle: { periodStart: ymd(-7), periodEnd: ymd(6), payDate: ymd(13), schedule: 'Biweekly', hours: { approved: 0, pending: 0, pendingBefore: 40.6 }, run: null },
         }) as never;
       }
       if (path.startsWith('/me/inbox')) {
@@ -207,12 +224,35 @@ describe('the finance cockpit', () => {
     const cycle = screen.getByRole('list', { name: 'Pay cycle' });
     expect(within(cycle).getByText('No hours clocked yet this period')).toBeInTheDocument();
     expect(within(cycle).queryByText('all approved')).toBeNull();
-    // 40.6h waits from earlier periods (the close chase counts them all).
+    // 40.6h waits from earlier periods: the API counts what was worked BEFORE the period (MONEY-7).
     expect(within(cycle).getByTestId('hours-earlier')).toHaveTextContent('+ 40.6h from earlier periods');
     // The fourth step says whether payday is paid; the headline says when.
     expect(within(cycle).getByText('Paid')).toBeInTheDocument();
     expect(within(cycle).getByText('Not yet paid')).toBeInTheDocument();
     expect(within(cycle).queryByText('Payday')).toBeNull();
+  });
+
+  it('hours pending in the NEXT period are never called "from earlier periods" (audit 2026-10-29 MONEY-7)', async () => {
+    renderDashboard(
+      overview({
+        // 113.6h waiting in all — every one of them from Oct 27 on, after the period being paid.
+        payCycle: { periodStart: ymd(-14), periodEnd: ymd(-1), payDate: ymd(6), schedule: 'Biweekly', hours: { approved: 1000, pending: 0, pendingBefore: 0 }, run: null },
+        close: { pendingEntries: 14, pendingHours: 113.6, oldestDay: ymd(1), byClient: [] },
+      }),
+    );
+    const cycle = await screen.findByRole('list', { name: 'Pay cycle' });
+    expect(within(cycle).queryByTestId('hours-earlier')).toBeNull();
+  });
+
+  it('an overdrawn bank account is named under "Cash today", which nets it away (deep audit MONEY-18)', async () => {
+    renderDashboard(
+      overview({
+        cash: { from: ymd(0), to: ymd(28), weeks: [{ weekStart: ymd(0), inflow: 100, outflow: 50, net: 50, cumulative: 50, balance: 181141.03 }] as never, totals: { inflow: 100, outflow: 50, net: 50 }, opening: { balance: 181091.03, accounts: 2, asOf: ymd(0), onFile: true, overdrawn: [{ id: 'acc-pay', name: 'Payroll checking', balance: -3908.97 }] }, lowest: null, minimumCash: null },
+      }),
+    );
+    const line = await screen.findByTestId('cash-overdrawn');
+    expect(line).toHaveTextContent('Payroll checking is overdrawn by $3,908.97 — fund it before anything else clears');
+    expect(within(line).getByRole('link')).toHaveAttribute('href', '/books/accounts/acc-pay');
   });
 
   it('no bank balance on file is said, not "Cash today $0.00" (F500)', async () => {

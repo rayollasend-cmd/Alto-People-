@@ -29,11 +29,12 @@ export const enEarn = {
   'earn.lastWeek': 'Last week: {amount} —',
   'earn.beatPace': "you're on pace to beat it",
   'earn.behindPace': '{amount} more to beat it',
-  'earn.openShifts': '{count} open shifts you qualify for · up to ~{amount} more',
+  'earn.openShifts': '{count} open shifts this week you qualify for · up to ~{amount} more',
   'earn.paystubs': 'View paychecks',
   'earn.pickup': 'Want more? Grab an open shift.',
   'earn.disclaimer':
     'Estimated at your hourly rate, before taxes — your paycheck is the official number.',
+  'earn.openShifts_one': '{count} open shift this week you qualify for · up to ~{amount} more',
 } as const;
 
 registerEnglish(enEarn);

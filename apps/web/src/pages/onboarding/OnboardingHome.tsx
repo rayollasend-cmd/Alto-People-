@@ -8,6 +8,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ListTemplate } from '@/components/templates';
 import { ApplicationsList } from './ApplicationsList';
+import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/ob';
 
 export function OnboardingHome() {
   const { user } = useAuth();
@@ -21,6 +23,7 @@ export function OnboardingHome() {
 }
 
 function AssociateRedirect() {
+  const { t } = useI18n();
   // Associates only ever have a handful of applications and we just need
   // the most recent one to redirect into. pageSize=1 keeps the response
   // tiny even though the API would scope this to the current associate
@@ -33,7 +36,7 @@ function AssociateRedirect() {
   const error = queryError
     ? queryError instanceof ApiError
       ? queryError.message
-      : 'Failed to load your onboarding.'
+      : t('ob.home.loadFailedDetail')
     : null;
   const applicationId = isPending ? undefined : (data ?? null);
 
@@ -41,11 +44,11 @@ function AssociateRedirect() {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
-          title="Onboarding"
+          title={t('ob.home.title')}
       >
         <EmptyState
           icon={AlertCircle}
-          title="Couldn't load onboarding"
+          title={t('ob.home.loadFailed')}
           description={error}
         />
       </ListTemplate>
@@ -75,12 +78,12 @@ function AssociateRedirect() {
     return (
       // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
       <ListTemplate
-          title="Onboarding"
+          title={t('ob.home.title')}
       >
         <EmptyState
           icon={Briefcase}
-          title="No active onboarding"
-          description="Once HR creates an application for you, it'll show up here with a checklist of what to complete."
+          title={t('ob.home.none')}
+          description={t('ob.home.noneDetail')}
         />
       </ListTemplate>
     );

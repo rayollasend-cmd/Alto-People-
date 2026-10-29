@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  computeFederalWithholding,
-  computeNet,
   msToHours,
   pickHourlyRate,
   round2,
@@ -15,6 +13,28 @@ describe('round2', () => {
     expect(round2(1.004)).toBe(1.0);
     expect(round2(0)).toBe(0);
   });
+
+  // Deep audit CODE-27: the EPSILON nudge rounded about one exact half-cent
+  // in twenty down. Integer-cent math, half away from zero.
+  it('rounds every exact half-cent up, whatever its binary error', () => {
+    expect(round2(4.015)).toBe(4.02);
+    expect(round2(0.5 * 8.03)).toBe(4.02); // half an hour at $8.03
+    expect(round2(1.005)).toBe(1.01);
+    expect(round2(2.675)).toBe(2.68);
+    expect(round2(1234.565)).toBe(1234.57);
+    expect(round2(8.345)).toBe(8.35);
+    // Every half-cent from $0.005 to $100.005: none rounds down.
+    for (let c = 0; c < 10_000; c++) expect(round2(c / 100 + 0.005)).toBe((c + 1) / 100);
+  });
+
+  it('leaves real fractions below a half-cent alone and mirrors negatives', () => {
+    expect(round2(4.0149)).toBe(4.01);
+    expect(round2(4.01499999)).toBe(4.01);
+    expect(round2(-4.015)).toBe(-4.02);
+    expect(round2(-0.004)).toBe(0);
+    expect(Object.is(round2(-0.001), 0)).toBe(true);
+    expect(round2(0.1 + 0.2)).toBe(0.3);
+  });
 });
 
 describe('msToHours', () => {
@@ -22,59 +42,6 @@ describe('msToHours', () => {
     expect(msToHours(60 * 60 * 1000)).toBe(1);
     expect(msToHours(90 * 60 * 1000)).toBe(1.5);
     expect(msToHours(0)).toBe(0);
-  });
-});
-
-describe('computeFederalWithholding (placeholder formula)', () => {
-  it('SINGLE bracket = 18%', () => {
-    expect(
-      computeFederalWithholding({ grossPay: 100, filingStatus: 'SINGLE' })
-    ).toBe(18);
-  });
-
-  it('MARRIED_FILING_JOINTLY bracket = 14%', () => {
-    expect(
-      computeFederalWithholding({ grossPay: 100, filingStatus: 'MARRIED_FILING_JOINTLY' })
-    ).toBe(14);
-  });
-
-  it('HEAD_OF_HOUSEHOLD bracket = 16%', () => {
-    expect(
-      computeFederalWithholding({ grossPay: 100, filingStatus: 'HEAD_OF_HOUSEHOLD' })
-    ).toBe(16);
-  });
-
-  it('null filing status defaults to SINGLE', () => {
-    expect(
-      computeFederalWithholding({ grossPay: 100, filingStatus: null })
-    ).toBe(18);
-  });
-
-  it('adds extraWithholding from W-4 line 4(c)', () => {
-    expect(
-      computeFederalWithholding({
-        grossPay: 100,
-        filingStatus: 'SINGLE',
-        extraWithholding: 25,
-      })
-    ).toBe(43);
-  });
-
-  it('treats negative extraWithholding as 0 (defensive)', () => {
-    expect(
-      computeFederalWithholding({
-        grossPay: 100,
-        filingStatus: 'SINGLE',
-        extraWithholding: -10,
-      })
-    ).toBe(18);
-  });
-});
-
-describe('computeNet', () => {
-  it('subtracts withholding from gross', () => {
-    expect(computeNet(100, 18)).toBe(82);
-    expect(computeNet(50, 0)).toBe(50);
   });
 });
 

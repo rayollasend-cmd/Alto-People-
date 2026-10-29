@@ -36,7 +36,19 @@ const REGISTER: ExecRisks = {
   asOf: '2026-10-27T15:45:00.000Z',
   risks: [
     risk({ id: 'conc', title: 'Coastal Resort Holdings is 76% of revenue', severity: 'high', metric: '75.7% of est. billing, last 4 weeks' }),
-    risk({ id: 'leave', title: '1 leave notice past the legal deadline', category: 'compliance', severity: 'high', owner: 'HR', trend: 'new', href: '/leave' }),
+    // The API's shape since the deep audit (LEAD-6): no desk the chairman cannot open — the leave
+    // risk reads in place, and the leave desk rides along for the role that holds manage:leave.
+    risk({
+      id: 'leave-deadlines',
+      title: '1 leave notice past the legal deadline',
+      category: 'compliance',
+      severity: 'high',
+      owner: 'HR',
+      trend: 'new',
+      href: '/executive/risk?open=leave-deadlines',
+      desk: { href: '/leave?status=notices', label: 'Open the leave desk', requires: 'manage:leave' },
+      items: [{ label: 'Eligibility and rights notice', sub: 'Due Oct 23 · 6 days late' }],
+    }),
     risk({ id: 'sup', title: 'Seaside Grand has 10 people and no supervisor', category: 'operations', owner: 'Operations', trend: 'rising' }),
   ],
 };
@@ -61,7 +73,10 @@ describe('the Risk page', () => {
     expect(rows[2]).toHaveTextContent('Medium');
     expect(within(rows[2]!).getByText('Rising')).toBeInTheDocument();
     expect(within(rows[0]!).getByText('75.7% of est. billing, last 4 weeks')).toBeInTheDocument();
-    expect(within(table).getByRole('link', { name: 'Open: 1 leave notice past the legal deadline' })).toHaveAttribute('href', '/leave');
+    // Nothing on the register opens the chairman's own "My leave".
+    expect(within(table).queryByRole('link', { name: 'Open: 1 leave notice past the legal deadline' })).toBeNull();
+    expect(within(table).getByRole('button', { name: 'Details: 1 leave notice past the legal deadline' })).toBeInTheDocument();
+    expect(table.querySelector('a[href^="/leave"]')).toBeNull();
 
     // The summary: a severity is coloured only when there is one of it.
     const summary = screen.getByTestId('exec-risk-summary');
@@ -141,5 +156,31 @@ describe('the Risk page', () => {
     await screen.findByRole('table', { name: 'Risk register' });
     expect(screen.queryByRole('button', { name: /^Client/ })).not.toBeInTheDocument();
     expect(screen.getByTestId('exec-risk-summary')).not.toHaveTextContent('Client');
+  });
+});
+
+describe('a risk the chairman cannot work (deep audit LEAD-6, LEAD-15)', () => {
+  it('opens in place with the records behind it, and never offers a desk her role cannot open', async () => {
+    vi.mocked(apiFetch).mockImplementation(routeApi({ '/executive/risks': REGISTER, '/executive/briefing': briefing() }) as never);
+    renderAsChairman(<ExecRiskPage />, { route: '/executive/risk?open=leave-deadlines' });
+    const detail = await screen.findByTestId('exec-risk-detail');
+    expect(detail).toHaveTextContent('1 leave notice past the legal deadline');
+    expect(within(screen.getByTestId('exec-risk-items')).getByText('Eligibility and rights notice')).toBeInTheDocument();
+    expect(detail).toHaveTextContent('Due Oct 23 · 6 days late');
+    expect(screen.queryByTestId('exec-risk-detail-desk')).toBeNull();
+    expect(detail).toHaveTextContent('HR works this from their own desk.');
+  });
+
+  it('shows the desk to a role that holds its capability', async () => {
+    vi.mocked(apiFetch).mockImplementation(routeApi({ '/executive/risks': REGISTER, '/executive/briefing': briefing() }) as never);
+    renderAsChairman(<ExecRiskPage />, { route: '/executive/risk?open=leave-deadlines', role: 'HR_ADMINISTRATOR' });
+    expect(await screen.findByTestId('exec-risk-detail-desk')).toHaveAttribute('href', '/leave?status=notices');
+  });
+
+  it('keeps the frame on executive drill links, and only there', async () => {
+    vi.mocked(apiFetch).mockImplementation(routeApi({ '/executive/risks': REGISTER, '/executive/briefing': briefing() }) as never);
+    renderAsChairman(<ExecRiskPage />, { route: '/executive/risk?period=month&compare=year' });
+    const table = await screen.findByRole('table', { name: 'Risk register' });
+    expect(within(table).getByRole('link', { name: 'Open: Coastal Resort Holdings is 76% of revenue' })).toHaveAttribute('href', '/executive/clients?period=month&compare=year');
   });
 });

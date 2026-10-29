@@ -4,10 +4,10 @@ import { Timer } from '@/components/ui/icons';
 import { paidMinutesForRange, type Shift, type TimeEntry } from '@alto-people/shared';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
-import { displayLocale } from '@/lib/format';
-
-/** Hours with one decimal, like every hours figure in the app (it read "10.98h / 35h"). */
-const fmtHours = (hours: number) => `${(Math.round(hours * 10) / 10).toLocaleString(displayLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })}h`;
+// Hours as every associate screen writes them (lib/format fmtHours, up to two
+// decimals — the paystub's precision): this tile read "23.4h" beside Home's
+// "23.43h" and the timesheet's "23.43h" for the same week (ASSOC-28).
+import { fmtHours } from '@/lib/format';
 import { listMyTimeEntries } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
@@ -86,7 +86,7 @@ export function MyWeekHours() {
     return (
       <QueryError
         className="mb-5"
-        what="your hours this week"
+        what={t('week.load.hours')}
         query={entries.isError ? entries : shifts}
       />
     );

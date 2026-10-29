@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 vi.mock('@/lib/onboardingApi', () => ({
   createApplication: vi.fn(),
   cancelApplication: vi.fn(async () => ({ mode: 'removed' })),
-  listClients: vi.fn(),
+  listClientOptions: vi.fn(),
   listTemplates: vi.fn(),
 }));
 vi.mock('@/lib/undoToast', async (orig) => ({
@@ -15,7 +15,7 @@ vi.mock('@/lib/undoToast', async (orig) => ({
   undoWindowToast: vi.fn(),
 }));
 
-import { cancelApplication, createApplication, listClients, listTemplates } from '@/lib/onboardingApi';
+import { cancelApplication, createApplication, listClientOptions, listTemplates } from '@/lib/onboardingApi';
 import { undoWindowToast } from '@/lib/undoToast';
 import { NewApplicationDialog } from '@/pages/onboarding/NewApplicationDialog';
 
@@ -24,8 +24,8 @@ const TPL = '00000000-0000-4000-8000-00000000cccc';
 
 beforeEach(() => {
   window.localStorage.clear();
-  vi.mocked(listClients).mockResolvedValue({
-    clients: [{ id: CLIENT, name: 'Coastal Resort', industry: 'hospitality', status: 'ACTIVE', state: 'CA' }],
+  vi.mocked(listClientOptions).mockResolvedValue({
+    clients: [{ id: CLIENT, name: 'Coastal Resort', status: 'ACTIVE', state: 'CA' }],
   });
   vi.mocked(listTemplates).mockResolvedValue({
     templates: [{ id: TPL, clientId: null, track: 'STANDARD', name: 'Standard onboarding', tasks: [] }],
@@ -60,7 +60,7 @@ describe('<NewApplicationDialog> — taking an invite back', () => {
       emailDueAt: new Date(Date.now() + 20_000).toISOString(),
     });
     const { user, onCreated } = renderDialog();
-    await waitFor(() => expect(listClients).toHaveBeenCalled());
+    await waitFor(() => expect(listClientOptions).toHaveBeenCalled());
     await user.type(screen.getByLabelText(/first name/i), 'Dana');
     await user.type(screen.getByLabelText(/last name/i), 'Draft');
     await user.type(screen.getByLabelText(/^email/i), 'dana@example.com');

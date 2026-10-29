@@ -103,6 +103,15 @@ for (const file of associateFiles) {
   const source = readFileSync(join(root, file), 'utf8');
   for (const m of source.matchAll(/\bt\('([A-Za-z0-9_.-]+)'/g)) used.add(m[1]);
   for (const m of source.matchAll(/\bt\(`([A-Za-z0-9_.-]+)\./g)) dynamicPrefixes.add(m[1]);
+  // A key needn't sit right inside t( to be shown: `t(late ? 'a.x' : 'a.y')`,
+  // a tab table's `labelKey: 'tabs.pay'`, `t(\`bell.cat.${bucket}\`)`. Every
+  // quoted string that IS an English key counts, and every key a template
+  // can build — the tabs read "Schedule", "Pay" and "Ride" in Turkish, Haitian
+  // Creole, Portuguese and Ukrainian while this check passed (deep audit
+  // 2026-10-29, ASSOC-11).
+  for (const m of source.matchAll(/['"]([a-zA-Z][a-zA-Z0-9]*\.[A-Za-z0-9_.-]+)['"]/g)) if (dictionaries.en.has(m[1])) used.add(m[1]);
+  for (const m of source.matchAll(/`([a-zA-Z][a-zA-Z0-9]*\.(?:[A-Za-z0-9_-]+\.)*)\$\{/g)) dynamicPrefixes.add(m[1].slice(0, -1));
+  for (const m of source.matchAll(/['"]([a-zA-Z][a-zA-Z0-9]*\.(?:[A-Za-z0-9_-]+\.)*)['"]\s*\+/g)) dynamicPrefixes.add(m[1].slice(0, -1));
   hardCoded[file] = hardCodedIn(source);
 }
 for (const key of dictionaries.en) for (const p of dynamicPrefixes) if (key.startsWith(p + '.')) used.add(key);

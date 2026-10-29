@@ -10,6 +10,8 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { assignByPerson, autoAssign, handOffToPerson, listTasks, policyFor, recordEvent, taskDetail, taskSummary } from '../lib/tasks/engine.js';
 import { spanWarningsFor } from '../lib/tasks/spanWarnings.js';
 import { siteDay } from '../lib/siteDay.js';
+import { assertCompanyWide, assertSiteInScope, loadInScope, scopeSites } from '../lib/scope.js';
+import { taskForViewer } from '../lib/tasks/costs.js';
 
 /**
  * Brief 3-2: tasks and their assignment.
@@ -27,7 +29,10 @@ import { siteDay } from '../lib/siteDay.js';
  *
  * Reads need view:time-live (the floor's live view: supervisors and up, never an
  * associate, a driver or the client portal); writes need manage:scheduling. The policy
- * needs manage:org. Everything is the caller's tenant only.
+ * needs manage:org. Everything is the caller's tenant and reach: a
+ * client-bound supervisor sees and works her client's sites only (FLOOR-9),
+ * and a person's cost — their pay × minutes — is shown only to a role that
+ * may see pay (FLOOR-6, lib/tasks/costs).
  */
 export const tasksRouter = Router();
 
@@ -56,8 +61,9 @@ tasksRouter.get('/', read, async (req, res) => {
     from: day ? day.start : dateParam(q.from),
     to: day ? day.end : dateParam(q.to),
     status: q.status ?? null,
+    sites: scopeSites(req.user!),
   });
-  res.json({ tasks, ...(day ? { day: day.day, timezone: day.timezone } : {}) });
+  res.json({ tasks: tasks.map((t) => taskForViewer(req.user!, t)), ...(day ? { day: day.day, timezone: day.timezone } : {}) });
 });
 
 /** Today on a site's clock (else the company's): the board opens on it and names the zone. */
@@ -69,7 +75,7 @@ tasksRouter.get('/day', read, async (req, res) => {
 
 tasksRouter.get('/summary', read, async (req, res) => {
   const q = z.object({ locationId: z.string().uuid().optional() }).parse(req.query);
-  res.json(await taskSummary(prisma, q.locationId ?? null));
+  res.json(await taskSummary(prisma, q.locationId ?? null, new Date(), scopeSites(req.user!)));
 });
 
 tasksRouter.get('/policy', read, async (req, res) => {
@@ -84,6 +90,9 @@ tasksRouter.put('/policy', admin, async (req, res) => {
   const input = WorkTaskPolicyUpdateSchema.parse(req.body);
   const tenantId = tenantIdForWrite();
   const locationId = q.locationId ?? null;
+  // A site's rules for a site in reach; the company's rules for a company-wide caller.
+  if (locationId) await assertSiteInScope(prisma, req.user!, locationId);
+  else assertCompanyWide(req.user!, 'The company-wide task rules are for someone without a site limit; set this location’s own.');
   const existing = await prisma.workTaskPolicy.findFirst({ where: { tenantId, locationId } });
   const data: Prisma.WorkTaskPolicyUncheckedUpdateInput = {
     ...(input.handoffSeconds !== undefined ? { handoffSeconds: input.handoffSeconds } : {}),
@@ -111,7 +120,7 @@ tasksRouter.post('/', write, async (req, res) => {
   const end = new Date(input.windowEnd);
   if (!(end > start)) throw new HttpError(400, 'window_invalid', 'The window must end after it starts.');
   const tenantId = tenantIdForWrite();
-  const site = await prisma.site.findFirst({ where: { id: input.locationId, tenantId, deletedAt: null }, select: { id: true } });
+  const site = await prisma.site.findFirst({ where: { AND: [{ id: input.locationId, tenantId, deletedAt: null }, scopeSites(req.user!)] }, select: { id: true } });
   if (!site) throw new HttpError(404, 'site_not_found', 'No such site.');
   const row = await prisma.workTask.create({
     data: {
@@ -131,10 +140,12 @@ tasksRouter.post('/', write, async (req, res) => {
   });
   const detail = await autoAssign(prisma, row.id, req.user!.id);
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId, action: 'task.created', entityType: 'WorkTask', entityId: row.id, metadata: { capability: input.capability, risk: input.risk, assignedTo: detail.assignment?.workerName ?? null, queued: detail.status === 'QUEUED' } }, 'tasks');
-  res.status(201).json({ ...detail, warnings: await spanWarningsFor(prisma, detail) });
+  res.status(201).json({ ...taskForViewer(req.user!, detail), warnings: await spanWarningsFor(prisma, detail) });
 });
 
-async function ownTask(id: string) {
+/** The task, through the caller's tenant and reach (lib/scope loadInScope) — another client's id is not found. */
+async function ownTask(id: string, user: NonNullable<Express.Request['user']>) {
+  await loadInScope(prisma, 'task', id, user);
   const t = await prisma.workTask.findFirst({ where: { id, tenantId: tenantIdForWrite() }, select: { id: true, status: true } });
   if (!t) throw new HttpError(404, 'not_found', 'No such task.');
   return t;
@@ -142,13 +153,13 @@ async function ownTask(id: string) {
 
 tasksRouter.get('/:id', read, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  await ownTask(id);
-  res.json(await taskDetail(prisma, id));
+  await ownTask(id, req.user!);
+  res.json(taskForViewer(req.user!, await taskDetail(prisma, id)));
 });
 
 tasksRouter.post('/:id/assign', write, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const t = await ownTask(id);
+  const t = await ownTask(id, req.user!);
   if (t.status === 'DONE' || t.status === 'CANCELLED') throw new HttpError(409, 'task_closed', 'This task is closed.');
   const input = WorkTaskAssignSchema.parse(req.body);
   let detail;
@@ -159,32 +170,32 @@ tasksRouter.post('/:id/assign', write, async (req, res) => {
     throw err;
   }
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId: tenantIdForWrite(), action: 'task.assigned_by_person', entityType: 'WorkTask', entityId: id, metadata: { workerId: input.workerId } }, 'tasks');
-  res.json(detail);
+  res.json(taskForViewer(req.user!, detail));
 });
 
 tasksRouter.post('/:id/auto', write, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const t = await ownTask(id);
+  const t = await ownTask(id, req.user!);
   if (t.status !== 'OPEN' && t.status !== 'QUEUED') throw new HttpError(409, 'task_not_open', 'Only an open or queued task is assigned by the engine.');
   const detail = await autoAssign(prisma, id, req.user!.id);
-  res.json({ ...detail, warnings: await spanWarningsFor(prisma, detail) });
+  res.json({ ...taskForViewer(req.user!, detail), warnings: await spanWarningsFor(prisma, detail) });
 });
 
 tasksRouter.post('/:id/handoff', write, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const t = await ownTask(id);
+  const t = await ownTask(id, req.user!);
   if (!['ASSIGNED', 'IN_PROGRESS', 'STALLED', 'FAILED', 'HANDED_OFF'].includes(t.status)) throw new HttpError(409, 'task_not_held', 'Nothing holds this task.');
   const kind = t.status === 'FAILED' ? 'FAILED' : 'STALLED';
   await handOffToPerson(prisma, id, req.user!.id, kind);
-  res.json(await taskDetail(prisma, id));
+  res.json(taskForViewer(req.user!, await taskDetail(prisma, id)));
 });
 
 tasksRouter.post('/:id/events', write, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const t = await ownTask(id);
+  const t = await ownTask(id, req.user!);
   if (t.status === 'DONE' || t.status === 'CANCELLED') throw new HttpError(409, 'task_closed', 'This task is closed.');
   const input = WorkTaskEventCreateSchema.parse(req.body);
   const detail = await recordEvent(prisma, id, input.kind, req.user!.id, input.note ?? null);
   enqueueAudit({ actorUserId: req.user!.id, clientId: null, tenantId: tenantIdForWrite(), action: `task.${input.kind.toLowerCase()}`, entityType: 'WorkTask', entityId: id, metadata: { note: input.note ?? null } }, 'tasks');
-  res.json(detail);
+  res.json(taskForViewer(req.user!, detail));
 });

@@ -6,6 +6,7 @@ import { createApprovalRequest, registerApplyHandler } from './approvalRequests.
 import { netWorkedMinutes } from './timeAnomalies.js';
 import { tenantIdForWrite } from './tenant.js';
 import { fmtDay, fmtDayRange } from './humanDates.js';
+import { cutOf, punchesInPeriod, workDayOf } from './payrollSchedule.js';
 
 /**
  * The pay ↔ bill link (BEYOND). Every dollar payroll pays for work a client
@@ -62,6 +63,7 @@ export const PREMIUM_LABEL: Record<PremiumKey, string> = {
 };
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column or a site day's UTC-midnight anchor.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const DAY_MS = 86_400_000;
@@ -132,23 +134,27 @@ interface ClientShare {
   lastDay: Date;
 }
 
-/** Approved minutes an associate worked per client in [from, toExclusive). */
+/** Approved minutes an associate worked per client in the days [from, toExclusive) — each shift on its site's day (the pay-period cut, deep audit CODE-1 / MONEY-1). */
 async function sharesFor(db: Db, associateId: string, from: Date, toExclusive: Date): Promise<ClientShare[]> {
-  const entries = await db.timeEntry.findMany({
-    where: { associateId, status: 'APPROVED', clientId: { not: null }, clockInAt: { gte: from, lt: toExclusive } },
-    select: { clientId: true, clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, shift: { select: { position: true } } },
-    take: 5000,
-  });
+  const entries = await punchesInPeriod(cutOf(from, toExclusive), null, (clockInAt) =>
+    db.timeEntry.findMany({
+      where: { associateId, status: 'APPROVED', clientId: { not: null }, clockInAt },
+      select: { associateId: true, clientId: true, clockInAt: true, clockOutAt: true, location: { select: { timezone: true } }, breaks: { select: { type: true, startedAt: true, endedAt: true } }, shift: { select: { position: true } } },
+      take: 5000,
+    }),
+  );
   const by = new Map<string, ClientShare>();
   for (const e of entries) {
     const min = netWorkedMinutes({ clockInAt: e.clockInAt, clockOutAt: e.clockOutAt }, e.breaks);
     if (min <= 0 || !e.clientId) continue;
-    const s = by.get(e.clientId) ?? { clientId: e.clientId, minutes: 0, byPosition: new Map(), firstDay: e.clockInAt, lastDay: e.clockInAt };
+    // The work day as the statement counts it: the site's, at a UTC-midnight anchor.
+    const day = dateOnly(workDayOf(e.clockInAt, e.location?.timezone));
+    const s = by.get(e.clientId) ?? { clientId: e.clientId, minutes: 0, byPosition: new Map(), firstDay: day, lastDay: day };
     s.minutes += min;
     const pos = e.shift?.position ?? null;
     s.byPosition.set(pos, (s.byPosition.get(pos) ?? 0) + min);
-    if (e.clockInAt < s.firstDay) s.firstDay = e.clockInAt;
-    if (e.clockInAt > s.lastDay) s.lastDay = e.clockInAt;
+    if (day < s.firstDay) s.firstDay = day;
+    if (day > s.lastDay) s.lastDay = day;
     by.set(e.clientId, s);
   }
   return [...by.values()];

@@ -1,3 +1,5 @@
+import { localDateKey, zonedMinutes } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 /**
  * ASC X12 834 Benefit Enrollment and Maintenance, version 005010X220A1
  * (the HIPAA-mandated implementation guide for enrollment to a carrier).
@@ -145,9 +147,13 @@ export interface Built834 {
 
 export function build834(env: Edi834Envelope, header: Edi834Header, members: Edi834Member[]): Built834 {
   const now = env.createdAt;
-  const yymmdd = now.toISOString().slice(2, 10).replace(/-/g, '');
-  const ccyymmdd = now.toISOString().slice(0, 10).replace(/-/g, '');
-  const hhmm = now.toISOString().slice(11, 16).replace(':', '');
+  // X12 dates and times carry no zone: the envelope (ISA09/10, GS04/05, BGN03/04)
+  // is stamped on the company's clock, all from the one instant.
+  const tz = companyWorkweek().timezone;
+  const ccyymmdd = localDateKey(now, tz).replace(/-/g, '');
+  const yymmdd = ccyymmdd.slice(2);
+  const minutes = zonedMinutes(now, tz);
+  const hhmm = `${String(Math.floor(minutes / 60)).padStart(2, '0')}${String(minutes % 60).padStart(2, '0')}`;
   const ctl = String(env.controlNumber).padStart(9, '0');
   if (ctl.length > 9) throw new Error('Interchange control number exceeds nine digits.');
   const isa =

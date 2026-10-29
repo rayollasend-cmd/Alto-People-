@@ -1,4 +1,5 @@
 import { Router, type Request } from 'express';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
@@ -19,9 +20,10 @@ import { SmsBadNumberError, SmsNotConfiguredError, SmsOptedOutError } from '../l
 import { toWaLang } from '../lib/whatsappContent.js';
 import { resetDrift } from '../lib/transportSafety.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
-import { DEFAULT_TIMEZONE, localDateKey } from '../lib/timezone.js';
-import { dateKeyInZone } from '../lib/timeAnomalies.js';
+import { localDateKey } from '../lib/timezone.js';
+import { companyWorkweek, dateKeyInZone } from '../lib/timeAnomalies.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
+import { ridePayrollOutlook } from '../lib/ridePayrollOutlook.js';
 import { activeGeocoder, geocode, reverseGeocode, searchAddresses, type GeoPoint } from '../lib/geocode.js';
 import { orderAndTime, planDay, planRideSelect } from '../lib/transportPlan.js';
 import {
@@ -93,6 +95,50 @@ import { fmtDayInZone } from '../lib/humanDates.js';
  *   /transport/arrivals   the store supervisors' heads-up — who's arriving
  *                         by van (with or without a shift). Heads-up only.
  */
+
+/**
+ * The company's zone (deep audit CODE-14): every transport "today" and the
+ * fallback for a run whose riders' site has no zone. It was New York,
+ * hard-coded — a desk in another zone read tomorrow's or yesterday's board.
+ */
+const companyZone = (): string => companyWorkweek().timezone;
+/** A calendar day `n` days from a YYYY-MM-DD (arithmetic on the day itself). */
+const shiftDayKey = (key: string, n: number): string =>
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a UTC-noon anchor of a day key
+  new Date(Date.parse(`${key}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/** `fn` over `items`, at most `limit` at a time, answers in the items' order. */
+async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+/**
+ * Riders' home points for a map (CODE-28): they were looked up one rider at
+ * a time — a Mapbox call per cache miss, in series. Now a few at a time,
+ * and riders at one shared stop share one lookup. (Nominatim's own queue
+ * still paces its calls to one a second.)
+ */
+export function homePointsOf(rides: ReadonlyArray<Parameters<typeof homePoint>[0]>): Promise<Array<Awaited<ReturnType<typeof homePoint>>>> {
+  const byStop = new Map<string, ReturnType<typeof homePoint>>();
+  return mapBounded(rides, 6, (r) => {
+    if (!r.stop) return homePoint(r);
+    let p = byStop.get(r.stop.id);
+    if (!p) {
+      p = homePoint(r);
+      byStop.set(r.stop.id, p);
+    }
+    return p;
+  });
+}
 export const transportRouter = Router();
 
 const RIDE = requireCapability('ride:transport');
@@ -226,6 +272,8 @@ transportRouter.get('/me', RIDE, async (req, res) => {
     where: { associateId, chargeCents: { gt: 0 }, waivedAt: null, chargedRunId: null },
     select: { chargeCents: true, status: true },
   });
+  // What payroll will actually take on that payday: never below the minimum wage (lib/ridePayrollOutlook).
+  const payroll = payday && owed.length ? await ridePayrollOutlook(prisma, associateId, payday.periodEnd, now) : null;
   // One-tap booking goes from where they went last time: that pickup (a
   // stop, a saved address, or the address itself) and that store.
   const last = await prisma.ride.findFirst({
@@ -270,7 +318,7 @@ transportRouter.get('/me', RIDE, async (req, res) => {
     chargedRunIds.length
       ? (await prisma.payrollRun.findMany({ where: { id: { in: chargedRunIds } }, select: { id: true, disbursedAt: true } })).map((p) => [
           p.id,
-          p.disbursedAt ? p.disbursedAt.toISOString().slice(0, 10) : null,
+          p.disbursedAt ? dateKeyInZone(p.disbursedAt, companyZone()) : null,
         ])
       : [],
   );
@@ -325,6 +373,7 @@ transportRouter.get('/me', RIDE, async (req, res) => {
       rides: owed.filter((r) => r.status !== 'NO_SHOW').length,
       noShows: owed.filter((r) => r.status === 'NO_SHOW').length,
       nextPayday: payday,
+      payroll,
     },
   });
 });
@@ -979,7 +1028,7 @@ transportRouter.post('/issues', requireAuth, async (req, res) => {
     if (park) {
       // The out-of-service record: the van parked (the fleet record) and
       // an incident the desk reviews — the same path Safety → Incident takes.
-      await tx.van.update({ where: { id: park.id }, data: { outOfServiceAt: now, outOfServiceReason: `${input.category.toLowerCase().replace(/_/g, ' ')} reported by ${reporter} ${now.toISOString().slice(0, 10)} — see issue` } });
+      await tx.van.update({ where: { id: park.id }, data: { outOfServiceAt: now, outOfServiceReason: `${input.category.toLowerCase().replace(/_/g, ' ')} reported by ${reporter} ${fmtDayInZone(now, companyZone())} — see issue` } });
       await tx.transportIncident.create({
         data: {
           tenantId: tenantIdForWrite(),
@@ -1074,9 +1123,9 @@ const conflictSelect = { id: true, vanId: true, driverUserId: true, status: true
 
 transportRouter.get('/driver/runs', DRIVE, async (req, res) => {
   const me = req.user!.id;
-  const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
-  const from = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
-  const to = new Date(Date.parse(`${today}T00:00:00Z`) + 2 * 86_400_000).toISOString().slice(0, 10);
+  const today = dateKeyInZone(new Date(), companyZone());
+  const from = shiftDayKey(today, -1);
+  const to = shiftDayKey(today, 2);
   const runs = await prisma.rideRun.findMany({
     where: {
       driverUserId: me,
@@ -1652,7 +1701,7 @@ async function runMapView(run: LiveRunRow, live: RunLive) {
     direction: run.direction,
     serviceDate: run.serviceDate,
     departAt: run.departAt.toISOString(),
-    timezone: run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE,
+    timezone: run.rides[0]?.location.timezone ?? companyZone(),
     van: run.van,
     driver: { userId: run.driver.id, name: personName(run.driver) },
     position: live.van,
@@ -1719,7 +1768,7 @@ async function runMapView(run: LiveRunRow, live: RunLive) {
 
 /** The desk's live map: every van on the road, and the day's planned runs. */
 transportRouter.get('/live', VIEW, async (req, res) => {
-  const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), companyZone());
   const runs = await prisma.rideRun.findMany({
     where: { OR: [{ status: 'ACTIVE' }, { status: 'PLANNED', serviceDate: date }] },
     orderBy: { departAt: 'asc' },
@@ -2032,14 +2081,15 @@ transportRouter.get('/driver/trip-map', DRIVE, async (req, res) => {
   await assertDriverMayServe(req, location.client.id);
   const members: ClusterMember[] = [];
   const photoOf = new Map(rides.map((r) => [r.associate.id, profilePhotoUrlFor(r.associate)]));
-  for (const r of rides) {
+  const points = await homePointsOf(rides);
+  for (const [i, r] of rides.entries()) {
     members.push({
       rideId: r.id,
       associateId: r.associate.id,
       name: `${r.associate.firstName} ${r.associate.lastName}`,
       label: r.stop?.name ?? r.address ?? '',
       address: r.stop?.address ?? r.address ?? '',
-      point: await homePoint(r),
+      point: points[i] ?? null,
       // A stop's or the rider's own coordinates — not a lookup's guess.
       pinned: r.stop ? r.stop.lat !== null : r.lat !== null,
       status: r.status,
@@ -2086,7 +2136,7 @@ transportRouter.get('/driver/trip-map', DRIVE, async (req, res) => {
  * the driver's /driver/trip-map is per client; this is the whole day.
  */
 transportRouter.get('/plan-map', VIEW, async (req, res) => {
-  const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), companyZone());
   const rides = await prisma.ride.findMany({
     where: { serviceDate: date, status: { in: ['REQUESTED', 'SCHEDULED', 'BOARDED'] } },
     orderBy: { targetAt: 'asc' },
@@ -2105,14 +2155,15 @@ transportRouter.get('/plan-map', VIEW, async (req, res) => {
       const mine = rides.filter((r) => r.location.id === site.id && r.direction === direction);
       if (mine.length === 0) continue;
       const members: ClusterMember[] = [];
-      for (const r of mine) {
+      const points = await homePointsOf(mine);
+      for (const [i, r] of mine.entries()) {
         members.push({
           rideId: r.id,
           associateId: r.associate.id,
           name: `${r.associate.firstName} ${r.associate.lastName}`,
           label: r.stop?.name ?? r.address ?? '',
           address: r.stop?.address ?? r.address ?? '',
-          point: await homePoint(r),
+          point: points[i] ?? null,
           pinned: r.stop ? r.stop.lat !== null : r.lat !== null,
           status: r.status,
         });
@@ -2155,12 +2206,12 @@ transportRouter.post('/driver/vans/:id/fuel', DRIVE, async (req, res) => {
   const van = await prisma.van.findUnique({ where: { id }, select: { id: true, name: true, driverUserId: true, odometerMiles: true } });
   if (!van) throw new HttpError(404, 'not_found', 'Van not found.');
   if (van.driverUserId !== req.user!.id && !can(req.user!, 'manage:transport')) {
-    const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
-    const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    const today = dateKeyInZone(new Date(), companyZone());
+    const yesterday = shiftDayKey(today, -1);
     const drove = await prisma.rideRun.findFirst({ where: { vanId: id, driverUserId: req.user!.id, serviceDate: { gte: yesterday, lte: today }, status: { not: 'CANCELLED' } }, select: { id: true } });
     if (!drove) throw new HttpError(403, 'not_your_van', `${van.name} isn't your van.`);
   }
-  const occurredAt = input.occurredAt ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const occurredAt = input.occurredAt ?? dateKeyInZone(new Date(), companyZone());
   const notes = input.gallons ? `${input.gallons} gal` : null;
   const entry = await prisma.$transaction(async (tx) => {
     const created = await tx.vanServiceEntry.create({
@@ -2245,8 +2296,8 @@ transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
       days: z.coerce.number().int().min(1).max(14).default(7),
     })
     .parse(req.query);
-  const from = q.from ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
-  const to = new Date(Date.parse(`${from}T00:00:00Z`) + (q.days - 1) * 86_400_000).toISOString().slice(0, 10);
+  const from = q.from ?? dateKeyInZone(new Date(), companyZone());
+  const to = shiftDayKey(from, q.days - 1);
   const now = new Date();
   const [van, runs, asks] = await Promise.all([
     myVan(me),
@@ -2313,7 +2364,7 @@ transportRouter.get('/driver/schedule', DRIVE, async (req, res) => {
         direction: run.direction,
         serviceDate: run.serviceDate,
         departAt: run.departAt.toISOString(),
-        timezone: run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE,
+        timezone: run.rides[0]?.location.timezone ?? companyZone(),
         shift,
         stores,
         storeId,
@@ -2677,7 +2728,7 @@ transportRouter.post('/authorizations/remind', MANAGE, async (req, res) => {
         subject: 'Sign your ride authorization',
         body:
           (p.heldCents > 0 ? `${money(p.heldCents)} for ${p.heldRides === 1 ? 'a ride' : `${p.heldRides} rides`} you took is held until you sign. ` : '') +
-          (p.nextRideAt ? `Your next ride is ${fmtTime(new Date(p.nextRideAt), DEFAULT_TIMEZONE)} on ${fmtDayInZone(new Date(p.nextRideAt), DEFAULT_TIMEZONE, { weekday: true })}. ` : '') +
+          (p.nextRideAt ? `Your next ride is ${fmtTime(new Date(p.nextRideAt), companyZone())} on ${fmtDayInZone(new Date(p.nextRideAt), companyZone(), { weekday: true })}. ` : '') +
           'Rides can only be taken from pay with your signed authorization — it takes a minute.',
         category: 'transport',
         linkUrl: '/rides?sign=1',
@@ -2691,7 +2742,7 @@ transportRouter.post('/authorizations/remind', MANAGE, async (req, res) => {
 });
 
 transportRouter.get('/board', VIEW, async (req, res) => {
-  const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const date = DateQuery.parse(req.query).date ?? dateKeyInZone(new Date(), companyZone());
   const [rides, runs, vans, drivers, openIssues, settings, enforced] = await Promise.all([
     prisma.ride.findMany({ where: { serviceDate: date }, orderBy: { targetAt: 'asc' }, select: rideSelect }),
     prisma.rideRun.findMany({ where: { serviceDate: date }, orderBy: { departAt: 'asc' }, include: runInclude }),
@@ -3115,7 +3166,7 @@ async function tellRidersTheyreScheduled(runId: string, rideIds: string[]) {
   }
   void trackNotificationWork(
     notifyUser(run.driver.id, {
-      subject: `Run: ${run.van.name} · ${fmtWhen(run.departAt, DEFAULT_TIMEZONE)}`,
+      subject: `Run: ${run.van.name} · ${fmtWhen(run.departAt, companyZone())}`,
       body: `${run.rides.filter((x) => x.status === 'SCHEDULED').length} riders, ${run.direction === 'TO_WORK' ? 'to work' : 'home from work'}.`,
       category: 'transport',
       linkUrl: '/',
@@ -3547,6 +3598,7 @@ function toVanView(v: Prisma.VanGetPayload<{ select: typeof vanSelect }>) {
       ['State inspection', v.inspectionDueAt],
     ]
       .filter((x): x is [string, Date] => x[1] instanceof Date && x[1].getTime() < Date.now() + 30 * 86_400_000)
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: the papers' dates are @db.Date columns
       .map(([label, at]) => ({ label, expiresAt: at.toISOString().slice(0, 10), expired: at.getTime() < Date.now() })),
     driver: v.driver
       ? {
@@ -3888,12 +3940,12 @@ export const SERVICE_INTERVAL_MILES = 5_000;
 const SERVICE_SOON_MILES = 500;
 
 transportRouter.get('/fleet', VIEW, async (req, res) => {
-  const today = dateKeyInZone(new Date(), DEFAULT_TIMEZONE);
+  const today = dateKeyInZone(new Date(), companyZone());
   const q = z
     .object({ from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() })
     .parse(req.query);
   const to = q.to ?? today;
-  const from = q.from ?? new Date(Date.parse(`${to}T12:00:00Z`) - 29 * 86_400_000).toISOString().slice(0, 10);
+  const from = q.from ?? shiftDayKey(to, -29);
   const [vans, runs] = await Promise.all([
     prisma.van.findMany({ orderBy: [{ isActive: 'desc' }, { name: 'asc' }], select: vanSelect }),
     prisma.rideRun.findMany({
@@ -3946,6 +3998,7 @@ transportRouter.get('/fleet', VIEW, async (req, res) => {
   });
   const lastFuelOf = (vanId: string) => {
     const f = lastFuels.find((x) => x.vanId === vanId);
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: VanServiceEntry.occurredAt is a @db.Date
     return f ? { occurredAt: f.occurredAt.toISOString().slice(0, 10), costCents: f.costCents, notes: f.notes, photoUrl: transportPhotoUrl(f.photoS3Key) } : null;
   };
   const serviceDueOf = (vanId: string) => {
@@ -4162,7 +4215,8 @@ transportRouter.get('/charges', VIEW, async (req, res) => {
     { rides: 0, noShows: 0, owedCents: 0, takenCents: 0, waivedCents: 0, unauthorizedCents: 0, deferredCents: 0 },
   );
   if (format === 'csv') {
-    const esc = (v: string | number) => (typeof v === 'number' || /^-?\d+(?:\.\d+)?$/.test(v) ? String(v) : `"${v.replace(/"/g, '""')}"`);
+    // The shared escaper (@alto-people/shared): numbers stay numeric, rider names get the formula guard.
+    const esc = (v: string | number) => sharedCsvCell(v);
     const dollars = (c: number) => (c / 100).toFixed(2);
     const lines = [
       ['Associate', 'Rides', 'No-shows', 'Owed', 'Taken', 'Deferred by minimum-wage guard', 'Not authorized (not deducted)', 'Waived', 'Authorization'].map(esc).join(','),

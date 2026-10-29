@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Navigate, useLocation } from 'react-router-dom';
 import { AlertTriangle, BookOpen, GraduationCap, Plus, X } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
@@ -46,10 +47,6 @@ import {
   SegmentedControl,
   Select,
   SkeletonRows,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
   Textarea,
 } from '@/components/ui';
 import { DataGrid } from '@/components/ui/DataGrid';
@@ -57,13 +54,12 @@ import { AssociatePicker, type PickedAssociate } from '@/components/ui/Associate
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { useUrlParam } from '@/lib/useUrlState';
-import { LEARNING_RELATED, LearningSummary } from './LearningSummary';
 import { toast } from 'sonner';
 import '@/lib/i18n/en/learning';
 import '@/lib/i18n/en/lrn';
 
-const TABS = ['courses', 'enrollments', 'expiring'] as const;
-type Tab = (typeof TABS)[number];
+export const TABS = ['courses', 'enrollments', 'expiring'] as const;
+export type Tab = (typeof TABS)[number];
 const ENROLLMENT_FILTERS = ['ALL', 'OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'EXPIRED', 'WAIVED'] as const;
 type EnrollmentFilter = (typeof ENROLLMENT_FILTERS)[number];
 type TFn = ReturnType<typeof useI18n>['t'];
@@ -88,47 +84,24 @@ function enrollmentStatusLabel(t: TFn, s: EnrollmentStatus): string {
   }
 }
 
+/**
+ * /learning — My learning: the courses assigned to me (the Me door).
+ *
+ * HR's course catalog used to render here too, so it sat under "Me" with
+ * a "Me" breadcrumb (PEOPLE-19). It is /learning/catalog now (People ›
+ * Courses & training). Old catalog links (/learning?tab=expiring, the
+ * tiles, notifications) and a staff login with no training of its own
+ * (no person record) are sent there.
+ */
 export function LearningHome() {
   const { user } = useAuth();
-  const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
+  const { search } = useLocation();
   const canViewAdmin = user ? hasCapability(user.role, 'view:compliance') : false;
-  // The tab lives in the URL (?tab=expiring), so the tiles and Back land on it.
-  const [tab, setTab] = useUrlParam<Tab>('tab', 'courses', TABS, { history: 'push' });
-  const { t } = useI18n();
-
-  // Associates got the compliance-admin console (associate search, CSV
-  // export, expiry windows) whose every fetch 403'd for them. They get
-  // their OWN training instead.
-  if (!canViewAdmin) {
-    return <MyTraining />;
+  const catalogTab = new URLSearchParams(search).get('tab');
+  if (canViewAdmin && (catalogTab || !user?.associateId)) {
+    return <Navigate to={`/learning/catalog${search}`} replace />;
   }
-
-  return (
-    // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
-    <ListTemplate
-        title={t('lrn.crumb')}
-        subtitle={t('learning.subtitle')}
-        related={LEARNING_RELATED}
-    >
-      <LearningSummary />
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList>
-          <TabsTrigger value="courses">
-            <BookOpen className="mr-2 h-4 w-4" /> {t('learning.courses')}
-          </TabsTrigger>
-          <TabsTrigger value="enrollments">
-            <GraduationCap className="mr-2 h-4 w-4" /> {t('learning.enrollments')}
-          </TabsTrigger>
-          <TabsTrigger value="expiring">
-            <AlertTriangle className="mr-2 h-4 w-4" /> {t('learning.expiring')}
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="courses"><CoursesTab canManage={canManage} /></TabsContent>
-        <TabsContent value="enrollments"><EnrollmentsTab canManage={canManage} /></TabsContent>
-        <TabsContent value="expiring"><ExpiringTab /></TabsContent>
-      </Tabs>
-    </ListTemplate>
-  );
+  return <MyTraining />;
 }
 
 /**
@@ -271,7 +244,7 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
-function CoursesTab({ canManage }: { canManage: boolean }) {
+export function CoursesTab({ canManage }: { canManage: boolean }) {
   const { t } = useI18n();
   const confirm = useConfirm();
   const [search, setSearch] = useState('');
@@ -689,7 +662,7 @@ function EnrollDrawer({
 // state (gold per the Badge contract).
 const ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } as const;
 
-function EnrollmentsTab({ canManage }: { canManage: boolean }) {
+export function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const { t } = useI18n();
   const term = useTerm();
   const [search, setSearch] = useState('');
@@ -875,7 +848,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
 
 const EXPIRING_WINDOWS = [30, 60, 90] as const;
 
-function ExpiringTab() {
+export function ExpiringTab() {
   const { t } = useI18n();
   const term = useTerm();
   const [days, setDays] = useState<number>(30);

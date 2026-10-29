@@ -312,7 +312,7 @@ describe('GET /executive/risks', () => {
     const agent = await chairman();
     const body = (await agent.get('/executive/risks')).body as ExecRisks;
     expect(body.risks.find((r) => r.id === 'i9-section2')).toMatchObject({ severity: 'high', category: 'compliance', title: '1 I-9 past the Section 2 deadline' });
-    expect(body.risks.find((r) => r.id === 'ui-claim-deadlines')).toMatchObject({ severity: 'high', owner: 'HR', title: '1 unemployment claim past the response date', trend: 'new', href: '/claims/unemployment' });
+    expect(body.risks.find((r) => r.id === 'ui-claim-deadlines')).toMatchObject({ severity: 'high', owner: 'HR', title: '1 unemployment claim past the response date', trend: 'new', href: '/executive/risk?open=ui-claim-deadlines' });
   });
 });
 

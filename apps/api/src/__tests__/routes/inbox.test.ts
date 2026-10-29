@@ -184,6 +184,17 @@ describe('GET /me/inbox', () => {
     expect(body.total).toBe(0);
   });
 
+  it('a document whose file is missing needs the associate too — the Documents page asks for a re-upload (ASSOC-9)', async () => {
+    const associate = await createAssociate();
+    const { user } = await createUser({ role: 'ASSOCIATE', email: associate.email, associateId: associate.id });
+    // Verified, no expiry, but the file never landed (or is gone): the page says "file missing — please re-upload".
+    await prisma.documentRecord.create({
+      data: { associateId: associate.id, kind: 'ID', status: 'VERIFIED', s3Key: 'tenants/x/docs/never-written.jpg', filename: 'id.jpg', mimeType: 'image/jpeg', size: 10 },
+    });
+    const body = await inboxFor(user.email);
+    expect(body.sources.find((s) => s.key === 'my-documents')).toMatchObject({ count: 1, path: '/documents' });
+  });
+
   it('reimbursements: the manager counts the claims to approve, Finance counts the ones to settle', async () => {
     const worker = await createAssociate({ firstName: 'Exp', lastName: 'Ense' });
     const { user: manager } = await createUser({ role: 'MANAGER' });

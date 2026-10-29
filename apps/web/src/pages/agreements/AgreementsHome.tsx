@@ -135,7 +135,11 @@ export function AgreementsHome() {
   const term = useTerm();
   const { user } = useAuth();
   const confirm = useConfirm();
-  const canManage = user ? hasCapability(user.role, 'manage:documents') : false;
+  // The org-wide list and its tiles read GET /agreements (view:hr-admin); a
+  // recruiter holds manage:documents without it and got the raw refusal
+  // under an "All" tab (deep audit 2026-10-29, CRAWL-11).
+  const canIssue = user ? hasCapability(user.role, 'manage:documents') : false;
+  const canManage = canIssue && !!user && hasCapability(user.role, 'view:hr-admin');
   // HR lands on every agreement (their own "mine" is rarely the job); the
   // tab is in the URL — ?tab=policies is the Inbox's "Policies to sign".
   const [tabParam, setTab] = useUrlParam<Tab>('tab', canManage ? 'all' : 'mine', TABS, { history: 'push' });
@@ -193,7 +197,7 @@ export function AgreementsHome() {
       title={t('agr.title')}
       // HR reads what the page holds; an associate reads what's asked of them.
       subtitle={canManage ? t('agr.subtitle') : t('agr.subtitleMine')}
-      actions={canManage ? [{ label: t('agreementsPage.issueAgreement'), icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
+      actions={canIssue ? [{ label: t('agreementsPage.issueAgreement'), icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
       {tabOptions.length > 1 && (
         <SegmentedControl ariaLabel={t('agr.viewAria')} value={tab} onChange={(v) => setTab(v)} options={tabOptions} />

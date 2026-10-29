@@ -24,11 +24,11 @@ import { paidMinutesForRange, rolesWithCapability } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import {
-  DEFAULT_TIMEZONE,
   formatDateInZone,
   formatTimeInZone,
   zonedMinutes,
 } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { emailUserForCategory } from './notify.js';
 import { emitLiveEvent } from './liveEvents.js';
 
@@ -128,7 +128,8 @@ export async function runScheduleDigestSweep(
   prisma: PrismaClient = defaultPrisma,
   now: Date = new Date(),
 ): Promise<ScheduleDigestSweepResult> {
-  const tz = DEFAULT_TIMEZONE;
+  // The company's clock: its day, and the hour the digest goes out.
+  const tz = companyWorkweek().timezone;
   const todayKey = dayKey(now, tz);
   const localHour = Math.floor(zonedMinutes(now, tz) / 60);
   if (localHour < env.SCHEDULE_DIGEST_HOUR) {
@@ -252,7 +253,7 @@ export function startScheduleDigestCron(): void {
     label: 'Schedule digest to admins (daily)',
     intervalSeconds: env.SCHEDULE_DIGEST_INTERVAL_SECONDS,
     run: tenantJob(SCHEDULE_DIGEST_JOB, runScheduleDigestSweep),
-    note: `SCHEDULE_DIGEST_INTERVAL_SECONDS; sends after ${env.SCHEDULE_DIGEST_HOUR}:00 ${DEFAULT_TIMEZONE}, once a day.`,
+    note: `SCHEDULE_DIGEST_INTERVAL_SECONDS; sends after ${env.SCHEDULE_DIGEST_HOUR}:00 in each company's time zone, once a day.`,
   });
 }
 

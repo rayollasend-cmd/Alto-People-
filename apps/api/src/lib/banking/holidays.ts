@@ -19,6 +19,7 @@ const DAY = 86_400_000;
 
 /** YYYY-MM-DD at UTC midnight. */
 export function ymd(d: Date): string {
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on UTC-midnight anchors.
   return d.toISOString().slice(0, 10);
 }
 export function parseYmd(s: string): Date {

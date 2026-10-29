@@ -145,7 +145,7 @@ export async function renderWh347Pdf(input: Wh347Input): Promise<Buffer> {
   // Statement of Compliance.
   doc.addPage();
   const s = input.statement;
-  const start = new Date(`${week.days[0]}T00:00:00Z`).toISOString().slice(0, 10);
+  const start = week.days[0]!;
   let sy = k.top;
   k.text('Statement of Compliance', L, sy, { size: 14, weight: 'bold', color: ink });
   k.text(`Form WH-347 \u00b7 Payroll no. ${input.payrollNumber} \u00b7 week ending ${fmt.date(week.weekEnding)}`, L, sy + 3, { size: 7.5, color: grey, width, align: 'right' });

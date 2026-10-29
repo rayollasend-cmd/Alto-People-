@@ -10,6 +10,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { federalW4Fields } from '../lib/payrollTax.js';
 import { getBlobStore, tenantBlobKey } from '../lib/blobStore.js';
 import { safeContentDisposition, sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * The federal W-4 facts payroll records that the worker's own W-4 form
@@ -71,7 +72,7 @@ async function view(w4: Awaited<ReturnType<typeof load>>) {
     nonresidentAlien: w4.nonresidentAlien,
     pre2020Allowances: w4.pre2020Allowances,
     lockIn: w4.lockInFilingStatus
-      ? { filingStatus: w4.lockInFilingStatus, multipleJobs: !!w4.lockInMultipleJobs, effectiveDate: w4.lockInEffectiveDate?.toISOString().slice(0, 10) ?? null }
+      ? { filingStatus: w4.lockInFilingStatus, multipleJobs: !!w4.lockInMultipleJobs, effectiveDate: w4.lockInEffectiveDate ? dateColumnKey(w4.lockInEffectiveDate) : null }
       : null,
     /** The IRS letter itself (Letter 2800C), when filed. */
     lockInLetter: await letterOf(w4),

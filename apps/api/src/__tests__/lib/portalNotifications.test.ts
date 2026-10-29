@@ -143,6 +143,21 @@ describe('short-staffing alert', () => {
   });
 });
 
+describe('the words of an alert (deep audit LEAD-24)', () => {
+  it('a wave with nobody assigned is "still unfilled", never "0 of 0 expected … 1 short"', async () => {
+    const s = await seedStores();
+    const now = new Date();
+    await crew({ clientId: s.client.id, locationId: s.storeA.id, start: new Date(now.getTime() - HOUR), n: 0, punchedIn: 0, open: 1 });
+    await runPortalCoverageAlertSweep(prisma, now);
+    await flushPendingNotifications();
+    const a = await alerts(s.managerA.id);
+    expect(a).toHaveLength(1);
+    expect(a[0]!.subject).toMatch(/^Front Beach 218: the .* shift has 1 slot still unfilled$/);
+    expect(a[0]!.body).toMatch(/^1 slot still unfilled for the /);
+    expect(a[0]!.body).not.toContain('0 of 0');
+  });
+});
+
 describe('morning note', () => {
   // 11am in the org's zone today — after the 6am send hour, and on the
   // same org day as the rows notifyUser stamps with the real clock.
@@ -173,6 +188,15 @@ describe('morning note', () => {
     const again = await runPortalDigestSweep(prisma, new Date(NOW.getTime() + HOUR));
     await flushPendingNotifications();
     expect(again.sent).toBe(0);
+  });
+
+  it('says "1 open slot needs cover" — one slot, one verb (LEAD-24)', async () => {
+    const s = await seedStores();
+    await crew({ clientId: s.client.id, locationId: s.storeA.id, start: at(0, 12), n: 1, punchedIn: 1, ack: true, open: 1 });
+    await runPortalDigestSweep(prisma, NOW);
+    await flushPendingNotifications();
+    const note = await prisma.notification.findFirstOrThrow({ where: { recipientUserId: s.managerA.id, category: 'portal.digest', channel: 'IN_APP' } });
+    expect(note.subject).toBe('Front Beach 218: 1 open slot needs cover');
   });
 });
 

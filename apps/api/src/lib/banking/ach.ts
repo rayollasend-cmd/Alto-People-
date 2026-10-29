@@ -120,6 +120,9 @@ export interface OriginateResult {
 
 const MODIFIERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
+/** An entry that is (or became) money: sent, settled, or settled with a correction. */
+export const LIVE_ENTRY_STATUSES = ['SENT', 'SETTLED', 'CORRECTED'] as const;
+
 /**
  * Write the file, record it and its entries, and send them. In-house files
  * wait in CREATED until Finance downloads them for the bank; a partner's
@@ -138,7 +141,20 @@ export async function originate(db: PrismaClient, profile: PayrollBankingProfile
   const { file, made } = await db.$transaction(async (tx) => {
     // One originator at a time per tenant: trace sequences and file modifiers never collide.
     await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `ach:${tenantId}`);
+    // Claim-then-act (deep audit CODE-3): under the lock, a paycheck already
+    // in a live bank file (not returned, file not refused) is never written
+    // into another. The partial unique index AchEntry_live_paycheck_credit_key
+    // backs this in the database.
+    const paycheckIds = [...new Set(input.entries.filter((e) => e.kind === 'CREDIT' && e.payrollItemId).map((e) => e.payrollItemId!))];
+    if (paycheckIds.length > 0) {
+      const live = await tx.achEntry.findFirst({
+        where: { tenantId, kind: 'CREDIT', payrollItemId: { in: paycheckIds }, status: { in: [...LIVE_ENTRY_STATUSES] }, file: { status: { not: 'REJECTED' } } },
+        select: { payrollItemId: true },
+      });
+      if (live) throw new HttpError(409, 'already_in_bank_file', 'A paycheck here is already in another bank file — sending it again would pay it twice.');
+    }
     const used = await tx.achEntry.count({ where: { tenantId } });
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: the NACHA header's creation date is written from the same UTC instant; file id modifiers count per that date.
     const today = now.toISOString().slice(0, 10);
     const filesToday = await tx.achFile.count({ where: { tenantId, createdAt: { gte: new Date(`${today}T00:00:00Z`) } } });
     const modifier = MODIFIERS[filesToday % MODIFIERS.length]!;
@@ -255,6 +271,8 @@ export async function originate(db: PrismaClient, profile: PayrollBankingProfile
     const message = err instanceof Error ? err.message : String(err);
     if (conn) await recordFailure(conn.id, message);
     const failed = await db.achFile.update({ where: { id: file.id }, data: { status: 'REJECTED', error: message.slice(0, 500) } });
+    // Nothing in a refused file was sent: its entries are not live money (the same mark a refused entry gets below).
+    await db.achEntry.updateMany({ where: { achFileId: file.id, status: 'SENT' }, data: { status: 'RETURNED' } });
     return { file: failed, entries: made.map((m) => ({ ...m, accepted: false, error: message, externalRef: null })) };
   }
   const byId = new Map(results.map((r) => [r.entryId, r]));

@@ -42,6 +42,7 @@ export interface Actor {
   capabilities?: string[] | null;
 }
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: @db.Date values are stored at UTC midnight.
 const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);

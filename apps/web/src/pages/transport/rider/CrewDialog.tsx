@@ -22,7 +22,7 @@ export function CrewDialog({ rideId, onClose }: { rideId: string; onClose: () =>
           <DialogTitle>{t('ride.crewTitle')}</DialogTitle>
         </DialogHeader>
         {q.isError ? (
-          <QueryError what="who else is on this ride" query={q} />
+          <QueryError what={t('ride.load.crew')} query={q} />
         ) : !crew ? (
           <Skeleton className="h-40" />
         ) : (

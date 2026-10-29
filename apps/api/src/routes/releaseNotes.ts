@@ -7,6 +7,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { ALTO_TENANT_ID, tenantIdForWrite, withPlatformScope } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 export const releaseNotesRouter = Router();
 
@@ -80,7 +81,7 @@ function shape(row: Row, audiences: Set<ReleaseNoteAudience> | null) {
   const items = (Array.isArray(row.items) ? row.items : []) as unknown as ReleaseNoteItem[];
   return {
     id: row.id,
-    day: row.day.toISOString().slice(0, 10),
+    day: dateColumnKey(row.day),
     items: audiences ? items.filter((i) => audiences.has(i.audience)) : items,
     publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
   };
@@ -182,7 +183,7 @@ releaseNotesRouter.delete('/:id', MANAGE, async (req, res, next) => {
     const existing = await editableNote(req.params.id);
     await (existing.tenantId === null ? withPlatformScope : <T,>(fn: () => Promise<T>) => fn())(() => prisma.releaseNote.delete({ where: { id: existing.id } }));
     enqueueAudit(
-      { actorUserId: req.user!.id, action: 'release_note.deleted', entityType: 'ReleaseNote', entityId: existing.id, metadata: { day: existing.day.toISOString().slice(0, 10) } },
+      { actorUserId: req.user!.id, action: 'release_note.deleted', entityType: 'ReleaseNote', entityId: existing.id, metadata: { day: dateColumnKey(existing.day) } },
       'releaseNotes.delete',
     );
     res.json({ ok: true });

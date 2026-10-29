@@ -3,11 +3,9 @@ import { ensureRegionUnit } from '../lib/orgUnits.js';
 import { z } from 'zod';
 import {
   ROLES,
-  ROLE_CAPABILITIES,
   HUMAN_ROLES,
   MAX_ADDITIONAL_ROLES,
   additionalRoleRefusal,
-  capabilitiesOf,
   type Role,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -34,6 +32,7 @@ import { isElevation } from '../lib/accessChanges.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { ensureWorkerForAssociate } from '../lib/workers.js';
 import { inviteStaffAccount } from '../lib/staffInvite.js';
+import { assertMayGrantRole, atOrBelow } from '../lib/roleGrant.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -458,17 +457,10 @@ usersRouter.patch(
     //
     // Demotions and lateral moves are unaffected; only granting strictly
     // more power than you hold is refused.
+    // One copy of the rule (lib/roleGrant): onboarding's "Hire as", the
+    // staff invite and directory group mappings answer to it too.
     if (input.role && input.role !== target.role) {
-      const callerCaps = capabilitiesOf(req.user!);
-      const grantedCaps = ROLE_CAPABILITIES[input.role];
-      const escalating = [...grantedCaps].filter((c) => !callerCaps.has(c));
-      if (escalating.length > 0) {
-        throw new HttpError(
-          403,
-          'role_escalation_forbidden',
-          `You cannot grant ${input.role}: it holds capabilities you don't have (${escalating.join(', ')}).`,
-        );
-      }
+      assertMayGrantRole(req.user!, input.role);
     }
 
     // A second role is exactly as powerful as the role itself, so it
@@ -485,15 +477,7 @@ usersRouter.patch(
         if (refusal) {
           throw new HttpError(400, 'role_combination_forbidden', refusal);
         }
-        const callerCaps = capabilitiesOf(req.user!);
-        const escalating = [...ROLE_CAPABILITIES[extra]].filter((c) => !callerCaps.has(c));
-        if (escalating.length > 0) {
-          throw new HttpError(
-            403,
-            'role_escalation_forbidden',
-            `You cannot grant ${extra}: it holds capabilities you don't have (${escalating.join(', ')}).`,
-          );
-        }
+        assertMayGrantRole(req.user!, extra);
       }
     }
 
@@ -1032,11 +1016,7 @@ usersRouter.post(
     // which has zero manage:* capabilities) could bump tokenVersion on
     // every HR_ADMINISTRATOR — killing all their sessions repeatedly —
     // and mint reset links for them.
-    const callerCaps = ROLE_CAPABILITIES[req.user!.role];
-    const beyondCaller = [...ROLE_CAPABILITIES[target.role]].filter(
-      (c) => !callerCaps.has(c),
-    );
-    if (beyondCaller.length > 0) {
+    if (!atOrBelow(req.user!, target.role)) {
       throw new HttpError(
         403,
         'target_more_privileged',

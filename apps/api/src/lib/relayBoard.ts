@@ -5,6 +5,7 @@ import { soonestPayday } from './payday.js';
 import { buildFieldglassQueue } from './fieldglassQueue.js';
 import { fmtDay } from './humanDates.js';
 import { billingWeek } from './financeCockpit.js';
+import { dateColumnKey } from './timezone.js';
 
 const daysWord = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 
@@ -439,7 +440,7 @@ export async function computeRelayBoard(
       name: c.name,
       clientName: c.client?.name ?? null,
       targetHeadcount: c.targetHeadcount,
-      landByDate: c.landByDate.toISOString().slice(0, 10),
+      landByDate: dateColumnKey(c.landByDate),
       daysLeft: Math.ceil((c.landByDate.getTime() - now.getTime()) / DAY_MS),
       members: c._count.applications,
       completed: cohortCompletedIn45d.get(c.id) ?? 0,

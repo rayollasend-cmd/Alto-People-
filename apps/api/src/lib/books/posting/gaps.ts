@@ -4,7 +4,8 @@ import { ymd, type Db } from './common.js';
 import { disburseKey, postPayrollRun, runKey } from './payroll.js';
 import { advanceKey, garnishmentKey, postGarnishmentRemittance, postTaxDeposit, postTaxPayment, postWageAdvance, taxDepositKey, taxPaymentKey } from './remittances.js';
 import { postStatement, statementAmounts, statementKey } from './statements.js';
-import { paymentKey } from './receivables.js';
+import { paidWithoutPayment, paymentKey, settleMarkedPaidStatements } from './receivables.js';
+import { fmtDay, fmtDayRange } from '../../humanDates.js';
 
 /**
  * What should be in the books and isn't — and the catch-up that puts it
@@ -48,7 +49,7 @@ export async function postingGaps(db: Db, periodKey: string): Promise<PostingGap
   });
   const runPosted = await postedKeys(db, runs.flatMap((r) => [runKey(r.id), disburseKey(r.id)]));
   for (const r of runs) {
-    const label = `Payroll ${ymd(r.periodStart)} – ${ymd(r.periodEnd)}`;
+    const label = `Payroll ${fmtDayRange(ymd(r.periodStart), ymd(r.periodEnd), { year: true })}`;
     if (r._count.items > 0 && r.periodEnd >= range.gte && r.periodEnd < range.lt && !runPosted.has(runKey(r.id))) {
       gaps.push({ kind: 'PAYROLL_RUN', sourceType: 'PayrollRun', sourceId: r.id, label: `${label} isn’t in the books`, link: `/payroll/runs/${r.id}` });
     }
@@ -96,6 +97,10 @@ export async function postingGaps(db: Db, periodKey: string): Promise<PostingGap
   for (const p of payments) {
     if (!payPosted.has(paymentKey(p.id))) gaps.push({ kind: 'CLIENT_PAYMENT', sourceType: 'ClientPayment', sourceId: p.id, label: `Client payment (${money(p.amount)}) isn’t in the books`, link: '/books/receivables' });
   }
+  // A statement marked paid in the month with no payment behind it: the books still count it as owed (MONEY-3).
+  for (const b of await paidWithoutPayment(db, { paidAt: range })) {
+    gaps.push({ kind: 'CLIENT_PAYMENT', sourceType: 'ClientStatement', sourceId: b.statementId, label: `Statement ${b.number != null ? `No. ${String(b.number).padStart(4, '0')} ` : ''}was marked paid ${fmtDay(b.paidAt!.slice(0, 10), { year: true })} (${money(b.total / 100)}) with no payment in the books`, link: '/books/receivables?view=payments' });
+  }
   return gaps;
 }
 
@@ -106,6 +111,8 @@ export interface BackfillResult {
   taxDeposits: number;
   garnishmentRemittances: number;
   wageAdvances: number;
+  /** Payments recorded for statements marked paid without one. */
+  clientPayments: number;
   failed: Array<{ sourceType: string; sourceId: string; error: string }>;
 }
 
@@ -114,10 +121,10 @@ export interface BackfillResult {
  * Idempotent: what is already right is left alone; a voided run's entries
  * come off. `since` limits it to sources from that day on.
  */
-export async function backfillPosting(db: PrismaClient, opts: { since?: Date } = {}): Promise<BackfillResult> {
+export async function backfillPosting(db: PrismaClient, opts: { since?: Date; userId?: string | null } = {}): Promise<BackfillResult> {
   const tenantId = tenantIdForWrite();
   const since = opts.since;
-  const out: BackfillResult = { payrollRuns: 0, statements: 0, taxPayments: 0, taxDeposits: 0, garnishmentRemittances: 0, wageAdvances: 0, failed: [] };
+  const out: BackfillResult = { payrollRuns: 0, statements: 0, taxPayments: 0, taxDeposits: 0, garnishmentRemittances: 0, wageAdvances: 0, clientPayments: 0, failed: [] };
   // Counted when it changed what's in the books (newly posted, or taken off).
   const attempt = async (sourceType: string, sourceId: string, keys: string[], fn: () => Promise<unknown>, count: () => void) => {
     try {
@@ -153,5 +160,11 @@ export async function backfillPosting(db: PrismaClient, opts: { since?: Date } =
 
   const advances = await db.earnedWageAdvance.findMany({ where: { tenantId, status: { in: ['PAID', 'RECOVERED'] }, paidAt: { not: null, ...(since ? { gte: since } : {}) } }, select: { id: true }, orderBy: { paidAt: 'asc' } });
   for (const a of advances) await attempt('EarnedWageAdvance', a.id, [advanceKey(a.id)], () => postWageAdvance(db, a.id), () => (out.wageAdvances += 1));
+
+  // Statements marked paid with no payment: record the payment each was marked paid with (MONEY-3),
+  // after the statements above are in receivables.
+  const settled = await settleMarkedPaidStatements(db, { userId: opts.userId ?? null, since });
+  out.clientPayments = settled.payments;
+  for (const f of settled.failed) out.failed.push({ sourceType: 'ClientStatement', sourceId: f.statementId, error: f.error });
   return out;
 }

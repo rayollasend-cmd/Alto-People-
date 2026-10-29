@@ -6,6 +6,9 @@ import { requireAnyCapability, requireAuth, requireCapability } from '../middlew
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import type { Prisma } from '@prisma/client';
 import { scopeActiveAssociates } from '../lib/scope.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 107 — Birthdays & work anniversaries.
@@ -42,6 +45,8 @@ interface CelebrationItem {
   siteName: string | null;
   clientId: string | null;
   clientName: string | null;
+  /** The headshot URL; null when none is on file (no request, initials). */
+  photoUrl: string | null;
 }
 
 celebrationsRouter.get('/celebrations/upcoming', VIEW_CREW, async (req, res) => {
@@ -79,6 +84,8 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW_CREW, async (req, res) => 
       lastName: true,
       email: true,
       dob: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
       applications: {
         where: { deletedAt: null, startDate: { not: null } },
         select: { startDate: true },
@@ -101,11 +108,11 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW_CREW, async (req, res) => 
   }
 
   const now = new Date();
-  // Use UTC math throughout — birthdays are date-only and don't care
-  // about timezone. The window is `days` calendar days from today.
-  const startOfToday = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
+  // Birthdays and hire dates are date-only, so the math is calendar math in
+  // UTC — but "today" is the company's day, never UTC's (after 5 PM Pacific
+  // UTC is already tomorrow and today's birthday rolled to next year). The
+  // window is `days` calendar days from today.
+  const startOfToday = new Date(`${orgDateKey(now)}T00:00:00.000Z`);
   const horizon = new Date(startOfToday);
   horizon.setUTCDate(horizon.getUTCDate() + days);
 
@@ -130,6 +137,7 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW_CREW, async (req, res) => 
       siteName: where?.name ?? null,
       clientId: where?.clientId ?? null,
       clientName: where?.client?.name ?? null,
+      photoUrl: profilePhotoUrlFor(a),
     };
     if (a.dob) {
       const dob = new Date(a.dob);
@@ -143,7 +151,7 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW_CREW, async (req, res) => 
           associateName: name,
           email: a.email,
           kind: 'BIRTHDAY',
-          date: next.toISOString().slice(0, 10),
+          date: dateColumnKey(next),
           years: null,
           ...place,
         });
@@ -165,7 +173,7 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW_CREW, async (req, res) => 
           associateName: name,
           email: a.email,
           kind: 'ANNIVERSARY',
-          date: next.toISOString().slice(0, 10),
+          date: dateColumnKey(next),
           years: yearsAtNext,
           ...place,
         });
@@ -204,7 +212,9 @@ celebrationsRouter.get('/celebrations/me', requireAuth, async (req, res) => {
     res.json({ birthday: false, anniversaryYears: null, firstName: null });
     return;
   }
-  const now = new Date();
+  // Today is the company's day (UTC midnight of it, to compare with the date
+  // columns' UTC parts) — not UTC's, which turns the ribbon over at 5 PM Pacific.
+  const now = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
   const isToday = (d: Date) =>
     d.getUTCMonth() === now.getUTCMonth() && d.getUTCDate() === now.getUTCDate();
   const birthday = Boolean(a.dob && isToday(new Date(a.dob)));

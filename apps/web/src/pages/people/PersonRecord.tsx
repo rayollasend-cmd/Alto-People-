@@ -106,7 +106,8 @@ export function PersonRecord() {
   const canSeeTimeOff = can('manage:time');
   const canSeePerformance = can('view:hr-admin');
   const canSeeLadder = canSeePerformance && moduleOn('hrCases');
-  const canSeeCases = moduleOn('hrCases') && (can('manage:onboarding') || can('process:payroll'));
+  // The same rule as the tab (lib/personTabs ↔ API hrDeskScope).
+  const canSeeCases = moduleOn('hrCases') && ((can('view:hr-admin') && can('manage:onboarding')) || can('process:payroll'));
 
   // Same key as the directory's deep-link lookup, so a row opened there and
   // the record here share one cached person.
@@ -166,8 +167,11 @@ export function PersonRecord() {
   const siteWord = term('site');
   const status = workStatusOf(a);
   const tabHref = (tab: TabKey) => `/people/${a.id}${tab === 'overview' ? '' : `?tab=${tab}`}`;
-  // Separation is an org change (manage:org), offered while they still work here.
-  const canSeparate = can('manage:org') && !a.separatedAt;
+  // Separation is HR's: /separations reads on view:hr-admin and the API
+  // writes on manage:onboarding — offered only to a role that holds both
+  // (the workforce manager has manage:org and landed on "no access" —
+  // PEOPLE-7), while they still work here.
+  const canSeparate = can('view:hr-admin') && can('manage:onboarding') && !a.separatedAt;
   const canTransfer = can('manage:org') && Boolean(a.workplaceClientId) && !a.separatedAt;
   const subtitle = [
     a.position,
@@ -266,7 +270,7 @@ export function PersonRecord() {
       content: <TimeOffTab associateId={a.id} requests={timeOffRequests} />,
     },
     { key: 'performance', label: 'Performance', content: <PerformanceTab associateId={a.id} showLadder={canSeeLadder} /> },
-    { key: 'cases', label: 'Cases', count: cases.data?.cases.length, content: <CasesTab query={cases} workerWord={workerWord} person={{ id: a.id, name }} canOpen={can('manage:onboarding')} /> },
+    { key: 'cases', label: 'Cases', count: cases.data?.cases.length, content: <CasesTab query={cases} workerWord={workerWord} person={{ id: a.id, name }} canOpen={can('view:hr-admin') && can('manage:onboarding')} /> },
     { key: 'documents', label: 'Documents', content: <DocumentsTab associateId={a.id} /> },
     { key: 'thread', label: 'Thread', content: <WorkThreadPanel associateId={a.id} /> },
   ].filter((t) => (visibleTabs as readonly string[]).includes(t.key));
@@ -421,6 +425,8 @@ function attentionItems(opts: {
   siteWord: string;
   tabHref: (tab: TabKey) => string;
   canSeeTime: boolean;
+  /** The Documents tab is shown (manage:documents) — else the line stands without a link to it. */
+  canSeeDocs?: boolean;
   onTransfer: (() => void) | null;
   onReactivate: (() => void) | null;
 }): AttentionItem[] {
@@ -484,7 +490,7 @@ function attentionItems(opts: {
     items.push({ key: 'manager', icon: UserX, tone: 'info', text: `No ${managerWord.toLowerCase()} assigned.`, action: { label: `Set a ${managerWord.toLowerCase()}`, to: tabHref('profile') } });
   }
   if (ov?.documents && ov.documents.expired > 0) {
-    items.push({ key: 'expired', icon: FileWarning, tone: 'alert', text: `${plural(ov.documents.expired, 'document')} expired.`, action: { label: 'Open documents', to: tabHref('documents') } });
+    items.push({ key: 'expired', icon: FileWarning, tone: 'alert', text: `${plural(ov.documents.expired, 'document')} expired.`, ...(opts.canSeeDocs ? { action: { label: 'Open documents', to: tabHref('documents') } } : {}) });
   }
   if (ov?.documents && ov.documents.expiringSoon > 0) {
     items.push({
@@ -492,7 +498,7 @@ function attentionItems(opts: {
       icon: FileWarning,
       tone: 'warning',
       text: `${plural(ov.documents.expiringSoon, 'document')} ${ov.documents.expiringSoon === 1 ? 'expires' : 'expire'} in the next 30 days.`,
-      action: { label: 'Open documents', to: tabHref('documents') },
+      ...(opts.canSeeDocs ? { action: { label: 'Open documents', to: tabHref('documents') } } : {}),
     });
   }
   if (ov && ov.work.noShows30d > 0) {
@@ -548,6 +554,7 @@ function OverviewTab({
   onReactivate: (() => void) | null;
 }) {
   const term = useTerm();
+  const { can } = useAuth();
   const pin = useQuery({ queryKey: ['kiosk-pin', a.id], queryFn: () => getAssociateKioskPin(a.id), enabled: canSeeTime });
   const ov = overview.data;
   const items = attentionItems({
@@ -559,6 +566,7 @@ function OverviewTab({
     siteWord: term('site'),
     tabHref,
     canSeeTime,
+    canSeeDocs: can('manage:documents'),
     onTransfer,
     onReactivate,
   });
@@ -617,8 +625,9 @@ function OverviewTab({
                   <dd className="text-ink">{a.departmentName}</dd>
                 </>
               )}
-              <dt className="text-ink-muted">Hired</dt>
-              <dd className="tabular-nums text-ink">{a.startDate ? fmtDateOnly(a.startDate) : <span className="text-ink-muted">No start date on record</span>}</dd>
+              {/* The one hire date (PEOPLE-10) — the employment record's, else a planned start. */}
+              <dt className="text-ink-muted">{a.startDateSource === 'application' ? 'Planned start' : 'Hired'}</dt>
+              <dd className="tabular-nums text-ink">{a.startDate ? fmtDateOnly(a.startDate) : <span className="text-ink-muted">No hire date on record</span>}</dd>
               <dt className="text-ink-muted">Type</dt>
               <dd className="text-ink">{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</dd>
               <dt className="text-ink-muted">Email</dt>

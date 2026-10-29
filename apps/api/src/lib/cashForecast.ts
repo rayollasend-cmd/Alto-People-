@@ -1,12 +1,15 @@
 import { prisma } from '../db.js';
-import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
+import type { TaxAgencyAccount } from '@prisma/client';
+import { orgDateKey } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
-import { getNextPayday, getPeriodAfter, type PeriodWindow } from './payrollSchedule.js';
-import { depositDueDate } from './taxDeposits.js';
+import { nextPaydayOn, periodAfter, scheduleFilterFor } from './payScheduleMembership.js';
+import { agencyNameFor, dueFor, employerFor } from './payrollTaxLedger.js';
+import { runCutFor } from './payrollRunCut.js';
 import { aggregatePayrollProjection } from './payrollAggregator.js';
 import { cashOnHand } from './books/ledger.js';
 import { tenantIdForWrite } from './tenant.js';
 import { fmtDay, fmtDayRange } from './humanDates.js';
+import { quarterWords } from './books/words.js';
 
 /**
  * The cash forecast: where the money stands and what leaves and arrives
@@ -21,8 +24,11 @@ import { fmtDay, fmtDayRange } from './humanDates.js';
  *                    skipped: with nobody on the schedule and no run, the
  *                    line is the last run's net, marked estimated and
  *                    flagged "0 people on schedule" (audit 2026-10-21 #18)
- *   tax deposits     pending FED_941 / FUTA rows by due date, plus the
- *                    deposit each forecast payday will create
+ *   tax              the tax desk's open liabilities (every agency) on
+ *                    their due dates, older FED_941 / FUTA rows the desk
+ *                    never itemized, and the federal deposit each forecast
+ *                    payday will create — dated on the IRS account's
+ *                    schedule, as the desk dates it
  *   garnishments     pending remittances, assumed a week after payday
  *   bills            approved, unpaid vendor bills on their due date
  *                    (overdue ones expected this week)
@@ -78,7 +84,8 @@ export interface CashForecast {
   to: string;
   /** The Books cash position today (null when the books hold no bank account yet). */
   /** `onFile`: false when the bank accounts exist but nothing is posted to them (no opening balance, no feed). */
-  opening: { balance: number; accounts: number; asOf: string; onFile: boolean } | null;
+  /** `overdrawn`: bank accounts below zero today, which the balance nets away (MONEY-18). */
+  opening: { balance: number; accounts: number; asOf: string; onFile: boolean; overdrawn?: Array<{ id: string; name: string; balance: number }> } | null;
   /** The cash floor from Settings → Finance; null when none is set. */
   minimumCash: number | null;
   /** The week the projected balance is lowest. */
@@ -92,9 +99,14 @@ const DAY_MS = 86_400_000;
 const addDays = (ymd: string, n: number) => {
   const d = new Date(`${ymd}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: day arithmetic on YYYY-MM-DD keys anchored at noon UTC.
   return d.toISOString().slice(0, 10);
 };
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: @db.Date values (due dates, pay dates) are stored at UTC midnight; instants use orgDateKey.
 const ymdOf = (d: Date) => d.toISOString().slice(0, 10);
+
+/** "2026-Q4" → "Oct–Dec 2026" (lib/books/words, MONEY-24). */
+export { quarterWords };
 
 /** Days after a payday the plan's money is sent to the recordkeeper (DOL: as soon as it can be segregated). */
 export const RETIREMENT_REMIT_LAG_DAYS = 3;
@@ -124,7 +136,8 @@ export function contributionTotal(c: ContributionRow): number {
 export async function cashForecast(now: Date = new Date(), opts: { tenantId?: string; weeks?: number } = {}): Promise<CashForecast> {
   const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
   const horizonWeeks = opts.weeks ?? 4;
-  const today = localDateKey(now, DEFAULT_TIMEZONE);
+  // The company's day (its zone), not the server default's.
+  const today = orgDateKey(now);
   const end = addDays(today, horizonWeeks * 7);
   const lines: CashLine[] = [];
   const inHorizon = (ymd: string) => ymd >= today && ymd < end;
@@ -134,20 +147,36 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     cashOnHand(prisma, today).catch(() => null),
     prisma.orgSetting.findFirst({ where: { tenantId: opts.tenantId ?? tenantIdForWrite() }, select: { cashMinimum: true } }),
   ]);
-  const opening = cash && cash.accounts > 0 ? { balance: cash.total, accounts: cash.accounts, asOf: today, onFile: cash.postedAccounts > 0 } : null;
+  const opening = cash && cash.accounts > 0 ? { balance: cash.total, accounts: cash.accounts, asOf: today, onFile: cash.postedAccounts > 0, overdrawn: cash.overdrawn } : null;
   const minimumCash = org?.cashMinimum != null ? Number(org.cashMinimum) : null;
 
-  // ---- Payroll: the next two paydays ------------------------------------
-  const select = { id: true, name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
-  const live = { isActive: true, deletedAt: null, ...T };
-  const schedule =
-    (await prisma.payrollSchedule.findFirst({ where: { ...live, clientId: null }, orderBy: { createdAt: 'asc' }, select })) ??
-    (await prisma.payrollSchedule.findFirst({ where: live, orderBy: { createdAt: 'asc' }, select }));
+  // ---- Payroll: the next two paydays of every active schedule ------------
+  // Each schedule pays its own members (audit 2026-10-29 MONEY-14): the open
+  // period is projected exactly as Payroll's "next run" projects it (the
+  // schedule's membership windows and run cut), so the same payroll never
+  // reads two different totals on two screens.
+  const schedules = await prisma.payrollSchedule.findMany({
+    where: { isActive: true, deletedAt: null, ...T },
+    orderBy: [{ clientId: { sort: 'asc', nulls: 'first' } }, { createdAt: 'asc' }],
+    include: { versions: true },
+  });
+  const schedule = schedules[0] ?? null;
   const [lastRun, profile] = await Promise.all([
     prisma.payrollRun.findFirst({ where: { ...T, status: 'DISBURSED', kind: 'REGULAR' }, orderBy: { disbursedAt: 'desc' }, select: { id: true, totalNet: true, totalTax: true, totalGross: true, items: { select: { employerFica: true, employerMedicare: true, fica: true, medicare: true, federalWithholding: true }, take: 10_000 } } }),
-    prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() }, select: { depositSchedule: true } }),
+    prisma.submitterProfile.findUnique({ where: { tenantId: opts.tenantId ?? tenantIdForWrite() }, select: { depositSchedule: true } }),
   ]);
-  const depositSchedule = profile?.depositSchedule ?? 'MONTHLY';
+  // The federal deposit schedule is the IRS agency account's — the one the
+  // tax desk dates its liabilities by (lib/payrollTaxLedger.dueFor), not the
+  // submitter profile's (audit 2026-10-29 MONEY-6). With no account yet, the
+  // desk's own default applies (semiweekly when the profile says so).
+  const fedAccountFor = async (clientId: string | null): Promise<TaxAgencyAccount> => {
+    const employerOrgId = await employerFor(prisma, clientId);
+    const found = await prisma.taxAgencyAccount.findFirst({
+      where: { ...T, kind: 'FEDERAL_WITHHOLDING', jurisdiction: 'US', employerOrgId, status: { in: ['ACTIVE', 'PENDING_REGISTRATION'] } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return found ?? ({ kind: 'FEDERAL_WITHHOLDING', depositFrequency: profile?.depositSchedule === 'SEMIWEEKLY' ? 'SEMIWEEKLY' : 'MONTHLY', dueDayOfMonth: 15 } as unknown as TaxAgencyAccount);
+  };
   // The federal deposit a payday creates, as a share of net, from the last run paid.
   let depositPerNet = 0;
   if (lastRun && Number(lastRun.totalNet) > 0) {
@@ -169,23 +198,29 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     retirementPerNet = sent.reduce((sum, c) => sum + contributionTotal(c), 0) / Number(lastRun.totalNet);
   }
 
-  if (schedule) {
-    let w: PeriodWindow = getNextPayday(schedule, new Date(`${today}T12:00:00Z`));
-    if (w.payDate < today) w = getPeriodAfter(schedule, w);
-    const windows = [w, getPeriodAfter(schedule, w)];
+  for (const sched of schedules) {
+    const first = nextPaydayOn(sched, today);
+    const windows = [first, periodAfter(sched, first)];
+    const named = schedules.length > 1 ? ` · ${sched.name}` : '';
+    const fedAccount = await fedAccountFor(sched.clientId);
     for (const [i, win] of windows.entries()) {
       if (!inHorizon(win.payDate)) continue;
-      const run = await prisma.payrollRun.findFirst({
+      const ps = new Date(`${win.periodStart}T00:00:00Z`);
+      const pe = new Date(`${win.periodEnd}T00:00:00Z`);
+      pe.setUTCDate(pe.getUTCDate() + 1);
+      // The period's run: this schedule's own, else one tied to no schedule for the same client (Payroll's rule).
+      const candidates = await prisma.payrollRun.findMany({
         where: {
           ...T,
-          kind: 'REGULAR',
+          periodStart: ps,
           status: { in: ['DRAFT', 'FINALIZED', 'DISBURSED'] },
-          periodStart: { lte: new Date(`${win.periodEnd}T00:00:00Z`) },
-          periodEnd: { gte: new Date(`${win.periodStart}T00:00:00Z`) },
+          OR: [{ kind: 'REGULAR' }, { includesApprovedTime: true }],
+          AND: [{ OR: [{ payrollScheduleId: sched.id }, { payrollScheduleId: null, ...(sched.clientId ? { clientId: sched.clientId } : {}) }] }],
         },
         orderBy: { createdAt: 'desc' },
-        select: { id: true, status: true, totalNet: true, totalTax: true, items: { select: { fica: true, medicare: true, federalWithholding: true, employerFica: true, employerMedicare: true }, take: 10_000 } },
+        select: { id: true, status: true, payrollScheduleId: true, totalNet: true, totalTax: true, items: { select: { fica: true, medicare: true, federalWithholding: true, employerFica: true, employerMedicare: true }, take: 10_000 } },
       });
+      const run = candidates.find((r) => r.payrollScheduleId === sched.id) ?? candidates[0] ?? null;
       if (run?.status === 'DISBURSED') continue; // already out the door
       let net = 0;
       let confidence: CashLine['confidence'];
@@ -197,13 +232,12 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
         confidence = run.status === 'FINALIZED' ? 'scheduled' : 'estimated';
       } else {
         confidence = 'estimated';
-        if (i === 0) {
-          // The open period: project it from approved hours so far.
-          const ps = new Date(`${win.periodStart}T00:00:00Z`);
-          const pe = new Date(`${win.periodEnd}T00:00:00Z`);
-          pe.setUTCDate(pe.getUTCDate() + 1);
+        const filter = await scheduleFilterFor(prisma, sched.id, ps, new Date(`${win.periodEnd}T00:00:00Z`)).catch(() => null);
+        if (i === 0 && filter) {
+          // The open period: project the schedule's members from approved hours so far.
           try {
-            const proj = await aggregatePayrollProjection(prisma, { periodStart: ps, periodEndExclusive: pe, clientId: null, defaultRate: 15 });
+            const { cut, payDate } = await runCutFor(prisma, { kind: 'REGULAR', payrollScheduleId: sched.id, clientId: sched.clientId, periodStart: win.periodStart, periodEnd: win.periodEnd, windows: filter.windows });
+            const proj = await aggregatePayrollProjection(prisma, { periodStart: ps, periodEndExclusive: pe, clientId: sched.clientId, defaultRate: 15, scheduleFilter: filter, payDate, prevUtcCut: cut.prevUtc });
             net = proj.totals.totalNet;
             fed = proj.items.reduce((s, x) => s + x.federalIncomeTax + x.fica + x.medicare + x.employerFica + x.employerMedicare, 0);
             // A period that is barely begun projects low; the last run is the better guess until it is half over.
@@ -221,7 +255,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
         // Nobody on the schedule yet (or nothing approved): the payday still comes. The last
         // run's net is the estimate, and the line says so — never dropped from the picture.
         if (net <= 0) {
-          const people = await prisma.associate.count({ where: { ...T, payrollScheduleId: schedule.id, deletedAt: null } }).catch(() => 0);
+          const people = filter ? filter.windows.size : 0;
           net = lastRun ? Number(lastRun.totalNet) : 0;
           fed = null;
           warning = `${people} ${people === 1 ? 'person' : 'people'} on schedule — ${lastRun ? 'the last run’s net' : 'no run paid yet to estimate from'}`;
@@ -230,7 +264,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
       lines.push({
         date: win.payDate,
         kind: 'PAYROLL',
-        label: `Payroll ${fmtDayRange(win.periodStart, win.periodEnd)}${run ? ` (${run.status.toLowerCase()})` : ' (projected)'}`,
+        label: `Payroll ${fmtDayRange(win.periodStart, win.periodEnd)}${named}${run ? ` (${run.status.toLowerCase()})` : ' (projected)'}`,
         amount: -round2(net),
         confidence,
         linkUrl: run ? `/payroll?run=${run.id}` : '/payroll',
@@ -238,9 +272,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
       });
       const deposit = round2(fed ?? net * depositPerNet);
       if (deposit > 0) {
-        const payday = new Date(`${win.payDate}T12:00:00Z`);
-        const { dueDate } = depositDueDate(payday, depositSchedule, deposit);
-        const due = ymdOf(dueDate);
+        const due = ymdOf(dueFor(fedAccount, new Date(`${win.payDate}T12:00:00Z`), deposit));
         if (inHorizon(due)) {
           lines.push({
             date: due,
@@ -267,12 +299,36 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     }
   }
 
-  // ---- Tax deposits already on the ledger --------------------------------
+  // ---- Tax already owed: the tax desk's liabilities -----------------------
+  // Every agency's open liability on its due date (MONEY-6): federal, FUTA,
+  // state withholding and unemployment, local — the desk's own dates.
+  const liabilities = await prisma.taxLiability.findMany({
+    where: { ...T, status: { in: ['OPEN', 'SCHEDULED'] }, dueDate: { lt: new Date(`${end}T00:00:00Z`) } },
+    select: { id: true, kind: true, jurisdiction: true, periodLabel: true, dueDate: true, amount: true, payrollRunId: true, account: { select: { agencyName: true } } },
+  });
+  for (const l of liabilities) {
+    const due = ymdOf(l.dueDate);
+    const overdue = due < today;
+    lines.push({
+      date: overdue ? today : due,
+      kind: 'TAX_DEPOSIT',
+      label: `${l.account?.agencyName ?? agencyNameFor(l.kind, l.jurisdiction)} — ${quarterWords(l.periodLabel)}${overdue ? ' (past due)' : ''}`,
+      amount: -round2(Number(l.amount)),
+      confidence: overdue ? 'overdue' : 'scheduled',
+      linkUrl: '/payroll/taxes?tab=deposits',
+    });
+  }
+  // Older per-run deposits, only where the desk never itemized the run (or, for FUTA, the year) — never counted twice.
+  const itemized = new Set(
+    (await prisma.taxLiability.findMany({ where: { ...T, payrollRunId: { not: null } }, select: { payrollRunId: true }, distinct: ['payrollRunId'] })).map((r) => r.payrollRunId),
+  );
+  const futaYears = new Set((await prisma.taxLiability.findMany({ where: { ...T, kind: 'FEDERAL_UNEMPLOYMENT' }, select: { periodLabel: true }, distinct: ['periodLabel'] })).map((r) => r.periodLabel.slice(0, 4)));
   const deposits = await prisma.taxDeposit.findMany({
     where: { ...T, status: 'PENDING', dueDate: { lt: new Date(`${end}T00:00:00Z`) } },
-    select: { id: true, kind: true, periodLabel: true, dueDate: true, amount: true },
+    select: { id: true, kind: true, periodLabel: true, dueDate: true, amount: true, payrollRunId: true },
   });
   for (const d of deposits) {
+    if (d.kind === 'FUTA' ? futaYears.has(d.periodLabel.slice(0, 4)) : d.payrollRunId !== null && itemized.has(d.payrollRunId)) continue;
     const due = ymdOf(d.dueDate);
     const overdue = due < today;
     lines.push({
@@ -291,7 +347,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     select: { id: true, payeeName: true, amount: true, payrollRun: { select: { disbursedAt: true } } },
   });
   for (const r of remittances) {
-    const base = r.payrollRun.disbursedAt ? ymdOf(r.payrollRun.disbursedAt) : today;
+    const base = r.payrollRun.disbursedAt ? orgDateKey(r.payrollRun.disbursedAt) : today;
     const due = addDays(base, 7);
     const date = due < today ? today : due;
     if (!inHorizon(date)) continue;
@@ -439,7 +495,7 @@ export async function cashForecast(now: Date = new Date(), opts: { tenantId?: st
     const expected = s.dueAt
       ? ymdOf(s.dueAt)
       : s.finalizedAt
-        ? addDays(ymdOf(s.finalizedAt), avgDays ?? s.client.paymentTermsDays)
+        ? addDays(orgDateKey(s.finalizedAt), avgDays ?? s.client.paymentTermsDays)
         : today;
     const overdue = expected < today;
     const date = overdue ? addDays(today, 6) : expected;

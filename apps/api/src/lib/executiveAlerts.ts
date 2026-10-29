@@ -22,6 +22,7 @@ import { notifyUser } from './notify.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { computeExecutiveSummary } from './executiveSummary.js';
 import { buildOnboardingTile } from '../routes/complianceScorecard.js';
+import { logger } from './logger.js';
 
 const ALERT_CATEGORY = 'executive_alert';
 const SWEEP_SECONDS = 60 * 60;
@@ -222,8 +223,8 @@ export function startExecutiveAlertsCron(): void {
     });
   }, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] executive alerts cron armed (hourly, at-most-once per condition per org week)`,
+  logger.info(
+    `executive alerts cron armed (hourly, at-most-once per condition per org week)`,
   );
 }
 

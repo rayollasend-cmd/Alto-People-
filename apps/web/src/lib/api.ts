@@ -5,7 +5,19 @@ import {
 } from './sessionEvents';
 import { nativeHeaders } from './native/platform';
 
+/**
+ * What a person reads when the server refuses for a capability their role
+ * doesn't hold. The API answers "Missing capability: view:recruiting" — a
+ * line for logs, never for a screen (deep audit 2026-10-29, CRAWL-11: 27
+ * page loads printed it). Every page that shows `err.message` reads plain
+ * words instead; the capability stays on `ApiError.capability` for logic.
+ */
+export const NO_ACCESS_MESSAGE = 'You don’t have access to this.';
+const CAPABILITY_REFUSAL = /^\s*missing capabilit(?:y|ies)\b:?\s*(?:one of\s*)?(.*)$/i;
+
 export class ApiError extends Error {
+  /** The capability (or "a, b" list) a refusal named — for logic and logs, never shown. */
+  public readonly capability?: string;
   constructor(
     public readonly status: number,
     public readonly code: string,
@@ -16,8 +28,10 @@ export class ApiError extends Error {
     // server logs for the matching trace.
     public readonly requestId?: string,
   ) {
-    super(message);
+    const refusal = CAPABILITY_REFUSAL.exec(message ?? '');
+    super(refusal ? NO_ACCESS_MESSAGE : message);
     this.name = 'ApiError';
+    if (refusal) this.capability = refusal[1]!.trim() || undefined;
   }
 }
 

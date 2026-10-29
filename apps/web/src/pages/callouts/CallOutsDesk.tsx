@@ -239,14 +239,18 @@ function RecordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
   const [shiftId, setShiftId] = useState('');
   const [reason, setReason] = useState<CallOutReason>('SICK');
   const [note, setNote] = useState('');
+  // The next three days from now, as instants (a UTC date key started the
+  // window at UTC midnight — the evening before, after 8 PM Eastern).
   const range = useMemo(() => {
     const from = new Date();
-    const to = new Date(Date.now() + 3 * 86_400_000);
-    return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+    const to = new Date(from.getTime() + 3 * 86_400_000);
+    return { from: from.toISOString(), to: to.toISOString() };
   }, []);
+  // Only this person's shifts, filtered on the server (CODE-29: it fetched
+  // every ASSIGNED shift in the tenant, up to 3,000, to find one person's).
   const shifts = useQuery({
     queryKey: ['callouts', 'shifts-for', person?.id, range.from, range.to],
-    queryFn: () => listShifts({ status: 'ASSIGNED', from: range.from, to: range.to }),
+    queryFn: () => listShifts({ status: 'ASSIGNED', associateId: person!.id, from: range.from, to: range.to }),
     enabled: open && !!person,
   });
   const theirs = (shifts.data?.shifts ?? []).filter((s) => s.assignedAssociateId === person?.id && new Date(s.startsAt).getTime() > Date.now());

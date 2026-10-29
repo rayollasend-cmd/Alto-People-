@@ -20,12 +20,13 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+import { accountName, useMoneyConfirm } from '@/components/payroll/MoneyConfirm';
 
 /** The badge tone each funding state wears. */
 export function fundingTone(s: FundingStatus): NonNullable<BadgeProps['variant']> {
   if (s === 'SETTLED' || s === 'WIRE_RECEIVED') return 'success';
   if (s === 'RETURNED' || s === 'CANCELLED') return 'destructive';
-  if (s === 'SUBMITTED' || s === 'WIRE_PENDING') return 'info';
+  if (s === 'SUBMITTING' || s === 'SUBMITTED' || s === 'WIRE_PENDING') return 'info';
   return 'pending';
 }
 
@@ -61,6 +62,22 @@ export function FundingBreakdownList({ f }: { f: Funding }) {
   );
 }
 
+/** The confirm a funding pull asks (MONEY-10): the amount, the account it comes from, when it settles. Shared with the run's funding card. */
+export function pullConfirm(f: Pick<Funding, 'status' | 'amountCents' | 'debitEffectiveDate' | 'payDate' | 'returnReason'>, fromAccount: string | null) {
+  const again = f.status === 'RETURNED';
+  return {
+    title: again ? 'Pull payroll funds again?' : 'Pull payroll funds?',
+    amount: f.amountCents / 100,
+    from: fromAccount ?? 'The operating account on file',
+    to: 'Payroll (net pay, taxes and garnishments)',
+    when: `Settles ${shortDay(f.debitEffectiveDate)} · pay lands ${shortDay(f.payDate)}`,
+    note: again
+      ? `The last debit came back${f.returnReason ? `: ${f.returnReason}` : ''}. Make sure the money is in the account before you pull again.`
+      : 'An ACH debit starts now. It can’t be stopped once the bank has it.',
+    confirmLabel: `${again ? 'Pull again' : 'Pull'} ${centsToMoney(f.amountCents)}`,
+  };
+}
+
 const canPull = (s: FundingStatus) => s === 'NOT_STARTED' || s === 'DRAFT' || s === 'RETURNED';
 
 /**
@@ -70,8 +87,11 @@ const canPull = (s: FundingStatus) => s === 'NOT_STARTED' || s === 'DRAFT' || s 
  */
 export function RunFundingCard({ runId, runFinalized }: { runId: string; runFinalized: boolean }) {
   const qc = useQueryClient();
+  const confirmMoney = useMoneyConfirm();
   const [open, setOpen] = useState(false);
   const q = useQuery({ queryKey: ['payroll-banking', 'run', runId], queryFn: () => getRunFunding(runId), retry: false });
+  // The account the pull comes from, for the confirm (the same read the banking page makes).
+  const summary = useQuery({ queryKey: ['payroll-banking', 'summary'], queryFn: getBankingSummary, retry: false, enabled: !!q.data?.applies });
   const pull = useMutation({
     mutationFn: () => pullFunding(runId),
     onSuccess: (r) => {
@@ -106,7 +126,14 @@ export function RunFundingCard({ runId, runFinalized }: { runId: string; runFina
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           {canPull(f.status) && runFinalized && (
-            <Button size="sm" onClick={() => pull.mutate()} loading={pull.isPending}>
+            <Button
+              size="sm"
+              onClick={async () => {
+                const from = summary.data ? accountName(summary.data.accounts.find((a) => a.id === (f.bankAccountId ?? summary.data.profile.fundingAccountId))) : null;
+                if (await confirmMoney(pullConfirm(f, from))) pull.mutate();
+              }}
+              loading={pull.isPending}
+            >
               {`Pull ${centsToMoney(f.amountCents)}`}
             </Button>
           )}

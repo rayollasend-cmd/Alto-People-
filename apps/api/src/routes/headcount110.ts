@@ -6,11 +6,12 @@ import { requireCapability } from '../middleware/auth.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { activeBreakdown } from '../lib/activeDefinition.js';
 import { countStandings, peopleStandings, turnoverBetween } from '../lib/peopleStatus.js';
-import { endOfWeekUTC, startOfWeekUTC } from '../lib/timeAnomalies.js';
+import { endOfWeekUTC, orgDateKey, startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { associatesWithoutRate } from '../lib/rateCards.js';
 import { internalSites, scopeAssociates } from '../lib/scope.js';
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '../types/express.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * A site/region-bound office account counts its own sites' people only:
@@ -124,9 +125,9 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
     onPayrollLastPeriod: lastRun
       ? {
           count: lastRun._count.items,
-          periodStart: lastRun.periodStart.toISOString().slice(0, 10),
-          periodEnd: lastRun.periodEnd.toISOString().slice(0, 10),
-          finalizedOn: lastRun.finalizedAt ? lastRun.finalizedAt.toISOString().slice(0, 10) : null,
+          periodStart: dateColumnKey(lastRun.periodStart),
+          periodEnd: dateColumnKey(lastRun.periodEnd),
+          finalizedOn: lastRun.finalizedAt ? orgDateKey(lastRun.finalizedAt) : null, // a moment: the company's day
         }
       : null,
     inHousing: null,
@@ -143,8 +144,8 @@ async function overview(now: Date, tenantId: string, reach: { ids: string[]; sit
     byEmploymentType: [...byType.entries()].map(([employmentType, n]) => ({ employmentType, active: n })).sort((a, b) => b.active - a.active),
     reconciliation: snapshot
       ? {
-          periodStart: snapshot.periodStart.toISOString().slice(0, 10),
-          periodEnd: snapshot.periodEnd.toISOString().slice(0, 10),
+          periodStart: dateColumnKey(snapshot.periodStart),
+          periodEnd: dateColumnKey(snapshot.periodEnd),
           ranAt: snapshot.ranAt.toISOString(),
           platformActive: snapshot.platformActive,
           platformPaid: snapshot.platformPaid,

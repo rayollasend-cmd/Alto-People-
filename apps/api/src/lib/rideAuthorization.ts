@@ -8,6 +8,8 @@ import { hashSignedPdf, renderSignedAgreement } from './esign.js';
 import { RIDE_AUTHORIZATION_VERSION, rideAuthorizationBody, rideAuthorizationTitle, toRideAuthLang, type RideAuthLang } from './rideAuthorizationContent.js';
 import { tenantIdForWrite } from './tenant.js';
 import { fmtDay } from './humanDates.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Van ride charge authorization (Brief 1A-3).
@@ -35,16 +37,18 @@ export interface RideRate {
   effectiveTo: string | null;
 }
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** effectiveFrom/effectiveTo are @db.Date columns: their UTC date is the day. A moment uses orgDateKey. */
+const ymd = dateColumnKey;
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
 function toRate(r: { id: string; fareCents: number; noShowFeeCents: number; effectiveFrom: Date; effectiveTo: Date | null }): RideRate {
   return { id: r.id, fareCents: r.fareCents, noShowFeeCents: r.noShowFeeCents, effectiveFrom: ymd(r.effectiveFrom), effectiveTo: r.effectiveTo ? ymd(r.effectiveTo) : null };
 }
 
-/** The rate in force on a date (today by default). Null when none has been set. */
+/** The rate in force on the company's day of `on` (today by default). Null when none has been set. */
 export async function rideRateOn(db: Db, on: Date = new Date()): Promise<RideRate | null> {
-  const day = dateOnly(ymd(on));
+  const dayKey = orgDateKey(on);
+  const day = dateOnly(dayKey);
   const row = await db.transportRate.findFirst({
     where: { effectiveFrom: { lte: day }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: day } }] },
     orderBy: { effectiveFrom: 'desc' },
@@ -58,7 +62,7 @@ export async function rideRateOn(db: Db, on: Date = new Date()): Promise<RideRat
     const seeded = await db.transportRate.create({
       data: { fareCents: settings?.fareCents ?? 500, noShowFeeCents: settings?.noShowFeeCents ?? 100, effectiveFrom: dateOnly('2024-01-01') },
     });
-    return ymd(seeded.effectiveFrom) <= ymd(day) ? toRate(seeded) : null;
+    return ymd(seeded.effectiveFrom) <= dayKey ? toRate(seeded) : null;
   }
   return null;
 }
@@ -69,7 +73,7 @@ export async function rideRateHistory(db: Db): Promise<RideRate[]> {
 
 /** A new rate from a date; the rate before it ends the day before. History is never rewritten. */
 export async function setRideRate(db: Db, input: { fareCents: number; noShowFeeCents: number; effectiveFrom?: string }, actorUserId: string, now: Date = new Date()): Promise<RideRate> {
-  const from = input.effectiveFrom ?? ymd(now);
+  const from = input.effectiveFrom ?? orgDateKey(now);
   const current = await db.transportRate.findFirst({ where: { effectiveTo: null }, orderBy: { effectiveFrom: 'desc' } });
   if (current && ymd(current.effectiveFrom) > from) {
     throw new HttpError(409, 'rate_history', `A rate already starts ${fmtDay(current.effectiveFrom, { year: true })}; a new rate cannot start before it.`);

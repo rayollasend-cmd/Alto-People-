@@ -50,6 +50,7 @@ import { fmtDay } from '../../humanDates.js';
 type Db = PrismaClient;
 
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: @db.Date values (posted-on, statement dates) are stored at UTC midnight.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const DAY = 86_400_000;
 const FEED_SUBTYPES = new Set(['BANK', 'CREDIT_CARD']);

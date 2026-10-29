@@ -37,7 +37,7 @@ import { QueryError } from '@/components/ui/QueryError';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, ymdLocal } from '@/lib/format';
 
 /* The contractors desk's money tabs: payment runs, state 1099 filing and the year-end summary. */
 
@@ -54,7 +54,7 @@ export function PaymentRunsTab() {
   const q = useQuery({ queryKey: ['contractors', 'runs'], queryFn: listPaymentRuns });
   const [open, setOpen] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [f, setF] = useState({ name: '', payDate: new Date().toISOString().slice(0, 10) });
+  const [f, setF] = useState(() => ({ name: '', payDate: ymdLocal() }));
   const create = useMutation({
     mutationFn: () => createPaymentRun({ name: f.name.trim(), payDate: f.payDate }),
     onSuccess: (r) => {

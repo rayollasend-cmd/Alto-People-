@@ -109,7 +109,7 @@ export async function runAuditChainChecks(db: Db): Promise<ChainResult[]> {
       // The security contact and the operator's org admins hear it the
       // way every other security alert reaches them (lib/securityAlerts),
       // once an hour per break — not a row nobody reads.
-      await raiseSecurityAlert(db, { rule: 'AUDIT_CHAIN', key: `${tenantId ?? '-'}:${r.breaks[0]!.seq}`, summary, auditLogIds: [], linkUrl: '/admin/audit' });
+      await raiseSecurityAlert(db, { rule: 'AUDIT_CHAIN', key: `${tenantId ?? '-'}:${r.breaks[0]!.seq}`, summary, auditLogIds: [], linkUrl: '/audit' });
       console.error(`[alto-people/api] ${summary}`);
     }
   }
@@ -176,6 +176,7 @@ export async function archiveAuditRows(db: Db, tenantId: string, now: Date = new
   const sealed = encryptBytes(gzipSync(Buffer.from(jsonl, 'utf8')));
   const sha256 = createHash('sha256').update(sealed).digest('hex');
   const end = rows.length === batch ? rows[rows.length - 1]!.createdAt : before;
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: the archive's object name spans instants (createdAt), not a company day
   const objectKey = tenantBlobKey(`audit-archive/${rows[0]!.createdAt.toISOString().slice(0, 10)}_${end.toISOString().slice(0, 10)}_${sha256.slice(0, 12)}.jsonl.gz.enc`, tenantId);
   await getBlobStore().put(objectKey, sealed, 'application/octet-stream');
   const seqs = rows.map((r) => r.seq).filter((s): s is bigint => s !== null);

@@ -4,22 +4,30 @@ import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { ArrowDownRight, ArrowUpRight, Minus, ShieldCheck, Sparkles } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
+import { execHref, useExecFrame } from '@/lib/executiveApi';
 import { useI18n } from '@/lib/i18n';
 import { useUrlParam } from '@/lib/useUrlState';
 import '@/lib/i18n/en/execPortal';
 import { CATEGORIES, CATEGORY_FILTERS, SEVERITY_RANK, TREND_TEXT, countBy, type CategoryFilter } from './riskMeta';
 import { SeverityChip } from './SeverityChip';
+import { RiskDetailDrawer, isDetailHref, useOpenRisk } from './RiskDetail';
 
 /**
  * The risk register as the board reads one: severity, the risk in a line,
  * what it means, who owns it, which way it is moving, the number behind
  * it, and the page that works it. Highest severity first; a chip per area
  * narrows it (kept in the URL, so a filtered register can be sent).
+ *
+ * A row opens its detail in place (RiskDetailDrawer); "Open" goes to the
+ * risk's page only when every executive can read that page, keeping the
+ * frame on executive pages (execHref).
  */
 const TREND_ICON = { rising: ArrowUpRight, easing: ArrowDownRight, steady: Minus, new: Sparkles } as const;
 
 export function RiskRegister({ risks, categories = CATEGORIES }: { risks: ExecRisk[]; categories?: readonly ExecRiskCategory[] }) {
   const { t } = useI18n();
+  const frame = useExecFrame();
+  const [, setOpenRisk] = useOpenRisk();
   const [category, setCategory] = useUrlParam<CategoryFilter>('category', 'all', CATEGORY_FILTERS);
   const counts = countBy(risks, (r) => r.category, categories);
   const rows = category === 'all' ? risks : risks.filter((r) => r.category === category);
@@ -80,19 +88,32 @@ export function RiskRegister({ risks, categories = CATEGORIES }: { risks: ExecRi
       searchable: false,
       stopRowClick: true,
       align: 'right',
-      cell: (r) => (
-        <Link
-          to={r.href}
-          className="inline-flex min-h-8 items-center rounded-md px-2 text-sm text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11"
-          aria-label={t('execPortal.risk.openAria', { title: r.title })}
-        >
-          {t('execPortal.risk.open')}
-        </Link>
-      ),
+      cell: (r) =>
+        isDetailHref(r.href) ? (
+          <button
+            type="button"
+            onClick={() => setOpenRisk(r.id)}
+            className="inline-flex min-h-8 items-center rounded-md px-2 text-sm text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11"
+            aria-label={t('execPortal.risk.detailsAria', { title: r.title })}
+            data-testid={`exec-risk-details-${r.id}`}
+          >
+            {t('execPortal.risk.details')}
+          </button>
+        ) : (
+          <Link
+            to={execHref(r.href, frame)}
+            className="inline-flex min-h-8 items-center rounded-md px-2 text-sm text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent coarse:min-h-11"
+            aria-label={t('execPortal.risk.openAria', { title: r.title })}
+            data-testid={`exec-risk-open-${r.id}`}
+          >
+            {t('execPortal.risk.open')}
+          </Link>
+        ),
     },
   ];
 
   return (
+    <>
     <DataGrid<ExecRisk>
       id="exec-risk-register"
       caption={t('execPortal.risk.caption')}
@@ -100,6 +121,8 @@ export function RiskRegister({ risks, categories = CATEGORIES }: { risks: ExecRi
       rows={rows}
       columns={columns}
       rowKey={(r) => r.id}
+      onRowClick={(r) => setOpenRisk(r.id)}
+      rowActionLabel={(r) => t('execPortal.risk.detailsAria', { title: r.title })}
       defaultSort={{ key: 'severity', direction: 'desc' }}
       search={false}
       columnChooser={false}
@@ -119,5 +142,7 @@ export function RiskRegister({ risks, categories = CATEGORIES }: { risks: ExecRi
       }
       empty={{ icon: ShieldCheck, title: t('execPortal.risk.emptyTitle'), description: t('execPortal.risk.emptyBody') }}
     />
+    <RiskDetailDrawer risks={risks} />
+    </>
   );
 }

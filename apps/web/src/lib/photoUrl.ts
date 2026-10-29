@@ -40,6 +40,16 @@ export function personPhotoUrl(p: {
   return p.photoUrl || associatePhotoUrl(p.associateId) || userPhotoUrl(p.userId);
 }
 
+/** An associate row's face (a roster/picker row: `{ id, photoUrl? }`) — the same null-means-none contract. */
+export function associateFace(a: { id: string; photoUrl?: string | null } | null | undefined): string | undefined {
+  return a ? personPhotoUrl({ photoUrl: a.photoUrl, associateId: a.id }) : undefined;
+}
+
+/** A shift's holder's face (`assignedAssociatePhotoUrl` on the shift payload) — no request when the API says there is none. */
+export function shiftHolderFace(s: { assignedAssociateId: string | null; assignedAssociatePhotoUrl?: string | null }): string | undefined {
+  return personPhotoUrl({ photoUrl: s.assignedAssociatePhotoUrl, associateId: s.assignedAssociateId });
+}
+
 /*
  * Photo URLs that came back missing (404, a dead blob) this session. A
  * person with no photo is on the directory, the schedule, the inbox — and

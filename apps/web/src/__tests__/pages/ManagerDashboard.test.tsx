@@ -57,11 +57,14 @@ const request = (id: string): TeamTimeOffRequest => ({
 
 /** The company decision queue's rows (the shared ['me','decisions'] query the count reads). */
 let queueRows: Array<{ key: string }> = [];
+/** The person's inbox (the shared ['inbox'] query) — null: not loaded. */
+let inboxData: { total: number; sources: Array<Record<string, unknown>> } | null = null;
 
 function renderPage(user: { firstName?: string; email: string } = { firstName: 'Dana', email: 'dana.reyes@example.com' }) {
   const caps = ROLE_CAPABILITIES.MANAGER;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(['me', 'decisions'], { decisions: queueRows });
+  if (inboxData) client.setQueryData(['inbox'], inboxData);
   render(
     <QueryClientProvider client={client}>
       <AuthContext.Provider
@@ -94,6 +97,7 @@ const emptyHome: TeamHome = {
 
 beforeEach(() => {
   queueRows = [];
+  inboxData = null;
   hours.getTeamHours.mockResolvedValue({ weekStart: '2026-10-17', weekEnd: '2026-10-24', thresholdHours: 40, people: [] });
   vi.mocked(getTeamHome).mockResolvedValue(emptyHome);
   vi.mocked(getTeamDashboard).mockResolvedValue({
@@ -136,22 +140,49 @@ describe('<ManagerDashboard>', () => {
 
   it('leads with ONE counted "Needs you": the approvals ranked, the decision queue folded while they wait', async () => {
     renderPage();
-    await screen.findByText('Timesheets to review');
+    await screen.findByText('Timesheets from your team');
     const heading = screen.getByRole('heading', { name: /Needs you/ });
     // The count is what is listed: two cards (timesheets, time off), no queue rows.
     expect(heading).toHaveTextContent('Needs you2');
     const section = heading.closest('section')!;
-    expect(within(section).getByText('Time-off request waiting')).toBeInTheDocument();
+    expect(within(section).getByText('Time-off request from your team')).toBeInTheDocument();
     expect(within(section).getByRole('button', { name: 'Approve all 2' })).toBeInTheDocument();
     expect(screen.queryByText(/Nothing needs you/)).not.toBeInTheDocument();
     expect(screen.queryByText('Manager view')).not.toBeInTheDocument();
     expect(screen.queryByText(/Needs your approval/)).not.toBeInTheDocument();
   });
 
+  it('says the timesheets card is the team’s, with every timesheet they approve one tap away (FLOOR-15)', async () => {
+    inboxData = {
+      total: 17,
+      sources: [{ key: 'timesheets', label: 'Timesheets to approve', description: '', count: 14, path: '/time-attendance?tab=queue&from=2026-10-20', module: 'time' }],
+    };
+    renderPage();
+    const card = (await screen.findByText('Timesheets from your team')).closest('div.group') as HTMLElement;
+    expect(within(card).getByText(/14 in all across everyone you approve/)).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: 'See every timesheet' })).toHaveAttribute('href', '/time-attendance?tab=queue&from=2026-10-20');
+  });
+
+  it('names the company’s day on Today on your team when it isn’t the viewer’s own (FLOOR-5)', async () => {
+    vi.mocked(getTeamHome).mockResolvedValue({
+      ...emptyHome,
+      today: {
+        date: '2031-03-04',
+        shifts: [{ id: 's1', associateId: 'a-1', associateName: 'Ann Lee', startsAt: '2031-03-04T14:00:00.000Z', endsAt: '2031-03-04T22:00:00.000Z', position: 'Cashier', location: null, timezone: 'America/New_York' }],
+        onClock: [],
+        out: [],
+        celebrations: [],
+      },
+    });
+    renderPage();
+    const section = await screen.findByRole('region', { name: 'Today on your team' });
+    await vi.waitFor(() => expect(within(section).getByRole('heading', { name: /Today on your team/ })).toHaveTextContent(/Today on your team · .*Mar.*4/));
+  });
+
   it('counts the company queue’s rows with the cards — the number is what the section lists', async () => {
     queueRows = [{ key: 'claims:pending:x' }, { key: 'compliance:expired:y' }];
     renderPage();
-    await screen.findByText('Timesheets to review');
+    await screen.findByText('Timesheets from your team');
     expect(screen.getByTestId('needs-you-count')).toHaveTextContent('4');
   });
 

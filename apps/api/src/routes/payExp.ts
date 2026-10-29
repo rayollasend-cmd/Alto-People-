@@ -16,6 +16,7 @@ import { scopeAssociates, scopePayrollItems, scopePayrollRuns, scopeWhere } from
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { estimateW4, w4EstimatorContext } from '../lib/w4Estimator.js';
 import type { Prisma } from '@prisma/client';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * PAYEXP: daily pay, manual checks, third-party sick pay, "check my pay
@@ -81,7 +82,7 @@ payExpRouter.get('/payroll/daily-pay', requireAuth, PROCESS, async (req, res) =>
       runId: i.payrollRun.id,
       associateId: i.associateId,
       name: `${i.associate.firstName} ${i.associate.lastName}`,
-      workDate: i.payrollRun.periodStart.toISOString().slice(0, 10),
+      workDate: dateColumnKey(i.payrollRun.periodStart),
       gross: Number(i.grossPay),
       net: Number(i.netPay),
       status: i.status,
@@ -174,7 +175,7 @@ payExpRouter.get('/payroll/manual-checks', requireAuth, PROCESS, async (req, res
       associateId: s.associateId,
       associateName: `${s.associate.firstName} ${s.associate.lastName}`,
       payerName: s.payerName,
-      payDate: s.payDate.toISOString().slice(0, 10),
+      payDate: dateColumnKey(s.payDate),
       grossAmount: Number(s.grossAmount),
       nontaxableAmount: Number(s.nontaxableAmount),
       federalWithheld: Number(s.federalWithheld),
@@ -308,7 +309,7 @@ payExpRouter.get('/payroll/pay-checks', requireAuth, PROCESS, async (req, res) =
   const stats = await payPreviewStats(prisma, { associateIds: items.map((i) => i.associateId), periodStart: run.periodStart, periodEnd: run.periodEnd });
   const names = new Map(items.map((i) => [i.associateId, `${i.associate.firstName} ${i.associate.lastName}`]));
   res.json({
-    run: { id: run.id, periodStart: run.periodStart.toISOString().slice(0, 10), periodEnd: run.periodEnd.toISOString().slice(0, 10) },
+    run: { id: run.id, periodStart: dateColumnKey(run.periodStart), periodEnd: dateColumnKey(run.periodEnd) },
     people: stats.people,
     confirmed: stats.confirmed,
     flagged: stats.flagged,

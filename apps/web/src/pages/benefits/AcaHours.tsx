@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { HeartPulse, Settings2 } from '@/components/ui/icons';
 import { ApiError } from '@/lib/api';
 import { useTenant, useTerm } from '@/lib/auth';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, ymdLocal } from '@/lib/format';
 import {
   answerAcaOffer,
   getAcaSettings,
@@ -288,7 +288,7 @@ export function AcaHours() {
 function WorkerDrawer({ worker, threshold, onClose }: { worker: AcaWorker | null; threshold: number; onClose: () => void }) {
   const qc = useQueryClient();
   const [klass, setKlass] = useState<AcaClassification>('VARIABLE_HOUR');
-  const [from, setFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [from, setFrom] = useState(() => ymdLocal());
   useEffect(() => {
     if (worker) setKlass(worker.measurement.classification);
   }, [worker]);

@@ -122,8 +122,34 @@ describe('the Operations pulse', () => {
     expect(tone('incidentsOpen')).toBe('negative');
     expect(tone('payrollCasesOpen')).toBe('none');
     expect(tone('closeOuts')).toBe('none');
-    expect(batons).toHaveTextContent('23 items are waiting on the next team.');
-    expect(screen.getByTestId('exec-baton-unapprovedTimesheets')).toHaveAttribute('href', '/time-attendance');
+    expect(batons).toHaveTextContent('23 items are waiting on the next team');
+    // The approval queue is manage:time's: for the chairman the count names its desk and opens
+    // nothing (it used to open her own clock, with two 403s — deep audit LEAD-6).
+    const timesheets = screen.getByTestId('exec-baton-unapprovedTimesheets');
+    expect(timesheets.tagName).not.toBe('A');
+    expect(timesheets).toHaveAttribute('data-opens', 'false');
+    expect(timesheets).toHaveTextContent('Approved by operations in Time & attendance');
+    expect(screen.getByTestId('exec-baton-payrollCasesOpen').tagName).not.toBe('A');
+    // Pages she can read still open.
+    expect(screen.getByTestId('exec-baton-incidentsOpen')).toHaveAttribute('href', '/compliance/osha');
+  });
+
+  it('opens the timesheet queue for a role that works it', async () => {
+    vi.mocked(apiFetch).mockImplementation(routeApi(ROUTES) as never);
+    renderAsChairman(<ExecOperationsPage />, { route: '/executive/operations', role: 'OPERATIONS_MANAGER' });
+    const batons = await screen.findByTestId('exec-ops-batons');
+    await within(batons).findByText('Timesheets to approve');
+    expect(screen.getByTestId('exec-baton-unapprovedTimesheets')).toHaveAttribute('href', '/time-attendance?tab=queue');
+    expect(screen.getByTestId('exec-baton-payrollCasesOpen')).toHaveAttribute('href', '/hr-cases');
+  });
+
+  it('prints "right now" on the company clock with its zone, and keeps the frame on its executive links', async () => {
+    vi.mocked(apiFetch).mockImplementation(routeApi({ ...ROUTES, '/executive/briefing': { ...BRIEFING, timezone: 'America/New_York' } }) as never);
+    renderAsChairman(<ExecOperationsPage />, { route: '/executive/operations?period=month' });
+    // 15:32Z is 11:32 AM in New York, whatever the machine's zone.
+    expect(await screen.findByText(/Right now · as of 11:32 AM E[DS]T/)).toBeInTheDocument();
+    const placements = await screen.findByTestId('exec-ops-placements');
+    expect(within(placements).getByRole('link', { name: 'Client portfolio' })).toHaveAttribute('href', '/executive/clients?period=month');
   });
 
   it('shows the floor, store standards, attendance, placements and the portal', async () => {

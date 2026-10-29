@@ -1,4 +1,5 @@
 import type { ExecKpi, ExecStatus, ExecUnit } from '@alto-people/shared';
+import { fmtTime, fmtTimeTz, tzAbbrev } from '@/lib/format';
 
 /**
  * How the executive portal writes a number (2026-10-27). Board figures are
@@ -74,3 +75,20 @@ export const STATUS_TEXT: Record<ExecStatus, string> = {
   bad: 'text-negative-800',
   none: 'text-ink-muted',
 };
+
+/**
+ * "2:19 AM EDT" — when the figures were read, on the COMPANY's clock with
+ * its zone. The periods beside it are company days (an Eastern company is on
+ * Thursday at 11:30 PM Pacific), so a browser-clock "11:19 PM" beside
+ * "Oct 1 – 29" mixed two calendars. Without a zone from the API it falls
+ * back to the display clock, unlabelled, as before.
+ */
+export function fmtExecAsOf(asOf: string, timezone?: unknown): string {
+  if (typeof timezone !== 'string' || !timezone) return fmtTime(asOf);
+  try {
+    return `${fmtTimeTz(asOf, timezone)} ${tzAbbrev(timezone, asOf)}`;
+  } catch {
+    // An unknown zone name must not take the page down: the display clock, unlabelled.
+    return fmtTime(asOf);
+  }
+}

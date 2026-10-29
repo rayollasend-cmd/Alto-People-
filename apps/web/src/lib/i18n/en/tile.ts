@@ -10,11 +10,14 @@ export const enTile = {
   'tile.noPayYet': 'Your first shows up after payroll runs',
   'tile.paidOn': 'Paid {date}',
   'tile.timeOff': 'Time off',
-  'tile.accrues': 'Sick hours accrue as you work',
+  'tile.accrues': 'Accrues as you work',
   'tile.openShifts': 'Open shifts',
   'tile.openSome': 'Ready to pick up',
   'tile.openNone': 'None right now',
   'tile.nextPayday': 'Next payday {date}',
+  'tile.noBalance': 'No balance yet',
+  'tile.openCount': '{count} open shifts you can pick up',
+  'tile.openCount_one': '{count} open shift you can pick up',
 } as const;
 
 registerEnglish(enTile);

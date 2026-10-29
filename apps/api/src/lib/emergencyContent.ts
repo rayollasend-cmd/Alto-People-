@@ -1,5 +1,5 @@
 import type { EmailLang } from './emailLayout.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * What an emergency says, in the three languages the platform speaks.
@@ -39,7 +39,7 @@ export function emergencySubject(lang: EmailLang, title: string): string {
 
 /** The declaration: the message, the shifts, the one tap, the van. */
 export function emergencyDeclaredBody(lang: EmailLang, w: EmergencyWords): string {
-  const tz = w.timeZone ?? DEFAULT_TIMEZONE;
+  const tz = w.timeZone ?? companyWorkweek().timezone;
   const start = when(w.startsAt, lang, tz);
   const pickup = w.pickupAt ? when(w.pickupAt, lang, tz) : null;
   if (lang === 'es') {
@@ -86,7 +86,7 @@ export function standDownSubject(lang: EmailLang, title: string): string {
 }
 
 /** Stand down: the schedule is back from the next shift on. */
-export function standDownBody(lang: EmailLang, title: string, from: Date, timeZone = DEFAULT_TIMEZONE): string {
+export function standDownBody(lang: EmailLang, title: string, from: Date, timeZone = companyWorkweek().timezone): string {
   const at = when(from, lang, timeZone);
   if (lang === 'es') {
     return `La emergencia "${title}" terminó. Tus turnos a partir del ${at} vuelven a estar en el horario; revisa la app para ver cuándo te toca. Gracias por avisarnos que estabas bien.`;

@@ -45,7 +45,14 @@ const TRAININGS = [
 ] as const;
 const KIND_LABEL: Record<RequirementKind, string> = { VACCINATION: 'Vaccination', TRAINING: 'Training', QUALIFICATION: 'Qualification' };
 
-export function RequirementsTab({ canManage }: { canManage: boolean }) {
+export function RequirementsTab({
+  canManage,
+  canReadQualifications = false,
+}: {
+  canManage: boolean;
+  /** GET /qualifications reads on view:scheduling: without it the Qualification kind isn't offered. */
+  canReadQualifications?: boolean;
+}) {
   const term = useTerm();
   // The tab says "Store requirements" in this tenant's words; the card, the
   // field and the empty state say the same word.
@@ -55,7 +62,11 @@ export function RequirementsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const list = useQuery({ queryKey: ['credentialRequirements', 'list'], queryFn: listCredentialRequirements });
   const sites = useQuery({ queryKey: ['credentialRequirements', 'sites'], queryFn: listSites, enabled: canManage });
-  const quals = useQuery({ queryKey: ['credentialRequirements', 'qualifications'], queryFn: () => listQualifications(), enabled: canManage });
+  // The qualification catalog reads on view:scheduling (GET /qualifications).
+  // A role without it (the recruiter) was offered the Qualification kind over
+  // an empty picker while the read 403'd (PEOPLE-16): offer only what it can.
+  const canReadQuals = canReadQualifications;
+  const quals = useQuery({ queryKey: ['credentialRequirements', 'qualifications'], queryFn: () => listQualifications(), enabled: canManage && canReadQuals, retry: false });
 
   const [locationId, setLocationId] = useState('');
   const [kind, setKind] = useState<RequirementKind>('VACCINATION');
@@ -192,11 +203,15 @@ export function RequirementsTab({ canManage }: { canManage: boolean }) {
                   >
                     <option value="VACCINATION">Vaccination</option>
                     <option value="TRAINING">Training</option>
-                    <option value="QUALIFICATION">Qualification</option>
+                    {canReadQuals && <option value="QUALIFICATION">Qualification</option>}
                   </Select>
                 )}
               </Field>
-              <Field label="Required" required>
+              <Field
+                label="Required"
+                required
+                hint={kind === 'QUALIFICATION' && quals.isError ? 'The qualification list could not be loaded. Choose a vaccination or a training, or try again later.' : undefined}
+              >
                 {(p) => (
                   <Select {...p} value={target} onChange={(e) => pick(e.target.value)}>
                     <option value="">Choose</option>

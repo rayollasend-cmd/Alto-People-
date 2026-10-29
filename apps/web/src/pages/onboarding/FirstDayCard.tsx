@@ -303,7 +303,11 @@ function OpenShiftsPicker({
   /** The application to come back to from the schedule. */
   back: string;
 }) {
-  const fromIso = from ? `${from}T00:00:00.000Z` : new Date().toISOString();
+  // Without a start date the list starts now — read ONCE: a fresh
+  // new Date() in the query key was a new key every render, so each answer
+  // re-rendered, re-keyed and fetched again forever (CODE-11).
+  const [openedAt] = useState(() => new Date().toISOString());
+  const fromIso = from ? `${from}T00:00:00.000Z` : openedAt;
   const q = useQuery({
     queryKey: ['scheduling', 'shifts', 'open', locationId, fromIso],
     queryFn: () => listShifts({ status: 'OPEN', locationId, from: fromIso }),

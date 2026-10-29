@@ -6,6 +6,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { latestCoverage } from '../lib/credentialCoverage.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * What a site or client requires its people to hold (agent families step 5;
@@ -52,7 +53,7 @@ credentialRequirementsRouter.get('/', async (_req, res) => {
       vaccinationKind: r.vaccinationKind,
       complianceTag: r.complianceTag,
       qualificationId: r.qualificationId,
-      latest: r.latest ? { weekOf: r.latest.weekOf.toISOString().slice(0, 10), population: r.latest.population, missing: r.latest.missing } : null,
+      latest: r.latest ? { weekOf: dateColumnKey(r.latest.weekOf), population: r.latest.population, missing: r.latest.missing } : null,
     })),
   });
 });

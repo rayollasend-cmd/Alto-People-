@@ -142,6 +142,9 @@ export function resolveExecWindow(periodKey: ExecPeriodKey, compareKey: ExecComp
     complete,
     elapsedPct,
     asOf: now.toISOString(),
+    // The page prints "as of" on this clock, with its abbreviation: the
+    // days above are the company's, so the time beside them is too.
+    timezone: tz,
   };
 
   let compareFrom: Date | null = null;

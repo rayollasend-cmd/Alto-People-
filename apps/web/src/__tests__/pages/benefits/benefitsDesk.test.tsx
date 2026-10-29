@@ -84,7 +84,8 @@ describe('/benefits for an associate', () => {
   it('an error says so once — no “when HR opens enrollment” card under it', async () => {
     api.listMyPlans.mockRejectedValue(new Error('boom'));
     renderAs('ASSOCIATE', <BenefitsHome />, '/benefits', { associateId: 'a1' });
-    expect(await screen.findByText('Could not load your benefits.')).toBeInTheDocument();
+    // The failure in plain words (QueryError) — once.
+    expect(await screen.findByText(/Couldn’t load your benefits\./)).toBeInTheDocument();
     expect(screen.queryByText(/When HR opens enrollment/)).toBeNull();
     expect(screen.queryByText('Available plans')).toBeNull();
   });

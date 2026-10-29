@@ -19,6 +19,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { tenantIdForWrite } from './tenant.js';
 import { netWorkedMinutes, orgDateKey } from './timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 
 /**
  * PROGRAM LIFECYCLE — the J-1 and H-2B record and the dates it turns on.
@@ -38,10 +39,10 @@ import { netWorkedMinutes, orgDateKey } from './timeAnomalies.js';
 type Db = PrismaClient;
 
 const DAY_MS = 86_400_000;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+const ymd = dateColumnKey;
 const atUtcMidnight = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const daysBetween = (fromYmd: string, toYmd: string) => Math.round((atUtcMidnight(toYmd).getTime() - atUtcMidnight(fromYmd).getTime()) / DAY_MS);
-const addDays = (s: string, days: number) => ymd(new Date(atUtcMidnight(s).getTime() + days * DAY_MS));
+const addDays = addDaysToKey;
 
 export const DEFAULT_ALERT_SETTINGS: ProgramAlertSettings = {
   programEndDays: [60, 30, 14, 7],

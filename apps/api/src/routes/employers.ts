@@ -7,6 +7,7 @@ import { scopeActiveAssociates } from '../lib/scope.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { defaultEmployerOrg, employmentHistory } from '../lib/employment.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Brief 2-1b, step 4 — the employers of record and a person's employment.
@@ -18,7 +19,10 @@ import { tenantIdForWrite } from '../lib/tenant.js';
  */
 export const employersRouter = Router();
 
-const VIEW = requireCapability('view:hr-admin');
+// The list is the legal name, EIN and address forms print — company facts,
+// no pay. view:org reads it too (CRAWL-3): Finance prints W-2s from these
+// EINs, and the Settings rail and module were already view:org.
+const VIEW = requireAnyCapability('view:hr-admin', 'view:org');
 const MANAGE = requireCapability('manage:org');
 
 const FactsInput = z.object({
@@ -126,8 +130,8 @@ employersRouter.get('/org/associates/:id/employment', requireAnyCapability('view
       id: e.id,
       employer: { id: e.employer.id, kind: e.employer.kind, legalName: e.employer.legalName, ein: e.employer.ein, clientId: e.employer.clientId },
       employmentType: e.employmentType,
-      hireDate: e.hireDate.toISOString().slice(0, 10),
-      endDate: e.endDate ? e.endDate.toISOString().slice(0, 10) : null,
+      hireDate: dateColumnKey(e.hireDate),
+      endDate: e.endDate ? dateColumnKey(e.endDate) : null,
       applicationId: e.applicationId,
       site: e.site,
     })),

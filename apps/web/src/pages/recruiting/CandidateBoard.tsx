@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -8,11 +8,12 @@ import {
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { ArrowRightLeft, FileText, Link2 } from '@/components/ui/icons';
+import { ArrowRightLeft, FileText, Link2, MessageSquare, Phone } from '@/components/ui/icons';
 import type { Candidate, CandidateBoardResponse, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, phoneHref } from '@/lib/format';
+import { useMinWidth } from '@/lib/useViewport';
 import { associatePhotoUrl } from '@/lib/photoUrl';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -79,7 +80,31 @@ interface CandidateBoardProps {
   onSeeAll: (stage: CandidateStage) => void;
 }
 
-export function CandidateBoard({
+/** Below this the columns (4 × 12rem + the outcomes) no longer fit side by side. */
+const BOARD_MIN_PX = 880;
+
+export function CandidateBoard(props: CandidateBoardProps) {
+  // A phone gets its own shape (PEOPLE-18): seven columns side by side
+  // showed only Applied, with the rest off-screen and no cue. So does a
+  // narrow desk (1024 with the sidebar open): the stage switcher, rather
+  // than a board whose Offer column and outcomes sit off to the right.
+  const wideScreen = useMinWidth(640);
+  const ref = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setNarrow(w < BOARD_MIN_PX);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return <div ref={ref}>{wideScreen && !narrow ? <WideBoard {...props} /> : <PhonePipeline {...props} />}</div>;
+}
+
+function WideBoard({
   columns,
   pendingId,
   canManage,
@@ -573,5 +598,200 @@ function MoveMenu({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/* ===== The phone pipeline (PEOPLE-18) ===================================== */
+
+const PHONE_STAGE_DOT: Record<CandidateStage, string> = {
+  APPLIED: 'bg-silver/60',
+  SCREENING: 'bg-warning',
+  INTERVIEW: 'bg-accent',
+  OFFER: 'bg-gold',
+  HIRED: 'bg-success',
+  WITHDRAWN: 'bg-silver/30',
+  REJECTED: 'bg-alert',
+};
+
+/**
+ * The pipeline on a phone: a stage switcher with counts above one
+ * full-width list — every stage one tap away, nothing off-screen. Each
+ * card opens the candidate, and carries one-tap Call, Text and Move (a
+ * drag fights the scroll on a phone). Starts on the first working stage
+ * with anyone in it.
+ */
+export function PhonePipeline({ columns, pendingId, canManage, onMove, onOpen, onLoadMore, loadingMore, onSeeAll }: CandidateBoardProps) {
+  const byStage = useMemo(() => new Map(columns.map((c) => [c.stage, c])), [columns]);
+  const firstBusy = OPEN.find((s) => (byStage.get(s)?.total ?? 0) > 0) ?? 'APPLIED';
+  const [picked, setPicked] = useState<CandidateStage | null>(null);
+  const stage = picked ?? firstBusy;
+  const col = byStage.get(stage) ?? { stage, total: 0, candidates: [] };
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const tabRefs = useRef(new Map<CandidateStage, HTMLButtonElement>());
+  useEffect(() => {
+    tabRefs.current.get(stage)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [stage]);
+  const onTabKey = (e: KeyboardEvent, s: CandidateStage) => {
+    const i = NAV_ORDER.indexOf(s);
+    const next = e.key === 'ArrowRight' ? NAV_ORDER[i + 1] : e.key === 'ArrowLeft' ? NAV_ORDER[i - 1] : undefined;
+    if (!next) return;
+    e.preventDefault();
+    setPicked(next);
+    tabRefs.current.get(next)?.focus();
+  };
+  const shown = col.candidates.length;
+  return (
+    <div className="space-y-3" data-testid="phone-pipeline">
+      <div role="tablist" aria-label="Pipeline stages" className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
+        {NAV_ORDER.map((s) => {
+          const total = byStage.get(s)?.total ?? 0;
+          const active = s === stage;
+          return (
+            <button
+              key={s}
+              ref={(el) => {
+                if (el) tabRefs.current.set(s, el);
+                else tabRefs.current.delete(s);
+              }}
+              type="button"
+              role="tab"
+              id={`pipeline-tab-${s}`}
+              aria-selected={active}
+              aria-controls="pipeline-stage-panel"
+              tabIndex={active ? 0 : -1}
+              onClick={() => setPicked(s)}
+              onKeyDown={(e) => onTabKey(e, s)}
+              className={cn(
+                'inline-flex min-h-11 shrink-0 snap-start items-center gap-2 rounded-full border px-3.5 text-sm transition-colors',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                active ? 'border-gold bg-gold-fill text-on-accent font-medium' : 'border-navy-secondary bg-navy/40 text-silver',
+              )}
+            >
+              {!active && <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', PHONE_STAGE_DOT[s])} />}
+              {STAGE_LABEL[s]}
+              <span className={cn('tabular-nums', active ? 'opacity-90' : 'text-silver/70')}>{total}</span>
+            </button>
+          );
+        })}
+      </div>
+      <section id="pipeline-stage-panel" role="tabpanel" aria-labelledby={`pipeline-tab-${stage}`} className="space-y-2">
+        {shown === 0 ? (
+          <p className="rounded-md border border-dashed border-navy-secondary px-4 py-8 text-center text-sm text-silver/80">
+            No one in {STAGE_LABEL[stage]} right now.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {col.candidates.map((c) => (
+              <PhoneCard
+                key={c.id}
+                candidate={c}
+                pending={pendingId === c.id}
+                canMove={canManage && !TERMINAL.has(c.stage)}
+                menuOpen={menuFor === c.id}
+                onMenuOpenChange={(open) => setMenuFor(open ? c.id : null)}
+                onMove={(target) => onMove(c, target)}
+                onOpen={() => onOpen(c)}
+              />
+            ))}
+          </ul>
+        )}
+        {shown < col.total &&
+          (TERMINAL.has(stage) ? (
+            <Button variant="ghost" className="min-h-11 w-full" onClick={() => onSeeAll(stage)}>
+              See all {col.total} in the list
+            </Button>
+          ) : (
+            <Button variant="ghost" className="min-h-11 w-full" loading={loadingMore === stage} disabled={loadingMore === stage} onClick={() => onLoadMore(stage)}>
+              Show more ({col.total - shown} left)
+            </Button>
+          ))}
+      </section>
+    </div>
+  );
+}
+
+function PhoneCard({
+  candidate,
+  pending,
+  canMove,
+  menuOpen,
+  onMenuOpenChange,
+  onMove,
+  onOpen,
+}: {
+  candidate: Candidate;
+  pending: boolean;
+  canMove: boolean;
+  menuOpen: boolean;
+  onMenuOpenChange: (open: boolean) => void;
+  onMove: (target: CandidateStage) => void;
+  onOpen: () => void;
+}) {
+  const fullName = `${candidate.firstName} ${candidate.lastName}`;
+  const inStage = daysSince(candidate.stageChangedAt);
+  const tel = phoneHref(candidate.phone);
+  const sms = tel ? tel.replace(/^tel:/, 'sms:').replace(/;ext=.*$/, '') : null;
+  const source = candidate.source ? (SOURCE_LABEL[candidate.source] ?? candidate.source) : null;
+  const action = 'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-navy-secondary px-3 text-sm text-silver transition-colors hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright';
+  return (
+    <li className={cn('rounded-md border border-navy-secondary bg-navy elev-1', pending && 'opacity-60')} aria-busy={pending || undefined}>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open ${fullName}'s details`}
+        className="flex w-full items-start gap-3 rounded-t-md p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+      >
+        <Avatar src={associatePhotoUrl(candidate.hiredAssociateId)} name={fullName} email={candidate.email} size="sm" />
+        <span className="min-w-0 flex-1">
+          <span className="block break-words font-medium leading-snug text-ink">{fullName}</span>
+          <span className="block truncate text-xs2 text-ink-muted">
+            {[candidate.position, source].filter(Boolean).join(' · ') || 'No position recorded'}
+          </span>
+        </span>
+        <span
+          className={cn('shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-2xs tabular-nums', inStage >= 7 && !TERMINAL.has(candidate.stage) ? 'bg-warning/15 text-warning' : 'text-silver/70')}
+          title={`${inStage} day${inStage === 1 ? '' : 's'} in ${STAGE_LABEL[candidate.stage]}`}
+        >
+          {TERMINAL.has(candidate.stage) ? fmtDate(candidate.stageChangedAt) : `${inStage} ${inStage === 1 ? 'day' : 'days'}`}
+        </span>
+      </button>
+      {(tel || canMove) && (
+        <div className="flex gap-2 border-t border-navy-secondary px-3 py-2">
+          {tel && (
+            <a href={tel} className={action} aria-label={`Call ${fullName}`}>
+              <Phone className="h-4 w-4" aria-hidden="true" /> Call
+            </a>
+          )}
+          {sms && (
+            <a href={sms} className={action} aria-label={`Text ${fullName}`}>
+              <MessageSquare className="h-4 w-4" aria-hidden="true" /> Text
+            </a>
+          )}
+          {canMove && (
+            <DropdownMenu open={menuOpen} onOpenChange={onMenuOpenChange} modal={false}>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className={cn(action, 'ml-auto')} aria-label={`Move ${fullName}`}>
+                  <ArrowRightLeft className="h-4 w-4" aria-hidden="true" /> Move
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Move {candidate.firstName} to…</DropdownMenuLabel>
+                {OPEN.filter((st) => st !== candidate.stage).map((st) => (
+                  <DropdownMenuItem key={st} className="min-h-11" onSelect={() => onMove(st)}>
+                    {STAGE_LABEL[st]}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="min-h-11" onSelect={() => onMove('HIRED')}>Hire…</DropdownMenuItem>
+                <DropdownMenuItem className="min-h-11" onSelect={() => onMove('WITHDRAWN')}>Withdrawn…</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onMove('REJECTED')} className="min-h-11 text-alert focus:text-alert">
+                  Reject…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      )}
+    </li>
   );
 }

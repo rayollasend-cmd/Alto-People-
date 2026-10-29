@@ -74,3 +74,40 @@ describe('ClientDetail — the record follows the URL', () => {
     expect(getClient).toHaveBeenCalledWith(CLIENT_B);
   });
 });
+
+/**
+ * Deep audit 2026-10-29 (CRAWL-16): an unknown client read "Client not
+ * found · Retry" — an alert with a button that could never help. A 404 now
+ * reads the shared not-found words, with no Retry; a server fault still
+ * offers one.
+ */
+describe('ClientDetail — an unknown client', () => {
+  function renderAt(id: string) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <MemoryRouter initialEntries={[`/clients/${id}`]}>
+        <QueryClientProvider client={qc}>
+          <Routes>
+            <Route path="/clients/:id" element={<ClientDetail />} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('404: “Couldn’t find this client” — no Retry', async () => {
+    const { ApiError } = await import('@/lib/api');
+    vi.mocked(getClient).mockRejectedValue(new ApiError(404, 'not_found', 'Client not found'));
+    renderAt(CLIENT_A);
+    expect(await screen.findByText(/Couldn’t find this client\. It may have been removed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('5xx: says it went wrong on our side, with Retry', async () => {
+    const { ApiError } = await import('@/lib/api');
+    vi.mocked(getClient).mockRejectedValue(new ApiError(500, 'internal', 'Request failed (500)'));
+    renderAt(CLIENT_B);
+    expect(await screen.findByText(/Something went wrong on our side/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+});

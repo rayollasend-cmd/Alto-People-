@@ -6,6 +6,8 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { effectiveClientIdFilter } from '../lib/scope.js';
 import type { SessionUser } from '../types/express.js';
+import { dateColumnKey } from '../lib/timezone.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Phase 117 — Holiday calendar.
@@ -102,7 +104,7 @@ holiday117Router.get('/holidays', VIEW, async (req, res) => {
     holidays: rows.map((h) => ({
       id: h.id,
       name: h.name,
-      date: h.date.toISOString().slice(0, 10),
+      date: dateColumnKey(h.date),
       type: h.type,
       state: h.state,
       paid: h.paid,
@@ -122,8 +124,8 @@ holiday117Router.get('/holidays/upcoming', VIEW, async (req, res) => {
   );
   const requested = z.string().uuid().optional().parse(req.query.clientId);
   const clientId = effectiveClientIdFilter(req.user!, requested);
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  // Today on the company's calendar, as a DATE value (Holiday.date is a DATE column).
+  const today = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
   const cutoff = new Date(today);
   cutoff.setUTCDate(cutoff.getUTCDate() + days);
 
@@ -145,7 +147,7 @@ holiday117Router.get('/holidays/upcoming', VIEW, async (req, res) => {
     holidays: rows.map((h) => ({
       id: h.id,
       name: h.name,
-      date: h.date.toISOString().slice(0, 10),
+      date: dateColumnKey(h.date),
       type: h.type,
       paid: h.paid,
       clientName: h.client?.name ?? null,

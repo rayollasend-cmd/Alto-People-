@@ -13,6 +13,7 @@ import { getMarketRates } from '@/lib/marketRatesApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
+import { useGatedMutation } from '@/lib/useGatedMutation';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -212,6 +213,18 @@ function RateRow({
   const [bill, setBill] = useState(saved?.billRate != null ? String(saved.billRate) : '');
   const [busy, setBusy] = useState(false);
   const [leadBusy, setLeadBusy] = useState(false);
+  // A bill-rate change may go to a second person (202 pending): then the
+  // card in force stays on screen, not the numbers just typed (CODE-12).
+  const saveRate = useGatedMutation({
+    mutationFn: (v: { payRate: number; billRate: number | null }) => upsertRateDefault({ clientId, position, ...v }),
+    applied: `Default rate saved for ${position}.`,
+    failed: 'Could not save the rate.',
+    onPending: () => {
+      setPay(saved ? String(saved.payRate) : '');
+      setBill(saved?.billRate != null ? String(saved.billRate) : '');
+    },
+    onDone: onChanged,
+  });
 
   const toggleLead = async () => {
     if (!catalogRow || leadBusy) return;
@@ -262,13 +275,9 @@ function RateRow({
     }
     setBusy(true);
     try {
-      await upsertRateDefault({ clientId, position, payRate: payNum, billRate: billNum });
-      toast.success(`Default rate saved for ${position}.`);
-      await onChanged();
-    } catch (err) {
-      toast.error('Could not save the rate.', {
-        description: err instanceof ApiError ? err.message : undefined,
-      });
+      await saveRate.mutateAsync({ payRate: payNum, billRate: billNum });
+    } catch {
+      /* useGatedMutation said so */
     } finally {
       setBusy(false);
     }

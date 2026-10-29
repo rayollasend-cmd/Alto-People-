@@ -35,6 +35,16 @@ export type { ApprovalRequestSummary, ApprovalDelegation, AccessGrant, Promotion
 
 export const MY_REQUESTS_KEY = ['approvals', 'requests'] as const;
 
+/**
+ * What a gated route answers: the saved row when the change landed, or 202
+ * { pending, approvalId, title } (plus `Extra`, e.g. the job's other fields
+ * that did land) when it went to a second person. Type every client function
+ * behind `requestApproval` with it, so a caller can't toast "saved" over a
+ * change that is only waiting (CODE-12, MONEY-11) — branch on isPending(), or
+ * use useGatedMutation (lib/useGatedMutation).
+ */
+export type Gated<T, Extra extends object = object> = T | (PendingApprovalResponse & Extra);
+
 /** Did the server park the change for a second person instead of applying it? */
 export function isPending(r: unknown): r is PendingApprovalResponse {
   return !!r && typeof r === 'object' && (r as { pending?: unknown }).pending === true && typeof (r as { approvalId?: unknown }).approvalId === 'string';

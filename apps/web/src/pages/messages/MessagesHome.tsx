@@ -41,6 +41,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { QueryError } from '@/components/ui/QueryError';
 import { Input, Textarea } from '@/components/ui/Input';
 import {
   Dialog,
@@ -516,18 +517,10 @@ function Thread({ id, meId }: { id: string; meId: string }) {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {loadFailed && (
-          <ErrorBanner
-            action={
-              <Button size="sm" variant="secondary" onClick={() => void thread.refetch()}>
-                {t('common.retry')}
-              </Button>
-            }
-          >
-            {t('msg.loadFailed')}
-          </ErrorBanner>
-        )}
-        {!data ? (
+        {/* An unknown or removed conversation reads "Couldn't find this conversation" with no
+            Retry; only a server fault offers one (the shared words, CRAWL-16). */}
+        {loadFailed && <QueryError what={t('msg.thisConversation')} query={thread} />}
+        {loadFailed ? null : !data ? (
           <div className="space-y-2">
             <Skeleton className="h-10 w-2/3" />
             <Skeleton className="ml-auto h-10 w-1/2" />

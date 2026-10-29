@@ -7,6 +7,7 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 127 — Tuition reimbursement.
@@ -84,8 +85,8 @@ tuition127Router.get('/my/tuition-requests', requireAuth, async (req, res) => {
       schoolName: r.schoolName,
       programName: r.programName,
       courseName: r.courseName,
-      termStartDate: r.termStartDate.toISOString().slice(0, 10),
-      termEndDate: r.termEndDate.toISOString().slice(0, 10),
+      termStartDate: dateColumnKey(r.termStartDate),
+      termEndDate: dateColumnKey(r.termEndDate),
       amount: r.amount.toString(),
       currency: r.currency,
       status: r.status,
@@ -155,8 +156,8 @@ tuition127Router.get('/tuition-requests', PROCESS_PAYROLL, async (req, res) => {
       schoolName: r.schoolName,
       programName: r.programName,
       courseName: r.courseName,
-      termStartDate: r.termStartDate.toISOString().slice(0, 10),
-      termEndDate: r.termEndDate.toISOString().slice(0, 10),
+      termStartDate: dateColumnKey(r.termStartDate),
+      termEndDate: dateColumnKey(r.termEndDate),
       amount: r.amount.toString(),
       currency: r.currency,
       status: r.status,

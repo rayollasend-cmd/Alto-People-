@@ -5,7 +5,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { cn } from '@/lib/cn';
 import { fmtExecExact, fmtExecMoney } from '@/lib/executiveFormat';
-import { fmtDateOnly, fmtTime, fmtWeekday } from '@/lib/format';
+import { fmtExecAsOf } from '@/lib/executiveFormat';
+import { fmtDateOnly, fmtWeekday } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import '@/lib/i18n/en/execPortal';
 import { useLegacyBriefing } from './execLegacyApi';
@@ -82,7 +83,7 @@ export function TodayCard({ billRates }: { billRates: boolean }) {
                       ) : soon ? (
                         <Badge variant="destructive" size="sm">{t('execPortal.ops.inHours', { count: Math.max(1, Math.round(hoursOut)) })}</Badge>
                       ) : (
-                        <span className="shrink-0 text-xs2 tabular-nums text-ink-muted">{fmtTime(s.startsAt)}</span>
+                        <span className="shrink-0 text-xs2 tabular-nums text-ink-muted">{fmtExecAsOf(s.startsAt, b.timezone)}</span>
                       )}
                     </Link>
                   </li>

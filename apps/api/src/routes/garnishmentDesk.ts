@@ -7,6 +7,8 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { isInternallyScoped, scopeAssociatesIncludingFormer, scopeWhere } from '../lib/scope.js';
 import { createApprovalRequest, pendingResponse, registerApplyHandler } from '../lib/approvalRequests.js';
 import {
@@ -54,7 +56,8 @@ function refuseNarrowed(user: SessionUser): void {
 }
 
 const num = (d: Prisma.Decimal | null | undefined): number | null => (d == null ? null : Number(d));
-const ymd = (d: Date | null | undefined): string | null => (d ? d.toISOString().slice(0, 10) : null);
+/** A date column's YYYY-MM-DD. */
+const ymd = (d: Date | null | undefined): string | null => (d ? dateColumnKey(d) : null);
 
 async function employerFor(associateId: string | null): Promise<EmployerFacts> {
   const tenantId = tenantIdForWrite();
@@ -131,7 +134,7 @@ garnishmentDeskRouter.get('/garnishment-desk', PROCESS, async (req, res) => {
     const prev = nextByOrder.get(d.garnishmentId);
     if (!prev || dueBy < prev.dueBy) nextByOrder.set(d.garnishmentId, { remittanceId: d.remittanceId!, amount: Number(d.amount), payee: d.remittance!.payeeName, dueBy });
   }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = orgDateKey(new Date());
   const shaped = orders.map((g) => {
     const cap = num(g.totalCap);
     const withheld = Number(g.amountWithheld);
@@ -170,7 +173,7 @@ garnishmentDeskRouter.get('/garnishment-desk', PROCESS, async (req, res) => {
       totalCap: cap,
       amountWithheld: withheld,
       remainingBalance: cap == null ? null : Math.max(0, Math.round((cap - withheld) * 100) / 100),
-      lastDeduction: g.deductions[0] ? { amount: Number(g.deductions[0].amount), on: ymd(g.deductions[0].deductedOn) } : null,
+      lastDeduction: g.deductions[0] ? { amount: Number(g.deductions[0].amount), on: orgDateKey(g.deductions[0].deductedOn) } : null,
       nextRemittance: next ? { ...next, overdue: next.dueBy < today } : null,
       startDate: ymd(g.startDate),
       endDate: ymd(g.endDate),
@@ -346,7 +349,7 @@ garnishmentDeskRouter.post('/garnishment-desk/eiwo/:id/accept', PROCESS, async (
             associateId,
             kind: 'CHILD_SUPPORT',
             caseNumber: parsed.caseIdentifier,
-            startDate: new Date(`${parsed.beginWithholdingBy ?? new Date().toISOString().slice(0, 10)}T00:00:00Z`),
+            startDate: new Date(`${parsed.beginWithholdingBy ?? orgDateKey(new Date())}T00:00:00Z`),
             priority: 10,
             createdById: req.user!.id,
           },

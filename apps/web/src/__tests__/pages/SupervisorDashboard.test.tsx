@@ -14,6 +14,7 @@ vi.mock('@/lib/api', async (orig) => ({
 vi.mock('@/lib/schedulingApi', () => ({
   listShifts: vi.fn(),
   getSchedulingKpis: vi.fn(),
+  getStaffingContract: vi.fn(),
 }));
 vi.mock('@/lib/clientsApi', () => ({ listClientLocations: vi.fn() }));
 vi.mock('@/components/RoleDecisionQueue', () => ({ RoleDecisionQueue: () => <div>decision queue</div> }));
@@ -21,12 +22,18 @@ vi.mock('@/components/MyPlanCard', () => ({ MyPlanCard: () => <div>my plan</div>
 vi.mock('@/lib/programsApi', () => ({ listMyProgramAlerts: vi.fn().mockResolvedValue({ alerts: [], settings: {} }) }));
 vi.mock('@/pages/portal/portalCharts', async (orig) => ({
   ...(await orig<typeof import('@/pages/portal/portalCharts')>()),
-  CoverageCurve: () => <div>coverage curve</div>,
+  CoverageCurve: (p: { bands?: Array<{ label: string }>; target: number | null }) => (
+    <div>
+      coverage curve
+      <span data-testid="curve-bands">{(p.bands ?? []).map((b) => b.label).join(' | ')}</span>
+      <span data-testid="curve-target">{String(p.target)}</span>
+    </div>
+  ),
   WeekFillChart: () => <div>week chart</div>,
 }));
 
 import { apiFetch } from '@/lib/api';
-import { getSchedulingKpis, listShifts } from '@/lib/schedulingApi';
+import { getSchedulingKpis, getStaffingContract, listShifts } from '@/lib/schedulingApi';
 import { listClientLocations } from '@/lib/clientsApi';
 import { SupervisorDashboard } from '@/pages/SupervisorDashboard';
 
@@ -62,7 +69,7 @@ function day(roster: ReturnType<typeof row>[]) {
 }
 
 type Live = Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
-type MyWindow = { label: string; startMinute: number; endMinute: number; targetCount: number };
+type MyWindow = { label: string; startMinute: number; endMinute: number; targetCount: number; locationId?: string; locationName?: string };
 
 function renderPage(
   opts: {
@@ -84,6 +91,9 @@ function renderPage(
     coverageAhead?: Record<string, unknown>;
     /** Today with nobody on the roster at all. */
     emptyDay?: boolean;
+    /** The store's today, when it isn't the UTC date (a Central store seen from a Pacific evening). */
+    storeToday?: string;
+    contract?: Record<string, unknown>;
   } = {},
 ) {
   const role = opts.role ?? 'SHIFT_SUPERVISOR';
@@ -97,10 +107,10 @@ function renderPage(
     if (path === '/me/shift-windows')
       return {
         windows: (opts.myWindows ?? []).map((w) => ({
-          ...w,
           locationId: 'l1',
           locationName: 'Front Beach 218',
           timezone: tz,
+          ...w,
         })),
       };
     if (path.startsWith('/client-portal/day?date=')) return day([row('t1', 'Cy Dale', 'unconfirmed', 20, 28)]);
@@ -115,6 +125,7 @@ function renderPage(
           ...(opts.extraRows ?? []),
         ]),
         ...(opts.onFloorNow ? { onFloorNow: opts.onFloorNow } : {}),
+        ...(opts.storeToday ? { date: opts.storeToday, today: opts.storeToday } : {}),
       };
     if (path === '/transport/arrivals') return { arrivals: opts.arrivals ?? [] };
     // The floor from a phone (field roles, 2026-10).
@@ -138,6 +149,8 @@ function renderPage(
     throw new Error(`unexpected ${path}`);
   });
   vi.mocked(listShifts).mockResolvedValue({ shifts: [] } as never);
+  if (opts.contract) vi.mocked(getStaffingContract).mockResolvedValue(opts.contract as never);
+  else vi.mocked(getStaffingContract).mockRejectedValue(new Error('no contract in this test'));
   vi.mocked(getSchedulingKpis).mockResolvedValue({
     fillRatePercent: 94,
     assignedShifts: 80,
@@ -666,3 +679,80 @@ describe('<SupervisorDashboard> — the floor from a phone', () => {
     expect(apiFetch).not.toHaveBeenCalledWith('/floor/flags');
   });
 });
+
+describe('<SupervisorDashboard> — the floor numbers agree (deep audit 2026-10-29)', () => {
+  const clearFocus = () => {
+    try {
+      sessionStorage.removeItem('alto.floor.focus');
+    } catch {
+      /* no storage in this env */
+    }
+  };
+  const mod = (h: number) => minuteOfDayInZone(new Date(Date.now() + h * 3_600_000), tz);
+
+  it('before the shift, the hero counts EVERY window that starts next together — 3 + 5 + 3, not the first one (FLOOR-2)', async () => {
+    clearFocus();
+    renderPage({
+      myWindows: [
+        { label: 'Morning', startMinute: mod(2), endMinute: mod(10), targetCount: 3, locationId: 'l1', locationName: 'Front Beach 218' },
+        { label: 'Morning', startMinute: mod(2), endMinute: mod(10), targetCount: 5, locationId: 'l2', locationName: 'Thomas Drive' },
+        { label: 'Morning', startMinute: mod(2), endMinute: mod(10), targetCount: 3, locationId: 'l3', locationName: 'Destin Harbor 507' },
+        { label: 'Afternoon', startMinute: mod(10), endMinute: mod(18), targetCount: 4, locationId: 'l1', locationName: 'Front Beach 218' },
+      ],
+    });
+    expect(await screen.findByText('/ 11')).toBeInTheDocument();
+    expect(screen.getByText(/^Morning starts at /)).toBeInTheDocument();
+  });
+
+  it('lists the windows they lead one per line, the same window at three stores once (FLOOR-27)', async () => {
+    clearFocus();
+    renderPage({
+      myWindows: [
+        { label: 'Morning', startMinute: 360, endMinute: 840, targetCount: 3, locationId: 'l1', locationName: 'Front Beach 218' },
+        { label: 'Morning', startMinute: 360, endMinute: 840, targetCount: 5, locationId: 'l2', locationName: 'Thomas Drive' },
+        { label: 'Afternoon', startMinute: 840, endMinute: 1320, targetCount: 4, locationId: 'l1', locationName: 'Front Beach 218' },
+      ],
+    });
+    const list = await screen.findByTestId('my-windows');
+    const items = within(list).getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent(/^Morning 6:00\sAM – 2:00\sPM/);
+    expect(items[1]).toHaveTextContent(/^Afternoon 2:00\sPM – 10:00\sPM/);
+  });
+
+  it('asks for "tomorrow" by the store’s day, not the browser’s (FLOOR-3)', async () => {
+    vi.mocked(apiFetch).mockClear();
+    vi.mocked(getStaffingContract).mockClear();
+    renderPage({ storeToday: '2030-01-05' });
+    await screen.findByText('Front Beach 218');
+    await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledWith('/client-portal/day?date=2030-01-06'));
+    // Only the store's tomorrow is ever asked for.
+    const dated = vi.mocked(apiFetch).mock.calls.map(([p]) => p).filter((p) => p.startsWith('/client-portal/day?date='));
+    expect(new Set(dated)).toEqual(new Set(['/client-portal/day?date=2030-01-06']));
+    expect(getStaffingContract).toHaveBeenCalledWith({ date: '2030-01-05' });
+  });
+
+  it('draws the contract window by window with its count, never this minute’s number flat across the day (FLOOR-4)', async () => {
+    clearFocus();
+    renderPage({
+      contract: {
+        date: '2026-10-29',
+        timezone: tz,
+        windows: [
+          { locationId: 'l1', locationName: 'Front Beach 218', timezone: tz, label: 'Overnight', startMinute: 1320, endMinute: 360, targetCount: 2 },
+          { locationId: 'l1', locationName: 'Front Beach 218', timezone: tz, label: 'Morning', startMinute: 360, endMinute: 840, targetCount: 3 },
+          { locationId: 'l2', locationName: 'Thomas Drive', timezone: tz, label: 'Morning', startMinute: 360, endMinute: 840, targetCount: 8 },
+        ],
+        totals: [],
+        hours: [],
+      },
+    });
+    // Whole store (no windows of their own): every window, Morning summed across stores.
+    expect(await screen.findByText(/Morning · 11/)).toBeInTheDocument();
+    expect(screen.getByTestId('curve-bands')).toHaveTextContent('Overnight · 2');
+    expect(screen.getByTestId('contract-caption')).toHaveTextContent('contracted headcount');
+    // No flat "Contracted 4" line across 24 hours.
+    expect(screen.getByTestId('curve-target')).toHaveTextContent('null');
+  });
+});
+

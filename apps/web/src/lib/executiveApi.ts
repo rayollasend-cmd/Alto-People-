@@ -39,14 +39,29 @@ export function useExecFrame(): ExecFrame {
   return { period, compare, setPeriod, setCompare, query: `period=${period}&compare=${compare}` };
 }
 
-/** A drill-down link that keeps the frame (defaults left out, so the clean URL stays clean). */
+/** Whether a path is read in the executive frame: the executive home and the /executive pages. */
+export function readsExecFrame(path: string): boolean {
+  const p = path.split(/[?#]/)[0]!;
+  return p === '/' || p === '' || p === '/executive' || p.startsWith('/executive/');
+}
+
+/**
+ * A drill-down link that keeps the frame (defaults left out, so the clean
+ * URL stays clean). Only pages that read the frame get it: a client's
+ * record, the leave desk or the books keep their own windows, so a
+ * `?period=month` on them would only promise a frame they don't honour.
+ */
 export function execHref(path: string, frame: Pick<ExecFrame, 'period' | 'compare'>): string {
+  if (!readsExecFrame(path)) return path;
   const q = new URLSearchParams();
   if (frame.period !== EXEC_DEFAULT_PERIOD) q.set('period', frame.period);
   if (frame.compare !== EXEC_DEFAULT_COMPARE) q.set('compare', frame.compare);
   const s = q.toString();
   if (!s) return path;
-  return path.includes('?') ? `${path}&${s}` : `${path}?${s}`;
+  const hashAt = path.indexOf('#');
+  const base = hashAt >= 0 ? path.slice(0, hashAt) : path;
+  const hash = hashAt >= 0 ? path.slice(hashAt) : '';
+  return `${base}${base.includes('?') ? '&' : '?'}${s}${hash}`;
 }
 
 export const execKeys = {

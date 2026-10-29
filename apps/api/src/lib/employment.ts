@@ -3,6 +3,8 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { getBrandingSync } from './branding.js';
 import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Brief 2-1b, step 4 — the employer of record.
@@ -78,10 +80,14 @@ export async function employerOrgForClient(db: Db, clientId: string): Promise<Em
   });
 }
 
-const dateOnly = (d: Date | string) => new Date(`${typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10)}T00:00:00.000Z`);
+/** A day as the @db.Date columns hold it. A Date here is a date column's value (UTC midnight of its day). */
+const dateOnly = (d: Date | string) => new Date(`${typeof d === 'string' ? d.slice(0, 10) : dateColumnKey(d)}T00:00:00.000Z`);
+
+/** Today on the company's calendar, as a date column holds it (never UTC's day, which is tomorrow after 5 PM Pacific). */
+const companyToday = (): Date => new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
 
 /** The employment in force on a day (the latest one that covers it). */
-export async function currentEmployment(db: Db, associateId: string, on: Date = new Date()) {
+export async function currentEmployment(db: Db, associateId: string, on: Date = companyToday()) {
   const day = dateOnly(on);
   return db.employment.findFirst({
     where: { associateId, hireDate: { lte: day }, OR: [{ endDate: null }, { endDate: { gte: day } }] },
@@ -91,7 +97,7 @@ export async function currentEmployment(db: Db, associateId: string, on: Date = 
 }
 
 /** The employer of record for a person on a day: the employment's, else the tenant's default. */
-export async function employerFor(db: Db, associateId: string, on: Date = new Date()): Promise<EmployerFacts> {
+export async function employerFor(db: Db, associateId: string, on: Date = companyToday()): Promise<EmployerFacts> {
   const e = await currentEmployment(db, associateId, on);
   if (e) return e.employer;
   // No spell yet (a person hired before the record existed, or an applicant): the tenant's own row.

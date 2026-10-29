@@ -29,8 +29,9 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
-import { FundingBadge, FundingBreakdownList } from './FundingCard';
+import { FundingBadge, FundingBreakdownList, pullConfirm } from './FundingCard';
 import { WebhookHealthTile } from '@/pages/payroll/WebhookHealthTile';
+import { accountName, useMoneyConfirm } from '@/components/payroll/MoneyConfirm';
 import { getDisbursementWebhookStatus, type DisbursementWebhookStatus } from '@/lib/payrollApi';
 import { AccountsTab } from './AccountsTab';
 import { DepositsTab } from './DepositsTab';
@@ -296,7 +297,7 @@ function FundingTab({ query, onTab, highlightRun }: { query: ReturnType<typeof u
           ) : (
             <ul className="divide-y divide-navy-secondary">
               {s.runs.map((r) => (
-                <RunRow key={r.runId} r={r} highlight={r.runId === highlightRun} canFund={!!account && s.profile.gaps.length === 0} onWire={(state) => setWiring({ run: r, state })} />
+                <RunRow key={r.runId} r={r} highlight={r.runId === highlightRun} canFund={!!account && s.profile.gaps.length === 0} fromAccount={accountName(s.accounts.find((a) => a.id === (r.funding.bankAccountId ?? s.profile.fundingAccountId)) ?? account)} onWire={(state) => setWiring({ run: r, state })} />
               ))}
             </ul>
           )}
@@ -307,8 +308,9 @@ function FundingTab({ query, onTab, highlightRun }: { query: ReturnType<typeof u
   );
 }
 
-function RunRow({ r, highlight, canFund, onWire }: { r: RunToFund; highlight: boolean; canFund: boolean; onWire: (state: 'WIRE_PENDING' | 'WIRE_RECEIVED') => void }) {
+function RunRow({ r, highlight, canFund, fromAccount, onWire }: { r: RunToFund; highlight: boolean; canFund: boolean; fromAccount: string | null; onWire: (state: 'WIRE_PENDING' | 'WIRE_RECEIVED') => void }) {
   const qc = useQueryClient();
+  const confirmMoney = useMoneyConfirm();
   const [open, setOpen] = useState(highlight);
   const f = r.funding;
   const pull = useMutation({
@@ -330,7 +332,17 @@ function RunRow({ r, highlight, canFund, onWire }: { r: RunToFund; highlight: bo
         <span className="tabular-nums font-medium text-ink">{centsToMoney(f.amountCents)}</span>
         <div className="flex flex-wrap gap-1.5">
           {canPull(f.status) && (
-            <Button size="sm" onClick={() => pull.mutate()} loading={pull.isPending} disabled={!canFund} aria-label={`Pull ${centsToMoney(f.amountCents)} for pay on ${shortDay(f.payDate)}`}>
+            <Button
+              size="sm"
+              onClick={async () => {
+                // Money moves on a confirm that names it (MONEY-10): the amount, the account, the settle date.
+                const ok = await confirmMoney(pullConfirm(f, fromAccount));
+                if (ok) pull.mutate();
+              }}
+              loading={pull.isPending}
+              disabled={!canFund}
+              aria-label={`Pull ${centsToMoney(f.amountCents)} for pay on ${shortDay(f.payDate)}`}
+            >
               {f.status === 'RETURNED' ? 'Pull again' : 'Pull funds'}
             </Button>
           )}

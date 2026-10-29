@@ -4,13 +4,15 @@ import { useQuery } from '@tanstack/react-query';
 import { Ban, Download, ExternalLink, FileText, Pencil } from '@/components/ui/icons';
 import type { PayrollRunDetail } from '@alto-people/shared';
 import { getPayrollRun } from '@/lib/payrollApi';
-import { getPayrollReviewStatus } from '@/lib/payrollReviewApi';
-import { fmtDateOnly, fmtDateOnlyRange, fmtDateTime, fmtHours, fmtMoney } from '@/lib/format';
+import { SERIOUS_FLAGS, FLAG_LABEL, getPayrollReview, getPayrollReviewStatus } from '@/lib/payrollReviewApi';
+import { fmtDateOnly, fmtDateOnlyRange, fmtDateTime, fmtMoney } from '@/lib/format';
 import { RecordTemplate, type RecordTab } from '@/components/templates';
 import { Badge } from '@/components/ui/Badge';
 import { DataGrid, type GridColumn } from '@/components/ui/DataGrid';
 import { QueryError } from '@/components/ui/QueryError';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { MetricStrip } from '@/components/ui/MetricStrip';
 import { RunStatusStepper } from '@/components/payroll/RunStatusStepper';
 import { RunTotalsMismatch, liveNextStep } from '@/components/payroll/RunTotalsMismatch';
 import { RunTaxBreakdown } from '@/components/payroll/RunTaxBreakdown';
@@ -103,7 +105,9 @@ export function RunRecordPage() {
         { label: 'Payday', value: run.payDate ? fmtDateOnly(run.payDate, { weekday: true }) : null },
         { label: 'Gross', value: fmtMoney(run.totalGross) },
         { label: 'Net', value: fmtMoney(run.totalNet) },
-        { label: 'Taxes withheld', value: fmtMoney(run.totalTax) },
+        // Every tax withheld, state disability / paid-leave programs and local tax included (MONEY-12):
+        // summed from the paychecks, because older runs stored a total without the programs.
+        { label: 'Taxes withheld', value: fmtMoney(runTaxesWithheld(run)), hint: 'Federal, Social Security, Medicare, state, local and state programs' },
         { label: 'Employer taxes', value: fmtMoney(run.totalEmployerTax), hint: 'Social Security and Medicare match, FUTA, SUTA' },
         { label: 'Paychecks', value: String(run.items.length), to: runPath(run.id, 'paychecks') },
         { label: 'Pay schedule', value: run.payrollScheduleName ?? null, to: run.payrollScheduleId ? `/payroll/schedules/${run.payrollScheduleId}` : undefined },
@@ -169,6 +173,8 @@ function RunOverview({ run }: { run: PayrollRunDetail }) {
       )}
       {/* The next step is the header's primary; the stepper doesn't say it twice. */}
       <RunStatusStepper status={run.status} lifecycle={run} signedOff={!!review.data?.signoff?.current} signoffRequired={review.data?.signoff?.required} showNext={false} />
+      {/* The review's money summary: what leaves the bank, the taxes, the paychecks worth a look (MONEY-13). */}
+      {run.status !== 'CANCELLED' && run.items.length > 0 && <RunMoneySummary runId={run.id} />}
       {/* State and local taxes by jurisdiction (lib/taxEngine). */}
       <RunTaxBreakdown runId={run.id} />
       {run.notes && (
@@ -181,11 +187,68 @@ function RunOverview({ run }: { run: PayrollRunDetail }) {
   );
 }
 
+/** The review's money summary on Overview (MONEY-13): cash required, taxes owed, paychecks to look at. */
+function RunMoneySummary({ runId }: { runId: string }) {
+  // The same read as the Review tab (one cache entry).
+  const q = useQuery({ queryKey: ['payroll', 'review', runId], queryFn: () => getPayrollReview(runId) });
+  if (q.isError) return <QueryError what="this run's money summary" query={q} />;
+  if (!q.data) return <Skeleton className="h-24" />;
+  const report = q.data.report;
+  const flagged = report.rows.filter((r) => r.flags.length > 0);
+  const serious = flagged.filter((r) => r.flags.some((f) => SERIOUS_FLAGS.has(f)));
+  const firstFlags = (serious.length ? serious : flagged).slice(0, 3).map((r) => `${r.name}: ${FLAG_LABEL[r.flags[0]!].toLowerCase()}`);
+  const employee = report.taxes.employee.reduce((sum, l) => sum + Math.round(l.amount * 100), 0) / 100;
+  const employer = report.taxes.employer.reduce((sum, l) => sum + Math.round(l.amount * 100), 0) / 100;
+  return (
+    <MetricStrip label="This run’s money">
+      <MetricCard label="Cash required" value={fmtMoney(report.cash.total)} hint="Pay, taxes and money owed onward" href={runPath(runId, 'review')} />
+      <MetricCard label="Taxes owed" value={fmtMoney(report.taxes.total)} hint={`${fmtMoney(employee)} withheld · ${fmtMoney(employer)} employer`} href={runPath(runId, 'review')} />
+      <MetricCard
+        label="Paychecks to look at"
+        value={String(flagged.length)}
+        nothing={flagged.length === 0 ? `All ${report.rows.length} look ordinary` : undefined}
+        tone={serious.length > 0 ? 'alert' : 'default'}
+        hint={firstFlags.join(' · ') || undefined}
+        href={runPath(runId, 'review')}
+      />
+    </MetricStrip>
+  );
+}
+
+/* ----- Money on a paycheck --------------------------------------------------------- */
+
+const sumCents = (xs: number[]) => xs.reduce((sum, x) => sum + Math.round(x * 100), 0) / 100;
+
+/** Every tax withheld from a paycheck: the API's total when it sends one, else federal, Social Security, Medicare, state, local and state programs (MONEY-12). */
+export function paycheckTaxes(i: Pick<Item, 'taxesTotal' | 'federalWithholding' | 'fica' | 'medicare' | 'stateWithholding' | 'localWithholding' | 'stateProgramTaxes'>): number {
+  if (typeof i.taxesTotal === 'number') return i.taxesTotal;
+  return sumCents([i.federalWithholding, i.fica, i.medicare, i.stateWithholding, i.localWithholding ?? 0, ...(i.stateProgramTaxes ?? []).map((t) => t.amount)]);
+}
+
+/**
+ * A run's taxes withheld: the sum of its paychecks' taxes, so the header and
+ * the Paychecks tab agree (the API's stored total left state programs out
+ * before 2026-10-29 and is not rewritten). A run whose stored totals and
+ * paychecks disagree, or that has none, shows its stored total like every
+ * other header fact (lib/payrollRunTotals).
+ */
+export function runTaxesWithheld(run: Pick<PayrollRunDetail, 'items' | 'totalTax' | 'totalsAgree'>): number {
+  const live = run.items.filter((i) => i.status !== 'VOIDED');
+  if (run.totalsAgree === false || live.length === 0) return run.totalTax;
+  return sumCents(live.map(paycheckTaxes));
+}
+
+/** Pre-tax and post-tax deductions on a paycheck. */
+export function paycheckDeductions(i: Pick<Item, 'preTaxDeductions' | 'postTaxDeductions'>): number {
+  return sumCents([i.preTaxDeductions ?? 0, i.postTaxDeductions]);
+}
+
 /* ----- Paychecks ------------------------------------------------------------------ */
 
 type Item = PayrollRunDetail['items'][number];
 
 function RunPaychecks({ run }: { run: PayrollRunDetail }) {
+  const hasReimbursements = run.items.some((i) => (i.reimbursementsTotal ?? 0) > 0);
   const columns: GridColumn<Item>[] = useMemo(
     () => [
       { key: 'name', header: 'Person', accessor: (i) => i.associateName ?? '', primary: true, sortable: true, cell: (i) => <span className="font-medium text-ink">{i.associateName ?? 'Unknown'}</span> },
@@ -202,22 +265,51 @@ function RunPaychecks({ run }: { run: PayrollRunDetail }) {
           </span>
         ),
       },
-      { key: 'hours', header: 'Hours', accessor: (i) => i.hoursWorked, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (i) => fmtHours(i.hoursWorked) },
+      // Two decimals on every row, so 67.80h sits under 60.62h (deep audit MONEY-26); the API derives the figure from the rounded lines.
+      { key: 'hours', header: 'Hours', accessor: (i) => i.hoursWorked, csv: (i) => i.hoursWorked.toFixed(2), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (i) => `${i.hoursWorked.toFixed(2)}h` },
       { key: 'gross', header: 'Gross', accessor: (i) => i.grossPay, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (i) => fmtMoney(i.grossPay), csv: (i) => i.grossPay },
       {
         key: 'taxes',
         header: 'Taxes',
-        accessor: (i) => i.federalWithholding + i.fica + i.medicare + i.stateWithholding,
+        // Every tax withheld, state programs and local tax included (MONEY-12).
+        accessor: (i) => paycheckTaxes(i),
         sortable: true,
         searchable: false,
         align: 'right',
         className: 'tabular-nums',
-        cell: (i) => fmtMoney(i.federalWithholding + i.fica + i.medicare + i.stateWithholding),
+        cell: (i) => fmtMoney(paycheckTaxes(i)),
+        csv: (i) => paycheckTaxes(i),
       },
+      {
+        key: 'deductions',
+        header: 'Deductions',
+        accessor: (i) => paycheckDeductions(i),
+        sortable: true,
+        searchable: false,
+        align: 'right',
+        className: 'tabular-nums',
+        cell: (i) => fmtMoney(paycheckDeductions(i)),
+        csv: (i) => paycheckDeductions(i),
+      },
+      ...(hasReimbursements
+        ? [
+            {
+              key: 'reimbursements',
+              header: 'Reimbursements',
+              accessor: (i: Item) => i.reimbursementsTotal ?? 0,
+              sortable: true,
+              searchable: false,
+              align: 'right' as const,
+              className: 'tabular-nums',
+              cell: (i: Item) => fmtMoney(i.reimbursementsTotal ?? 0),
+              csv: (i: Item) => i.reimbursementsTotal ?? 0,
+            },
+          ]
+        : []),
       { key: 'net', header: 'Net', accessor: (i) => i.netPay, sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums font-medium text-ink', cell: (i) => fmtMoney(i.netPay), csv: (i) => i.netPay },
       { key: 'state', header: 'Tax state', accessor: (i) => i.taxState ?? '', sortable: true, defaultHidden: true, cell: (i) => i.taxState ?? '—' },
     ],
-    [],
+    [hasReimbursements],
   );
   return (
     <DataGrid<Item>

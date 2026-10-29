@@ -19,7 +19,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtDateTime, fmtShiftTz } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtShiftTz, ymdLocal } from '@/lib/format';
 import { listClientLocations, listClients } from '@/lib/clientsApi';
 import { listAdminUsers } from '@/lib/usersAdminApi';
 import { zoneNameAt } from '@/lib/robotZones';
@@ -850,7 +850,7 @@ function EventsTab({ robot }: { robot: RobotDetail }) {
 function MaintenanceTab({ robot, canManage }: { robot: RobotDetail; canManage: boolean }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['robots', 'maintenance', robot.id], queryFn: () => listMaintenance(robot.id) });
-  const [performedOn, setPerformedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  const [performedOn, setPerformedOn] = useState(() => ymdLocal());
   const [kind, setKind] = useState('');
   const [description, setDescription] = useState('');
   const [nextDueOn, setNextDueOn] = useState('');

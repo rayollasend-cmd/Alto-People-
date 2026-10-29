@@ -79,6 +79,7 @@ export const toCents = (n: number | string | Prisma.Decimal | null | undefined):
 export const fromCents = (c: number): number => Math.round(c) / 100 + 0;
 export const periodOf = (ymd: string): string => ymd.slice(0, 7);
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: entry dates are @db.Date values stored at UTC midnight.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 
@@ -393,10 +394,10 @@ export async function reverseEntry(db: Db, id: string, input: { date: string; me
  * balances — the one number the Books overview, the cash forecast and the
  * bill run read (finance walk 2, 8).
  */
-export async function cashOnHand(db: Db, through: string): Promise<{ total: number; accounts: number; postedAccounts: number }> {
+export async function cashOnHand(db: Db, through: string): Promise<{ total: number; accounts: number; postedAccounts: number; overdrawn: Array<{ id: string; name: string; balance: number }> }> {
   const tenantId = tenantIdForWrite();
-  const accounts = await db.ledgerAccount.findMany({ where: { tenantId, isActive: true, subtype: { in: ['BANK', 'CREDIT_CARD'] } }, select: { id: true, subtype: true } });
-  if (accounts.length === 0) return { total: 0, accounts: 0, postedAccounts: 0 };
+  const accounts = await db.ledgerAccount.findMany({ where: { tenantId, isActive: true, subtype: { in: ['BANK', 'CREDIT_CARD'] } }, select: { id: true, subtype: true, name: true } });
+  if (accounts.length === 0) return { total: 0, accounts: 0, postedAccounts: 0, overdrawn: [] };
   const rows = await db.journalLine.groupBy({
     by: ['accountId'],
     where: { tenantId, accountId: { in: accounts.map((a) => a.id) }, entry: { status: 'POSTED', entryDate: { lte: dateOnly(through) } } },
@@ -407,7 +408,9 @@ export async function cashOnHand(db: Db, through: string): Promise<{ total: numb
   const total = accounts.reduce((s, a) => s + (net.get(a.id) ?? 0), 0);
   // postedAccounts: how many of them hold any posted line — 0 means the
   // books have accounts but no balance on file, not a real $0.00.
-  return { total: fromCents(total), accounts: accounts.length, postedAccounts: rows.length };
+  // A bank account below zero: the total nets it away, so it is named (deep audit MONEY-18).
+  const overdrawn = accounts.filter((a) => a.subtype === 'BANK' && (net.get(a.id) ?? 0) < 0).map((a) => ({ id: a.id, name: a.name, balance: fromCents(net.get(a.id)!) }));
+  return { total: fromCents(total), accounts: accounts.length, postedAccounts: rows.length, overdrawn };
 }
 
 export async function accountBalance(db: Db, accountId: string, through: string): Promise<number> {

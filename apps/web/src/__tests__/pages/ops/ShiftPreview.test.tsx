@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { ShiftPreview } from '@/pages/ops/OpsRunner';
+import { setDisplayTimeZone } from '@/lib/format';
+import { storeTime } from '@/pages/scheduling/viewerSites';
+
+afterEach(() => setDisplayTimeZone(null));
 
 /** F500 G2 — before clock-in, "My shift" shows what the shift will need. */
 describe('ShiftPreview', () => {
@@ -43,4 +47,32 @@ describe('ShiftPreview', () => {
     expect(screen.getByText('No checklist is set for the shifts you lead yet.')).toBeInTheDocument();
     expect(screen.getByText('No one else is scheduled here today.')).toBeInTheDocument();
   });
+
+  it('reads the crew’s times on the store’s clock, naming the zone only for a viewer elsewhere (FLOOR-20)', () => {
+    const preview = {
+      dateKey: '2026-10-29',
+      timezone: 'America/Chicago',
+      myShift: null,
+      handover: [],
+      sops: [],
+      // 11:00Z = 6:00 AM in Chicago, 4:00 AM in Los Angeles.
+      crew: [{ id: 's1', name: 'Tyler Alvarez', position: 'Cashier', startsAt: '2026-10-29T11:00:00.000Z', endsAt: '2026-10-29T19:00:00.000Z' }],
+    };
+    setDisplayTimeZone('America/Los_Angeles');
+    const { unmount } = render(<ShiftPreview preview={preview} />);
+    expect(screen.getByText(/^Cashier · 6:00\sAM CDT$/)).toBeInTheDocument();
+    unmount();
+    setDisplayTimeZone('America/Chicago');
+    render(<ShiftPreview preview={preview} />);
+    expect(screen.getByText(/^Cashier · 6:00\sAM$/)).toBeInTheDocument();
+  });
 });
+
+describe('storeTime', () => {
+  it('is the store’s wall clock, with the zone when the viewer’s differs', () => {
+    setDisplayTimeZone('America/Los_Angeles');
+    expect(storeTime('2026-10-29T04:00:00.000Z', 'America/Chicago')).toMatch(/^11:00\sPM CDT$/);
+    expect(storeTime('2026-10-29T04:00:00.000Z', 'America/Los_Angeles')).toMatch(/^9:00\sPM$/);
+  });
+});
+

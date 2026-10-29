@@ -55,6 +55,7 @@ import type {
   ScorecardTrainingSignal,
 } from '@alto-people/shared';
 import {
+  METRICS,
   OSHA_DART_TARGET,
   OSHA_RATE_MIN_HOURS,
   OSHA_TRIR_TARGET,
@@ -88,7 +89,8 @@ import type {
 import { Input, Textarea, Label } from '@/components/ui';
 import { downloadDocumentUrl } from '@/lib/documentsApi';
 import { fmtDate, fmtDateOnly, fmtMoney, fmtRelativeDate, fmtStatementNo, parseYmd, ymdLocal } from '@/lib/format';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTerm } from '@/lib/auth';
+import { termizeText } from '@/lib/modules';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -463,6 +465,7 @@ const NUDGEABLE_SIGNALS = new Set<ScorecardOnboardingSignal['key']>([
 ]);
 
 function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
+  const term = useTerm();
   const fetcher = useCallback(
     () => getScorecardOnboarding(clientId || undefined),
     [clientId],
@@ -546,7 +549,7 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
       >
         <div className="text-sm text-silver flex items-center gap-2 py-4">
           <Info className="h-4 w-4" />
-          No active associates yet — once HR approves an application this tile lights up.
+          Nobody placed yet — once HR approves an application this tile lights up.
         </div>
       </TileShell>
     );
@@ -591,8 +594,11 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
                 <span className="text-2xs uppercase tracking-widest text-silver/80">
                   Per signal
                 </span>
-                <span className="text-2xs text-silver/80 tabular-nums">
-                  {data.activeAssociateCount} active
+                {/* The scorecard's population is everyone PLACED (lib/activeDefinition
+                    placements), not "active" — the People page's Working is a
+                    different number (PEOPLE-23). Named by the metric dictionary. */}
+                <span className="text-2xs text-silver/80 tabular-nums" title={termizeText(METRICS.placed.definition, term)} data-testid="scorecard-population">
+                  {data.activeAssociateCount} {METRICS.placed.label.toLowerCase()}
                 </span>
               </div>
               {data.signals.map((s) => {
@@ -665,7 +671,7 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
               {drawerSignal && drawerSignal.missing.length === 0 ? (
                 <div className="text-sm text-success flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4" />
-                  All active associates have this on file.
+                  Everyone placed has this on file.
                 </div>
               ) : (
                 <ul className="space-y-1">
@@ -1306,8 +1312,10 @@ function useQuickAttest(
   const quickAttest = async (signal: ManualAttestationSignal) => {
     setAttestingKey(signal.key);
     try {
-      // Same date construction as AttestationDrawer's submit path.
-      const today = new Date().toISOString().slice(0, 10);
+      // Same date construction as AttestationDrawer's submit path. The
+      // reader's day, not UTC's: after 5 PM Pacific UTC is already tomorrow
+      // and the attestation was dated a day late (CODE-14).
+      const today = ymdLocal();
       const r = await upsertAttestation({
         key: signal.key,
         periodStart: signal.periodStart,
@@ -1508,7 +1516,7 @@ function AttestationDrawer({
     } else {
       setOutcome('YES');
       // Pre-fill action date with today (most common case).
-      setActionTakenAt(new Date().toISOString().slice(0, 10));
+      setActionTakenAt(ymdLocal()); // the reader's day, never UTC's (CODE-14)
       setNotes('');
     }
     setError(null);
@@ -1796,7 +1804,7 @@ function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; client
           {data.signals.some((s) => s.status === 'no_course') && (
             <p className="text-2xs text-silver/80 mt-2">
               “No course linked” means no Learning course covers this training yet.{' '}
-              <Link to="/learning" className="text-gold underline underline-offset-2">
+              <Link to="/learning/catalog" className="text-gold underline underline-offset-2">
                 Link a course in Learning
               </Link>{' '}
               to start tracking it.
@@ -1836,7 +1844,7 @@ function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; client
               {drawerSignal && drawerSignal.missing.length === 0 ? (
                 <div className="text-sm text-success flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4" />
-                  All active associates have completed this training.
+                  Everyone placed has completed this training.
                 </div>
               ) : (
                 <ul className="space-y-1">

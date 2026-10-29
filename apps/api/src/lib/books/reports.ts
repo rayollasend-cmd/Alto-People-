@@ -195,6 +195,7 @@ export function shiftMonths(s: string, n: number, toEnd = false): string {
 }
 
 function addDays(s: string, n: number): string {
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: day arithmetic on YYYY-MM-DD keys anchored at UTC midnight.
   return new Date(Date.parse(`${s}T00:00:00.000Z`) + n * 86_400_000).toISOString().slice(0, 10);
 }
 
@@ -359,6 +360,7 @@ export async function accountDetail(db: Db, accountId: string, from: string, to:
       lineId: l.id,
       entryId: l.entry.id,
       number: l.entry.number,
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: entryDate is a @db.Date stored at UTC midnight.
       date: l.entry.entryDate.toISOString().slice(0, 10),
       memo: l.memo ?? l.entry.memo,
       source: l.entry.source,

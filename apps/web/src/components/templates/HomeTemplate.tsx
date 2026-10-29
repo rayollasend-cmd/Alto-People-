@@ -5,6 +5,8 @@ import { PageHeader, isPageActions, type PageAction } from '@/components/ui/Page
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { FirstLoadGate } from './FirstLoadGate';
 import { WhatsNew } from '@/components/WhatsNew';
+import { useI18n } from '@/lib/i18n';
+import { homeLabel } from '@/lib/navI18n';
 
 /**
  * Home — a role's first screen (design system §4.1).
@@ -70,10 +72,12 @@ export interface HomeTemplateProps {
   className?: string;
 }
 
-export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, actions, banners, hero, decisions, changes, waysIn, assistant, children, className }: HomeTemplateProps) {
+export function HomeTemplate({ title, topbarTitle: topbarTitleProp, subtitle, meta, actions, banners, hero, decisions, changes, waysIn, assistant, children, className }: HomeTemplateProps) {
   const queued = useNeedsYouCount({ queue: !!decisions?.queue, cards: decisions?.count ?? 0, cardKeys: decisions?.cardKeys });
   const count = decisions?.queue ? queued : decisions?.count;
   const structured = isPageActions(actions) ? actions : undefined;
+  const { t } = useI18n();
+  const topbarTitle = topbarTitleProp ?? homeLabel(t);
   return (
     // A home appears whole, once its cards' first data has landed (FirstLoadGate).
     <FirstLoadGate page="home">
@@ -84,7 +88,7 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
         </PageHeader>
         {/* The latest release note, once per note — in the page, never floating over it. */}
         <WhatsNew />
-        <section aria-label="Today">{hero}</section>
+        <section aria-label={t('common.today')}>{hero}</section>
         {decisions && (
           <section aria-labelledby="home-decisions">
             <SectionTitle
@@ -108,7 +112,7 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
           <div className="min-w-0 space-y-[var(--d-stack-lg)]">
             {changes && (
               <section aria-labelledby="home-changes">
-                <SectionTitle id="home-changes" title={changes.title ?? 'What changed'} />
+                <SectionTitle id="home-changes" title={changes.title ?? t('common.whatChanged')} />
                 {changes.content}
               </section>
             )}
@@ -119,11 +123,11 @@ export function HomeTemplate({ title, topbarTitle = 'Home', subtitle, meta, acti
             so an empty seat never takes room. After the day's own content —
             a phone reads the next shift before the assistant. */}
         {assistant && (
-          <section aria-label="Assistant" className="empty:hidden">
+          <section aria-label={t('common.assistant')} className="empty:hidden">
             {assistant}
           </section>
         )}
-        {waysIn && <section aria-label="Shortcuts">{waysIn}</section>}
+        {waysIn && <section aria-label={t('common.shortcuts')}>{waysIn}</section>}
       </div>
     </FirstLoadGate>
   );

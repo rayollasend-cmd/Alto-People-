@@ -24,8 +24,13 @@ vi.mock('@/lib/api', async (orig) => ({
     throw new Error(`unexpected ${path}`);
   }),
 }));
-const labor = { current: { rows: [] as Array<{ workedMinutes: number; scheduledMinutes: number }> } };
-vi.mock('@/lib/schedulingApi', () => ({ laborCosts: vi.fn(async () => labor.current) }));
+// "Hours this week" / "Scheduled hours" come from the dictionary's one
+// source, GET /analytics/dashboard's company week (LEAD-21) — not the
+// labor-cost rows re-added over a UTC week.
+const kpiWeek = { current: null as null | { start: string; end: string; timezone: string; paidHours: number; scheduledHours: number } };
+vi.mock('@/lib/analyticsApi', () => ({ getDashboardKPIs: vi.fn(async () => ({ week: kpiWeek.current })) }));
+const laborCosts = vi.fn();
+vi.mock('@/lib/schedulingApi', () => ({ laborCosts: (...a: unknown[]) => laborCosts(...a) }));
 const headcount = { current: { total: 0, byStatus: {}, fteAuthorized: '0', fteFilled: '0' } as unknown };
 vi.mock('@/lib/positionsApi', () => ({ getHeadcount: vi.fn(async () => headcount.current) }));
 const inbox = { current: { sources: [] as Array<{ key: string; count: number; path: string }> } };
@@ -34,6 +39,7 @@ vi.mock('@/lib/inboxApi', async () => {
   return { useInbox: () => useQuery({ queryKey: ['inbox-test'], queryFn: async () => inbox.current }) };
 });
 
+import { METRICS } from '@alto-people/shared';
 import { RoleFocusRow } from '@/components/home/RoleFocusRow';
 
 function renderRow() {
@@ -56,7 +62,7 @@ beforeEach(() => {
 describe('RoleFocusRow — operations', () => {
   it('computes each tile from the data and links it to the list behind it', async () => {
     overview.current = { now: { onFloor: 6, scheduledNow: 8 }, today: { filled: 5, open: 2 }, week: { start: '2026-10-17', fillRatePct: 84, filled: 42, total: 50 } };
-    labor.current = { rows: [{ workedMinutes: 600, scheduledMinutes: 900 }, { workedMinutes: 330, scheduledMinutes: 300 }] };
+    kpiWeek.current = { start: '2026-10-24', end: '2026-10-30', timezone: 'America/New_York', paidHours: 15.5, scheduledHours: 20 };
     headcount.current = { total: 9, byStatus: { OPEN: 3, FILLED: 6 }, fteAuthorized: '9', fteFilled: '6' };
     renderRow();
     const coverage = await screen.findByRole('link', { name: /Coverage today/ });
@@ -71,9 +77,12 @@ describe('RoleFocusRow — operations', () => {
     expect(fill).toHaveAttribute('href', '/scheduling?open=1&view=week&week=2026-10-17');
     // Below the 95% target: the number asks for attention.
     expect(fill.querySelector('[data-metric-value]')).toHaveClass('text-warning');
-    // 930 worked minutes → 16h (rounded), against 1,200 scheduled → 20h — one unit, "h".
-    expect(await within(tile('Hours worked this week')).findByText('16h')).toBeInTheDocument();
-    expect(within(tile('Hours worked this week')).getByText('of 20h scheduled across stores')).toBeInTheDocument();
+    // 15.5 paid hours → 16h (rounded), against 20h scheduled — one unit, "h" — on the
+    // company week, its dates said; the label is the dictionary's.
+    expect(METRICS.hoursThisWeek.label).toBe('Hours this week');
+    expect(await within(tile(METRICS.hoursThisWeek.label)).findByText('16h')).toBeInTheDocument();
+    expect(within(tile(METRICS.hoursThisWeek.label)).getByText('Paid, of 20h scheduled across stores · Oct 24 – 30, 2026')).toBeInTheDocument();
+    expect(laborCosts).not.toHaveBeenCalled();
     expect(await within(tile('Open positions')).findByText('3')).toBeInTheDocument();
     expect(tile('Open positions')).toHaveAttribute('href', '/org?tab=positions');
     expect(screen.getByRole('group', { name: 'Your floor this week' })).toBeInTheDocument();
@@ -81,7 +90,7 @@ describe('RoleFocusRow — operations', () => {
 
   it('an empty day says so in words, never "0 / 0 · Every shift filled"', async () => {
     overview.current = { now: { onFloor: 0, scheduledNow: 0 }, today: { filled: 0, open: 0 }, week: { start: '2026-10-17', fillRatePct: null } };
-    labor.current = { rows: [] };
+    kpiWeek.current = { start: '2026-10-24', end: '2026-10-30', timezone: 'America/New_York', paidHours: 0, scheduledHours: 0 };
     headcount.current = { total: 0, byStatus: {}, fteAuthorized: '0', fteFilled: '0' };
     renderRow();
     expect(await screen.findByText('No shifts today')).toBeInTheDocument();

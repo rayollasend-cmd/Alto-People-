@@ -137,6 +137,8 @@ export const PostingBackfillResultSchema = z.object({
   taxDeposits: z.number().int(),
   garnishmentRemittances: z.number().int(),
   wageAdvances: z.number().int(),
+  /** Payments recorded for statements that were marked paid without one (audit 2026-10-29 MONEY-3). */
+  clientPayments: z.number().int().optional(),
   failed: z.array(z.object({ sourceType: z.string(), sourceId: z.string(), error: z.string() })),
 });
 export type PostingBackfillResult = z.infer<typeof PostingBackfillResultSchema>;

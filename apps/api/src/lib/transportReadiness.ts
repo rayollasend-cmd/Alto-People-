@@ -1,7 +1,6 @@
 import type { TransportReadiness, TransportReadinessItem } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
-import { dateKeyInZone } from './timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone } from './timeAnomalies.js';
 import { fmtDay } from './humanDates.js';
 import { conflictPairs } from './transportConflicts.js';
 import { DRIVER_POSITION, RUN_SPAN_MS, credentialsEnforced, dayBounds, driverCredentialStatus, hosSettings, runBusyWindow } from './transportDrivers.js';
@@ -30,18 +29,20 @@ import { DRIVER_POSITION, RUN_SPAN_MS, credentialsEnforced, dayBounds, driverCre
 const addDays = (ymd: string, n: number) => {
   const d = new Date(`${ymd}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date arithmetic on a day key's UTC-noon anchor
   return d.toISOString().slice(0, 10);
 };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const fmtTime = (d: Date, tz = DEFAULT_TIMEZONE) => new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(d);
+const fmtTime = (d: Date, tz = companyWorkweek().timezone) => new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(d);
 const nameOf = (u: { email: string; associate: { firstName: string; lastName: string } | null }) =>
   u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : (u.email.split('@')[0] ?? u.email);
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: only the vans' @db.Date papers come through here
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const more = (n: number, one: string, many = `${one}s`) => (n > 0 ? ` ${plural(n, `more ${one}`, `more ${many}`)} too.` : '');
 
 /** Tomorrow in the company calendar. */
 export function tomorrowKey(now = new Date()): string {
-  return addDays(dateKeyInZone(now, DEFAULT_TIMEZONE), 1);
+  return addDays(dateKeyInZone(now, companyWorkweek().timezone), 1);
 }
 
 export async function computeReadiness(date: string): Promise<TransportReadiness> {
@@ -86,7 +87,7 @@ export async function computeReadiness(date: string): Promise<TransportReadiness
         })
       : Promise.resolve([]),
   ]);
-  const tzOf = (r: (typeof runs)[number]) => r.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE;
+  const tzOf = (r: (typeof runs)[number]) => r.rides[0]?.location.timezone ?? companyWorkweek().timezone;
   const pairs = conflictPairs(runs);
   const runById = new Map(runs.map((r) => [r.id, r]));
   const items: TransportReadinessItem[] = [];

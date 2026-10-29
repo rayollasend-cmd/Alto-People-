@@ -10,7 +10,7 @@ import { DataGrid } from '@/components/ui/DataGrid';
 import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
-import { fmtDate, fmtDateOnly, fmtDateOnlyRange, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateOnly, fmtDateOnlyRange, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { ListTemplate } from '@/components/templates';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui';
 import { LaborOverridesSection } from './LaborOverridesSection';
@@ -119,7 +119,7 @@ function SiteDrawer({ id, date, onClose }: { id: string; date: string; onClose: 
 }
 
 export function LaborRulesPage() {
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => ymdLocal());
   const [open, setOpen] = useState<string | null>(null);
   // "shadow" was the test-runs tab's old name; a link that still says it opens the same tab.
   const [raw, setTab] = useUrlParam<Tab | 'shadow'>('tab', 'states', TAB_VALUES, { history: 'push' });

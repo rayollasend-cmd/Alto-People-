@@ -5,13 +5,16 @@ import {
   PerformanceReviewCreateInputSchema,
   PerformanceReviewListResponseSchema,
   PerformanceReviewUpdateInputSchema,
+  toDateOnly,
   type PerformanceReview,
 } from '@alto-people/shared';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeAssociatesIncludingFormer, scopeWhere } from '../lib/scope.js';
-import { enqueueAudit, recordComplianceEvent } from '../lib/audit.js';
+import { enqueueAudit } from '../lib/audit.js';
+import { tenantIdForWrite } from '../lib/tenant.js';
 import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { notifyAssociate, notifyUser } from '../lib/notify.js';
 import { fmtDayRange } from '../lib/humanDates.js';
@@ -27,8 +30,9 @@ type RawReview = Prisma.PerformanceReviewGetPayload<{
   };
 }>;
 
+/** A calendar-day column (@db.Date), or a UTC-midnight day built from one, as stored. */
 function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return toDateOnly(d)!;
 }
 
 function toReview(row: RawReview): PerformanceReview {
@@ -145,7 +149,7 @@ performanceRouter.get('/reviews/summary', MANAGE, async (req, res, next) => {
           name: `${p.firstName} ${p.lastName}`.trim(),
           lastPeriodEnd: last ? ymd(last.periodEnd) : null,
           dueOn,
-          overdue: dueOn < ymd(now),
+          overdue: dueOn < orgDateKey(now),
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null)
@@ -173,7 +177,7 @@ performanceRouter.post('/reviews', MANAGE, async (req, res, next) => {
     }
     const i = parsed.data;
     const associate = await prisma.associate.findFirst({
-      where: { id: i.associateId, deletedAt: null },
+      where: scopeWhere<Prisma.AssociateWhereInput>({ id: i.associateId, deletedAt: null, tenantId: tenantIdForWrite() }, scopeAssociatesIncludingFormer(req.user!)),
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
 
@@ -211,17 +215,24 @@ performanceRouter.post('/reviews', MANAGE, async (req, res, next) => {
       include: REVIEW_INCLUDE,
     });
 
-    await recordComplianceEvent({
-      actorUserId: req.user!.id,
-      // Reusing the compliance-event recorder; the entityType union is broad
-      // enough that adding a 4th value is overkill for v1.
-      action: 'performance.review_created',
-      entityType: 'I9Verification',  // placeholder — extend ComplianceEventContext later
-      entityId: created.id,
-      associateId: created.associateId,
-      metadata: { rating: created.overallRating, period: i.periodStart + '-' + i.periodEnd },
-      req,
-    });
+    // Audited as what it is — a PerformanceReview (it used to be filed under
+    // I9Verification, so the audit log's entity filter could never find it).
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'performance.review_created',
+        entityType: 'PerformanceReview',
+        entityId: created.id,
+        metadata: {
+          associateId: created.associateId,
+          rating: created.overallRating,
+          period: i.periodStart + '-' + i.periodEnd,
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+      'performance.review_created',
+    );
 
     res.status(201).json(toReview(created));
   } catch (err) {
@@ -235,8 +246,9 @@ performanceRouter.patch('/reviews/:id', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
+    // The review's person must be in the caller's reach (same rule as the list).
     const existing = await prisma.performanceReview.findFirst({
-      where: { id: req.params.id },
+      where: { id: req.params.id, tenantId: tenantIdForWrite(), associate: { is: scopeAssociatesIncludingFormer(req.user!) } },
     });
     if (!existing) throw new HttpError(404, 'review_not_found', 'Review not found');
     if (existing.status !== 'DRAFT') {
@@ -264,8 +276,9 @@ performanceRouter.patch('/reviews/:id', MANAGE, async (req, res, next) => {
 
 performanceRouter.post('/reviews/:id/submit', MANAGE, async (req, res, next) => {
   try {
+    // The review's person must be in the caller's reach (same rule as the list).
     const existing = await prisma.performanceReview.findFirst({
-      where: { id: req.params.id },
+      where: { id: req.params.id, tenantId: tenantIdForWrite(), associate: { is: scopeAssociatesIncludingFormer(req.user!) } },
     });
     if (!existing) throw new HttpError(404, 'review_not_found', 'Review not found');
     if (existing.status !== 'DRAFT') {
@@ -361,11 +374,11 @@ performanceRouter.get('/review-context', MANAGE, async (req, res, next) => {
       }),
     ]);
     const count = (k: string) => events.filter((e) => e.kind === k).length;
-    const ymd = (d: Date) => d.toISOString().slice(0, 10);
     res.json({
       associate: { id: person.id, name: `${person.firstName} ${person.lastName}` },
-      from: ymd(from),
-      to: ymd(to),
+      // The asked-for days, else the company's (the window ends now).
+      from: fromQ ?? orgDateKey(from),
+      to: toQ ?? orgDateKey(to),
       goals: goals.map((g) => ({ id: g.id, title: g.title, status: g.status, progressPct: g.progressPct, periodEnd: ymd(g.periodEnd) })),
       kudos: kudos.map((k) => ({ id: k.id, message: k.message, from: k.fromUser.email, at: k.createdAt.toISOString() })),
       oneOnOnes: meetings.map((m) => ({
@@ -472,7 +485,7 @@ performanceRouter.post('/reviews/:id/calibrate', MANAGE, async (req, res, next) 
     if (!body.success) {
       throw new HttpError(400, 'invalid_body', 'A rating from 1 to 5 and a reason are required.', body.error.flatten());
     }
-    const existing = await prisma.performanceReview.findFirst({ where: { id: req.params.id } });
+    const existing = await prisma.performanceReview.findFirst({ where: { id: req.params.id, tenantId: tenantIdForWrite(), associate: { is: scopeAssociatesIncludingFormer(req.user!) } } });
     if (!existing) throw new HttpError(404, 'review_not_found', 'Review not found');
     if (existing.status !== 'DRAFT') {
       throw new HttpError(409, 'not_draft', 'Only a review that has not been shared can be calibrated.');

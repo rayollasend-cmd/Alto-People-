@@ -12,8 +12,9 @@ import { prisma as defaultPrisma } from '../db.js';
 import { benchFor } from './scope.js';
 import { notifyUser } from './notify.js';
 import { siteSupervisorRecipients, supervisorRecipients } from './shiftWindows.js';
-import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
-import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
+import { orgDateKey, utcInstantOfLocalMidnight, companyWorkweek } from './timeAnomalies.js';
+import { formatTimeInZone, addDaysToKey } from './timezone.js';
+import { logger } from './logger.js';
 
 const DAY_MS = 24 * 3600_000;
 /** A holder at this many unexcused points in 90 days is high-risk (the radar and attendance.confirm). */
@@ -31,6 +32,8 @@ export interface RiskyShift {
   locationId: string | null;
   position: string;
   startsAt: Date;
+  /** The store's zone (null: the company's) — the time a digest line shows. */
+  timezone: string | null;
   holderName: string;
   points: number;
 }
@@ -42,12 +45,11 @@ export async function computeNoShowRisk(
   now: Date,
   clientId: string | null,
 ): Promise<RiskyShift[]> {
-  const todayKey = orgDateKey(now);
-  const t = new Date(`${todayKey}T12:00:00Z`);
-  t.setUTCDate(t.getUTCDate() + 1);
-  const dayStart = utcInstantOfLocalMidnight(t.toISOString().slice(0, 10), 'America/New_York');
-  t.setUTCDate(t.getUTCDate() + 1);
-  const dayEnd = utcInstantOfLocalMidnight(t.toISOString().slice(0, 10), 'America/New_York');
+  // Tomorrow on the company's calendar, midnight to midnight in its zone.
+  const tz = companyWorkweek().timezone;
+  const tomorrow = addDaysToKey(orgDateKey(now), 1);
+  const dayStart = utcInstantOfLocalMidnight(tomorrow, tz);
+  const dayEnd = utcInstantOfLocalMidnight(addDaysToKey(tomorrow, 1), tz);
 
   const shifts = await prisma.shift.findMany({
     where: {
@@ -63,6 +65,7 @@ export async function computeNoShowRisk(
       locationId: true,
       position: true,
       startsAt: true,
+      locationRel: { select: { timezone: true } },
       client: { select: { name: true } },
       assignedAssociate: { select: { id: true, firstName: true, lastName: true } },
     },
@@ -81,6 +84,7 @@ export async function computeNoShowRisk(
       clientName: s.client?.name ?? '',
       position: s.position,
       startsAt: s.startsAt,
+      timezone: s.locationRel?.timezone ?? null,
       holderName: `${s.assignedAssociate!.firstName} ${s.assignedAssociate!.lastName}`,
       points: Math.round((points.get(s.assignedAssociate!.id) ?? 0) * 10) / 10,
     }));
@@ -151,7 +155,7 @@ export async function runNoShowRiskSweep(
 ): Promise<NoShowRiskResult> {
   const hour = Number(
     new Intl.DateTimeFormat('en-US', {
-      timeZone: DEFAULT_TIMEZONE,
+      timeZone: companyWorkweek().timezone,
       hour: 'numeric',
       hour12: false,
     }).format(now),
@@ -162,7 +166,7 @@ export async function runNoShowRiskSweep(
   if (risky.length === 0) return { sent: 0, skipped: 'no_risk' };
 
   // Once per org-local day: the day's first send claims it.
-  const dayStart = utcInstantOfLocalMidnight(orgDateKey(now), 'America/New_York');
+  const dayStart = utcInstantOfLocalMidnight(orgDateKey(now), companyWorkweek().timezone);
   const already = await prisma.notification.findFirst({
     // Per tenant: one tenant's evening send must not mark another's as done.
     where: { category: CATEGORY, createdAt: { gte: dayStart }, ...(currentTenantId() ? { tenantId: currentTenantId()! } : {}) },
@@ -198,9 +202,7 @@ export async function runNoShowRiskSweep(
     if (rowsBySupervisor.size === 0) continue;
     const bench = benchFor({ clientId, locationId });
     if (!bench) continue;
-    const t = new Date(`${orgDateKey(now)}T12:00:00Z`);
-    t.setUTCDate(t.getUTCDate() + 1);
-    const dStart = utcInstantOfLocalMidnight(t.toISOString().slice(0, 10), 'America/New_York');
+    const dStart = utcInstantOfLocalMidnight(addDaysToKey(orgDateKey(now), 1), companyWorkweek().timezone);
     const backups = await suggestBackups(
       prisma,
       bench,
@@ -216,7 +218,7 @@ export async function runNoShowRiskSweep(
       const lines = rows
         .map(
           (r) =>
-            `${formatTimeInZone(r.startsAt, DEFAULT_TIMEZONE)} ${r.position} — held by ${r.holderName} (${r.points} attendance points, 90d)`,
+            `${formatTimeInZone(r.startsAt, r.timezone ?? companyWorkweek().timezone)} ${r.position} — held by ${r.holderName} (${r.points} attendance points, 90d)`,
         )
         .join('\n');
       const body = `Tomorrow's coverage risk at ${deskName}:\n${lines}${backups.length > 0 ? `\n\nAvailable backups: ${backups.join(', ')}` : ''}\n\nWorth a confirmation text tonight or a pre-arranged backup.`;
@@ -245,8 +247,8 @@ export function startNoShowRiskCron(): void {
     });
   }, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] no-show risk cron armed (hourly, sends evenings after ${SEND_AFTER_HOUR}:00 ${DEFAULT_TIMEZONE})`,
+  logger.info(
+    `no-show risk cron armed (hourly, sends evenings after ${SEND_AFTER_HOUR}:00 company time)`,
   );
 }
 

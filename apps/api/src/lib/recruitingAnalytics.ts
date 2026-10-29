@@ -1,8 +1,9 @@
 import type { Prisma } from '@prisma/client';
 import type { RecruitingAnalytics, RecruitingFlow } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
+import { localDateKey } from './timezone.js';
 import { realName } from './displayName.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * The recruiting dashboard's numbers, computed from what recruiting
@@ -442,8 +443,8 @@ export async function computeRecruitingAnalytics(input: {
     clients,
     retention: {
       window: {
-        from: localDateKey(retentionFrom, DEFAULT_TIMEZONE),
-        to: localDateKey(new Date(retentionTo.getTime() - 1), DEFAULT_TIMEZONE),
+        from: localDateKey(retentionFrom, companyWorkweek().timezone),
+        to: localDateKey(new Date(retentionTo.getTime() - 1), companyWorkweek().timezone),
       },
       overall: { key: null, label: 'All hires', hires: measured.length, stayed: stayedAll, stayedPct: pct(stayedAll, measured.length) },
       bySource: group((m) => ({ key: m.source, label: m.source ?? 'Not recorded' })),

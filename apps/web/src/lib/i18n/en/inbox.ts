@@ -39,6 +39,8 @@ export const enInbox = {
   'inbox.markFailed': 'Could not mark the message as read.',
   'inbox.repeats': '{count}×',
   'inbox.repeatsTitle': 'The same notification {count} times — the newest is shown.',
+  'inbox.tabSendsShort': 'Sends',
+  'inbox.tabSendsLong': 'Sends & broadcasts',
 } as const;
 
 registerEnglish(enInbox);

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { listProviderConnections, providerCatalog, type ProviderKind, type ProviderKindSummary } from '@/lib/providersApi';
 import { getDisbursementWebhookStatus, type DisbursementWebhookStatus } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
+import { useReadable } from '@/lib/useReadable';
 import { fmtCount, fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -55,9 +56,11 @@ export function cardState(
 export function ProvidersSection({ canManage }: { canManage: boolean }) {
   const list = useQuery({ queryKey: ['providers', 'connections'], queryFn: listProviderConnections });
   const catalog = useQuery({ queryKey: ['providers', 'catalog'], queryFn: providerCatalog, staleTime: 30 * 60_000 });
-  // The disbursement rail's health (payroll's endpoint). 403 = this person
-  // doesn't hold payroll: the Payouts card then reads the connection alone.
-  const rail = useQuery({ queryKey: ['WebhookHealthTile', 'status'], queryFn: getDisbursementWebhookStatus, retry: false, refetchInterval: 60_000 });
+  // The disbursement rail's health (payroll's endpoint, process:payroll).
+  // Someone without payroll never asks (CRAWL-15): the Payouts card then
+  // reads the connection alone.
+  const readsRail = useReadable('process:payroll');
+  const rail = useQuery({ queryKey: ['WebhookHealthTile', 'status'], queryFn: getDisbursementWebhookStatus, retry: false, refetchInterval: 60_000, enabled: readsRail });
   const payout = rail.error instanceof ApiError ? null : (rail.data ?? null);
   const [setupKind, setSetupKind] = useState<ProviderKind | null>(null);
   const [manageId, setManageId] = useState<string | null>(null);

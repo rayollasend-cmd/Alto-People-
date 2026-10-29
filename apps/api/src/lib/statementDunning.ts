@@ -7,6 +7,8 @@ import { sendRecorded } from './financialChanges.js';
 import { notifyUser } from './notify.js';
 import { tenantIdForWrite } from './tenant.js';
 import { tenantJob } from './tenantJobs.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { addDaysToKey, dateColumnKey } from './timezone.js';
 
 /**
  * Invoicing terms and the dunning cadence.
@@ -31,18 +33,17 @@ export const DUNNING_STAGES: ReadonlyArray<{ stage: number; offsetDays: number; 
 ];
 
 const DAY_MS = 86_400_000;
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
-/** Due date for a statement: finalizedAt (as a date) + the client's terms. */
+/** Due date for a statement: finalizedAt (the company's day it was finalized) + the client's terms. */
 export function dueDateFor(finalizedAt: Date, termsDays: number): Date {
-  const base = new Date(`${ymd(finalizedAt)}T00:00:00.000Z`);
+  const base = new Date(`${orgDateKey(finalizedAt)}T00:00:00.000Z`);
   base.setUTCDate(base.getUTCDate() + Math.max(0, termsDays));
   return base;
 }
 
-/** The highest stage that is due as of `now` for a statement due `dueAt`. */
+/** The highest stage that is due as of `now` for a statement due `dueAt` (a date), counted in the company's days. */
 export function stageDue(dueAt: Date, now: Date): number {
-  const days = Math.floor((now.getTime() - dueAt.getTime()) / DAY_MS);
+  const days = Math.round((Date.parse(`${orgDateKey(now)}T00:00:00.000Z`) - Date.parse(`${dateColumnKey(dueAt)}T00:00:00.000Z`)) / DAY_MS);
   let due = 0;
   for (const s of DUNNING_STAGES) if (days >= s.offsetDays) due = s.stage;
   return due;
@@ -146,7 +147,7 @@ export async function sendStatementReminder(db: Db, s: ReminderCandidate, stage:
       action: 'clients.statement_reminder_sent',
       entityType: 'ClientStatement',
       entityId: s.id,
-      metadata: { stage, recipients, amount, dueAt: s.dueAt ? ymd(s.dueAt) : null },
+      metadata: { stage, recipients, amount, dueAt: s.dueAt ? dateColumnKey(s.dueAt) : null },
     },
     'clients.statement_reminder',
   );
@@ -175,8 +176,7 @@ export function nextReminderOn(dueAt: Date | null, reminderStage: number): strin
   if (!dueAt) return null;
   const next = DUNNING_STAGES.find((st) => st.stage > reminderStage);
   if (!next) return null;
-  const d = new Date(dueAt.getTime() + next.offsetDays * DAY_MS);
-  return ymd(d);
+  return addDaysToKey(dateColumnKey(dueAt), next.offsetDays);
 }
 
 /** One pass of the cadence. Safe to run as often as you like. */

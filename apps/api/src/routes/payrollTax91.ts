@@ -7,7 +7,7 @@ import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
-import { can } from '@alto-people/shared';
+import { can, toDateOnly } from '@alto-people/shared';
 import { assertBulkPiiExporter } from '../lib/bulkPiiExport.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import { dispatchFinancialChange, recordFinancialChange, ssnSummary } from '../lib/financialChanges.js';
@@ -60,6 +60,8 @@ import { build940Xml, build941Xml } from '../lib/irsMef.js';
 import { send } from '../lib/notifications.js';
 import { assertSameTenant } from '../lib/sameTenant.js';
 import { assertInTenant } from '../lib/sameTenant.js';
+import { assertCompanyWide, associatesInReach, loadInScope, scopeWhere } from '../lib/scope.js';
+import { dateKeyInZone } from '../lib/timeAnomalies.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -152,12 +154,16 @@ payrollTax91Router.get('/garnishments', VIEW, async (req, res) => {
     .enum(['ACTIVE', 'SUSPENDED', 'COMPLETED', 'TERMINATED'])
     .optional()
     .parse(req.query.status);
+  // CODE-7: the caller's tenant and reach — a store-bound payroll account
+  // reads its own people's orders, not every garnishment in the company
+  // (the garnishment desk's rule).
   const rows = await prisma.garnishment.findMany({
-    where: {
-      deletedAt: null,
-      ...(associateId ? { associateId } : {}),
-      ...(status ? { status } : {}),
-    },
+    where: scopeWhere<Prisma.GarnishmentWhereInput>(
+      { tenantId: tenantIdForWrite(), deletedAt: null },
+      { associate: { is: associatesInReach(req.user!) } },
+      associateId ? { associateId } : null,
+      status ? { status } : null,
+    ),
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },
       _count: { select: { deductions: true } },
@@ -179,8 +185,9 @@ payrollTax91Router.get('/garnishments', VIEW, async (req, res) => {
       amountWithheld: g.amountWithheld.toString(),
       remitTo: g.remitTo,
       remitAddress: g.remitAddress,
-      startDate: g.startDate.toISOString().slice(0, 10),
-      endDate: g.endDate?.toISOString().slice(0, 10) ?? null,
+      // @db.Date columns: the calendar day as stored (toDateOnly), not a zone's day.
+      startDate: toDateOnly(g.startDate),
+      endDate: toDateOnly(g.endDate),
       status: g.status,
       priority: g.priority,
       notes: g.notes,
@@ -192,6 +199,8 @@ payrollTax91Router.get('/garnishments', VIEW, async (req, res) => {
 
 payrollTax91Router.post('/garnishments', MANAGE, async (req, res) => {
   const input = GarnishmentInputSchema.parse(req.body);
+  // The person through the caller's reach, never a bare id (deep audit CODE-5/6).
+  await loadInScope(prisma, 'associate', input.associateId, req.user!);
   const created = await prisma.garnishment.create({
     data: {
       associateId: input.associateId,
@@ -217,8 +226,9 @@ payrollTax91Router.post('/garnishments/:id/status', MANAGE, async (req, res) => 
   const status = z
     .enum(['ACTIVE', 'SUSPENDED', 'COMPLETED', 'TERMINATED'])
     .parse(req.body?.status);
+  const g = await loadInScope(prisma, 'garnishment', req.params.id, req.user!);
   await prisma.garnishment.update({
-    where: { id: req.params.id },
+    where: { id: g.id },
     data: { status },
   });
   res.json({ ok: true });
@@ -231,15 +241,24 @@ payrollTax91Router.post('/garnishments/:id/deduct', MANAGE, async (req, res) => 
       amount: z.number().positive(),
     })
     .parse(req.body);
+  const inReach = await loadInScope(prisma, 'garnishment', req.params.id, req.user!);
   const g = await prisma.garnishment.findUnique({
-    where: { id: req.params.id },
+    where: { id: inReach.id },
   });
   if (!g || g.deletedAt) throw new HttpError(404, 'not_found', 'Garnishment not found.');
   if (g.status !== 'ACTIVE') {
     throw new HttpError(409, 'invalid_state', `Garnishment is ${g.status}.`);
   }
 
+  // Claim-then-act: the withheld total moves by an atomic increment on a
+  // still-ACTIVE order (two deductions at once never lose one), then the cap
+  // is checked on the row as it now stands.
   const result = await prisma.$transaction(async (tx) => {
+    const bumped = await tx.garnishment.updateMany({
+      where: { id: g.id, status: 'ACTIVE' },
+      data: { amountWithheld: { increment: input.amount } },
+    });
+    if (bumped.count === 0) throw new HttpError(409, 'invalid_state', 'Garnishment is no longer active.');
     const ded = await tx.garnishmentDeduction.create({
       data: {
         garnishmentId: g.id,
@@ -247,15 +266,9 @@ payrollTax91Router.post('/garnishments/:id/deduct', MANAGE, async (req, res) => 
         amount: input.amount,
       },
     });
-    const newWithheld = g.amountWithheld.plus(input.amount);
-    const reachedCap = g.totalCap != null && newWithheld.gte(g.totalCap);
-    await tx.garnishment.update({
-      where: { id: g.id },
-      data: {
-        amountWithheld: newWithheld,
-        ...(reachedCap ? { status: 'COMPLETED' } : {}),
-      },
-    });
+    const now = await tx.garnishment.findUniqueOrThrow({ where: { id: g.id }, select: { amountWithheld: true, totalCap: true } });
+    const reachedCap = now.totalCap != null && now.amountWithheld.gte(now.totalCap);
+    if (reachedCap) await tx.garnishment.update({ where: { id: g.id }, data: { status: 'COMPLETED' } });
     return { id: ded.id, completed: reachedCap };
   });
   res.status(201).json(result);
@@ -263,6 +276,7 @@ payrollTax91Router.post('/garnishments/:id/deduct', MANAGE, async (req, res) => 
 
 payrollTax91Router.get('/garnishments/:id/deductions', VIEW, async (req, res) => {
   await assertInTenant('garnishment', String(req.params.id), 'Garnishment not found.');
+  await loadInScope(prisma, 'garnishment', String(req.params.id), req.user!);
   const rows = await prisma.garnishmentDeduction.findMany({
     where: { garnishmentId: req.params.id },
     orderBy: { deductedOn: 'desc' },
@@ -289,8 +303,10 @@ payrollTax91Router.get(
   async (req, res, next) => {
     try {
       const id = z.string().uuid().parse(req.params.id);
+      // The order behind the letter must be in the caller's reach (CODE-7).
+      await loadInScope(prisma, 'garnishment', id, req.user!);
       const g = await prisma.garnishment.findFirst({
-        where: { id, deletedAt: null },
+        where: { id, deletedAt: null, tenantId: tenantIdForWrite() },
         include: {
           associate: {
             select: { firstName: true, lastName: true, email: true },
@@ -356,6 +372,9 @@ const TaxFormInputSchema = z.object({
 });
 
 payrollTax91Router.get('/tax-forms', VIEW, async (req, res) => {
+  // CODE-7: the filing desk — every 941, 940, W-2 and 1099 — is company-wide;
+  // a store-bound account gets a plain refusal, not the whole company's forms.
+  assertCompanyWide(req.user!, 'Tax forms are filed for the whole company. Ask a payroll administrator without a site limit.');
   const kind = z
     .enum(['F941', 'F940', 'W2', 'W2C', 'F1099_NEC', 'F1099_MISC'])
     .optional()
@@ -420,7 +439,8 @@ payrollTax91Router.get('/tax-forms', VIEW, async (req, res) => {
  * records.
  */
 payrollTax91Router.get('/tax-forms/:id/mef.xml', VIEW, async (req, res) => {
-  const f = await prisma.taxForm.findUnique({ where: { id: z.string().uuid().parse(req.params.id) } });
+  assertCompanyWide(req.user!, 'Tax returns are filed for the whole company. Ask a payroll administrator without a site limit.');
+  const f = await prisma.taxForm.findFirst({ where: { id: z.string().uuid().parse(req.params.id), tenantId: tenantIdForWrite() } });
   if (!f) throw new HttpError(404, 'not_found', 'Form not found.');
   if (f.kind !== 'F941' && f.kind !== 'F940') throw new HttpError(409, 'not_mef', 'Only Forms 941 and 940 have an MeF return.');
   const profile = await prisma.submitterProfile.findUnique({ where: { tenantId: tenantIdForWrite() } });
@@ -447,6 +467,8 @@ payrollTax91Router.get('/tax-forms/:id/mef.xml', VIEW, async (req, res) => {
 });
 
 payrollTax91Router.post('/tax-forms', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const input = TaxFormInputSchema.parse(req.body);
 
   // Cross-field validation matches the DB CHECK constraint.
@@ -492,6 +514,8 @@ payrollTax91Router.post('/tax-forms', MANAGE, async (req, res) => {
 });
 
 payrollTax91Router.post('/tax-forms/:id/file', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const f = await prisma.taxForm.findUnique({ where: { id: req.params.id } });
   if (!f) throw new HttpError(404, 'not_found', 'Form not found.');
   if (f.status !== 'DRAFT' && f.status !== 'AMENDED') {
@@ -531,6 +555,8 @@ payrollTax91Router.post('/tax-forms/:id/file', MANAGE, async (req, res) => {
  * batch.
  */
 payrollTax91Router.post('/tax-forms/bulk-file', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const ids = z.array(z.string().uuid()).min(1).max(1000).parse(req.body?.ids);
   const confirmationNumber = z.string().trim().max(80).optional().nullable().parse(req.body?.confirmationNumber) ?? null;
   const now = new Date();
@@ -564,6 +590,8 @@ payrollTax91Router.post('/tax-forms/bulk-file', MANAGE, async (req, res) => {
 });
 
 payrollTax91Router.post('/tax-forms/:id/void', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   await prisma.taxForm.update({
     where: { id: req.params.id },
     data: { status: 'VOIDED' },
@@ -636,8 +664,9 @@ payrollTax91Router.get('/tax-forms/build/941', VIEW, async (req, res) => {
       // 7.65% combined (FICA 6.2 + Medicare 1.45) — illustrative only.
       ficaMedicareWages: totalWages.toFixed(2),
     },
-    periodStart: periodStart.toISOString().slice(0, 10),
-    periodEnd: periodEnd.toISOString().slice(0, 10),
+    // The quarter's bounds are UTC-midnight dates.
+    periodStart: dateKeyInZone(periodStart, 'UTC'),
+    periodEnd: dateKeyInZone(periodEnd, 'UTC'),
   });
 });
 
@@ -813,6 +842,7 @@ async function sendRecipientCopyForForm(
 
 payrollTax91Router.post('/tax-forms/:id/send-recipient-copy', MANAGE, async (req, res, next) => {
   try {
+    assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
     const result = await sendRecipientCopyForForm(
       req.params.id,
       req.body?.force === true,
@@ -829,6 +859,8 @@ payrollTax91Router.post('/tax-forms/:id/send-recipient-copy', MANAGE, async (req
  * (no email, already sent, aggregate form) skip with a reason.
  */
 payrollTax91Router.post('/tax-forms/bulk-send-copies', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const ids = z.array(z.string().uuid()).min(1).max(1000).parse(req.body?.ids);
   const force = req.body?.force === true;
   let sent = 0;
@@ -871,6 +903,8 @@ const GenerateW2BodySchema = z.object({
  * caller can void an existing form first to force regeneration.
  */
 payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const input = GenerateW2BodySchema.parse(req.body ?? {});
   const associateIds = await listW2EligibleAssociates(
     prisma,
@@ -967,6 +1001,8 @@ const GenerateF1099NecBodySchema = z.object({
  * regeneration.
  */
 payrollTax91Router.post('/tax-forms/1099-nec/generate', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const input = GenerateF1099NecBodySchema.parse(req.body ?? {});
   const associateIds = await listF1099NecEligibleAssociates(
     prisma,
@@ -1038,6 +1074,8 @@ const GenerateF1099MiscBodySchema = z.object({
  * payment lands in Box 3 (Other income). See f1099MiscAggregator.
  */
 payrollTax91Router.post('/tax-forms/1099-misc/generate', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const input = GenerateF1099MiscBodySchema.parse(req.body ?? {});
   const associateIds = await listF1099MiscEligibleAssociates(
     prisma,
@@ -1137,6 +1175,8 @@ const W2cBodySchema = z
  * correction.
  */
 payrollTax91Router.post('/tax-forms/w2c', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const input = W2cBodySchema.parse(req.body);
 
   const original = await prisma.taxForm.findUnique({
@@ -2058,6 +2098,8 @@ payrollTax91Router.get('/tax-forms/submitter', VIEW, async (_req, res) => {
 });
 
 payrollTax91Router.post('/tax-forms/submitter', MANAGE, async (req, res) => {
+  // Tax forms are the company's filings: a site- or region-bound account doesn't write them (deep audit SEC).
+  assertCompanyWide(req.user!, 'Tax forms cover the whole company; ask a payroll admin without a site limit.');
   const input = SubmitterProfileBodySchema.parse(req.body);
   const data = {
     ...input,
@@ -2975,6 +3017,8 @@ const TinBodySchema = z.object({
 payrollTax91Router.get('/associates/:id/tin', VIEW, async (req, res, next) => {
   try {
     await assertSameTenant('associate', String(req.params.id));
+    // The person must be in the caller's reach (CODE-7): no TIN last-4 for another store's contractor.
+    await loadInScope(prisma, 'associate', String(req.params.id), req.user!);
     const id = z.string().uuid().parse(req.params.id);
     const a = await prisma.associate.findUnique({
       where: { id },
@@ -3007,6 +3051,7 @@ payrollTax91Router.get('/associates/:id/tin', VIEW, async (req, res, next) => {
 payrollTax91Router.post('/associates/:id/tin', MANAGE, async (req, res, next) => {
   try {
     await assertSameTenant('associate', String(req.params.id));
+    await loadInScope(prisma, 'associate', String(req.params.id), req.user!);
     const id = z.string().uuid().parse(req.params.id);
     const input = TinBodySchema.parse(req.body);
     const cleaned = input.tin.replace(/[^0-9]/g, '');
@@ -3068,6 +3113,7 @@ payrollTax91Router.post('/associates/:id/tin', MANAGE, async (req, res, next) =>
 payrollTax91Router.delete('/associates/:id/tin', MANAGE, async (req, res, next) => {
   try {
     await assertSameTenant('associate', String(req.params.id));
+    await loadInScope(prisma, 'associate', String(req.params.id), req.user!);
     const id = z.string().uuid().parse(req.params.id);
     const a = await prisma.associate.findUnique({
       where: { id },

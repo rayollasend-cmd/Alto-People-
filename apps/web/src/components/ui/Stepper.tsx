@@ -1,5 +1,6 @@
 import { Check } from '@/components/ui/icons';
 import { cn } from '@/lib/cn';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Horizontal step indicator for multi-step flows (RunPayrollWizard,
@@ -31,10 +32,11 @@ interface StepperProps {
 }
 
 export function Stepper({ current, steps, onStepClick, className }: StepperProps) {
+  const { t } = useI18n();
   return (
     <ol
       className={cn('flex items-center justify-between gap-2', className)}
-      aria-label="Progress"
+      aria-label={t('common.progress')}
     >
       {steps.map((s, i) => {
         const stepNum = i + 1;

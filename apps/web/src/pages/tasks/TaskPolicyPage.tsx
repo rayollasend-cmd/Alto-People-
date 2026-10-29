@@ -10,6 +10,7 @@ import { ListTemplate } from '@/components/templates';
 import { Button, Input, Select } from '@/components/ui';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
+import { QueryError } from '@/components/ui/QueryError';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -38,15 +39,23 @@ export function TaskPolicyPage() {
   // Sites with their own policy, marked in the picker so nobody hunts for them.
   const custom = new Set((q.data as { overrideLocationIds?: string[] } | undefined)?.overrideLocationIds ?? []);
 
-  const [handoff, setHandoff] = useState('30');
+  // The form holds the policy the server sent, never a hard-coded guess: it
+  // starts blank and fills from the read. While the read loads or after it
+  // failed there is no form and no Save — the defaults shown as "the
+  // policy", one Save away from overwriting the real one, were the bug
+  // (deep audit 2026-10-29, CRAWL-7).
+  const [handoff, setHandoff] = useState('');
   const [maxAuto, setMaxAuto] = useState('');
   const [highRisk, setHighRisk] = useState<WorkTaskHighRiskPolicy>('PERSON_OR_SUPERVISED_ROBOT');
-  const [robotDefault, setRobotDefault] = useState('4.00');
-  const [agentCost, setAgentCost] = useState('0.00');
-  const [span, setSpan] = useState('4');
-  const [utilization, setUtilization] = useState('70');
-  const [backup, setBackup] = useState('25');
+  const [robotDefault, setRobotDefault] = useState('');
+  const [agentCost, setAgentCost] = useState('');
+  const [span, setSpan] = useState('');
+  const [utilization, setUtilization] = useState('');
+  const [backup, setBackup] = useState('');
   const [robotCosts, setRobotCosts] = useState<Record<string, string>>({});
+  // Which scope's policy the form holds ('' = every site); null until the first read lands.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loaded = !!q.data && loadedFor === locationId;
 
   useEffect(() => {
     const p = q.data;
@@ -60,7 +69,9 @@ export function TaskPolicyPage() {
     setUtilization(String(p.robotUtilizationPct));
     setBackup(String(p.backupCrewRatioPct));
     setRobotCosts(Object.fromEntries(Object.entries(p.robotCostPerTaskCents).map(([k, v]) => [k, (v / 100).toFixed(2)])));
-  }, [q.data]);
+    setLoadedFor(locationId);
+    // A scope change is a new key: its data lands here again (cached or read).
+  }, [q.data, locationId]);
 
   const cents = (s: string) => Math.round(Number(s || '0') * 100);
   const save = useMutation({
@@ -109,7 +120,9 @@ export function TaskPolicyPage() {
         </div>
       }
     >
-      {q.isLoading ? (
+      {q.isError && !q.data ? (
+        <QueryError what="the task assignment policy" query={q} />
+      ) : !loaded ? (
         <Skeleton className="h-64 w-full" />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -176,7 +189,7 @@ export function TaskPolicyPage() {
           </Card>
           {canEdit && (
             <div className="lg:col-span-2">
-              <Button onClick={() => save.mutate()} loading={save.isPending}>
+              <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!loaded}>
                 Save policy
               </Button>
             </div>

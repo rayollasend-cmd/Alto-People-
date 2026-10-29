@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * WHO IS COVERING WHOSE TEAM TODAY.
@@ -11,11 +12,13 @@ import { prisma } from '../db.js';
  * cover's own name. Nothing is reassigned and nothing is copied; the
  * delegation is a lens, and it closes itself on the end date.
  *
- * "Active" is judged on UTC calendar days, inclusive at both ends, the
- * way people write "out Monday through Friday".
+ * "Active" is judged on the company's calendar days, inclusive at both
+ * ends, the way people write "out Monday through Friday" — never UTC's,
+ * which ended a Friday cover at 5 PM Pacific.
  */
 
-const dayStart = (d: Date) => new Date(`${d.toISOString().slice(0, 10)}T00:00:00.000Z`);
+/** The company's day `d` falls on, as the @db.Date startsOn/endsOn compare (UTC midnight of that day). */
+const dayStart = (d: Date) => new Date(`${orgDateKey(d)}T00:00:00.000Z`);
 
 /** Delegations currently pointing AT `userId` — the teams they cover. */
 export async function activeDelegationsTo(userId: string, now = new Date()) {

@@ -25,6 +25,8 @@ import {
   updateCheckSettings,
   voidCheck,
 } from '../lib/paperChecks.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Paper checks: "pay by check this time" on a paycheck, the associate's
@@ -37,7 +39,8 @@ import {
 
 export const paperChecksRouter = Router();
 const PROCESS = requireCapability('process:payroll');
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A run's @db.Date period as the days it names. */
+const ymd = dateColumnKey;
 
 async function scopedItem(req: Request) {
   const id = z.string().uuid().parse(req.params.id);
@@ -244,7 +247,7 @@ paperChecksRouter.get('/payroll/positive-pay.csv', PROCESS, async (req, res) => 
   }
   const out = await positivePayFile(prisma, { runId: q.runId ?? null, onlyNew: q.onlyNew === '1', actorUserId: req.user!.id });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="positive-pay-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="positive-pay-${orgDateKey(new Date())}.csv"`);
   res.setHeader('X-Checks-Issued', String(out.issued));
   res.setHeader('X-Checks-Voided', String(out.voids));
   res.send(out.csv);

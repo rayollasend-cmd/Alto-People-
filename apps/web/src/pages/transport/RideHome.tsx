@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { onLiveEvent } from '@/lib/liveEvents';
 import { useAuth } from '@/lib/auth';
+import { useReadable } from '@/lib/useReadable';
 import { useUrlParam } from '@/lib/useUrlState';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Bus, Check, Home, MapPin, Plus, Repeat, ThumbsDown, ThumbsUp, Trash2, UserRound, Wallet } from '@/components/ui/icons';
@@ -57,6 +58,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { NoAccess } from '@/components/ui/NoAccess';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -152,7 +154,10 @@ type RideView = (typeof RIDE_VIEWS)[number];
 export function RideHome() {
   const { t } = useI18n();
   const { can } = useAuth();
-  const me = useQuery({ queryKey: ['transport', 'me'], queryFn: getMyTransport, refetchInterval: 60_000 });
+  // "My rides" reads the rider's own record: an account with no person behind
+  // it (an admin who runs the vans) never asks — it was a 403 on every visit (CRAWL-15).
+  const rides = useReadable('ride:transport', { self: true });
+  const me = useQuery({ queryKey: ['transport', 'me'], queryFn: getMyTransport, refetchInterval: 60_000, enabled: rides });
   const [view, setView] = useUrlParam<RideView>('view', 'upcoming', RIDE_VIEWS, { history: 'push' });
   // The booking form, open — blank, or prefilled from a shift / a past ride.
   const [booking, setBooking] = useState<BookPrefill | null>(null);
@@ -162,7 +167,7 @@ export function RideHome() {
   // the older shape of the same fact).
   const authorized = data ? isAuthorized(data) : false;
   const canBook = authorized && (data?.stores.length ?? 0) > 0;
-  const live = useMyLiveRide();
+  const live = useMyLiveRide(rides);
   useRiderAlerts(data, live);
   // With a ride coming the trip leads — the explainer steps aside.
   const next = authorized ? sortedLive(data!.rides, Date.now())[0] : undefined;
@@ -178,9 +183,10 @@ export function RideHome() {
   // placed at a store rides nothing: the rider pitch is not their page, the
   // board's Rides tab is (F500 G2).
   const runsTheVans = can('view:transport');
-  if (runsTheVans && ((data && data.stores.length === 0 && data.rides.length === 0) || me.isError)) {
+  if (runsTheVans && (!rides || (data && data.stores.length === 0 && data.rides.length === 0) || me.isError)) {
     return <Navigate to="/transport?tab=rides" replace />;
   }
+  if (!rides) return <NoAccess />;
 
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
@@ -206,7 +212,7 @@ export function RideHome() {
     >
       {me.isLoading || !data ? (
         me.isError ? (
-          <QueryError what="your rides" query={me} />
+          <QueryError what={t('ride.load.rides')} query={me} />
         ) : (
           <Card>
             <CardContent className="space-y-3">
@@ -656,7 +662,7 @@ function NextRideHero({
           )}
           <div className="flex items-start gap-2 text-sm text-ink-muted">
             <Wallet className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <span className="min-w-0 flex-1 tabular-nums">{fareWords(t, next.fareCents, data.charges.nextPayday, next.serviceDate)}</span>
+            <span className="min-w-0 flex-1 tabular-nums">{fareWords(t, next.fareCents, data.charges.nextPayday, next.serviceDate, data.charges.payroll)}</span>
           </div>
         </div>
 
@@ -799,11 +805,12 @@ export function ShiftRides({ data, gold = true, onCustom }: { data: MyTransport;
 
 /** The rider's ride while the van is out (or about to leave): refetched
  *  every 15s, and the moment the server says the van moved. */
-function useMyLiveRide(): MyLiveRide | null {
+function useMyLiveRide(enabled = true): MyLiveRide | null {
   const queryClient = useQueryClient();
   const q = useQuery({
     queryKey: ['transport', 'me', 'live'],
     queryFn: getMyLiveRide,
+    enabled,
     // 15 s while the van is out, and in the half hour before it leaves (so
     // "Mike is on the way" lands without a pull); a minute otherwise.
     refetchInterval: (query) => {
@@ -1283,6 +1290,7 @@ function hhmm(iso: string, tz: string): string {
 function addDays(ymd: string, n: number): string {
   const [y, m, d] = ymd.split('-').map(Number);
   const at = new Date(Date.UTC(y!, m! - 1, d! + n));
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: date-only arithmetic on a UTC-midnight date, no instant involved
   return at.toISOString().slice(0, 10);
 }
 
@@ -1611,7 +1619,7 @@ export function BookRideDialog({
         toast.success(t('ride.bookedWaitlist', { position: inLine.position, shift: picked.label }));
       } else {
         toast.success(legs.length === 2 ? t('ride.bookedBoth') : t('ride.booked'), {
-          description: fareWords(t, total, data.charges.nextPayday, date),
+          description: fareWords(t, total, data.charges.nextPayday, date, data.charges.payroll),
         });
       }
       await queryClient.invalidateQueries({ queryKey: ['transport', 'me'] });
@@ -1730,7 +1738,7 @@ export function BookRideDialog({
           {/* Without this, a failed trip lookup just showed every shift as
               having no seats taken — a rider would book into a van that
               was already full. */}
-          {trips.isError && <QueryError what="seats left on these shifts" query={trips} />}
+          {trips.isError && <QueryError what={t('ride.load.seats')} query={trips} />}
           {windows.length > 0 && (
             <ShiftPicker
               windows={windows}
@@ -1889,7 +1897,7 @@ export function BookRideDialog({
             the sheet opens, and associates could not find it. */}
         <DialogFooter sticky className="flex-row items-center justify-between gap-3 sm:justify-between">
           <span className="min-w-0 text-sm text-silver tabular-nums" data-testid="booking-fare">
-            {fareWords(t, total, data.charges.nextPayday, date)}
+            {fareWords(t, total, data.charges.nextPayday, date, data.charges.payroll)}
           </span>
           <Button
             className="shrink-0"

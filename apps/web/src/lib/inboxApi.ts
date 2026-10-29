@@ -1,8 +1,7 @@
-import { useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { InboxResponse } from '@alto-people/shared';
 import { apiFetch } from './api';
-import { INBOX_QUERY_KEY, inboxCountFor, navBadgeFor } from './inboxCounts';
+import { INBOX_QUERY_KEY } from './inboxCounts';
 
 export { INBOX_QUERY_KEY, NOT_A_QUEUE, inboxCountFor, inboxHomePath, inboxPagesOf, navBadgeFor } from './inboxCounts';
 
@@ -29,24 +28,6 @@ export function useInbox() {
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
-}
-
-/** The rail's and the phone drawer's badges, from the one inbox request. */
-export function useNavBadges(): (rows: { key: string; path: string } | ReadonlyArray<{ key: string; path: string }>) => number | null {
-  const data = useInbox().data;
-  return useCallback((rows: { key: string; path: string } | ReadonlyArray<{ key: string; path: string }>) => navBadgeFor(data, rows), [data]);
-}
-
-/** The page header's "N waiting" — the same number as the page's sidebar badge. */
-export function useInboxCount(pages: string | readonly string[], enabled = true): number | null {
-  const q = useQuery({
-    queryKey: INBOX_QUERY_KEY,
-    queryFn: getInbox,
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-    enabled,
-  });
-  return enabled ? inboxCountFor(q.data, pages) : null;
 }
 
 /**

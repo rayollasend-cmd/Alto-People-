@@ -1,4 +1,5 @@
-import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, Tooltip, XAxis, YAxis } from 'recharts';
+import { ResponsiveContainer } from './container.plot';
 import { AXIS, Y_AXIS_WIDTH, yAxisLabel } from './axes';
 import { PALETTE, TICK, TOOLTIP_ITEM_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './palette';
 import type { Row } from './Waterfall';

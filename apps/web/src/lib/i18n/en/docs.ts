@@ -112,6 +112,11 @@ export const enDocs = {
   'docs.rescanBody':
     'Photos are now straightened, cropped, and color-corrected automatically. If an older upload looks crooked or hard to read, re-upload it — it will come out as a clean scan.',
   'docs.rescanDismiss': 'Got it',
+  'docs.heroMissing': '{count} need re-upload',
+  'docs.heroMissingOne': '1 needs re-upload',
+  'docs.whatDocs': 'your documents',
+  'docs.status.reupload': 'Re-upload needed',
+  'docs.lettersTitle': 'Verification letters',
 } as const;
 
 registerEnglish(enDocs);

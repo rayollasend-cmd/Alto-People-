@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { seenKey, stepCopy, tourFor, type Tour } from '@/lib/tours';
 import { Button } from '@/components/ui/Button';
@@ -57,7 +57,9 @@ export function overlayOpen(root: ParentNode = document): boolean {
 }
 
 export function Coachmarks() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  const { moduleOn } = useTenant();
+  const term = useTerm();
   const { lang, t } = useI18n();
   const location = useLocation();
   const [tour, setTour] = useState<Tour | null>(null);
@@ -129,7 +131,10 @@ export function Coachmarks() {
     setTour(null);
   };
 
-  const current = stepCopy(tour.steps[step]!, lang);
+  // "people and clients" only where search finds client accounts: the
+  // tenant has clients (a hotel does not) and the reader is not a client.
+  const clients = moduleOn('clientPortal') && user.role !== 'CLIENT_PORTAL' ? term('label.clients').toLowerCase() : null;
+  const current = stepCopy(tour.steps[step]!, lang, { clients, findsPeople: can('view:org') });
   const last = step === tour.steps.length - 1;
   // Card below the anchor when there is room, otherwise above; never off
   // the right edge.

@@ -136,6 +136,12 @@ describe('the Client portfolio page', () => {
     expect(within(rows[3]!).getByText('Not rated')).toBeInTheDocument();
     // Never a numeric score.
     expect(table).not.toHaveTextContent(/Watch · \d/);
+    // The dictionary's names (LEAD-5): the portfolio's money is Revenue at the standard rates,
+    // and the card says statements are the invoice-grade figure — Clients' "Billed" reads those.
+    const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toEqual(expect.arrayContaining(['Revenue (est.)', 'Gross margin', 'Gross margin %']));
+    expect(headers).not.toContain('Billed');
+    expect(screen.getAllByText(/finalized statements are the invoice-grade figure/).length).toBeGreaterThan(0);
   });
 
   it('weights the pipeline: the annual total as the headline, each stage in words, an empty stage with no bar, the rates in a footnote', async () => {
@@ -162,7 +168,7 @@ describe('the Client portfolio page', () => {
 
   it('two clients: the matrix is a list; no clients and no prospects: each section says so', async () => {
     const { unmount } = show(portfolio({ clients: CLIENTS.slice(0, 2) }));
-    expect(await screen.findByTestId('exec-matrix-few')).toHaveTextContent('The matrix draws from three clients.');
+    expect(await screen.findByTestId('exec-matrix-few')).toHaveTextContent('The matrix appears once there are three clients.');
     unmount();
     show(portfolio({ clients: [], concentration: { topSharePct: 0, topClientName: null, thresholdPct: 50, hhi: 0 }, pipeline: { stages: [], weightedAnnual: 0, prospects: [] }, league: [] }));
     expect((await screen.findAllByText('Clients appear here once approved time is billed in the period.')).length).toBeGreaterThan(0);

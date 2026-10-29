@@ -2,6 +2,7 @@ import type { DocumentKind, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { getBlobStore } from './blobStore.js';
 import { tenantIdForWrite } from './tenant.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * Document retention by kind (HR pack 2026-10).
@@ -87,7 +88,7 @@ export async function retentionPreview(db: PrismaClient = defaultPrisma, now: Da
         filename: r.filename,
         associateId: r.associateId,
         associateName: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
-        separatedAt: r.associate.separatedAt!.toISOString().slice(0, 10),
+        separatedAt: orgDateKey(r.associate.separatedAt!), // a moment: the company's day it happened on
         retainYears: p.retainYearsAfterSeparation,
       });
     }

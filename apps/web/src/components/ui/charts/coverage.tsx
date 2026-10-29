@@ -34,6 +34,23 @@ export function coverageDomain(peak: number, target: number | null = null): [num
   return [0, Math.ceil(top / 4) * 4];
 }
 
+/**
+ * A "nice" axis for a measured quantity (hours): zero to a round top with
+ * evenly spaced round ticks — 0/25/50/75/100, never 0/25/50/88 (deep audit
+ * LEAD-26: the hours chart's domain top, 88, was drawn as the last tick).
+ * The top clears the peak by 15%, like coverageDomain; steps are 1, 2, 2.5
+ * or 5 × a power of ten, at least 1 (whole hours).
+ */
+export function niceAxis(peak: number, segments = 4): { domain: [number, number]; ticks: number[] } {
+  const top = Math.max(peak, 1) * 1.15;
+  const raw = top / segments;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = Math.max(1, [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw - 1e-9) ?? 10 * mag);
+  const n = Math.ceil(top / step - 1e-9);
+  const ticks = Array.from({ length: n + 1 }, (_, i) => Math.round(i * step * 100) / 100);
+  return { domain: [0, ticks[ticks.length - 1]!], ticks };
+}
+
 /* ---- Coverage curve: headcount by hour today vs the contracted line ---- */
 
 export interface HourPoint {
@@ -318,10 +335,11 @@ export function HoursChart({
   labels: { scheduled: string; worked: string; heading: (d: string) => string };
 }) {
   const peak = Math.max(0, ...days.map((d) => Math.max(d.scheduledHours, d.workedHours)));
+  const axis = niceAxis(peak);
   return (
     <div>
       <div className="h-40 w-full">
-        <HoursPlot days={days} labels={labels} domain={coverageDomain(peak)} />
+        <HoursPlot days={days} labels={labels} domain={axis.domain} ticks={axis.ticks} />
       </div>
       <div className="mt-1">
         <LegendKey

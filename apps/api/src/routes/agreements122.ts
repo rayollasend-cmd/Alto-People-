@@ -10,6 +10,8 @@ import { notifyAssociate } from '../lib/notify.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
 import { fmtDay } from '../lib/humanDates.js';
+import { dateColumnKey } from '../lib/timezone.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Phase 122 — Per-associate legal agreements.
@@ -79,8 +81,8 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
       customLabel: a.customLabel,
       status: a.status,
       documentUrl: a.documentUrl,
-      effectiveDate: a.effectiveDate?.toISOString().slice(0, 10) ?? null,
-      expiresOn: a.expiresOn?.toISOString().slice(0, 10) ?? null,
+      effectiveDate: a.effectiveDate ? dateColumnKey(a.effectiveDate) : null,
+      expiresOn: a.expiresOn ? dateColumnKey(a.expiresOn) : null,
       signedAt: a.signedAt?.toISOString() ?? null,
       signature: a.signature,
       supersedesId: a.supersedesId,
@@ -95,7 +97,8 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
 function agreementWindow(window: 'signed30' | 'expiring30', now: Date): Prisma.AgreementWhereInput {
   const DAY = 86_400_000;
   if (window === 'signed30') return { status: 'SIGNED', signedAt: { gte: new Date(now.getTime() - 30 * DAY) } };
-  const today = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  // Today on the company's calendar, as a DATE value (expiresOn is a DATE column).
+  const today = new Date(`${orgDateKey(now)}T00:00:00Z`);
   return { status: 'SIGNED', expiresOn: { gte: today, lte: new Date(today.getTime() + 30 * DAY) } };
 }
 
@@ -137,8 +140,8 @@ agreements122Router.get(
         customLabel: a.customLabel,
         status: a.status,
         documentUrl: a.documentUrl,
-        effectiveDate: a.effectiveDate?.toISOString().slice(0, 10) ?? null,
-        expiresOn: a.expiresOn?.toISOString().slice(0, 10) ?? null,
+        effectiveDate: a.effectiveDate ? dateColumnKey(a.effectiveDate) : null,
+        expiresOn: a.expiresOn ? dateColumnKey(a.expiresOn) : null,
         signedAt: a.signedAt?.toISOString() ?? null,
         notes: a.notes,
       })),

@@ -8,6 +8,7 @@ import { depositDue, isDepositFrequency, quarterLabel, type DepositFrequency } f
 import { tenantIdForWrite } from './tenant.js';
 import { booksAfterTaxPayment } from './books/posting/hooks.js';
 import { fmtDay } from './humanDates.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * The payroll-tax liability ledger.
@@ -359,6 +360,7 @@ export async function submitPaymentToProvider(db: PrismaClient, paymentId: strin
         jurisdiction: p.jurisdiction,
         periodLabel: p.periodLabel,
         amount: Number(p.amount),
+        // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: dueDate is a Postgres DATE (UTC midnight)
         dueDate: p.dueDate.toISOString().slice(0, 10),
         accountNumber: p.account?.accountNumber ?? null,
       }),
@@ -402,7 +404,11 @@ export async function markPaymentPaid(db: PrismaClient, paymentId: string, input
   const paidAt = input.paidOn ? new Date(`${input.paidOn}T12:00:00Z`) : new Date();
   const updated = await db.taxPayment.update({ where: { id: p.id }, data: { status: 'PAID', confirmationNumber: input.confirmationNumber, paidAt, paidById: actorUserId } });
   await settleLiabilities(db, updated, actorUserId);
-  enqueueAudit({ actorUserId, action: 'payroll_tax.payment_paid', entityType: 'TaxPayment', entityId: p.id, metadata: { confirmationNumber: input.confirmationNumber, paidOn: paidAt.toISOString().slice(0, 10), late: paidAt > p.dueDate } }, 'payrollTaxLedger');
+  // The day it was paid on the company's calendar, against the due date (a DATE): paid on the due day is on time.
+  const paidOn = input.paidOn ?? orgDateKey(paidAt);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: dueDate is a Postgres DATE (UTC midnight)
+  const dueOn = p.dueDate.toISOString().slice(0, 10);
+  enqueueAudit({ actorUserId, action: 'payroll_tax.payment_paid', entityType: 'TaxPayment', entityId: p.id, metadata: { confirmationNumber: input.confirmationNumber, paidOn, late: paidOn > dueOn } }, 'payrollTaxLedger');
   return updated;
 }
 
@@ -482,6 +488,24 @@ function stepsFor(kind: TaxAgencyKind, jurisdiction: string): string[] {
  * unemployment first, then each state where tax is owed or people live or
  * worked in the last 120 days, then accounts waiting on registration.
  */
+/**
+ * The next deposit to make: every open line (one per agency and due date)
+ * due on the earliest due date that hasn't passed, summed (deep audit
+ * MONEY-28). Two agencies due the same day are one "next deposit" of their
+ * total, never the first one alone. Overdue lines are not "next"; they are late.
+ */
+export function nextDepositDue(
+  lines: ReadonlyArray<{ dueDate: string; amount: number; agency: string }>,
+  today: string,
+): { dueDate: string; amount: number; agencies: string[]; lines: number } | null {
+  const ahead = lines.filter((l) => l.dueDate >= today && l.amount > 0);
+  if (ahead.length === 0) return null;
+  const dueDate = ahead.reduce((min, l) => (l.dueDate < min ? l.dueDate : min), ahead[0]!.dueDate);
+  const that = ahead.filter((l) => l.dueDate === dueDate);
+  const cents = that.reduce((sum, l) => sum + Math.round(l.amount * 100), 0);
+  return { dueDate, amount: cents / 100, agencies: [...new Set(that.map((l) => l.agency))], lines: that.length };
+}
+
 export async function registrationsNeeded(db: Db, now: Date = new Date()): Promise<RegistrationNeed[]> {
   const tenantId = tenantIdForWrite();
   const pending = await db.taxAgencyAccount.findMany({ where: { tenantId, status: 'PENDING_REGISTRATION' }, orderBy: [{ kind: 'asc' }, { jurisdiction: 'asc' }] });
@@ -532,7 +556,9 @@ export async function registrationsNeeded(db: Db, now: Date = new Date()): Promi
  */
 export async function payrollTaxesNeedingYou(db: Db, now = new Date()): Promise<number> {
   const tenantId = tenantIdForWrite();
-  const day = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
+  // The company's day (deep audit MONEY-16): after 8 PM Eastern the UTC date is tomorrow, which
+  // pulled a deposit eight days out into "due within 7".
+  const day = new Date(orgDateKey(now) + 'T00:00:00Z');
   const in7 = new Date(day.getTime() + 7 * 86_400_000);
   const in14 = new Date(day.getTime() + 14 * 86_400_000);
   const [deposits, failed, returns, notices] = await Promise.all([

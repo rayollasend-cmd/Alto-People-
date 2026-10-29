@@ -1322,7 +1322,7 @@ function GridCore<T>({
                     )}
                     {expandable && (
                       <TableHead className="w-8 pr-0">
-                        <span className="sr-only">Details</span>
+                        <span className="sr-only">{t('common.details')}</span>
                       </TableHead>
                     )}
                     {tableCols.map((c) =>

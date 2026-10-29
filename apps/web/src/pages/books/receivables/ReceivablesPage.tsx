@@ -6,6 +6,7 @@ import {
   AGING_BUCKET_KEYS,
   AGING_BUCKET_LABELS,
   CLIENT_PAYMENT_METHOD_LABELS,
+  METRICS,
   type AgingBucketKey,
   type ClientPaymentRow,
   type ReceivableStatement,
@@ -34,7 +35,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
 import { PaymentDialog, useWho } from './receivablesKit';
 import { AgingByClientChart, CollectionActions, CollectionsGrid, DsoTrendChart, PromiseDialog, ReminderLine, useCollectionActions } from './collections';
-import type { CollectionItem } from '@/lib/books/receivablesApi';
+import type { CollectionItem, DsoResponse } from '@/lib/books/receivablesApi';
 
 /**
  * Receivables: what clients owe, by how late (the aging, with the picture
@@ -84,8 +85,10 @@ export function ReceivablesPage() {
           <MetricCard label="Owed to you" value={totals ? money(totals.open) : '—'} hint={aging.data ? `${aging.data.statements.length} open ${aging.data.statements.length === 1 ? 'statement' : 'statements'}` : undefined} href="/books/receivables?view=aging" nothing={totals && !totals.open ? 'Nothing owed' : undefined} />
           <MetricCard label="Past due" value={totals ? money(late) : '—'} hint={totals && totals.open ? `${Math.round((late / totals.open) * 100)}% of what’s owed` : undefined} tone={late > 0 ? 'warning' : 'default'} href="/books/receivables?view=collections" nothing={totals && !late ? 'Nothing late' : undefined} />
           <MetricCard label="Over 60 days" value={totals ? money(over60) : '—'} hint={over60 > 0 ? 'Call these first' : undefined} tone={over60 > 0 ? 'alert' : 'default'} href="/books/receivables?view=collections" nothing={totals && !over60 ? 'Nothing over 60 days' : undefined} />
+          {/* One name, one number (the metric dictionary, deep audit MONEY-8): this figure is the average days from
+              finalized to paid — "Average days to pay". "Days to collect" (DSO) is the executive pages' measure. */}
           <MetricCard
-            label="Days to collect"
+            label={METRICS.averageDaysToPay.label}
             value={dso.data?.last90.days ?? '—'}
             unit={dso.data?.last90.days != null ? (dso.data.last90.days === 1 ? 'day' : 'days') : undefined}
             hint={dso.data ? `Last 90 days · ${dso.data.last90.statements} ${dso.data.last90.statements === 1 ? 'statement' : 'statements'} paid` : undefined}
@@ -95,10 +98,10 @@ export function ReceivablesPage() {
           <MetricCard
             label="Collected this month"
             value={dso.data ? money(dso.data.collectedThisMonth.amount) : '—'}
-            hint={dso.data ? `${dso.data.collectedThisMonth.payments} ${dso.data.collectedThisMonth.payments === 1 ? 'payment' : 'payments'}` : undefined}
+            hint={dso.data ? collectedHint(dso.data) : undefined}
             tone="good"
             href="/books/receivables?view=payments"
-            nothing={dso.data && !dso.data.collectedThisMonth.payments ? 'Nothing collected yet this month' : undefined}
+            nothing={dso.data && !dso.data.collectedThisMonth.payments && !dso.data.markedPaidThisMonth?.statements ? 'Nothing collected yet this month' : undefined}
           />
         </MetricStrip>
       }
@@ -172,8 +175,9 @@ function AgingGrid({
   });
   const columns: GridColumn<ReceivablesAgingRow>[] = [
     { key: 'client', header: 'Client', accessor: (r) => r.clientName, sortable: true, primary: true, cell: (r) => <Link to={`/clients/${r.clientId}?tab=statements`} className="font-medium text-ink hover:text-gold hover:underline">{r.clientName}</Link> },
-    ...AGING_BUCKET_KEYS.map(bucketCol),
+    // The bottom line beside the name (deep audit MONEY-15): at 1024 the last columns sit past the scroller's edge.
     { key: 'open', header: 'Total owed', accessor: (r) => r.open, csv: (r) => r.open.toFixed(2), sortable: true, searchable: false, align: 'right', cardMeta: true, className: 'tabular-nums font-medium', cell: (r) => money(r.open) },
+    ...AGING_BUCKET_KEYS.map(bucketCol),
     {
       key: 'credit',
       header: 'Credit on file',
@@ -265,6 +269,15 @@ function StatementList({ statements, reminders, manage }: { statements: Receivab
     {actions.promising && <PromiseDialog item={actions.promising} onClose={() => actions.setPromising(null)} onSaved={actions.refresh} />}
     </>
   );
+}
+
+/** The collected tile's hint — and, when statements were marked paid this month with no payment behind them, that too (MONEY-3). */
+function collectedHint(d: DsoResponse): string {
+  const p = d.collectedThisMonth.payments;
+  const base = `${p} ${p === 1 ? 'payment' : 'payments'}`;
+  const m = d.markedPaidThisMonth;
+  if (!m?.statements) return base;
+  return `${base} · ${m.statements} ${m.statements === 1 ? 'statement' : 'statements'} (${money(m.amount)}) marked paid with no payment recorded`;
 }
 
 /* ---- Payments ---------------------------------------------------------- */

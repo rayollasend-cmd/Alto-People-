@@ -12,13 +12,13 @@ import { prisma as defaultPrisma } from '../db.js';
 import { tenantJob } from './tenantJobs.js';
 import { currentTenantId } from './tenant.js';
 import type { PrismaClient } from '@prisma/client';
-import { startOfWeekUTC } from './timeAnomalies.js';
+import { companyWorkweek, orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 import { computeExecutiveDecisions } from './executiveDecisions.js';
 import { computeExecutiveSummary, executiveDigestBody, executiveNarrative } from './executiveSummary.js';
 import { buildBoardPack } from './executiveBoardPack.js';
 import { formatRef } from './emailTemplates.js';
 import { notifyUser } from './notify.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { logger } from './logger.js';
 
 const DIGEST_CATEGORY = 'executive_digest';
 const SEND_AFTER_HOUR = 8;
@@ -44,7 +44,8 @@ export async function runExecutiveDigestSweep(
   prisma: PrismaClient = defaultPrisma,
   now: Date = new Date(),
 ): Promise<ExecutiveDigestResult> {
-  const { weekday, hour } = localParts(now, DEFAULT_TIMEZONE);
+  // Saturday morning on the company's clock (the week it reports ends Friday there).
+  const { weekday, hour } = localParts(now, companyWorkweek().timezone);
   if (weekday !== 'Sat') return { sent: 0, skipped: 'not_saturday' };
   if (hour < SEND_AFTER_HOUR) return { sent: 0, skipped: 'too_early' };
 
@@ -74,7 +75,7 @@ export async function runExecutiveDigestSweep(
   // than a pointer to one.
   let body = `${executiveNarrative(summary).join(' ')}\n\n${executiveDigestBody(summary)}`;
   const packet = await buildBoardPack(summary, formatRef());
-  const packetName = `board-pack-${now.toISOString().slice(0, 10)}.pdf`;
+  const packetName = `board-pack-${orgDateKey(now)}.pdf`;
   // The follow-through line: the digest never lets the queue die quietly.
   const decisions = await computeExecutiveDecisions(prisma, now, { tenantId: currentTenantId() ?? undefined });
   const open = decisions.filter((d) => d.status === 'open');
@@ -108,8 +109,8 @@ export function startExecutiveDigestCron(): void {
     });
   }, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] executive digest cron armed (every ${SWEEP_SECONDS}s, sends Saturdays after ${SEND_AFTER_HOUR}:00 ${DEFAULT_TIMEZONE})`,
+  logger.info(
+    `executive digest cron armed (every ${SWEEP_SECONDS}s, sends Saturdays after ${SEND_AFTER_HOUR}:00 ${companyWorkweek().timezone})`,
   );
 }
 

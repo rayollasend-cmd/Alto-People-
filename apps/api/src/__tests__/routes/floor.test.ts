@@ -95,6 +95,23 @@ describe('incidents from the floor', () => {
     const assoc = await loginAs(user.email);
     expect((await assoc.post('/floor/incidents').send({ description: 'I fell over something.' })).status).toBe(403);
   });
+
+  it('the form posts nearMiss as text: "false" is an injury (recordable), "true" a hazard — and a future time is refused', async () => {
+    const w = await world();
+    const sup = await loginAs(w.lead.email);
+    const injury = await sup.post('/floor/incidents').field('description', 'Cut on the box cutter, needed stitches.').field('severity', 'MEDICAL_TREATMENT').field('nearMiss', 'false');
+    expect(injury.status).toBe(201);
+    expect(injury.body.isRecordable).toBe(true);
+    const hazard = await sup.post('/floor/incidents').field('description', 'Loose mat by the door, nobody hurt.').field('nearMiss', 'true');
+    expect(hazard.status).toBe(201);
+    expect(hazard.body.isRecordable).toBe(false);
+    const future = await sup
+      .post('/floor/incidents')
+      .field('description', 'Fell from the step ladder in aisle 4.')
+      .field('occurredAt', new Date(Date.now() + 60 * 60_000).toISOString());
+    expect(future.status).toBe(400);
+    expect(future.body.error?.code ?? future.body.code).toBe('occurred_in_future');
+  });
 });
 
 describe('flags from the floor', () => {

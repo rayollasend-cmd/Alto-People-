@@ -6,14 +6,12 @@ import type {
   BackgroundCheck,
   BackgroundCheckDetail,
   BackgroundCheckListResponse,
-  BackgroundInitiateInput,
   BackgroundPendingResponse,
   BackgroundUpdateInput,
   DrugTest,
   DrugTestBulkInitiateInput,
   DrugTestBulkInitiateResponse,
   DrugTestDetail,
-  DrugTestInitiateInput,
   DrugTestListResponse,
   DrugTestPendingResponse,
   DrugTestUpdateInput,
@@ -110,12 +108,6 @@ export function bulkInitiateBackgroundChecks(
   });
 }
 
-export function initiateBackgroundCheck(
-  body: BackgroundInitiateInput
-): Promise<BackgroundCheck> {
-  return apiFetch<BackgroundCheck>('/compliance/background', { method: 'POST', body });
-}
-
 export function updateBackgroundCheck(
   id: string,
   body: BackgroundUpdateInput
@@ -171,10 +163,6 @@ export function listDrugTests(): Promise<DrugTestListResponse> {
  *  disclosure, so fetch on drawer open, not per row. */
 export function getDrugTestDetail(id: string): Promise<DrugTestDetail> {
   return apiFetch<DrugTestDetail>(`/compliance/drug-tests/${id}`);
-}
-
-export function initiateDrugTest(body: DrugTestInitiateInput): Promise<DrugTest> {
-  return apiFetch<DrugTest>('/compliance/drug-tests', { method: 'POST', body });
 }
 
 export function updateDrugTest(id: string, body: DrugTestUpdateInput): Promise<DrugTest> {

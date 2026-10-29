@@ -1,9 +1,9 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
-  DEFAULT_TIMEZONE,
   formatDateInZone,
   formatTimeInZone,
 } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { emailUserForCategory, trackNotificationWork, type NotifyOpts } from './notify.js';
 import { emitLiveEvent } from './liveEvents.js';
 
@@ -64,7 +64,7 @@ export function shiftWa(
 ): NonNullable<NotifyOpts['wa']> {
   const start = new Date(s.startsAt);
   const end = new Date(s.endsAt);
-  const tz = s.timezone ?? DEFAULT_TIMEZONE;
+  const tz = s.timezone ?? companyWorkweek().timezone;
   return {
     template,
     params: (lang) => {
@@ -162,7 +162,7 @@ export function formatShiftLine(s: {
 }): string {
   const start = new Date(s.startsAt);
   const end = new Date(s.endsAt);
-  const tz = s.timezone ?? DEFAULT_TIMEZONE;
+  const tz = s.timezone ?? companyWorkweek().timezone;
   const date = formatDateInZone(start, tz);
   const startTime = formatTimeInZone(start, tz);
   const endTime = formatTimeInZone(end, tz);

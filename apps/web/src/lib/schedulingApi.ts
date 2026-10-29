@@ -59,6 +59,7 @@ import type {
   SwapDecideInput,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
+import type { Gated } from './approvalRequestsApi';
 
 interface ShiftListFilters {
   status?: ShiftStatus;
@@ -70,6 +71,8 @@ interface ShiftListFilters {
   id?: string;
   /** false = not over yet, true = already over (with OPEN: "Open" vs "Went unfilled"). */
   ended?: boolean;
+  /** One person's shifts (filtered on the server, inside the caller's scope). */
+  associateId?: string;
 }
 
 function qs(filters: ShiftListFilters): string {
@@ -81,6 +84,7 @@ function qs(filters: ShiftListFilters): string {
   if (filters.from) p.set('from', filters.from);
   if (filters.to) p.set('to', filters.to);
   if (filters.id) p.set('id', filters.id);
+  if (filters.associateId) p.set('associateId', filters.associateId);
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -109,6 +113,34 @@ export interface SchedulingKpis {
    *  labor cost from them; the counts above still come through. */
   projectedLaborCost: number | null;
   shiftsWithoutRate: number | null;
+}
+
+/** The contracted floor through one store day (GET /scheduling/contract). */
+export interface StaffingContract {
+  date: string;
+  timezone: string;
+  windows: Array<{
+    locationId: string;
+    locationName: string;
+    timezone: string;
+    label: string;
+    startMinute: number;
+    endMinute: number;
+    targetCount: number;
+  }>;
+  /** Stores with one all-day target and no labeled windows. */
+  totals: Array<{ locationId: string; targetCount: number }>;
+  /** The contract summed hour by hour on the store's clock (null: none set). */
+  hours: Array<{ at: string; target: number | null }>;
+}
+
+export function getStaffingContract(filters: { date?: string; clientId?: string; locationId?: string } = {}): Promise<StaffingContract> {
+  const p = new URLSearchParams();
+  if (filters.date) p.set('date', filters.date);
+  if (filters.clientId) p.set('clientId', filters.clientId);
+  if (filters.locationId) p.set('locationId', filters.locationId);
+  const q = p.toString();
+  return apiFetch<StaffingContract>(`/scheduling/contract${q ? `?${q}` : ''}`);
 }
 
 export function getSchedulingKpis(
@@ -519,17 +551,6 @@ export function nudgeUnconfirmedShifts(): Promise<{ nudged: number }> {
   });
 }
 
-/** Persist the client's grid row order (whole roster, replace-all). */
-export function saveRosterOrder(
-  clientId: string,
-  orderedIds: string[],
-): Promise<{ ok: true }> {
-  return apiFetch('/scheduling/roster-order', {
-    method: 'POST',
-    body: { clientId, orderedIds },
-  });
-}
-
 /**
  * Anchor move: put `moveId` directly above/below `anchorId` in the FULL
  * saved roster order. Safe under any filter — hidden people keep their
@@ -568,6 +589,8 @@ export function otOutlook(clientId?: string | null): Promise<OtOutlookResponse> 
 }
 
 export interface StoreTrendsResponse<T> {
+  /** The week the weeks start on (0 Sunday … 6 Saturday): the client's own week when asked about one client. */
+  weekStartsOn?: number;
   stores: T[];
   bestMarginPerHour: number;
   truncated?: boolean;
@@ -746,10 +769,11 @@ export function listRateDefaults(
   );
 }
 
+/** A bill-rate change goes to a second person (202 pending) when the tenant's switch says so. */
 export function upsertRateDefault(
   body: ShiftRateDefaultInput,
-): Promise<ShiftRateDefault> {
-  return apiFetch<ShiftRateDefault>('/scheduling/rate-defaults', {
+): Promise<Gated<ShiftRateDefault>> {
+  return apiFetch<Gated<ShiftRateDefault>>('/scheduling/rate-defaults', {
     method: 'PUT',
     body,
   });

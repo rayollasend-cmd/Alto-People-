@@ -15,6 +15,7 @@ import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui';
 import { QueryError } from '@/components/ui/QueryError';
 import { Drawer, DrawerBody, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
+import { ymdLocal } from '@/lib/format';
 
 /**
  * Brief 2-2 step 6 — the organization's and each site's own rules on the
@@ -28,7 +29,7 @@ const num = (v: string) => (v.trim() === '' ? undefined : Number(v));
 function NewOverrideDrawer({ sites, onClose, onSaved }: { sites: LaborRuleSite[]; onClose: () => void; onSaved: () => void }) {
   const [level, setLevel] = useState<'TENANT' | 'SITE'>('TENANT');
   const [siteId, setSiteId] = useState('');
-  const [effectiveFrom, setEffectiveFrom] = useState(() => new Date().toISOString().slice(0, 10));
+  const [effectiveFrom, setEffectiveFrom] = useState(() => ymdLocal());
   const [weekly, setWeekly] = useState('');
   const [daily, setDaily] = useState('');
   const [restHours, setRestHours] = useState('');

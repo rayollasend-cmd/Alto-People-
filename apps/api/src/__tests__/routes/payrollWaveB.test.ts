@@ -191,7 +191,7 @@ describe('payroll desks', () => {
     const p = await createAssociate({ firstName: 'Ray', lastName: 'Shaw' });
     await prisma.associate.update({ where: { id: p.id }, data: { employmentType: 'W2_EMPLOYEE' } });
     // Hired: readiness lists the people a run is for (F500 SH-4).
-    await prisma.application.create({ data: { associateId: p.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date() } });
+    const hired = await prisma.application.create({ data: { associateId: p.id, onboardingTrack: 'STANDARD', status: 'APPROVED', approvedAt: new Date() } });
     const { user: personUser } = await createUser({ role: 'ASSOCIATE', associateId: p.id });
     const noLogin = await createAssociate({ firstName: 'No', lastName: 'Login' });
     const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
@@ -202,6 +202,8 @@ describe('payroll desks', () => {
     expect(r.body.skipped).toEqual([{ associateId: noLogin.id, reason: 'No sign-in yet — invite them first.' }]);
     const bell = await prisma.notification.findFirst({ where: { recipientUserId: personUser.id, channel: 'IN_APP' } });
     expect(bell?.body).toMatch(/your W-4.*and where to send your pay/);
+    // A page that exists: their own checklist (deep audit CRAWL-2 — '/onboarding/me' alone was a 404).
+    expect(bell?.linkUrl).toBe(`/onboarding/me/${hired.id}`);
     const grid = await a.get('/payroll/readiness');
     const row = grid.body.rows.find((x: { associateId: string }) => x.associateId === p.id);
     expect(row.requested).toMatchObject({ items: ['w4', 'payout'] });

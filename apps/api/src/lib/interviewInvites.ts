@@ -1,6 +1,6 @@
 import { escapeText, fmtUtc, fold } from './calendarFeed.js';
 import { send } from './notifications.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * Interview invites that land in a calendar.
@@ -57,7 +57,7 @@ function uidOf(interviewId: string): string {
 
 /** "Fri, Sep 26, 10:00 AM EDT" — the email body's time, zone spelled out.
  *  The attachment itself carries UTC and each calendar shows local time. */
-export function inviteWhen(d: Date, timeZone = DEFAULT_TIMEZONE): string {
+export function inviteWhen(d: Date, timeZone = companyWorkweek().timezone): string {
   return new Intl.DateTimeFormat('en-US', {
     timeZone,
     weekday: 'short',

@@ -4,7 +4,10 @@ import { env } from './config/env.js';
 // its auto-instrumentation can attach to Node's HTTP layer at import
 // time. No-op when SENTRY_DSN is unset.
 import { initSentry } from './lib/sentry.js';
+import { installProcessGuards } from './lib/processGuards.js';
 initSentry();
+// A stray rejected promise is logged, never fatal (CODE-22).
+installProcessGuards();
 
 import { createApp } from './app.js';
 import { prisma } from './db.js';
@@ -71,19 +74,13 @@ import { startDailyPayCron } from './lib/dailyPay.js';
 import { startTimeOffPolicyCron } from './lib/timeOffPolicy.js';
 import { startSecurityAlertsCron } from './lib/securityAlerts.js';
 import { startAuditSinkCron } from './lib/auditSink.js';
-import { ensurePersonWorkers } from './lib/workers.js';
-import { ensureBuiltInAgents, expireApprovals } from './lib/agents.js';
 import { runForEachTenant } from './lib/tenantJobs.js';
-import { runBooksJobs } from './lib/books/jobs.js';
-import { syncAllPlans } from './lib/retirement.js';
-import { applyDueBackupWithholding } from './lib/contractors.js';
-import { installEventSync, runScheduledSyncs } from './lib/integrations/sync.js';
-import { sampleRobots } from './lib/robots.js';
+import { installEventSync } from './lib/integrations/sync.js';
 import { startAgentDriftCron } from './lib/agentControls.js';
 import { startAccessPurgeCron } from './lib/accessCleanup.js';
 import { startTaskHandoffSweep } from './lib/tasks/sweep.js';
-import { ALTO_TENANT_ID, onPlatformScope, runWithTenant, withPlatformScope } from './lib/tenant.js';
-import { enqueueAudit } from './lib/audit.js';
+import { ALTO_TENANT_ID, runWithTenant, withPlatformScope } from './lib/tenant.js';
+import { armBootJobs, installPlatformScopeAudit } from './lib/bootJobs.js';
 import { BUILD_VERSION } from './routes/health.js';
 import { startMemoryWatch } from './lib/memoryWatch.js';
 import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
@@ -101,7 +98,6 @@ import { flushPendingAudits } from './lib/audit.js';
 import { KeyringError, verifyKeyring } from './lib/keyring.js';
 import { startAuditChainCheckCron } from './lib/auditChain.js';
 import { startBiometricSealCron } from './lib/biometricFields.js';
-import { sweepTenantSchedules } from './lib/payScheduleMembership.js';
 
 const app = createApp();
 
@@ -233,71 +229,26 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   // SOC 2 decision 7: selfies and face templates written before the seal are encrypted in batches.
   startBiometricSealCron(prisma);
   // The environment's SSO / SCIM settings belong to Alto HR: written as that tenant.
-  void runWithTenant(ALTO_TENANT_ID, 'job', () => Promise.all([ensureEnvIdentity(prisma), ensureEnvScimToken(prisma)])).catch((err) => console.error('[alto-people/api] identity migration from the environment failed:', err));
-  // Brief 1D-1: a PERSON worker for every associate, at boot and every
-  // quarter hour, so an import that bypassed the API still ends up owned.
-  const sweepWorkers = () => runForEachTenant('workers', () => ensurePersonWorkers(prisma)).catch((err) => logger.warn({ err }, 'worker sweep failed'));
-  void sweepWorkers();
-  setInterval(sweepWorkers, 15 * 60_000).unref();
-  // Brief 1D-2: the agents Alto already runs are registered, and unanswered
-  // approval requests expire.
-  // Agent families step 0 (owner's decision 5): built-ins are per tenant.
-  const sweepAgents = () =>
-    runForEachTenant('agents', (tenantId) => ensureBuiltInAgents(prisma, tenantId))
-      .then(() => expireApprovals(prisma))
-      .catch((err) => logger.warn({ err }, 'agent sweep failed'));
-  void sweepAgents();
-  setInterval(sweepAgents, 15 * 60_000).unref();
-  // DEDUCT: 401(k) eligibility, auto-enroll after the opt-out window, and yearly escalation (idempotent).
-  const sweepRetirement = () =>
-    runForEachTenant('retirement-elections', () => syncAllPlans(prisma)).catch((err) => logger.warn({ err }, 'retirement election sweep failed'));
-  setTimeout(() => void sweepRetirement(), 10 * 60_000).unref();
-  setInterval(sweepRetirement, 6 * 60 * 60_000).unref();
-  // Contractors: backup withholding starts on payees whose B-notice deadline passed unanswered (IRS Pub 1281).
-  const sweepBackupWithholding = () =>
-    runForEachTenant('backup-withholding', () => applyDueBackupWithholding(prisma)).catch((err) => logger.warn({ err }, 'backup withholding sweep failed'));
-  void sweepBackupWithholding();
-  setInterval(sweepBackupWithholding, 60 * 60_000).unref();
-  // Pay schedules: everyone against the membership rules (moves start at the
-  // new schedule's next period, with a notice to payroll), and the
-  // Associate.payrollScheduleId mirror flipped for moves that start today.
-  const sweepPaySchedules = () =>
-    runForEachTenant('pay-schedules', () => sweepTenantSchedules(prisma)).catch((err) => logger.warn({ err }, 'pay schedule sweep failed'));
-  setTimeout(() => void sweepPaySchedules(), 5 * 60_000).unref();
-  setInterval(sweepPaySchedules, 3 * 60 * 60_000).unref();
-  // The books: recurring bills, bank feeds, accrual reversals and
-  // depreciation, and the QuickBooks outbox and pull (lib/books/jobs).
-  const sweepBooks = () => runForEachTenant('books', () => runBooksJobs(prisma)).catch((err) => logger.warn({ err }, 'books sweep failed'));
-  setTimeout(() => void sweepBooks(), 2 * 60_000).unref();
-  setInterval(sweepBooks, 5 * 60_000).unref();
+  void runWithTenant(ALTO_TENANT_ID, 'job', () => Promise.all([ensureEnvIdentity(prisma), ensureEnvScimToken(prisma)])).catch((err) => logger.error({ err }, 'identity migration from the environment failed'));
+  // The sweeps index.ts used to wire with bare setIntervals — person workers,
+  // built-in agents and their approvals' expiry, retirement elections, backup
+  // withholding, pay schedules, the books, integration syncs and robot
+  // sampling — go through the jobs registry, per tenant (lib/bootJobs.ts):
+  // one in-flight guard, one Scheduled jobs panel (audit 2026-10-29 CRAWL-4,
+  // CODE-23). timerTenancy.test.ts keeps new timers out of this file.
+  armBootJobs(prisma);
   startAgentDriftCron();
   // Brief 3-5: the HR and VMS connections sync on their schedule (every five
   // minutes the clock is checked per tenant) and on the domain events the
   // webhook fan-out sees.
   installEventSync();
-  const sweepIntegrations = () =>
-    runForEachTenant('integrations', (tenantId) => runScheduledSyncs(tenantId)).catch((err) => logger.warn({ err }, 'integration sweep failed'));
-  setInterval(sweepIntegrations, 5 * 60_000).unref();
   // Brief 3-2: a machine's stalled task goes to a person after the policy's seconds.
   startTaskHandoffSweep();
-  // Brief 3-1: every robot's fleet status, once a minute per tenant with robotics on.
-  const sampleFleet = () => runForEachTenant('robots', (tenantId) => sampleRobots(prisma, tenantId), { module: 'robotics' }).catch((err) => logger.warn({ err }, 'robot sampling failed'));
-  void sampleFleet();
-  setInterval(sampleFleet, 60_000).unref();
   // Brief 1A-4: deactivated accounts past their 30-day grace are soft-deleted.
   startAccessPurgeCron();
-  // Brief 2-1, step two: every cross-tenant view the platform opens is on the record.
-  const platformScopeSeen = new Map<string, number>();
-  onPlatformScope((ctx, callSite) => {
-    // Once an hour per call site: a timed flush must not write an audit row a minute.
-    const last = platformScopeSeen.get(callSite) ?? 0;
-    if (Date.now() - last < 3_600_000) return;
-    platformScopeSeen.set(callSite, Date.now());
-    enqueueAudit(
-      { actorUserId: null, clientId: null, action: 'platform.scope_opened', entityType: 'Tenant', entityId: ctx.tenantId, metadata: { callSite } },
-      'tenancy',
-    );
-  });
+  // Brief 2-1, step two: every cross-tenant view the platform opens is on the
+  // record, written as the scope's own tenant (lib/bootJobs.ts; CRAWL-5).
+  installPlatformScopeAudit();
   // Samples RSS/heap/external once a minute. An OOM kill is a SIGKILL —
   // no handler runs, nothing reaches Sentry — so the evidence has to be
   // written down BEFORE the process dies.

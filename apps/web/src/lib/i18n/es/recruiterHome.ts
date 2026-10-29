@@ -1,0 +1,57 @@
+// Spanish for 'recruiterHome.*' — a staff desk's words, registered with its English (en/recruiterHome.ts
+// imports this file), so it rides in that desk's own chunk: a Spanish-reading associate
+// never downloads it, and es.ts stays the associate's pack. Add 'recruiterHome.*' Spanish HERE.
+import { registerTranslations } from '../english';
+import type { enRecruiterHome } from '../en/recruiterHome';
+
+export const esRecruiterHome: Record<keyof typeof enRecruiterHome, string> = {
+  'recruiterHome.subtitle': 'Tu pipeline de hoy: qué hay de nuevo y qué está pendiente.',
+  'recruiterHome.newCandidate': 'Nuevo candidato',
+  'recruiterHome.openPipeline': 'Abrir pipeline',
+  'recruiterHome.interviewing': 'En entrevista',
+  'recruiterHome.onboarding': 'Incorporación',
+  'recruiterHome.todaysInterviews': 'Entrevistas de hoy',
+  'recruiterHome.noInterviews': 'Hoy no hay entrevistas',
+  'recruiterHome.noInterviewsBody': 'Programa una desde la página de un candidato y aparecerá aquí.',
+  'recruiterHome.inScreening': 'Candidatos en preselección',
+  'recruiterHome.loadError': 'No se pudo cargar tu día de reclutamiento.',
+  'recruiterHome.waitingOnYou': 'Esperan por ti',
+  'recruiterHome.nothingWaitingOnYou': 'Nada en tu proceso de selección te espera: cada entrevista tiene puntuación, cada sí tiene una oferta y nadie se ha quedado en silencio.',
+  'recruiterHome.waitingOnOthers': 'Esperan por otros',
+  'recruiterHome.nothingWithOthers': 'Nada pendiente con nadie: sin revisiones de clientes, ofertas sin firmar ni incorporaciones sin empezar.',
+  'recruiterHome.newApplicants': 'Nuevos solicitantes',
+  'recruiterHome.newest': 'Más recientes',
+  'recruiterHome.lastDayThisWeek': 'en el último día · {n} esta semana',
+  'recruiterHome.bySourceAria': 'Esta semana, por fuente',
+  'recruiterHome.pipeline': 'Pipeline',
+  'recruiterHome.board': 'Tablero',
+  'recruiterHome.openPostings': 'Vacantes abiertas',
+  'recruiterHome.postings': 'Vacantes',
+  'recruiterHome.noPostings': 'No hay vacantes abiertas',
+  'recruiterHome.noPostingsBody': 'Abre una vacante y los solicitantes empezarán a llegar aquí.',
+  'recruiterHome.openPosting': 'Abrir una vacante',
+  'recruiterHome.numbers': 'Los números',
+  'recruiterHome.analytics': 'Analítica',
+  'recruiterHome.hiresThisMonth': 'Contrataciones este mes',
+  'recruiterHome.nLastMonth': '{n} el mes pasado',
+  'recruiterHome.medianTimeToHire': 'Tiempo medio de contratación',
+  'recruiterHome.last90Days': 'Últimos 90 días',
+  'recruiterHome.offerAcceptance': 'Aceptación de ofertas',
+  'recruiterHome.inPipeline': 'En el pipeline',
+  'recruiterHome.nAtOffer': '{n} en oferta',
+  'recruiterHome.activity': 'Actividad reciente de reclutamiento',
+  'recruiterHome.nothingYet': 'Nada todavía.',
+  'recruiterHome.otherApprovals': 'Otras decisiones',
+  'recruiterHome.openDemand': 'Demanda abierta',
+  'recruiterHome.demandNone': 'Nada que contratar — cada puesto está cubierto o cerrado, y a ninguna tienda le falta personal.',
+  'recruiterHome.reqOpenPosting': 'Abrir una vacante',
+  'recruiterHome.gapsWaiting': 'Tiendas cortas sin vacante ({count})',
+  'recruiterHome.loadingAria': 'Cargando',
+  'recruiterHome.gapsTitle': 'Faltas de personal sin una oferta de empleo',
+  'recruiterHome.gapsShort': 'Faltan {n} desde la semana del {date}',
+  'recruiterHome.gapsOpen': 'Publicar una oferta para {n}',
+  'recruiterHome.gapsPlan': 'Plan de plantilla',
+  'recruiterHome.gapsError': 'No se pudo cargar el plan de plantilla.',
+};
+
+registerTranslations('es', esRecruiterHome);

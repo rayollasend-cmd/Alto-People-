@@ -86,10 +86,19 @@ export async function rerouteReturnedItem(
       .filter((m) => !failed || m.accountFingerprint === null || m.accountFingerprint !== failed.accountFingerprint)
       .sort((a, b) => b.verifiedAt!.getTime() - a.verifiedAt!.getTime())[0] ?? null;
 
-  await prisma.payrollItem.update({
-    where: { id: item.id },
-    data: { status: 'HELD', returnedAt: now, failureReason: reason },
+  // Claim-then-act (deep audit UPGRADE): one re-send per return. The claim
+  // is a conditional update on reroutedAt, so a bank webhook, its retry and
+  // a person pressing "Returned" at once re-pay the paycheck once; a re-send
+  // that fails gives the claim back below.
+  const claimed = await prisma.payrollItem.updateMany({
+    where: { id: item.id, reroutedAt: null },
+    data: { status: 'HELD', returnedAt: now, failureReason: reason, reroutedAt: now },
   });
+  if (claimed.count === 0) {
+    const cur = await prisma.payrollItem.findUnique({ where: { id: item.id }, select: { rerouteDetail: true } });
+    const d = cur?.rerouteDetail as RerouteDetail | null;
+    return d ? { outcome: 'rerouted', to: d.to, provider: d.provider, ref: d.ref } : { outcome: 'held', reason: 'already_rerouted' };
+  }
 
   const fullName = `${item.associate.firstName} ${item.associate.lastName}`;
   const address = {
@@ -98,6 +107,7 @@ export async function rerouteReturnedItem(
     state: item.associate.state ?? null,
     zip: item.associate.zip ?? null,
   };
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: the run's @db.Date period, stored at UTC midnight.
   const memo = `Payroll ${item.payrollRun.periodStart.toISOString().slice(0, 10)}–${item.payrollRun.periodEnd.toISOString().slice(0, 10)} (re-sent)`;
   const amount = Number(item.netPay);
 
@@ -153,6 +163,8 @@ export async function rerouteReturnedItem(
   });
 
   const ok = result.status === 'SUCCESS' || result.status === 'PENDING';
+  // Nothing went out: give the claim back, so a later return can re-send it.
+  if (!ok) await prisma.payrollItem.updateMany({ where: { id: item.id, reroutedAt: now }, data: { reroutedAt: null } });
   if (ok) {
     const detail: RerouteDetail = {
       returnedAt: now.toISOString(),

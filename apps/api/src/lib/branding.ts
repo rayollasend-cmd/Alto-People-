@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
-import { ALTO_TENANT_ID, tenantIdForWrite } from './tenant.js';
+import { ALTO_TENANT_ID, runWithTenant, tenantIdForWrite } from './tenant.js';
 
 /**
  * Org branding cache, per tenant (Phase: settings audit row #8; per
@@ -98,11 +98,17 @@ export async function refreshBranding(prisma: PrismaClient, tenantId: string = t
   const gen = generation;
   e.inflight = (async () => {
     try {
-      const row = await prisma.orgSetting.findUnique({ where: { tenantId } });
+      // Read as the tenant whose row this is: a refresh started by getBrandingSync()
+      // from a timer or a boot step has no tenant in context, and the wall refused it
+      // (audit 2026-10-29 CRAWL-5).
+      const [row, tenant] = await runWithTenant(tenantId, 'job', async () => {
+        const found = await prisma.orgSetting.findUnique({ where: { tenantId } });
+        // No row yet: the defaults, under the tenant's own name when it is not Alto HR.
+        const named = found || tenantId === ALTO_TENANT_ID ? null : await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }).catch(() => null);
+        return [found, named] as const;
+      });
       let snapshot: BrandingSnapshot;
       if (!row) {
-        // No row yet: the defaults, under the tenant's own name when it is not Alto HR.
-        const tenant = tenantId === ALTO_TENANT_ID ? null : await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } }).catch(() => null);
         snapshot = tenant ? { ...DEFAULT_BRANDING, orgName: tenant.name } : DEFAULT_BRANDING;
       } else {
         const logoDataUri =

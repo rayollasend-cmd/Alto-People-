@@ -7,6 +7,8 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
+import { fmtDay } from '../lib/humanDates.js';
 
 /**
  * Phase 130 — Volunteer time off (VTO).
@@ -129,7 +131,7 @@ vto130Router.get('/my/volunteer-entries', requireAuth, async (req, res) => {
   res.json({
     entries: entries.map((e) => ({
       id: e.id,
-      activityDate: e.activityDate.toISOString().slice(0, 10),
+      activityDate: dateColumnKey(e.activityDate),
       hours: e.hours.toString(),
       organization: e.organization,
       cause: e.cause,
@@ -176,7 +178,7 @@ vto130Router.get('/volunteer-entries', MANAGE_HR, async (req, res) => {
       associateId: e.associateId,
       associateName: `${e.associate.firstName} ${e.associate.lastName}`,
       associateEmail: e.associate.email,
-      activityDate: e.activityDate.toISOString().slice(0, 10),
+      activityDate: dateColumnKey(e.activityDate),
       hours: e.hours.toString(),
       organization: e.organization,
       cause: e.cause,
@@ -265,9 +267,7 @@ vto130Router.post(
     void notifyAssociate(e.associateId, {
       subject: `Volunteer hours ${approved ? 'approved' : 'rejected'}`,
       body:
-        `Your ${e.hours} volunteer hour(s) on ${e.activityDate
-          .toISOString()
-          .slice(0, 10)} for ${e.organization} were ${
+        `Your ${e.hours} volunteer hour(s) on ${fmtDay(e.activityDate, { year: true })} for ${e.organization} were ${
           approved ? 'approved' : 'rejected'
         }.` + (input.notes ? ` Reviewer note: ${input.notes}` : ''),
       category: 'vto',

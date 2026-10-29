@@ -325,9 +325,13 @@ export async function resolveAdapter(opts: { batch?: boolean; actorUserId?: stri
   // Payroll banking (lib/banking): a tenant that chose a rail per pay
   // method gets it — cards on Branch, bank accounts on the chosen rail
   // (our own ACH, Branch, Wise or check), no account at all by check.
+  // Fail closed (deep audit CODE-25): a failed read of the profile used to
+  // be swallowed and pay went out on the platform's rail — not the one the
+  // tenant chose (its own ACH, with its funding gate). A read error now stops
+  // the payout; the caller records it as failed and nothing moves.
   const { bankingProfile } = await import('./banking/ach.js');
-  const profile = await bankingProfile(prisma).catch(() => null);
-  if (profile && profile.bankRail !== 'PLATFORM') {
+  const profile = await bankingProfile(prisma);
+  if (profile.bankRail !== 'PLATFORM') {
     const card: DisbursementAdapter = isBranchConfigured() ? new BranchAdapter() : pickAdapter();
     let bank: DisbursementAdapter;
     if (profile.bankRail === 'ACH') {

@@ -187,6 +187,23 @@ describe('GET /compliance/everify — roster', () => {
     expect(res.body.counts.notRun).toBe(1);
     expect(res.body.counts.blocked).toBe(1);
   });
+
+  it('"can\'t submit yet" counts only people with no case: a case already open is never blocked', async () => {
+    const client = await createClient();
+    await onboardingAssociate(client.id, 'Blocked');
+    // Missing a section (not ready) but a case is already open: it's being worked, not blocked.
+    const opened = await onboardingAssociate(client.id, 'Opened');
+    await prisma.i9Verification.upsert({
+      where: { associateId: opened.id },
+      create: { associateId: opened.id, eVerifyStatus: 'PENDING', eVerifyCaseNumber: '2026-999-001', eVerifyCaseOpenedAt: new Date() },
+      update: { eVerifyStatus: 'PENDING', eVerifyCaseNumber: '2026-999-001', eVerifyCaseOpenedAt: new Date() },
+    });
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    const res = await a.get('/compliance/everify');
+    expect(res.body.counts.pending).toBe(1);
+    expect(res.body.counts.blocked).toBe(1);
+  });
 });
 
 describe('GET /compliance/everify/:associateId — aggregation', () => {

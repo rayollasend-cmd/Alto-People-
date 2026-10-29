@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import type { EeoApplicantReport } from '@alto-people/shared';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * Hiring compliance (2026-10-21 system audit, Tier 1 #14): the pure parts
@@ -25,7 +26,8 @@ import type { EeoApplicantReport } from '@alto-people/shared';
 
 const DAY_MS = 86_400_000;
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** The company's calendar day of an instant (now, a separation, a response deadline). */
+const ymd = (d: Date) => orgDateKey(d);
 
 /** The same calendar day `years` on, in UTC (date-only columns are UTC midnight). */
 function addYearsUtc(d: Date, years: number): Date {

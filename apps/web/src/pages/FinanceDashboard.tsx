@@ -23,7 +23,7 @@ import {
 import { apiFetch } from '@/lib/api';
 import { FieldglassQueueList } from './fieldglass/FieldglassQueue';
 import type { FinanceOverview } from './finance/financeTypes';
-import { BillingWeekCard, CashForecastCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks, hrs1, oldestText, usePayrollBlock } from './finance/FinanceCockpit';
+import { BillingWeekCard, CashForecastCard, MarginTrendCard, PayCycleHero, ReceivablesCard, TodayList, financeTasks, hrs1, oldestText, revenueHint, usePayrollBlock } from './finance/FinanceCockpit';
 import { useAuth, useTenant } from '@/lib/auth';
 import { useInbox } from '@/lib/inboxApi';
 import { useI18n } from '@/lib/i18n';
@@ -201,7 +201,7 @@ export function FinanceDashboard() {
           value={lastWeek ? fmtMoney(lastWeek.revenue) : ''}
           nothing={lastWeek && lastWeek.hours > 0 ? undefined : t('fin.marginEmpty')}
           icon={DollarSign}
-          hint={lastWeek ? t('fin.kpiRevenueHint', { hours: hrs1(lastWeek.hours - lastWeek.unpricedHours) }) : undefined}
+          hint={lastWeek ? revenueHint(t, lastWeek) : undefined}
         />
         <MetricCard
           href="/labor-costs"

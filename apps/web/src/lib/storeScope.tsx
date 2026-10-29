@@ -60,6 +60,17 @@ const StoreScopeContext = createContext<StoreScopeValue>({
   ready: false,
 });
 
+// Which pages follow the scope (deep audit LEAD-16): the picker showed on
+// the executive pages, Analytics, Clients, Reports and the ops home, which
+// never read it — picking "Coastal" left every number company-wide. A page
+// follows the scope by reading it (useStoreScope); the shell asks
+// useStoreScopeFollowed() whether any page on screen does, and shows the
+// picker only then. Two contexts so a page registering never re-renders the
+// others: the register function is stable, the count changes.
+const FollowRegisterContext = createContext<(() => () => void) | null>(null);
+/** Followers on screen; null outside a provider (a test's lone Topbar) = unknown, show the picker. */
+const FollowCountContext = createContext<number | null>(null);
+
 const storageKey = (userId: string) => `alto:storeScope:${userId}`;
 const EMPTY_CLIENTS: StoreScopeClient[] = [];
 
@@ -152,11 +163,39 @@ export function StoreScopeProvider({ children }: { children: ReactNode }) {
     () => ({ clientId, setClientId, clients, enabled, ready }),
     [clientId, setClientId, clients, enabled, ready],
   );
-  return <StoreScopeContext.Provider value={value}>{children}</StoreScopeContext.Provider>;
+  const [followers, setFollowers] = useState(0);
+  const register = useCallback(() => {
+    setFollowers((n) => n + 1);
+    return () => setFollowers((n) => n - 1);
+  }, []);
+  return (
+    <StoreScopeContext.Provider value={value}>
+      <FollowRegisterContext.Provider value={register}>
+        <FollowCountContext.Provider value={followers}>{children}</FollowCountContext.Provider>
+      </FollowRegisterContext.Provider>
+    </StoreScopeContext.Provider>
+  );
 }
 
-export function useStoreScope(): StoreScopeValue {
+/**
+ * The scope, for a page that follows it: reading it is what marks the page
+ * as one the shell's picker applies to. The shell's own picker passes
+ * `{ shell: true }` so it never counts itself.
+ */
+export function useStoreScope(opts?: { shell?: boolean }): StoreScopeValue {
+  const register = useContext(FollowRegisterContext);
+  const shell = opts?.shell === true;
+  useEffect(() => {
+    if (shell || !register) return;
+    return register();
+  }, [register, shell]);
   return useContext(StoreScopeContext);
+}
+
+/** Whether a page on screen follows the scope (true when nothing is tracking, as before). */
+export function useStoreScopeFollowed(): boolean {
+  const count = useContext(FollowCountContext);
+  return count === null || count > 0;
 }
 
 /** "Walmart Santa Rosa Beach" → "Santa Rosa Beach" — the bar has 4+1 slots. */

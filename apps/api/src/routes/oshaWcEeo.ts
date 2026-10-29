@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { atClient, scopeAssociates } from '../lib/scope.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
@@ -318,8 +319,8 @@ oshaWcEeoRouter.get('/wc/class-codes', VIEW_COMP, async (req, res) => {
       code: c.code,
       description: c.description,
       ratePer100: c.ratePer100.toFixed(4),
-      effectiveFrom: c.effectiveFrom.toISOString().slice(0, 10),
-      effectiveTo: c.effectiveTo?.toISOString().slice(0, 10) ?? null,
+      effectiveFrom: dateColumnKey(c.effectiveFrom),
+      effectiveTo: c.effectiveTo ? dateColumnKey(c.effectiveTo) : null,
     })),
   });
 });

@@ -1,7 +1,8 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { dateColumnKey } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { assertClientAllowed, clientRestrictionFor } from './programRules.js';
 
 /**
@@ -138,11 +139,11 @@ export async function eligibleOpenShifts(
       select: { date: true },
     }),
   ]);
-  const dayOfRow = (d: Date) => d.toISOString().slice(0, 10);
+  const dayOfRow = dateColumnKey;
   return qualified
     .filter((s) => {
       if (mine.some((m) => m.startsAt < s.endsAt && m.endsAt > s.startsAt)) return false;
-      const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+      const tz = s.locationRel?.timezone ?? companyWorkweek().timezone;
       const startKey = dayKeyInZone(s.startsAt, tz);
       const endKey = dayKeyInZone(s.endsAt, tz);
       if (ptoRows.some((r) => dayOfRow(r.startDate) <= endKey && dayOfRow(r.endDate) >= startKey)) return false;

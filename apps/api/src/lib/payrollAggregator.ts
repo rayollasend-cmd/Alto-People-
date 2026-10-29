@@ -43,16 +43,20 @@ import { computeGarnishmentDeductions } from './garnishments.js';
 import { backupAmount, backupRequirement } from './contractors.js';
 import { levyExemptPerPeriod, type LevyParameters, type StateRule, type PayFrequency as GarnFrequency } from './garnishmentEngine.js';
 import { enrollmentFacts, loadPayrollElections, projectRetirement, type EnrollmentRow, type ProjectedRetirement } from './retirement.js';
-import { computeYtdWagesBatch } from './payrollYtd.js';
+import { computeYtdWagesPaidBatch, priorChecksInTaxYear, taxYearWindow } from './payrollYtd.js';
 import { computeCheckDeductions, loadDeferralContexts, type DeferralRecord } from './retirementDeferrals.js';
 import { calculateTaxes, inHouseEngine, type TaxEngineProvider, type TaxLine } from './taxEngine/index.js';
 import { LOCAL_TAX_STATES, taxableWages, type TaxabilityContext, type TaxableWages } from './deductionTaxability.js';
 import { buildDeductionLines, reconcile, type DeductionLine } from './deductionLines.js';
 import { groupTermLifeImputed } from './groupTermLife.js';
 import type { PlanDeduction } from './retirementDeferrals.js';
-import { inWindows, workDayOf } from './payrollSchedule.js';
+import { cutOf } from './payrollSchedule.js';
+import { runPunches, type RunCut, type UtcCutPredecessor } from './payrollRunCut.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
+
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column (stored at UTC midnight).
+const dateColumnKey = (d: Date): string => d.toISOString().slice(0, 10);
 
 export interface AggregatorInput {
   /** Inclusive UTC midnight of the first day of the period. */
@@ -92,6 +96,8 @@ export interface AggregatorInput {
     kind: AddOnKind;
     amount: number;
     hours: number | null;
+    /** The paystub line's label (BACK_PAY names the periods it pays for). */
+    note?: string | null;
   }>;
   /**
    * Tier-2 — the run being (re-)aggregated, when persisting. Lets the
@@ -108,11 +114,28 @@ export interface AggregatorInput {
    */
   taxEngine?: TaxEngineProvider;
   /**
-   * The check's pay date, for the W-4 rules that turn on it (an "Exempt"
+   * The check's pay date (lib/payrollRunCut expectedPayDate). The tax year
+   * is the pay date's (deep audit CODE-2 — as the W-2 counts it): year-to-
+   * date wages, the wage bases, deferral and supplemental limits, levy and
+   * group-term-life tables. Also the W-4 rules that turn on it (an "Exempt"
    * W-4 lapses after February 15; an IRS lock-in letter's effective date).
    * Omitted, the day after the period ends.
    */
   payDate?: Date;
+  /**
+   * The deploy transition of the site-day cut (lib/payrollRunCut): the
+   * UTC-cut run just before this one, whose unpaid last evening this run
+   * carries in. Null/omitted once the change is behind.
+   */
+  prevUtcCut?: UtcCutPredecessor | null;
+  /** Re-working a run made under the UTC cut whose next run already exists (lib/payrollRunCut keepsUtcCut). */
+  utcCut?: boolean;
+  /**
+   * Only these people (an associate's own pay preview): the same math a run
+   * does for them — benefits, garnishments, retirement, taxes — without
+   * projecting everyone else. Omitted: everyone the period pays.
+   */
+  associateIds?: string[];
   /**
    * A run for one pay schedule (lib/payScheduleMembership): only these
    * people, and only their days on the schedule (inclusive YYYY-MM-DD
@@ -128,7 +151,9 @@ export type AddOnKind =
   | 'TIPS'
   | 'HOLIDAY'
   | 'SICK'
-  | 'VACATION';
+  | 'VACATION'
+  // Wages owed for hours a past run never paid (lib/payrollBackPay): regular wages, taxed by the percentage method.
+  | 'BACK_PAY';
 
 // Pub 15 §7 — supplemental wages withheld at the 22% flat rate when paid
 // alongside (but identified separately from) regular wages. Tips and
@@ -336,6 +361,8 @@ export interface AggregatorResult {
   /** Tier-2 — CLOSED tip pools whose allocations were folded into items.
    *  The persisting caller stamps them PAID_OUT + paidPayrollRunId. */
   consumedTipPoolIds: string[];
+  /** How the punches were sliced (lib/payrollRunCut) — daily-pay reconciliation subtracts exactly these. */
+  cut: RunCut;
 }
 
 /**
@@ -347,12 +374,20 @@ export async function aggregatePayrollProjection(
   input: AggregatorInput
 ): Promise<AggregatorResult> {
   const { periodStart, periodEndExclusive, clientId, defaultRate } = input;
+  // A run for one pay schedule pays its people for their days on it.
+  const sf = input.scheduleFilter;
+  // ONE cut for every payroll path (deep audit CODE-1): a punch is paid in
+  // the period holding its clock-in's day on the site's clock — fetched
+  // with a margin day each side, decided by the site day.
+  const cut: RunCut = { ...cutOf(periodStart, periodEndExclusive), windows: sf?.windows ?? null, prevUtc: input.utcCut ? null : (input.prevUtcCut ?? null), ...(input.utcCut ? { utc: true } : {}) };
 
-  const entries = await tx.timeEntry.findMany({
+  const onlyPeople = input.associateIds ? new Set(input.associateIds) : null;
+  const entries = await runPunches(cut, (clockInAt) => tx.timeEntry.findMany({
     where: {
       status: 'APPROVED',
-      clockInAt: { gte: periodStart, lt: periodEndExclusive },
+      clockInAt,
       ...(clientId ? { clientId } : {}),
+      ...(input.associateIds ? { associateId: { in: input.associateIds } } : {}),
     },
     include: {
       // Pay is net-of-breaks (matches the review screen and every export) —
@@ -402,13 +437,10 @@ export async function aggregatePayrollProjection(
         },
       },
     },
-  });
+  }));
 
   const byAssociate = new Map<string, typeof entries>();
-  // A run for one pay schedule pays its people for their days on it.
-  const sf = input.scheduleFilter;
   for (const e of entries) {
-    if (sf && !inWindows(sf.windows, e.associateId, workDayOf(e.clockInAt, e.location?.timezone))) continue;
     const arr = byAssociate.get(e.associateId) ?? [];
     arr.push(e);
     byAssociate.set(e.associateId, arr);
@@ -528,6 +560,8 @@ export async function aggregatePayrollProjection(
     ...addOnsByAssociate.keys(),
     ...tipsByAssociate.keys(),
   ]);
+  // An associate's own preview: only them.
+  if (onlyPeople) for (const id of [...universe]) if (!onlyPeople.has(id)) universe.delete(id);
   // On a schedule's run, only its people; a salary is paid for the share of the period they were on it.
   const salaryShare = new Map<string, number>();
   if (sf) {
@@ -535,7 +569,10 @@ export async function aggregatePayrollProjection(
     for (const id of [...universe]) {
       const ws = sf.windows.get(id);
       if (!ws || ws.length === 0) {
-        universe.delete(id);
+        // Only time the cut kept (the deploy transition's carried-in evening
+        // of someone who has since left the schedule) pays someone off it.
+        if (byAssociate.has(id)) salaryShare.set(id, 0);
+        else universe.delete(id);
         continue;
       }
       const days = ws.reduce((n, w) => n + Math.round((Date.parse(`${w.end}T00:00:00Z`) - Date.parse(`${w.start}T00:00:00Z`)) / 86_400_000) + 1, 0);
@@ -628,7 +665,12 @@ export async function aggregatePayrollProjection(
     }
   }
 
-  const yearStart = new Date(Date.UTC(periodStart.getUTCFullYear(), 0, 1));
+  // The tax year is the PAY DATE's (deep audit CODE-2), as the W-2, the
+  // 941 and the tax ledger count it: the check for Dec 19 – Jan 1 paid on
+  // Jan 8 starts the new year's wage bases and limits.
+  const payDate = input.payDate ?? periodEndExclusive;
+  // Prior checks count when paid in the tax year up to this check's pay day.
+  const { taxYear, yearStart, before: ytdBefore } = taxYearWindow(payDate);
 
   // PERF: batched pre-loads. The per-associate loop below used to issue up
   // to six queries per associate — ~1,800 sequential round-trips at 300
@@ -637,12 +679,7 @@ export async function aggregatePayrollProjection(
   // five set-based queries here and looked up from Maps.
   const universeIds = [...universe];
 
-  const ytdByAssociate = await computeYtdWagesBatch(
-    tx,
-    universeIds,
-    yearStart,
-    periodStart,
-  );
+  const ytdByAssociate = await computeYtdWagesPaidBatch(tx, universeIds, payDate, input.runId);
 
   const allEntryClientIds = new Set<string>();
   for (const group of byAssociate.values()) {
@@ -691,8 +728,8 @@ export async function aggregatePayrollProjection(
   }
   // Year-to-date deferrals and last year's FICA wages, for the annual limits
   // and the SECURE 2.0 Roth catch-up rule (lib/retirementDeferrals).
-  const deferralContexts = await loadDeferralContexts(tx, [...enrollmentsByAssociate.keys()], periodStart);
-  const deferralYear = periodStart.getUTCFullYear();
+  const deferralContexts = await loadDeferralContexts(tx, [...enrollmentsByAssociate.keys()], payDate, { periodStart, runId: input.runId });
+  const deferralYear = taxYear;
 
   type GarnishmentRow = Prisma.GarnishmentGetPayload<Record<string, never>>;
   const garnsByAssociate = new Map<string, GarnishmentRow[]>();
@@ -787,10 +824,9 @@ export async function aggregatePayrollProjection(
   // Supplemental wages paid so far this year, for the mandatory 37% tier past $1M.
   const ytdSupplementalByAssociate = new Map<string, number>();
   if (universeIds.length > 0 && tx.payrollItemTaxLine) {
-    const priorWhere = {
+    const priorWhere: Prisma.PayrollItemWhereInput = {
       associateId: { in: universeIds },
-      status: { not: 'VOIDED' as const },
-      payrollRun: { status: { notIn: ['CANCELLED' as const, 'DRAFT' as const] }, periodStart: { gte: yearStart, lt: periodStart } },
+      ...priorChecksInTaxYear({ yearStart, before: ytdBefore, periodStart, runId: input.runId }),
     };
     const [programRows, suppRows] = await Promise.all([
       tx.payrollItemTaxLine.findMany({
@@ -827,8 +863,6 @@ export async function aggregatePayrollProjection(
   const employerSize = tx.associate.count
     ? await tx.associate.count({ where: { tenantId: tenantIdForWrite(), deletedAt: null, employmentType: 'W2_EMPLOYEE' } })
     : undefined;
-  const payDate = input.payDate ?? periodEndExclusive;
-
   const items: ProjectedItem[] = [];
   let totalGross = 0;
   let totalEmployeeTax = 0;
@@ -940,7 +974,7 @@ export async function aggregatePayrollProjection(
     for (const p of myPremiums) {
       const amount = round2(Number(p.premiumHours) * (hourlyRate || 0) + p.premiumCents / 100);
       if (amount <= 0) continue;
-      laborPremiums.push({ kind: 'PREMIUM', hours: Number(p.premiumHours) || null, rate: Number(p.premiumHours) ? hourlyRate : null, amount, isTaxable: true, note: `${p.rule} — shift ${p.change} ${p.workDate.toISOString().slice(0, 10)}` });
+      laborPremiums.push({ kind: 'PREMIUM', hours: Number(p.premiumHours) || null, rate: Number(p.premiumHours) ? hourlyRate : null, amount, isTaxable: true, note: `${p.rule} — shift ${p.change} ${dateColumnKey(p.workDate)}` });
     }
     const laborPremiumPay = round2(laborPremiums.reduce((a, l) => a + l.amount, 0));
 
@@ -1059,7 +1093,7 @@ export async function aggregatePayrollProjection(
         if (e.plan.kind !== 'LIFE_INSURANCE' || !e.lifeCoverageCents) continue;
         imputedIncome = round2(
           imputedIncome +
-            groupTermLifeImputed({ coverageCents: e.lifeCoverageCents, dob: meta.dob ?? null, taxYear: periodStart.getUTCFullYear(), periodsPerYear: PERIODS_PER_YEAR[payFrequency] }).imputedIncome,
+            groupTermLifeImputed({ coverageCents: e.lifeCoverageCents, dob: meta.dob ?? null, taxYear, periodsPerYear: PERIODS_PER_YEAR[payFrequency] }).imputedIncome,
         );
       }
     }
@@ -1173,7 +1207,7 @@ export async function aggregatePayrollProjection(
           ...w4Fields,
         });
         // 22%, and 37% on the part that takes the year's supplemental wages past $1,000,000 (Pub 15 §7).
-        const supplementalFit = fedW4?.exempt ? 0 : supplementalFederalWithholding(supplementalGross, ytdSupplementalByAssociate.get(associateId) ?? 0, periodStart.getUTCFullYear());
+        const supplementalFit = fedW4?.exempt ? 0 : supplementalFederalWithholding(supplementalGross, ytdSupplementalByAssociate.get(associateId) ?? 0, taxYear);
         const fit = round2(regularPass.federalIncomeTax + supplementalFit);
         const totalEmp = round2(
           fit + full.socialSecurity + full.medicare + full.stateIncomeTax,
@@ -1362,7 +1396,7 @@ export async function aggregatePayrollProjection(
         ? garnsByAssociate.get(associateId) ?? []
         : [];
 
-    const levyYear = periodStart.getUTCFullYear();
+    const levyYear = taxYear;
     // Daily pay has no CCPA period figure of its own; the minimum-wage floor is applied per period otherwise.
     const garnFrequency: GarnFrequency | undefined = (payFrequency as string) === 'DAILY' ? undefined : (payFrequency as GarnFrequency);
     const garnResult = computeGarnishmentDeductions({
@@ -1479,6 +1513,7 @@ export async function aggregatePayrollProjection(
         rate: null,
         amount: round2(a.amount),
         isTaxable: true,
+        ...(a.kind === 'BACK_PAY' && a.note ? { note: a.note } : {}),
       });
     }
     if (retroPay > 0) {
@@ -1530,10 +1565,14 @@ export async function aggregatePayrollProjection(
         )
       : [];
 
+    // The header hours are the sum of the hour lines as shown, so a check's
+    // hours equal its lines to the cent (deep audit MONEY-26: 75.37h over
+    // lines of 70.38 + 4.98). A salaried check keeps its punched hours.
+    const lineHours = round2(otSplit.regularHours + otSplit.overtimeHours + doubleTimeHours);
     items.push({
       associateId,
       associateName,
-      hoursWorked,
+      hoursWorked: annualSalary === undefined && lineHours > 0 ? lineHours : hoursWorked,
       hourlyRate,
       rateSource,
       regularHours: otSplit.regularHours,
@@ -1612,5 +1651,6 @@ export async function aggregatePayrollProjection(
       itemCount: items.length,
     },
     consumedTipPoolIds: [...consumedTipPoolIds],
+    cut,
   };
 }

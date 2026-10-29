@@ -30,9 +30,10 @@ import {
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 import { Avatar } from '@/components/ui/Avatar';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { ListTemplate } from '@/components/templates';
 import { fmtDateOnly, parseYmd } from '@/lib/format';
+import { workweekBounds } from '@/lib/workweek';
 import { QueryError } from '@/components/ui/QueryError';
 import { urlNumber, useUrlParam, useUrlState } from '@/lib/useUrlState';
 
@@ -195,7 +196,7 @@ export function CelebrationsHome() {
                         return (
                           <li key={keyOf(c)} className="flex items-center gap-3 px-4 py-2.5">
                             <span className="hidden w-28 shrink-0 text-sm tabular-nums text-silver sm:block">{fmtDateOnly(c.date, { weekday: true, year: false })}</span>
-                            <Avatar src={associatePhotoUrl(c.associateId)} name={c.associateName} email={c.email} size="sm" />
+                            <Avatar src={personPhotoUrl(c)} name={c.associateName} email={c.email} size="sm" />
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-ink">
                                 <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
@@ -335,10 +336,11 @@ export function bucketize(items: CelebrationItem[], now = new Date()): Record<st
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const tomorrow = new Date(startOfToday);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const week = new Date(startOfToday);
-  week.setDate(week.getDate() + 7);
-  const twoWeeks = new Date(startOfToday);
-  twoWeeks.setDate(twoWeeks.getDate() + 14);
+  // "This week" and "Next week" are the company's workweeks, Saturday →
+  // Friday (FLOOR-24: a rolling seven days put a Monday Nov 2 birthday in
+  // "This week" on Thursday Oct 29, when the week ends Friday Oct 30).
+  const week = workweekBounds(now).end;
+  const twoWeeks = workweekBounds(now, 1).end;
   const month = new Date(startOfToday);
   month.setDate(month.getDate() + 30);
   const buckets: Record<string, CelebrationItem[]> = {

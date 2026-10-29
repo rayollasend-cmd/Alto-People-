@@ -6,6 +6,8 @@ import type { PaystubData, PaystubEarningLine, PaystubLine } from './paystub.js'
 import { emptyDeferrals, readDeferrals, type DeferralRecord } from './retirementDeferrals.js';
 import { LEGACY_DEDUCTION_SELECT, deriveLegacyDeductionLines } from './deductionBackfill.js';
 import { fmtDay } from './humanDates.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Single source of truth for turning a PayrollItem into the PaystubData
@@ -417,7 +419,8 @@ export async function buildPaystubDataFromItem(
     period: {
       start: ymd(item.payrollRun.periodStart),
       end: ymd(item.payrollRun.periodEnd),
-      payDate: item.payrollRun.disbursedAt ? ymd(item.payrollRun.disbursedAt) : null,
+      // disbursedAt is a moment: the pay date is the company's day it happened on.
+      payDate: item.payrollRun.disbursedAt ? orgDateKey(item.payrollRun.disbursedAt) : null,
     },
     earnings: earningLines(item),
     gross: { current: Number(item.grossPay), ytd: ytd.gross },
@@ -472,7 +475,8 @@ export async function buildPaystubDataById(
   return { item, data: await buildPaystubDataFromItem(prisma, item, issuedAt) };
 }
 
+/** A @db.Date column (the run's period) as the day it names. */
 function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return dateColumnKey(d);
 }
 

@@ -2,7 +2,8 @@ import type { FieldglassStatus } from '@alto-people/shared';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { primaryClientsForAssociates } from './associateClients.js';
-import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
+import { addDaysToKey, dateColumnKey, localDateKey } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 
 /**
@@ -158,9 +159,7 @@ export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenan
       approvedAt: null as string | null,
       email: r.associate.email,
       phone: r.associate.phone,
-      hireDate: r.associate.hireDate
-        ? r.associate.hireDate.toISOString().slice(0, 10)
-        : null,
+      hireDate: r.associate.hireDate ? dateColumnKey(r.associate.hireDate) : null,
     }));
   const transferRows = regs
     .filter((r) => {
@@ -187,9 +186,7 @@ export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenan
         approvedAt: null as string | null,
         email: r.associate.email,
         phone: r.associate.phone,
-        hireDate: r.associate.hireDate
-          ? r.associate.hireDate.toISOString().slice(0, 10)
-          : null,
+        hireDate: r.associate.hireDate ? dateColumnKey(r.associate.hireDate) : null,
       };
     });
   // Earliest upcoming shift at the NEW client — the transfer deadline.
@@ -237,9 +234,7 @@ export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenan
         // never require leaving the dashboard at all.
         email: a.associate.email,
         phone: a.associate.phone,
-        hireDate: a.associate.hireDate
-          ? a.associate.hireDate.toISOString().slice(0, 10)
-          : null,
+        hireDate: a.associate.hireDate ? dateColumnKey(a.associate.hireDate) : null,
       };
     })
     .filter((row): row is NonNullable<typeof row> => row !== null);
@@ -306,7 +301,7 @@ export async function buildFieldglassQueue(now: Date = new Date(), opts: { tenan
         approvedAt: null,
         email: p.email,
         phone: p.phone,
-        hireDate: p.hireDate ? p.hireDate.toISOString().slice(0, 10) : null,
+        hireDate: p.hireDate ? dateColumnKey(p.hireDate) : null,
       });
     }
   }
@@ -393,7 +388,7 @@ export async function buildFieldglassRoster(opts: { tenantId?: string; people?: 
   return regs.map((r) => {
     const sheet = sheetOf.get(r.associateId);
     const worked = lastOf.get(r.associateId);
-    const weekEnd = sheet ? new Date(sheet.weekStart.getTime() + 6 * DAY_MS).toISOString().slice(0, 10) : null;
+    const weekEnd = sheet ? addDaysToKey(dateColumnKey(sheet.weekStart), 6) : null;
     return {
       associateId: r.associateId,
       name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
@@ -408,7 +403,7 @@ export async function buildFieldglassRoster(opts: { tenantId?: string; people?: 
           : r.addedBy.email
         : null,
       separated: r.associate.separatedAt !== null,
-      lastWorked: worked ? localDateKey(worked.clockInAt, worked.location?.timezone ?? DEFAULT_TIMEZONE) : null,
+      lastWorked: worked ? localDateKey(worked.clockInAt, worked.location?.timezone ?? companyWorkweek().timezone) : null,
       lastTimesheet: sheet && weekEnd
         ? { weekEnd, status: (sheet.fgStatus as FieldglassStatus | null) ?? null, entered: !!sheet.enteredAt }
         : null,

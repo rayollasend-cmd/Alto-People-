@@ -1,4 +1,5 @@
 import type { FixedAsset, PrismaClient } from '@prisma/client';
+import { monthWords } from '../words.js';
 import { Prisma as P } from '@prisma/client';
 import { tenantIdForWrite } from '../../tenant.js';
 import { accountIndex, fromCents, isPeriodClosed, postEntry, toCents } from '../ledger.js';
@@ -113,7 +114,7 @@ export async function postAssetDepreciation(db: PrismaClient, assetId: string, t
     const late = await isPeriodClosed(db, m.periodKey);
     const entry = await postEntry(db, {
       date: monthEnd(m.periodKey),
-      memo: late ? `Depreciation for ${m.periodKey} — ${asset.name} (posted late: ${m.periodKey} closed without it)` : `Depreciation for ${m.periodKey} — ${asset.name}`,
+      memo: late ? `Depreciation for ${monthWords(m.periodKey)} — ${asset.name} (posted late: ${monthWords(m.periodKey)} closed without it)` : `Depreciation for ${monthWords(m.periodKey)} — ${asset.name}`,
       source: 'DEPRECIATION',
       sourceType: 'FixedAsset',
       sourceId: asset.id,

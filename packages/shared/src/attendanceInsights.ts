@@ -29,6 +29,19 @@ import { z } from 'zod';
  */
 
 export const ATTENDANCE_OVERTIME_THRESHOLD_HOURS = 40;
+/**
+ * Overtime risk — one definition for every screen that says it (FLOOR-23:
+ * Time & attendance counted 36h+ while My team and the manager's Home
+ * counted "more than 40"). A person is at overtime risk when the hours they
+ * have worked this company workweek (Saturday → Friday, net of unpaid meals)
+ * plus the paid hours still on their published schedule reach 36: the four
+ * hours before the 40-hour line, while a schedule change can still keep
+ * them under it. Pages differ only in WHO they count (your team, or everyone
+ * you approve) and must say so.
+ */
+export const OVERTIME_RISK_HOURS = 36;
+/** Worked + still-scheduled hours this workweek → at overtime risk? */
+export const isOvertimeRisk = (projectedHours: number): boolean => projectedHours >= OVERTIME_RISK_HOURS;
 /** The fill rate a store is graded against — the reference line on the charts. */
 export const ATTENDANCE_FILL_TARGET_PCT = 95;
 /** Minutes after start before a missing punch counts as late (the attendance policy's line). */

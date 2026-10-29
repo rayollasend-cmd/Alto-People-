@@ -8,8 +8,8 @@ import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { requireModule } from '../lib/tenantProfile.js';
 import { isInternallyScoped, scopeClients, scopePayrollRuns, scopeTimeEntries, scopeWhere } from '../lib/scope.js';
-import { startOfWeekUTC } from '../lib/timeAnomalies.js';
-import { reconcilePayPeriod, runningPayrollCost } from '../lib/payBillRecon.js';
+import { orgDateKey, startOfWeekUTC } from '../lib/timeAnomalies.js';
+import { reconcilePayPeriod, runningPayrollCost, unbilledGapCached } from '../lib/payBillRecon.js';
 import { billedNotPaid } from '../lib/payBillGaps.js';
 import { normalizeRules, onPayrollFinalized, PREMIUM_KEYS, readyAdjustments, termsFor } from '../lib/payBillLink.js';
 import { clientSalesTaxRate, totalsWithTax, type StatementSnapshot } from '../lib/clientStatement.js';
@@ -34,6 +34,7 @@ const FINANCE_READ = requireAnyCapability('process:payroll', 'view:executive');
 const FINANCE_WRITE = requireCapability('process:payroll');
 const BILLING = requireModule('clientPortal');
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date column or a company-midnight anchor (west of UTC that is the same date); today is orgDateKey.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const dateOnly = (s: string) => new Date(`${s}T00:00:00.000Z`);
@@ -70,7 +71,10 @@ payBillRouter.get('/periods', BILLING, FINANCE_READ, async (req, res, next) => {
       row.runs += 1;
       seen.set(k, row);
     }
-    res.json({ periods: [...seen.values()].slice(0, 26) });
+    // The periods holding billable pay on no statement, oldest first — the same figure (and cache) as the
+    // Inbox and sidebar badge, so the page opens where the badge's money is (deep audit MONEY-2).
+    const gap = await unbilledGapCached(prisma, `${tenantIdForWrite()}:${req.user!.role}`, { AND: [{ tenantId: tenantIdForWrite() }, scopePayrollRuns(req.user!)] }).catch(() => null);
+    res.json({ periods: [...seen.values()].slice(0, 26), gapPeriods: gap?.periods ?? [] });
   } catch (err) {
     next(err);
   }
@@ -170,7 +174,8 @@ payBillRouter.post('/clients/:id/adjustment-statement', BILLING, FINANCE_WRITE, 
     const client = await clientInReach(user, req.params.id);
     const adjustments = await readyAdjustments(prisma, client.id);
     if (!adjustments.length) throw new HttpError(409, 'nothing_ready', `Nothing is waiting to be billed to ${client.name}.`);
-    const today = dateOnly(ymd(new Date()));
+    // The company's day, not UTC's (after 8 PM Eastern UTC is tomorrow).
+    const today = dateOnly(orgDateKey(new Date()));
     const existing = await prisma.clientStatement.findUnique({ where: { clientId_periodStart_periodEnd: { clientId: client.id, periodStart: today, periodEnd: today } } });
     if (existing && (existing.status === 'FINAL' || !(existing.snapshot as unknown as StatementSnapshot).adjustmentsOnly)) {
       throw new HttpError(409, 'period_taken', 'A statement for today already exists — the adjustments ride on it.');

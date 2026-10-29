@@ -19,6 +19,7 @@ export type AgingBucket = (typeof AGING_BUCKETS)[number];
 export type AgingBuckets = Record<AgingBucket, number>;
 
 const DAY = 86_400_000;
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: a @db.Date value is stored at UTC midnight.
 const ymd = (d: Date | string) => (typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10));
 const midnight = (s: string) => new Date(`${s.slice(0, 10)}T00:00:00.000Z`).getTime();
 

@@ -15,6 +15,11 @@ vi.mock('@/lib/recruiting90Api', async (importOriginal) => {
     listReferrals: vi.fn(async () => ({ referrals: [] })),
   };
 });
+// The offer and posting pickers read GET /clients/options (PEOPLE-4).
+vi.mock('@/lib/onboardingApi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/onboardingApi')>()),
+  listClientOptions: vi.fn(async () => ({ clients: [] })),
+}));
 vi.mock('@/lib/clientsApi', () => ({ listClients: vi.fn(async () => ({ clients: [] })) }));
 
 import { ROLE_CAPABILITIES } from '@alto-people/shared';

@@ -624,18 +624,18 @@ function Register({ rows, totals, nothingBehind = false }: { rows: ReviewRow[]; 
       ),
     },
     { key: 'department', header: 'Department', sortable: true, accessor: (r) => r.department ?? '—', defaultHidden: true },
-    { key: 'state', header: 'State', sortable: true, accessor: (r) => r.state ?? '—', cardMeta: true },
-    { key: 'hours', header: 'Hours', align: 'right', sortable: true, searchable: false, accessor: (r) => r.hours, cell: (r) => fmtHours(r.hours), className: 'tabular-nums' },
-    { key: 'gross', header: 'Gross', align: 'right', sortable: true, searchable: false, accessor: (r) => r.gross, cell: money((r) => r.gross), className: 'tabular-nums' },
-    { key: 'taxes', header: 'Taxes', align: 'right', sortable: true, searchable: false, accessor: taxes, cell: (r) => fmtMoney(taxes(r)), className: 'tabular-nums' },
+    { key: 'state', header: 'State', sortable: true, hideBelow: 1000, accessor: (r) => r.state ?? '—', cardMeta: true },
+    { key: 'hours', header: 'Hours', align: 'right', sortable: true, searchable: false, hideBelow: 900, accessor: (r) => r.hours, csv: (r) => r.hours.toFixed(2), cell: (r) => fmtHours(r.hours), className: 'tabular-nums' },
+    { key: 'gross', header: 'Gross', align: 'right', sortable: true, searchable: false, hideBelow: 820, accessor: (r) => r.gross, csv: (r) => r.gross.toFixed(2), cell: money((r) => r.gross), className: 'tabular-nums' },
+    { key: 'taxes', header: 'Taxes', align: 'right', sortable: true, searchable: false, accessor: taxes, csv: (r) => taxes(r).toFixed(2), cell: (r) => fmtMoney(taxes(r)), className: 'tabular-nums' },
     { key: 'federal', header: 'Federal', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.federal, cell: money((r) => r.federal), className: 'tabular-nums' },
     { key: 'ss', header: 'Social Security', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.socialSecurity, cell: money((r) => r.socialSecurity), className: 'tabular-nums' },
     { key: 'medicare', header: 'Medicare', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.medicare, cell: money((r) => r.medicare), className: 'tabular-nums' },
     { key: 'stateTax', header: 'State tax', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.stateTax, cell: money((r) => r.stateTax), className: 'tabular-nums' },
     { key: 'localTax', header: 'Local tax', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.localTax, cell: money((r) => r.localTax), className: 'tabular-nums' },
     { key: 'stateProgram', header: 'Disability & leave', align: 'right', sortable: true, searchable: false, defaultHidden: true, accessor: (r) => r.stateProgram ?? 0, cell: money((r) => r.stateProgram ?? 0), className: 'tabular-nums' },
-    { key: 'deductions', header: 'Deductions', align: 'right', sortable: true, searchable: false, accessor: deductions, cell: (r) => fmtMoney(deductions(r)), className: 'tabular-nums' },
-    { key: 'net', header: 'Net', align: 'right', sortable: true, searchable: false, accessor: (r) => r.net, cell: (r) => <span className="font-medium text-ink">{fmtMoney(r.net)}</span>, className: 'tabular-nums' },
+    { key: 'deductions', header: 'Deductions', align: 'right', sortable: true, searchable: false, hideBelow: 950, accessor: deductions, csv: (r) => deductions(r).toFixed(2), cell: (r) => fmtMoney(deductions(r)), className: 'tabular-nums' },
+    { key: 'net', header: 'Net', align: 'right', sortable: true, searchable: false, accessor: (r) => r.net, csv: (r) => r.net.toFixed(2), cell: (r) => <span className="font-medium text-ink">{fmtMoney(r.net)}</span>, className: 'tabular-nums' },
     {
       key: 'change',
       header: 'vs last check',
@@ -643,6 +643,8 @@ function Register({ rows, totals, nothingBehind = false }: { rows: ReviewRow[]; 
       sortable: true,
       searchable: false,
       accessor: (r) => r.netChange ?? 0,
+      // A first paycheck exports blank, as the screen says "First" — never 0 (deep audit MONEY-22).
+      csv: (r) => (r.netChange === null ? '' : r.netChange.toFixed(2)),
       cell: (r) =>
         r.netChange === null ? (
           <span className="text-ink-muted">First</span>

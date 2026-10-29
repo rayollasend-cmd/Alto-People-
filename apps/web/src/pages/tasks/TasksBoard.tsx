@@ -4,9 +4,9 @@ import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Bot, Cpu, ListTodo, Plus, User } from '@/components/ui/icons';
 import { WORKER_CAPABILITIES, WORK_TASK_RISK_LABELS, WORK_TASK_STATUS_LABELS, type WorkTaskStatus, type WorkTaskView } from '@alto-people/shared';
 import { useAuth, useTerm } from '@/lib/auth';
-import { useOrgSites } from '@/lib/useOrgSites';
+import { useViewerSites } from '@/pages/scheduling/viewerSites';
 import { listTasks, getTaskDay } from '@/lib/tasksApi';
-import { fmtDateTz, fmtShiftRangeTz, ymdLocal } from '@/lib/format';
+import { fmtDateTz, fmtShiftRangeTz, ymdLocal, zonedWallTimeToUtc } from '@/lib/format';
 import { urlDay, urlString, useUrlParam, useUrlState } from '@/lib/useUrlState';
 import { ListTemplate } from '@/components/templates';
 import { Badge, Button, DateField, MetricCard, MetricStrip, Select } from '@/components/ui';
@@ -59,6 +59,23 @@ function bucketOf(status: WorkTaskStatus): Exclude<StatusFilter, 'all'> {
   return 'done';
 }
 
+/** The states the Inbox's "Tasks needing a person" counts — the board's needs view lists exactly these, on any day. */
+export const NEEDS_A_PERSON: readonly WorkTaskStatus[] = ['QUEUED', 'STALLED', 'FAILED'];
+
+/**
+ * One calendar day on a zone's clock, as instants [from, to) — the board's
+ * day for a viewer whose sites all share one zone (a Central-time store's
+ * day, not the company's Eastern one).
+ */
+export function zonedDayBounds(day: string, timeZone: string): { from: string; to: string } {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  return {
+    from: zonedWallTimeToUtc(y, m, d, 0, 0, timeZone).toISOString(),
+    to: zonedWallTimeToUtc(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, timeZone).toISOString(),
+  };
+}
+
 export function countByBucket(tasks: WorkTaskView[] | null): Record<Exclude<StatusFilter, 'all'>, number> | null {
   if (!tasks) return null;
   const out = { live: 0, queued: 0, exceptions: 0, done: 0 };
@@ -70,9 +87,17 @@ export function TasksBoard() {
   const { can } = useAuth();
   const term = useTerm();
   const canManage = can('manage:scheduling');
-  const sites = useOrgSites(true);
+  // The viewer's sites, with their zones (FLOOR-19): a client-bound viewer
+  // (a shift supervisor) has no view:org — their own client's stores carry
+  // the zones, so each task reads on its own store's clock.
+  const sites = useViewerSites();
+  // One zone for every site the viewer runs: their "today" is that clock's.
+  const sharedZone = sites && sites.length > 0 && sites.every((x) => x.timezone && x.timezone === sites[0]!.timezone) ? sites[0]!.timezone : null;
   const [params, setParams] = useSearchParams();
   const openId = params.get('task');
+  // The Inbox's "Tasks needing a person" opens here (FLOOR-8): every open
+  // task waiting for a person, on any day — exactly what the Inbox counts.
+  const needs = params.get('needs') === '1';
   // Site, day and state live in the URL (?site=&day=&status=), so a link
   // or a notification opens the same board (F500 G2).
   const [locationId, setLocationId] = useUrlState<string>('site', '', urlString);
@@ -81,28 +106,66 @@ export function TasksBoard() {
   // API (apps/api/src/lib/siteDay.ts) — never the browser's UTC date, which
   // after 5 PM Pacific was already tomorrow. A day the person picks wins.
   const [pickedDay, setDay] = useUrlState<string>('day', '', urlDay);
-  const todayQuery = useQuery({ queryKey: ['tasks', 'day', locationId], queryFn: () => getTaskDay(locationId || null), staleTime: 60_000 });
+  // With no site picked, the day of the one zone the viewer's sites share
+  // (any of them answers it) — else the company's.
+  const dayAnchor = locationId || (sharedZone && sites ? sites[0]!.id : null);
+  const todayQuery = useQuery({
+    queryKey: ['tasks', 'day', dayAnchor],
+    queryFn: () => getTaskDay(dayAnchor),
+    staleTime: 60_000,
+    enabled: sites !== null || !!locationId,
+  });
   const day = pickedDay || todayQuery.data?.day || (todayQuery.isError ? ymdLocal() : null);
   const dayZone = todayQuery.data?.timezone ?? null;
   // A task's window reads on its own site's clock (it read in UTC: a 9 AM
   // task in Panama City showed 2:00 PM).
-  const zoneOf = useMemo(() => new Map((sites ?? []).map((site) => [site.id, site.timezone])), [sites]);
+  const zoneOf = useMemo(() => new Map((sites ?? []).filter((site) => site.timezone).map((site) => [site.id, site.timezone])), [sites]);
+  // The server's zone for the site the day was asked of beats any list entry
+  // (a site-bound account's own site carries no zone of its own here).
+  const zoneFor = (siteId: string) => (siteId === dayAnchor ? dayZone : null) ?? zoneOf.get(siteId) ?? dayZone;
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
 
+  // No site picked, one shared zone: that clock's midnight to midnight (the
+  // API's plain day is the company's). The zone is the server's answer for
+  // the anchor site, never a browser fallback.
+  const boundsZone = !locationId && dayAnchor ? dayZone : null;
   const tasksQuery = useQuery({
-    queryKey: ['tasks', 'list', { locationId, day }],
-    queryFn: () => listTasks({ locationId: locationId || null, day }),
-    enabled: day !== null,
+    queryKey: ['tasks', 'list', { locationId, day, boundsZone }],
+    queryFn: () =>
+      boundsZone && day
+        ? listTasks({ locationId: null, ...zonedDayBounds(day, boundsZone) })
+        : listTasks({ locationId: locationId || null, day }),
+    enabled: !needs && day !== null,
     refetchInterval: 30_000,
   });
+  // Every open task that needs a person, on any day (the Inbox's count).
+  const needsQuery = useQuery({
+    queryKey: ['tasks', 'needs', { locationId }],
+    queryFn: async () => {
+      const lists = await Promise.all(NEEDS_A_PERSON.map((st) => listTasks({ locationId: locationId || null, status: st })));
+      return lists.flatMap((l) => l.tasks).sort((a, b) => a.windowStart.localeCompare(b.windowStart));
+    },
+    enabled: needs,
+    refetchInterval: 30_000,
+  });
+  const listQuery = needs ? needsQuery : tasksQuery;
+  const allRows = needs ? (needsQuery.data ?? null) : (tasksQuery.data?.tasks ?? null);
+  // In the needs view only its two states filter; a day-board state (live, done) shows them all.
+  const effectiveStatus: StatusFilter = needs && status !== 'queued' && status !== 'exceptions' ? 'all' : status;
   const rows = useMemo(() => {
-    const all = tasksQuery.data?.tasks ?? [];
-    return status === 'all' ? all : all.filter((t) => bucketOf(t.status) === status);
-  }, [tasksQuery.data, status]);
-  // The tiles count the same day's list the grid shows, so a number and its
+    const all = allRows ?? [];
+    return effectiveStatus === 'all' ? all : all.filter((t) => bucketOf(t.status) === effectiveStatus);
+  }, [allRows, effectiveStatus]);
+  // The tiles count the same list the grid shows, so a number and its
   // rows always agree (the 24h summary disagreed with a per-day list).
-  const counts = useMemo(() => countByBucket(tasksQuery.data?.tasks ?? null), [tasksQuery.data]);
+  const counts = useMemo(() => countByBucket(allRows), [allRows]);
+  const leaveNeeds = () => {
+    const next = new URLSearchParams(params);
+    next.delete('needs');
+    next.delete('status');
+    setParams(next, { replace: true });
+  };
 
   const setOpen = (id: string | null) => {
     const next = new URLSearchParams(params);
@@ -117,8 +180,8 @@ export function TasksBoard() {
 
   const siteLabel = term('site');
   const tile = (key: Exclude<StatusFilter, 'all'>) => ({
-    onClick: () => setStatus(status === key ? 'all' : key),
-    selected: status === key,
+    onClick: () => setStatus(effectiveStatus === key ? 'all' : key),
+    selected: effectiveStatus === key,
   });
   const activeFilters = (locationId ? 1 : 0) + (pickedDay ? 1 : 0);
 
@@ -137,6 +200,13 @@ export function TasksBoard() {
         ) : undefined
       }
       summary={
+        needs ? (
+          // The needs view: the two states a person must act on, every day.
+          <MetricStrip label="Open tasks needing a person, every day">
+            <MetricCard compact label="Waiting for a person" value={counts ? counts.queued : '…'} hint="Any day · someone must choose who does it" tone={counts && counts.queued > 0 ? 'warning' : 'default'} {...tile('queued')} />
+            <MetricCard compact label="Exceptions" value={counts ? counts.exceptions : '…'} hint="Any day · stalled or failed" tone={counts && counts.exceptions > 0 ? 'alert' : 'default'} {...tile('exceptions')} />
+          </MetricStrip>
+        ) : (
         // The tiles ARE the state filter (F500 G2: tiles and a chip row
         // said the same four things). Tap the picked one again for all.
         <MetricStrip label="Tasks on this day by state">
@@ -145,6 +215,7 @@ export function TasksBoard() {
           <MetricCard compact label="Exceptions" value={counts ? counts.exceptions : '…'} hint="Stalled or failed" tone={counts && counts.exceptions > 0 ? 'alert' : 'default'} {...tile('exceptions')} />
           <MetricCard compact label="Done" value={counts ? counts.done : '…'} hint="Finished or cancelled" {...tile('done')} />
         </MetricStrip>
+        )
       }
       filters={
         <FilterBar
@@ -156,7 +227,11 @@ export function TasksBoard() {
           }}
           sheetDescription={`Pick a ${siteLabel.toLowerCase()} and a day.`}
           actions={
-            status !== 'all' ? (
+            needs ? (
+              <Button size="sm" variant="ghost" onClick={leaveNeeds}>
+                Back to the day’s board
+              </Button>
+            ) : status !== 'all' ? (
               <Button size="sm" variant="ghost" onClick={() => setStatus('all')}>
                 Show every state
               </Button>
@@ -171,9 +246,13 @@ export function TasksBoard() {
               </option>
             ))}
           </Select>
-          <span title={dayZone ? `The day on the ${dayZone.replace(/^.*\//, '').replace(/_/g, ' ')} clock` : undefined}>
-            <DateField size="sm" aria-label="Day" value={day ?? ''} clearable={false} onChange={(v) => v && setDay(v)} />
-          </span>
+          {needs ? (
+            <span className="self-center text-xs text-ink-muted">Every day · open tasks needing a person</span>
+          ) : (
+            <span title={dayZone ? `The day on the ${dayZone.replace(/^.*\//, '').replace(/_/g, ' ')} clock` : undefined}>
+              <DateField size="sm" aria-label="Day" value={day ?? ''} clearable={false} onChange={(v) => v && setDay(v)} />
+            </span>
+          )}
         </FilterBar>
       }
       drawer={openId ? <TaskDrawer taskId={openId} onClose={() => setOpen(null)} onChanged={refresh} canManage={canManage} /> : null}
@@ -181,18 +260,22 @@ export function TasksBoard() {
       <DataGrid<WorkTaskView>
         id="tasks-board"
         caption="Tasks"
-        rows={tasksQuery.isLoading ? null : rows}
-        loading={tasksQuery.isLoading}
-        error={tasksQuery.isError ? 'Could not load the tasks.' : null}
-        onRetry={() => void tasksQuery.refetch()}
+        rows={listQuery.isLoading ? null : rows}
+        loading={listQuery.isLoading}
+        error={listQuery.isError ? 'Could not load the tasks.' : null}
+        onRetry={() => void listQuery.refetch()}
         rowKey={(t) => t.id}
         onRowClick={(t) => setOpen(t.id)}
         rowActionLabel={(t) => `Open ${t.type}`}
         search={{ placeholder: 'Search tasks' }}
         empty={{
           icon: ListTodo,
-          title: status === 'live' ? 'Nothing live on this day' : status === 'all' ? 'No tasks on this day' : 'Nothing in this state on this day',
-          description: status === 'live' ? 'Tasks appear as they are created, and each is assigned as it arrives.' : 'Change the day or the state to see more.',
+          title: needs
+            ? 'No task is waiting for a person'
+            : status === 'live' ? 'Nothing live on this day' : status === 'all' ? 'No tasks on this day' : 'Nothing in this state on this day',
+          description: needs
+            ? 'Every open task has someone on it.'
+            : status === 'live' ? 'Tasks appear as they are created, and each is assigned as it arrives.' : 'Change the day or the state to see more.',
           // The header's New task is the page's one gold action; this twin is outline.
           action: canManage ? (
             <Button variant="outline" onClick={() => setCreating(true)}>
@@ -232,8 +315,8 @@ export function TasksBoard() {
             className: 'tabular-nums',
             cell: (t) => (
               <span className="flex flex-col">
-                <span>{fmtShiftRangeTz(t.windowStart, t.windowEnd, zoneOf.get(t.locationId) ?? dayZone)}</span>
-                <span className="text-xs2 text-ink-muted">{fmtDateTz(t.windowStart, zoneOf.get(t.locationId) ?? dayZone)} · {t.estimatedMinutes} min</span>
+                <span>{fmtShiftRangeTz(t.windowStart, t.windowEnd, zoneFor(t.locationId))}</span>
+                <span className="text-xs2 text-ink-muted">{fmtDateTz(t.windowStart, zoneFor(t.locationId))} · {t.estimatedMinutes} min</span>
               </span>
             ),
           },

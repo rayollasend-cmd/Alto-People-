@@ -2,7 +2,6 @@ import { Router, type Request } from 'express';
 import {
   InboxResponseSchema,
   can,
-  hasCapability,
   timesheetQueuePath,
   type InboxSource,
   type InboxUrgency,
@@ -19,7 +18,7 @@ import { localJurisdictionsAwaitingReview } from './taxJurisdictions.js';
 import { payrollTaxesNeedingYou } from '../lib/payrollTaxLedger.js';
 import { runsAwaitingReview } from '../lib/payrollReview.js';
 import { missedPaydaysNeedingYou } from '../lib/payrollPeriodLedger.js';
-import { isClientBoundedRole, isInternallyScoped } from '../lib/scope.js';
+import { isClientBoundedRole, isInternallyScoped, scopeSites } from '../lib/scope.js';
 import { logger } from '../lib/logger.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { loadTenantProfile } from '../lib/tenantProfile.js';
@@ -28,8 +27,8 @@ import { canUseMessenger } from '../lib/messaging.js';
 import { buildFieldglassQueue } from '../lib/fieldglassQueue.js';
 import { countApprovalQueues, deciderOf } from './approvals.js';
 import { billTabWhere } from '../lib/books/payables/bills.js';
-import { companyWorkweek } from '../lib/timeAnomalies.js';
-import { localDateKey } from '../lib/timezone.js';
+import { companyWorkweek, orgDateKey } from '../lib/timeAnomalies.js';
+import { dateColumnKey, localDateKey } from '../lib/timezone.js';
 import { utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
 import { countDecidableApprovals } from '../lib/proposalDecisions.js';
 import { countDecidable } from '../lib/approvalRequests.js';
@@ -40,7 +39,7 @@ import { deskOf } from './relay.js';
 import { transportNeedsYou } from './transportOps.js';
 import { countToCertify } from '../lib/accessCertification.js';
 import { expiringQualificationsWhere } from '../lib/expirationScope.js';
-import { hrCaseReach } from '../lib/hrCaseScope.js';
+import { hrCaseReach, hrDeskScope } from '../lib/hrCaseScope.js';
 import { myPayNoticesToSign, newHireReportsDueCount, unsignedPayNoticesCount } from './payrollCompliance.js';
 import { unbilledGapCached } from '../lib/payBillRecon.js';
 import { certifiedWeeksDue } from '../lib/certifiedPayroll.js';
@@ -55,6 +54,7 @@ import { portalCalendar } from '../lib/portalMetrics.js';
 import { overdueContractDuties, seesContractDuties } from '../lib/contractDuties.js';
 import { stuckWhere } from '../lib/applicationFilters.js';
 import { carrierAnswersNeedingYou } from '../lib/carrierAcks.js';
+import { blobExistsForListing } from '../lib/blobStore.js';
 
 /**
  * GET /me/inbox — every decision waiting on the signed-in person, across
@@ -123,7 +123,7 @@ interface SourceDef {
 function soonestDay(...dates: Array<Date | string | null | undefined>): string | null {
   const days = dates
     .filter((d): d is Date | string => !!d)
-    .map((d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d.slice(0, 10)))
+    .map((d) => (d instanceof Date ? dateColumnKey(d) : d.slice(0, 10)))
     .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
     .sort();
   return days[0] ?? null;
@@ -186,12 +186,8 @@ function clientClamp(user: SessionUser): string | undefined {
   return bounded === null ? NO_CLIENT : bounded;
 }
 
-/** What slice of the case desk this role works — deskScope in hrCases123.ts. */
-function caseDeskScope(user: SessionUser): 'all' | 'payroll' | null {
-  if (hasCapability(user.role, 'manage:onboarding')) return 'all';
-  if (hasCapability(user.role, 'process:payroll')) return 'payroll';
-  return null;
-}
+/** What slice of the case desk this account works — the desk's own rule (lib/hrCaseScope, PEOPLE-5). */
+const caseDeskScope = (user: SessionUser): 'all' | 'payroll' | null => hrDeskScope(user);
 
 const SOURCES: SourceDef[] = [
   {
@@ -575,7 +571,8 @@ const SOURCES: SourceDef[] = [
     visible: (u) => can(u, 'manage:leave'),
     urgency: 'legal',
     count: async (u) => {
-      const t = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+      // The company's calendar day (not UTC's — after 8 PM Eastern that read tomorrow).
+      const t = new Date(orgDateKey(new Date()) + 'T00:00:00.000Z');
       const rows = await prisma.leaveCase.findMany({
         where: {
           tenantId: tenantIdForWrite(),
@@ -715,11 +712,15 @@ const SOURCES: SourceDef[] = [
     key: 'tasks',
     label: 'Tasks needing a person',
     description: 'Work the engine queued for a person, or that a worker stalled on or failed.',
-    path: '/tasks',
+    // The board's "needs a person" view (FLOOR-8): every open task waiting
+    // for a person on ANY day — what this count counts. The plain /tasks
+    // opened on today's board, which read 0 beside an Inbox count of 1.
+    path: '/tasks?needs=1',
     visible: (u) => can(u, 'view:time-live'),
-    count: () =>
+    // The caller's sites only (FLOOR-9): the board it opens lists no more.
+    count: (u) =>
       prisma.workTask.count({
-        where: { tenantId: tenantIdForWrite(), status: { in: ['QUEUED', 'STALLED', 'FAILED'] } },
+        where: { tenantId: tenantIdForWrite(), status: { in: ['QUEUED', 'STALLED', 'FAILED'] }, location: { is: scopeSites(u) } },
       }),
   },
   {
@@ -852,17 +853,22 @@ const SOURCES: SourceDef[] = [
   {
     key: 'my-documents',
     label: 'Documents needing attention',
-    description: 'Documents that expired, were sent back, or expire within 60 days.',
+    description: 'Documents that expired, were sent back, expire within 60 days, or whose file is missing.',
     path: '/documents',
     visible: (u) => u.role === 'ASSOCIATE' && !!u.associateId,
-    count: (u) =>
-      prisma.documentRecord.count({
-        where: {
-          associateId: u.associateId!,
-          deletedAt: null,
-          OR: [{ status: { in: ['EXPIRED', 'REJECTED'] } }, { expiresAt: { not: null, lte: new Date(Date.now() + 60 * DAY_MS) } }],
-        },
-      }),
+    // The Documents page's own rule (routes/documents.ts fileAvailable): a record whose
+    // file is gone asks for a re-upload, so it needs them too. One person's documents
+    // are a handful, so they're read and judged here rather than counted in SQL.
+    count: async (u) => {
+      const soon = Date.now() + 60 * DAY_MS;
+      const docs = await prisma.documentRecord.findMany({
+        where: { associateId: u.associateId!, deletedAt: null },
+        select: { status: true, expiresAt: true, s3Key: true },
+      });
+      return docs.filter(
+        (d) => d.status === 'EXPIRED' || d.status === 'REJECTED' || (d.expiresAt && d.expiresAt.getTime() <= soon) || !blobExistsForListing(d.s3Key),
+      ).length;
+    },
   },
   {
     key: 'my-pay-notices',
@@ -1101,7 +1107,13 @@ const SOURCES: SourceDef[] = [
     count: async (u) => {
       const gap = await unbilledGapCached(prisma, `${tenantIdForWrite()}:${u.role}`, { AND: [{ tenantId: tenantIdForWrite() }, scopePayrollRuns(u)] });
       const dollars = gap.amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-      return { count: gap.count, description: gap.count ? `${dollars} of billable pay is not on any statement.` : 'All billable pay is on a statement.' };
+      // The link carries the period the gap is in (deep audit MONEY-2) — the oldest, when several have one.
+      const oldest = gap.periods[0];
+      return {
+        count: gap.count,
+        description: gap.count ? `${dollars} of billable pay is not on any statement${gap.periods.length > 1 ? `, across ${gap.periods.length} pay periods — oldest first` : ''}.` : 'All billable pay is on a statement.',
+        ...(gap.count && oldest ? { path: `/finance/pay-bill?period=${oldest}` } : {}),
+      };
     },
   },
   {

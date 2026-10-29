@@ -285,10 +285,13 @@ describe('margin per paycheck and the reconciliation', () => {
     const res = await a.get(`/pay-bill/reconciliation?periodStart=${w.ymd(w.start)}&periodEnd=${w.ymd(w.end)}`);
     expect(res.status).toBe(200);
     expect(res.body.totals.gapPay).toBe(200);
-    expect((await a.get('/pay-bill/periods')).body.periods).toHaveLength(1);
+    const periods = (await a.get('/pay-bill/periods')).body;
+    expect(periods.periods).toHaveLength(1);
+    // The page opens where the gap is, and the badge's link carries that period (deep audit MONEY-2).
+    expect(periods.gapPeriods).toEqual([`${periods.periods[0].periodStart}:${periods.periods[0].periodEnd}`]);
     const inbox = await a.get('/me/inbox');
     const src = inbox.body.sources.find((s: { key: string }) => s.key === 'unbilled-pay');
-    expect(src).toMatchObject({ count: 1, description: '$200.00 of billable pay is not on any statement.', path: '/finance/pay-bill' });
+    expect(src).toMatchObject({ count: 1, description: '$200.00 of billable pay is not on any statement.', path: `/finance/pay-bill?period=${periods.gapPeriods[0]}` });
 
     const site = await prisma.site.create({ data: { clientId: w.client.id, name: 'Coastal 1' } });
     const { user: bound } = await createUser({ role: 'FINANCE_ACCOUNTANT' });

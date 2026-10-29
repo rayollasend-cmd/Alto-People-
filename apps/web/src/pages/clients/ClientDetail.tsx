@@ -9,8 +9,7 @@ import { useAuth } from '@/lib/auth';
 import { fmtDate } from '@/lib/format';
 import { StatusBadge } from '@/lib/status';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { QueryError } from '@/components/ui/QueryError';
 import { RecordTemplate } from '@/components/templates';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
@@ -115,23 +114,22 @@ export function ClientDetail() {
   useEffect(() => setEditingBasics(false), [id]);
 
   if (error) {
+    // The shared failure words: an unknown or removed client reads "Couldn't
+    // find this client" with no Retry (it won't appear on a second try); a
+    // refusal explains; only a server fault offers Retry (CRAWL-16).
     return (
       <div className="mx-auto">
-        <ErrorBanner>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{error}</span>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setError(null);
-                void clientQuery.refetch();
-              }}
-            >
-              Retry
-            </Button>
-          </div>
-        </ErrorBanner>
+        <QueryError
+          what="this client"
+          query={{
+            error: clientQuery.error,
+            isFetching: clientQuery.isFetching,
+            refetch: () => {
+              setError(null);
+              return clientQuery.refetch();
+            },
+          }}
+        />
       </div>
     );
   }

@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
-import { fmtDateTz, fmtHours, fmtMoneyEst, zonedDayKey } from '@/lib/format';
+import { displayLocale, fmtDateTz, fmtHours, fmtMoneyEst, zonedDayKey } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { Check, ChevronLeft, ChevronRight, X } from '@/components/ui/icons';
 import { ShiftCard, paidShiftMinutes } from './ShiftCard';
+import { workweekStart } from '@/lib/workweek';
+import { leadingBlanks, saturdayFirst } from './associateWeek';
 import '@/lib/i18n/en/cal';
 import '@/lib/i18n/en/sched';
 import '@/lib/i18n/en/shift';
@@ -64,8 +66,10 @@ const DAY_MS = 86_400_000;
  *  still hardcoding English day names on an otherwise-Spanish page.
  *  2021-08-01 (a Sunday) anchors the weekday sequence; UTC rendering keeps
  *  the anchor date from shifting in western zones. */
-function calendarNames(lang: string): { weekdays: string[]; months: string[] } {
-  const locale = lang === 'es' ? 'es-US' : 'en-US';
+function calendarNames(): { weekdays: string[]; months: string[] } {
+  // The app language's date locale (lib/format displayLocale) — every
+  // language, not only Spanish; the callers re-run this when `lang` changes.
+  const locale = displayLocale();
   // Builds the picker's weekday/month name tables from fixed UTC anchors —
   // not a date being displayed, so the shared formatters don't apply.
   const weekdays = Array.from({ length: 7 }, (_, i) =>
@@ -88,11 +92,11 @@ function calendarNames(lang: string): { weekdays: string[]; months: string[] } {
 /** Browser-local YYYY-MM-DD for a Date (zonedDayKey with no zone). */
 const localKey = (d: Date) => zonedDayKey(d);
 
+/** The workweek's Saturday — payroll's week (lib/workweek), the one the
+ *  page header, the list view and overtime count. The calendar ran Sun→Sat,
+ *  so its "35h · ~$525" covered a different week from everything beside it. */
 function startOfWeek(t: number): Date {
-  const d = new Date(t);
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - d.getDay()); // Sunday start, matching the hours strip
-  return d;
+  return workweekStart(t);
 }
 
 /** Store-local day key → that day's shifts, each list chronological. */
@@ -181,7 +185,8 @@ export function ScheduleWeekView({
   const [offset, setOffset] = useState(0);
   const byDay = useMemo(() => bucketByDay(shifts), [shifts]);
   const { t, lang } = useI18n();
-  const { weekdays: WEEKDAYS } = useMemo(() => calendarNames(lang), [lang]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `lang` re-reads the locale on a language change
+  const { weekdays: WEEKDAYS } = useMemo(() => calendarNames(), [lang]);
 
   // Calendar-day arithmetic (setDate), NOT raw ms offsets — adding
   // 86.4M-ms increments drifts an hour across a DST transition and can
@@ -338,7 +343,8 @@ export function ScheduleMonthView({
   const byDay = useMemo(() => bucketByDay(shifts), [shifts]);
   const { t, lang } = useI18n();
   const { weekdays: WEEKDAYS, months: MONTHS } = useMemo(
-    () => calendarNames(lang),
+    () => calendarNames(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `lang` re-reads the locale on a language change
     [lang],
   );
 
@@ -421,12 +427,13 @@ export function ScheduleMonthView({
       </div>
 
       <div className="grid grid-cols-7 gap-1 text-center">
-        {WEEKDAYS.map((w) => (
+        {/* Saturday first: each grid row is one payroll workweek. */}
+        {saturdayFirst(WEEKDAYS).map((w) => (
           <div key={w} className="text-2xs uppercase tracking-wider text-silver/60 py-1">
             {w}
           </div>
         ))}
-        {Array.from({ length: monthStart.getDay() }, (_, i) => (
+        {Array.from({ length: leadingBlanks(monthStart) }, (_, i) => (
           <div key={`blank-${i}`} />
         ))}
         {Array.from({ length: daysInMonth }, (_, i) => {

@@ -129,7 +129,22 @@ export function CandidatePortalPage() {
   const confirm = useMutation({
     mutationFn: (id: string) => confirmPortalInterview(token, id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['candidate-portal', token] }),
+    // An expired link (410) must never look confirmed (CODE-20): the row says
+    // it didn't go through, and the page re-reads — it turns into "This link
+    // has expired" with who to ask.
+    onError: (err) => {
+      if (err instanceof ApiError && (err.status === 410 || err.status === 404)) {
+        void queryClient.invalidateQueries({ queryKey: ['candidate-portal', token] });
+      }
+    },
   });
+  const confirmError = confirm.isError
+    ? confirm.error instanceof ApiError && confirm.error.status === 410
+      ? 'This link has expired, so we couldn’t record that. Ask your recruiter for a new link.'
+      : confirm.error instanceof ApiError
+        ? confirm.error.message
+        : 'That didn’t go through. Check your connection and try again.'
+    : null;
 
   useEffect(() => {
     document.title = data ? `Your application — ${data.orgName}` : 'Your application';
@@ -210,10 +225,17 @@ export function CandidatePortalPage() {
                           You said you&rsquo;ll be there
                         </span>
                       ) : (
-                        <Button size="sm" loading={confirm.isPending && confirm.variables === i.id} onClick={() => confirm.mutate(i.id)}>
-                          <CalendarCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                          I&rsquo;ll be there
-                        </Button>
+                        <>
+                          <Button size="sm" loading={confirm.isPending && confirm.variables === i.id} onClick={() => confirm.mutate(i.id)}>
+                            <CalendarCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                            I&rsquo;ll be there
+                          </Button>
+                          {confirmError && confirm.variables === i.id && (
+                            <p role="alert" className="mt-1 text-xs text-alert">
+                              {confirmError}
+                            </p>
+                          )}
+                        </>
                       )}
                     </div>
                   </li>

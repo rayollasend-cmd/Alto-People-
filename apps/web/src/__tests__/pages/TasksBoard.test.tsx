@@ -5,12 +5,20 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { WorkTaskDetailView, WorkTaskSummary, WorkTaskView } from '@alto-people/shared';
 
+const authState = vi.hoisted(() => ({
+  auth: { user: { id: 'u1', role: 'HR_ADMINISTRATOR', email: 'hr@altohr.com' } as Record<string, unknown>, can: () => true },
+}));
 vi.mock('@/lib/auth', async () => {
   const React = await import('react');
-  const auth = { user: { id: 'u1', role: 'HR_ADMINISTRATOR', email: 'hr@altohr.com' }, can: () => true };
-  return { AuthContext: React.createContext(auth), useAuth: () => auth, useTerm: () => (k: string) => (k === 'site' ? 'Site' : k), useTenant: () => ({ modules: {}, terminology: {} }) };
+  return {
+    AuthContext: React.createContext(authState.auth),
+    useAuth: () => authState.auth,
+    useTerm: () => (k: string) => (k === 'site' ? 'Site' : k),
+    useTenant: () => ({ modules: {}, terminology: {} }),
+  };
 });
-vi.mock('@/lib/useOrgSites', () => ({ useOrgSites: () => [{ id: 'loc-1', name: 'Front Beach 218' }] }));
+vi.mock('@/lib/useOrgSites', () => ({ useOrgSites: (enabled: boolean) => (enabled ? [{ id: 'loc-1', name: 'Front Beach 218' }] : null) }));
+vi.mock('@/lib/clientsApi', () => ({ listClientLocations: vi.fn() }));
 vi.mock('@/lib/tasksApi', () => ({
   listTasks: vi.fn(),
   getTaskSummary: vi.fn(),
@@ -23,7 +31,8 @@ vi.mock('@/lib/tasksApi', () => ({
 }));
 
 import { listTasks, getTaskSummary, getTask, getTaskDay } from '@/lib/tasksApi';
-import { TasksBoard } from '@/pages/tasks/TasksBoard';
+import { listClientLocations } from '@/lib/clientsApi';
+import { TasksBoard, zonedDayBounds } from '@/pages/tasks/TasksBoard';
 
 /**
  * Brief 3-2: the board shows every task with who holds it, says why a
@@ -98,6 +107,9 @@ function renderBoard(initial = '/tasks') {
 }
 
 beforeEach(() => {
+  authState.auth.user = { id: 'u1', role: 'HR_ADMINISTRATOR', email: 'hr@altohr.com' };
+  vi.mocked(listTasks).mockReset();
+  vi.mocked(getTaskDay).mockReset();
   vi.mocked(listTasks).mockResolvedValue({ tasks: [assigned, queued] });
   vi.mocked(getTaskDay).mockResolvedValue({ day: '2026-10-16', timezone: 'America/Chicago' });
   vi.mocked(getTaskSummary).mockResolvedValue(summary);
@@ -156,5 +168,59 @@ describe('<TasksBoard>', () => {
     // A person holds it, so there is nothing to hand off.
     expect(within(drawer).queryByRole('button', { name: /Hand to a person/ })).not.toBeInTheDocument();
     expect(within(drawer).getByRole('button', { name: /Done/ })).toBeInTheDocument();
+  });
+
+  it('the Inbox link (?needs=1) lists every open task waiting for a person on any day — the Inbox’s own count (FLOOR-8)', async () => {
+    const oldQueued: WorkTaskView = { ...queued, id: 't-3', type: 'Unload the afternoon produce truck', windowStart: '2026-10-25T19:00:00.000Z', windowEnd: '2026-10-25T21:00:00.000Z' };
+    const stalled: WorkTaskView = { ...assigned, id: 't-4', type: 'Mop the dairy aisle', status: 'STALLED' };
+    vi.mocked(listTasks).mockImplementation(async (f) => ({
+      tasks: f.status === 'QUEUED' ? [oldQueued] : f.status === 'STALLED' ? [stalled] : [],
+    }));
+    renderBoard('/tasks?needs=1');
+    // Three days back still lists: no day bound, one call per state the Inbox counts.
+    expect(await screen.findByText('Unload the afternoon produce truck')).toBeInTheDocument();
+    expect(screen.getByText('Mop the dairy aisle')).toBeInTheDocument();
+    const calls = vi.mocked(listTasks).mock.calls.map(([f]) => f);
+    expect(calls.map((f) => f.status).sort()).toEqual(['FAILED', 'QUEUED', 'STALLED']);
+    expect(calls.every((f) => !f.day && !f.from && !f.to)).toBe(true);
+    expect(screen.getByRole('button', { name: /Waiting for a person/ })).toHaveTextContent('1');
+    expect(screen.getByRole('button', { name: /Exceptions/ })).toHaveTextContent('1');
+    expect(screen.queryByRole('button', { name: /^Live/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Day')).not.toBeInTheDocument();
+    // One tap back to the day's board.
+    await userEvent.click(screen.getByRole('button', { name: /Back to the day’s board/ }));
+    expect(await screen.findByLabelText('Day')).toBeInTheDocument();
+  });
+
+  it('a client-bound supervisor reads each task on its own store’s clock and the stores’ day, not the company’s (FLOOR-19)', async () => {
+    authState.auth.user = { id: 'u2', role: 'SHIFT_SUPERVISOR', email: 'dana@altohr.com', clientId: 'c-1', clientName: 'Coastal' };
+    vi.mocked(listClientLocations).mockResolvedValue({
+      locations: [
+        { id: 'loc-1', clientId: 'c-1', name: 'Front Beach 218', timezone: 'America/Chicago', isActive: true },
+        { id: 'loc-2', clientId: 'c-1', name: 'Thomas Drive', timezone: 'America/Chicago', isActive: true },
+      ],
+    } as never);
+    vi.mocked(getTaskDay).mockImplementation(async (loc) =>
+      loc ? { day: '2026-10-27', timezone: 'America/Chicago' } : { day: '2026-10-28', timezone: 'America/New_York' },
+    );
+    // 04:00Z Oct 28 is 11 PM Oct 27 in Chicago (it read "12:00 AM EDT, Oct 28").
+    const late: WorkTaskView = { ...assigned, windowStart: '2026-10-28T04:00:00.000Z', windowEnd: '2026-10-28T04:59:00.000Z' };
+    vi.mocked(listTasks).mockResolvedValue({ tasks: [late] });
+    renderBoard();
+    expect(await screen.findByText(/^11:00\sPM – 11:59\sPM/)).toBeInTheDocument();
+    // The day is the stores' (asked of one of them), bounded on Chicago's midnights.
+    expect(getTaskDay).toHaveBeenCalledWith('loc-1');
+    await waitFor(() =>
+      expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ from: '2026-10-27T05:00:00.000Z', to: '2026-10-28T05:00:00.000Z' })),
+    );
+    expect(screen.getByLabelText('Day')).toHaveValue('2026-10-27');
+  });
+});
+
+describe('zonedDayBounds', () => {
+  it('is midnight to midnight on the zone’s clock, across a DST change', () => {
+    expect(zonedDayBounds('2026-10-28', 'America/Chicago')).toEqual({ from: '2026-10-28T05:00:00.000Z', to: '2026-10-29T05:00:00.000Z' });
+    // Fall back (Nov 1, 2026): a 25-hour day.
+    expect(zonedDayBounds('2026-11-01', 'America/Chicago')).toEqual({ from: '2026-11-01T05:00:00.000Z', to: '2026-11-02T06:00:00.000Z' });
   });
 });

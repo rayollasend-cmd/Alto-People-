@@ -17,7 +17,7 @@ vi.mock('@/lib/celebrations107Api', async (orig) => ({
 import { getPulseSummary, listMyOpenSurveys, listPulseSurveys } from '@/lib/pulseSurveys109Api';
 import { listUpcomingCelebrations, type CelebrationItem } from '@/lib/celebrations107Api';
 import { PulseHome } from '@/pages/pulse/PulseHome';
-import { CelebrationsHome } from '@/pages/celebrations/CelebrationsHome';
+import { CelebrationsHome, bucketize } from '@/pages/celebrations/CelebrationsHome';
 
 /**
  * Pulse opens whoever runs surveys on the results (score, response rate,
@@ -60,6 +60,9 @@ describe('Pulse', () => {
 
 describe('Celebrations', () => {
   it('puts today first and counts this week', async () => {
+    // A Saturday — the first day of the company's workweek — so +3 and +5
+    // are this week (Sat → Fri) whatever day the suite runs.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 9, 24, 12) });
     const day = (offset: number) => {
       const d = new Date();
       d.setDate(d.getDate() + offset);
@@ -77,5 +80,16 @@ describe('Celebrations', () => {
     expect(within(sections[0]!).getByText('Ana Today')).toBeInTheDocument();
     expect(within(sections[1]!).getByText('3 years')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Send a note to/ })).toHaveLength(4);
+    vi.useRealTimers();
+  });
+
+  it('"This week" is the company’s workweek, Saturday → Friday — not a rolling seven days (FLOOR-24)', () => {
+    const item = (name: string, date: string) =>
+      ({ associateId: name, associateName: name, email: '', kind: 'BIRTHDAY', date, years: null, clientId: null, clientName: null, locationId: null, siteName: null }) as CelebrationItem;
+    // Thursday Oct 29, 2026: the week ends Friday Oct 30.
+    const b = bucketize([item('Fri', '2026-10-30'), item('Mon', '2026-11-02'), item('NextFri', '2026-11-06'), item('Sat2', '2026-11-07')], new Date(2026, 9, 29, 21));
+    expect(b['This week']!.map((c) => c.associateName)).toEqual(['Fri']);
+    expect(b['Next week']!.map((c) => c.associateName)).toEqual(['Mon', 'NextFri']);
+    expect(b['This month']!.map((c) => c.associateName)).toEqual(['Sat2']);
   });
 });

@@ -129,7 +129,7 @@ describe('the HR administrator’s home', () => {
     expect(labels).toHaveLength(4);
     expect(labels[0]).toMatch(/Working \(14 days\)/);
     expect(labels[1]).toMatch(/Open shifts · next 30d/);
-    expect(labels[2]).toMatch(/Hours worked · last week/);
+    expect(labels[2]).toMatch(/Paid hours · last week/);
     expect(labels[3]).toMatch(/Onboarding in flight/);
     expect(strip).not.toHaveTextContent(/Net paid/);
     expect(strip).not.toHaveTextContent(/View details/i);
@@ -199,5 +199,23 @@ describe('on a phone', () => {
     expect(screen.queryByText(/what's happening across your workforce/i)).not.toBeInTheDocument();
     fireEvent.click(more);
     expect(await screen.findByRole('group', { name: 'Workforce snapshot' })).toBeInTheDocument();
+  });
+});
+
+describe('the date line is the company’s day (deep audit LEAD-17)', () => {
+  it('at 11:30 PM Pacific the stores are on Thursday: the line says Thursday and names the zone', async () => {
+    const { setDisplayTimeZone } = await import('@/lib/format');
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-29T06:30:00Z') });
+    setDisplayTimeZone('America/Los_Angeles');
+    try {
+      kpis.getDashboardKPIs.mockResolvedValue({ ...KPIS, week: { start: '2026-10-24', end: '2026-10-30', timezone: 'America/New_York', paidHours: 537, scheduledHours: 741 } });
+      renderHome('OPERATIONS_MANAGER');
+      // Coverage today is counted on the company day (orgDateKey); the line above it says the same day.
+      await waitFor(() => expect(screen.getByTestId('home-meta')).toHaveTextContent('Thu, Oct 29 (EDT)'));
+      expect(screen.getByTestId('home-meta')).not.toHaveTextContent('Wed, Oct 28');
+    } finally {
+      setDisplayTimeZone(null);
+      vi.useRealTimers();
+    }
   });
 });

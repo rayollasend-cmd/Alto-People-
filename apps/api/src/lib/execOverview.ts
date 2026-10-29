@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import type { ExecBasis, ExecChange, ExecKpi, ExecKpiId, ExecOverview, ExecRisk, ExecStatus, ExecTrendPoint, ExecUnit } from '@alto-people/shared';
+import { METRICS, marginPctOf, type ExecBasis, type ExecChange, type ExecKpi, type ExecKpiId, type ExecOverview, type ExecRisk, type ExecStatus, type ExecTrendPoint, type ExecUnit } from '@alto-people/shared';
 import { judge, prorateTarget } from './execPeriods.js';
 import { companyWorkweek } from './timeAnomalies.js';
 import { cashForecast, type CashForecast } from './cashForecast.js';
@@ -26,6 +26,12 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 /* ------------------------------------------------------------- the eight */
 
+// Labels and definitions come from the metric dictionary
+// (packages/shared/src/metrics.ts): the name a card prints and the sentence
+// its tooltip and the board pack's appendix print are the dictionary's, so
+// "Gross margin %" or "Days to collect" can never mean one thing here and
+// another on Analytics or in Books.
+
 interface KpiSpec {
   id: ExecKpiId;
   label: string;
@@ -41,83 +47,85 @@ interface KpiSpec {
 export const KPI_SPECS: Record<'revenue' | 'grossMargin' | 'marginPct' | 'workforce' | 'fillRate' | 'turnover' | 'overtimePct' | 'dso' | 'cash', KpiSpec> = {
   revenue: {
     id: 'revenue',
-    label: 'Revenue',
+    label: METRICS.revenue.label,
     sentence: 'Revenue',
     unit: 'money',
     betterWhen: 'up',
     basis: 'estimate',
-    definition: 'Approved and completed hours priced at the standard bill rate, overtime at the pay multipliers. Finalized client statements are the invoice-grade figure.',
+    definition: METRICS.revenue.definition,
     href: '/executive/financials',
   },
   grossMargin: {
     id: 'grossMargin',
-    label: 'Gross margin',
+    label: METRICS.grossMargin.label,
     sentence: 'Gross margin',
     unit: 'money',
     betterWhen: 'up',
     basis: 'estimate',
-    definition: 'Estimated billing less pay, employer burden and overhead, at the standard rates.',
+    definition: METRICS.grossMargin.definition,
     href: '/executive/financials',
   },
   marginPct: {
     id: 'marginPct',
     // The rate beside the dollars (grossMargin) — two cards on Financials, two names.
-    label: 'Gross margin %',
+    label: METRICS.grossMarginPct.label,
     sentence: 'Gross margin',
     unit: 'pct',
     betterWhen: 'up',
     basis: 'estimate',
-    definition: 'Estimated billing less pay, employer burden and overhead, as a share of billing.',
+    definition: METRICS.grossMarginPct.definition,
     href: '/executive/financials',
   },
   workforce: {
     id: 'workforce',
-    label: 'Active workforce',
-    sentence: 'The active workforce',
+    // "Working", as the People directory and Analytics name the same people —
+    // not "active", which other pages have used for "placed".
+    label: METRICS.working.label,
+    sentence: 'The number working',
     unit: 'count',
     betterWhen: 'up',
     basis: 'live',
-    definition: 'Associates placed at a site who worked in the active window or have a shift ahead, counted at the end of the period.',
+    definition: `${METRICS.working.definition} Counted at the end of the period.`,
     href: '/executive/people',
   },
   fillRate: {
     id: 'fillRate',
-    label: 'Fill rate',
+    label: METRICS.fillRate.label,
     sentence: 'Fill rate',
     unit: 'pct',
     betterWhen: 'up',
     basis: 'live',
-    definition: 'Published shifts starting in the period that have someone assigned, as a share of all published shifts.',
+    definition: METRICS.fillRate.definition,
     href: '/executive/clients',
   },
   turnover: {
     id: 'turnover',
-    label: 'Turnover',
+    label: METRICS.turnover.label,
     sentence: 'Annualized turnover',
     unit: 'pct',
     betterWhen: 'down',
     basis: 'live',
-    definition: 'Separations in the period over the average number on the books, annualized. The trend line reads each week’s trailing four weeks.',
+    definition: `${METRICS.turnover.definition} The trend line reads each week’s trailing four weeks.`,
     href: '/executive/people',
   },
   overtimePct: {
     id: 'overtimePct',
-    label: 'Overtime',
+    label: METRICS.overtimeShare.label,
     sentence: 'Overtime',
     unit: 'pct',
     betterWhen: 'down',
     basis: 'live',
-    definition: 'Overtime and double-time hours as a share of paid hours, split the way payroll splits them.',
+    definition: METRICS.overtimeShare.definition,
     href: '/executive/people',
   },
   dso: {
     id: 'dso',
-    label: 'Days to collect',
+    label: METRICS.daysToCollect.label,
     sentence: 'Days to collect',
     unit: 'days',
     betterWhen: 'down',
     basis: 'statements',
-    definition: 'Days sales outstanding: what clients owe on finalized statements, over the last 90 days’ average daily billing.',
+    definition: METRICS.daysToCollect.definition,
     href: '/executive/financials',
   },
   cash: {
@@ -312,7 +320,7 @@ export function rankChanges(scorecard: ExecKpi[], ctx: ExecContext, risk: ExecRi
     };
     const facts = [
       fact('revenue', (k) => `Revenue for ${ctx.w.period.label.replace(/^Week/, 'the week')} is ${execMoney(k.value)}${k.sub ? ` on ${k.sub}` : ''}.`),
-      fact('workforce', (k) => `The active workforce is ${valueWords(k.value, 'count')}${k.sub ? `, ${k.sub}` : ''}.`),
+      fact('workforce', (k) => `${valueWords(k.value, 'count')} ${k.value === 1 ? 'person is' : 'people are'} working${k.sub ? `, ${k.sub}` : ''}.`),
       fact('cash', (k) => cashFact ?? `Cash stands at ${execMoney(k.value)}.`),
       fact('marginPct', (k) => `Gross margin is ${valueWords(k.value, 'pct')}${k.sub ? `, ${k.sub}` : ''}.`),
     ];
@@ -397,13 +405,14 @@ export async function computeExecOverview(
 
   // ---- margin %
   const marginPctTarget = revTarget !== null && marginTarget !== null && revTarget > 0 ? (marginTarget / revTarget) * 100 : null;
+  // Gross margin % by the dictionary's formula: (revenue − pay, burden, overhead) ÷ revenue.
   const marginPct = buildKpi(KPI_SPECS.marginPct, {
-    value: pct(current.margin, current.billed),
-    compare: planMode ? marginPctTarget : cmp(compared ? pct(compared.margin, compared.billed) : null),
+    value: marginPctOf(current.billed, current.cost),
+    compare: planMode ? marginPctTarget : cmp(compared ? marginPctOf(compared.billed, compared.cost) : null),
     target: marginPctTarget,
     targetLabel: marginPctTarget !== null ? `${qLabel} plan: ${execMoney(qSum('margin'))} margin on ${execMoney(qSum('revenue'))}` : null,
     sub: `${execMoney(current.margin)} margin`,
-    trend: trendOf(weekly.map((x) => pct(x.margin, x.billed))),
+    trend: trendOf(weekly.map((x) => marginPctOf(x.billed, x.cost))),
   });
 
   // ---- workforce
@@ -413,7 +422,7 @@ export async function computeExecOverview(
     value: activeAt(periodEnd),
     compare: planMode ? headTarget : cmp(hasCompare ? activeAt(w.compareTo!) : null),
     target: headTarget,
-    targetLabel: headTarget !== null ? `${qLabel} plan ${headTarget.toLocaleString('en-US')} active` : null,
+    targetLabel: headTarget !== null ? `${qLabel} plan ${headTarget.toLocaleString('en-US')} working` : null,
     sub: `of ${onTheBooksAt(standings, periodEnd).toLocaleString('en-US')} on the books`,
     trend: trendOf(weekEnds.map((d) => activeAt(d))),
   });
@@ -471,7 +480,15 @@ export async function computeExecOverview(
   const low = forecast?.lowest ?? null;
   const minimum = forecast?.minimumCash ?? null;
   let cashStatus: { status: ExecStatus; label: string };
+  // A bank account below zero today is a problem the total hides (MONEY-18): the
+  // balance nets it away, so "Positive for 13 weeks" would read beside an overdraft.
+  const overdrawn = forecast?.opening?.overdrawn ?? [];
   if (!bank) cashStatus = { status: 'none', label: 'Books not set up' };
+  else if (overdrawn.length > 0)
+    cashStatus = {
+      status: 'bad',
+      label: overdrawn.length === 1 ? `${overdrawn[0]!.name} is overdrawn (${execMoney(overdrawn[0]!.balance)})` : `${overdrawn.length} bank accounts overdrawn`,
+    };
   else if (!low) cashStatus = { status: 'none', label: 'No forecast yet' };
   else if (minimum !== null && low.balance < minimum) cashStatus = { status: 'bad', label: 'Forecast dips below the floor' };
   else if (minimum !== null && low.balance < minimum * 1.5) cashStatus = { status: 'watch', label: 'Forecast nears the floor' };

@@ -154,6 +154,10 @@ regionRouter.get('/overview', requireAuth, async (req, res, next) => {
         shortNow: stores.filter((s) => s.now.short > 0).length,
         belowContract: stores.filter((s) => (s.now.shortOfContract ?? 0) > 0).length,
         missingFromSchedule: sum((s) => s.now.missingFromSchedule),
+        // PEOPLE late and not in yet, across the region — the hero tile's
+        // number. `alerts` is how many STORES have one (LEAD-8: it read 1
+        // with two people missing at one store).
+        lateNotIn: sum((s) => s.now.lateNotIn),
         alerts: stores.filter((s) => s.alert).length,
         openToday: sum((s) => s.today.open),
         openTomorrow: sum((s) => s.tomorrow.open),

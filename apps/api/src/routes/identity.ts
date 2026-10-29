@@ -11,10 +11,12 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { isValidCidr, loadSecurityPolicy, resetSecurityPolicyCache } from '../lib/securityPolicy.js';
 import { X509Certificate } from 'node:crypto';
 import { acsUrl, spEntityId } from '../lib/saml.js';
+import { IDENTITY_CAPABILITIES } from '../lib/roleGrant.js';
 
 /**
  * Brief 2-3 step 2 — a tenant's own sign-in, managed by its admins
- * (manage:org; the executive reads nothing here). Secrets are write-only:
+ * (manage:org + view:hr-admin; the executive reads nothing here, the
+ * workforce manager changes nothing here). Secrets are write-only:
  * a client secret is sealed on the way in and never returned; a SCIM token
  * is shown once.
  *
@@ -31,7 +33,11 @@ import { acsUrl, spEntityId } from '../lib/saml.js';
 
 export const identityRouter = Router();
 
-const MANAGE = requireCapability('manage:org');
+// The identity desk is an org administrator's: manage:org AND view:hr-admin
+// (lib/roleGrant). manage:org alone let the workforce manager — field org,
+// "no org-admin surface" — turn off two-step, open the staff networks and
+// issue a SCIM token that provisions anyone (PEOPLE-2).
+const MANAGE = requireCapability(...IDENTITY_CAPABILITIES);
 const Id = z.string().uuid();
 
 const ConnectionInput = z

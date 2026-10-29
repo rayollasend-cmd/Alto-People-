@@ -71,6 +71,7 @@ export function weekGroups(from: string, lines: CashLine[]): Array<{ weekStart: 
   const groups = new Map<string, CashLine[]>();
   for (const l of lines) {
     const days = Math.max(0, Math.floor((Date.parse(`${l.date}T00:00:00Z`) - start) / 86_400_000));
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: day arithmetic on YYYY-MM-DD keys anchored at UTC midnight, never a clock time.
     const ws = new Date(start + Math.floor(days / 7) * 7 * 86_400_000).toISOString().slice(0, 10);
     groups.set(ws, [...(groups.get(ws) ?? []), l]);
   }
@@ -118,9 +119,9 @@ export function CashForecastPage() {
             <MetricCard
               label="Cash today"
               value={booked ? fmtMoney(data.opening!.balance) : '—'}
-              tone="neutral"
               href={booked ? '/books/bank' : '/books'}
-              hint={booked ? `From the books · ${fmtCount(data.opening!.accounts, 'bank and card account')}` : undefined}
+              tone={booked && (data.opening!.overdrawn ?? []).length ? 'alert' : 'neutral'}
+              hint={booked ? overdrawnHint(data.opening!) ?? `From the books · ${fmtCount(data.opening!.accounts, 'bank and card account')}` : undefined}
               nothing={booked ? undefined : notPosted ? 'Cash not in the books yet' : 'No bank account in the books yet'}
             />
             <MetricCard label="Money in" value={fmtMoney(data.totals.inflow)} tone="good" onClick={() => setKind(kind === 'in' ? 'all' : 'in')} selected={kind === 'in'} nothing={data.totals.inflow ? undefined : 'Nothing coming in'} />
@@ -277,4 +278,11 @@ function CashChart({ weeks, withBalance, minimumCash }: { weeks: CashWeek[]; wit
       <CashFlowChart weeks={weeks} withBalance={withBalance} minimumCash={withBalance ? minimumCash : null} />
     </ChartFrame>
   );
+}
+
+/** An overdrawn bank account, which the cash total nets away (MONEY-18); null when none is. */
+export function overdrawnHint(opening: NonNullable<CashForecast['opening']>): string | null {
+  const short = opening.overdrawn ?? [];
+  if (short.length === 0) return null;
+  return short.length === 1 ? `${short[0]!.name} overdrawn by ${fmtMoney(-short[0]!.balance)}` : `${short.length} accounts overdrawn`;
 }

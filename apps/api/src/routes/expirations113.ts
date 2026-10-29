@@ -63,6 +63,7 @@ expirations113Router.get('/expirations', VIEW, async (req, res) => {
     qualificationCode: r.qualification.code,
     qualificationName: r.qualification.name,
     isCert: r.qualification.isCert,
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: AssociateQualification.expiresAt is a @db.Date
     expiresAt: r.expiresAt!.toISOString().slice(0, 10),
     daysUntilExpiry: Math.round((r.expiresAt!.getTime() - now.getTime()) / 86_400_000),
   });

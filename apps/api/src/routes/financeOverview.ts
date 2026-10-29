@@ -269,13 +269,16 @@ financeOverviewRouter.get(
             ? {
                 id: inFlightRun.id,
                 status: inFlightRun.status,
+                // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: run periods are @db.Date values stored at UTC midnight.
                 periodStart: inFlightRun.periodStart.toISOString().slice(0, 10),
+                // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: run periods are @db.Date values stored at UTC midnight.
                 periodEnd: inFlightRun.periodEnd.toISOString().slice(0, 10),
                 totalGross: Number(inFlightRun.totalGross),
               }
             : null,
           lastDisbursed: lastDisbursed
             ? {
+                // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: run periods are @db.Date values stored at UTC midnight.
                 periodEnd: lastDisbursed.periodEnd.toISOString().slice(0, 10),
                 totalGross: Number(lastDisbursed.totalGross),
               }

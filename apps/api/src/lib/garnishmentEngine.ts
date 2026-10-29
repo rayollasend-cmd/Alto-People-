@@ -1,4 +1,5 @@
 import type { GarnishmentKind } from '@prisma/client';
+import { roundCents } from './roundCents.js';
 
 /**
  * How much each withholding order takes from one paycheck — the rules a
@@ -133,8 +134,9 @@ export interface EngineResult {
   skipped: Array<{ garnishmentId: string; note: string }>;
 }
 
+/** Dollars to the cent, half away from zero (lib/roundCents; deep audit CODE-27). */
 export function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
+  return roundCents(n);
 }
 
 const SUPPORT: GarnishmentKind[] = ['CHILD_SUPPORT'];

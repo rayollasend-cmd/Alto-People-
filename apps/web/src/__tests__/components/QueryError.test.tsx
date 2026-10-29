@@ -92,6 +92,44 @@ describe('<QueryError>', () => {
   });
 });
 
+describe('a capability string never reaches the screen (deep audit 2026-10-29, CRAWL-11)', () => {
+  it('ApiError turns the API’s “Missing capability: …” into plain words and keeps the capability for logic', () => {
+    const one = new ApiError(403, 'forbidden', 'Missing capability: view:recruiting');
+    expect(one.message).toBe('You don’t have access to this.');
+    expect(one.capability).toBe('view:recruiting');
+    const any = new ApiError(403, 'forbidden', 'Missing capability: one of manage:scheduling, view:executive, process:payroll');
+    expect(any.message).not.toMatch(/capabilit|manage:|view:/);
+    expect(any.capability).toBe('manage:scheduling, view:executive, process:payroll');
+    // Any other sentence is the API's own, written for people: untouched.
+    const rule = new ApiError(403, 'forbidden', 'Call-outs are for the people who lead the floor.');
+    expect(rule.message).toBe('Call-outs are for the people who lead the floor.');
+    expect(rule.capability).toBeUndefined();
+  });
+
+  it('no kind of failure renders “view:” / “manage:” or the words “Missing capability”', () => {
+    const errors = [
+      new ApiError(403, 'forbidden', 'Missing capability: view:org'),
+      new ApiError(401, 'unauthorized', 'Missing capability: view:org'),
+      new ApiError(404, 'not_found', 'Missing capability: view:org'),
+      new ApiError(409, 'conflict', 'Missing capability: manage:scheduling'),
+      new ApiError(500, 'internal', 'Missing capability: process:payroll'),
+    ];
+    for (const err of errors) {
+      const { container, unmount } = renderAs('DRIVER', <QueryError what="the list" query={query(err)} />);
+      expect(container.textContent, `status ${err.status}`).not.toMatch(/missing capabilit|\b(view|manage|process):[a-z-]+/i);
+      unmount();
+    }
+  });
+
+  it('access="hide": a refused part of a page renders nothing (no warning, no Retry)', () => {
+    const { container } = renderAs('DRIVER', <QueryError access="hide" what="the payout rail" query={query(new ApiError(403, 'forbidden', 'Missing capability: process:payroll'))} />);
+    expect(container).toBeEmptyDOMElement();
+    // …and anything else still says what happened.
+    renderAs('DRIVER', <QueryError access="hide" what="the payout rail" query={query(new ApiError(500, 'internal', 'x'))} />);
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+});
+
 describe('<NoAccess>', () => {
   it('the access page: what happened, who can change it, the way home', () => {
     renderAs('CLIENT_PORTAL', <NoAccess />);

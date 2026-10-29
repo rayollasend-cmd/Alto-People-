@@ -2,11 +2,11 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
 import { enqueueAudit } from './audit.js';
 import { tenantJob } from './tenantJobs.js';
+import { armJob } from './jobs.js';
 import { notifyAssociate, notifyUser, trackNotificationWork } from './notify.js';
 import { emitLiveEvent } from './liveEvents.js';
 import { actsAs } from './roleScope.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
-import { dateKeyInZone } from './timeAnomalies.js';
+import { companyWorkweek, dateKeyInZone } from './timeAnomalies.js';
 import { fmtDay } from './humanDates.js';
 import { riderLang, riderTime, type RiderLang } from './transportRider.js';
 
@@ -130,7 +130,7 @@ export async function closeRunsThatNeverRan(now = new Date(), db: Db = prisma): 
       );
     }
     const driver = run.driver.associate ? `${run.driver.associate.firstName} ${run.driver.associate.lastName}` : run.driver.email;
-    const zone = run.rides[0]?.location.timezone ?? DEFAULT_TIMEZONE;
+    const zone = run.rides[0]?.location.timezone ?? companyWorkweek().timezone;
     const when = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' }).format(run.departAt);
     const day = run.serviceDate === dateKeyInZone(now, zone) ? '' : ` on ${fmtDay(run.serviceDate, { weekday: true })}`;
     for (const u of desk) {
@@ -150,19 +150,15 @@ export async function closeRunsThatNeverRan(now = new Date(), db: Db = prisma): 
   return out;
 }
 
-let timer: NodeJS.Timeout | null = null;
 const SWEEP_EVERY_MS = 15 * 60_000;
 
 /** Every 15 minutes: a planned run that never left is closed and its riders told (per tenant, transportation on). */
 export function startNotRunSweepCron(): void {
-  if (timer) return;
   if (process.env.NODE_ENV === 'test') return;
-  const tick = () => {
-    void tenantJob('transportNotRun', () => closeRunsThatNeverRan(), { module: 'transportation' })().catch((err) =>
-      console.error('[alto-people/api] didn\'t-run sweep failed:', err),
-    );
-  };
-  tick();
-  timer = setInterval(tick, SWEEP_EVERY_MS);
-  timer.unref();
+  armJob({
+    name: 'transportNotRun',
+    label: 'Planned van runs that never left',
+    intervalSeconds: SWEEP_EVERY_MS / 1000,
+    run: tenantJob('transportNotRun', () => closeRunsThatNeverRan(), { module: 'transportation' }),
+  });
 }

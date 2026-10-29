@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { FloorNowResponse, LaborCostRow } from '@alto-people/shared';
+import { METRICS, type FloorNowResponse, type LaborCostRow } from '@alto-people/shared';
 
 vi.mock('@/lib/schedulingApi', async (orig) => ({
   ...(await orig<typeof import('@/lib/schedulingApi')>()),
@@ -126,6 +126,16 @@ beforeEach(() => {
 });
 
 describe('LaborCostsHome', () => {
+  it('names its margin by the metric dictionary — scheduled, after wages — never the executive "Gross margin" (LEAD-5)', async () => {
+    renderPage();
+    // 435.47 billable − 297.50 scheduled cost = +$137.97, 32% of billable value.
+    expect(await screen.findByText(METRICS.scheduledMarginAfterWages.label)).toBeInTheDocument();
+    expect(await screen.findByText('32% of billable value · before burden and overhead')).toBeInTheDocument();
+    // No card or column is called bare "Margin" or "Gross margin" (the footnote may name the executive one to tell them apart).
+    expect(screen.queryByText(METRICS.grossMargin.label)).toBeNull();
+    expect(screen.queryByText('Margin')).toBeNull();
+  });
+
   it('opens on the current pay period to date, not on today', async () => {
     renderPage();
     await waitFor(() => expect(laborCosts).toHaveBeenCalled());

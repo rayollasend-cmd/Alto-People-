@@ -138,6 +138,8 @@ export function RegionHome() {
   const storeHref = (s: StoreSnapshot) =>
     data.preview ? `/portal?clientId=${s.clientId}&locationId=${s.id}` : `/portal?locationId=${s.id}`;
   const short = tot.target !== null && tot.onFloor < tot.target;
+  // PEOPLE late and not in yet (LEAD-8) — `alerts` counts stores with one.
+  const lateNotIn = tot.lateNotIn ?? tot.missingFromSchedule ?? tot.alerts;
   const heroTone = short ? 'warning' : tot.onFloor > 0 ? 'success' : 'gold';
   const nowHour = Math.floor(zonedMinutesOfDay(new Date(), null) / 60);
   const curve = data.hours.map((h) => ({ hour: h.hour, label: hourLabel(h.hour), scheduled: h.scheduled, open: h.open }));
@@ -264,14 +266,14 @@ export function RegionHome() {
                 </div>
                 <div className="rounded-lg border border-navy-secondary/60 bg-navy/40 px-2 py-2">
                   <dt className="text-2xs uppercase tracking-wider text-silver/60">{t('region.kpiLateNotIn')}</dt>
-                  <dd className={cn('mt-0.5 text-xl font-bold tabular-nums', tot.alerts > 0 ? 'text-alert' : 'text-white')}>{tot.alerts}</dd>
+                  <dd className={cn('mt-0.5 text-xl font-bold tabular-nums', lateNotIn > 0 ? 'text-alert' : 'text-white')}>{lateNotIn}</dd>
                 </div>
               </dl>
             </div>
             <div className="md:col-span-8">
               <div className="flex items-baseline justify-between gap-3">
                 <h2 className="text-sm font-medium text-white">{t('region.curveTitle')}</h2>
-                <span className="text-xs text-silver/60 tabular-nums">{t('region.curveMeta', { open: tot.openToday })}</span>
+                <span className="text-xs text-silver/60 tabular-nums">{t('region.curveMeta', { open: tot.openToday, count: tot.openToday })}</span>
               </div>
               <div className="mt-2">
                 <CoverageCurve
@@ -358,11 +360,11 @@ export function RegionHome() {
                           ['requests', t('region.colRequests')],
                         ] as Array<[SortKey, string]>
                       ).map(([k, label]) => (
-                        <th key={k} className="py-1.5 pr-3 font-medium">
+                        <th key={k} className="py-0.5 pr-3 font-medium">
                           <button
                             type="button"
                             onClick={() => setSort(sort === k ? 'rank' : k)}
-                            className={cn('inline-flex items-center gap-1 hover:text-white', sort === k && 'text-gold')}
+                            className={cn('inline-flex items-center gap-1 hover:text-white coarse:min-h-11', sort === k && 'text-gold')}
                           >
                             {label}
                             <ArrowUpDown className="h-3 w-3" aria-hidden="true" />
@@ -376,7 +378,7 @@ export function RegionHome() {
                     {stores.map((s) => (
                       <tr key={s.id} className={cn(s.alert && 'bg-alert/[0.06]')}>
                         <td className="py-2.5 pr-3">
-                          <Link to={storeHref(s)} className="font-medium text-white underline-offset-2 hover:underline">
+                          <Link to={storeHref(s)} className="inline-flex items-center font-medium text-white underline-offset-2 hover:underline coarse:min-h-11">
                             {s.name}
                           </Link>
                         </td>
@@ -496,12 +498,12 @@ export function RegionHome() {
           unit={t('region.kpiShortUnit', { total: tot.stores })}
           deltaTone={tot.shortNow > 0 ? 'bad' : 'good'}
           // The label already says "below contract": the line under it adds, never repeats.
-          sub={tot.alerts > 0 ? t('region.kpiShortAlerts', { count: tot.alerts }) : tot.shortNow > 0 ? undefined : t('region.kpiFloorOk')}
+          sub={lateNotIn > 0 ? t('region.kpiShortAlerts', { count: lateNotIn }) : tot.shortNow > 0 ? undefined : t('region.kpiFloorOk')}
         />
         <StatTile
           label={t('region.kpiOpen')}
           value={tot.openToday}
-          unit={t('region.kpiOpenUnit')}
+          unit={t('region.kpiOpenUnit', { count: tot.openToday })}
           deltaTone={tot.openToday > 0 ? 'bad' : 'good'}
           sub={t('region.kpiOpenSub', { open: tot.openTomorrow, unconfirmed: tot.unconfirmedTomorrow })}
         />

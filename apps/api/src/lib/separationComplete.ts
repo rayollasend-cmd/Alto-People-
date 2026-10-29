@@ -12,6 +12,7 @@ import { emitWebhookEvent } from './webhookDispatch.js';
 import { closeOpenAssignments } from './assignmentDates.js';
 import { emitWorkerStatusChanged } from './webhookEvents.js';
 import { emit as emitWorkflow } from './workflow.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Completing a separation is the termination event. It is one function so
@@ -72,7 +73,7 @@ export async function completeSeparation(id: string, actorUserId: string, opts: 
   }
   void trackNotificationWork(maybeNotifyFinanceDeparture(existing.associateId, existing.lastDayWorked));
   emitWorkerStatusChanged({ associateId: existing.associateId }, 'separated');
-  const lastDay = existing.lastDayWorked.toISOString().slice(0, 10);
+  const lastDay = dateColumnKey(existing.lastDayWorked);
   void emitWebhookEvent('associate.terminated', {
     associateId: existing.associateId,
     separationId: existing.id,

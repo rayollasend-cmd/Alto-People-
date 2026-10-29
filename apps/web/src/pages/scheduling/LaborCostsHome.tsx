@@ -19,6 +19,7 @@ import {
   Timer,
   Users,
 } from '@/components/ui/icons';
+import { METRICS } from '@alto-people/shared';
 import type {
   FloorNowResponse,
   OtOutlookResponse,
@@ -724,6 +725,8 @@ function MarginSparkline({ weeks }: { weeks: StoreTrend['weeks'] }) {
   return <KitSparkline series={vals} tone={lastUp ? 'good' : 'warn'} width={96} height={24} area={false} />;
 }
 
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 function StoreTrendsCard() {
   const [open, setOpen] = usePersistentState<boolean>(
     'alto:laborcosts.trends.open.v1',
@@ -743,6 +746,10 @@ function StoreTrendsCard() {
   if (failed || (data !== null && data.stores.length === 0)) return null;
   if (data === null) return <Skeleton className="h-24" />;
   const best = data.bestMarginPerHour;
+  // Which week the four are (LEAD-23): one client's own week when the page is
+  // narrowed to it, else the company's (Saturday to Friday).
+  const ws = (dataQuery.data as { weekStartsOn?: number } | undefined)?.weekStartsOn ?? 6;
+  const weekWords = `${WEEKDAY_NAMES[ws] ?? 'Saturday'} to ${WEEKDAY_NAMES[(ws + 6) % 7] ?? 'Friday'}`;
 
   return (
     <Card>
@@ -760,6 +767,7 @@ function StoreTrendsCard() {
             )}
           />
           <span className="text-sm font-medium text-white">Store benchmarks — 4 weeks</span>
+          <span className="hidden text-2xs text-silver/60 sm:inline">{weekWords}</span>
           <span className="ml-auto text-2xs text-silver/60">
             margin/hr vs the best store&apos;s pace
           </span>
@@ -1008,9 +1016,10 @@ function LiveFloorLine() {
         {total.projectedOtHeads > 0 && (
           <span
             className="rounded border border-warning/40 px-1.5 py-0.5 text-2xs font-medium text-warning/80"
-            title="Will pass 40h this week if their remaining shifts run as scheduled — trim a shift to avoid 1.5× billing."
+            title={`${METRICS.projectedOvertime.definition} Trim a shift to avoid 1.5× billing.`}
           >
-            {total.projectedOtHeads} at overtime risk
+            {/* The dictionary's "Heading into overtime" — not "Overtime risk" (36h+ worked and scheduled, Time & attendance). */}
+            {total.projectedOtHeads} {METRICS.projectedOvertime.label.toLowerCase()}
           </span>
         )}
         {canLive && (
@@ -1627,7 +1636,8 @@ const DAY_COLUMNS: GridColumn<DayLine>[] = [
   },
   {
     key: 'margin',
-    header: 'Margin',
+    // Scheduled billing less scheduled pay — the dictionary's "Scheduled margin after wages".
+    header: 'Margin after wages',
     accessor: (l) => (l.w ? l.w.scheduledRevenue - l.w.scheduledCost : l.r.scheduledRevenue - l.r.scheduledCost),
     csv: (l) => (l.w ? l.w.scheduledRevenue - l.w.scheduledCost : l.r.scheduledRevenue - l.r.scheduledCost).toFixed(2),
     sortable: true,
@@ -1960,7 +1970,7 @@ export function LaborCostsHome() {
         'Date', 'Client', 'Store', 'Shift window', 'Heads', 'Target heads', 'Overstaff cost',
         'Lead heads', 'Associate heads', 'Lead cost', 'Associate cost',
         'Shifts', 'Scheduled hours', 'Scheduled cost', 'Shifts without rate',
-        'Billable value', 'Margin', 'Shifts without bill rate',
+        'Billable value', METRICS.scheduledMarginAfterWages.label, 'Shifts without bill rate',
         'Punches', 'Worked hours', 'Worked cost', 'Punches without rate',
         'Approved hours', 'Approved cost', 'Unapproved hours',
       ],
@@ -2221,8 +2231,12 @@ export function LaborCostsHome() {
                 />
                 <MetricCard
                   icon={Scale}
-                  label="Margin"
+                  // Named by the metric dictionary (LEAD-5): scheduled billing less
+                  // scheduled pay — not the executive "Gross margin", which prices
+                  // paid hours and also takes out burden and overhead.
+                  label={METRICS.scheduledMarginAfterWages.label}
                   value={`${margin >= 0 ? '+' : '−'}${money(Math.abs(margin))}`}
+                  valueTitle={METRICS.scheduledMarginAfterWages.definition}
                   nothing={
                     grand.scheduledShifts === 0
                       ? 'No shifts in range'
@@ -2231,7 +2245,7 @@ export function LaborCostsHome() {
                         : undefined
                   }
                   tone={margin >= 0 ? 'good' : 'alert'}
-                  hint={`${Math.round((margin / (grand.scheduledRevenue || 1)) * 100)}% of billable value`}
+                  hint={`${Math.round((margin / (grand.scheduledRevenue || 1)) * 100)}% of billable value · before burden and overhead`}
                 />
                 <MetricCard
                   icon={Users}
@@ -2416,6 +2430,13 @@ export function LaborCostsHome() {
                     ? `, else the SOW rates (${money(fallbacks.associateBillRate)}/hr ${term('workers').toLowerCase()} · ${money(fallbacks.leadBillRate)}/hr leads)`
                     : ''}
                   .
+                </dd>
+              </div>
+              <div>
+                <dt className="inline font-medium text-silver">{METRICS.scheduledMarginAfterWages.label} — </dt>
+                <dd className="inline">
+                  billable value less scheduled cost: wages only, before employer burden and overhead. The executive
+                  pages&rsquo; gross margin prices paid hours and takes those out too, so it reads lower.
                 </dd>
               </div>
               <div>

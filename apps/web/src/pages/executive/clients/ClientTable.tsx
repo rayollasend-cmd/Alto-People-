@@ -27,7 +27,8 @@ export function HealthChip({ client }: { client: Pick<ExecClientRow, 'health' | 
 }
 
 /**
- * Every client, the period's figures exact: billed and margin, the rate and
+ * Every client, the period's figures exact: revenue (est., at the standard
+ * rates — finalized statements are the invoice-grade figure) and margin, the rate and
  * share, the people and hours, how well shifts were filled, the latest NPS,
  * health, and eight weeks of billing as a line. Largest first; on a phone
  * a card per client.
@@ -38,7 +39,8 @@ export function ClientTable({ clients }: { clients: ExecClientRow[] }) {
     { key: 'client', header: t('execPortal.clients.col.client'), accessor: (c) => c.name, primary: true, sortable: true },
     { key: 'billed', header: t('execPortal.clients.col.billed'), accessor: (c) => c.billed, csv: (c) => c.billed.toFixed(2), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (c) => fmtExecExact(c.billed, 'money') },
     { key: 'margin', header: t('execPortal.clients.col.margin'), accessor: (c) => c.margin, csv: (c) => c.margin.toFixed(2), sortable: true, searchable: false, align: 'right', className: 'tabular-nums', hideBelow: 820, cell: (c) => `${c.margin < 0 ? '−' : ''}${fmtExecExact(Math.abs(c.margin), 'money')}` },
-    { key: 'marginPct', header: t('execPortal.clients.col.marginPct'), accessor: (c) => c.marginPct, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cardMeta: true, cell: (c) => pct1(c.marginPct) },
+    // A labelled field on a phone card too: a bare "20.8%" under the name said nothing.
+    { key: 'marginPct', header: t('execPortal.clients.col.marginPct'), accessor: (c) => c.marginPct, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', cell: (c) => pct1(c.marginPct) },
     { key: 'share', header: t('execPortal.clients.col.share'), accessor: (c) => c.sharePct, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', hideBelow: 900, cell: (c) => pct1(c.sharePct) },
     { key: 'headcount', header: t('execPortal.clients.col.headcount'), accessor: (c) => c.headcount, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', hideBelow: 700 },
     { key: 'hours', header: t('execPortal.clients.col.hours'), accessor: (c) => c.hours, sortable: true, searchable: false, align: 'right', className: 'tabular-nums', hideBelow: 1100, cell: (c) => fmtHours(c.hours) },
@@ -78,6 +80,9 @@ export function ClientTable({ clients }: { clients: ExecClientRow[] }) {
           columns={columns}
           rowKey={(c) => c.clientId}
           rowHref={(c) => c.href}
+          // The client's own record keeps its own windows (this month, this
+          // week), not the portfolio's period — say so before the click.
+          rowActionLabel={(c) => t('execPortal.clients.openRecord', { name: c.name })}
           noun={{ one: t('execPortal.clients.noun.one'), many: t('execPortal.clients.noun.many') }}
           defaultSort={{ key: 'billed', direction: 'desc' }}
           urlState={false}

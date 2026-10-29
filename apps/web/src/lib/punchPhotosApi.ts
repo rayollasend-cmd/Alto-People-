@@ -36,6 +36,12 @@ export interface PunchPhotoOverview {
   people: PunchPhotoRule[];
   history: PunchPhotoRule[];
   noPhotoPunchesLast30Days: number;
+  /** Only a company-wide caller sets the company rule (a client- or store-bound account gets false). */
+  canSetCompanyRule?: boolean;
+  /** A store-bound office account names its own locations, never a whole client. */
+  canSetClientRules?: boolean;
+  /** For a client- or store-bound caller: the locations they may name. Null = everyone with a kiosk (company-wide callers). */
+  places?: Array<{ id: string; name: string; clientId: string | null; clientName: string }> | null;
 }
 
 export interface PersonPunchPhoto {

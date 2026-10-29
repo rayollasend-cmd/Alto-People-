@@ -20,7 +20,7 @@ import {
 import { patchNotificationPreference } from '@/lib/settingsApi';
 import { ApiError, apiFetch } from '@/lib/api';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { QueryError, queryErrorKind } from '@/components/ui/QueryError';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -29,7 +29,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Drawer, DrawerBody, DrawerHeader, DrawerTitle } from '@/components/ui/Drawer';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
-import { fmtDateTime, fmtHours, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, mapsUrl, zonedDayKey } from '@/lib/format';
+import { fmtDateTime, fmtHours, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, directionsUrl, zonedDayKey } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import {
@@ -47,6 +47,8 @@ import {
   WifiOff,
 } from '@/components/ui/icons';
 import { useUrlParam } from '@/lib/useUrlState';
+import { listOpenShifts } from '@/lib/qualApi';
+import { openShiftWorth } from '@/lib/openShiftPay';
 import { listMyRequests } from '@/lib/timeOffApi';
 import {
   PullToRefreshIndicator,
@@ -198,11 +200,9 @@ export function AssociateScheduleView() {
   /** Set when rendering the cached copy because the network is down —
    *  the timestamp of that copy, shown in the offline banner. */
   const offlineAt = scheduleQuery.data?.offlineAt ?? null;
-  const error = scheduleQuery.error
-    ? scheduleQuery.error instanceof ApiError
-      ? scheduleQuery.error.message
-      : t('sched.loadFailed')
-    : null;
+  // The failure decides the words (QueryError) — never the server's raw
+  // "Internal error" on a worker's phone (ASSOC-25).
+  const error = scheduleQuery.isError;
   const { refetch: refetchSchedule } = scheduleQuery;
   const load = async () => {
     await refetchSchedule();
@@ -522,21 +522,7 @@ export function AssociateScheduleView() {
         <NoNextShift openCount={openShiftCount} />
       )}
 
-      {error && (
-        <ErrorBanner
-          className="mb-4"
-          action={
-            !loaded ? (
-              <Button variant="secondary" size="sm" onClick={load}>
-                <RefreshCw className="h-4 w-4" />
-                {t('common.retry')}
-              </Button>
-            ) : undefined
-          }
-        >
-          {error}
-        </ErrorBanner>
-      )}
+      {error && <QueryError className="mb-4" what={t('sched.whatSchedule')} query={scheduleQuery} />}
       {!shifts && !error && <SkeletonRows count={4} rowHeight="h-20" />}
 
       {loaded && truncated && (
@@ -736,6 +722,12 @@ function OpenShiftsSection({ estRate, quietWhenEmpty = false }: { estRate: numbe
   const openQuery = useQuery({ queryKey: ['me', 'open-shifts'], queryFn: () => listMyOpenShifts() });
   const items: OpenShiftsResponse['shifts'] | null = openQuery.data?.shifts ?? null;
   const failed = openQuery.isError;
+  // Each shift's POSTED pay rate, from the Open shifts page's own list (the
+  // same eligibility rule; same cache as Home's tile) — priced as that page
+  // prices it, so one shift is one number everywhere (ASSOC-5).
+  const postedQuery = useQuery({ queryKey: ['me', 'marketplace', 'open'], queryFn: () => listOpenShifts().catch(() => null) });
+  const postedRate = new Map((postedQuery.data?.shifts ?? []).map((x) => [x.id, x.payRate]));
+  const worthOf = (s: OpenShiftsResponse['shifts'][number]) => openShiftWorth(s, postedRate.get(s.id) ?? s.payRate, estRate);
   const { refetch: refetchOpen } = openQuery;
   const load = useCallback(async () => {
     await refetchOpen();
@@ -806,10 +798,10 @@ function OpenShiftsSection({ estRate, quietWhenEmpty = false }: { estRate: numbe
   };
 
   // Lead with the prize: what the whole board is worth if they took it all.
-  const totalEst =
-    estRate != null
-      ? items.reduce((sum, s) => sum + (paidShiftMinutes(s) / 60) * estRate, 0)
-      : null;
+  const totalEst = items.reduce<number | null>((sum, s) => {
+    const w = worthOf(s);
+    return w === null ? sum : (sum ?? 0) + w;
+  }, null);
 
   return (
     <section className="mt-6 scroll-mt-20" id="open-shifts">
@@ -842,9 +834,9 @@ function OpenShiftsSection({ estRate, quietWhenEmpty = false }: { estRate: numbe
               <div className="text-sm text-silver tabular-nums">
                 {fmtRelativeDayTz(s.startsAt, s.timezone)} ·{' '}
                 {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
-                {estRate != null && (
+                {worthOf(s) !== null && (
                   <span className="font-medium text-gold">
-                    {' '}· {fmtMoneyEst((paidShiftMinutes(s) / 60) * estRate)}
+                    {' '}· {fmtMoneyEst(worthOf(s)!)}
                   </span>
                 )}
               </div>
@@ -852,7 +844,7 @@ function OpenShiftsSection({ estRate, quietWhenEmpty = false }: { estRate: numbe
                 <div className="flex flex-wrap items-center gap-x-2 text-xs text-silver/70">
                   <span>{[s.locationName, s.location].filter(Boolean).join(' · ')}</span>
                   <a
-                    href={mapsUrl([s.clientName, s.locationName, s.location].filter(Boolean).join(' '))}
+                    href={directionsUrl({ address: s.locationAddress, lat: s.locationLat, lng: s.locationLng, names: [s.clientName, s.locationName ?? s.location] })}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center coarse:min-h-11 text-gold hover:text-gold-bright underline underline-offset-2"
@@ -924,13 +916,15 @@ function CalendarSubscribeCard() {
   const queryCache = useQueryClient();
   const feedQuery = useQuery({ queryKey: ['me', 'calendar-feed'], queryFn: () => getMyCalendarUrl() });
   const feed: CalendarFeedUrlResponse | null = feedQuery.data ?? null;
+  // A rule the request broke says its sentence; a crash says only that the
+  // subscription is unavailable — never "Internal error" (ASSOC-25).
   const error = feedQuery.error
-    ? feedQuery.error instanceof ApiError
+    ? queryErrorKind(feedQuery.error) === 'rule' && feedQuery.error instanceof ApiError
       ? feedQuery.error.message
-      : t('sched.calLoadFailed')
+      : ''
     : null;
 
-  if (error) {
+  if (error !== null) {
     return (
       <div className="mb-6 p-4 bg-navy border border-navy-secondary rounded-lg">
         <div className="flex items-start gap-3">

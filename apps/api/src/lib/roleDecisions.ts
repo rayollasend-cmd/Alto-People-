@@ -37,6 +37,7 @@ const DAY_WORDS_YEAR = new Intl.DateTimeFormat('en-US', { weekday: 'short', mont
  * or an instant converted to the company's day by the caller (`ymd`).
  */
 export function dayWords(day: string | Date, now: Date = new Date()): string {
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: a date-only column reads at UTC midnight, so its UTC date is the day
   const key = typeof day === 'string' ? day.slice(0, 10) : day.toISOString().slice(0, 10);
   const at = new Date(`${key}T12:00:00.000Z`);
   if (Number.isNaN(at.getTime())) return key;
@@ -55,6 +56,7 @@ const SHORT_DAY_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', day: '
  * or a date-only column); `today` is the company's own day.
  */
 export function dueWords(day: string | Date, now: Date = new Date()): string {
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: a date-only column reads at UTC midnight, so its UTC date is the day
   const key = typeof day === 'string' ? day.slice(0, 10) : day.toISOString().slice(0, 10);
   const at = new Date(`${key}T12:00:00.000Z`);
   if (Number.isNaN(at.getTime())) return `due ${key}`;
@@ -339,7 +341,7 @@ export async function computeRoleDecisions(
             .join(', ')}) — worth a confirmation text tonight or a pre-arranged backup.`,
           stakes: null,
           ageDays: null,
-          linkUrl: `/scheduling?view=day&date=${ymd(addDaysInZone(now, 1, companyWorkweek().timezone))}`,
+          linkUrl: `/scheduling?view=day&risk=1&date=${ymd(addDaysInZone(now, 1, companyWorkweek().timezone))}`,
         });
       }
     }
@@ -457,8 +459,10 @@ export async function computeRoleDecisions(
     const section2Running = (await runningCapabilityKeys(prisma, tenantIdForWrite())).has(I9_SECTION2);
     const hires = section2Running ? await pendingSection2(prisma, tenantIdForWrite()) : [];
     if (section2Running && hires.length > 0 && hires.length <= 5) {
-      const today = now.toISOString().slice(0, 10);
+      // Today is the company's day (CODE-14) — the UTC date reads "due today" a day early in the evening.
+      const today = ymd(now);
       for (const h of hires) {
+        // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: dueBy is built from a @db.Date (UTC midnight), so its UTC date is the day
         const due = h.dueBy ? h.dueBy.toISOString().slice(0, 10) : null;
         out.push({
           key: `i9:section2:${h.associateId}`,
@@ -1000,6 +1004,7 @@ async function pushLegalDeadlines(
           detail: 'A late response loses the right to contest and can charge the claim to your account.',
           stakes: null,
           ageDays: null,
+          // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: responseDueAt is a @db.Date
           dueDay: c.responseDueAt.toISOString().slice(0, 10),
           linkUrl: `/claims/unemployment?claim=${c.id}`,
         });
@@ -1053,6 +1058,7 @@ async function pushLegalDeadlines(
             c.status === 'REQUESTED'
               ? `Send ${who} the leave notice — ${dueWords(ymd(due), now)}`
               : `Get ${who}’s medical certification — ${dueWords(due, now)}`,
+          // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: certificationDueAt is a @db.Date (the notice day is an instant, so ymd)
           dueDay: c.status === 'REQUESTED' ? ymd(due) : due.toISOString().slice(0, 10),
           detail:
             c.status === 'REQUESTED'

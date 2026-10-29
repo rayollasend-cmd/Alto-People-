@@ -4,7 +4,9 @@ import { env } from '../config/env.js';
 import { activeWorkersBetween } from './activeDefinition.js';
 import { enqueueAudit } from './audit.js';
 import { companyWorkweek, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { addDaysToKey } from './timezone.js';
 import { ALTO_TENANT_ID, runWithTenant } from './tenant.js';
+import { logger } from './logger.js';
 
 /**
  * Brief 2-6 step 4 — usage and invoices (docs/agent-product-billing-investigation.md §4.4).
@@ -48,17 +50,13 @@ export function usageCountLabel(type: string, quantity: number): string {
 }
 export type WorkerType = (typeof WORKER_TYPES)[number];
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
-
 /** Today's date in the organization's zone. */
 export function localToday(now: Date = new Date(), tz: string = companyWorkweek().timezone): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
 function nextDay(day: string): string {
-  const d = new Date(`${day}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
-  return ymd(d);
+  return addDaysToKey(day, 1);
 }
 
 /** One tenant's snapshot of a local day; idempotent (a day once written stays). */
@@ -81,9 +79,7 @@ export async function runUsageSnapshots(db: Db, now: Date = new Date()): Promise
   for (const t of tenants) {
     let day = today;
     for (let i = 0; i < 3; i++) {
-      const d = new Date(`${day}T12:00:00Z`);
-      d.setUTCDate(d.getUTCDate() - 1);
-      day = ymd(d);
+      day = addDaysToKey(day, -1);
       // Each tenant's reads and writes run in its own context (enforce mode
       // refuses a tenant-keyed query with none; so does the database wall).
       wrote += await runWithTenant(t.id, 'job', async () => {
@@ -350,5 +346,5 @@ export function startBillingCron(db: Db): void {
   void tick();
   timer = setInterval(() => void tick(), 60 * 60 * 1000);
   timer.unref();
-  console.log(`[alto-people/api] usage and billing armed (hourly; Stripe ${stripeMode() ?? 'off'})`);
+  logger.info(`usage and billing armed (hourly; Stripe ${stripeMode() ?? 'off'})`);
 }

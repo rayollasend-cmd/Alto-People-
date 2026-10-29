@@ -7,6 +7,8 @@ import { createJob, deleteJob, listJobs, updateJob } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useLaborCostVisible } from '@/lib/useLaborCostVisible';
+import { isPending } from '@/lib/approvalRequestsApi';
+import { useSentForApproval } from '@/lib/useGatedMutation';
 import { fmtMoney } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import {
@@ -254,6 +256,7 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
   const [payRate, setPayRate] = useState(existing?.payRate?.toString() ?? '');
   const [isActive, setIsActive] = useState(existing?.isActive ?? true);
   const [submitting, setSubmitting] = useState(false);
+  const sentForApproval = useSentForApproval();
 
   // Re-seed when the dialog opens for a different job (or for a new one).
   useEffect(() => {
@@ -283,15 +286,19 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
 
     setSubmitting(true);
     try {
+      // A rate change may go to a second person (202 pending): the job's
+      // other edits landed, the rates in force stay until it's approved —
+      // never "Job updated" over a rate that didn't change (CODE-12).
       if (existing) {
-        await updateJob(existing.id, {
+        const res = await updateJob(existing.id, {
           name: trimmed,
           ...(seesMoney ? { billRate: billN, payRate: payN } : {}),
           isActive,
         });
-        toast.success('Job updated.');
+        if (isPending(res)) sentForApproval(res);
+        else toast.success('Job updated.');
       } else {
-        await createJob({
+        const res = await createJob({
           clientId,
           name: trimmed,
           // Create-input schema is `optional` (omit, not null); skip the
@@ -299,7 +306,8 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
           ...(seesMoney && billN !== null ? { billRate: billN } : {}),
           ...(seesMoney && payN !== null ? { payRate: payN } : {}),
         });
-        toast.success('Job created.');
+        if (isPending(res)) sentForApproval(res);
+        else toast.success('Job created.');
       }
       onSaved();
     } catch (err) {

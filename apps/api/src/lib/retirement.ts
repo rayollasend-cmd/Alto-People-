@@ -1,5 +1,7 @@
 import type { BenefitsPlanKind, Prisma, PrismaClient } from '@prisma/client';
 import type { EnrollmentFacts, DeferralRecord } from './retirementDeferrals.js';
+import { dateColumnKey } from './timezone.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * A 401(k) plan, its people and its money — the part a recordkeeper needs.
@@ -80,7 +82,8 @@ export function employerContribution(
 
 /* ----- eligibility & auto-enroll ------------------------------------------ */
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A calendar day held at UTC midnight (a DATE column, or one built with Date.UTC): its own day. */
+const ymd = (d: Date) => dateColumnKey(d);
 const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 86_400_000);
 
 /** The first day a person may join: old enough, served long enough, then the plan's entry date. */
@@ -131,7 +134,16 @@ export function autoEnrollProblems(plan: {
 
 /* ----- the one election: the benefits enrollment --------------------------- */
 
-const dayStart = (d: Date) => new Date(`${ymd(d)}T00:00:00Z`);
+/**
+ * The day a Date names, held at UTC midnight. A DATE value (UTC midnight —
+ * an effective date from a file or a column) is its own day; any other
+ * instant ("now") is read on the company's calendar, so a change made at
+ * 9 PM Eastern is dated that day, not tomorrow's UTC date.
+ */
+const dayStart = (d: Date) => {
+  const isDateValue = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return new Date(`${isDateValue ? ymd(d) : orgDateKey(d)}T00:00:00Z`);
+};
 
 /** The person's enrollment in a benefits plan that is in force on `day`. */
 export async function activeEnrollment(db: Db, benefitsPlanId: string, associateId: string, day: Date) {
@@ -179,7 +191,9 @@ export async function setDeferralRate(
  * to auto-enrolled rates. Someone who already chose a rate is ENROLLED and
  * never overwritten. Idempotent.
  */
-export async function syncPlanElections(db: Db, planId: string, today: Date = new Date()): Promise<{ eligible: number; autoEnrolled: number; escalated: number }> {
+export async function syncPlanElections(db: Db, planId: string, now: Date = new Date()): Promise<{ eligible: number; autoEnrolled: number; escalated: number }> {
+  // Today on the company's calendar, as a DATE value: eligibility, opt-out and escalation dates are days.
+  const today = dayStart(now);
   const plan = await db.retirementPlan.findUniqueOrThrow({ where: { id: planId } });
   const people = await db.associate.findMany({
     where: { tenantId: plan.tenantId, deletedAt: null, deactivatedAt: null, employmentType: 'W2_EMPLOYEE', ...(plan.employerId ? { employments: { some: { employerOrgId: plan.employerId, endDate: null } } } : {}) },

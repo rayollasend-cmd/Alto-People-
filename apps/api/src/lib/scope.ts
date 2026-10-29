@@ -690,3 +690,197 @@ export async function assertCanModifyApplication(
   }
   return app;
 }
+
+/* ------------------------------------------- fix wave 2026-10-29 (SEC) */
+
+/**
+ * The sites the caller stands on: a client-bound account its client's
+ * (or its own site's), a site/region-bound office account its sites, an
+ * associate none, everyone else the whole tenant. For rows that hang off
+ * a site — a work task, a punch-photo rule, a kiosk — the way scopeShifts
+ * is for shifts.
+ */
+export function scopeSites(user: SessionUser): Prisma.SiteWhereInput {
+  if (user.role === 'ASSOCIATE') return { id: NO_CLIENT };
+  if (isBounded(user)) {
+    const b = boundsOf(user);
+    if (!b) return { id: NO_CLIENT };
+    if (b.clientId) {
+      // A portal account pinned to a store stands on that store; a supervisor on the client.
+      return user.role === 'CLIENT_PORTAL' && b.locationId
+        ? { tenantId: b.tenantId, id: b.locationId }
+        : { tenantId: b.tenantId, clientId: b.clientId };
+    }
+    return { tenantId: b.tenantId, ...siteFilter(b) };
+  }
+  return internalSites(user) ?? {};
+}
+
+/** True when the caller's reach is narrower than the whole company (bounded, site/region-bound, or an associate). */
+export function isNarrowedCaller(user: SessionUser): boolean {
+  return user.role === 'ASSOCIATE' || isBounded(user) || isInternallyScoped(user);
+}
+
+/**
+ * Company-wide records (a 941, the company photo rule, a tax filing) are
+ * for company-wide callers. A store-bound or client-bound account gets a
+ * 403 that says so — the contractors / retirement / carrier pattern, in
+ * one place.
+ */
+export function assertCompanyWide(user: SessionUser, message = 'This covers the whole company; ask someone without a site limit.'): void {
+  if (isNarrowedCaller(user)) throw new HttpError(403, 'company_wide', message);
+}
+
+/**
+ * The people a caller may act on BY ID: placed (open assignment) inside
+ * their reach — or, for someone with no open placement anywhere (separated,
+ * between stores), last placed there. A person who moved from store A to
+ * store B is B's now, never A's (scopeAssociatesIncludingFormer would keep
+ * them A's forever). Unscoped callers: scopeAssociates as ever.
+ */
+export function associatesInReach(user: SessionUser): Prisma.AssociateWhereInput {
+  const sites = internalSites(user);
+  if (!sites) return scopeAssociates(user);
+  return {
+    OR: [
+      atInternalSites(sites),
+      { AND: [{ assignments: { none: { endedAt: null } } }, { assignments: { some: { location: { is: sites } } } }] },
+    ],
+  };
+}
+
+/**
+ * A row that names a person and/or a client but has no relation to filter
+ * through (an ApprovalRequest): is it inside the caller's reach? The person
+ * decides when there is one, else the client; a row naming neither is the
+ * company's, and only a company-wide caller reaches it.
+ */
+export async function subjectInReach(
+  tx: Tx,
+  user: SessionUser,
+  subject: { associateId?: string | null; clientId?: string | null },
+): Promise<boolean> {
+  if (!isNarrowedCaller(user)) return true;
+  const tenantId = tenantIdForWrite();
+  if (subject.associateId) {
+    const hit = await tx.associate.findFirst({ where: { AND: [{ id: subject.associateId, tenantId }, associatesInReach(user)] }, select: { id: true } });
+    return !!hit;
+  }
+  if (subject.clientId) {
+    const hit = await tx.client.findFirst({ where: { AND: [{ id: subject.clientId, tenantId }, clientsInReach(user)] }, select: { id: true } });
+    return !!hit;
+  }
+  return false;
+}
+
+/** The clients a narrowed caller stands on — an associate none (scopeClients leaves them unclamped). */
+function clientsInReach(user: SessionUser): Prisma.ClientWhereInput {
+  return user.role === 'ASSOCIATE' ? { id: NO_CLIENT } : scopeClients(user);
+}
+
+/**
+ * subjectInReach as a where, for lists and counts of such rows: the ids in
+ * reach, resolved once. Null for a company-wide caller (no narrowing).
+ */
+export async function subjectReachWhere(
+  tx: Tx,
+  user: SessionUser,
+): Promise<{ OR: Array<{ associateId: { in: string[] } } | { associateId: null; clientId: { in: string[] } }> } | null> {
+  if (!isNarrowedCaller(user)) return null;
+  const tenantId = tenantIdForWrite();
+  const [people, clients] = await Promise.all([
+    tx.associate.findMany({ where: { AND: [{ tenantId }, associatesInReach(user)] }, select: { id: true } }),
+    tx.client.findMany({ where: { AND: [{ tenantId }, clientsInReach(user)] }, select: { id: true } }),
+  ]);
+  return {
+    OR: [
+      { associateId: { in: people.map((p) => p.id) } },
+      { associateId: null, clientId: { in: clients.map((c) => c.id) } },
+    ],
+  };
+}
+
+/** The by-id models whose reach loadInScope knows. */
+export type InScopeModel =
+  | 'associate'
+  | 'approvalRequest'
+  | 'garnishment'
+  | 'taxForm'
+  | 'reimbursement'
+  | 'document'
+  | 'task'
+  | 'shift'
+  | 'timeEntry';
+
+const NOT_FOUND: Record<InScopeModel, string> = {
+  associate: 'Associate not found.',
+  approvalRequest: 'Approval request not found.',
+  garnishment: 'Garnishment not found.',
+  taxForm: 'Form not found.',
+  reimbursement: 'Reimbursement not found.',
+  document: 'Document not found',
+  task: 'No such task.',
+  shift: 'Shift not found',
+  timeEntry: 'Time entry not found',
+};
+
+/**
+ * Load a row BY ID through the caller's reach — tenant first, then the
+ * caller's clients/sites/people — or 404 (never 403: a store-bound account
+ * must not learn another store's row exists). The one door for the
+ * /:id routes, so a new handler cannot forget the caller's reach; the
+ * tenancy suite (byIdScope.test.ts) calls each with another store's id.
+ */
+export async function loadInScope(
+  tx: Tx,
+  model: InScopeModel,
+  id: string,
+  user: SessionUser,
+  opts: { includeDeleted?: boolean } = {},
+): Promise<{ id: string }> {
+  const tenantId = tenantIdForWrite();
+  const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  let hit: { id: string } | null = null;
+  if (ok) {
+    switch (model) {
+      case 'associate':
+        // includeDeleted: erasure reaches a soft-deleted record too.
+        hit = await tx.associate.findFirst({ where: { AND: [{ id, tenantId }, opts.includeDeleted ? {} : { deletedAt: null }, associatesInReach(user)] }, select: { id: true } });
+        break;
+      case 'garnishment':
+        hit = await tx.garnishment.findFirst({ where: { id, tenantId, deletedAt: null, associate: { is: associatesInReach(user) } }, select: { id: true } });
+        break;
+      case 'taxForm': {
+        // A company form (941, 940, W-3) is the company's; a person's form follows the person.
+        const narrowed = isNarrowedCaller(user);
+        hit = await tx.taxForm.findFirst({ where: { id, tenantId, ...(narrowed ? { associate: { is: associatesInReach(user) } } : {}) }, select: { id: true } });
+        break;
+      }
+      case 'reimbursement':
+        hit = await tx.reimbursement.findFirst({
+          where: { id, tenantId, ...(user.role === 'ASSOCIATE' ? { associateId: user.associateId ?? NO_CLIENT } : { associate: { is: associatesInReach(user) } }) },
+          select: { id: true },
+        });
+        break;
+      case 'document':
+        hit = await tx.documentRecord.findFirst({ where: { AND: [{ id, tenantId }, scopeDocuments(user)] }, select: { id: true } });
+        break;
+      case 'task':
+        hit = await tx.workTask.findFirst({ where: { id, tenantId, location: { is: scopeSites(user) } }, select: { id: true } });
+        break;
+      case 'shift':
+        hit = await tx.shift.findFirst({ where: { AND: [{ id, tenantId }, scopeShifts(user)] }, select: { id: true } });
+        break;
+      case 'timeEntry':
+        hit = await tx.timeEntry.findFirst({ where: { AND: [{ id, tenantId }, scopeTimeEntries(user)] }, select: { id: true } });
+        break;
+      case 'approvalRequest': {
+        const row = await tx.approvalRequest.findFirst({ where: { id, tenantId }, select: { id: true, associateId: true, clientId: true } });
+        hit = row && (await subjectInReach(tx, user, row)) ? { id: row.id } : null;
+        break;
+      }
+    }
+  }
+  if (!hit) throw new HttpError(404, 'not_found', NOT_FOUND[model]);
+  return hit;
+}

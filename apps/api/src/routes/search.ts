@@ -15,6 +15,7 @@ import {
 } from '../lib/scope.js';
 import type { SessionUser } from '../types/express.js';
 import { fmtDayInZone, fmtDayRange } from '../lib/humanDates.js';
+import { companyWorkweek, dateKeyInZone } from '../lib/timeAnomalies.js';
 
 export const searchRouter = Router();
 
@@ -43,7 +44,6 @@ const MAX_LIMIT = 10;
 const SHIFT_LOOKBACK_DAYS = 7;
 
 const ci = (q: string): Prisma.StringFilter => ({ contains: q, mode: 'insensitive' });
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 type Finder = (q: string, limit: number, user: SessionUser) => Promise<SearchHit[]>;
 
@@ -145,16 +145,20 @@ const FINDERS: { kind: SearchKind; cap: Capability | null; find: Finder }[] = [
             { startsAt: { gte: since }, OR: [{ position: ci(q) }, { client: { name: ci(q) } }, { assignedAssociate: { lastName: ci(q) } }] },
           ],
         },
-        select: { id: true, position: true, startsAt: true, status: true, clientId: true, client: { select: { name: true } } },
+        select: { id: true, position: true, startsAt: true, status: true, clientId: true, client: { select: { name: true } }, locationRel: { select: { timezone: true } } },
         orderBy: { startsAt: 'asc' },
         take: limit,
       });
-      return rows.map((r) => ({
-        id: r.id,
-        title: r.client ? `${r.position} — ${r.client.name}` : r.position,
-        hint: `${fmtDayInZone(r.startsAt, undefined, { weekday: true })} · ${r.status.toLowerCase()}`,
-        href: `/scheduling?view=week&week=${ymd(r.startsAt)}${r.clientId ? `&client=${r.clientId}` : ''}`,
-      }));
+      return rows.map((r) => {
+        // The shift's day at its store (its zone, else the company's): a 9 PM Eastern shift is that day's.
+        const tz = r.locationRel?.timezone ?? companyWorkweek().timezone;
+        return {
+          id: r.id,
+          title: r.client ? `${r.position} — ${r.client.name}` : r.position,
+          hint: `${fmtDayInZone(r.startsAt, tz, { weekday: true })} · ${r.status.toLowerCase()}`,
+          href: `/scheduling?view=week&week=${dateKeyInZone(r.startsAt, tz)}${r.clientId ? `&client=${r.clientId}` : ''}`,
+        };
+      });
     },
   },
   {

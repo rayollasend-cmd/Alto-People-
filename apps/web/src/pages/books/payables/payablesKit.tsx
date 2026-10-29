@@ -13,6 +13,7 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { toast } from '@/components/ui/Toaster';
+import { useMoneyConfirm } from '@/components/payroll/MoneyConfirm';
 import { cn } from '@/lib/cn';
 
 /** Shared pieces of the payables pages: status words, pickers, the lines editor, the Pay dialog. */
@@ -242,6 +243,7 @@ export function PayBillsDialog({
   onPaid?: () => void;
 }) {
   const qc = useQueryClient();
+  const confirmMoney = useMoneyConfirm();
   const opts = usePayablesOptions();
   const [method, setMethod] = useState<BooksVendorPaymentMethod>(vendor.paymentMethod);
   const [from, setFrom] = useState('');
@@ -374,7 +376,27 @@ export function PayBillsDialog({
             <Button variant="secondary" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button onClick={() => pay.mutate()} loading={pay.isPending} disabled={apps.length === 0 || !from || !!over || !paidOn}>
+            <Button
+              onClick={async () => {
+                // One click never moves money (deep audit MONEY-10/21): the amount, the account and the day, first.
+                const acct = payFrom.find((a) => a.id === from);
+                const sending = canAch && sendAch;
+                if (
+                  !(await confirmMoney({
+                    title: sending ? `Send ${money(total)} to ${vendor.name}?` : `Record ${money(total)} paid to ${vendor.name}?`,
+                    amount: total,
+                    from: acct ? `${acct.code} ${acct.name}` : null,
+                    to: vendor.name,
+                    when: sending ? `In today’s ACH file · paid ${fmtDate(paidOn)}` : `Paid ${fmtDate(paidOn)}`,
+                    confirmLabel: sending ? `Send ${money(total)}` : `Record ${money(total)}`,
+                  }))
+                )
+                  return;
+                pay.mutate();
+              }}
+              loading={pay.isPending}
+              disabled={apps.length === 0 || !from || !!over || !paidOn}
+            >
               {canAch && sendAch ? `Send ${money(total)}` : `Record ${money(total)}`}
             </Button>
           </div>

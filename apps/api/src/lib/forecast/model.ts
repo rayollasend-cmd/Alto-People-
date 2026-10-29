@@ -1,4 +1,5 @@
 import type { ForecastDrivers, ForecastSignalKind } from '@alto-people/shared';
+import { addDaysToKey } from '../timezone.js';
 
 /**
  * Brief 3-4 — the forecast model, pure and explainable.
@@ -63,8 +64,7 @@ export interface ForecastPoint {
 
 const DAY_MS = 86_400_000;
 export function addWeeks(weekKey: string, n: number): string {
-  const [y, m, d] = weekKey.split('-').map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d! + 7 * n)).toISOString().slice(0, 10);
+  return addDaysToKey(weekKey, 7 * n);
 }
 export function weeksBetween(a: string, b: string): number {
   const [ay, am, ad] = a.split('-').map(Number);
@@ -87,15 +87,16 @@ interface Holiday {
   /** YYYY-MM-DD of the holiday in a given year. */
   on: (year: number) => string;
 }
+const pad2 = (n: number) => String(n).padStart(2, '0');
 const nthWeekday = (year: number, month: number, weekday: number, n: number): string => {
   const first = new Date(Date.UTC(year, month - 1, 1));
   const offset = (weekday - first.getUTCDay() + 7) % 7;
-  return new Date(Date.UTC(year, month - 1, 1 + offset + 7 * (n - 1))).toISOString().slice(0, 10);
+  return addDaysToKey(`${year}-${pad2(month)}-01`, offset + 7 * (n - 1));
 };
 const lastWeekday = (year: number, month: number, weekday: number): string => {
   const last = new Date(Date.UTC(year, month, 0));
   const back = (last.getUTCDay() - weekday + 7) % 7;
-  return new Date(Date.UTC(year, month - 1, last.getUTCDate() - back)).toISOString().slice(0, 10);
+  return addDaysToKey(`${year}-${pad2(month)}-${pad2(last.getUTCDate())}`, -back);
 };
 const fixed = (month: number, day: number) => (year: number) =>
   `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;

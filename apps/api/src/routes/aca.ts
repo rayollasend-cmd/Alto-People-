@@ -17,12 +17,13 @@ import {
   loadHours,
   measure,
   penaltyAmounts,
-  utcDay,
   validateAcaConfig,
   type AcaConfig,
   type Measurement,
   type PersonInput,
 } from '../lib/acaMeasurement.js';
+import { addDaysToKey, dateColumnKey } from '../lib/timezone.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * ACA hours tracking (TAXCOMP 2026-10).
@@ -39,7 +40,8 @@ export const acaRouter = Router();
 
 const VIEW = requireCapability('view:payroll');
 const MANAGE = requireCapability('process:payroll');
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** A DATE column's day (hire date, stability period); "today" is the company's (orgDateKey). */
+const ymd = (d: Date) => dateColumnKey(d);
 
 const SettingsInput = z.object({
   measurementMonths: z.number().int(),
@@ -87,6 +89,8 @@ const LOOKBACK_MONTHS = 27;
 async function measureEveryone(user: SessionUser, opts: { clientId?: string | null; associateId?: string } = {}): Promise<{ config: AcaConfig; rows: WorkerRow[]; truncated: boolean }> {
   const config = await loadAcaConfig(prisma);
   const now = new Date();
+  // The company's day as a calendar date: after 8 PM Eastern the UTC date is already tomorrow.
+  const today = new Date(`${orgDateKey(now)}T00:00:00.000Z`);
   const people = await prisma.associate.findMany({
     where: scopeWhere<Prisma.AssociateWhereInput>(
       scopeActiveAssociates(user),
@@ -109,12 +113,12 @@ async function measureEveryone(user: SessionUser, opts: { clientId?: string | nu
   });
   const truncated = people.length > 5_000;
   const list = people.slice(0, 5_000);
-  const hours = await loadHours(prisma, list.map((p) => p.id), addMonths(utcDay(now), -LOOKBACK_MONTHS));
+  const hours = await loadHours(prisma, list.map((p) => p.id), addMonths(today, -LOOKBACK_MONTHS));
   const rows = list.map((p): WorkerRow => {
     const input: PersonInput = { hireDate: p.hireDate ?? p.createdAt, classes: p.acaWorkerClasses, entries: hours.get(p.id) ?? [] };
-    const m = measure(config, input, now);
+    const m = measure(config, input, today);
     const offer = m.offerDue ? p.acaOffers.find((o) => ymd(o.stabilityStart) <= m.offerDue!.stabilityStart && ymd(o.stabilityEnd) > m.offerDue!.stabilityStart) ?? null : (p.acaOffers[0] ?? null);
-    const offerState: WorkerRow['offerState'] = !m.offerDue ? 'not_due' : offer ? 'offered' : m.offerDue.dueBy < ymd(now) ? 'overdue' : 'due';
+    const offerState: WorkerRow['offerState'] = !m.offerDue ? 'not_due' : offer ? 'offered' : m.offerDue.dueBy < orgDateKey(now) ? 'overdue' : 'due';
     const place = p.assignments[0]?.location ?? null;
     return {
       associateId: p.id,
@@ -139,7 +143,7 @@ acaRouter.get('/aca/workers', VIEW, async (req, res) => {
 
 acaRouter.get('/aca/summary', VIEW, async (req, res) => {
   const { rows, truncated, config } = await measureEveryone(req.user!);
-  const year = new Date().getUTCFullYear();
+  const year = Number(orgDateKey(new Date()).slice(0, 4));
   const ft = rows.filter((r) => r.measurement.today === 'full_time');
   const offered = ft.filter((r) => !!r.offer);
   const byClient = new Map<string, { clientId: string | null; clientName: string | null; fullTime: number; offered: number; due: number; overdue: number }>();
@@ -297,7 +301,7 @@ export async function acaOffersDue(user: SessionUser): Promise<number> {
   const hit = dueMemo.get(user.id);
   if (hit && Date.now() - hit.at < 60_000) return hit.n;
   const { rows } = await measureEveryone(user);
-  const soon = ymd(new Date(Date.now() + 30 * 86_400_000));
+  const soon = addDaysToKey(orgDateKey(new Date()), 30);
   const n = rows.filter((r) => (r.offerState === 'due' || r.offerState === 'overdue') && r.measurement.offerDue && r.measurement.offerDue.dueBy <= soon).length;
   dueMemo.set(user.id, { at: Date.now(), n });
   return n;

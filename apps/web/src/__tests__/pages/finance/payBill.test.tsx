@@ -125,6 +125,21 @@ describe('pay and bill desk', () => {
     expect(within(grid).getAllByRole('link', { name: 'No. 0004' })[0]).toHaveAttribute('href', '/clients/statements?statement=s4');
   });
 
+  it('with no period in the URL it opens on the oldest period holding pay on no statement — where the badge’s money is (deep audit MONEY-2)', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (url: string) => {
+      if (url.startsWith('/pay-bill/periods'))
+        return { periods: [{ periodStart: '2026-09-26', periodEnd: '2026-10-09', runs: 1 }, { periodStart: '2026-09-12', periodEnd: '2026-09-25', runs: 1 }], gapPeriods: ['2026-09-12:2026-09-25'] } as never;
+      if (url.startsWith('/pay-bill/reconciliation')) return report as never;
+      throw new Error(`unexpected ${url}`);
+    });
+    renderAs('FINANCE_ACCOUNTANT', <PayBillPage />, '/finance/pay-bill');
+    await screen.findByText('Billable pay on no statement');
+    expect((screen.getByLabelText('Pay period') as HTMLSelectElement).value).toBe('2026-09-12:2026-09-25');
+    expect(vi.mocked(apiFetch).mock.calls.some(([u]) => String(u).includes('periodStart=2026-09-12'))).toBe(true);
+    expect(screen.getByText('Billable pay on no statement is in this period.')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Sep 12.*pay not billed/ })).toBeInTheDocument();
+  });
+
   it('the pay period is in the URL', async () => {
     renderAs('FINANCE_ACCOUNTANT', <PayBillPage />, '/finance/pay-bill?period=2026-08-22:2026-09-04');
     await screen.findByText('Billable pay on no statement');

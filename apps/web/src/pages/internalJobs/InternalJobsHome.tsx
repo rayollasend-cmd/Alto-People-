@@ -13,14 +13,13 @@ import {
   listApplicationsForJob,
   listInternalJobs,
   listMyApplications,
-  STATUS_LABELS,
   withdrawApplication,
   type ApplicationDetail,
   type InternalApplicationStatus,
   type JobRow,
   type MyApplicationRow,
 } from '@/lib/internalMobility120Api';
-import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { useAuth, useTenant } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import { statusTone } from '@/lib/status';
@@ -36,7 +35,6 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  ErrorBanner,
   FilterBar,
   FilterChip,
   Input,
@@ -49,6 +47,21 @@ import {
 import { Label } from '@/components/ui/Label';
 import { ListTemplate } from '@/components/templates';
 import { fmtDate, fmtMoney } from '@/lib/format';
+import { QueryError } from '@/components/ui/QueryError';
+import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
+import '@/lib/i18n/en/ijobs';
+
+/** An application's status in the reader's language (ASSOC-12: the page was English in every language). */
+const STATUS_KEY: Record<InternalApplicationStatus, MessageKey> = {
+  SUBMITTED: 'ijobs.status.SUBMITTED',
+  UNDER_REVIEW: 'ijobs.status.UNDER_REVIEW',
+  INTERVIEWING: 'ijobs.status.INTERVIEWING',
+  OFFERED: 'ijobs.status.OFFERED',
+  HIRED: 'ijobs.status.HIRED',
+  REJECTED: 'ijobs.status.REJECTED',
+  WITHDRAWN: 'ijobs.status.WITHDRAWN',
+};
+const statusLabel = (t: Translate, s: InternalApplicationStatus) => t(STATUS_KEY[s]);
 
 // Domain-only codes the shared vocabulary doesn't carry: UNDER_REVIEW is a
 // wait state; an OFFERED application is in-flight awaiting the associate's
@@ -62,35 +75,19 @@ const INTERNAL_APP_STATUS_TONES = {
  *  (server sets reviewedAt on every manager decision). */
 type MyApplicationWithReview = MyApplicationRow & { reviewedAt?: string | null };
 
-/** Inline load-failure affordance: real error + Retry, never a fake empty. */
-function LoadErrorState({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
+/** Inline load-failure affordance: the failure in plain words + Retry, never a fake empty. */
+function LoadErrorState({ what, query }: { what: string; query: { error: unknown; refetch: () => unknown; isFetching?: boolean } }) {
   return (
     <div className="p-6">
-      <ErrorBanner>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span>{message}</span>
-          <Button size="sm" variant="outline" onClick={onRetry}>
-            Retry
-          </Button>
-        </div>
-      </ErrorBanner>
+      <QueryError what={what} query={query} />
     </div>
   );
-}
-
-function errMessage(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.message : fallback;
 }
 
 const JOB_TABS = ['browse', 'mine'] as const;
 
 export function InternalJobsHome() {
+  const { t } = useI18n();
   const { user } = useAuth();
   // Brief 2-1b: a tenant with no clients is not offered a client to search by.
   const hasClients = useTenant().moduleOn('clientPortal');
@@ -126,13 +123,9 @@ export function InternalJobsHome() {
     enabled: tab === 'mine',
   });
   const jobs: JobRow[] | null = jobsQuery.data?.jobs ?? null;
-  const jobsError = jobsQuery.error
-    ? errMessage(jobsQuery.error, 'Failed to load open positions.')
-    : null;
+  const jobsError = jobsQuery.isError;
   const mine: MyApplicationWithReview[] | null = mineQuery.data?.applications ?? null;
-  const mineError = mineQuery.error
-    ? errMessage(mineQuery.error, 'Failed to load your applications.')
-    : null;
+  const mineError = mineQuery.isError;
   // Applying or withdrawing changes both the job counts and "mine", so
   // invalidate the pair: the visible reads refresh now, the hidden tab
   // when it next opens.
@@ -164,17 +157,17 @@ export function InternalJobsHome() {
   return (
     // Design system §4.2 (UX upgrade step 6, the sweep): the List template.
     <ListTemplate
-        title="Internal jobs"
-        subtitle="Open roles across the company. Apply directly — your manager and the hiring manager will see it."
+        title={t('ijobs.title')}
+        subtitle={t('ijobs.subtitle')}
         // Whoever posts the jobs gets the way there; navigation, not a button.
-        related={canManage ? [{ label: 'Manage postings', to: '/recruiting/extras?tab=postings' }] : undefined}
+        related={canManage ? [{ label: t('ijobs.manage'), to: '/recruiting/extras?tab=postings' }] : undefined}
     >
 
       <SegmentedControl<'browse' | 'mine'>
-        ariaLabel="Internal jobs view"
+        ariaLabel={t('ijobs.viewAria')}
         options={[
-          { value: 'browse', label: 'Browse' },
-          { value: 'mine', label: 'My applications' },
+          { value: 'browse', label: t('ijobs.browse') },
+          { value: 'mine', label: t('ijobs.mine') },
         ]}
         value={tab}
         onChange={setTab}
@@ -189,8 +182,8 @@ export function InternalJobsHome() {
                 <SearchInput
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder={hasClients ? 'Search title, client, or location…' : 'Search title or location…'}
-                  aria-label="Search internal jobs"
+                  placeholder={hasClients ? t('ijobs.searchClients') : t('ijobs.search')}
+                  aria-label={t('ijobs.searchAria')}
                 />
               </div>
             }
@@ -201,7 +194,7 @@ export function InternalJobsHome() {
                   active={locationFilter === null}
                   onClick={() => setLocationFilter(null)}
                 >
-                  All locations
+                  {t('ijobs.allLocations')}
                 </FilterChip>
                 {locations.map((l) => (
                   <FilterChip
@@ -220,7 +213,7 @@ export function InternalJobsHome() {
           {jobsError ? (
             <Card>
               <CardContent className="p-0">
-                <LoadErrorState message={jobsError} onRetry={refresh} />
+                <LoadErrorState what={t('ijobs.what')} query={jobsQuery} />
               </CardContent>
             </Card>
           ) : visibleJobs === null ? (
@@ -236,15 +229,15 @@ export function InternalJobsHome() {
                   icon={Briefcase}
                   title={
                     search.trim() || locationFilter
-                      ? 'No positions match your filters'
-                      : 'No open positions'
+                      ? t('ijobs.noMatchTitle')
+                      : t('ijobs.noneTitle')
                   }
                   description={
                     search.trim() || locationFilter
-                      ? 'Try a different search or clear the location filter.'
+                      ? t('ijobs.noMatchDesc')
                       : canManage
-                        ? 'Post a job and it shows here for everyone to apply to.'
-                        : 'Internal openings are posted here as roles open up.'
+                        ? t('ijobs.noneDescManage')
+                        : t('ijobs.noneDesc')
                   }
                   action={
                     search.trim() || locationFilter ? (
@@ -255,12 +248,12 @@ export function InternalJobsHome() {
                           setLocationFilter(null);
                         }}
                       >
-                        Clear filters
+                        {t('ijobs.clearFilters')}
                       </Button>
                     ) : canManage ? (
                       <Button asChild>
                         <Link to="/recruiting/extras?tab=postings&new=1">
-                          <Plus className="mr-2 h-4 w-4" /> Post a job
+                          <Plus className="mr-2 h-4 w-4" /> {t('ijobs.postJob')}
                         </Link>
                       </Button>
                     ) : undefined
@@ -284,10 +277,10 @@ export function InternalJobsHome() {
                     </div>
                     {j.myApplication ? (
                       <Badge variant={statusTone(j.myApplication.status, { overrides: INTERNAL_APP_STATUS_TONES })}>
-                        {STATUS_LABELS[j.myApplication.status]}
+                        {statusLabel(t, j.myApplication.status)}
                       </Badge>
                     ) : (
-                      <Badge variant="outline">{j.applicantCount} applied</Badge>
+                      <Badge variant="outline">{t('ijobs.applied', { count: j.applicantCount })}</Badge>
                     )}
                   </div>
                   <div className="text-sm text-silver flex items-center gap-3 flex-wrap">
@@ -321,25 +314,25 @@ export function InternalJobsHome() {
                         onClick={async () => {
                           if (!j.myApplication) return;
                           const appId = j.myApplication.id;
-                          if (!(await confirm({ title: 'Withdraw your application?', destructive: true }))) return;
+                          if (!(await confirm({ title: t('ijobs.withdrawConfirm'), destructive: true }))) return;
                           await act(`withdraw-${appId}`, async () => {
                             try {
                               await withdrawApplication(appId);
-                              toast.success('Withdrawn.');
+                              toast.success(t('ijobs.withdrawn'));
                               refresh();
                             } catch (err) {
                               toast.error(
-                                err instanceof ApiError ? err.message : 'Failed.',
+                                err instanceof ApiError ? err.message : t('ijobs.failed'),
                               );
                             }
                           });
                         }}
                       >
-                        Withdraw
+                        {t('ijobs.withdraw')}
                       </Button>
                     ) : (
                       <Button size="sm" onClick={() => setApplyJob(j)}>
-                        <Send className="mr-1 h-3 w-3" /> Apply
+                        <Send className="mr-1 h-3 w-3" /> {t('ijobs.apply')}
                       </Button>
                     )}
                     {canManage && (
@@ -349,7 +342,7 @@ export function InternalJobsHome() {
                         onClick={() => setReviewJob(j)}
                       >
                         <Users className="mr-1 h-3 w-3" />
-                        Review {j.applicantCount}
+                        {t('ijobs.review', { count: j.applicantCount })}
                       </Button>
                     )}
                   </div>
@@ -362,7 +355,7 @@ export function InternalJobsHome() {
       ) : mineError ? (
         <Card>
           <CardContent className="p-0">
-            <LoadErrorState message={mineError} onRetry={refresh} />
+            <LoadErrorState what={t('ijobs.whatMine')} query={mineQuery} />
           </CardContent>
         </Card>
       ) : mine === null ? (
@@ -376,8 +369,8 @@ export function InternalJobsHome() {
           <CardContent className="p-0">
             <EmptyState
               icon={Send}
-              title="No applications yet"
-              description="Switch to Browse to find a role and apply."
+              title={t('ijobs.noAppsTitle')}
+              description={t('ijobs.noAppsDesc')}
             />
           </CardContent>
         </Card>
@@ -392,13 +385,13 @@ export function InternalJobsHome() {
                       {a.posting.title}
                     </div>
                     <div className="text-xs text-silver">
-                      Applied {fmtDate(a.createdAt)}
+                      {t('ijobs.appliedOn', { date: fmtDate(a.createdAt) })}
                       {a.posting.location && ` · ${a.posting.location}`}
-                      {a.reviewedAt && ` · Status updated ${fmtDate(a.reviewedAt)}`}
+                      {a.reviewedAt && ` · ${t('ijobs.statusUpdated', { date: fmtDate(a.reviewedAt) })}`}
                     </div>
                   </div>
                   <Badge variant={statusTone(a.status, { overrides: INTERNAL_APP_STATUS_TONES })}>
-                    {STATUS_LABELS[a.status]}
+                    {statusLabel(t, a.status)}
                   </Badge>
                   {a.status !== 'WITHDRAWN' &&
                     a.status !== 'HIRED' &&
@@ -409,21 +402,21 @@ export function InternalJobsHome() {
                         loading={actionKey === `withdraw-${a.id}`}
                         disabled={actionKey !== null}
                         onClick={async () => {
-                          if (!(await confirm({ title: 'Withdraw your application?', destructive: true }))) return;
+                          if (!(await confirm({ title: t('ijobs.withdrawConfirm'), destructive: true }))) return;
                           await act(`withdraw-${a.id}`, async () => {
                             try {
                               await withdrawApplication(a.id);
-                              toast.success('Withdrawn.');
+                              toast.success(t('ijobs.withdrawn'));
                               refresh();
                             } catch (err) {
                               toast.error(
-                                err instanceof ApiError ? err.message : 'Failed.',
+                                err instanceof ApiError ? err.message : t('ijobs.failed'),
                               );
                             }
                           });
                         }}
                       >
-                        Withdraw
+                        {t('ijobs.withdraw')}
                       </Button>
                     )}
                 </div>
@@ -437,7 +430,7 @@ export function InternalJobsHome() {
                     )}
                   >
                     <span className="font-medium text-white">
-                      Note from the hiring manager:
+                      {t('ijobs.noteFromManager')}
                     </span>{' '}
                     {a.reviewerNotes}
                   </div>
@@ -482,6 +475,7 @@ function ApplyDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   // Draft survives an accidental drawer close / navigation: restored on
   // reopen, kept per posting id, cleared on successful submit.
   const [coverLetter, setCoverLetter] = useState(() => {
@@ -523,10 +517,10 @@ function ApplyDrawer({
       } catch {
         // Best-effort cleanup.
       }
-      toast.success('Applied.');
+      toast.success(t('ijobs.sent'));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('ijobs.failed'));
     } finally {
       setSaving(false);
     }
@@ -535,7 +529,7 @@ function ApplyDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Apply — {job.title}</DrawerTitle>
+        <DrawerTitle>{t('ijobs.applyTitle', { title: job.title })}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {job.location && (
@@ -547,16 +541,16 @@ function ApplyDrawer({
           {job.description}
         </div>
         <div>
-          <Label>Cover letter (optional)</Label>
+          <Label>{t('ijobs.cover')}</Label>
           <Textarea
             className="mt-1 h-32"
             value={coverLetter}
             onChange={(e) => setCoverLetter(e.target.value)}
-            placeholder="Why this role, what you bring…"
+            placeholder={t('ijobs.coverPlaceholder')}
           />
         </div>
         <div>
-          <Label>Resume URL (optional)</Label>
+          <Label>{t('ijobs.resume')}</Label>
           <Input
             type="url"
             className="mt-1"
@@ -568,10 +562,10 @@ function ApplyDrawer({
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('ijobs.cancel')}
         </Button>
         <Button onClick={submit} disabled={saving}>
-          {saving ? 'Submitting…' : 'Submit application'}
+          {saving ? t('ijobs.submitting') : t('ijobs.submit')}
         </Button>
       </DrawerFooter>
     </Drawer>
@@ -590,7 +584,7 @@ function ReviewDrawer({
   // REJECTED is destructive from the applicant's side, so it routes
   // through a confirm with an optional reviewer note; other statuses
   // apply immediately.
-  const term = useTerm();
+  const { t } = useI18n();
   const [rejectTarget, setRejectTarget] = useState<ApplicationDetail | null>(null);
   const [deciding, setDeciding] = useState(false);
 
@@ -599,7 +593,7 @@ function ReviewDrawer({
     queryFn: () => listApplicationsForJob(job.id),
   });
   const apps: ApplicationDetail[] | null = refreshQuery.data?.applications ?? null;
-  const error = refreshQuery.error ? errMessage(refreshQuery.error, 'Failed to load applicants.') : null;
+  const error = refreshQuery.isError;
   const refresh = () => void refreshQuery.refetch();
 
   const applyStatus = async (
@@ -613,12 +607,12 @@ function ReviewDrawer({
         status,
         ...(reviewerNotes !== undefined ? { reviewerNotes } : {}),
       });
-      toast.success(`Status updated to ${STATUS_LABELS[status]}.`);
+      toast.success(t('ijobs.statusSet', { status: statusLabel(t, status) }));
       setRejectTarget(null);
       refresh();
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('ijobs.failed'));
     } finally {
       setDeciding(false);
     }
@@ -627,18 +621,18 @@ function ReviewDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Applicants — {job.title}</DrawerTitle>
+        <DrawerTitle>{t('ijobs.applicantsTitle', { title: job.title })}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-3">
         {error ? (
-          <LoadErrorState message={error} onRetry={refresh} />
+          <LoadErrorState what={t('ijobs.whatApplicants')} query={refreshQuery} />
         ) : apps === null ? (
           <SkeletonRows count={3} />
         ) : apps.length === 0 ? (
           <EmptyState
             icon={Users}
-            title="No applicants yet"
-            description={`${term('workers')} who apply to this posting will show up here.`}
+            title={t('ijobs.noApplicantsTitle')}
+            description={t('ijobs.noApplicantsDesc')}
           />
         ) : (
           apps.map((a) => (
@@ -668,10 +662,10 @@ function ReviewDrawer({
                       void applyStatus(a.id, next);
                     }}
                   >
-                    {(Object.keys(STATUS_LABELS) as InternalApplicationStatus[]).map(
+                    {(Object.keys(STATUS_KEY) as InternalApplicationStatus[]).map(
                       (s) => (
                         <option key={s} value={s}>
-                          {STATUS_LABELS[s]}
+                          {statusLabel(t, s)}
                         </option>
                       ),
                     )}
@@ -689,7 +683,7 @@ function ReviewDrawer({
                     rel="noopener noreferrer"
                     className="text-xs text-gold hover:underline"
                   >
-                    Resume ↗
+                    {t('ijobs.resumeLink')}
                   </a>
                 )}
               </CardContent>
@@ -698,22 +692,18 @@ function ReviewDrawer({
         )}
       </DrawerBody>
       <DrawerFooter>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose}>{t('ijobs.close')}</Button>
       </DrawerFooter>
       <ConfirmDialog
         open={rejectTarget !== null}
         onOpenChange={(o) => !o && setRejectTarget(null)}
-        title={
-          rejectTarget
-            ? `Reject ${rejectTarget.associateName}'s application?`
-            : 'Reject application'
-        }
-        description="They'll be notified that their internal application was not selected."
-        confirmLabel="Reject application"
+        title={rejectTarget ? t('ijobs.rejectTitle', { name: rejectTarget.associateName }) : t('ijobs.reject')}
+        description={t('ijobs.rejectDesc')}
+        confirmLabel={t('ijobs.reject')}
         destructive
         requireReason="optional"
-        reasonLabel="Reason (optional)"
-        reasonPlaceholder="e.g., Another applicant was a closer fit for this role."
+        reasonLabel={t('ijobs.reason')}
+        reasonPlaceholder={t('ijobs.reasonPlaceholder')}
         busy={deciding}
         onConfirm={(reason) => {
           if (!rejectTarget) return;

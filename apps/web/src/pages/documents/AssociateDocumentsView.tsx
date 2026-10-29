@@ -32,7 +32,8 @@ import {
 } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDate, fmtSize } from '@/lib/format';
+import { calendarDay, fmtDate, fmtSize } from '@/lib/format';
+import { QueryError } from '@/components/ui/QueryError';
 import { enterStagger } from '@/lib/motion';
 import { isImagePick } from '@/lib/loadImageFile';
 import { Badge } from '@/components/ui/Badge';
@@ -155,7 +156,9 @@ export function AssociateDocumentsView() {
     queryFn: () => listMyDocuments(),
   });
   const docs: DocumentRecord[] | null = refreshQuery.data?.documents ?? null;
-  const error = errorLocal ?? (refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : t('docs.loadFailed') : null);
+  // A failed load says what failed in plain words (QueryError) — never the
+  // server's "Internal error" (ASSOC-25); upload/delete problems stay here.
+  const error = errorLocal;
   const refresh = async () => {
     await refreshQuery.refetch();
   };
@@ -291,10 +294,15 @@ export function AssociateDocumentsView() {
 
   // The page's verdict — "are my papers in order?" — computed once so
   // the hero can answer before the associate reads a single row.
+  // A record whose file is gone is not "verified" — it needs a re-upload,
+  // and the hero says so (ASSOC-9: "All set · 4 verified" sat above
+  // "file missing — please re-upload").
   const summary = useMemo(() => {
     if (!docs || docs.length === 0) return null;
+    const missing = (d: DocumentRecord) => !d.fileAvailable && d.status !== 'REJECTED' && d.status !== 'EXPIRED';
     return {
-      verified: docs.filter((d) => d.status === 'VERIFIED').length,
+      missing: docs.filter(missing).length,
+      verified: docs.filter((d) => d.status === 'VERIFIED' && !missing(d)).length,
       pending: docs.filter((d) => d.status === 'UPLOADED').length,
       rejected: docs.filter((d) => d.status === 'REJECTED').length,
       expired: docs.filter((d) => d.status === 'EXPIRED').length,
@@ -303,7 +311,7 @@ export function AssociateDocumentsView() {
   }, [docs]);
   const needsAction =
     summary !== null &&
-    summary.rejected + summary.expired + summary.expiring > 0;
+    summary.rejected + summary.expired + summary.expiring + summary.missing > 0;
   const inReview = summary !== null && !needsAction && summary.pending > 0;
 
   const openUpload = () => {
@@ -388,6 +396,7 @@ export function AssociateDocumentsView() {
             </div>
             <p className="mt-1.5 text-sm text-silver tabular-nums">
               {[
+                [summary.missing, 'docs.heroMissingOne', 'docs.heroMissing'],
                 [summary.verified, 'docs.heroVerifiedOne', 'docs.heroVerified'],
                 [summary.pending, 'docs.heroPendingOne', 'docs.heroPending'],
                 [summary.expiring, 'docs.heroExpiringOne', 'docs.heroExpiring'],
@@ -409,6 +418,7 @@ export function AssociateDocumentsView() {
       <h2 className="text-xl text-white mb-3">{t('docs.yourDocs')}</h2>
       {/* Load failure surfaces HERE with a retry — with the form moved to
           the bottom, its banner would otherwise hide below the fold. */}
+      {refreshQuery.isError && !docs && <QueryError className="mb-4" what={t('docs.whatDocs')} query={refreshQuery} />}
       {error && !docs && (
         <ErrorBanner
           className="mb-4"
@@ -421,7 +431,7 @@ export function AssociateDocumentsView() {
           {error}
         </ErrorBanner>
       )}
-      {!docs && !error && <SkeletonRows count={4} rowHeight="h-14" />}
+      {!docs && !error && !refreshQuery.isError && <SkeletonRows count={4} rowHeight="h-14" />}
       {docs && docs.length === 0 && (
         <EmptyState
           icon={FileText}
@@ -438,7 +448,14 @@ export function AssociateDocumentsView() {
       {docs && docs.length > 0 && (
         <ul className="space-y-2">
           {docs.map((d, i) => {
-            const badgeEl = (
+            // A record whose file is gone is not "Verified" on its face — the
+            // row says what the hero says (ASSOC-9).
+            const lost = !d.fileAvailable && d.status !== 'REJECTED' && d.status !== 'EXPIRED';
+            const badgeEl = lost ? (
+              <Badge variant="destructive" className="shrink-0">
+                {t('docs.status.reupload')}
+              </Badge>
+            ) : (
               <Badge variant={STATUS_VARIANT[d.status]} className="shrink-0">
                 {t(('docs.status.' + d.status) as MessageKey)}
               </Badge>
@@ -756,7 +773,7 @@ function DocInfo({ d, t }: { d: DocumentRecord; t: Translate }) {
         {d.status === 'EXPIRED' && (
           <span className="text-alert ml-2">
             {t('docs.expiredMeta', {
-              date: d.expiresAt ? ` ${fmtDate(d.expiresAt)}` : '',
+              date: d.expiresAt ? ` ${fmtDate(calendarDay(d.expiresAt))}` : '',
             })}
           </span>
         )}
@@ -765,13 +782,13 @@ function DocInfo({ d, t }: { d: DocumentRecord; t: Translate }) {
           (isExpiringSoon(d) ? (
             <span className="text-warning ml-2 tabular-nums">
               {t('docs.expiringSoonMeta', {
-                date: fmtDate(d.expiresAt),
+                date: fmtDate(calendarDay(d.expiresAt)),
                 days: Math.max(0, daysToExpiry(d) ?? 0),
               })}
             </span>
           ) : (
             <span className="text-silver/70 ml-2">
-              {t('docs.expiresMeta', { date: fmtDate(d.expiresAt) })}
+              {t('docs.expiresMeta', { date: fmtDate(calendarDay(d.expiresAt)) })}
             </span>
           ))}
         {!d.fileAvailable && (

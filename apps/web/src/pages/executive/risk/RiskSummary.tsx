@@ -1,6 +1,6 @@
 import type { ExecRisk, ExecRiskCategory } from '@alto-people/shared';
 import { Card, CardContent } from '@/components/ui/Card';
-import { fmtTime } from '@/lib/format';
+import { fmtExecAsOf } from '@/lib/executiveFormat';
 import { useI18n } from '@/lib/i18n';
 import '@/lib/i18n/en/execPortal';
 import { CATEGORIES, SEVERITIES, countBy } from './riskMeta';
@@ -12,7 +12,7 @@ import { SeverityChip } from './SeverityChip';
  * how they spread across the five areas, in plain ink. As of when the
  * register was read.
  */
-export function RiskSummary({ risks, asOf, categories = CATEGORIES }: { risks: ExecRisk[]; asOf: string; categories?: readonly ExecRiskCategory[] }) {
+export function RiskSummary({ risks, asOf, timezone, categories = CATEGORIES }: { risks: ExecRisk[]; asOf: string; timezone?: string; categories?: readonly ExecRiskCategory[] }) {
   const { t } = useI18n();
   const bySeverity = countBy(risks, (r) => r.severity, SEVERITIES);
   const byCategory = countBy(risks, (r) => r.category, categories);
@@ -22,7 +22,7 @@ export function RiskSummary({ risks, asOf, categories = CATEGORIES }: { risks: E
         <div>
           <div className="font-display text-[1.75rem] leading-none tabular-nums text-ink">{risks.length.toLocaleString('en-US')}</div>
           <div className="mt-1 text-xs2 text-ink-muted">
-            {t('execPortal.risk.openSub', { count: risks.length })} · {t('execPortal.asOf', { time: fmtTime(asOf) })}
+            {t('execPortal.risk.openSub', { count: risks.length })} · {t('execPortal.asOf', { time: fmtExecAsOf(asOf, timezone) })}
           </div>
         </div>
         <dl className="flex flex-wrap items-center gap-2" aria-label={t('execPortal.risk.bySeverityAria')}>

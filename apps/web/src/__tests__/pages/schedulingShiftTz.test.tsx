@@ -69,12 +69,12 @@ describe('every display uses the shift zone', () => {
     expect(screen.getByText(/Housekeeper at Front Beach/)).toBeInTheDocument();
   });
 
-  it('the mobile card reads 9:00 AM CDT from New York', () => {
+  it('the mobile card reads 9:00 AM–5:00 PM CDT from New York — the zone once (FLOOR-13)', () => {
     const anchor = new Date(2026, 6, 14);
     render(
       <MobileScheduleList shifts={[shift]} associates={[]} dayAnchor={anchor} displayTimeZone="America/Chicago" canManage onShiftClick={() => {}} onPrevDay={() => {}} onNextDay={() => {}} onCreate={() => {}} />,
     );
-    expect(screen.getByText(/9:00 AM CDT – 5:00 PM CDT/)).toBeInTheDocument();
+    expect(screen.getByText('9:00 AM–5:00 PM CDT')).toBeInTheDocument();
   });
 });
 

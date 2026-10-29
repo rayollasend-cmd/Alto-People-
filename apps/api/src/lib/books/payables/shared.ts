@@ -1,12 +1,15 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { orgDateKey } from '../../timeAnomalies.js';
 
 /** Small helpers the payables modules share. */
 
 export type Db = PrismaClient | Prisma.TransactionClient;
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: @db.Date values and day keys at UTC midnight; today is todayYmd().
 export const ymd = (d: Date): string => d.toISOString().slice(0, 10);
 export const dateOnly = (s: string): Date => new Date(`${s}T00:00:00.000Z`);
-export const todayYmd = (now: Date = new Date()): string => ymd(now);
+/** Today on the company's calendar (deep audit MONEY-16): after 8 PM Eastern UTC is already tomorrow, and a payment, its aging and its "due" are company days. */
+export const todayYmd = (now: Date = new Date()): string => orgDateKey(now);
 export const addDays = (s: string, n: number): string => ymd(new Date(dateOnly(s).getTime() + n * 86_400_000));
 export const daysBetween = (from: string, to: string): number => Math.round((dateOnly(to).getTime() - dateOnly(from).getTime()) / 86_400_000);
 export const cents = (n: number | string | Prisma.Decimal | null | undefined): number => Math.round(Number(n ?? 0) * 100);

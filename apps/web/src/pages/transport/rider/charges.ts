@@ -1,4 +1,4 @@
-import { fmtDayShort, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtDayShort, fmtMoney, parseYmd, zonedDayKey } from '@/lib/format';
 import type { Translate } from '@/lib/i18n';
 import type { MyTransport, Ride } from '@/lib/transportApi';
 import '@/lib/i18n/en/ride';
@@ -20,6 +20,10 @@ export type LedgerRide = Ride & {
 };
 
 export type Payday = MyTransport['charges']['nextPayday'];
+export type PayrollOutlook = MyTransport['charges']['payroll'];
+
+/** Paid at the minimum wage: payroll takes no fare from pay at all (it would put the check under the minimum). */
+export const atMinimumWage = (payroll: PayrollOutlook | undefined) => payroll?.reason === 'MINIMUM_WAGE';
 
 const cents = (n: number) => fmtMoney(n / 100);
 const day = (ymd: string) => fmtDayShort(parseYmd(ymd) ?? ymd, { anchored: true });
@@ -32,8 +36,10 @@ const dateOf = (r: Ride) => r.serviceDate;
  * bare number. A ride after the coming payday's period is taken from the
  * one after it; with no pay schedule it just says "from your pay".
  */
-export function fareWords(t: Translate, amountCents: number, payday: Payday, serviceDate?: string | null): string {
+export function fareWords(t: Translate, amountCents: number, payday: Payday, serviceDate?: string | null, payroll?: PayrollOutlook): string {
   const amount = cents(amountCents);
+  // Payroll never takes a fare below the minimum wage: never promise a payday it won't keep.
+  if (atMinimumWage(payroll)) return t('ride.fare.wordsMinimumWage', { amount });
   if (payday && (!serviceDate || serviceDate <= payday.periodEnd)) return t('ride.fare.words', { amount, date: day(payday.payDate) });
   if (payday) return t('ride.fare.wordsLater', { amount });
   return t('ride.total', { amount });
@@ -91,7 +97,9 @@ export function chargeRows(rides: LedgerRide[]): ChargeRow[] {
       cents: notRun ? r.fareCents : state === 'notCharged' ? (r.uncollectedCents ?? listed) : amount,
       state,
       date: dateOf(r),
-      takenOn: r.chargedPayDate ?? (r.chargedAt ? r.chargedAt.slice(0, 10) : null),
+      // With no payday on file, the day payroll took it — in the store's calendar, not UTC's (CODE-35: an
+      // evening charge in Pacific time was grouped under tomorrow).
+      takenOn: r.chargedPayDate ?? (r.chargedAt ? zonedDayKey(r.chargedAt, r.store?.timezone) : null),
       reason: state === 'waived' ? (r.waiveReason?.trim() || null) : null,
       counts: state === 'pending' || state === 'held' || state === 'taken',
     });
@@ -163,6 +171,14 @@ export interface OwedSummary {
   laterCents: number;
   /** Of `cents`, fares held until the rider signs the authorization. */
   heldCents: number;
+  /**
+   * What payroll will take on `payDate` (its own plan: never below the minimum wage), when it is known;
+   * else null and the plan is "what falls in the period" (`cents - laterCents`).
+   */
+  dueCents: number | null;
+  /** Of `cents`, what the coming check can't take and stays owed. */
+  keptCents: number;
+  keptReason: 'MINIMUM_WAGE' | 'CHECK_TOO_SMALL' | null;
 }
 
 /** The balance for the "What you owe" card and the Home card. */
@@ -172,6 +188,9 @@ export function owedSummary(data: MyTransport): OwedSummary {
   const payday = c.nextPayday;
   const laterCents = payday ? rows.filter((r) => r.state === 'pending' && r.date > payday.periodEnd).reduce((n, r) => n + r.cents, 0) : 0;
   const heldCents = rows.filter((r) => r.state === 'held').reduce((n, r) => n + r.cents, 0);
+  const p = c.payroll ?? null;
+  // At the minimum wage nothing comes out of pay — the later rides included; otherwise what payroll's plan keeps back.
+  const keptCents = !p ? 0 : p.reason === 'MINIMUM_WAGE' ? c.pendingCents : Math.min(p.keptCents, c.pendingCents);
   return {
     cents: c.pendingCents,
     rides: c.rides,
@@ -179,6 +198,9 @@ export function owedSummary(data: MyTransport): OwedSummary {
     payDate: payday?.payDate ?? null,
     laterCents: Math.min(laterCents, c.pendingCents),
     heldCents: Math.min(heldCents, c.pendingCents),
+    dueCents: p && p.reason === 'MINIMUM_WAGE' ? 0 : (p?.takeCents ?? null),
+    keptCents,
+    keptReason: keptCents > 0 ? (p?.reason ?? null) : null,
   };
 }
 

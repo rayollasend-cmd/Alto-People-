@@ -114,10 +114,12 @@ describe('Receivables', () => {
     await waitFor(() => expect(api.recordClientPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 1500, applications: [{ statementId: S1, amount: 1000 }, { statementId: S2, amount: 500 }] })));
   });
 
-  it('leads with days to collect (last 90 days) and what came in this month; Post history is the close checklist’s, not a header button', async () => {
+  it('leads with average days to pay (last 90 days) and what came in this month; Post history is the close checklist’s, not a header button', async () => {
     renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
     const strip = await screen.findByRole('group', { name: 'Receivables at a glance' });
-    const days = within(strip).getByText('Days to collect').parentElement!;
+    // One name, one number (deep audit MONEY-8): finalized → paid is "Average days to pay"; "Days to collect" is DSO, the executive pages'.
+    expect(within(strip).queryByText('Days to collect')).toBeNull();
+    const days = within(strip).getByText('Average days to pay').parentElement!;
     await waitFor(() => expect(days).toHaveTextContent('29days'));
     expect(days).toHaveTextContent('Last 90 days · 4 statements paid');
     const collected = within(strip).getByText('Collected this month').closest('a')!;
@@ -126,6 +128,29 @@ describe('Receivables', () => {
     expect(collected).toHaveTextContent('2 payments');
     expect(within(strip).getByText('Past due').closest('a')).toHaveAttribute('href', '/books/receivables?view=collections');
     expect(screen.queryByRole('button', { name: /Post history/ })).toBeNull();
+  });
+
+  it('never says “nothing collected” beside statements marked paid: it names the ones with no payment behind them (MONEY-3)', async () => {
+    api.getDsoTrend.mockResolvedValue({
+      months: [],
+      last90: { days: 7, statements: 6 },
+      collectedThisMonth: { amount: 0, payments: 0 },
+      markedPaidThisMonth: { statements: 6, amount: 68816.65 },
+    });
+    renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
+    const strip = await screen.findByRole('group', { name: 'Receivables at a glance' });
+    const collected = within(strip).getByText('Collected this month').closest('a')!;
+    await waitFor(() => expect(collected).toHaveTextContent('6 statements ($68,816.65) marked paid with no payment recorded'));
+    expect(collected).not.toHaveTextContent('Nothing collected yet');
+  });
+
+  it('“Total owed” sits beside the client, so the bottom line is never past the scroller’s edge (deep audit MONEY-15)', async () => {
+    renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
+    const link = await screen.findByRole('link', { name: 'Coastal Resort' });
+    const table = link.closest('table')!;
+    const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent ?? '');
+    const at = (label: string) => headers.findIndex((h) => h.includes(label));
+    expect(at('Total owed')).toBe(at('Client') + 1);
   });
 
   it('read-only roles see no buttons', async () => {
@@ -163,7 +188,7 @@ describe('collections (finance walk 7)', () => {
   it('the aging view shows what each client owes by age and the days-to-collect trend', async () => {
     renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
     expect(await screen.findByRole('img', { name: /1 client with money open; 1 past due\. Most owed: Coastal Resort, \$1,500\.00\./ })).toBeInTheDocument();
-    expect(await screen.findByRole('img', { name: /Days to collect over the last 3 months: Aug 26 35, Sep 26 31, Oct 26 26\./ })).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: /Average days to pay over the last 3 months: Aug 26 35, Sep 26 31, Oct 26 26\./ })).toBeInTheDocument();
   });
 
   it('with fewer than three months of payments the trend isn’t drawn — two points float on the axis', async () => {
@@ -175,8 +200,8 @@ describe('collections (finance walk 7)', () => {
     renderAs('FINANCE_ACCOUNTANT', <ReceivablesPage />, '/books/receivables');
     expect(await screen.findByRole('img', { name: /1 client with money open/ })).toBeInTheDocument();
     const strip = await screen.findByRole('group', { name: 'Receivables at a glance' });
-    expect(within(strip).getByText('Days to collect')).toBeInTheDocument();
-    expect(screen.queryByRole('img', { name: /Days to collect over the last/ })).toBeNull();
+    expect(within(strip).getByText('Average days to pay')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Average days to pay over the last/ })).toBeNull();
   });
 });
 

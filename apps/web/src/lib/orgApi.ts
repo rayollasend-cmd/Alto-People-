@@ -516,7 +516,6 @@ export const getEmploymentHistory = (associateId: string) =>
 
 export type OrgUnitType = 'DIVISION' | 'REGION' | 'BUSINESS_UNIT' | 'COST_CENTER';
 
-export const ORG_UNIT_TYPES: OrgUnitType[] = ['DIVISION', 'REGION', 'BUSINESS_UNIT', 'COST_CENTER'];
 export const ORG_UNIT_TYPE_LABEL: Record<OrgUnitType, string> = {
   DIVISION: 'Division',
   REGION: 'Region',

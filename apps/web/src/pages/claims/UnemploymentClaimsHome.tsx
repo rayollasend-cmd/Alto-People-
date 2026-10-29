@@ -8,7 +8,7 @@ import { ArrowLeft, Download, FileWarning, Scale } from '@/components/ui/icons';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useTerm } from '@/lib/auth';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   answerWorkOffer,
@@ -719,7 +719,7 @@ function OfferDialog({ associateId, claimId, onClose, onDone }: { associateId: s
 function OpenClaimDialog({ onClose, onOpened }: { onClose: () => void; onOpened: (id: string) => void }) {
   const [person, setPerson] = useState<PickedAssociate | null>(null);
   const [state, setState] = useState('');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = ymdLocal();
   const [claimDate, setClaimDate] = useState(today);
   const [notice, setNotice] = useState(today);
   const [due, setDue] = useState('');

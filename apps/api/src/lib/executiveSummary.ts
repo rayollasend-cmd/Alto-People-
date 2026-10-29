@@ -12,12 +12,12 @@ import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
 import { activeBreakdown } from './activeDefinition.js';
 import { profilePhotoUrlFor } from './profilePhotoUrl.js';
-import { startOfWeekUTC } from './timeAnomalies.js';
+import { companyWorkweek, startOfWeekUTC } from './timeAnomalies.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { payFor, splitByPerson, type EntryHours, type HoursSplit, type LaborSite } from './laborRules/hours.js';
 import { tenantIdForWrite } from './tenant.js';
 import { fmtDayRange } from './humanDates.js';
-import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
+import { dateColumnKey, localDateKey } from './timezone.js';
 
 const DAY_MS = 24 * 3600_000;
 /** Complete org weeks in the trend series (newest last = last week). */
@@ -354,7 +354,7 @@ export async function computeExecutiveSummary(
       id: a.id,
       name: `${a.firstName} ${a.lastName}`,
       photoUrl: profilePhotoUrlFor(a),
-      hireDate: a.hireDate ? a.hireDate.toISOString().slice(0, 10) : null,
+      hireDate: a.hireDate ? dateColumnKey(a.hireDate) : null,
     })),
     rates: {
       payRate: env.DEFAULT_ASSOCIATE_PAY_RATE,
@@ -385,10 +385,10 @@ const money = (v: number): string =>
 export function executiveDigestBody(s: ExecutiveSummary): string {
   const w = s.lastWeek;
   const lines = [
-    `Week in review (${fmtDayRange(localDateKey(new Date(w.start), DEFAULT_TIMEZONE), localDateKey(new Date(new Date(w.end).getTime() - 1), DEFAULT_TIMEZONE))}):`,
+    `Week in review (${fmtDayRange(localDateKey(new Date(w.start), companyWorkweek().timezone), localDateKey(new Date(new Date(w.end).getTime() - 1), companyWorkweek().timezone))}):`,
     `- Hours worked: ${w.workedHours.toFixed(2)}h across ${w.headsWorked} associates (${w.otHours.toFixed(2)}h overtime)`,
     `- Est. billed at standard rates: ${money(w.estBilled)} · est. margin ${money(w.estMargin)}`,
-    `- Workforce: ${s.workforce.active} active · ${s.workforce.hires30d} hires and ${s.workforce.separations30d} separations in the last 30 days · ${s.workforce.onboardingInFlight} onboarding in flight`,
+    `- Workforce: ${s.workforce.active} working · ${s.workforce.hires30d} hires and ${s.workforce.separations30d} separations in the last 30 days · ${s.workforce.onboardingInFlight} onboarding in flight`,
   ];
   if (s.attendance30d.length > 0) {
     lines.push(

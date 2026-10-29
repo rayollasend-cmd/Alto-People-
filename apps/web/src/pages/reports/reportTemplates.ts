@@ -87,7 +87,8 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
   {
     key: 'headcount-by-store',
     name: 'Headcount by {store}',
-    hint: 'People working now, counted by the {store} they are placed at.',
+    // `active` is Working, the one definition every screen counts (LEAD-9) — not account status.
+    hint: 'People working now — placed, and worked in the active window or with a shift ahead — counted by the {store} they are placed at.',
     entity: 'ASSOCIATE',
     spec: {
       columns: ['store'],

@@ -6,6 +6,8 @@ import { confirmEmailChange } from '@/lib/settingsApi';
 import { AuthCardTitle, AuthShell } from '@/components/ui/AuthHeading';
 import { Button } from '@/components/ui/Button';
 import { LinkProblem } from '@/components/LinkProblem';
+import { useI18n } from '@/lib/i18n';
+import '@/lib/i18n/en/pw';
 
 /**
  * Public — completes the two-step email change. The token comes from the
@@ -20,6 +22,7 @@ import { LinkProblem } from '@/components/LinkProblem';
  */
 export function ConfirmEmailChange() {
   const { token = '' } = useParams<{ token: string }>();
+  const { t } = useI18n();
   const [state, setState] = useState<'pending' | 'done' | 'error'>('pending');
   const [error, setError] = useState<string | null>(null);
   // 'link': the link itself can't be used (expired, used, cut off) — the next
@@ -43,7 +46,7 @@ export function ConfirmEmailChange() {
       .catch((err) => {
         setState('error');
         if (err instanceof NetworkError) {
-          setError('Network error — check your connection and try again.');
+          setError(t('login.errNetwork'));
         } else if (err instanceof ApiError && err.code === 'invalid_token') {
           setProblem('link');
         } else if (err instanceof ApiError && err.code === 'email_in_use') {
@@ -51,9 +54,11 @@ export function ConfirmEmailChange() {
         } else if (err instanceof ApiError) {
           setError(err.message);
         } else {
-          setError("Couldn't confirm the email change. Try again in a minute.");
+          setError(t('pw.confirmFailed'));
         }
       });
+    // The words are read when the answer lands; the confirm runs once per token.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   return (
@@ -64,26 +69,24 @@ export function ConfirmEmailChange() {
         {state === 'pending' && (
           <>
             <AtSign className="mx-auto h-12 w-12 text-gold mb-4 animate-pulse" />
-            <AuthCardTitle size="md">Confirming your new email…</AuthCardTitle>
+            <AuthCardTitle size="md">{t('pw.confirming')}</AuthCardTitle>
             <p className="text-silver text-sm">
-              One moment.
+              {t('pw.oneMoment')}
             </p>
           </>
         )}
         {state === 'done' && (
           <>
             <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-            <AuthCardTitle size="md">Email updated</AuthCardTitle>
+            <AuthCardTitle size="md">{t('pw.emailUpdated')}</AuthCardTitle>
             <p className="text-silver text-sm mb-6">
-              Your sign-in email has been changed. Every existing session
-              has been signed out. Sign in again with your new email to
-              continue.
+              {t('pw.emailUpdatedBody')}
             </p>
             {/* Signing in again IS this page's next step — full-width
                 button, not an easy-to-miss text link (same complaint as
                 the invite page's hidden "Go to sign in"). */}
             <Button asChild variant="secondary" className="w-full">
-              <Link to="/login">Go to sign in</Link>
+              <Link to="/login">{t('pw.goToSignIn')}</Link>
             </Button>
           </>
         )}
@@ -92,17 +95,11 @@ export function ConfirmEmailChange() {
       {state === 'error' && (
         <LinkProblem
           kind={problem === 'link' ? 'expired' : 'error'}
-          title={problem === 'link' ? 'This confirmation link can’t be used' : problem === 'taken' ? 'That email is taken' : 'Couldn’t confirm the change'}
-          reason={
-            problem === 'link'
-              ? 'It has expired or was already used. Sign in and request a new change in Settings.'
-              : problem === 'taken'
-                ? 'Another account claimed that email before you could confirm. Sign in and pick a different one in Settings.'
-                : error
-          }
+          title={problem === 'link' ? t('pw.confirmLinkBad') : problem === 'taken' ? t('pw.emailTaken') : t('pw.confirmCouldnt')}
+          reason={problem === 'link' ? t('pw.confirmLinkBadWhy') : problem === 'taken' ? t('pw.emailTakenWhy') : error}
           action={
             <Button asChild size="lg" className="w-full sm:w-auto">
-              <Link to="/login?next=/settings">Sign in</Link>
+              <Link to="/login?next=/settings">{t('login.signIn')}</Link>
             </Button>
           }
         />

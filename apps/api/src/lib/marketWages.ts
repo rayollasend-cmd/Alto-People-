@@ -7,6 +7,7 @@ import { internalSites, scopeWhere } from './scope.js';
 import { tenantIdForWrite } from './tenant.js';
 import { runForEachTenant } from './tenantJobs.js';
 import { CBSA_CATALOG, SOC_CATALOG, cbsaByCode, positionKey, socByCode } from './marketCatalog.js';
+import { logger } from './logger.js';
 
 /**
  * Pay and bill-rate intelligence.
@@ -274,7 +275,7 @@ export function startMarketWageCron(): void {
   setTimeout(() => void tick().catch((err) => console.error('[alto-people/api] market wage refresh failed:', err)), 5 * 60_000).unref();
   timer = setInterval(() => void tick().catch((err) => console.error('[alto-people/api] market wage refresh failed:', err)), every);
   timer.unref();
-  console.log(`[alto-people/api] market wage refresh armed (every ${env.MARKET_WAGE_REFRESH_HOURS}h)`);
+  logger.info(`market wage refresh armed (every ${env.MARKET_WAGE_REFRESH_HOURS}h)`);
 }
 
 /* ----- Reading the data ------------------------------------------------------------ */

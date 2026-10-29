@@ -4,7 +4,6 @@ import {
   DrugTestBulkInitiateInputSchema,
   DrugTestBulkInitiateResponseSchema,
   DrugTestDetailSchema,
-  DrugTestInitiateInputSchema,
   DrugTestListResponseSchema,
   DrugTestPendingResponseSchema,
   DrugTestUpdateInputSchema,
@@ -21,7 +20,7 @@ import {
 } from '../lib/associateClients.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
-import { scopeAssociates } from '../lib/scope.js';
+import { scopeAssociates, scopeWhere } from '../lib/scope.js';
 
 /**
  * Drug-test directorate — mirrors the background-check surface, with one
@@ -220,9 +219,13 @@ drugTestsRouter.post('/bulk-initiate', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
+    if (parsed.data.externalId && parsed.data.associateIds.length !== 1) {
+      throw new HttpError(400, 'external_id_one_person', 'A provider reference belongs to one person’s order.');
+    }
     const associates = await prisma.associate.findMany({
       take: 500,
-      where: { id: { in: parsed.data.associateIds }, deletedAt: null },
+      // The people in the caller's reach only (scope-every-list).
+      where: scopeWhere<Prisma.AssociateWhereInput>({ id: { in: parsed.data.associateIds }, deletedAt: null }, scopeAssociates(req.user!)),
       select: {
         id: true,
         applications: { select: { clientId: true }, take: 1 },
@@ -238,15 +241,20 @@ drugTestsRouter.post('/bulk-initiate', MANAGE, async (req, res, next) => {
     const hasOpen = new Set(openOrders.map((o) => o.associateId));
     const toCreate = associates.filter((a) => !hasOpen.has(a.id));
 
-    if (toCreate.length > 0) {
-      await prisma.drugTest.createMany({
-        data: toCreate.map((a) => ({
-          associateId: a.id,
-          clientId: a.applications[0]?.clientId ?? null,
-          provider: parsed.data.provider,
-          status: 'INITIATED' as const,
-        })),
-      });
+    const made = toCreate.length > 0
+      ? await prisma.drugTest.createManyAndReturn({
+          data: toCreate.map((a) => ({
+            associateId: a.id,
+            clientId: a.applications[0]?.clientId ?? null,
+            provider: parsed.data.provider,
+            externalId: parsed.data.externalId || null,
+            status: 'INITIATED' as const,
+          })),
+          select: { id: true },
+        })
+      : [];
+    if (parsed.data.associateIds.length === 1 && associates.length === 0) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found');
     }
 
     await recordComplianceEvent({
@@ -268,6 +276,7 @@ drugTestsRouter.post('/bulk-initiate', MANAGE, async (req, res, next) => {
       DrugTestBulkInitiateResponseSchema.parse({
         created: toCreate.length,
         skipped: parsed.data.associateIds.length - toCreate.length,
+        ids: made.map((m) => m.id),
       })
     );
   } catch (err) {
@@ -323,48 +332,6 @@ drugTestsRouter.get('/:id', async (req, res, next) => {
         reports,
       })
     );
-  } catch (err) {
-    next(err);
-  }
-});
-
-/** Order a single test. STUBBED like background checks: the row records the
- *  order; HR runs it in the provider portal and flips status via /update. */
-drugTestsRouter.post('/', MANAGE, async (req, res, next) => {
-  try {
-    const parsed = DrugTestInitiateInputSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
-    }
-    const associate = await prisma.associate.findFirst({
-      where: { id: parsed.data.associateId, deletedAt: null },
-      include: { applications: { select: { clientId: true }, take: 1 } },
-    });
-    if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
-
-    const created = await prisma.drugTest.create({
-      data: {
-        associateId: associate.id,
-        clientId: associate.applications[0]?.clientId ?? null,
-        provider: parsed.data.provider,
-        externalId: parsed.data.externalId ?? null,
-        status: 'INITIATED',
-      },
-      include: TEST_INCLUDE,
-    });
-
-    await recordComplianceEvent({
-      actorUserId: req.user!.id,
-      action: 'compliance.drug_test_initiated',
-      entityType: 'DrugTest',
-      entityId: created.id,
-      associateId: associate.id,
-      clientId: created.clientId,
-      metadata: { provider: created.provider, stub: true },
-      req,
-    });
-
-    res.status(201).json(toTest(created));
   } catch (err) {
     next(err);
   }

@@ -8,11 +8,14 @@ import {
   ClientUpdateInputSchema,
   LocationCreateInputSchema,
   LocationUpdateInputSchema,
+  can,
+  type Capability,
   type ClientListItem,
   type ClientListResponse,
+  type ClientOptionsResponse,
   type ClientSummary,
   type LocationSummary,
-  csvCell,
+  toCsv,
 } from '@alto-people/shared';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
@@ -26,16 +29,19 @@ import { invitePortalAccount } from '../lib/portalInvite.js';
 import { portalEngagementFor } from '../lib/portalEngagement.js';
 import { computePortalReadiness, nudgePortalReadiness } from '../lib/portalReadiness.js';
 import { trackNotificationWork } from '../lib/notify.js';
-import { scopeClients } from '../lib/scope.js';
+import { internalSites, scopeClients } from '../lib/scope.js';
+import { clientSignOffWeeks, signOffsForStatements } from '../lib/portalHoursSignOff.js';
+import { moduleOn } from '../lib/tenantProfile.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
 import { computeStatementSnapshot, type StatementSnapshot } from '../lib/clientStatement.js';
 import { orgDateKey, startOfWeekUTC } from '../lib/timeAnomalies.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import {
   buildClientServiceReport,
   renderClientServiceReportPdf,
 } from '../lib/clientServiceReport.js';
-import { completeStatementSnapshot, renderStatementPdf, statementContext } from '../lib/statementPdf.js';
+import { completeStatementSnapshot, renderStatementPdf, statementContext, statementCsvRows } from '../lib/statementPdf.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 import { finalizeStatement, notifyPortalOfStatement, statementLabel } from '../lib/statementFinalize.js';
 import { recordStatementPaidInFull, statementBalances } from '../lib/books/posting/receivables.js';
@@ -48,6 +54,8 @@ export const clientsRouter = Router();
 
 const MANAGE = requireCapability('manage:clients');
 const VIEW = requireCapability('view:clients');
+/** Who reads the client picker (GET /clients/options): the accounts area, and whoever invites, onboards or makes offers. */
+const CLIENT_OPTION_READERS = ['view:clients', 'invite:onboarding', 'manage:onboarding', 'manage:recruiting'] as const satisfies readonly Capability[];
 
 /**
  * Mount-level gate for the /clients router (used in app.ts instead of a
@@ -75,6 +83,14 @@ export function clientsAccessGate(
   res: Response,
   next: NextFunction,
 ): void {
+  // GET /clients/options: the invite/application/offer client picker. Anyone
+  // who may invite or onboard reads it (the workforce manager and the shift
+  // supervisor hold no view:clients — PEOPLE-4, FLOOR-1); the handler clamps
+  // to the caller's own clients through scopeClients.
+  if (req.method === 'GET' && /^\/options\/?$/.test(req.path) && req.user && CLIENT_OPTION_READERS.some((c) => can(req.user!, c))) {
+    next();
+    return;
+  }
   if (
     req.method === 'GET' &&
     /^\/[^/]+\/locations\/?$/.test(req.path) &&
@@ -134,6 +150,27 @@ const CLIENTS_DEFAULT_PAGE_SIZE = 1000;
 /** How the internal-hires pseudo-client is recognised (no flag on Client yet): its name. */
 export const INTERNAL_HIRES_MARK = 'Internal Hires';
 const CLIENTS_MAX_PAGE_SIZE = 500;
+
+/**
+ * GET /clients/options — id, name and status of every client the caller
+ * reaches (tenant + scopeClients: a shift supervisor gets their own client,
+ * a site-bound manager the clients with a site in reach), by name. The
+ * pickers on New application, Bulk invite and offers read this instead of
+ * the accounts list, which needs view:clients and carries bill rates.
+ */
+clientsRouter.get('/options', async (req, res, next) => {
+  try {
+    const rows = await prisma.client.findMany({
+      where: { ...scopeClients(req.user!), tenantId: tenantIdForWrite() },
+      select: { id: true, name: true, status: true, state: true },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+    const body: ClientOptionsResponse = { clients: rows };
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
 
 clientsRouter.get('/', async (req, res, next) => {
   try {
@@ -711,18 +748,18 @@ function statementRow(r: {
   return {
     id: r.id,
     clientId: r.clientId,
-    periodStart: r.periodStart.toISOString().slice(0, 10),
-    periodEnd: r.periodEnd.toISOString().slice(0, 10),
+    periodStart: dateColumnKey(r.periodStart),
+    periodEnd: dateColumnKey(r.periodEnd),
     number: r.number,
     status: r.status,
     // Statements saved before a field existed read complete (lib/statementPdf).
-    snapshot: completeStatementSnapshot(r.snapshot as StatementSnapshot, 'Client', { start: r.periodStart.toISOString().slice(0, 10), end: r.periodEnd.toISOString().slice(0, 10) }),
+    snapshot: completeStatementSnapshot(r.snapshot as StatementSnapshot, 'Client', { start: dateColumnKey(r.periodStart), end: dateColumnKey(r.periodEnd) }),
     finalizedAt: r.finalizedAt?.toISOString() ?? null,
     finalizedByEmail: r.finalizedBy?.email ?? null,
     paidAt: r.paidAt?.toISOString() ?? null,
     paymentRef: r.paymentRef ?? null,
     poNumber: r.poNumber ?? null,
-    dueAt: r.dueAt ? r.dueAt.toISOString().slice(0, 10) : null,
+    dueAt: r.dueAt ? dateColumnKey(r.dueAt) : null,
     reminderStage: r.reminderStage ?? 0,
     lastReminderAt: r.lastReminderAt?.toISOString() ?? null,
   };
@@ -850,7 +887,7 @@ clientsRouter.get('/statements/rollup', STATEMENTS_READ, async (req, res, next) 
           dueOn,
           daysLate: unpaid && dueOn ? Math.max(0, daysPastDue(dueOn, now)) : 0,
           open: unpaid ? (open.get(st.id) ?? snap.totals?.amount ?? 0) : 0,
-          previous: prev && prevSnap?.totals ? { statementId: prev.id, periodStart: prev.periodStart.toISOString().slice(0, 10), hours: prevSnap.totals.hours ?? 0, amount: prevSnap.totals.amount ?? 0 } : null,
+          previous: prev && prevSnap?.totals ? { statementId: prev.id, periodStart: dateColumnKey(prev.periodStart), hours: prevSnap.totals.hours ?? 0, amount: prevSnap.totals.amount ?? 0 } : null,
         });
       }
     }
@@ -914,9 +951,43 @@ clientsRouter.get('/:id/statements', STATEMENTS_READ, async (req, res, next) => 
         },
       ]),
     );
+    // The client's sign-off on the store weeks each statement bills (portal
+    // hours sign-off) — only where the client portal is on.
+    const signOffs = (await moduleOn('clientPortal')) ? await signOffsForStatements(req.params.id, rows) : null;
     res.json({
-      statements: rows.map((r) => ({ ...statementRow(r), clientReviewed: reviewed.get(r.id) ?? null })),
+      statements: rows.map((r) => ({
+        ...statementRow(r),
+        clientReviewed: reviewed.get(r.id) ?? null,
+        ...(signOffs ? { hoursSignOff: signOffs.get(r.id) ?? { signed: 0, flagged: 0 } } : {}),
+      })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /clients/:id/hours-signoffs?weeks=6 — the client's sign-off on each of
+ * its stores' finished weeks (lib/portalHoursSignOff): the worked hours now,
+ * and who signed or flagged them when, with what total. Only where the
+ * client portal is on; a site-bound caller reads only their own stores.
+ */
+clientsRouter.get('/:id/hours-signoffs', VIEW, async (req, res, next) => {
+  try {
+    const owner = await prisma.client.findFirst({
+      where: { AND: [scopeClients(req.user!), { id: req.params.id, tenantId: tenantIdForWrite() }] },
+      select: { id: true },
+    });
+    if (!owner) throw new HttpError(404, 'client_not_found', 'Client not found');
+    if (!(await moduleOn('clientPortal'))) {
+      res.json({ enabled: false, weeks: [] });
+      return;
+    }
+    const weeks = await clientSignOffWeeks(owner.id, {
+      weeks: Number(req.query.weeks) || 6,
+      siteWhere: internalSites(req.user!),
+    });
+    res.json({ enabled: true, weeks });
   } catch (err) {
     next(err);
   }
@@ -1128,7 +1199,7 @@ const noteRow = (n: { id: string; clientId: string; statementId: string | null; 
   statementId: n.statementId,
   kind: n.kind as 'PROMISE' | 'CALL' | 'NOTE',
   note: n.note,
-  promisedOn: n.promisedOn ? n.promisedOn.toISOString().slice(0, 10) : null,
+  promisedOn: n.promisedOn ? dateColumnKey(n.promisedOn) : null,
   promisedAmount: n.promisedAmount === null ? null : Number(n.promisedAmount),
   createdById: n.createdById,
   createdAt: n.createdAt.toISOString(),
@@ -1200,8 +1271,8 @@ clientsRouter.get('/:id/dunning', STATEMENTS_READ, async (req, res, next) => {
         recipients: r.recipients,
         statementId: r.statement.id,
         number: r.statement.number,
-        periodStart: r.statement.periodStart.toISOString().slice(0, 10),
-        periodEnd: r.statement.periodEnd.toISOString().slice(0, 10),
+        periodStart: dateColumnKey(r.statement.periodStart),
+        periodEnd: dateColumnKey(r.statement.periodEnd),
       })),
     });
   } catch (err) {
@@ -1217,6 +1288,11 @@ clientsRouter.post('/:id/statements/:sid/mark-paid', STATEMENTS, async (req, res
       typeof req.body?.paymentRef === 'string' && req.body.paymentRef.trim()
         ? String(req.body.paymentRef).trim().slice(0, 120)
         : null;
+    // When the money arrived and how (MONEY-17): a check that came last week is dated last week, not today.
+    const paid = z
+      .object({ receivedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), method: z.enum(['ACH', 'CHECK', 'WIRE', 'CARD', 'OTHER']).optional() })
+      .parse({ receivedOn: req.body?.receivedOn || undefined, method: req.body?.method || undefined });
+    if (paid.receivedOn && paid.receivedOn > orgDateKey(new Date())) throw new HttpError(400, 'future_date', 'A payment can’t be received in the future.');
     const row = await prisma.clientStatement.findFirst({
       where: { id: req.params.sid, clientId: req.params.id },
     });
@@ -1229,7 +1305,7 @@ clientsRouter.post('/:id/statements/:sid/mark-paid', STATEMENTS, async (req, res
     }
     // One path for money received (lib/books/posting/receivables): a payment of
     // what is still open, into the books, and the statement marked paid.
-    const updated = await recordStatementPaidInFull(prisma, { statementId: row.id, userId: req.user!.id, paymentRef });
+    const updated = await recordStatementPaidInFull(prisma, { statementId: row.id, userId: req.user!.id, paymentRef, receivedOn: paid.receivedOn, method: paid.method });
     await recordCriticalAudit(
       {
         actorUserId: req.user!.id,
@@ -1259,48 +1335,31 @@ clientsRouter.get('/:id/statements/:sid.csv', STATEMENTS_READ, async (req, res, 
       where: { id: req.params.sid, clientId: req.params.id },
     });
     if (!row) throw new HttpError(404, 'not_found', 'Statement not found');
-    const s = completeStatementSnapshot(row.snapshot as unknown as StatementSnapshot, 'Client', { start: row.periodStart.toISOString().slice(0, 10), end: row.periodEnd.toISOString().slice(0, 10) });
-    const lines: string[] = [];
-    const push = (...cells: Array<string | number>) =>
-      lines.push(cells.map((c) => csvCell(String(c))).join(','));
-    push('Client', s.clientName);
-    push('Period', s.periodStart, s.periodEnd);
-    push(
-      'Statement',
-      row.status === 'FINAL' && row.number !== null
-        ? `No. ${String(row.number).padStart(4, '0')}`
-        : 'DRAFT',
+    // The PDF's twin (lib/statementPdf.statementCsvRows): every line the total includes, through the shared writer.
+    const client = await prisma.client.findFirst({ where: { id: row.clientId }, select: { poNumber: true, paymentTermsDays: true } });
+    const csv = toCsv(
+      statementCsvRows(row.snapshot as unknown as StatementSnapshot, {
+        status: row.status,
+        number: row.number,
+        finalizedAt: row.finalizedAt,
+        dueDate: row.dueAt,
+        paidAt: row.paidAt,
+        paymentRef: row.paymentRef,
+        poNumber: row.poNumber ?? client?.poNumber ?? null,
+        termsDays: client?.paymentTermsDays ?? null,
+        // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: statement periods are @db.Date values stored at UTC midnight.
+        period: { start: row.periodStart.toISOString().slice(0, 10), end: row.periodEnd.toISOString().slice(0, 10) },
+      }),
     );
-    push('');
-    push('Service', 'Hours', 'Rate', 'Amount');
-    for (const l of s.lines) push(l.label, l.hours.toFixed(2), l.rate.toFixed(2), l.amount.toFixed(2));
-    push(
-      'Total',
-      s.totals.hours.toFixed(2),
-      '',
-      s.totals.amount.toFixed(2),
-    );
-    push('Regular hours', s.totals.regularHours.toFixed(2));
-    push('Overtime hours', s.totals.otHours.toFixed(2));
-    push('');
-    push('Work site', 'Hours', 'Amount');
-    for (const st of s.stores) push(st.locationName, st.hours.toFixed(2), st.amount.toFixed(2));
-    push('');
-    push('Shifts published', s.sla.publishedShifts);
-    push('Shifts filled', s.sla.assignedShifts);
-    if (s.sla.fillRatePct !== null) push('Fill rate %', s.sla.fillRatePct);
-    if (s.sla.punctualPct !== null) push('On-time %', s.sla.punctualPct);
-    push('No-shows', s.sla.noShows);
-    if (s.sla.pendingEntries > 0) push('Entries pending approval (unbilled)', s.sla.pendingEntries);
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="statement-${row.periodStart.toISOString().slice(0, 10)}${
+      `attachment; filename="statement-${dateColumnKey(row.periodStart)}${
         row.number !== null ? `-no${String(row.number).padStart(4, '0')}` : '-draft'
       }.csv"`,
     );
-    res.send(lines.join('\n'));
+    res.send(csv);
   } catch (err) {
     next(err);
   }
@@ -1397,7 +1456,7 @@ clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS_READ, async (req, res, 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="statement-${row.periodStart.toISOString().slice(0, 10)}${
+      `attachment; filename="statement-${dateColumnKey(row.periodStart)}${
         row.number !== null ? `-no${String(row.number).padStart(4, '0')}` : '-draft'
       }.pdf"`,
     );

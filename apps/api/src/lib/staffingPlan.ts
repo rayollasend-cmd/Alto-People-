@@ -145,7 +145,7 @@ export async function buildStaffingPlan(user: SessionUser, opts: { weeks: number
     scheduledBy.set(key, set);
   }
   // The client's bill rate: the average of its cards in force today.
-  const today = now.toISOString().slice(0, 10);
+  const today = orgDateKey(now);
   const rateBy = new Map<string | null, number>();
   for (const clientId of new Set(live.map((s) => s.clientId))) {
     const inForce = cards.filter((c) => c.clientId === clientId && c.billRate != null && c.effectiveFrom <= today && (c.effectiveTo === null || c.effectiveTo >= today));

@@ -7,8 +7,8 @@ import type {
 } from '@alto-people/shared';
 import { toCsv } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { DEFAULT_TIMEZONE, formatTimeInZone, localDateKey } from './timezone.js';
-import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
+import { dateColumnKey, formatTimeInZone, localDateKey } from './timezone.js';
+import { companyWorkweek, netWorkedMinutes, orgDateKey, type BreakFacts } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
 import { buildAssociateDays, saturdayWeek, toUsDate, type TimesheetSourceEntry } from './timesheetWeek.js';
 import { fieldglassDueAt, fieldglassHours } from './fieldglassDesk.js';
@@ -108,8 +108,10 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
   // Each entry into its week (by the site's own calendar) and client.
   type Group = { weekStart: string; weekEnd: string; dateKeys: string[]; clientId: string | null; entries: TimesheetSourceEntry[] };
   const groups = new Map<string, Group>();
+  // A punch with no store reads on the company's clock.
+  const companyTz = companyWorkweek().timezone;
   for (const e of raw) {
-    const tz = e.location?.timezone ?? DEFAULT_TIMEZONE;
+    const tz = e.location?.timezone ?? companyTz;
     const wk = saturdayWeek(e.clockInAt, tz);
     const key = `${wk.weekStart}|${e.clientId ?? ''}`;
     let g = groups.get(key);
@@ -139,7 +141,7 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
         where: { associateId: a.id, weekStart: { in: weekStarts.map((w) => new Date(`${w}T00:00:00Z`)) } },
       })
     : [];
-  const sheetOf = new Map(sheets.map((s) => [`${s.weekStart.toISOString().slice(0, 10)}|${s.clientId}`, s]));
+  const sheetOf = new Map(sheets.map((s) => [`${dateColumnKey(s.weekStart)}|${s.clientId}`, s]));
   const enteredByIds = [...new Set(sheets.map((s) => s.enteredById).filter((x): x is string => !!x))];
   const users = enteredByIds.length
     ? await prisma.user.findMany({
@@ -150,7 +152,7 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
   const nameOf = new Map(users.map((u) => [u.id, u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : u.email]));
   const reg = a.fieldglassRegistration;
 
-  const todayKey = localDateKey(now, DEFAULT_TIMEZONE);
+  const todayKey = orgDateKey(now);
   const year = Number(todayKey.slice(0, 4));
   const fg = { approved: 0, awaiting: 0, rejected: 0, toEnter: 0, overdue: 0, notRegistered: 0, variances: 0 };
   const money = { approved: 0, awaiting: 0, atRisk: 0 };
@@ -247,7 +249,7 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
   const hours = round2(weeks.reduce((s, w) => s + w.total, 0));
   const newest = raw[0];
   const newestClient = newest?.clientId ? clientOf.get(newest.clientId) : undefined;
-  const firstTz = firstEntry?.location?.timezone ?? DEFAULT_TIMEZONE;
+  const firstTz = firstEntry?.location?.timezone ?? companyTz;
   const anyRate = clients.some((c) => c.fieldglassBillRate != null);
 
   return {
@@ -263,7 +265,7 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
       firstClockIn: firstEntry
         ? { date: localDateKey(firstEntry.clockInAt, firstTz), time: formatTimeInZone(firstEntry.clockInAt, firstTz) }
         : null,
-      lastWorked: newest ? localDateKey(newest.clockInAt, newest.location?.timezone ?? DEFAULT_TIMEZONE) : null,
+      lastWorked: newest ? localDateKey(newest.clockInAt, newest.location?.timezone ?? companyTz) : null,
       securityId: input.showSecurityId ? fieldglassSecurityId(a).value : null,
     },
     schedule: schedule ? { name: schedule.name, frequency: schedule.frequency } : null,
@@ -283,7 +285,7 @@ export async function buildTimesheetHistory(input: TimesheetHistoryInput): Promi
     },
     years: [...new Set(weeks.map((w) => Number(w.weekEnd.slice(0, 4))))].sort((x, y) => y - x),
     truncated: raw.length >= MAX_ENTRIES || (!!firstEntry && firstEntry.clockInAt < from),
-    from: raw.length >= MAX_ENTRIES ? localDateKey(raw[raw.length - 1]!.clockInAt, DEFAULT_TIMEZONE) : from.toISOString().slice(0, 10),
+    from: orgDateKey(raw.length >= MAX_ENTRIES ? raw[raw.length - 1]!.clockInAt : from),
     generatedAt: now.toISOString(),
   };
 }

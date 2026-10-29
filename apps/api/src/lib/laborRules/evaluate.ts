@@ -1,4 +1,5 @@
 import type { MinorBand, ResolvedRules, Severity } from './params.js';
+import { addDaysToKey } from '../timezone.js';
 
 /**
  * Brief 2-2 step 1 — the evaluators (report §4.2). Pure: no database, no
@@ -549,9 +550,7 @@ function minorFindings(draft: ScheduleShift, ctx: ScheduleContext, date: string,
   const start = localParts(draft.startsAt, draft.timezone).minutes;
   const endParts = localParts(draft.endsAt, draft.timezone);
   const end = endParts.date === date ? endParts.minutes : 24 * 60 + endParts.minutes;
-  const nextDay = new Date(`${date}T12:00:00Z`);
-  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-  const schoolTomorrow = (ctx.isSchoolDay ?? defaultIsSchoolDay)(nextDay.toISOString().slice(0, 10));
+  const schoolTomorrow = (ctx.isSchoolDay ?? defaultIsSchoolDay)(addDaysToKey(date, 1));
   const out: ScheduleFinding[] = [];
   const block = (rule: ScheduleFinding['rule'], reason: string) => {
     if (!out.some((f) => f.rule === rule)) out.push({ rule, severity: 'block', reason: `${reason}, ${label}` });

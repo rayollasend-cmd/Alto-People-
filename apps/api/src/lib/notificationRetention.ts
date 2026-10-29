@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import { tenantJob } from './tenantJobs.js';
 import { env } from '../config/env.js';
+import { logger } from './logger.js';
 
 /**
  * Notification retention sweep.
@@ -73,8 +74,8 @@ export async function runNotificationRetention(
   });
 
   if (inAppDeleted > 0 || auditDeleted > 0) {
-    console.log(
-      `[alto-people/api] notification retention: removed ${inAppDeleted} read ` +
+    logger.info(
+      `notification retention: removed ${inAppDeleted} read ` +
         `bell rows (>${IN_APP_READ_RETENTION_DAYS}d) and ${auditDeleted} ` +
         `delivery-audit rows (>${DELIVERY_AUDIT_RETENTION_DAYS}d)`,
     );
@@ -96,8 +97,8 @@ export function startNotificationRetentionCron(): void {
   tick();
   timer = setInterval(tick, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] notification retention cron armed (every ${seconds}s; ` +
+  logger.info(
+    `notification retention cron armed (every ${seconds}s; ` +
       `read bell rows ${IN_APP_READ_RETENTION_DAYS}d, delivery audit ${DELIVERY_AUDIT_RETENTION_DAYS}d)`,
   );
 }

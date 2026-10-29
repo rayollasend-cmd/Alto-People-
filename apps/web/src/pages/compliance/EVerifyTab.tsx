@@ -44,7 +44,7 @@ import {
 import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, ymdLocal } from '@/lib/format';
-import { associatePhotoUrl } from '@/lib/photoUrl';
+import { personPhotoUrl } from '@/lib/photoUrl';
 import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useStoreScope } from '@/lib/storeScope';
@@ -103,10 +103,22 @@ const BLOCKER_LABEL: Record<EVerifyBlocker, string> = {
   SECTION1_INCOMPLETE: 'Section 1 unsigned',
   SECTION2_INCOMPLETE: 'Section 2 not verified',
   NO_CITIZENSHIP: 'No citizenship status',
-  NO_SSN: 'No readable SSN',
+  NO_SSN: 'No SSN on file',
   NO_DOB: 'No date of birth',
   NO_HIRE_DATE: 'No hire date',
 };
+
+/**
+ * A blocker in words. An SSN whose last four are on file but which can't be
+ * decrypted is not "no SSN": the row showed "SSN ••••6789" beside "No
+ * readable SSN" (PEOPLE-27). Say what is true and what to do.
+ */
+function blockerLabel(b: EVerifyBlocker, ssnLast4: string | null | undefined): string {
+  if (b === 'NO_SSN' && ssnLast4) return "SSN can't be read — collect it again";
+  // Not known here (the case drawer): don't claim there is none.
+  if (b === 'NO_SSN' && ssnLast4 === undefined) return 'SSN missing or unreadable';
+  return BLOCKER_LABEL[b];
+}
 
 /**
  * Where each blocker gets FIXED. I-9 sections (and the citizenship status
@@ -322,6 +334,10 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
     blocked: number;
   } | null = refreshQuery.data?.counts ?? null;
   const truncated = refreshQuery.data?.truncated ?? false;
+  // People with no case yet whose case can't be sent (PEOPLE-27): the API's
+  // `blocked` also counted everyone already authorized ("Blocked 44" beside
+  // "Authorized 37"). Same rows the counts are made from.
+  const cantSubmit = (rows ?? []).filter((r) => r.status === null && !r.ready).length;
   const error = refreshQuery.error ? refreshQuery.error instanceof ApiError ? refreshQuery.error.message : 'Could not load the roster.' : null;
   const refresh = async () => {
     await refreshQuery.refetch();
@@ -415,10 +431,20 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
 
       {/* Snapshot — the "how are we doing on E-Verify" question, answered
           without scrolling a table. */}
+      {/* (cantSubmit: people with no case yet whose case can't be sent — an
+          authorized person isn't "blocked"; the counts come from these same rows.) */}
       {counts && counts.total > 0 && (
         <KpiStrip>
           {/* Each number is the filter for the rows it counts. */}
-          <Kpi label="Associates" value={counts.total} onClick={() => setFilter('all')} active={filter === 'all'} />
+          {/* Named by who it counts (PEOPLE-23): everyone hired or still
+              onboarding — not the People page's "Working" or "On the books". */}
+          <Kpi
+            label="Hired or onboarding"
+            value={counts.total}
+            onClick={() => setFilter('all')}
+            active={filter === 'all'}
+            hint="Everyone hired or still onboarding: anyone whose application wasn't declined or cancelled. Shows them all."
+          />
           <Kpi label="Authorized" value={counts.authorized} tone="text-success" onClick={() => setFilter('authorized')} active={filter === 'authorized'} />
           <Kpi label="Pending" value={counts.pending} onClick={() => setFilter('pending')} active={filter === 'pending'} />
           <Kpi
@@ -436,10 +462,13 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
             onClick={() => setFilter('overdue')}
             active={filter === 'overdue'}
           />
+          {/* "Blocked 44" beside "Authorized 37" read as "44 people may not
+              work" (PEOPLE-27). It counts cases that can't be SUBMITTED yet. */}
           <Kpi
-            label="Blocked"
-            value={counts.blocked}
-            tone={counts.blocked > 0 ? 'text-warning' : undefined}
+            label="Can't submit yet"
+            value={cantSubmit}
+            tone={cantSubmit > 0 ? 'text-warning' : undefined}
+            hint="People whose E-Verify case can't be sent yet: something it needs is missing (a finished I-9, a readable SSN, a date of birth or a hire date). Nobody here is barred from working; each row says what's missing."
           />
         </KpiStrip>
       )}
@@ -636,7 +665,7 @@ function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: (() => void
       title={onOpen ? undefined : 'View only — opening a case requires compliance management access.'}
       className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-left transition-colors enabled:hover:bg-navy-secondary/40 disabled:cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
     >
-      <Avatar src={associatePhotoUrl(row.associateId)} name={row.associateName} email={row.associateEmail} size="sm" />
+      <Avatar src={personPhotoUrl({ photoUrl: row.associatePhotoUrl, associateId: row.associateId })} name={row.associateName} email={row.associateEmail} size="sm" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm text-white">{row.associateName}</span>
@@ -672,14 +701,18 @@ function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: (() => void
 
       {/* Why this person isn't actionable, without opening them. */}
       <div className="w-full sm:w-56">
-        {row.blockers.length === 0 ? (
+        {row.status ? (
+          // A case is already on file: what a NEW case would need is moot —
+          // every authorized row read "No SSN on file" (PEOPLE-27).
+          <span className="text-xs text-silver">Case on file</span>
+        ) : row.blockers.length === 0 ? (
           <span className="inline-flex items-center gap-1 text-xs text-success">
             <Check className="h-3.5 w-3.5" />
             Ready
           </span>
         ) : (
           <span className="text-xs text-warning">
-            {row.blockers.map((b) => BLOCKER_LABEL[b]).join(' · ')}
+            {row.blockers.map((b) => blockerLabel(b, row.ssnLast4 ?? null)).join(' · ')}
           </span>
         )}
       </div>
@@ -841,7 +874,7 @@ function CaseDrawer({
                           rel={fix.newTab ? 'noreferrer' : undefined}
                           className="inline-flex items-center gap-1 text-gold hover:underline"
                         >
-                          {BLOCKER_LABEL[b]}
+                          {blockerLabel(b, undefined)}
                           <ExternalLink className="h-3 w-3" />
                         </Link>
                       );
@@ -877,7 +910,7 @@ function CaseDrawer({
                   hint={
                     detail.ssn
                       ? undefined
-                      : 'No readable SSN — the employee must re-submit their W-4.'
+                      : "The SSN on file can't be read. Ask them to enter it again on their W-4."
                   }
                 />
                 <div className="col-span-2">

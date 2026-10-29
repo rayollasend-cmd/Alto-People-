@@ -146,7 +146,7 @@ import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { IntegrationsHome } from '@/pages/integrations/IntegrationsHome';
 import { TemplatesHome } from '@/pages/templates/TemplatesHome';
 import { WorktagsHome } from '@/pages/worktags/WorktagsHome';
-import { LearningHome } from '@/pages/learning/LearningHome';
+import { LearningCatalog } from '@/pages/learning/LearningCatalog';
 import { LearningPathsHome } from '@/pages/learningPaths/LearningPathsHome';
 import { InternalJobsHome } from '@/pages/internalJobs/InternalJobsHome';
 import { VaccinationsHome } from '@/pages/vaccinations/VaccinationsHome';
@@ -258,8 +258,8 @@ describe('axe pages — insights / compliance / misc long tail', () => {
     await expectNoViolations(container);
   });
 
-  it('<LearningHome> has no axe violations', async () => {
-    const { container } = renderPage(<LearningHome />);
+  it('<LearningCatalog> has no axe violations', async () => {
+    const { container } = renderPage(<LearningCatalog />);
     await screen.findByText('No courses');
     await expectNoViolations(container);
   });

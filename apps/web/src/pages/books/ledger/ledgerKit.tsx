@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { History } from '@/components/ui/icons';
+import { HandCoins, History } from '@/components/ui/icons';
 import { LEDGER_TYPE_LABELS, LEDGER_ACCOUNT_TYPES, JOURNAL_SOURCE_LABELS, type BooksDimensionsFilter, type LedgerAccountRow, type PostingBackfillResult } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { getBooksDimensions, listLedgerAccounts } from '@/lib/books/ledgerApi';
-import { backfillPosting } from '@/lib/books/receivablesApi';
+import { backfillPosting, settleMarkedPaid } from '@/lib/books/receivablesApi';
 import { fmtMoney, ymdLocal } from '@/lib/format';
 import { Button, type ButtonProps } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -154,10 +154,39 @@ export function backfillSummary(r: PostingBackfillResult): string {
     tax && `${tax} tax ${tax === 1 ? 'payment' : 'payments'}`,
     r.garnishmentRemittances && `${r.garnishmentRemittances} garnishment ${r.garnishmentRemittances === 1 ? 'payment' : 'payments'}`,
     r.wageAdvances && `${r.wageAdvances} wage ${r.wageAdvances === 1 ? 'advance' : 'advances'}`,
+    r.clientPayments && `${r.clientPayments} client ${r.clientPayments === 1 ? 'payment' : 'payments'} for statements marked paid`,
   ].filter(Boolean);
   const failed = r.failed.length ? ` ${r.failed.length} couldn’t post: ${r.failed[0]!.error}` : '';
   if (parts.length === 0) return r.failed.length ? `Nothing posted.${failed}` : 'The books already hold everything — nothing to post.';
   return `Posted ${parts.join(', ')}.${failed}`;
+}
+
+/**
+ * "Record the payments" (audit 2026-10-29 MONEY-3): statements marked paid
+ * with no payment behind them get the payment they were marked paid with —
+ * dated the day they were marked paid — so the books stop counting them as
+ * owed. For the people who keep the books; null for everyone else.
+ */
+export function RecordMarkedPaidButton({ label = 'Record the payments', ...props }: Omit<ButtonProps, 'onClick' | 'loading' | 'children'> & { label?: string }) {
+  const { can } = useAuth();
+  const qc = useQueryClient();
+  const settle = useMutation({
+    mutationFn: () => settleMarkedPaid(),
+    onSuccess: (r) => {
+      const words = r.payments ? `Recorded ${r.payments} ${r.payments === 1 ? 'payment' : 'payments'} (${fmtMoney(r.amount)}) for statements marked paid.` : 'Every statement marked paid already has its payment.';
+      if (r.failed.length) toast.error(`${words} ${r.failed.length} couldn’t be recorded: ${r.failed[0]!.error}`);
+      else toast.success(words);
+      void qc.invalidateQueries({ queryKey: ['books'] });
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not record the payments.'),
+  });
+  if (!can('manage:books')) return null;
+  return (
+    <Button {...props} loading={settle.isPending} onClick={() => settle.mutate()} title="Record a payment for each statement that was marked paid without one">
+      <HandCoins className="h-4 w-4" aria-hidden="true" />
+      {label}
+    </Button>
+  );
 }
 
 /**

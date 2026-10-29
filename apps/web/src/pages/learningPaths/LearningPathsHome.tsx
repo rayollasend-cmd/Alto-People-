@@ -96,7 +96,7 @@ export function LearningPathsHome() {
     <ListTemplate
         title="Learning paths"
         subtitle="Sequence courses into ordered tracks. People work through them in order."
-        related={[{ label: 'Courses & enrollments', to: '/learning' }]}
+        related={[{ label: 'Courses & enrollments', to: '/learning/catalog' }]}
         actions={canManage ? [{ label: 'New path', icon: Plus, primary: true, onSelect: () => setShowNew(true) }] : undefined}
     >
       <Card>

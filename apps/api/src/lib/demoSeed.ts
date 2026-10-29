@@ -1,3 +1,4 @@
+import { addDaysToKey as addDaysToDayKey } from './timezone.js';
 /**
  * The demo tenant's pure parts: a seeded random source, the cast, the
  * stores and the day planner. `scripts/seed-demo.ts` turns these into rows;
@@ -71,8 +72,7 @@ export class Rng {
 
 /** Calendar-day arithmetic on a key (not +24h) so DST days keep their boundaries. */
 export function addDaysToKey(key: string, days: number): string {
-  const [y, m, d] = key.split('-').map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+  return addDaysToDayKey(key, days);
 }
 
 /** 0 = Sunday … 6 = Saturday, for a day key. */

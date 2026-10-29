@@ -20,7 +20,8 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { usePrompt } from '@/lib/confirm';
-import { listClientLocations, listClients } from '@/lib/clientsApi';
+import { listClientLocations } from '@/lib/clientsApi';
+import { listClientOptions } from '@/lib/onboardingApi';
 import { DOCUMENT_KIND_LABEL, getDocumentVault } from '@/lib/documentsApi';
 import { fmtDate, ymdLocal } from '@/lib/format';
 import {
@@ -191,7 +192,14 @@ function ParticipantsTab({
   };
   const programs = useQuery({ queryKey: ['programs', 'list', filters], queryFn: () => listPrograms(filters) });
   const sponsors = useQuery({ queryKey: ['programs', 'sponsors'], queryFn: listSponsors });
-  const clients = useQuery({ queryKey: ['clients', 'names', 'programs'], queryFn: () => listClients({ status: 'ACTIVE', limit: 200 }) });
+  // The picker list (GET /clients/options): the caller's own clients, readable without view:clients.
+  const clients = useQuery({
+    queryKey: ['clients', 'options', 'active'],
+    queryFn: async () => {
+      const r = await listClientOptions();
+      return { clients: r.clients.filter((c) => c.status === 'ACTIVE') };
+    },
+  });
 
   // Deep link: /programs?associateId=<id> opens that person's program (or
   // a blank record for them). The param is consumed at once so Back and
@@ -479,7 +487,14 @@ function ProgramDialog(
     [d, props],
   );
 
-  const clients = useQuery({ queryKey: ['clients', 'names', 'programs'], queryFn: () => listClients({ status: 'ACTIVE', limit: 200 }) });
+  // The picker list (GET /clients/options): the caller's own clients, readable without view:clients.
+  const clients = useQuery({
+    queryKey: ['clients', 'options', 'active'],
+    queryFn: async () => {
+      const r = await listClientOptions();
+      return { clients: r.clients.filter((c) => c.status === 'ACTIVE') };
+    },
+  });
   const vault = useQuery({
     queryKey: ['programs', 'vault', associate?.id ?? null],
     queryFn: () => getDocumentVault(associate!.id),
@@ -1019,7 +1034,14 @@ function CalendarTab() {
   const [to, setTo] = useState(lastOfMonth(new Date(now.getFullYear(), now.getMonth() + 5, 1)));
   const [clientId, setClientId] = useState('');
   const [locationId, setLocationId] = useState('');
-  const clients = useQuery({ queryKey: ['clients', 'names', 'programs'], queryFn: () => listClients({ status: 'ACTIVE', limit: 200 }) });
+  // The picker list (GET /clients/options): the caller's own clients, readable without view:clients.
+  const clients = useQuery({
+    queryKey: ['clients', 'options', 'active'],
+    queryFn: async () => {
+      const r = await listClientOptions();
+      return { clients: r.clients.filter((c) => c.status === 'ACTIVE') };
+    },
+  });
   const locations = useQuery({
     queryKey: ['clients', 'locations', clientId],
     queryFn: () => listClientLocations(clientId),

@@ -29,15 +29,12 @@ type Tx = PrismaClient | Prisma.TransactionClient;
  * `periodStart` lies in `[yearStart, beforeDate)`. Returns dollars as a
  * Number (the tax engine works in plain numbers, not Prisma.Decimal).
  *
- * KNOWN APPROXIMATION (audit 2026-08): the IRS attributes wages to the
- * year PAID (disbursedAt — what the W-2 aggregator uses), while this
- * windows on periodStart. The two disagree only for the single period
- * straddling Dec/Jan, where the SS-cap/Medicare-surcharge bases can be
- * off by one period at the year boundary. A naive switch to disbursedAt
- * with these bounds would be WORSE (the previous period's paycheck
- * normally disburses after the next period starts and would drop out of
- * YTD entirely), so fixing this needs pay-date-aware bounds threaded
- * from every caller — deliberately not attempted here.
+ * Windowed on the run's periodStart. PAY RUNS DON'T USE THIS: the
+ * aggregator counts on the pay-date basis (computeYtdWagesPaidBatch below,
+ * deep audit CODE-2), as the W-2 does. The day-by-day callers (daily pay,
+ * manual checks, the take-home estimate) keep this window: a daily check
+ * for yesterday is often paid after today began, and would drop out of a
+ * disbursedAt window bounded by today.
  *
  * - Excluded: items on runs with `status = CANCELLED` (voided runs).
  * - Excluded: items with `status` other than DISBURSED (PENDING/HELD/
@@ -103,6 +100,91 @@ export async function computeYtdWagesBatch(
     const rows = await findInChunks(associateIds, (chunk) =>
       sick.findMany({
         where: { associateId: { in: chunk }, voidedAt: null, payDate: { gte: yearStart, lt: beforeDate } },
+        select: { associateId: true, grossAmount: true, nontaxableAmount: true },
+      }),
+    );
+    for (const r of rows) {
+      const taxable = Math.max(0, Number(r.grossAmount) - Number(r.nontaxableAmount));
+      if (taxable > 0) ytd.set(r.associateId, (ytd.get(r.associateId) ?? 0) + taxable);
+    }
+  }
+  return ytd;
+}
+
+/**
+ * The tax year of a check and the window its prior checks are counted in
+ * (deep audit CODE-2): the PAY DATE's calendar year — the W-2's, the 941's
+ * and the tax ledger's basis — from Jan 1 through the end of the pay day.
+ * The check for Sat Dec 19, 2026 – Fri Jan 1, 2027, paid Fri Jan 8, 2027,
+ * is a 2027 check: it starts 2027's wage bases and limits.
+ */
+export function taxYearWindow(payDate: Date): { taxYear: number; yearStart: Date; before: Date } {
+  const taxYear = payDate.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(taxYear, 0, 1));
+  const endOfPayDay = Date.UTC(taxYear, payDate.getUTCMonth(), payDate.getUTCDate()) + 86_400_000;
+  return { taxYear, yearStart, before: new Date(Math.min(endOfPayDay, Date.UTC(taxYear + 1, 0, 1))) };
+}
+
+/**
+ * Prior checks in a check's tax year, for the year's limits (state-program
+ * wage caps, supplemental tiers, deferral limits): checks PAID in the window
+ * (taxYearWindow), plus checks approved and not yet paid whose period began
+ * in the year (a run in flight still uses up the limits). Never the run's
+ * own checks, voided checks or cancelled runs.
+ */
+export function priorChecksInTaxYear(input: { yearStart: Date; before: Date; periodStart: Date; runId?: string | null }): Prisma.PayrollItemWhereInput {
+  return {
+    ...(input.runId ? { payrollRunId: { not: input.runId } } : {}),
+    OR: [
+      { status: 'DISBURSED', disbursedAt: { gte: input.yearStart, lt: input.before }, payrollRun: { status: { not: 'CANCELLED' } } },
+      { status: 'DISBURSED', disbursedAt: null, payrollRun: { status: { not: 'CANCELLED' }, disbursedAt: { gte: input.yearStart, lt: input.before } } },
+      // A paid check with no paid date anywhere (imported history): its period's end stands in.
+      { status: 'DISBURSED', disbursedAt: null, payrollRun: { status: { not: 'CANCELLED' }, disbursedAt: null, periodEnd: { gte: input.yearStart, lt: input.before } } },
+      { status: { in: ['PENDING', 'HELD'] }, payrollRun: { status: 'FINALIZED', periodStart: { gte: input.yearStart, lt: input.periodStart } } },
+    ],
+  };
+}
+
+/**
+ * Year-to-date wages for the wage bases (Social Security, FUTA, SUTA, the
+ * Medicare surcharge) ON THE PAY-DATE BASIS (deep audit CODE-2): gross of
+ * the checks actually paid in the pay date's year up to the pay day — what
+ * the W-2 will report. Batched for a run's universe; missing = 0.
+ */
+export async function computeYtdWagesPaidBatch(
+  tx: Tx,
+  associateIds: string[],
+  payDate: Date,
+  excludeRunId?: string | null,
+): Promise<Map<string, number>> {
+  if (associateIds.length === 0) return new Map();
+  const { yearStart, before } = taxYearWindow(payDate);
+  const groups = await findInChunks(associateIds, (chunk) =>
+    tx.payrollItem.groupBy({
+      by: ['associateId'],
+      where: {
+        associateId: { in: chunk },
+        status: 'DISBURSED',
+        ...(excludeRunId ? { payrollRunId: { not: excludeRunId } } : {}),
+        payrollRun: { status: { not: 'CANCELLED' } },
+        // The check's own paid date; a check marked paid without one takes its run's.
+        OR: [
+          { disbursedAt: { gte: yearStart, lt: before } },
+          { disbursedAt: null, payrollRun: { disbursedAt: { gte: yearStart, lt: before } } },
+          // No paid date anywhere (imported history): its period's end stands in.
+          { disbursedAt: null, payrollRun: { disbursedAt: null, periodEnd: { gte: yearStart, lt: before } } },
+        ],
+      },
+      _sum: { grossPay: true },
+    }),
+  );
+  const ytd = new Map(groups.map((g) => [g.associateId, Number(g._sum.grossPay ?? 0)]));
+  // Third-party sick pay's taxable part is FICA wages on the W-2 (see computeYtdWagesBatch).
+  const sick = (tx as unknown as { thirdPartySickPay?: { findMany: (a: unknown) => Promise<Array<{ associateId: string; grossAmount: unknown; nontaxableAmount: unknown }>> } }).thirdPartySickPay;
+  if (sick?.findMany) {
+    const rows = await findInChunks(associateIds, (chunk) =>
+      sick.findMany({
+        where: { associateId: { in: chunk }, voidedAt: null, payDate: { gte: yearStart, lt: before } },
         select: { associateId: true, grossAmount: true, nontaxableAmount: true },
       }),
     );

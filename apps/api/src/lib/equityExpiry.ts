@@ -4,6 +4,7 @@ import { enqueueAudit } from './audit.js';
 import { logger } from './logger.js';
 import { runForEachTenant } from './tenantJobs.js';
 import { tenantIdForWrite } from './tenant.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * Equity grants expire (system audit 2026-10-21, Tier 3): an option grant
@@ -28,7 +29,7 @@ export async function expireEquityGrants(db: PrismaClient = defaultPrisma, today
         action: 'equity.grant_expired',
         entityType: 'EquityGrant',
         entityId: g.id,
-        metadata: { associateId: g.associateId, from: g.status, expirationDate: g.expirationDate?.toISOString().slice(0, 10) ?? null, totalShares: g.totalShares },
+        metadata: { associateId: g.associateId, from: g.status, expirationDate: g.expirationDate ? dateColumnKey(g.expirationDate) : null, totalShares: g.totalShares },
       },
       'equity',
     );

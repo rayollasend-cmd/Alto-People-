@@ -16,6 +16,8 @@ import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { emitWorkerStatusChanged } from './webhookEvents.js';
 import { tenantIdForWrite } from './tenant.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 import { countStandings, peopleStandings } from './peopleStatus.js';
 import { accountPhotoUrlFor, profilePhotoUrlFor } from './profilePhotoUrl.js';
 
@@ -37,7 +39,8 @@ import { accountPhotoUrlFor, profilePhotoUrlFor } from './profilePhotoUrl.js';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-const ymd = (d: Date) => d.toISOString().slice(0, 10);
+/** Assignment startedAt/endedAt are @db.Date columns: their UTC date is the day. Today is orgDateKey. */
+const ymd = dateColumnKey;
 const atUtc = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
 /** Who owns an associate's PERSON worker: their manager's account, else the first org-wide admin. */
@@ -301,7 +304,7 @@ export async function createWorker(db: Db, input: WorkerInput, actorUserId: stri
       capabilities: input.capabilities,
       notes: input.notes ?? null,
       createdById: actorUserId,
-      ...(input.locationId ? { assignments: { create: { locationId: input.locationId, startedAt: atUtc(ymd(now)) } } } : {}),
+      ...(input.locationId ? { assignments: { create: { locationId: input.locationId, startedAt: atUtc(orgDateKey(now)) } } } : {}),
     },
     include: WORKER_INCLUDE,
   });
@@ -338,7 +341,7 @@ export async function assignWorkerToSite(db: Db, id: string, input: WorkerAssign
   if (!w) throw new HttpError(404, 'worker_not_found', 'No such worker.');
   const loc = await db.site.findFirst({ where: { id: input.locationId, deletedAt: null, tenantId: tenantIdForWrite() }, select: { id: true } });
   if (!loc) throw new HttpError(400, 'site_not_found', 'No such site.');
-  const startedAt = atUtc(input.startedAt ?? ymd(now));
+  const startedAt = atUtc(input.startedAt ?? orgDateKey(now));
   if (w.type === 'PERSON' && w.associateId) {
     await db.associateAssignment.updateMany({ where: { associateId: w.associateId, endedAt: null }, data: { endedAt: startedAt } });
     await db.associateAssignment.create({ data: { associateId: w.associateId, locationId: loc.id, startedAt, notes: input.notes ?? null } });

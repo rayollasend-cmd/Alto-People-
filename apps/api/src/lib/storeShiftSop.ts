@@ -6,10 +6,9 @@ import { env } from '../config/env.js';
 import { enqueueAudit } from './audit.js';
 import { notifyAllAdmins, notifyUser } from './notify.js';
 import { currentStoreWindows, ledWindows } from './shiftWindows.js';
-import { dateKeyInZone, orgDateKey } from './timeAnomalies.js';
+import { dateKeyInZone, orgDateKey, companyWorkweek } from './timeAnomalies.js';
 import { dueInstants } from './sopDue.js';
 import { ensureOpsSeed } from './opsSops.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
 import {
   activeCoverFor,
   firstName,
@@ -18,6 +17,7 @@ import {
   validLead,
 } from './floorLeads.js';
 import { fmtDay } from './humanDates.js';
+import { logger } from './logger.js';
 
 /**
  * Store-shift SOP — every supervisor completes their shift's SOP and hands
@@ -319,7 +319,7 @@ export async function createOpsShift(
    * template so the merged list is stable instead of interleaved by
    * whatever each template numbered its own rows.
    */
-  const tz = location?.timezone ?? DEFAULT_TIMEZONE;
+  const tz = location?.timezone ?? companyWorkweek().timezone;
   const startsAt = input.startsAt ?? now;
   const taskRows: Record<string, unknown>[] = [];
   let orderBase = 0;
@@ -1133,8 +1133,10 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startOpsSopCron(): void {
   if (timer) return;
-  // The library is current before any clock-in opens an SOP from it.
-  void ensureOpsSeed(defaultPrisma).catch((err) => {
+  // The library is current before any clock-in opens an SOP from it — per
+  // tenant: each tenant has its own library, and the boot has no tenant of
+  // its own (the wall refused the seed at every boot; audit 2026-10-29 CRAWL-5).
+  void tenantJob('opsSopSeed', () => ensureOpsSeed(defaultPrisma))().catch((err) => {
     console.error('[alto-people/api] SOP library seed failed:', err);
   });
   const seconds = env.OPS_SOP_SWEEP_SECONDS;
@@ -1153,5 +1155,5 @@ export function startOpsSopCron(): void {
   };
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(`[alto-people/api] store-shift SOP sweep armed (every ${seconds}s)`);
+  logger.info(`store-shift SOP sweep armed (every ${seconds}s)`);
 }

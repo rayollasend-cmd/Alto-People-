@@ -1,12 +1,12 @@
 import { COLOR, SIZE, createDoc, fmt, type Column } from './docKit/index.js';
 import { loadCurrentBrand } from './docKit/biz.js';
 import {
-  DEFAULT_TIMEZONE,
   localDateKey,
   formatDateInZone,
   formatDateTimeInZone,
   formatTimeInZone,
 } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * Phase 54.4 — schedule PDF renderer.
@@ -121,7 +121,7 @@ export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffe
 }
 
 /** "Oct 10 – Oct 16, 2026" for an end-exclusive range. */
-function rangeLabel(from: Date, toExclusive: Date, tz = DEFAULT_TIMEZONE): string {
+function rangeLabel(from: Date, toExclusive: Date, tz = companyWorkweek().timezone): string {
   const last = new Date(toExclusive.getTime() - 1);
   const a = localDateKey(from, tz);
   const b = localDateKey(last, tz);

@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, ChevronDown, ChevronUp } from '@/components/ui/icons';
 import type { OnboardingAnalyticsResponse } from '@alto-people/shared';
 import { getOnboardingAnalytics } from '@/lib/analyticsApi';
-import { useAuth } from '@/lib/auth';
+import { useAuth, useTenant, useTerm } from '@/lib/auth';
+import { cn } from '@/lib/cn';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -86,6 +87,11 @@ const TOP_CLIENTS_PREVIEW = 5;
 export function OnboardingAnalytics() {
   const { can } = useAuth();
   const canView = can('view:dashboard');
+  // Tenant words (PEOPLE-12): a hotel reads its own word for its people, and
+  // has no clients to rank.
+  const term = useTerm();
+  const clientsOn = useTenant().moduleOn('clientPortal');
+  const workersLc = term('workers').toLowerCase();
 
   const [clientsExpanded, setClientsExpanded] = useState(false);
 
@@ -113,9 +119,11 @@ export function OnboardingAnalytics() {
         breadcrumbs={[{ label: 'Onboarding', to: '/onboarding' }, { label: 'Analytics' }]}
         title="Onboarding analytics"
         subtitle={
+          // The funnel counts everyone ever invited; the rest is the window
+          // (PEOPLE-24: "unless noted" was never noted).
           data
-            ? `How long associates take to finish onboarding. Last ${data.windowDays} days unless noted.`
-            : 'How long associates take to finish onboarding.'
+            ? `How long new ${workersLc} take to finish onboarding. Last ${data.windowDays} days, except the funnel, which is all time.`
+            : `How long new ${workersLc} take to finish onboarding.`
         }
       >
 
@@ -168,7 +176,8 @@ export function OnboardingAnalytics() {
               list behind it, and the step-to-step conversion in one line. */}
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle>Funnel — where everyone invited is now</CardTitle>
+              <CardTitle>Funnel — where everyone ever invited is now</CardTitle>
+              <p className="text-xs text-ink-muted">All time, not the last {data.windowDays} days.</p>
             </CardHeader>
             <CardContent className="space-y-4">
               <MetricStrip label="Applications by status">
@@ -205,7 +214,7 @@ export function OnboardingAnalytics() {
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          <div className={cn('grid grid-cols-1 gap-4 mb-6', clientsOn && 'lg:grid-cols-2')}>
             {/* By track */}
             <Card>
               <CardHeader>
@@ -231,10 +240,11 @@ export function OnboardingAnalytics() {
               </CardContent>
             </Card>
 
-            {/* By client */}
+            {/* By client — only where there are clients. */}
+            {clientsOn && (
             <Card>
               <CardHeader>
-                <CardTitle>Top clients</CardTitle>
+                <CardTitle>Top {term('label.clients').toLowerCase()}</CardTitle>
               </CardHeader>
               <CardContent>
                 {data.byClient.length === 0 ? (
@@ -282,6 +292,7 @@ export function OnboardingAnalytics() {
                 )}
               </CardContent>
             </Card>
+            )}
           </div>
 
           {/* Monthly trend */}

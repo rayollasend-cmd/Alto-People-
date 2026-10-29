@@ -1,6 +1,7 @@
 import type { TimeAnomaly } from '@alto-people/shared';
 import { getLaborPolicy } from './stateLaborPolicy.js';
 import { getBrandingSync } from './branding.js';
+import { addDaysToKey } from './timezone.js';
 
 /**
  * Pure functions for detecting anomalies on a completed TimeEntry.
@@ -257,20 +258,16 @@ export function orgDateKey(d: Date): string {
  *  that contains `d`. */
 export function startOfWeekInZone(d: Date, tz: string, weekStartsOn: number = companyWorkweek().weekStartsOn): Date {
   const localKey = dateKeyInZone(d, tz);
-  const anchor = new Date(`${localKey}T12:00:00Z`);
   // Days back to the week's first day (Saturday by default: Sat->0, Sun->1, ... Fri->6).
-  const back = (anchor.getUTCDay() - weekStartsOn + 7) % 7;
-  anchor.setUTCDate(anchor.getUTCDate() - back);
-  return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), tz);
+  const back = (new Date(`${localKey}T12:00:00Z`).getUTCDay() - weekStartsOn + 7) % 7;
+  return utcInstantOfLocalMidnight(addDaysToKey(localKey, -back), tz);
 }
 
 /** UTC instant of the NEXT Saturday 00:00 (zone-local) — the exclusive end
  *  of the workweek containing `d`. DST weeks are 167/169 real hours. */
 export function endOfWeekInZone(d: Date, tz: string, weekStartsOn: number = companyWorkweek().weekStartsOn): Date {
   const start = startOfWeekInZone(d, tz, weekStartsOn);
-  const anchor = new Date(`${dateKeyInZone(start, tz)}T12:00:00Z`);
-  anchor.setUTCDate(anchor.getUTCDate() + 7);
-  return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), tz);
+  return utcInstantOfLocalMidnight(addDaysToKey(dateKeyInZone(start, tz), 7), tz);
 }
 
 /** The org workweek (Sat 00:00 Eastern) containing `d`. */

@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useGoToTargets } from '@/lib/shortcuts';
+import { useI18n, type MessageKey } from '@/lib/i18n';
+import { homeLabel, localizeModule } from '@/lib/navI18n';
+import { MODULES } from '@/lib/modules';
+import '@/lib/i18n/en/top';
 import {
   Dialog,
   DialogContent,
@@ -19,51 +23,52 @@ import {
  */
 
 interface ShortcutGroup {
-  label: string;
-  items: Array<{ keys: string[]; description: string }>;
+  label: MessageKey;
+  /** A key, or (the go-to chords) the page's name already in the reader's words. */
+  items: Array<{ keys: string[]; description: MessageKey | { text: string } }>;
 }
 
 const SHORTCUTS: ShortcutGroup[] = [
   {
-    label: 'Navigation',
+    label: 'top.kbGroupNav',
     items: [
-      { keys: ['⌘', 'K'], description: 'Open command palette (search & jump)' },
-      { keys: ['⌘', 'J'], description: 'Open the assistant' },
+      { keys: ['⌘', 'K'], description: 'top.kbPalette' },
+      { keys: ['⌘', 'J'], description: 'top.kbAssistant' },
       // The go-to chords (g then a key) are added per person — only the
       // pages they can open (useGoToTargets).
-      { keys: ['Esc'], description: 'Close dialogs and overlays' },
-      { keys: ['?'], description: 'Show this overlay' },
+      { keys: ['Esc'], description: 'top.kbEsc' },
+      { keys: ['?'], description: 'top.kbHelp' },
     ],
   },
   {
-    label: 'Lists (Inbox, Approvals)',
+    label: 'top.kbGroupLists',
     items: [
-      { keys: ['j', 'k'], description: 'Move down / up a row' },
-      { keys: ['Enter'], description: 'Open the row' },
-      { keys: ['a'], description: 'Approve the row' },
-      { keys: ['d'], description: 'Decline the row' },
+      { keys: ['j', 'k'], description: 'top.kbDownUp' },
+      { keys: ['Enter'], description: 'top.kbOpenRow' },
+      { keys: ['a'], description: 'top.kbApprove' },
+      { keys: ['d'], description: 'top.kbDecline' },
     ],
   },
   {
-    label: 'Transportation (the board)',
+    label: 'top.kbGroupBoard',
     items: [
-      { keys: ['[', ']'], description: 'Previous / next day' },
-      { keys: ['t', 'm'], description: 'Today / tomorrow' },
-      { keys: ['j', 'k'], description: 'Move between waiting groups' },
-      { keys: ['x'], description: 'Pick the group' },
-      { keys: ['d'], description: 'Dispatch what is picked' },
-      { keys: ['p'], description: 'Plan runs' },
+      { keys: ['[', ']'], description: 'top.kbPrevNextDay' },
+      { keys: ['t', 'm'], description: 'top.kbTodayTomorrow' },
+      { keys: ['j', 'k'], description: 'top.kbGroups' },
+      { keys: ['x'], description: 'top.kbPickGroup' },
+      { keys: ['d'], description: 'top.kbDispatch' },
+      { keys: ['p'], description: 'top.kbPlanRuns' },
     ],
   },
   {
-    label: 'Tables',
+    label: 'top.kbGroupTables',
     items: [
-      { keys: ['j', 'k'], description: 'Move the cursor down / up a row (Tab into the table first)' },
-      { keys: ['Enter'], description: 'Open the row under the cursor' },
-      { keys: ['x'], description: 'Select the row under the cursor' },
-      { keys: ['Shift', 'click'], description: 'Select every row between two checkboxes' },
-      { keys: ['↑', '↓'], description: 'Move between table tabs' },
-      { keys: ['←', '→'], description: 'Switch tabs (in tab strips)' },
+      { keys: ['j', 'k'], description: 'top.kbCursor' },
+      { keys: ['Enter'], description: 'top.kbOpenCursor' },
+      { keys: ['x'], description: 'top.kbSelectCursor' },
+      { keys: ['Shift', 'click'], description: 'top.kbSelectRange' },
+      { keys: ['↑', '↓'], description: 'top.kbTableTabs' },
+      { keys: ['←', '→'], description: 'top.kbSwitchTabs' },
     ],
   },
 ];
@@ -78,6 +83,7 @@ export function KeyboardShortcutsDialog({
   onOpenChange,
 }: KeyboardShortcutsDialogProps) {
   const goTo = useGoToTargets();
+  const { t } = useI18n();
   const groups = useMemo<ShortcutGroup[]>(
     () =>
       SHORTCUTS.map((g, i) =>
@@ -86,43 +92,50 @@ export function KeyboardShortcutsDialog({
               ...g,
               items: [
                 ...g.items.slice(0, 2),
-                ...goTo.map((t) => ({ keys: ['g', t.key], description: t.path === '/' ? 'Go home' : `Go to ${t.label}` })),
+                ...goTo.map((g) => ({
+                  keys: ['g', g.key],
+                  description: { text: g.path === '/' ? t('top.kbGoTo', { name: homeLabel(t) }) : t('top.kbGoTo', { name: localizeModule(MODULES.find((m) => m.path === g.path), t)?.label ?? g.label }) },
+                })),
                 ...g.items.slice(2),
               ],
             }
           : g,
       ),
-    [goTo],
+    [goTo, t],
   );
+  const [pressBefore, pressAfter] = t('top.kbPress').split('{key}');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
+          <DialogTitle>{t('top.shortcuts')}</DialogTitle>
           <DialogDescription>
-            Press <Kbd>?</Kbd> any time to show this list.
+            {pressBefore}<Kbd>?</Kbd>{pressAfter}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           {groups.map((group) => (
             <section key={group.label}>
               <h3 className="text-2xs uppercase tracking-widest text-silver mb-2">
-                {group.label}
+                {t(group.label)}
               </h3>
               <ul className="grid gap-1.5">
-                {group.items.map((item) => (
+                {group.items.map((item) => {
+                  const text = typeof item.description === 'string' ? t(item.description) : item.description.text;
+                  return (
                   <li
-                    key={item.description}
+                    key={text}
                     className="flex items-center justify-between gap-3 text-sm"
                   >
-                    <span className="text-white">{item.description}</span>
+                    <span className="text-white">{text}</span>
                     <span className="flex items-center gap-1">
                       {item.keys.map((k) => (
                         <Kbd key={k}>{k}</Kbd>
                       ))}
                     </span>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </section>
           ))}

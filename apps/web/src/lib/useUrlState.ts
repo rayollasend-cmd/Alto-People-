@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { parseYmd, ymdLocal } from '@/lib/format';
 
 /**
  * View state in the URL — a tab, a filter, a period — so Back returns to
@@ -223,8 +224,9 @@ export const urlBoolean: UrlCodec<boolean> = {
 export const urlDay: UrlCodec<string> = {
   parse: (raw) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
-    const d = new Date(`${raw}T00:00:00Z`);
-    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === raw ? raw : undefined;
+    // A real calendar day reads back the same (Feb 30 rolls to Mar 2 and doesn't).
+    const d = parseYmd(raw);
+    return d && ymdLocal(d) === raw ? raw : undefined;
   },
   serialize: (v) => v,
 };

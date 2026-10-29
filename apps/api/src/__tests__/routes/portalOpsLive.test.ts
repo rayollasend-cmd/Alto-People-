@@ -139,7 +139,7 @@ describe('the store manager reads a live day', () => {
     expect(res.body.summary.running).toBeGreaterThanOrEqual(1);
   });
 
-  it('keeps an overnight that FINISHED this morning in this morning', async () => {
+  it('files an overnight that finished this morning under the night it started — once', async () => {
     const { client, loc, sup, manager } = await store();
     // Finished earlier today; started the evening before — the overnight
     // shape, pinned to today's clock rather than to the hour the suite runs.
@@ -153,19 +153,22 @@ describe('the store manager reads a live day', () => {
       closedAt: closed,
     });
 
+    // One day per run (deep audit LEAD-2): matched on its close as well as
+    // its open, a run read as two days' checklist — an expired morning run
+    // reappeared as the next day's, photos and temperatures and all.
     const today = await manager.get('/client-portal/ops');
     expect(today.status).toBe(200);
-    // Keyed on the open alone, this work vanished from the day the
-    // manager was standing in when they read about it.
-    expect(today.body.runs.map((r: { id: string }) => r.id)).toContain(shift.id);
+    expect(today.body.runs.map((r: { id: string }) => r.id)).not.toContain(shift.id);
+    expect(today.body.summary.sops).toBe(0);
     // Nothing is running, so the live list is empty rather than absent.
     expect(today.body.live).toEqual([]);
 
-    // And it is still on the day it opened — the work happened on both.
-    const its = await manager.get(
-      `/client-portal/ops?date=${localDateKey(opened, NY)}`,
+    // It is the night it started on — which is exactly what "Last night" opens.
+    const night = await manager.get(
+      `/client-portal/ops?date=${localDateKey(opened, NY)}&period=OVERNIGHT`,
     );
-    expect(its.body.runs.map((r: { id: string }) => r.id)).toContain(shift.id);
+    expect(night.body.runs.map((r: { id: string }) => r.id)).toEqual([shift.id]);
+    expect(night.body.summary).toMatchObject({ sops: 1, submitted: 1 });
   });
 
   it('answers "what happened overnight" as a filter', async () => {
@@ -192,14 +195,16 @@ describe('the store manager reads a live day', () => {
       },
     });
 
+    // Today holds today's run; last night's overnight is last night's.
     const all = await manager.get('/client-portal/ops');
-    expect(all.body.runs).toHaveLength(2);
-    expect(all.body.departments).toEqual(
-      expect.arrayContaining(['Frozen & Dairy', 'Grocery']),
-    );
+    expect(all.body.runs.map((r: { id: string }) => r.id)).toEqual([morning.id]);
     expect(all.body.filters).toEqual({ period: null, department: null });
 
-    const justNight = await manager.get('/client-portal/ops?period=OVERNIGHT');
+    const lastNight = localDateKey(night.openedAt, NY);
+    const both = await manager.get(`/client-portal/ops?date=${lastNight}`);
+    expect(both.body.departments).toEqual(expect.arrayContaining(['Frozen & Dairy']));
+
+    const justNight = await manager.get(`/client-portal/ops?date=${lastNight}&period=OVERNIGHT`);
     expect(justNight.body.runs.map((r: { id: string }) => r.id)).toEqual([night.id]);
     expect(justNight.body.filters.period).toBe('OVERNIGHT');
 

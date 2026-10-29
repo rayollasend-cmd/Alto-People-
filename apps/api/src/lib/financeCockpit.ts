@@ -1,12 +1,13 @@
 import type { FieldglassStatus } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { DEFAULT_TIMEZONE, localDateKey } from './timezone.js';
-import { netWorkedMinutes, utcInstantOfLocalMidnight, type BreakFacts } from './timeAnomalies.js';
+import { localDateKey } from './timezone.js';
+import { companyWorkweek, netWorkedMinutes, utcInstantOfLocalMidnight, type BreakFacts } from './timeAnomalies.js';
 import { loadLiveRules } from './laborRules/live.js';
 import { payFor, splitByPerson } from './laborRules/hours.js';
 import { tenantIdForWrite } from './tenant.js';
 import { round2 } from './payroll.js';
 import { ageStatements, type AgingBuckets } from './books/aging.js';
+import { statementAmounts } from './books/posting/statements.js';
 import { buildTimesheetWeek, saturdayWeek, toUsDate } from './timesheetWeek.js';
 import { fieldglassDueAt, fieldglassHours } from './fieldglassDesk.js';
 import { getNextPayday, getPeriodAfter } from './payrollSchedule.js';
@@ -36,6 +37,7 @@ const DAY_MS = 86_400_000;
 const addDays = (ymd: string, n: number) => {
   const d = new Date(`${ymd}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: day arithmetic on YYYY-MM-DD keys anchored at noon UTC.
   return d.toISOString().slice(0, 10);
 };
 
@@ -44,7 +46,14 @@ export interface PayCycle {
   periodEnd: string;
   payDate: string;
   schedule: string;
-  hours: { approved: number; pending: number };
+  /**
+   * Approved and still-waiting hours in the period; `pendingBefore` is time
+   * worked BEFORE the period that is still waiting for approval — the only
+   * hours that are "from earlier periods" (audit 2026-10-29 MONEY-7: the
+   * home subtracted the period from everything pending, so the NEXT
+   * period's hours read as earlier ones).
+   */
+  hours: { approved: number; pending: number; pendingBefore: number };
   run: { id: string; status: 'DRAFT' | 'FINALIZED' | 'DISBURSED'; totalGross: number } | null;
 }
 
@@ -58,16 +67,24 @@ export async function payCycle(now: Date = new Date(), opts: { tenantId?: string
     (await prisma.payrollSchedule.findFirst({ where: { ...live, clientId: null }, orderBy: { createdAt: 'asc' }, select })) ??
     (await prisma.payrollSchedule.findFirst({ where: live, orderBy: { createdAt: 'asc' }, select }));
   if (!schedule) return null;
-  const today = localDateKey(now, DEFAULT_TIMEZONE);
+  // The company's day and zone, not the server default's.
+  const zone = companyWorkweek().timezone;
+  const today = localDateKey(now, zone);
   let w = getNextPayday(schedule, new Date(`${today}T12:00:00Z`));
   if (w.payDate < today) w = getPeriodAfter(schedule, w);
 
-  const from = utcInstantOfLocalMidnight(w.periodStart, DEFAULT_TIMEZONE);
-  const to = utcInstantOfLocalMidnight(addDays(w.periodEnd, 1), DEFAULT_TIMEZONE);
-  const [entries, run] = await Promise.all([
+  const from = utcInstantOfLocalMidnight(w.periodStart, zone);
+  const to = utcInstantOfLocalMidnight(addDays(w.periodEnd, 1), zone);
+  const [entries, before, run] = await Promise.all([
     prisma.timeEntry.findMany({
       where: { ...tenant, clockInAt: { gte: from, lt: to }, status: { in: ['APPROVED', 'COMPLETED'] }, clockOutAt: { not: null } },
       select: { clockInAt: true, clockOutAt: true, status: true, breaks: { select: { type: true, startedAt: true, endedAt: true } } },
+      take: 50_000,
+    }),
+    // Still waiting for approval, worked before this period began.
+    prisma.timeEntry.findMany({
+      where: { ...tenant, clockInAt: { lt: from }, status: 'COMPLETED', clockOutAt: { not: null } },
+      select: { clockInAt: true, clockOutAt: true, breaks: { select: { type: true, startedAt: true, endedAt: true } } },
       take: 50_000,
     }),
     prisma.payrollRun.findFirst({
@@ -88,13 +105,14 @@ export async function payCycle(now: Date = new Date(), opts: { tenantId?: string
     if (e.status === 'APPROVED') approved += min;
     else pending += min;
   }
+  const pendingBefore = before.reduce((n, e) => n + netWorkedMinutes({ clockInAt: e.clockInAt, clockOutAt: e.clockOutAt! }, e.breaks as BreakFacts[]), 0);
   return {
     periodStart: w.periodStart,
     periodEnd: w.periodEnd,
     payDate: w.payDate,
     schedule: schedule.name,
     // Tenths, like the close chase — nobody pays by the hundredth of an hour here.
-    hours: { approved: Math.round(approved / 6) / 10, pending: Math.round(pending / 6) / 10 },
+    hours: { approved: Math.round(approved / 6) / 10, pending: Math.round(pending / 6) / 10, pendingBefore: Math.round(pendingBefore / 6) / 10 },
     run: run
       ? { id: run.id, status: run.status as 'DRAFT' | 'FINALIZED' | 'DISBURSED', totalGross: Number(run.totalGross) }
       : null,
@@ -128,7 +146,7 @@ export async function billingWeek(
   opts: { tenantId?: string } = {},
 ): Promise<BillingWeek> {
   const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
-  const current = saturdayWeek(now, DEFAULT_TIMEZONE);
+  const current = saturdayWeek(now, companyWorkweek().timezone);
   const weekStart = addDays(current.weekStart, -7);
   const week = await buildTimesheetWeek(prisma, {
     weekStart: new Date(`${weekStart}T12:00:00Z`),
@@ -212,7 +230,16 @@ export interface MarginWeek {
   weekEnd: string;
   inProgress: boolean;
   hours: number;
+  /** Billed at contract rates (METRICS.billedAtContractRates): each person's week at a client, as the VMS bills it. */
   revenue: number;
+  /**
+   * Billed on statements (METRICS.billedStatements): the finalized statements'
+   * services total for the week, once every priced client's week is on one —
+   * what Books and receivables carry. Null until then. Shown beside the
+   * contract figure so the two never sit on two screens unexplained (deep
+   * audit 2026-10-29 MONEY-20: $23,772.27 here, $23,760.63 there).
+   */
+  billedOnStatements: number | null;
   wages: number;
   margin: number;
   marginPct: number | null;
@@ -228,7 +255,7 @@ export async function marginTrend(
   opts: { tenantId?: string } = {},
 ): Promise<{ weeks: MarginWeek[]; defaultRate: number; defaultRateAssociates: number }> {
   const T = opts.tenantId ? { tenantId: opts.tenantId } : {};
-  const current = saturdayWeek(now, DEFAULT_TIMEZONE).weekStart;
+  const current = saturdayWeek(now, companyWorkweek().timezone).weekStart;
   const starts = Array.from({ length: weeks }, (_, i) => addDays(current, -7 * (weeks - 1 - i)));
   const startSet = new Set(starts);
   const entries = await prisma.timeEntry.findMany({
@@ -281,7 +308,7 @@ export async function marginTrend(
   // (they read $6,601.50 and $6,601.73: exact minutes against rounded rows).
   const byWeek = new Map<string, { people: Map<string, number>; rows: Map<string, { clientId: string; min: number }>; wages: number }>();
   for (const e of work) {
-    const ws = saturdayWeek(e.clockInAt, e.location?.timezone ?? DEFAULT_TIMEZONE).weekStart;
+    const ws = saturdayWeek(e.clockInAt, e.location?.timezone ?? companyWorkweek().timezone).weekStart;
     if (!startSet.has(ws)) continue;
     const share = byEntry.get(e)!;
     const min = share.workedHours * 60;
@@ -294,6 +321,24 @@ export async function marginTrend(
     b.rows.set(rk, row);
     b.wages += payFor(share, payRate.get(e.associateId) ?? PAYROLL_DEFAULT_RATE, byPerson.get(e.associateId)!);
     byWeek.set(ws, b);
+  }
+
+  // Finalized statements for these weeks: the books' revenue for a finished week (MONEY-20).
+  const finals = await prisma.clientStatement.findMany({
+    where: { ...T, status: 'FINAL', periodStart: { gte: new Date(`${starts[0]}T00:00:00Z`), lt: new Date(`${addDays(current, 7)}T00:00:00Z`) } },
+    select: { clientId: true, periodStart: true, periodEnd: true, snapshot: true },
+  });
+  const billedBy = new Map<string, { clients: Set<string>; cents: number }>();
+  for (const st of finals) {
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: statement periods are @db.Date values stored at UTC midnight.
+    const ws = st.periodStart.toISOString().slice(0, 10);
+    // A weekly statement for exactly this Sat→Fri week; a longer period isn't one week's figure.
+    // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: statement periods are @db.Date values stored at UTC midnight.
+    if (!startSet.has(ws) || st.periodEnd.toISOString().slice(0, 10) > addDays(ws, 6)) continue;
+    const b = billedBy.get(ws) ?? { clients: new Set<string>(), cents: 0 };
+    b.clients.add(st.clientId);
+    b.cents += statementAmounts(st.snapshot).hours;
+    billedBy.set(ws, b);
   }
 
   const atDefault = new Set<string>();
@@ -315,12 +360,17 @@ export async function marginTrend(
     }
     revenue = round2(revenue);
     wages = round2(wages);
+    // Every priced client with hours this week is on a finalized statement for it: the statements' figure rides beside.
+    const pricedClients = [...(b?.rows.values() ?? [])].filter((r) => r.clientId && billRate.get(r.clientId) != null && r.min > 0).map((r) => r.clientId);
+    const billed = billedBy.get(ws);
+    const onStatements = ws !== current && !!billed && pricedClients.length > 0 && pricedClients.every((c) => billed.clients.has(c));
     return {
       weekStart: ws,
       weekEnd: addDays(ws, 6),
       inProgress: ws === current,
       hours: round2(hours),
       revenue,
+      billedOnStatements: onStatements ? billed!.cents / 100 : null,
       wages,
       margin: round2(revenue - wages),
       marginPct: revenue > 0 ? Math.round(((revenue - wages) / revenue) * 1000) / 1000 : null,

@@ -5,6 +5,8 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { scopeActiveAssociates } from '../lib/scope.js';
+import { dateColumnKey } from '../lib/timezone.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Phase 129 — Equity grants & vesting.
@@ -314,8 +316,8 @@ equity129Router.get('/equity-grants/:id', MANAGE_COMP, async (req, res) => {
   if (!g) {
     throw new HttpError(404, 'not_found', 'Grant not found.');
   }
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  // Today on the company's calendar, as a DATE value (vest dates are DATE columns).
+  const today = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
   let vested = 0;
   for (const e of g.vestingEvents) {
     if (e.vestDate <= today) vested += e.shares;
@@ -326,7 +328,7 @@ equity129Router.get('/equity-grants/:id', MANAGE_COMP, async (req, res) => {
       events: g.vestingEvents.map((e) => ({
         id: e.id,
         eventIndex: e.eventIndex,
-        vestDate: e.vestDate.toISOString().slice(0, 10),
+        vestDate: dateColumnKey(e.vestDate),
         shares: e.shares,
         isCliff: e.isCliff,
         vested: e.vestDate <= today,
@@ -352,8 +354,8 @@ equity129Router.get('/my/equity-grants', requireAuth, async (req, res) => {
     include: { vestingEvents: { orderBy: { eventIndex: 'asc' } } },
     orderBy: { grantDate: 'desc' },
   });
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  // Today on the company's calendar, as a DATE value (vest dates are DATE columns).
+  const today = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
   res.json({
     grants: rows.map((g) => {
       let vested = 0;
@@ -363,7 +365,7 @@ equity129Router.get('/my/equity-grants', requireAuth, async (req, res) => {
           vested += e.shares;
         } else if (upcoming.length < 6) {
           upcoming.push({
-            vestDate: e.vestDate.toISOString().slice(0, 10),
+            vestDate: dateColumnKey(e.vestDate),
             shares: e.shares,
           });
         }
@@ -377,11 +379,11 @@ equity129Router.get('/my/equity-grants', requireAuth, async (req, res) => {
         unvestedShares: g.totalShares - vested,
         strikePrice: g.strikePrice?.toString() ?? null,
         currency: g.currency,
-        grantDate: g.grantDate.toISOString().slice(0, 10),
-        vestingStartDate: g.vestingStartDate.toISOString().slice(0, 10),
+        grantDate: dateColumnKey(g.grantDate),
+        vestingStartDate: dateColumnKey(g.vestingStartDate),
         cliffMonths: g.cliffMonths,
         vestingMonths: g.vestingMonths,
-        expirationDate: g.expirationDate?.toISOString().slice(0, 10) ?? null,
+        expirationDate: g.expirationDate ? dateColumnKey(g.expirationDate) : null,
         upcomingTranches: upcoming,
       };
     }),
@@ -394,8 +396,8 @@ equity129Router.get(
   '/equity-grants-summary',
   MANAGE_COMP,
   async (_req, res) => {
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    // Today on the company's calendar, as a DATE value (vest dates are DATE columns).
+    const today = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
     const [grantedAggregate, vestedAggregate, proposedCount, activeRecipients] =
       await Promise.all([
         prisma.equityGrant.aggregate({
@@ -464,11 +466,11 @@ function serializeGrant(g: GrantWithRelations) {
     totalShares: g.totalShares,
     strikePrice: g.strikePrice?.toString() ?? null,
     currency: g.currency,
-    grantDate: g.grantDate.toISOString().slice(0, 10),
-    vestingStartDate: g.vestingStartDate.toISOString().slice(0, 10),
+    grantDate: dateColumnKey(g.grantDate),
+    vestingStartDate: dateColumnKey(g.vestingStartDate),
     cliffMonths: g.cliffMonths,
     vestingMonths: g.vestingMonths,
-    expirationDate: g.expirationDate?.toISOString().slice(0, 10) ?? null,
+    expirationDate: g.expirationDate ? dateColumnKey(g.expirationDate) : null,
     notes: g.notes,
     grantedByEmail: g.grantedBy?.email ?? null,
     createdAt: g.createdAt.toISOString(),

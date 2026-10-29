@@ -6,7 +6,7 @@ import type { MyTransport } from '@/lib/transportApi';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { chargeGroups, chargeRows, paydayText, type ChargeGroup, type ChargeRow, type Payday } from './charges';
+import { atMinimumWage, chargeGroups, chargeRows, paydayText, type ChargeGroup, type ChargeRow, type Payday, type PayrollOutlook } from './charges';
 import '@/lib/i18n/en/ride';
 
 const cents = (n: number) => fmtMoney(n / 100);
@@ -39,9 +39,11 @@ function stateWords(t: Translate, row: ChargeRow): string | null {
 }
 
 /** A row's state as a sentence for screen readers and the chip's title. */
-function fullWords(t: Translate, row: ChargeRow, payday: Payday): string {
+function fullWords(t: Translate, row: ChargeRow, payday: Payday, payroll?: PayrollOutlook): string {
   switch (row.state) {
     case 'pending':
+      // Payroll never takes a fare below the minimum wage: no payday is promised.
+      if (atMinimumWage(payroll)) return t('ride.ledger.wordsMinimumWage');
       if (!payday) return t('ride.ledger.wordsPendingNoDate');
       return row.date > payday.periodEnd ? t('ride.ledger.wordsPendingLater', { date: paydayText(payday.payDate) }) : t('ride.ledger.wordsPending', { date: paydayText(payday.payDate) });
     case 'held':
@@ -74,8 +76,8 @@ export function ChargesLedger({ data, onQuestion }: { data: MyTransport; onQuest
         g.kind === 'current' || g.kind === 'later' || g.kind === 'held' ? (
           <Card key={g.key} data-testid={`ledger-${g.key}`}>
             <CardContent>
-              <GroupHead g={g} payday={payday} />
-              <ChargeList rows={g.rows} payday={payday} onQuestion={onQuestion} />
+              <GroupHead g={g} payday={payday} payroll={data.charges.payroll} />
+              <ChargeList rows={g.rows} payday={payday} payroll={data.charges.payroll} onQuestion={onQuestion} />
             </CardContent>
           </Card>
         ) : (
@@ -95,7 +97,7 @@ export function ChargesLedger({ data, onQuestion }: { data: MyTransport; onQuest
               <ChevronDown className="h-4 w-4 shrink-0 text-ink-muted transition-transform group-open:rotate-180" aria-hidden="true" />
             </summary>
             <div className="border-t border-line-subtle px-4">
-              <ChargeList rows={g.rows} payday={payday} onQuestion={onQuestion} />
+              <ChargeList rows={g.rows} payday={payday} payroll={data.charges.payroll} onQuestion={onQuestion} />
             </div>
           </details>
         ),
@@ -104,17 +106,31 @@ export function ChargesLedger({ data, onQuestion }: { data: MyTransport; onQuest
   );
 }
 
-function GroupHead({ g, payday }: { g: ChargeGroup; payday: Payday }) {
+function GroupHead({ g, payday, payroll }: { g: ChargeGroup; payday: Payday; payroll?: PayrollOutlook }) {
   const { t } = useI18n();
-  const title = g.kind === 'current' ? t('ride.ledger.current') : g.kind === 'later' ? t('ride.ledger.later') : t('ride.ledger.held');
+  // Headed by the payday the money comes out on, never "This pay period":
+  // the rides due on the next payday are the period that already CLOSED,
+  // while Home's "this pay period" is the one running now (ASSOC-17).
+  const title =
+    g.kind === 'current' && atMinimumWage(payroll)
+      ? t('ride.ledger.keptTitle')
+      : g.kind === 'current'
+      ? payday
+        ? t('ride.ledger.paydayTitle', { date: paydayText(payday.payDate) })
+        : t('ride.ledger.current')
+      : g.kind === 'later'
+        ? payday
+          ? t('ride.ledger.laterTitle', { date: paydayText(payday.payDate) })
+          : t('ride.ledger.later')
+        : t('ride.ledger.held');
   const sub =
     g.kind === 'current'
       ? payday
-        ? t('ride.ledger.wordsPending', { date: paydayText(payday.payDate) })
+        ? t('ride.ledger.through', { date: paydayText(payday.periodEnd) })
         : t('ride.ledger.wordsPendingNoDate')
       : g.kind === 'later'
         ? payday
-          ? t('ride.ledger.wordsPendingLater', { date: paydayText(payday.payDate) })
+          ? t('ride.ledger.after', { date: paydayText(payday.periodEnd) })
           : t('ride.ledger.wordsPendingNoDate')
         : t('ride.heldForSignature');
   return (
@@ -133,7 +149,7 @@ function GroupHead({ g, payday }: { g: ChargeGroup; payday: Payday }) {
   );
 }
 
-function ChargeList({ rows, payday, onQuestion }: { rows: ChargeRow[]; payday: Payday; onQuestion: (rideId: string) => void }) {
+function ChargeList({ rows, payday, payroll, onQuestion }: { rows: ChargeRow[]; payday: Payday; payroll?: PayrollOutlook; onQuestion: (rideId: string) => void }) {
   const { t } = useI18n();
   return (
     <ul className="divide-y divide-line-subtle">
@@ -149,7 +165,7 @@ function ChargeList({ rows, payday, onQuestion }: { rows: ChargeRow[]; payday: P
               </div>
               <div className="text-sm text-ink-muted">
                 {row.kind === 'noShow' ? t('ride.ledger.noShowFee') : t('ride.ledger.fare')}
-                {words ? ` · ${words}` : <span className="sr-only"> · {fullWords(t, row, payday)}</span>}
+                {words ? ` · ${words}` : <span className="sr-only"> · {fullWords(t, row, payday, payroll)}</span>}
               </div>
               {row.counts && (
                 <button

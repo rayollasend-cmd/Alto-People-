@@ -2,7 +2,8 @@ import type * as React from 'react';
 import type { ExecComparison, ExecCompareKey, ExecPeriod, ExecPeriodKey } from '@alto-people/shared';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
-import { fmtDateOnlyRange, fmtTime } from '@/lib/format';
+import { fmtDateOnlyRange } from '@/lib/format';
+import { fmtExecAsOf } from '@/lib/executiveFormat';
 import { useI18n } from '@/lib/i18n';
 import '@/lib/i18n/en/execPortal';
 import type { ExecFrame } from '@/lib/executiveApi';
@@ -46,7 +47,7 @@ export function PeriodBar({ frame, period, comparison, actions }: PeriodBarProps
             {fmtDateOnlyRange(period.start, period.end)}
             {comparison && (comparison.available ? ` · ${comparison.label}` : comparison.reason ? ` · ${comparison.reason}` : '')}
             {' · '}
-            {t('execPortal.asOf', { time: fmtTime(period.asOf) })}
+            {t('execPortal.asOf', { time: fmtExecAsOf(period.asOf, period.timezone) })}
           </span>
         )}
       </div>

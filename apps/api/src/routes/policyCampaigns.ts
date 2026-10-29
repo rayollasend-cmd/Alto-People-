@@ -5,6 +5,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
+import { dateColumnKey } from '../lib/timezone.js';
 import { AudienceSchema, audienceSize, contentHash, launchCampaign } from '../lib/policyCampaigns.js';
 
 /**
@@ -58,7 +59,7 @@ policyCampaignsRouter.get('/policy-campaigns', VIEW, async (_req, res) => {
       templateName: c.template.name,
       version: c.version.version,
       audience: c.audience,
-      dueOn: c.dueOn.toISOString().slice(0, 10),
+      dueOn: dateColumnKey(c.dueOn),
       reminderEveryDays: c.reminderEveryDays,
       status: c.status,
       launchedAt: c.launchedAt?.toISOString() ?? null,
@@ -121,7 +122,7 @@ policyCampaignsRouter.get('/policy-campaigns/:id', VIEW, async (req, res) => {
     version: c.version.version,
     body: c.version.body,
     audience: c.audience,
-    dueOn: c.dueOn.toISOString().slice(0, 10),
+    dueOn: dateColumnKey(c.dueOn),
     reminderEveryDays: c.reminderEveryDays,
     status: c.status,
     launchedAt: c.launchedAt?.toISOString() ?? null,
@@ -193,7 +194,7 @@ policyCampaignsRouter.get('/my/policies', requireAuth, async (req, res) => {
       id: r.id,
       campaignId: r.campaign.id,
       name: r.campaign.name,
-      dueOn: r.campaign.dueOn.toISOString().slice(0, 10),
+      dueOn: dateColumnKey(r.campaign.dueOn),
       status: r.status,
       body: r.renderedBody,
       signedAt: r.signedAt?.toISOString() ?? null,

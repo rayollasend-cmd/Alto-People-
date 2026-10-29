@@ -1,18 +1,22 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { HttpError } from '../middleware/error.js';
-import { nextPaydayFor, payScheduleFor } from './associatePayday.js';
+import { nextPaydayFor } from './associatePayday.js';
 import { enqueueAudit } from './audit.js';
 import { dailyPaidInWindow } from './dailyPay.js';
 import { dueAtFor, targetHoursFor } from './hrCaseSla.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyManager } from './notify.js';
 import { payableMs } from './payroll.js';
-import { splitHours } from './laborRules/hours.js';
 import { loadPayContext } from './laborRules/payContext.js';
-import { computePaycheckTaxes, type PayFrequency } from './payrollTax.js';
-import { computeYtdWages } from './payrollYtd.js';
+import { aggregatePayrollProjection } from './payrollAggregator.js';
+import { runCutFor } from './payrollRunCut.js';
+import { punchesInPeriod } from './payrollSchedule.js';
+import { scheduleFilterFor, scheduleMembershipFor } from './payScheduleMembership.js';
+import { taxEngineFor } from './taxEngine/index.js';
 import { submitCorrection } from './timeCorrections.js';
 import { tenantIdForWrite } from './tenant.js';
 import { fmtDay, fmtDayRange } from './humanDates.js';
+import { planRideCharges } from './transport.js';
+import { companyWorkweek, dateKeyInZone, orgDateKey } from './timeAnomalies.js';
 
 /**
  * "Check my pay before payday" (PAYEXP §4, Paycom Beti style).
@@ -31,8 +35,27 @@ import { fmtDay, fmtDayRange } from './humanDates.js';
 type Db = PrismaClient | Prisma.TransactionClient;
 const DAY = 86_400_000;
 const round2 = (n: number) => Math.round(n * 100) / 100;
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: YYYY-MM-DD of a @db.Date value or a UTC-midnight anchor (pay dates); the company day is orgDateKey.
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const asDate = (key: string) => new Date(`${key}T00:00:00.000Z`);
+
+/**
+ * Day hours that add up: each day rounded on the running total (cumulative
+ * rounding), so the days on the screen sum to the period's hours to the
+ * cent of an hour — rounding each day on its own showed 76.64h of days
+ * above a 76.65h pay line (ASSOC-28).
+ */
+export function roundDaysToTotal<T extends { ms: number }>(days: T[]): Array<Omit<T, 'ms'> & { hours: number }> {
+  let runMs = 0;
+  let shown = 0;
+  return days.map(({ ms, ...rest }) => {
+    runMs += ms;
+    const upTo = round2(runMs / 3_600_000);
+    const hours = round2(upTo - shown);
+    shown = upTo;
+    return { ...(rest as Omit<T, 'ms'>), hours };
+  });
+}
 
 /** How many days before the pay date the preview opens. */
 export const PREVIEW_DAYS_BEFORE = 2;
@@ -60,10 +83,19 @@ export interface PayPreview {
   days: Array<{ date: string; hours: number; entries: Array<{ id: string; clockInAt: string; clockOutAt: string | null; siteName: string | null; approved: boolean }> }>;
   earnings: Array<{ line: string; kind: string; hours: number | null; rate: number | null; amount: number }>;
   gross: number;
-  taxes: Array<{ line: string; kind: 'FEDERAL' | 'SOCIAL_SECURITY' | 'MEDICARE' | 'STATE' | 'LOCAL'; amount: number }>;
-  deductions: Array<{ line: string; kind: 'PRE_TAX' | 'POST_TAX'; amount: number }>;
+  taxes: Array<{ line: string; kind: 'FEDERAL' | 'SOCIAL_SECURITY' | 'MEDICARE' | 'STATE' | 'LOCAL' | 'STATE_PROGRAM'; amount: number }>;
+  /** RIDES: van rides and no-show fees payroll takes from this check (lib/transport planRideCharges). */
+  deductions: Array<{ line: string; kind: 'PRE_TAX' | 'POST_TAX' | 'RIDES'; amount: number }>;
   /** Paid ahead this period: daily pay already sent. */
   paidAhead: number;
+  /**
+   * Van rides owed through the period's end: what this check takes and what
+   * it holds back — payroll never takes a fare below the state's minimum
+   * wage (lib/transport planRideCharges), so a $15/h worker in Florida
+   * ($15 minimum) keeps the whole check and the fares wait. Null with
+   * nothing owed (or on a built run, whose lines already say it).
+   */
+  rides: { owed: number; taken: number; held: number; minimumWage: number; state: string } | null;
   net: number;
   check: { status: 'CONFIRMED' | 'FLAGGED'; flags: PreviewFlag[]; at: string } | null;
 }
@@ -82,6 +114,7 @@ const EMPTY = (reason: PayPreview['reason'], extra: Partial<PayPreview> = {}): P
   taxes: [],
   deductions: [],
   paidAhead: 0,
+  rides: null,
   net: 0,
   check: null,
   ...extra,
@@ -93,17 +126,21 @@ export async function buildPayPreview(db: PrismaClient, associateId: string, now
   if (!next) return EMPTY('NO_SCHEDULE');
   const opensOn = ymd(new Date(asDate(next.payDate).getTime() - PREVIEW_DAYS_BEFORE * DAY));
   const window = { payDate: next.payDate, opensOn, periodStart: next.periodStart, periodEnd: next.periodEnd };
-  const today = ymd(now);
+  // The company's calendar day, not UTC's (UTC is tomorrow from 5 PM Pacific).
+  const today = orgDateKey(now);
   if (today < opensOn && !opts.force) return EMPTY('NOT_YET', window);
 
   const periodStart = asDate(next.periodStart);
   const periodEndExclusive = new Date(asDate(next.periodEnd).getTime() + DAY);
-  const [entries, item, check, comp, schedule] = await Promise.all([
-    db.timeEntry.findMany({
-      where: { associateId, clockInAt: { gte: periodStart, lt: periodEndExclusive }, status: { in: ['APPROVED', 'COMPLETED'] } },
-      select: { id: true, locationId: true, clockInAt: true, clockOutAt: true, status: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: { select: { id: true, name: true, state: true, city: true, timezone: true } } },
-      orderBy: { clockInAt: 'asc' },
-    }),
+  const [entries, item, check] = await Promise.all([
+    // The pay-period cut (deep audit CODE-1): each shift on its store's day — an evening shift on the period's last day is in it.
+    punchesInPeriod({ periodStart: next.periodStart, periodEnd: next.periodEnd }, null, (clockInAt) =>
+      db.timeEntry.findMany({
+        where: { associateId, clockInAt, status: { in: ['APPROVED', 'COMPLETED'] } },
+        select: { id: true, associateId: true, locationId: true, clockInAt: true, clockOutAt: true, status: true, breaks: { select: { type: true, startedAt: true, endedAt: true } }, location: { select: { id: true, name: true, state: true, city: true, timezone: true } } },
+        orderBy: { clockInAt: 'asc' },
+      }),
+    ),
     db.payrollItem.findFirst({
       where: {
         associateId,
@@ -114,19 +151,25 @@ export async function buildPayPreview(db: PrismaClient, associateId: string, now
       orderBy: { createdAt: 'desc' },
     }),
     db.payPreviewCheck.findUnique({ where: { associateId_payDate: { associateId, payDate: asDate(next.payDate) } } }),
-    db.compensationRecord.findFirst({ where: { associateId, effectiveTo: null, payType: 'HOURLY' }, orderBy: { effectiveFrom: 'desc' }, select: { amount: true } }),
-    payScheduleFor(associateId),
   ]);
 
-  const byDay = new Map<string, PayPreview['days'][number]>();
+  // Each day is the store's calendar day (an evening shift is not "tomorrow"
+  // because UTC rolled over), and its hours are the hours pay counts: the
+  // same punch rounding the run applies (pay.forPay), net of breaks.
+  const pay = await loadPayContext(db);
+  const companyZone = companyWorkweek().timezone;
+  const byDay = new Map<string, { date: string; ms: number; entries: PayPreview['days'][number]['entries'] }>();
   for (const e of entries) {
-    const key = ymd(e.clockInAt);
-    const d = byDay.get(key) ?? { date: key, hours: 0, entries: [] };
-    if (e.status === 'APPROVED') d.hours = round2(d.hours + payableMs({ status: e.status, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks }) / 3_600_000);
+    const key = dateKeyInZone(e.clockInAt, e.location?.timezone || companyZone);
+    const d = byDay.get(key) ?? { date: key, ms: 0, entries: [] };
+    if (e.status === 'APPROVED') {
+      const paid = pay.forPay(e);
+      d.ms += payableMs({ status: e.status, clockInAt: paid.clockInAt, clockOutAt: paid.clockOutAt, breaks: paid.breaks });
+    }
     d.entries.push({ id: e.id, clockInAt: e.clockInAt.toISOString(), clockOutAt: e.clockOutAt?.toISOString() ?? null, siteName: e.location?.name ?? null, approved: e.status === 'APPROVED' });
     byDay.set(key, d);
   }
-  const days = [...byDay.values()];
+  const days = roundDaysToTotal([...byDay.values()].sort((a, b) => (a.date < b.date ? -1 : 1)));
   const daily = await dailyPaidInWindow(db, associateId, periodStart, periodEndExclusive);
 
   let earnings: PayPreview['earnings'];
@@ -135,6 +178,7 @@ export async function buildPayPreview(db: PrismaClient, associateId: string, now
   let gross: number;
   let net: number;
   let source: PayPreview['source'];
+  let rideFacts: PayPreview['rides'] = null;
   if (item) {
     source = 'RUN';
     // The true-up already took daily pay off; show it as the line it is.
@@ -154,63 +198,65 @@ export async function buildPayPreview(db: PrismaClient, associateId: string, now
     net = Number(item.netPay);
   } else {
     source = 'ESTIMATE';
-    const rate = comp ? Number(comp.amount) : 0;
-    // The approved hours split exactly as the run will split them (the
-    // labor-rules engine, lib/laborRules/hours): the weekly 40 at 1.5×,
-    // plus a live jurisdiction's daily overtime and double time.
-    const pay = await loadPayContext(db);
-    const split = splitHours(
-      pay.rules,
-      entries
-        .filter((e) => e.status === 'APPROVED')
-        .map((raw) => {
-          const e = pay.forPay(raw);
-          return { id: e.id, clockInAt: e.clockInAt, clockOutAt: e.clockOutAt, breaks: e.breaks, site: e.location };
-        }),
-    );
-    earnings = [];
-    if (split.regularHours > 0) earnings.push({ line: 'earning:REGULAR:0', kind: 'REGULAR', hours: split.regularHours, rate, amount: round2(split.regularHours * rate) });
-    if (split.overtimeHours > 0) earnings.push({ line: 'earning:OVERTIME:0', kind: 'OVERTIME', hours: split.overtimeHours, rate: round2(rate * split.overtimeMultiplier), amount: round2(split.overtimeHours * rate * split.overtimeMultiplier) });
-    if (split.doubleTimeHours > 0) earnings.push({ line: 'earning:DOUBLE_TIME:0', kind: 'DOUBLE_TIME', hours: split.doubleTimeHours, rate: round2(rate * split.doubleMultiplier), amount: round2(split.doubleTimeHours * rate * split.doubleMultiplier) });
-    const fullGross = round2(earnings.reduce((s, e) => s + e.amount, 0));
-    const a = await db.associate.findUnique({
-      where: { id: associateId },
-      select: {
-        employmentType: true,
-        state: true,
-        w4Submission: { select: { filingStatus: true, extraWithholding: true, deductions: true, otherIncome: true, dependentsAmount: true } },
-      },
-    });
-    const freq = schedule?.frequency ?? 'BIWEEKLY';
-    const payFrequency: PayFrequency = freq === 'DAILY' ? 'WEEKLY' : freq;
-    const ytd = await computeYtdWages(db, associateId, new Date(Date.UTC(periodStart.getUTCFullYear(), 0, 1)), periodStart);
-    const t =
-      a?.employmentType === 'W2_EMPLOYEE' && fullGross > 0
-        ? computePaycheckTaxes({
-            grossPay: fullGross,
-            filingStatus: a.w4Submission?.filingStatus ?? null,
-            payFrequency,
-            state: a.state,
-            ytdWages: ytd,
-            ytdMedicareWages: ytd,
-            extraWithholding: a.w4Submission?.extraWithholding ? Number(a.w4Submission.extraWithholding) : 0,
-            deductions: a.w4Submission?.deductions ? Number(a.w4Submission.deductions) : 0,
-            otherIncome: a.w4Submission?.otherIncome ? Number(a.w4Submission.otherIncome) : 0,
-            dependentsAmount: a.w4Submission?.dependentsAmount ? Number(a.w4Submission.dependentsAmount) : 0,
-          })
-        : null;
-    taxes = t
+    // The run's own math for this one person (lib/payrollAggregator with
+    // associateIds): the same period cut, rate, overtime split, taxes, state
+    // programs, benefit deductions, retirement and garnishments the run will
+    // apply — so the take-home they confirm is the check (ASSOC follow-through).
+    const est = await estimateFromRun(db, associateId, next);
+    earnings = est ? est.earnings.map((e, i) => ({ line: `earning:${e.kind}:${i}`, kind: e.kind, hours: e.hours, rate: e.rate, amount: round2(e.amount) })) : [];
+    const fullGross = est ? round2(est.grossPay) : 0;
+    taxes = est
       ? [
-          { line: 'tax:FEDERAL', kind: 'FEDERAL' as const, amount: t.federalIncomeTax },
-          { line: 'tax:SOCIAL_SECURITY', kind: 'SOCIAL_SECURITY' as const, amount: t.socialSecurity },
-          { line: 'tax:MEDICARE', kind: 'MEDICARE' as const, amount: t.medicare },
-          { line: 'tax:STATE', kind: 'STATE' as const, amount: t.stateIncomeTax },
+          { line: 'tax:FEDERAL', kind: 'FEDERAL' as const, amount: est.federalIncomeTax },
+          { line: 'tax:SOCIAL_SECURITY', kind: 'SOCIAL_SECURITY' as const, amount: est.fica },
+          { line: 'tax:MEDICARE', kind: 'MEDICARE' as const, amount: est.medicare },
+          { line: 'tax:STATE', kind: 'STATE' as const, amount: est.stateIncomeTax },
+          { line: 'tax:LOCAL', kind: 'LOCAL' as const, amount: est.localIncomeTax },
+          { line: 'tax:STATE_PROGRAM', kind: 'STATE_PROGRAM' as const, amount: est.stateProgramTax },
         ].filter((x) => x.amount !== 0)
       : [];
-    deductions = [];
+    deductions = est
+      ? [
+          { line: 'deduction:PRE_TAX', kind: 'PRE_TAX' as const, amount: round2(est.preTaxDeductions) },
+          { line: 'deduction:POST_TAX', kind: 'POST_TAX' as const, amount: round2(est.postTaxDeductions) },
+        ].filter((d) => d.amount !== 0)
+      : [];
     gross = fullGross;
     // Daily pay already sent comes off the check.
-    net = round2(Math.max(0, fullGross - taxes.reduce((s, x) => s + x.amount, 0) - daily.net));
+    const beforeRides = round2(Math.max(0, (est?.netPay ?? 0) - daily.net));
+    // Van rides come off this check too (ASSOC-1): payroll's own plan, read-
+    // only — authorized rides on or before the period's last day, oldest
+    // first, inside the minimum-wage guard — so "Looks right" is asked of
+    // the number the run will pay, and it matches the Ride page's "comes
+    // out of your pay on" total.
+    const regularHours = est?.regularHours ?? 0;
+    const overtimeHours = est?.overtimeHours ?? 0;
+    const doubleTimeHours = est?.doubleTimeHours ?? 0;
+    const rides = await planRideCharges(db, {
+      associateId,
+      availableNet: beforeRides,
+      grossPay: fullGross,
+      regularHours,
+      overtimeHours,
+      doubleTimeHours,
+      overtimeMultiplier: est?.overtimeMultiplier ?? 1.5,
+      doubleMultiplier: est?.doubleMultiplier ?? 2,
+      hoursWorked: round2(regularHours + overtimeHours + doubleTimeHours),
+      taxState: est?.taxState ?? null,
+      periodEnd: next.periodEnd,
+      clientId: null,
+    });
+    if (rides.totalCents > 0) deductions.push({ line: 'deduction:RIDES', kind: 'RIDES', amount: rides.totalCents / 100 });
+    if (rides.guard.owedCents > 0) {
+      rideFacts = {
+        owed: rides.guard.owedCents / 100,
+        taken: rides.totalCents / 100,
+        held: rides.deferredCents / 100,
+        minimumWage: rides.guard.minimumWageCents / 100,
+        state: rides.guard.state,
+      };
+    }
+    net = round2(Math.max(0, beforeRides - rides.totalCents / 100));
   }
 
   return {
@@ -224,9 +270,42 @@ export async function buildPayPreview(db: PrismaClient, associateId: string, now
     taxes,
     deductions,
     paidAhead: daily.net,
+    rides: rideFacts,
     net: round2(net),
     check: check ? { status: check.status as 'CONFIRMED' | 'FLAGGED', flags: (check.flags as unknown as PreviewFlag[]) ?? [], at: check.updatedAt.toISOString() } : null,
   };
+}
+
+/**
+ * The run's projection for one person over the period being previewed: their
+ * pay schedule's membership (when they're on one), the run's pay date, the
+ * run's default rate when no compensation record says otherwise.
+ */
+async function estimateFromRun(db: PrismaClient, associateId: string, next: { periodStart: string; periodEnd: string }) {
+  const periodStart = asDate(next.periodStart);
+  const periodEndExclusive = new Date(asDate(next.periodEnd).getTime() + DAY);
+  const membership = (await scheduleMembershipFor(db, [associateId], next.periodEnd)).get(associateId) ?? null;
+  const scheduleFilter = membership ? await scheduleFilterFor(db, membership.scheduleId, periodStart, asDate(next.periodEnd)) : undefined;
+  const { cut, payDate } = await runCutFor(db, {
+    kind: 'REGULAR',
+    payrollScheduleId: membership?.scheduleId ?? null,
+    clientId: null,
+    periodStart: next.periodStart,
+    periodEnd: next.periodEnd,
+    windows: scheduleFilter?.windows ?? null,
+  });
+  const projection = await aggregatePayrollProjection(db, {
+    periodStart,
+    periodEndExclusive,
+    clientId: null,
+    defaultRate: 15,
+    associateIds: [associateId],
+    taxEngine: await taxEngineFor(db),
+    ...(scheduleFilter ? { scheduleFilter } : {}),
+    payDate,
+    prevUtcCut: cut.prevUtc,
+  });
+  return projection.items.find((i) => i.associateId === associateId) ?? null;
 }
 
 export async function confirmPayPreview(db: PrismaClient, associateId: string, actorUserId: string, now: Date = new Date()): Promise<PayPreview> {

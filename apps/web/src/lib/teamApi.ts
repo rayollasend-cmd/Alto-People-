@@ -40,6 +40,8 @@ export interface TeamNumbers {
   lateOrNoShow7d: number;
   lateOrNoShowPeople7d: number;
   overtimeRisk: number;
+  /** Worked + still-scheduled hours at which a week is overtime risk (36, shared). */
+  overtimeRiskHours?: number;
   overtimeThresholdHours: number;
 }
 
@@ -71,6 +73,8 @@ export interface InboxItem {
   link: string;
   pendingSince: string;
   ageDays: number;
+  /** A timesheet carrying an anomaly flag (never approved in a batch). */
+  flagged?: boolean;
 }
 
 export interface TeamInboxResponse {
@@ -208,6 +212,8 @@ export interface TeamHome {
     pips: Array<TeamHomePerson & { id: string; endDate: string }>;
   };
   today: {
+    /** The company's calendar day (YYYY-MM-DD) the lists are cut on. */
+    date?: string;
     /** `timezone`: the store's clock — the shift is shown on it (fmtShiftTz). */
     shifts: Array<TeamHomePerson & { id: string; startsAt: string; endsAt: string; position: string; location: string | null; timezone?: string | null }>;
     onClock: Array<TeamHomePerson & { since: string }>;

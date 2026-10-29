@@ -6,6 +6,7 @@ import { getMarketRates } from '@/lib/marketRatesApi';
 import { fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { fmtExecExact, fmtExecMoney } from '@/lib/executiveFormat';
+import { execHref, useExecFrame } from '@/lib/executiveApi';
 import { whatIfBaseline, whatIfLose, whatIfWin, type WhatIfLeagueRow, type WhatIfOutcome, type WhatIfRates } from '@/lib/execWhatIf';
 import { useI18n } from '@/lib/i18n';
 import '@/lib/i18n/en/execPortal';
@@ -53,6 +54,7 @@ export function WhatIfClientCard({
   rates: WhatIfRates;
 }) {
   const { t } = useI18n();
+  const frame = useExecFrame();
   const base = useMemo(() => whatIfBaseline(league, clients), [league, clients]);
   const [mode, setMode] = useState<Mode>('lose');
   const [clientId, setClientId] = useState<string>(base.clients[0]?.clientId ?? '');
@@ -174,7 +176,7 @@ export function WhatIfClientCard({
         )}
         <p className="text-2xs text-ink-muted">
           {t('execPortal.scen.whatIfFoot')}{' '}
-          <Link to="/executive/clients" className="text-accent underline underline-offset-2">
+          <Link to={execHref('/executive/clients', frame)} className="text-accent underline underline-offset-2">
             {t('execPortal.scen.whatIfFootLink')}
           </Link>
         </p>

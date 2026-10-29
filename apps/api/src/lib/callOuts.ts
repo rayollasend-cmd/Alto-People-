@@ -4,7 +4,7 @@ import { enqueueAudit } from './audit.js';
 import { recordCallOutAttendance } from './attendance.js';
 import { runCoverFlow, type CoverStep } from './coverShift.js';
 import { notifyAssociate, notifyClientSupervisors, trackNotificationWork } from './notify.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 /**
  * Call-outs, handled. A worker says they can't make a shift — on WhatsApp,
@@ -152,7 +152,8 @@ export async function nextCallableShift(db: Db, associateId: string, now = new D
 }
 
 export const placeOf = (s: CallOutShift) => s.locationRel?.name ?? s.client?.name ?? s.position;
-export const zoneOf = (s: CallOutShift) => s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+/** The shift's store clock; a shift with no store reads the company's. */
+export const zoneOf = (s: CallOutShift) => s.locationRel?.timezone ?? companyWorkweek().timezone;
 
 /* ----- Recording, confirming, cancelling --------------------------------- */
 

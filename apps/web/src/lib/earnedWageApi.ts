@@ -17,6 +17,8 @@ export interface EwaAvailability {
   drawn: number;
   available: number;
   fee: number;
+  /** Where an advance goes — the verified pay account (absent on older answers). */
+  payoutTo?: { kind: 'BANK' | 'CARD' | 'OTHER'; last4: string | null } | null;
 }
 
 export interface EwaAdvance {
@@ -39,9 +41,19 @@ export function getMyEarnedWage(): Promise<EwaAvailability> {
   return apiFetch('/me/earned-wage');
 }
 
-export function requestEarnedWage(amount: number): Promise<{ id: string; status: 'PAID' | 'REQUESTED' | 'FAILED'; amount: number; fee: number; failureReason: string | null }> {
-  return apiFetch('/me/earned-wage', { method: 'POST', body: { amount } });
+/**
+ * Ask for an advance. One Idempotency-Key per tap (CODE-10): a network retry of the same request
+ * is answered from the first, never paid twice. Pass the key to retry a tap on purpose.
+ */
+export function requestEarnedWage(
+  amount: number,
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<{ id: string; status: 'PAID' | 'REQUESTED' | 'FAILED'; amount: number; fee: number; failureReason: string | null }> {
+  return apiFetch('/me/earned-wage', { method: 'POST', body: { amount }, headers: { 'Idempotency-Key': idempotencyKey } });
 }
+
+const newIdempotencyKey = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? `ewa-${crypto.randomUUID()}` : `ewa-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export interface EwaDesk {
   settings: { enabled: boolean; capPct: number; fee: number; maxPerPeriod: number };

@@ -39,6 +39,7 @@ import {
   WorkerSchema,
   WorkerUpdateSchema,
 } from '../lib/v1/schemas.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Brief 2-4 — the public API, /v1 (docs/public-api-investigation.md, every
@@ -66,7 +67,8 @@ async function needModule(module: TenantModule): Promise<void> {
 }
 
 const isoOrNull = (d: Date | null | undefined) => (d ? d.toISOString() : null);
-const dateOnly = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+/** A DATE column (hire date, program dates): its own day. */
+const dateOnly = (d: Date | null | undefined) => (d ? dateColumnKey(d) : null);
 const ownerName = (o: { email: string; associate: { firstName: string; lastName: string } | null } | null) =>
   o ? (o.associate ? `${o.associate.firstName} ${o.associate.lastName}` : o.email) : null;
 

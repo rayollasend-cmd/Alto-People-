@@ -139,6 +139,12 @@ describe('Expirations empty states', () => {
     expect(screen.getByText('· Nothing further out.')).toBeInTheDocument();
   });
 
+  it('a column the API capped says "Showing 500 of 812" (CODE-33)', async () => {
+    getExpirations.mockResolvedValue({ ...counts(0, 3, 0), counts: { expired: 0, dueSoon: 812, dueLater: 0 }, truncated: { expired: false, dueSoon: true, dueLater: false } });
+    renderAs('HR_ADMINISTRATOR', <ExpirationsHome />, '/expirations?view=list');
+    expect(await screen.findByTestId('bucket-truncated')).toHaveTextContent('Showing 3 of 812.');
+  });
+
   it('the timeline draws no chart when nothing lapses', async () => {
     getExpirationRisk.mockResolvedValue(emptyRisk);
     renderAs('HR_ADMINISTRATOR', <ExpirationsHome />, '/expirations?view=timeline');

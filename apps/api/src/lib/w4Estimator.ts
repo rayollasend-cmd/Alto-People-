@@ -2,6 +2,7 @@ import type { PrismaClient, W4FilingStatus } from '@prisma/client';
 import { payScheduleFor } from './associatePayday.js';
 import { getCurrentPeriod, getPeriodAfter } from './payrollSchedule.js';
 import { computeFederalIncomeTax, type PayFrequency } from './payrollTax.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * W-4 estimator (PAYEXP §5): "am I withholding the right amount?"
@@ -127,8 +128,8 @@ export function estimateW4(input: W4EstimateInput): W4EstimateResult {
 
 /** Checks left this year on the person's schedule (after today). */
 export function periodsRemainingThisYear(schedule: { frequency: PayrollFrequencyLike; anchorDate: Date | string; payDateOffsetDays: number }, now: Date): number {
-  const year = now.getUTCFullYear();
-  const todayKey = now.toISOString().slice(0, 10);
+  const todayKey = orgDateKey(now);
+  const year = Number(todayKey.slice(0, 4));
   let w = getCurrentPeriod(schedule, now);
   let n = 0;
   for (let i = 0; i < 400; i++) {

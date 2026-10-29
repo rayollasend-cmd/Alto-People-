@@ -119,7 +119,8 @@ describe('My team', () => {
     expect(within(tile('Hours this week')).getByText('of 14 h scheduled')).toBeInTheDocument();
     expect(tile('Hours this week')).toHaveAttribute('href', '/team?tab=timesheets');
     expect(within(tile('Late or no-show · 7 days')).getByText('1 person')).toBeInTheDocument();
-    expect(within(tile('Overtime risk')).getByText('On track for more than 40 h this week')).toBeInTheDocument();
+    // One definition with Time & attendance (FLOOR-23), and whose people it counts.
+    expect(within(tile('Overtime risk')).getByText('Your team · 36h+ worked and scheduled this week')).toBeInTheDocument();
     // The pending counts moved to the header facts and the tab badges.
     const facts = screen.getByTestId('page-facts');
     expect(within(facts).getByText('Direct reports').nextElementSibling).toHaveTextContent('3');
@@ -160,4 +161,30 @@ describe('My team', () => {
     expect(await screen.findByText('Nothing from your team is waiting')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open Inbox' })).toHaveAttribute('href', '/inbox');
   });
+
+  it('one gold action: "Approve N clean" for the timesheets with nothing flagged; each row’s Approve is secondary (FLOOR-30)', async () => {
+    const item = (id: string, kind: 'TIMESHEET' | 'TIME_OFF', flagged = false) => ({
+      id,
+      kind,
+      associateId: `a-${id}`,
+      associateName: `Person ${id}`,
+      summary: flagged ? 'Shift on Tue, Oct 27 · Forgot clock-out' : 'Shift on Tue, Oct 27',
+      link: '/team?tab=timesheets',
+      pendingSince: '2026-10-27T20:00:00.000Z',
+      ageDays: 1,
+      flagged,
+    });
+    vi.mocked(getTeamInbox).mockResolvedValue({ items: [item('1', 'TIMESHEET'), item('2', 'TIMESHEET'), item('3', 'TIMESHEET', true), item('4', 'TIME_OFF')], total: 4 } as never);
+    renderPage('/team?tab=inbox');
+    const batch = await screen.findByTestId('approve-clean');
+    expect(batch).toHaveTextContent('2 timesheets have nothing flagged.');
+    expect(within(batch).getByRole('button', { name: 'Approve 2 clean' })).toHaveClass('btn-gold');
+    // The anomaly reads in words, not as an enum.
+    expect(screen.getAllByText(/Forgot clock-out/).length).toBeGreaterThan(0);
+    // Row decisions never wear the gold.
+    const rowApproves = screen.getAllByRole('button', { name: 'Approve' });
+    expect(rowApproves.length).toBeGreaterThan(0);
+    for (const b of rowApproves) expect(b).not.toHaveClass('btn-gold');
+  });
 });
+

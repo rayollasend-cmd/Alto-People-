@@ -567,7 +567,8 @@ describe('ride charges come out of the pay period’s paycheck (Brief 1A-3)', ()
     expect(csv.status).toBe(200);
     expect(csv.headers['content-type']).toMatch(/text\/csv/);
     expect(csv.text).toMatch(/Not authorized \(not deducted\)/);
-    expect(csv.text).toMatch(/"Ana Reyes",4,1,0.00,11.00,0.00,5.00,5.00,"current"/);
+    // The shared writer (deep audit MONEY-23): quotes only where RFC-4180 needs them, numbers numeric.
+    expect(csv.text).toMatch(/Ana Reyes,4,1,0.00,11.00,0.00,5.00,5.00,current/);
   });
 
   it('the minimum-wage guard: no pay period falls below the applicable minimum wage after the deduction', async () => {

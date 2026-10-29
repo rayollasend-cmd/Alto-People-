@@ -46,7 +46,7 @@ export function HugoNoteCard({
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent-fill/20 text-accent" aria-hidden="true">
           <Icon className="h-[18px] w-[18px]" />
         </span>
-        <div className="min-w-0 flex-1 pr-6">
+        <div className="min-w-0 flex-1 pr-6 coarse:pr-9">
           <p className="text-sm font-medium leading-snug text-ink">
             {note.status === 'NEW' && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-gold-bright align-middle" aria-label={t('hugoWork.new')} role="img" />}
             {words.title}
@@ -67,7 +67,7 @@ export function HugoNoteCard({
         onClick={onDismiss}
         disabled={busy !== null}
         aria-label={t('hugoWork.note.dismissAria', { title: words.title })}
-        className="absolute right-1.5 top-1.5 grid h-8 w-8 place-items-center rounded-md text-ink-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        className="absolute right-0.5 top-0.5 grid h-8 w-8 coarse:h-11 coarse:w-11 place-items-center rounded-md text-ink-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
       >
         <X className="h-4 w-4" aria-hidden="true" />
       </button>

@@ -38,9 +38,11 @@ type Db = Prisma.TransactionClient | PrismaClient;
 
 export interface StatementLine {
   label: string;
+  /** Hours to the hundredth; a statement's lines add up to its hours total. */
   hours: number;
-  /** Blended rate (amount ÷ hours) — uniform in practice, honest when not. */
+  /** The billed rate to the cent — one rate per line (older snapshots: amount ÷ hours). */
   rate: number;
+  /** hours × rate, rounded to the cent; the lines add up to the services total. */
   amount: number;
 }
 
@@ -88,7 +90,59 @@ export interface StatementSnapshot {
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: statement period bounds are day keys (a company midnight or UTC midnight).
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
+
+/**
+ * Largest-remainder rounding (audit 2026-10-29 CODE-13): whole units (cents,
+ * hundredths of an hour) that add up to `target` exactly, each within one
+ * unit of its exact share. Deterministic: the biggest remainders take the
+ * spare units first, ties in the order given (callers sort their rows).
+ * Lines rounded one by one drifted from the total: three 20-minute lines at
+ * $10 printed 3.33 + 3.33 + 3.33 under a $10.00 total.
+ */
+export function apportion(exact: number[], target: number): number[] {
+  const base = exact.map((v) => Math.floor(v + 1e-9));
+  let diff = Math.round(target) - base.reduce((a, b) => a + b, 0);
+  if (exact.length === 0 || diff === 0) return base;
+  const rem = exact.map((v, i) => ({ i, r: v - base[i]! }));
+  const order = diff > 0 ? [...rem].sort((a, b) => b.r - a.r || a.i - b.i) : [...rem].sort((a, b) => a.r - b.r || a.i - b.i);
+  const step = diff > 0 ? 1 : -1;
+  for (let k = 0; diff !== 0; k = (k + 1) % order.length) {
+    base[order[k]!.i]! += step;
+    diff -= step;
+  }
+  return base;
+}
+
+/**
+ * An invoice's lines as a client checks them: hours to the hundredth, a rate
+ * to the cent, and amount = hours × rate rounded to the cent — so every line
+ * verifies on its own and the lines add up to the services total. The hours
+ * are apportioned (largest remainder) so they still add up to the period's
+ * worked hours to the hundredth. Pure; the snapshot and the tests share it.
+ */
+export function billLines<T extends { label: string; hours: number; rate: number }>(rows: T[]): { lines: StatementLine[]; hoursCents: number[]; amountCents: number[]; source: T[] } {
+  const sorted = [...rows].sort((a, b) => a.label.localeCompare(b.label) || a.rate - b.rate);
+  const exactHundredths = sorted.map((r) => r.hours * 100);
+  const hundredths = apportion(exactHundredths, exactHundredths.reduce((a, b) => a + b, 0));
+  const lines: StatementLine[] = [];
+  const hoursCents: number[] = [];
+  const amountCents: number[] = [];
+  const source: T[] = [];
+  sorted.forEach((r, i) => {
+    const h = hundredths[i]!;
+    const rateCents = Math.round(r.rate * 100);
+    const cents = Math.round((h * rateCents) / 100);
+    // A sliver that apportions to 0.00 h bills nothing: no "0.00 h overtime" line.
+    if (h === 0 && cents === 0) return;
+    lines.push({ label: r.label, hours: h / 100, rate: rateCents / 100, amount: cents / 100 });
+    hoursCents.push(h);
+    amountCents.push(cents);
+    source.push(r);
+  });
+  return { lines, hoursCents, amountCents, source };
+}
 
 export type StatementTotals = StatementSnapshot['totals'];
 
@@ -203,13 +257,10 @@ export async function computeStatementSnapshot(
   );
   const shareById = new Map([...byEntry].map(([e, h]) => [e.id!, h]));
 
-  // Aggregate lines per (position band, bucket) at each hour's own bill rate.
-  const lineAgg = new Map<string, { hours: number; amount: number }>();
+  // Aggregate lines per (position band, bucket, billed rate): one rate per
+  // line, so hours × rate = amount on every line of the invoice.
+  const lineAgg = new Map<string, { label: string; rate: number; hours: number; bucket: 'regular' | 'ot' | 'dt' }>();
   const storeAgg = new Map<string, { hours: number; amount: number }>();
-  let regularH = 0;
-  let otH = 0;
-  let dtH = 0;
-  let totalAmount = 0;
 
   for (const e of entries) {
     const share = shareById.get(e.id);
@@ -233,24 +284,21 @@ export async function computeStatementSnapshot(
     const band = lead ? 'Lead' : 'Associate';
     const posLabel = position ?? 'Unscheduled work';
     let entryAmount = 0;
-    for (const [suffix, hours, mult] of [
-      ['regular', share.regularHours, 1],
-      [otLabel, share.overtimeHours, otMult],
-      [dtLabel, share.doubleTimeHours, otMult],
+    for (const [suffix, hours, mult, bucket] of [
+      ['regular', share.regularHours, 1, 'regular'],
+      [otLabel, share.overtimeHours, otMult, 'ot'],
+      [dtLabel, share.doubleTimeHours, otMult, 'dt'],
     ] as const) {
       if (hours <= 0) continue;
-      const amount = hours * rate * mult;
-      const key = `${band} — ${posLabel} — ${suffix}`;
-      const agg = lineAgg.get(key) ?? { hours: 0, amount: 0 };
+      // The rate an invoice prints is a cents figure: 1.5 × $17.33 bills at $26.00.
+      const billed = round2(rate * mult);
+      const label = `${band} — ${posLabel} — ${suffix}`;
+      const key = `${label}|${billed}`;
+      const agg = lineAgg.get(key) ?? { label, rate: billed, hours: 0, bucket };
       agg.hours += hours;
-      agg.amount += amount;
       lineAgg.set(key, agg);
-      entryAmount += amount;
+      entryAmount += hours * billed;
     }
-    totalAmount += entryAmount;
-    regularH += share.regularHours;
-    otH += share.overtimeHours;
-    dtH += share.doubleTimeHours;
 
     const store = e.locationId
       ? (locationName.get(e.locationId) ?? 'Unknown site')
@@ -314,34 +362,41 @@ export async function computeStatementSnapshot(
   const adjustments = await readyAdjustments(db, clientId);
   const adjustmentsAmount = round2(adjustments.reduce((t, a) => t + a.amount, 0));
 
+  // The invoice's lines, rounded so they verify and add up (CODE-13); the
+  // hours totals are the lines' own sums, so the summary agrees with them.
+  const billed = billLines([...lineAgg.values()]);
+  const hoursIn = (bucket: 'regular' | 'ot' | 'dt') =>
+    billed.source.reduce((n, a, i) => n + (a.bucket === bucket ? billed.hoursCents[i]! : 0), 0);
+  const hoursCentsTotal = billed.hoursCents.reduce((a, b) => a + b, 0);
+  const amountCentsTotal = billed.amountCents.reduce((a, b) => a + b, 0);
+  const regularC = hoursIn('regular');
+  const otC = hoursIn('ot');
+  const dtC = hoursIn('dt');
+
+  // The work-site split, apportioned to the same totals so it adds up too.
+  const storeRows = [...storeAgg.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const storeHours = apportion(storeRows.map(([, v]) => v.hours * 100), hoursCentsTotal);
+  const storeAmounts = apportion(storeRows.map(([, v]) => v.amount * 100), amountCentsTotal);
+
   return {
     clientName: client.name,
     periodStart: ymd(periodStart),
     periodEnd: ymd(new Date(periodEndExclusive.getTime() - 24 * 3_600_000)),
     generatedAt: new Date().toISOString(),
-    lines: [...lineAgg.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([label, v]) => ({
-        label,
-        hours: round2(v.hours),
-        rate: v.hours > 0 ? round2(v.amount / v.hours) : 0,
-        amount: round2(v.amount),
-      })),
-    stores: [...storeAgg.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([name, v]) => ({
-        locationName: name,
-        hours: round2(v.hours),
-        amount: round2(v.amount),
-      })),
+    lines: billed.lines,
+    stores: storeRows.map(([name], i) => ({
+      locationName: name,
+      hours: storeHours[i]! / 100,
+      amount: storeAmounts[i]! / 100,
+    })),
     ...(adjustments.length ? { adjustments } : {}),
     overtimeBilling: terms.overtimeBilling,
     totals: {
-      hours: round2(regularH + otH + dtH),
-      regularHours: round2(regularH),
-      otHours: round2(otH),
-      ...(dtH > 0 ? { doubleTimeHours: round2(dtH) } : {}),
-      ...totalsWithTax({ hoursAmount: totalAmount, adjustmentsAmount, salesTaxRatePct: client.salesTaxable && client.salesTaxRatePct != null ? Number(client.salesTaxRatePct) : null }),
+      hours: hoursCentsTotal / 100,
+      regularHours: regularC / 100,
+      otHours: otC / 100,
+      ...(dtC > 0 ? { doubleTimeHours: dtC / 100 } : {}),
+      ...totalsWithTax({ hoursAmount: amountCentsTotal / 100, adjustmentsAmount, salesTaxRatePct: client.salesTaxable && client.salesTaxRatePct != null ? Number(client.salesTaxRatePct) : null }),
     },
     sla: {
       publishedShifts: published,

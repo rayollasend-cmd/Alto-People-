@@ -15,6 +15,7 @@ import {
   disciplineManagerTemplate,
 } from '../lib/emailTemplates.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Phase 118 — Disciplinary action log.
@@ -94,8 +95,8 @@ discipline118Router.get('/disciplinary-actions', VIEW, async (req, res) => {
       associateEmail: a.associate.email,
       kind: a.kind,
       status: a.status,
-      incidentDate: a.incidentDate.toISOString().slice(0, 10),
-      effectiveDate: a.effectiveDate.toISOString().slice(0, 10),
+      incidentDate: dateColumnKey(a.incidentDate),
+      effectiveDate: dateColumnKey(a.effectiveDate),
       suspensionDays: a.suspensionDays,
       description: a.description,
       expectedAction: a.expectedAction,
@@ -276,8 +277,8 @@ discipline118Router.get(
         associateName: `${a.associate.firstName} ${a.associate.lastName}`,
         kind: a.kind,
         status: a.status,
-        incidentDate: a.incidentDate.toISOString().slice(0, 10),
-        effectiveDate: a.effectiveDate.toISOString().slice(0, 10),
+        incidentDate: dateColumnKey(a.incidentDate),
+        effectiveDate: dateColumnKey(a.effectiveDate),
         suspensionDays: a.suspensionDays,
         description: a.description,
         expectedAction: a.expectedAction,

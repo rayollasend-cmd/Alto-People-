@@ -30,6 +30,10 @@ export interface OpenShiftListItem {
   location: string | null;
   locationId?: string | null;
   locationName?: string | null;
+  /** The store's street address and point — what "Directions" opens (ASSOC-10). */
+  locationAddress?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
   /** The store's IANA zone: the shift is shown on its clock (fmtShiftTz). */
   timezone?: string | null;
   /** A site they have not worked at — the feed says so before they tap. */

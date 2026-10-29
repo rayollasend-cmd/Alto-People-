@@ -10,15 +10,16 @@ import { assertInTenant } from '../lib/sameTenant.js';
 import { loadApprovalPolicy, payChangeNeedsApproval, secondPersonExists } from '../lib/approvalPolicy.js';
 import { createApprovalRequest, payChangeReasonLabel, pendingResponse, registerApplyHandler } from '../lib/approvalRequests.js';
 import { fmtDay } from '../lib/humanDates.js';
-import { applyPayRateChange, currentComp, listPayChanges } from '../lib/payChanges.js';
+import { applyPayRateChange, currentComp, listPayChanges, compEffectiveDay } from '../lib/payChanges.js';
 import { coveringManagerIds } from '../lib/delegations.js';
-import { assertAssociateInScope, scopeActiveAssociates, scopeWhere } from '../lib/scope.js';
+import { assertAssociateInScope, atClient, scopeActiveAssociates, scopeWhere } from '../lib/scope.js';
 import { namesOf, payChangeContexts, type ProposedChange } from '../lib/payChangeContext.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { EMPLOYED_WHERE } from '../lib/activeDefinition.js';
 import { enqueueAudit } from '../lib/audit.js';
 import type { SessionUser } from '../types/express.js';
 import { PAY_CHANGE_NOW, assertNewHireForPay, hirePayCeilings, hirePayStatus } from '../lib/hirePay.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -65,7 +66,8 @@ function shapeRecord(r: {
   return {
     id: r.id,
     associateId: r.associateId,
-    effectiveFrom: toDateOnly(r.effectiveFrom),
+    // A named day (UTC midnight) or an "effective now" moment, read the way the audit row and hire-pay read it.
+    effectiveFrom: compEffectiveDay(r.effectiveFrom),
     effectiveTo: r.effectiveTo?.toISOString() ?? null,
     payType: r.payType,
     amount: r.amount.toFixed(2),
@@ -103,7 +105,7 @@ function shapeBand(b: {
     midAmount: b.midAmount.toFixed(2),
     maxAmount: b.maxAmount.toFixed(2),
     currency: b.currency,
-    effectiveFrom: toDateOnly(b.effectiveFrom),
+    effectiveFrom: compEffectiveDay(b.effectiveFrom),
     effectiveTo: b.effectiveTo?.toISOString() ?? null,
   };
 }
@@ -208,7 +210,8 @@ async function setStartingPay(user: SessionUser, associateId: string, input: Rec
     : f.startDate
       ? new Date(`${f.startDate}T00:00:00.000Z`)
       : new Date();
-  const day = effectiveFrom.toISOString().slice(0, 10);
+  // A named day stays that day; "now" is the company's day.
+  const day = input.effectiveFrom || f.startDate ? toDateOnly(effectiveFrom)! : orgDateKey(effectiveFrom);
   const ceiling = (await hirePayCeilings(prisma, f, day))[input.payType];
   // With no band or rate card on file there is nothing to hold the wage
   // against, and it applies at once (owner 2026-10-23).
@@ -559,7 +562,7 @@ compensationRouter.get('/overview', requireCapability('view:comp'), async (req, 
       id: cycle.id,
       name: cycle.name,
       status: cycle.status,
-      effectiveDate: cycle.effectiveDate.toISOString().slice(0, 10),
+      effectiveDate: toDateOnly(cycle.effectiveDate)!,
       budget: budget?.toFixed(2) ?? null,
       spent: (Math.round(spent * 100) / 100).toFixed(2),
       people: proposals.length,
@@ -615,9 +618,9 @@ compensationRouter.get(
         clientId: c.clientId,
         name: c.name,
         status: c.status,
-        reviewPeriodStart: c.reviewPeriodStart.toISOString().slice(0, 10),
-        reviewPeriodEnd: c.reviewPeriodEnd.toISOString().slice(0, 10),
-        effectiveDate: c.effectiveDate.toISOString().slice(0, 10),
+        reviewPeriodStart: toDateOnly(c.reviewPeriodStart)!,
+        reviewPeriodEnd: toDateOnly(c.reviewPeriodEnd)!,
+        effectiveDate: toDateOnly(c.effectiveDate)!,
         budget: c.budget?.toFixed(2) ?? null,
         appliedAt: c.appliedAt?.toISOString() ?? null,
       })),
@@ -689,25 +692,27 @@ compensationRouter.post(
   '/cycles/:id/proposals/seed',
   requireCapability('manage:comp'),
   async (req, res) => {
-    const cycleId = req.params.id;
-    const cycle = await prisma.meritCycle.findUnique({ where: { id: cycleId } });
+    const cycleId = String(req.params.id);
+    const cycle = await prisma.meritCycle.findFirst({ where: { id: cycleId, tenantId: tenantIdForWrite() } });
     if (!cycle) throw new HttpError(404, 'not_found', 'Cycle not found.');
     if (cycle.status !== 'DRAFT' && cycle.status !== 'OPEN') {
       throw new HttpError(400, 'wrong_state', 'Cycle is not editable.');
     }
 
-    // All active associates with at least one current comp record. We can't
-    // propose for someone whose comp baseline we don't know.
+    // CODE-17: the cycle's people — active (never a deactivated person), at
+    // the cycle's client, inside the caller's reach, with a current comp
+    // record (we can't propose without a baseline). Every one of them: no
+    // silent take caps, here or on the proposals already seeded (a re-seed
+    // past 500 used to re-insert duplicates and answer 500).
     const associates = await prisma.associate.findMany({
-      take: 1000,
-      where: {
-        deletedAt: null,
-        compRecords: { some: { effectiveTo: null } },
-      },
+      where: scopeWhere<Prisma.AssociateWhereInput>(
+        scopeActiveAssociates(req.user!),
+        atClient(cycle.clientId, { approvedOnly: true }),
+        { compRecords: { some: { effectiveTo: null } } },
+      ),
       select: { id: true },
     });
     const existing = await prisma.meritProposal.findMany({
-      take: 500,
       where: { cycleId },
       select: { associateId: true },
     });
@@ -743,7 +748,7 @@ compensationRouter.post(
     const created =
       proposalData.length === 0
         ? 0
-        : (await prisma.meritProposal.createMany({ data: proposalData })).count;
+        : (await prisma.meritProposal.createMany({ data: proposalData, skipDuplicates: true })).count;
 
     if (cycle.status === 'DRAFT') {
       await prisma.meritCycle.update({
@@ -763,7 +768,10 @@ compensationRouter.put(
     const cycleId = req.params.id;
     const pid = req.params.pid;
     const input = ProposalUpdateSchema.parse(req.body);
-    const proposal = await prisma.meritProposal.findUnique({ where: { id: pid } });
+    // Only a proposal for someone in the caller's tenant and reach (CODE-17).
+    const proposal = await prisma.meritProposal.findFirst({
+      where: { id: pid, tenantId: tenantIdForWrite(), associate: { is: scopeActiveAssociates(req.user!, { former: true }) } },
+    });
     if (!proposal || proposal.cycleId !== cycleId) {
       throw new HttpError(404, 'not_found', 'Proposal not found.');
     }
@@ -952,7 +960,7 @@ async function cycleWorksheet(cycleId: string, managerIds: string[] | null) {
       bandPositionNow: bandPosition(current, band),
       bandPositionProposed: bandPosition(proposed, band),
       lastRating: review?.overallRating ?? null,
-      lastReviewEnd: review?.periodEnd.toISOString().slice(0, 10) ?? null,
+      lastReviewEnd: toDateOnly(review?.periodEnd) ?? null,
     };
   });
   return { cycle, rows, totalCurrent };
@@ -983,7 +991,7 @@ compensationRouter.get('/cycles/:id/worksheet', requireCapability('view:comp'), 
   const share = budget === null ? null : cycleCurrent > 0 ? Math.round(budget * (mineCurrent / cycleCurrent) * 100) / 100 : budget;
   const spent = rows.filter((r) => r.status !== 'REJECTED').reduce((sum, r) => sum + annual(Number(r.proposedAmount) - Number(r.currentAmount), r.payType), 0);
   res.json({
-    cycle: { id: cycle.id, name: cycle.name, status: cycle.status, effectiveDate: cycle.effectiveDate.toISOString().slice(0, 10), budget: budget?.toFixed(2) ?? null },
+    cycle: { id: cycle.id, name: cycle.name, status: cycle.status, effectiveDate: toDateOnly(cycle.effectiveDate)!, budget: budget?.toFixed(2) ?? null },
     budget: { share: share?.toFixed(2) ?? null, spent: Math.round(spent * 100) / 100, remaining: share === null ? null : Math.round((share - spent) * 100) / 100 },
     rows,
     editable: cycle.status === 'DRAFT' || cycle.status === 'OPEN',
@@ -1025,7 +1033,7 @@ compensationRouter.get('/cycles/:id/calibration', requireCapability('manage:comp
   const spent = rows.filter((r) => r.status !== 'REJECTED').reduce((sum, r) => sum + annual(Number(r.proposedAmount) - Number(r.currentAmount), r.payType), 0);
   const budget = cycle.budget ? Number(cycle.budget) : null;
   res.json({
-    cycle: { id: cycle.id, name: cycle.name, status: cycle.status, budget: budget?.toFixed(2) ?? null, effectiveDate: cycle.effectiveDate.toISOString().slice(0, 10) },
+    cycle: { id: cycle.id, name: cycle.name, status: cycle.status, budget: budget?.toFixed(2) ?? null, effectiveDate: toDateOnly(cycle.effectiveDate)! },
     totals: { people: rows.length, spent: Math.round(spent * 100) / 100, remaining: budget === null ? null : Math.round((budget - spent) * 100) / 100, meanPct: mean, medianPct: q(0.5), p25, p75, pending: rows.filter((r) => r.status === 'DRAFT' || r.status === 'SUBMITTED').length },
     distribution: buckets,
     managers,
@@ -1050,7 +1058,7 @@ compensationRouter.get('/associates/:id/pay-change-context', requireCapability('
     .object({
       payType: z.enum(['HOURLY', 'SALARY']).default('HOURLY'),
       amount: z.coerce.number().positive(),
-      effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default(() => new Date().toISOString().slice(0, 10)),
+      effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default(() => orgDateKey(new Date())),
     })
     .parse(req.query);
   const ctx = (await payChangeContexts(prisma, [{ associateId, ...q }])).get(associateId);

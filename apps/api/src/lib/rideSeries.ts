@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { enqueueAudit } from './audit.js';
 import { tenantJob } from './tenantJobs.js';
+import { armJob } from './jobs.js';
 import { tenantIdForWrite } from './tenant.js';
 import { dateKeyInZone } from './timeAnomalies.js';
 import { zonedWallTimeToUtcInstant } from './timezone.js';
@@ -32,6 +33,7 @@ export const GENERATE_DAYS_AHEAD = 7;
 const DUPLICATE_WINDOW_MS = 3 * 3_600_000;
 const DAY_MS = 86_400_000;
 
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: only @db.Date columns and UTC-midnight day anchors come through here
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (date: string, n: number) => ymd(new Date(Date.parse(`${date}T00:00:00Z`) + n * DAY_MS));
 const dow = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
@@ -179,15 +181,12 @@ export async function generateAllSeries(now = new Date(), db: Db = prisma): Prom
   return total;
 }
 
-let timer: NodeJS.Timeout | null = null;
+/** Through the jobs registry (in-flight guard, Scheduled jobs panel); per tenant with transportation on. */
 export function startRideSeriesCron(): void {
-  if (timer) return;
-  const seconds = env.RIDE_SERIES_INTERVAL_SECONDS;
-  if (seconds <= 0) return;
-  const tick = () => {
-    void tenantJob('rideSeries', () => generateAllSeries(), { module: 'transportation' })().catch((err) => console.error('[alto-people/api] ride series failed:', err));
-  };
-  tick();
-  timer = setInterval(tick, seconds * 1000);
-  timer.unref();
+  armJob({
+    name: 'rideSeries',
+    label: 'Standing ride bookings (booked a week ahead)',
+    intervalSeconds: Math.max(0, env.RIDE_SERIES_INTERVAL_SECONDS),
+    run: tenantJob('rideSeries', () => generateAllSeries(), { module: 'transportation' }),
+  });
 }

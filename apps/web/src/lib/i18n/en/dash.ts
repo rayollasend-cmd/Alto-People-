@@ -12,8 +12,8 @@ export const enDash = {
   'dash.happyBirthday': 'Happy birthday, {name}!',
   // Homes without a first name on the account greet without one.
   'dash.greetingNoName': 'Hey there',
-  'dash.happyAnniversary': '{years} years at Alto today, {name} — thank you!',
-  'dash.celebrationSub': 'From all of us at Alto People — have a great one.',
+  'dash.happyAnniversary': '{years} years with {org} today, {name} — thank you!',
+  'dash.celebrationSub': 'From all of us at {org} — have a great one.',
   'dash.clock': 'Clock',
   'dash.onClock': 'On the clock',
   'dash.offClock': 'Off the clock',

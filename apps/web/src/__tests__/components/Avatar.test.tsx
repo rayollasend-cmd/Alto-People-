@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { Avatar } from '@/components/ui/Avatar';
-import { forgetMissingPhotos, isPhotoKnownMissing, personPhotoUrl } from '@/lib/photoUrl';
+import { associateFace, forgetMissingPhotos, isPhotoKnownMissing, personPhotoUrl, shiftHolderFace } from '@/lib/photoUrl';
 
 /**
  * One request per known photo (G4: ~24 404s on one Users page load). A row
@@ -59,5 +59,42 @@ describe('personPhotoUrl', () => {
     expect(personPhotoUrl({ associateId: 'a1', userId: 'u1' })).toBe('/api/associates/a1/photo');
     expect(personPhotoUrl({ userId: 'u1' })).toBe('/api/users/u1/photo');
     expect(personPhotoUrl({})).toBeUndefined();
+  });
+});
+
+/**
+ * LEAD-12 / FLOOR-25 / PEOPLE-26 (deep audit 2026-10-29): 36 photo 404s on one
+ * schedule load, 10 on the client's Today. The roster, shift, day, document,
+ * E-Verify, background and time-off payloads now say whether a photo exists;
+ * a row whose payload says "none" (null) asks for nothing.
+ */
+describe('payload faces', () => {
+  it('a roster row with photoUrl null: no request, initials', () => {
+    expect(associateFace({ id: 'a1', photoUrl: null })).toBeUndefined();
+    const { container } = render(<Avatar src={associateFace({ id: 'a1', photoUrl: null })} name="Dana Reyes" />);
+    expect(imgs(container)).toHaveLength(0);
+    expect(container.textContent).toBe('DR');
+  });
+
+  it('a roster row with a photo: its versioned URL', () => {
+    expect(associateFace({ id: 'a1', photoUrl: '/api/associates/a1/photo?v=9' })).toBe('/api/associates/a1/photo?v=9');
+  });
+
+  it('an older payload without the field still tries the bare path (one request, remembered on a miss)', () => {
+    expect(associateFace({ id: 'a1' })).toBe('/api/associates/a1/photo');
+    expect(associateFace(null)).toBeUndefined();
+  });
+
+  it("a shift's holder: assignedAssociatePhotoUrl decides", () => {
+    expect(shiftHolderFace({ assignedAssociateId: 'a1', assignedAssociatePhotoUrl: null })).toBeUndefined();
+    expect(shiftHolderFace({ assignedAssociateId: 'a1', assignedAssociatePhotoUrl: '/api/associates/a1/photo?v=2' })).toBe('/api/associates/a1/photo?v=2');
+    expect(shiftHolderFace({ assignedAssociateId: null })).toBeUndefined();
+  });
+
+  it('a photo that fails to load falls back to initials', () => {
+    const { container } = render(<Avatar src="/api/associates/a9/photo?v=1" name="Kim Ode" />);
+    fireEvent.error(container.querySelector('img')!);
+    expect(imgs(container)).toHaveLength(0);
+    expect(container.textContent).toBe('KO');
   });
 });

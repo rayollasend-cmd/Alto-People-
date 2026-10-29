@@ -11,6 +11,7 @@ import { tenantIdForWrite } from '../lib/tenant.js';
 import { safeContentDisposition } from '../lib/uploads.js';
 import { fmtDay } from '../lib/claimsPdf.js';
 import { leaveSettings } from '../lib/leaveOfAbsence.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 import { assembleEvidence, estimatedSuiImpact, finalOutcome, responsePacketPdf } from '../lib/unemploymentClaims.js';
 import { froiPdf, froiWindowDays, modifiedDutyMatches, prefillFroi, syncOshaFromClaim, type FroiFields, type RestrictionRules } from '../lib/workersComp.js';
 
@@ -37,8 +38,11 @@ const MANAGE = requireCapability('manage:claims');
 const DAY_MS = 86_400_000;
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const day = (s: string) => new Date(`${s}T00:00:00.000Z`);
-const todayUtc = () => day(new Date().toISOString().slice(0, 10));
+// The company's day (CODE-14): after 5 PM Pacific the UTC date is already tomorrow.
+const todayUtc = () => day(orgDateKey(new Date()));
 const money = (d: Prisma.Decimal | null) => (d === null ? null : Number(d));
+// CODE-24: a page number is a whole number in a range Prisma's skip can hold — `?page=1e9` is a 400, not a 500.
+const PageParam = z.coerce.number().int().min(1).max(100_000).default(1);
 
 const inReach = (req: Request): Prisma.AssociateWhereInput => ({ AND: [{ tenantId: tenantIdForWrite() }, scopeAssociatesIncludingFormer(req.user!)] });
 
@@ -139,7 +143,7 @@ claimsRouter.get('/claims/unemployment/summary', MANAGE, async (req, res) => {
 const UiListQuery = z.object({
   status: z.enum(['open', 'all', 'NEW', 'RESPONDED', 'DETERMINED', 'HEARING_SCHEDULED', 'APPEALED', 'CLOSED']).default('open'),
   q: z.string().trim().max(100).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: PageParam,
 });
 
 claimsRouter.get('/claims/unemployment', MANAGE, async (req, res) => {
@@ -474,7 +478,7 @@ claimsRouter.get('/claims/workers-comp/incidents', MANAGE, async (req, res) => {
 });
 
 claimsRouter.get('/claims/workers-comp', MANAGE, async (req, res) => {
-  const q = z.object({ status: z.enum(['open', 'all', 'OPEN', 'SUBMITTED', 'ACCEPTED', 'DENIED', 'CLOSED']).default('open'), page: z.coerce.number().int().min(1).default(1) }).parse(req.query);
+  const q = z.object({ status: z.enum(['open', 'all', 'OPEN', 'SUBMITTED', 'ACCEPTED', 'DENIED', 'CLOSED']).default('open'), page: PageParam }).parse(req.query);
   const where = scopeWhere<Prisma.WcClaimWhereInput>(
     { tenantId: tenantIdForWrite() },
     { associate: inReach(req) },
@@ -516,7 +520,7 @@ claimsRouter.post('/claims/workers-comp', MANAGE, async (req, res) => {
     if (await prisma.wcClaim.findUnique({ where: { oshaIncidentId: inc.id }, select: { id: true } })) throw new HttpError(409, 'claim_exists', 'This incident already has a claim.');
     const jurisdiction = input.jurisdiction ?? inc.store?.state ?? (await prisma.associate.findUnique({ where: { id: inc.associateId! }, select: { state: true } }))?.state;
     if (!jurisdiction) throw new HttpError(400, 'jurisdiction_required', 'Which state’s workers’ comp applies? The store has no state on file.');
-    data = { associateId: inc.associateId!, clientId: inc.clientId, locationId: inc.locationId, jurisdiction, injuryDate: inc.occurredAt, reported: day(inc.reportedAt.toISOString().slice(0, 10)), description: inc.description, where: inc.location, bodyPart: inc.bodyPart, severity: inc.severity, reporter: inc.reportedById, incidentId: inc.id };
+    data = { associateId: inc.associateId!, clientId: inc.clientId, locationId: inc.locationId, jurisdiction, injuryDate: inc.occurredAt, reported: day(orgDateKey(inc.reportedAt)), description: inc.description, where: inc.location, bodyPart: inc.bodyPart, severity: inc.severity, reporter: inc.reportedById, incidentId: inc.id };
   } else {
     await assertAssociateInScope(prisma, req.user!, input.associateId, { former: true });
     data = { associateId: input.associateId, clientId: input.clientId ?? null, locationId: input.locationId ?? null, jurisdiction: input.jurisdiction, injuryDate: new Date(input.injuryDate), reported: day(input.reportedToEmployerAt), description: input.description, where: null, bodyPart: input.bodyPart ?? null, severity: null, reporter: req.user!.id, incidentId: null };

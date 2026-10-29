@@ -139,11 +139,6 @@ export interface VanLook {
   year?: number | null;
 }
 
-/** "White Ford Transit 2023" */
-export function vanLookText(v: VanLook): string {
-  return [v.color, v.make, v.model, v.year].filter((x) => x !== null && x !== undefined && x !== '').join(' ');
-}
-
 export type RiderSignal = 'OUTSIDE' | 'LATE';
 
 /** A rider can be marked a no-show this long after the driver arrived. */
@@ -261,7 +256,22 @@ export interface MyTransport {
     rides: number;
     noShows: number;
     nextPayday: { payDate: string; periodStart: string; periodEnd: string } | null;
+    /**
+     * What payroll will actually take on that payday (API lib/ridePayrollOutlook): it never takes a
+     * fare that would put the check under the minimum wage. Null with nothing owed through the period.
+     */
+    payroll?: RidePayrollOutlook | null;
   };
+}
+
+export interface RidePayrollOutlook {
+  /** What the coming check takes for rides; null while its hours aren't in yet. */
+  takeCents: number | null;
+  /** Owed through the coming check's period that stays owed after that payday. */
+  keptCents: number;
+  reason: 'MINIMUM_WAGE' | 'CHECK_TOO_SMALL' | null;
+  minimumWageCents: number;
+  state: string;
 }
 
 export const getMyTransport = () => apiFetch<MyTransport>('/transport/me');

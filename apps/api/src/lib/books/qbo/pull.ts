@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { orgDateKey } from '../../timeAnomalies.js';
 import { tenantIdForWrite } from '../../tenant.js';
 import { accountByKey, entryForKey, isPeriodClosed, periodOf, postEntry, voidEntry, type PostLine } from '../ledger.js';
 import { logEvent } from './connection.js';
@@ -306,7 +307,7 @@ async function applyQboMade(ctx: PullCtx, type: QboType, e: QboEntity): Promise<
     if (link) await ctx.db.qboSyncLink.update({ where: { id: link.id }, data: { remoteHash: fp, syncToken: e.SyncToken ?? null, lastSyncedAt: new Date() } });
     return { result: 'OK', message: `Voided the ${describe(type, e)} — voided in QuickBooks.`, localType: 'JournalEntry', localId: existing?.id };
   }
-  const date = String(e.TxnDate ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const date = String(e.TxnDate ?? orgDateKey(new Date())).slice(0, 10);
   const closed = (await isPeriodClosed(ctx.db, periodOf(date))) || (existing ? await isPeriodClosed(ctx.db, existing.periodKey) : false);
   if (closed && !ctx.force) {
     await raiseConflict(ctx.db, {
@@ -314,6 +315,7 @@ async function applyQboMade(ctx: PullCtx, type: QboType, e: QboEntity): Promise<
       localType: 'JournalEntry',
       localId: existing?.id ?? pseudoId(type, e.Id),
       summary: `QuickBooks ${existing ? 'changed' : 'added'} a ${describe(type, e)} in ${monthWords(periodOf(date))}, which is closed in the books here.`,
+      // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: entryDate is a @db.Date stored at UTC midnight.
       siteVersion: existing ? { number: existing.number, date: existing.entryDate.toISOString().slice(0, 10), total: Number(existing.totalDebit) } : {},
       qboVersion: { type, id: e.Id, entity: e, reason: 'SITE_PERIOD_CLOSED' },
     });
@@ -372,7 +374,7 @@ export async function applyQboVersion(ctx: PullCtx, type: QboType, e: QboEntity,
   const tenantId = tenantIdForWrite();
   const fp = remoteFingerprint(type, e);
   const qboLines = await linesOf(ctx, type, e);
-  const date = String(e.TxnDate ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const date = String(e.TxnDate ?? orgDateKey(new Date())).slice(0, 10);
   const entry = link.localType === 'JournalEntry' ? await ctx.db.journalEntry.findFirst({ where: { id: link.localId, tenantId }, include: { lines: true } }) : null;
   if (entry && entry.source === 'MANUAL' && !(await isPeriodClosed(ctx.db, entry.periodKey)) && !(await isPeriodClosed(ctx.db, periodOf(date)))) {
     await voidEntry(ctx.db, entry.id, { reason: 'Replaced by the version edited in QuickBooks.' });
@@ -404,7 +406,7 @@ export async function applyQboVersion(ctx: PullCtx, type: QboType, e: QboEntity,
   if (diff.length > 0) {
     const n = await ctx.db.journalEntry.count({ where: { tenantId, sourceKey: { startsWith: `qbo-correction:${type}:${e.Id}` } } });
     await postEntry(ctx.db, {
-      date: new Date().toISOString().slice(0, 10) > date ? new Date().toISOString().slice(0, 10) : date,
+      date: orgDateKey(new Date()) > date ? orgDateKey(new Date()) : date,
       memo: `Correction to match QuickBooks: ${describe(type, e)}`,
       source: 'QUICKBOOKS',
       sourceType: link.localType,

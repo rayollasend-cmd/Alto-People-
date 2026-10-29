@@ -26,6 +26,7 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { paycheckStatusLabel, paycheckStatusTone } from '@/lib/payrollRunStatus';
+import { useMoneyConfirm } from '@/components/payroll/MoneyConfirm';
 
 /**
  * Daily pay, Finance's desk: whether it's on (and the second person's
@@ -57,6 +58,7 @@ export function DailyPayDesk() {
   const d = q.data;
   const [dialog, setDialog] = useState<null | 'policy' | 'enroll'>(null);
   const status = d?.policy.status;
+  const confirmMoney = useMoneyConfirm();
   const run = useMutation({
     mutationFn: () => runDailyPayNow(),
     onSuccess: (r) => {
@@ -98,7 +100,20 @@ export function DailyPayDesk() {
               {
                 key: 'run',
                 label: 'Run tonight’s now',
-                onSelect: () => run.mutate(),
+                // Paying people now: confirm with the most it can send (the money-confirm rule).
+                onSelect: async () => {
+                  const people = d.enrolledCount + d.dailySchedulePeople;
+                  const ok = await confirmMoney({
+                    title: 'Pay tonight’s daily pay now?',
+                    amount: (people * d.policy.dailyCapCents) / 100,
+                    amountLabel: 'Up to (before taxes)',
+                    to: `${people} ${people === 1 ? 'person' : 'people'} paid daily`,
+                    when: 'Now, instead of on the nightly run',
+                    note: 'Each person is paid for their approved time, up to the daily limit per person.',
+                    confirmLabel: 'Pay now',
+                  });
+                  if (ok) run.mutate();
+                },
                 loading: run.isPending,
                 // Off: nothing to run, so no button. Waiting on approval: the reason, not a dead button.
                 hidden: status === 'OFF',

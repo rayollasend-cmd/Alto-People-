@@ -7,6 +7,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth, useTerm } from '@/lib/auth';
 import { getMarketRates, setClientMargin, type MarketRow } from '@/lib/marketRatesApi';
 import { upsertRateDefault } from '@/lib/schedulingApi';
+import { useGatedMutation } from '@/lib/useGatedMutation';
 import { useClients } from '@/lib/useClients';
 import { useStoreScope } from '@/lib/storeScope';
 import { useUrlParam } from '@/lib/useUrlState';
@@ -61,14 +62,12 @@ export function MarketRatesTab({ onOpenMapping }: { onOpenMapping: () => void })
   const roles = useMemo(() => [...new Set(all.map((r) => r.position))].sort(), [all]);
   const rows = useMemo(() => all.filter((r) => (!siteId || r.siteId === siteId) && (!position || r.position === position)), [all, siteId, position]);
 
-  const propose = useMutation({
+  // Typed 202 (CODE-12): a proposal that goes to a second person says so, with a link to the request.
+  const propose = useGatedMutation({
     mutationFn: (r: MarketRow) => upsertRateDefault({ clientId: r.clientId, position: r.position, payRate: r.recommendation!.payRate, billRate: r.recommendation!.billRate }),
-    onSuccess: (res, r) => {
-      const pending = (res as unknown as { pending?: boolean }).pending;
-      toast.success(pending ? `${r.position} at ${r.clientName}: sent for a second person to approve.` : `${r.position} at ${r.clientName}: new rate card in force.`);
-      void qc.invalidateQueries({ queryKey: ['market'] });
-    },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'Could not propose the rate.'),
+    applied: (_res, r) => `${r.position} at ${r.clientName}: new rate card in force.`,
+    failed: 'Could not propose the rate.',
+    onDone: () => qc.invalidateQueries({ queryKey: ['market'] }),
   });
 
   const chartRows = useMemo(() => {

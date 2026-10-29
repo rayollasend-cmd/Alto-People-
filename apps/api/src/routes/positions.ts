@@ -20,6 +20,7 @@ import { requestOpenPosition } from '../lib/requisitions.js';
 import { deciderFrom } from './approvalRequests.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { scopePositions } from '../lib/scope.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 const POSITIONS_CAP = 1000;
 
@@ -84,9 +85,7 @@ function shape(
       ? `${row.filledBy.firstName} ${row.filledBy.lastName}`.trim()
       : null,
     filledAt: row.filledAt?.toISOString() ?? null,
-    targetStartDate: row.targetStartDate
-      ? row.targetStartDate.toISOString().slice(0, 10)
-      : null,
+    targetStartDate: row.targetStartDate ? dateColumnKey(row.targetStartDate) : null,
     minHourlyRate: row.minHourlyRate?.toString() ?? null,
     maxHourlyRate: row.maxHourlyRate?.toString() ?? null,
     budgetAmount: row.budgetAmount?.toString() ?? null,

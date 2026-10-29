@@ -1,6 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { netWorkedMinutes } from '../timeAnomalies.js';
-import { DEFAULT_TIMEZONE } from '../timezone.js';
+import { netWorkedMinutes, companyWorkweek } from '../timeAnomalies.js';
 
 /**
  * Brief 2-4 — row → public shape, one copy for the /v1 responses and the
@@ -20,7 +19,7 @@ export function shiftPublic(s: PublicShiftRow, opts: { pay?: boolean } = {}) {
     position: s.position,
     startsAt: s.startsAt.toISOString(),
     endsAt: s.endsAt.toISOString(),
-    timezone: s.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+    timezone: s.locationRel?.timezone ?? companyWorkweek().timezone,
     status: s.status,
     assignedWorkerId: s.workerId,
     publishedAt: isoOrNull(s.publishedAt),

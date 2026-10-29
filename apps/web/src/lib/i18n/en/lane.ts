@@ -12,7 +12,7 @@ export const enLane = {
   'lane.inProgress': 'In progress',
   'lane.expected': 'Expected by {date}',
   'lane.late': 'Taking a little longer than planned — we’re on it.',
-  'lane.kept': 'Your first paycheck has landed. Welcome to Alto.',
+  'lane.kept': 'Your first paycheck has landed. Welcome to {org}.',
 } as const;
 
 registerEnglish(enLane);

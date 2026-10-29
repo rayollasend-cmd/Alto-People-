@@ -6,6 +6,9 @@ import { inviteTemplate } from './emailTemplates.js';
 import { generateInviteToken } from './inviteToken.js';
 import { send } from './notifications.js';
 import { publicBaseUrl } from './emailLayout.js';
+import { logger } from './logger.js';
+import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * The onboarding invite email, sent now or held for the Undo window.
@@ -49,9 +52,9 @@ export async function sendInviteEmail(input: {
   const tpl = inviteTemplate({
     firstName: input.firstName,
     clientName: input.clientName,
-    hireDate: input.hireDate ? input.hireDate.toISOString().slice(0, 10) : null,
+    hireDate: input.hireDate ? dateColumnKey(input.hireDate) : null,
     magicLink: acceptUrl,
-    linkExpiresAt: input.expiresAt.toISOString().slice(0, 10),
+    linkExpiresAt: orgDateKey(input.expiresAt),
   });
   let emailRef: string | null = null;
   let emailFailed: string | null = null;
@@ -167,7 +170,7 @@ export function startDueInviteCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(`[alto-people/api] due-invite sweep armed (every ${seconds}s; undo window ${INVITE_UNDO_SECONDS}s)`);
+  logger.info(`due-invite sweep armed (every ${seconds}s; undo window ${INVITE_UNDO_SECONDS}s)`);
 }
 
 export function stopDueInviteCron(): void {

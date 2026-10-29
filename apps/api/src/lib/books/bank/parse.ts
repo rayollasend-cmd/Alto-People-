@@ -114,6 +114,7 @@ export function parseDate(raw: string | undefined, order: 'MDY' | 'DMY' | 'YMD' 
   if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31 && y > 1900 && y < 2200)) return null;
   const dt = new Date(Date.UTC(y, m - 1, d));
   if (dt.getUTCMonth() !== m - 1) return null;
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: dt is built with Date.UTC from the statement's own Y/M/D.
   return dt.toISOString().slice(0, 10);
 }
 

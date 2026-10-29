@@ -15,8 +15,28 @@ import '@/lib/i18n/en/execPortal';
 const personHref = (id: string) => `/people?associateId=${id}`;
 const HEAD = 'text-2xs font-semibold uppercase tracking-[0.18em] text-ink-muted';
 
+/**
+ * The short name each tile shows: the first name, plus the last initial
+ * whenever another tile shares that first name — two "Kendra" tiles told
+ * the reader nothing (LEAD-29). Still the same, the full name.
+ */
+export function tileNames(names: string[]): string[] {
+  const split = names.map((n) => {
+    const parts = n.trim().split(/\s+/);
+    return { first: parts[0] ?? n, last: parts.length > 1 ? parts[parts.length - 1]! : '' };
+  });
+  const firsts = new Map<string, number>();
+  for (const s of split) firsts.set(s.first, (firsts.get(s.first) ?? 0) + 1);
+  const short = split.map((s, i) => ((firsts.get(s.first) ?? 0) > 1 && s.last ? `${s.first} ${s.last[0]}.` : s.first) || names[i]!);
+  const counts = new Map<string, number>();
+  for (const s of short) counts.set(s, (counts.get(s) ?? 0) + 1);
+  return short.map((s, i) => ((counts.get(s) ?? 0) > 1 ? names[i]! : s));
+}
+
 export function PeopleBand({ data }: { data: Pick<ExecPeople, 'newHires' | 'topWorkers' | 'anniversaries'> }) {
   const { t } = useI18n();
+  const hires = data.newHires.slice(0, 8);
+  const hireNames = tileNames(hires.map((h) => h.name));
   return (
     <Card data-testid="exec-people-band">
       <CardContent className="grid gap-6 p-4 md:grid-cols-3 md:p-5">
@@ -26,11 +46,11 @@ export function PeopleBand({ data }: { data: Pick<ExecPeople, 'newHires' | 'topW
             <p className="mt-2 text-sm text-ink-muted">{t('execPortal.people.newNone')}</p>
           ) : (
             <ul className="mt-3 flex flex-wrap gap-3">
-              {data.newHires.slice(0, 8).map((h) => (
+              {hires.map((h, i) => (
                 <li key={h.id} className="w-[4.5rem] text-center">
                   <Link to={personHref(h.id)} className="group block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title={h.name}>
                     <Avatar src={h.photoUrl} name={h.name} size="md" className="mx-auto" />
-                    <div className="mt-1 truncate text-xs text-ink group-hover:text-accent">{h.name.split(' ')[0]}</div>
+                    <div className="mt-1 truncate text-xs text-ink group-hover:text-accent">{hireNames[i]}</div>
                     <div className="text-2xs text-ink-muted">{fmtDateOnly(h.hireDate, { year: 'auto' })}</div>
                   </Link>
                 </li>

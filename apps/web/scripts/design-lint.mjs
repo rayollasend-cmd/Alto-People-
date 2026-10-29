@@ -87,6 +87,11 @@ for (const [file, row] of Object.entries(counts)) {
 // lazyPlot() fetches when a chart first renders — a static import anywhere
 // else puts it back on a page's critical path (components/ui/charts/lazyPlot.tsx).
 const rechartsOutsidePlots = [];
+// And a plot's ResponsiveContainer is the kit's (components/ui/charts/container.plot):
+// recharts' own draws once at -1 × -1 before measuring — "width(-1) and height(-1)"
+// on 103 page loads in the 2026-10-29 crawl (CRAWL-17).
+const rawContainers = [];
+const RECHARTS_IMPORT = /import\s*\{([^}]*)\}\s*from\s*['"]recharts['"]/g;
 const scan = (dir) => {
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
@@ -94,11 +99,17 @@ const scan = (dir) => {
       if (name !== '__tests__') scan(full);
     } else if (/\.tsx?$/.test(name) && !/\.(plot|test|stories)\.tsx?$/.test(name) && /from ['"]recharts['"]/.test(readFileSync(full, 'utf8'))) {
       rechartsOutsidePlots.push(relative(ROOT, full).replace(/\\/g, '/'));
+    } else if (/\.plot\.tsx$/.test(name) && name !== 'container.plot.tsx') {
+      const text = readFileSync(full, 'utf8');
+      for (const m of text.matchAll(RECHARTS_IMPORT)) {
+        if (/\bResponsiveContainer\b/.test(m[1])) rawContainers.push(relative(ROOT, full).replace(/\\/g, '/'));
+      }
     }
   }
 };
 scan(SRC);
 for (const f of rechartsOutsidePlots) failures.push(`${f}: imports recharts outside a *.plot.tsx — move the drawing into a plot file loaded with lazyPlot()`);
+for (const f of rawContainers) failures.push(`${f}: ResponsiveContainer from recharts — import it from @/components/ui/charts/container.plot (measured before it draws)`);
 
 const paid = Object.entries(baseline.totals ?? {}).map(([k, was]) => [k, was - (totals[k] ?? 0)]).filter(([, d]) => d > 0);
 console.log('design-lint totals:', Object.entries(totals).map(([k, n]) => `${k}=${n} (baseline ${baseline.totals?.[k] ?? 0})`).join(', '));

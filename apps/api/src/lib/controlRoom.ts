@@ -15,7 +15,8 @@ import { listRobots, listZones } from './robots.js';
 import { listTasks, policyFor } from './tasks/engine.js';
 import { crewLeadsOnFloor, spanOfControl } from './tasks/spanOfControl.js';
 import { moduleOn } from './tenantProfile.js';
-import { DEFAULT_TIMEZONE, formatDateTimeInZone } from './timezone.js';
+import { companyWorkweek } from './timeAnomalies.js';
+import { formatDateTimeInZone } from './timezone.js';
 
 /**
  * Brief 3-3 — the control room's one read: every worker on shift at a site
@@ -250,7 +251,7 @@ export async function controlRoom(db: Db = defaultPrisma, locationId: string, te
   const shiftsHere = new Set(
     shiftIds.length ? (await db.shift.findMany({ where: { id: { in: shiftIds }, locationId }, select: { id: true } })).map((s) => s.id) : [],
   );
-  const siteTz = site.timezone ?? DEFAULT_TIMEZONE;
+  const siteTz = site.timezone ?? companyWorkweek().timezone;
   for (const a of approvals) {
     const subjectId = typeof a.payload.subjectId === 'string' ? a.payload.subjectId : null;
     const here = (subjectId && shiftsHere.has(subjectId)) || a.evidence.affects.some((x) => x.kind === 'site' && x.id === locationId);

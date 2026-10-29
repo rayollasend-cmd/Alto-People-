@@ -20,6 +20,8 @@ vi.mock('@/lib/auth', async () => {
 vi.mock('@/lib/confirm', () => ({ useConfirm: () => vi.fn(), usePrompt: () => vi.fn() }));
 vi.mock('@/lib/onboardingApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/onboardingApi')>()),
+  // The invite-scoped client picker (GET /clients/options).
+  listClientOptions: vi.fn(async () => ({ clients: [] })),
   listApplications: vi.fn(),
   getApplicationStats: vi.fn(),
 }));

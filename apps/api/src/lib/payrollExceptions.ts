@@ -25,6 +25,8 @@ import { prevailingWageRunExceptions } from './certifiedPayroll.js';
 import { complianceRunExceptions } from './payrollComplianceChecks.js';
 import { calculateInHouse, localAwaitingReview, primeLocalAcknowledgments, unresolvedText } from './taxEngine/index.js';
 import { fmtDay, fmtDayInZone, fmtDayRange } from './humanDates.js';
+import { cutOf } from './payrollSchedule.js';
+import { runPunches, utcCutPredecessor, type RunCut, type UtcCutPredecessor } from './payrollRunCut.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -34,6 +36,8 @@ export interface ExceptionsInput {
   clientId: string | null;
   /** A run for one pay schedule: exceptions for its people only, plus who has time but no schedule. */
   payrollScheduleId?: string | null;
+  /** The deploy transition of the site-day cut (lib/payrollRunCut); looked up when omitted. */
+  prevUtcCut?: UtcCutPredecessor | null;
 }
 
 export type ExceptionKind =
@@ -102,26 +106,40 @@ export async function computePayrollExceptions(
   input: ExceptionsInput
 ): Promise<ExceptionsResult> {
   const { periodStart, periodEndExclusive, clientId } = input;
+  // The run's own cut (deep audit CODE-1, lib/payrollRunCut): a punch is in
+  // the period when its clock-in's day ON THE SITE'S CLOCK is — and, on a
+  // schedule's run, one of the person's days on it. Exactly what the run
+  // pays, so an evening shift at a period's edge is either paid or warned.
+  const period = cutOf(periodStart, periodEndExclusive);
+  const { membershipWindows } = await import('./payScheduleMembership.js');
+  const cut: RunCut = {
+    ...period,
+    windows: input.payrollScheduleId ? await membershipWindows(tx, input.payrollScheduleId, period.periodStart, period.periodEnd) : null,
+    prevUtc:
+      input.prevUtcCut !== undefined
+        ? input.prevUtcCut
+        : await utcCutPredecessor(tx, { kind: 'REGULAR', payrollScheduleId: input.payrollScheduleId ?? null, clientId, periodStart: period.periodStart }),
+  };
 
   // Unapproved (clocked-out but not yet reviewed) time in the same window.
   // These hours will NOT be paid — historically the #1 cause of a silent
   // short paycheck, because the associate simply wasn't in the run.
-  let unapproved = await tx.timeEntry.findMany({
+  const unapproved = await runPunches(cut, (clockInAt) => tx.timeEntry.findMany({
     where: {
       status: 'COMPLETED',
-      clockInAt: { gte: periodStart, lt: periodEndExclusive },
+      clockInAt,
       ...(clientId ? { clientId } : {}),
     },
     include: {
       associate: { select: { id: true, firstName: true, lastName: true } },
       location: { select: { timezone: true } },
     },
-  });
+  }));
 
-  let entries = await tx.timeEntry.findMany({
+  const entries = await runPunches(cut, (clockInAt) => tx.timeEntry.findMany({
     where: {
       status: 'APPROVED',
-      clockInAt: { gte: periodStart, lt: periodEndExclusive },
+      clockInAt,
       ...(clientId ? { clientId } : {}),
     },
     include: {
@@ -153,7 +171,7 @@ export async function computePayrollExceptions(
         },
       },
     },
-  });
+  }));
 
   // A run for one pay schedule: only its people's time on their days on it
   // (the same cut the aggregator pays — someone who moved mid-period is
@@ -161,13 +179,9 @@ export async function computePayrollExceptions(
   // with approved time who is on no schedule at all.
   const scheduleWarnings: PayrollExceptionRow[] = [];
   if (input.payrollScheduleId) {
-    const { inWindows, membershipWindows, unscheduledWithTime, workDayOf, ymd } = await import('./payScheduleMembership.js');
-    const from = ymd(periodStart);
-    const to = ymd(new Date(periodEndExclusive.getTime() - 86_400_000));
-    const windows = await membershipWindows(tx, input.payrollScheduleId, from, to);
-    entries = entries.filter((e) => inWindows(windows, e.associateId, workDayOf(e.clockInAt, e.location?.timezone)));
-    unapproved = unapproved.filter((e) => inWindows(windows, e.associateId, workDayOf(e.clockInAt, e.location?.timezone)));
-    for (const u of await unscheduledWithTime(tx, from, to, clientId)) {
+    const { unscheduledWithTime } = await import('./payScheduleMembership.js');
+    const from = period.periodStart;
+    for (const u of await unscheduledWithTime(tx, period.periodStart, period.periodEnd, clientId)) {
       scheduleWarnings.push({
         associateId: u.associateId,
         associateName: u.name,

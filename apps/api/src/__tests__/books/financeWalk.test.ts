@@ -283,7 +283,8 @@ describe('month-end close steps done inline (walk 16)', () => {
     await postEntry(prisma, { date: '2026-09-15', source: 'MANUAL', lines: [{ account: 'WAGES_DIRECT', debit: 564.3 }, { account: 'FIT_PAYABLE', credit: 564.3 }] });
     const off = task((await p.a.get('/books/close/2026-09')).body, 'payroll_liabilities');
     expect(off).toMatchObject({ status: 'OPEN', passing: false });
-    expect(off.summary).toMatch(/\$564\.30 on the books with no deposit accrued/);
+    // Like with like (MONEY-4): federal withholding on the books against what the desk owes for it.
+    expect(off.summary).toBe('Federal withholding and FICA: $564.30 on the books, $0.00 owed on the tax desk.');
     // Can't be ticked by hand any more: it checks itself.
     expect((await p.a.post('/books/close/2026-09/tasks/payroll_liabilities').send({ status: 'DONE' })).body.error.code).toBe('auto_task');
 

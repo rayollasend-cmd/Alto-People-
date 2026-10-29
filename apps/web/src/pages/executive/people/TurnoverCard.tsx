@@ -10,14 +10,18 @@ import '@/lib/i18n/en/execPortal';
 import { turnoverKpi, turnoverStatus } from './peopleMath';
 
 /**
- * Turnover against the plan, the way a board asks it: the annualized rate,
- * the plan as a ceiling on one bullet, the verdict in a word and a
- * sentence — and what the leavers of the last ninety days cost to replace,
- * an estimate that says so.
+ * Turnover against the plan, the way a board asks it: the selected period's
+ * annualized rate (the scorecard's Turnover, METRICS.turnover), the plan as
+ * a ceiling on one bullet, the verdict in a word and a sentence — then,
+ * under its own heading, the trailing 90 days (METRICS.turnover90d): that
+ * span's rate, its separations and what they cost to replace, an estimate
+ * that says so. The card used to call the period's rate "the last 90 days"
+ * and print it beside the 90 days' separations (deep audit LEAD-7).
  */
 export function TurnoverCard({ data }: { data: Pick<ExecPeople, 'turnover' | 'kpis'> }) {
   const { t } = useI18n();
   const { annualizedPct, targetPct, separations90d, estCost90d } = data.turnover;
+  const rate90 = data.turnover.annualizedPct90d ?? null;
   const kpi = turnoverKpi(data);
   const status = kpi && kpi.status !== 'none' ? kpi.status : turnoverStatus(annualizedPct, targetPct);
   const value = annualizedPct === null ? null : `${annualizedPct.toFixed(1)}%`;
@@ -54,7 +58,16 @@ export function TurnoverCard({ data }: { data: Pick<ExecPeople, 'turnover' | 'kp
           </div>
         )}
         <p className="text-sm text-ink">{sentence}</p>
-        <div className="border-t border-line-subtle pt-3">
+        <div className="space-y-2 border-t border-line-subtle pt-3" data-testid="exec-turnover-90d">
+          <h3 className="text-2xs font-semibold uppercase tracking-[0.14em] text-ink-muted">{t('execPortal.people.turnover90Title')}</h3>
+          {rate90 !== null && (
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-sm text-ink-muted">{t('execPortal.people.turnover90Rate')}</span>
+              <span className="text-lg font-medium tabular-nums text-ink" title={fmtExecExact(rate90, 'pct')}>
+                {t('execPortal.people.turnover90Value', { value: `${rate90.toFixed(1)}%` })}
+              </span>
+            </div>
+          )}
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="text-sm text-ink-muted">{t('execPortal.people.turnoverCostLabel')}</span>
             <span className="text-lg font-medium tabular-nums text-ink" title={fmtExecExact(estCost90d, 'money')}>

@@ -5,6 +5,7 @@ import { env } from '../config/env.js';
 import { recordCriticalAudit } from './audit.js';
 import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins } from './notify.js';
 import { executeDeactivation } from './deactivation.js';
+import { logger } from './logger.js';
 
 /**
  * Dormancy auto-deactivation — the self-cleaning half of the workforce
@@ -257,8 +258,8 @@ export function startDormancySweepCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] dormancy sweep armed (every ${seconds}s; deactivate at ${env.DORMANCY_DEACTIVATE_DAYS}d idle, warning ${env.DORMANCY_WARN_DAYS}d ahead)`,
+  logger.info(
+    `dormancy sweep armed (every ${seconds}s; deactivate at ${env.DORMANCY_DEACTIVATE_DAYS}d idle, warning ${env.DORMANCY_WARN_DAYS}d ahead)`,
   );
 }
 

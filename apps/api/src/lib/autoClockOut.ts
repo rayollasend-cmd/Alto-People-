@@ -19,7 +19,9 @@ import { prisma as defaultPrisma } from '../db.js';
 import { recordAttendanceForEntry } from './attendance.js';
 import { closeForgottenClockOuts } from './kioskMaintenance.js';
 import { notifyAssociate } from './notify.js';
-import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
+import { formatTimeInZone } from './timezone.js';
+import { logger } from './logger.js';
+import { companyWorkweek } from './timeAnomalies.js';
 
 export const AUTO_CLOCKOUT_GRACE_MIN = 10;
 const SWEEP_SECONDS = 5 * 60;
@@ -77,7 +79,7 @@ export async function runAutoClockOutSweep(
     // Late-arrival attendance still counts; EARLY_OUT can't fire since
     // we closed exactly at the scheduled end.
     void recordAttendanceForEntry(prisma, entry.id);
-    const tz = entry.location?.timezone ?? DEFAULT_TIMEZONE;
+    const tz = entry.location?.timezone ?? companyWorkweek().timezone;
     // Awaited: the cron caller can afford it, and awaited-by callers
     // (tests) must see the row — same race class as the earnings notify.
     await notifyAssociate(entry.associateId, {
@@ -106,8 +108,8 @@ export function startAutoClockOutCron(): void {
     });
   }, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] auto clock-out cron armed (every ${SWEEP_SECONDS}s, closes ${AUTO_CLOCKOUT_GRACE_MIN} min after shift end)`,
+  logger.info(
+    `auto clock-out cron armed (every ${SWEEP_SECONDS}s, closes ${AUTO_CLOCKOUT_GRACE_MIN} min after shift end)`,
   );
 }
 

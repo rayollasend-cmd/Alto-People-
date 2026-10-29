@@ -19,6 +19,7 @@ export const enNeeds = {
   'needs.dueOn': 'Due {date}',
   'needs.go': 'Open',
   'needs.unreadNotices': '{n} unread notices',
+  'needs.my-availability': 'Set when you can work',
 } as const;
 
 registerEnglish(enNeeds);

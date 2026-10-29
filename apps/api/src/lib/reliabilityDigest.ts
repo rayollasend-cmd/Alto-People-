@@ -25,10 +25,10 @@ import type { PrismaClient, Role } from '@prisma/client';
 import { platformJob } from './tenantJobs.js';
 import { PLATFORM_OPERATOR_TENANT_ID, RELIABILITY_ERROR_BUDGET, ROLE_CAPABILITIES } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
-import { startOfWeekUTC } from './timeAnomalies.js';
-import { DEFAULT_TIMEZONE } from './timezone.js';
+import { startOfWeekUTC, companyWorkweek } from './timeAnomalies.js';
 import { notifyUser } from './notify.js';
 import { computeWeekFacts, consecutiveWeeksUnderBudget, reliabilityWeeks, type WeekFacts } from './reliability.js';
+import { logger } from './logger.js';
 
 export const RELIABILITY_DIGEST_CATEGORY = 'reliability_digest';
 const SEND_AFTER_HOUR = 8;
@@ -60,7 +60,7 @@ export interface ReliabilityDigestResult {
 
 const pctOf = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 100)}%` : 'n/a');
 const fmtDay = (d: Date) =>
-  new Intl.DateTimeFormat('en-US', { timeZone: DEFAULT_TIMEZONE, month: 'short', day: 'numeric' }).format(d);
+  new Intl.DateTimeFormat('en-US', { timeZone: companyWorkweek().timezone, month: 'short', day: 'numeric' }).format(d);
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
 /**
@@ -153,7 +153,7 @@ export async function runReliabilityDigestSweep(
     strayDigestsCleared = true;
     await clearCustomerReliabilityDigests(prisma).catch(() => undefined);
   }
-  const { weekday, hour } = localParts(now, DEFAULT_TIMEZONE);
+  const { weekday, hour } = localParts(now, companyWorkweek().timezone);
   if (weekday !== 'Sat') return { sent: 0, skipped: 'not_saturday' };
   if (hour < SEND_AFTER_HOUR) return { sent: 0, skipped: 'too_early' };
 
@@ -240,8 +240,8 @@ export function startReliabilityDigestCron(): void {
     });
   }, SWEEP_SECONDS * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] reliability digest cron armed (every ${SWEEP_SECONDS}s, sends Saturdays after ${SEND_AFTER_HOUR}:00 ${DEFAULT_TIMEZONE})`,
+  logger.info(
+    `reliability digest cron armed (every ${SWEEP_SECONDS}s, sends Saturdays after ${SEND_AFTER_HOUR}:00 company time)`,
   );
 }
 

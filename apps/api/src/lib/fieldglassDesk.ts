@@ -6,7 +6,7 @@ import type {
   TimesheetRow,
   TimesheetWeekResponse,
 } from '@alto-people/shared';
-import { zonedWallTimeToUtcInstant } from './timezone.js';
+import { dateColumnKey, zonedWallTimeToUtcInstant } from './timezone.js';
 import { round2 } from './payroll.js';
 
 /**
@@ -246,7 +246,8 @@ const HEADERS = {
 
 function cellText(v: unknown): string {
   if (v === null || v === undefined) return '';
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  // A spreadsheet date cell reads as UTC midnight of the day it shows (ExcelJS), like a @db.Date.
+  if (v instanceof Date) return dateColumnKey(v);
   if (typeof v === 'object') {
     const o = v as { text?: string; result?: unknown; richText?: Array<{ text: string }> };
     if (o.richText) return o.richText.map((r) => r.text).join('');
@@ -257,7 +258,7 @@ function cellText(v: unknown): string {
 }
 
 function isoDate(v: unknown): string | null {
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) return dateColumnKey(v);
   const t = cellText(v);
   let m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t);
   if (m) return `${m[3]}-${m[1]!.padStart(2, '0')}-${m[2]!.padStart(2, '0')}`;

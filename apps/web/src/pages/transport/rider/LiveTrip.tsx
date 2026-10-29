@@ -135,7 +135,7 @@ export function LiveTrip({
   const dispatchPhone = (l?.dispatchPhone ?? data.settings.dispatchPhone ?? '').trim() || null;
   const fare = l?.fare
     ? liveFareWords(t, lang, l.fare)
-    : fareWords(t, ride.owedCents > 0 ? ride.owedCents : ride.fareCents, data.charges.nextPayday, ride.serviceDate);
+    : fareWords(t, ride.owedCents > 0 ? ride.owedCents : ride.fareCents, data.charges.nextPayday, ride.serviceDate, data.charges.payroll);
   const look = lookLine(t, lang, v);
 
   const tell = async (kind: RiderSignal) => {

@@ -30,6 +30,7 @@ import {
   markFieldglassEntered,
 } from '@/lib/timeApi';
 import { EnterInFieldglass, FieldglassStatusCell, FieldglassStrip } from './FieldglassDesk';
+import { timesheetStage } from './timesheetStage';
 import { onTimeEntriesChanged } from '@/lib/timeEntriesChannel';
 import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth, useTerm, useTenant } from '@/lib/auth';
@@ -84,6 +85,7 @@ function addDays(d: Date, n: number): Date {
 function mondayOfIsoWeek(fridayIso: string): string {
   const d = new Date(`${fridayIso}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // back to Monday
+  // eslint-disable-next-line no-restricted-syntax -- UTC on purpose: calendar arithmetic on a date-only key pinned at UTC noon, never "now".
   return d.toISOString().slice(0, 10);
 }
 
@@ -606,9 +608,13 @@ export function TimesheetsView() {
                   <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
                     <span>
                       <span className="text-silver/60">Status: </span>
-                      <Badge variant={detail.status === 'PENDING' ? 'pending' : 'success'}>
-                        {detail.status === 'PENDING' ? 'Pending approval' : 'Ready to submit'}
-                      </Badge>
+                      {(() => {
+                        const stage = timesheetStage({
+                          status: detail.status,
+                          fieldglass: allRows.find((r) => r.associateId === detailAssociateId)?.fieldglass ?? null,
+                        });
+                        return <Badge variant={stage.variant}>{stage.label}</Badge>;
+                      })()}
                     </span>
                     <span>
                       <span className="text-silver/60">Total worked: </span>
@@ -972,10 +978,15 @@ export function TimesheetsView() {
               {
                 key: 'status',
                 header: 'Status',
-                accessor: (r) => (r.status === 'PENDING' ? 'Pending approval' : 'Ready to submit'),
+                // Where the week stands end to end — Alto's review, then
+                // Fieldglass's own status (./timesheetStage, FLOOR-21).
+                accessor: (r) => timesheetStage(r).label,
                 sortable: true,
                 cardMeta: true,
-                cell: (r) => <Badge variant={r.status === 'PENDING' ? 'pending' : 'success'}>{r.status === 'PENDING' ? 'Pending approval' : 'Ready to submit'}</Badge>,
+                cell: (r) => {
+                  const stage = timesheetStage(r);
+                  return <Badge variant={stage.variant}>{stage.label}</Badge>;
+                },
               },
               // ID + Revision are Fieldglass's — filled from the imported
               // Fieldglass list, so the columns match it line for line.

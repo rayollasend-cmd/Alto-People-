@@ -961,13 +961,22 @@ export function CandidateTimeline({
   candidateId,
   canManage,
   refreshKey,
+  onDraftChange,
 }: {
   candidateId: string;
   canManage: boolean;
   /** Changes whenever something elsewhere in the drawer wrote an event. */
   refreshKey: string;
+  /** Whether a note is typed and not yet added — the drawer asks before closing on it (PEOPLE-14). */
+  onDraftChange?: (dirty: boolean) => void;
 }) {
   const [note, setNote] = useState('');
+  const hasDraft = note.trim().length > 0;
+  useEffect(() => {
+    onDraftChange?.(hasDraft);
+  }, [hasDraft, onDraftChange]);
+  // Leaving this candidate (closing, or j/k to the next) forgets the draft.
+  useEffect(() => () => onDraftChange?.(false), [candidateId, onDraftChange]);
   const [saving, setSaving] = useState(false);
   // refreshKey is part of the key: a write elsewhere in the drawer is a
   // new timeline to read. The previous one stays up meanwhile, so the list
@@ -1040,7 +1049,7 @@ export function CandidateTimeline({
                     </p>
                   )}
                   <div className="mt-0.5 text-xs2 text-silver/70">
-                    {actorOf(e) && <>{actorOf(e)} · </>}
+                    {actorOf(e) && <><span title={e.actorEmail ?? undefined}>{actorOf(e)}</span> · </>}
                     <time dateTime={e.createdAt} title={fmtDateTime(e.createdAt)}>{fmtRelativeDate(e.createdAt)}</time>
                   </div>
                 </div>

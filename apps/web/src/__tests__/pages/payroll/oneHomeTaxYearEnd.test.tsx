@@ -13,6 +13,7 @@ vi.mock('@/lib/api', async (orig) => ({ ...(await orig<typeof import('@/lib/api'
 
 import { TaxTablesPage } from '@/pages/payroll/TaxTablesPage';
 import { YearEndPage, defaultTaxYear } from '@/pages/payroll/YearEndPage';
+import { yearHasNoPayroll } from '@/pages/payroll/PayrollYearEndClose';
 
 const CONFIG = {
   year: 2026,
@@ -62,7 +63,7 @@ describe('Tax tables', () => {
 });
 
 describe('Year-end', () => {
-  it('opens on last year’s checklist, with one tax-year picker and the three parts as tabs', async () => {
+  it('opens on the default tax year’s checklist, with one tax-year picker and the three parts as tabs', async () => {
     renderAs('FINANCE_ACCOUNTANT', <YearEndPage />, '/payroll/year-end');
     expect(await screen.findByText('Nothing to file for 2025.')).toBeInTheDocument();
     const picker = screen.getByRole('combobox', { name: 'Tax year' }) as HTMLSelectElement;
@@ -76,7 +77,27 @@ describe('Year-end', () => {
     await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining('/payroll/year-end-close?year=2024')));
   });
 
-  it('defaultTaxYear is the year being closed', () => {
-    expect(defaultTaxYear(new Date('2026-10-22T12:00:00Z'))).toBe(2025);
+  it('defaultTaxYear is the year with the work: the year ending from October 1, last year before (MONEY-27)', () => {
+    expect(defaultTaxYear(new Date('2026-10-22T12:00:00'))).toBe(2026);
+    expect(defaultTaxYear(new Date('2026-10-01T00:30:00'))).toBe(2026);
+    expect(defaultTaxYear(new Date('2026-09-30T23:30:00'))).toBe(2025);
+    expect(defaultTaxYear(new Date('2027-01-20T12:00:00'))).toBe(2026);
+  });
+
+  it('a year with no payroll says there is nothing to close, not "ready to close" (MONEY-27)', () => {
+    const empty = {
+      taxYear: 2025,
+      readyToClose: true,
+      checks: [
+        { key: 'runs_disbursed', label: 'All payroll runs paid', done: true, detail: 'No payroll run in 2025 is still waiting to be paid.', href: '/payroll' },
+        { key: 'w2_generated', label: 'W-2s', done: true, detail: 'No one was paid wages in 2025, so no W-2s are due.', href: '' },
+        { key: 'nec_generated', label: 'NECs', done: true, detail: 'No contractor was paid enough in 2025 to need a 1099-NEC.', href: '' },
+        { key: 'misc_generated', label: 'MISCs', done: true, detail: 'No one was paid in 2025 in a way that needs a 1099-MISC.', href: '' },
+      ],
+    };
+    expect(yearHasNoPayroll(empty)).toBe(true);
+    expect(yearHasNoPayroll({ ...empty, noPayroll: false })).toBe(false);
+    expect(yearHasNoPayroll({ ...empty, checks: [], noPayroll: true })).toBe(true);
+    expect(yearHasNoPayroll({ ...empty, checks: empty.checks.map((c) => (c.key === 'w2_generated' ? { ...c, detail: '35 eligible employees · 0 on file.', done: false } : c)) })).toBe(false);
   });
 });

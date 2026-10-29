@@ -5,6 +5,7 @@ import { daysPastDue, dueOnFor } from './books/aging.js';
 import { statementBalances } from './books/posting/receivables.js';
 import { computePortalReadiness } from './portalReadiness.js';
 import { orgDateKey } from './timeAnomalies.js';
+import { dateColumnKey } from './timezone.js';
 
 /**
  * What needs someone on one client account (CL-A, 2026-10-22) — the list
@@ -50,7 +51,6 @@ const ORDER: ClientNeedsYouKind[] = [
 const money = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const longDate = (ymd: string) => new Date(`${ymd}T12:00:00.000Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
-const ymdOf = (d: Date) => d.toISOString().slice(0, 10);
 
 /** Whole calendar days from today (the company's date) to a YYYY-MM-DD; negative once it has passed. */
 export function daysUntil(ymd: string, now: Date): number {
@@ -156,7 +156,7 @@ export async function clientNeedsYou(input: NeedsYouInput, db: Db = defaultPrism
 
   // The contract's end.
   if (client.contractEndDate) {
-    const end = ymdOf(client.contractEndDate);
+    const end = dateColumnKey(client.contractEndDate);
     const left = daysUntil(end, now);
     if (left < 0) {
       items.push({
@@ -200,7 +200,7 @@ export async function clientNeedsYou(input: NeedsYouInput, db: Db = defaultPrism
       kind: 'nps_detractors',
       severity: 'risk',
       title: `${plural(detractors.length, 'detractor')} in the last 90 days`,
-      detail: `Latest: ${latest.score}/10 on ${longDate(ymdOf(latest.respondedAt!))}.${quote}`,
+      detail: `Latest: ${latest.score}/10 on ${longDate(orgDateKey(latest.respondedAt!))}.${quote}`,
       count: detractors.length,
       href: input.canSeeNps ? '/clients/nps' : `${base}?section=performance`,
     });

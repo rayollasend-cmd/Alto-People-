@@ -11,6 +11,7 @@ import {
   isStaleApplication,
   staleNudgeContent,
 } from '../routes/onboarding.js';
+import { logger } from './logger.js';
 
 /**
  * Automatic stale-application nudge — the cron twin of the manual
@@ -180,8 +181,8 @@ export function startStaleNudgeCron(): void {
   run();
   timer = setInterval(run, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] stale nudge cron armed (every ${seconds}s; cooldown ${STALE_NUDGE_COOLDOWN_HOURS}h, max ${STALE_NUDGE_MAX_AUTO} automatic nudges per recipient)`,
+  logger.info(
+    `stale nudge cron armed (every ${seconds}s; cooldown ${STALE_NUDGE_COOLDOWN_HOURS}h, max ${STALE_NUDGE_MAX_AUTO} automatic nudges per recipient)`,
   );
 }
 

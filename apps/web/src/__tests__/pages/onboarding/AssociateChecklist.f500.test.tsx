@@ -22,6 +22,11 @@ vi.mock('@/lib/onboardingApi', () => ({
 vi.mock('@/lib/documentsApi', () => ({
   listMyDocuments: vi.fn(async () => ({ documents: [] })),
 }));
+// Home's earnings answer — whether they are already working (ASSOC-31).
+const earningsState: { data: unknown } = { data: undefined };
+vi.mock('@/components/EarningsCard', () => ({
+  useMyEarnings: () => ({ data: earningsState.data }),
+}));
 
 import { getApplication } from '@/lib/onboardingApi';
 import { listMyDocuments } from '@/lib/documentsApi';
@@ -88,6 +93,7 @@ function renderChecklist() {
 }
 
 beforeEach(() => {
+  earningsState.data = undefined;
   vi.mocked(getApplication).mockReset();
   try {
     sessionStorage.clear();
@@ -166,3 +172,29 @@ describe('<AssociateChecklist> (F500)', () => {
   });
 });
 
+
+describe('<AssociateChecklist> once they are working (ASSOC-31)', () => {
+  const done = application({
+    status: 'APPROVED',
+    percentComplete: 100,
+    approvedAt: '2026-08-20T12:00:00.000Z',
+    tasks: [task('1', 'PROFILE_INFO', 'DONE'), task('2', 'W4', 'DONE')],
+  });
+
+  it('approved and already on the schedule: done, and the way Home — not "your manager will be in touch"', async () => {
+    vi.mocked(getApplication).mockResolvedValue(done);
+    earningsState.data = { workedHours: 23.43, lastWeekEarned: 576.75, period: { workedHours: 23.43 } };
+    renderChecklist();
+    expect(await screen.findByText('Onboarding complete')).toBeInTheDocument();
+    expect(screen.getByText(/already on the schedule/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/');
+    expect(screen.queryByText(/will be in touch/)).not.toBeInTheDocument();
+  });
+
+  it('approved, first shift still ahead: the welcome stays', async () => {
+    vi.mocked(getApplication).mockResolvedValue(done);
+    earningsState.data = { workedHours: 0, lastWeekEarned: 0, period: { workedHours: 0 } };
+    renderChecklist();
+    expect((await screen.findAllByText(/will be in touch/)).length).toBeGreaterThan(0);
+  });
+});

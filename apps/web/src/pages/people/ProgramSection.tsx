@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { fmtDate } from '@/lib/format';
 import { getAssociateProgram } from '@/lib/programsApi';
+import { useAuth } from '@/lib/auth';
 
 const STATUS_BADGE: Record<ProgramSummary['status'], { variant: 'success' | 'pending' | 'destructive' | 'info' | 'outline'; label: string }> = {
   UPCOMING: { variant: 'info', label: 'Upcoming' },
@@ -22,6 +23,7 @@ const STATUS_BADGE: Record<ProgramSummary['status'], { variant: 'success' | 'pen
  * the section stays quiet).
  */
 export function ProgramSection({ associateId }: { associateId: string }) {
+  const { can } = useAuth();
   const q = useQuery({
     queryKey: ['programs', 'associate', associateId],
     queryFn: () => getAssociateProgram(associateId).catch(() => ({ program: null, denied: true as const })),
@@ -35,9 +37,12 @@ export function ProgramSection({ associateId }: { associateId: string }) {
     return (
       <div className="flex items-center justify-between gap-2 text-sm">
         <span className="text-silver/80">No program on record.</span>
-        <Link to={`/programs?associateId=${associateId}`} className="text-xs text-gold hover:underline">
-          Add program
-        </Link>
+        {/* Adding one is manage:compliance (POST /programs) — never offered to a role the API refuses (PEOPLE-16). */}
+        {can('manage:compliance') && (
+          <Link to={`/programs?associateId=${associateId}`} className="text-xs text-gold hover:underline">
+            Add program
+          </Link>
+        )}
       </div>
     );
   }

@@ -54,6 +54,9 @@ export const enPayx = {
   'payx.daily.leave': 'Turn off daily pay',
   'payx.daily.saved': 'Saved.',
   'payx.daily.failed': 'We couldn’t change that.',
+  'payx.preview.ded.RIDES': 'Van rides',
+  'payx.preview.ridesHeld': '{amount} in van rides isn’t taken from this check: your pay can’t go below the minimum wage ({wage} an hour). It stays owed for a later check.',
+  'payx.preview.tax.STATE_PROGRAM': 'Disability & paid leave',
 } as const;
 
 registerEnglish(enPayx);

@@ -1,5 +1,7 @@
 // English for the pages that use 'wf.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/wf.ts).
+import '../es/wf';
 
 export const enWf = {
   // Client portal — "the Walmart view"

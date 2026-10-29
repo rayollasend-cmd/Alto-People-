@@ -7,6 +7,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { computeForecastRun, forecastForSite, forecastSites, planFromForecast, scoreForecastAccuracy } from '../lib/forecast/run.js';
+import { dateColumnKey } from '../lib/timezone.js';
 
 /**
  * Labor-demand forecasting (Brief 3-4).
@@ -72,7 +73,7 @@ forecastRouter.put('/signals', MANAGE, async (req, res, next) => {
       { actorUserId: req.user!.id, clientId: null, action: 'forecast.signal_set', entityType: 'ForecastSignal', entityId: row.id, metadata: { locationId: input.locationId, weekStart: input.weekStart, kind: input.kind, factor: input.factor } },
       'forecast',
     );
-    res.json({ signal: { ...row, weekStart: row.weekStart.toISOString().slice(0, 10) } });
+    res.json({ signal: { ...row, weekStart: dateColumnKey(row.weekStart) } });
   } catch (err) {
     next(err);
   }

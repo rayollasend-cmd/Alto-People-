@@ -82,6 +82,10 @@ export function LegendKey({ items }: { items: Array<{ name: string; color: strin
  */
 export const STOCK_LEGEND = {
   wrapperStyle: { fontSize: 12 },
+  // The series' own order (data order). Recharts sorts legend items by name
+  // by default, so month series read "Apr, Aug, Jun, Oct, Sep" (LEAD-31); a
+  // chart that wants a sort passes its own itemSorter.
+  itemSorter: null,
   iconType: 'square' as const,
   iconSize: 10,
   formatter: (value: unknown) => <span style={{ color: 'rgb(var(--color-silver))' }}>{String(value)}</span>,

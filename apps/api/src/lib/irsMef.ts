@@ -9,6 +9,7 @@
  * payroll filing partner) with an EFIN/ETIN and the IRS-issued
  * submission manifest — Alto renders and packages; it does not transmit.
  */
+import { orgDateKey } from './timeAnomalies.js';
 
 export interface MefFiler {
   ein: string;
@@ -79,7 +80,7 @@ function header(input: { taxYear: number; periodBegin: string; periodEnd: string
     el('PersonNm', f.contactName, '      ') +
     el('PersonTitleTxt', 'Payroll', '      ') +
     el('PhoneNum', digits(f.contactPhone), '      ') +
-    el('SignatureDt', input.generatedAt.toISOString().slice(0, 10), '      ') +
+    el('SignatureDt', orgDateKey(input.generatedAt), '      ') +
     `    </BusinessOfficerGrp>\n` +
     `  </ReturnHeader>\n`
   );

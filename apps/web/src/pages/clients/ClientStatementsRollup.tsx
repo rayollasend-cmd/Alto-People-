@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CalendarX2, FileText, HandCoins, Lock, ReceiptText } from '@/components/ui/icons';
 import { toast } from 'sonner';
+import type { ClientPaymentMethodKind } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
@@ -234,10 +235,10 @@ export function ClientStatementsRollup() {
     }
   };
 
-  const markPaid = async (row: RollupRow, ref: string | undefined) => {
+  const markPaid = async (row: RollupRow, ref: string | undefined, paid: { receivedOn: string; method: ClientPaymentMethodKind }) => {
     setBusy(`paid-${row.id}`);
     try {
-      await markClientStatementPaid(row.clientId, row.id, ref);
+      await markClientStatementPaid(row.clientId, row.id, ref, paid);
       toast.success(
         `${row.clientName} paid — statement moved out of receivables.`,
       );
@@ -359,7 +360,10 @@ export function ClientStatementsRollup() {
               selectable={canFinalize ? { disabled: (st) => st.status !== 'DRAFT', selectAllLabel: 'Select all draft statements', selection: { selected: sel.selected, onChange: sel.replace } } : undefined}
               columns={[
                 { key: 'client', header: 'Client', accessor: (st) => st.clientName, sortable: true, primary: true, className: 'font-medium text-white' },
-                { key: 'period', header: 'Period', accessor: (st) => st.periodStart, csv: (st) => `${fmtDate(st.periodStart)} – ${fmtDate(st.periodEnd)}`, sortable: true, searchable: false, cardMeta: true, className: 'text-silver whitespace-nowrap', cell: (st) => `${fmtDate(st.periodStart)} – ${fmtDate(st.periodEnd)}` },
+                // Room for the bottom line at 1024 (deep audit MONEY-15): the period, hours, due date and days late
+                // leave the table on a narrow box (they stay in the chooser, the phone cards and the export); the
+                // amount and Record payment stay.
+                { key: 'period', header: 'Period', accessor: (st) => st.periodStart, csv: (st) => `${fmtDate(st.periodStart)} – ${fmtDate(st.periodEnd)}`, sortable: true, searchable: false, cardMeta: true, hideBelow: 1000, className: 'text-silver whitespace-nowrap', cell: (st) => `${fmtDate(st.periodStart)} – ${fmtDate(st.periodEnd)}` },
                 {
                   key: 'status',
                   header: 'Status',
@@ -389,10 +393,12 @@ export function ClientStatementsRollup() {
                   key: 'hours',
                   header: 'Hours',
                   accessor: (st) => st.snapshot.totals.hours,
-                  csv: (st) => st.snapshot.totals.hours.toFixed(1),
+                  // Raw numbers in the file (MONEY-29); on screen, hours to one decimal like every other screen (LEAD-28).
+                  csv: (st) => st.snapshot.totals.hours,
                   sortable: true,
                   searchable: false,
                   align: 'right',
+                  hideBelow: 900,
                   className: 'tabular-nums text-silver',
                   cell: (st) => (
                     <>
@@ -405,7 +411,7 @@ export function ClientStatementsRollup() {
                   key: 'amount',
                   header: 'Amount',
                   accessor: (st) => st.snapshot.totals.amount,
-                  csv: (st) => fmtMoney(st.snapshot.totals.amount),
+                  csv: (st) => st.snapshot.totals.amount,
                   sortable: true,
                   searchable: false,
                   align: 'right',
@@ -418,7 +424,7 @@ export function ClientStatementsRollup() {
                     </>
                   ),
                 },
-                { key: 'due', header: 'Due', accessor: (st) => st.dueOn ?? '', csv: (st) => (st.dueOn ? fmtDate(st.dueOn) : ''), sortable: true, searchable: false, className: 'whitespace-nowrap text-silver', cell: (st) => (st.dueOn ? fmtDate(st.dueOn) : '—') },
+                { key: 'due', header: 'Due', accessor: (st) => st.dueOn ?? '', csv: (st) => (st.dueOn ? fmtDate(st.dueOn) : ''), sortable: true, searchable: false, hideBelow: 800, className: 'whitespace-nowrap text-silver', cell: (st) => (st.dueOn ? fmtDate(st.dueOn) : '—') },
                 {
                   key: 'late',
                   header: 'Days late',
@@ -426,6 +432,7 @@ export function ClientStatementsRollup() {
                   sortable: true,
                   searchable: false,
                   align: 'right',
+                  hideBelow: 760,
                   cell: (st) => (st.daysLate > 0 ? <Badge variant={st.daysLate > 60 ? 'destructive' : 'pending'}>{st.daysLate}</Badge> : <span className="text-silver">—</span>),
                 },
                 {
@@ -520,8 +527,8 @@ export function ClientStatementsRollup() {
             : ''
         }
         busy={busy !== null && busy.startsWith('paid-')}
-        onConfirm={(ref) => {
-          if (payTarget) void markPaid(payTarget, ref);
+        onConfirm={(ref, paid) => {
+          if (payTarget) void markPaid(payTarget, ref, paid);
         }}
       />
     </ListTemplate>

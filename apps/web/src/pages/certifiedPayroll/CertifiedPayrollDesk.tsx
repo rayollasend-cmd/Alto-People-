@@ -16,7 +16,7 @@ import { AddressAutocomplete, pickedFields } from '@/components/ui/AddressAutoco
 import { MetricCard } from '@/components/ui/MetricCard';
 import { MetricStrip } from '@/components/ui/MetricStrip';
 import { Select } from '@/components/ui/Select';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 
 /**
  * Certified payroll — public-works projects paid at prevailing wage. Each
@@ -120,7 +120,7 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 function NewProjectDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (v: boolean) => void; onCreated: (id: string) => void }) {
   const qc = useQueryClient();
   const sites = useQuery({ queryKey: ['certified-payroll', 'sites'], queryFn: listSites, enabled: open, retry: false });
-  const blank: ProjectInput = { name: '', startDate: new Date().toISOString().slice(0, 10), weekEndsOn: 6, fringeMode: 'CASH' };
+  const blank: ProjectInput = { name: '', startDate: ymdLocal(), weekEndsOn: 6, fringeMode: 'CASH' };
   const [form, setForm] = useState<ProjectInput>(blank);
   const set = <K extends keyof ProjectInput>(k: K, v: ProjectInput[K]) => setForm((f) => ({ ...f, [k]: v }));
   const save = useMutation({

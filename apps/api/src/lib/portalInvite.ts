@@ -8,6 +8,7 @@ import { send } from './notifications.js';
 import { enqueueAudit } from './audit.js';
 import { marketManagerInviteTemplate, storeManagerInviteTemplate, type EmailTemplate } from './emailTemplates.js';
 import { publicBaseUrl } from './emailLayout.js';
+import { orgDateKey } from './timeAnomalies.js';
 
 /**
  * Onboarding a portal account — a store manager or a market manager.
@@ -162,7 +163,7 @@ export async function invitePortalAccount(input: {
     name: portalDisplayName(input.name, email),
     scope,
     magicLink,
-    linkExpiresAt: expiresAt.toISOString().slice(0, 10),
+    linkExpiresAt: orgDateKey(expiresAt),
   });
   let emailFailed: string | null = null;
   let externalRef: string | null = null;

@@ -4,7 +4,7 @@ import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { ShieldCheck } from '@/components/ui/icons';
 import { Card, CardContent } from '@/components/ui/Card';
 import { SectionTitle } from '@/components/ui/SectionTitle';
-import { fmtTime } from '@/lib/format';
+import { fmtExecAsOf } from '@/lib/executiveFormat';
 import { useTenant } from '@/lib/auth';
 import { useExecRisks } from '@/lib/executiveApi';
 import { useI18n } from '@/lib/i18n';
@@ -41,12 +41,12 @@ export function ExecRiskPage() {
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-positive-200 bg-positive-100 text-positive-800">
               <ShieldCheck className="h-5 w-5" aria-hidden="true" />
             </span>
-            <SectionTitle as="h2" title={t('execPortal.risk.clearTitle')} description={`${t('execPortal.risk.clearBody')} ${t('execPortal.asOf', { time: fmtTime(data.asOf) })}`} />
+            <SectionTitle as="h2" title={t('execPortal.risk.clearTitle')} description={`${t('execPortal.risk.clearBody')} ${t('execPortal.asOf', { time: fmtExecAsOf(data.asOf, data.timezone) })}`} />
           </CardContent>
         </Card>
       ) : (
         <>
-          <RiskSummary risks={data.risks} asOf={data.asOf} categories={categories} />
+          <RiskSummary risks={data.risks} asOf={data.asOf} timezone={data.timezone} categories={categories} />
           <ExecSection id="exec-risk-register" title={t('execPortal.risk.registerTitle')} description={t('execPortal.risk.registerDesc')}>
             <RiskRegister risks={data.risks} categories={categories} />
           </ExecSection>

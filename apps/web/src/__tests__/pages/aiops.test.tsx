@@ -116,6 +116,37 @@ describe('<RetentionDesk>', () => {
   });
 });
 
+describe('<RetentionDesk> — Mark done that fails (CODE-29)', () => {
+  it('says so instead of failing silently', async () => {
+    const { toast } = await import('sonner');
+    const { markPlayDone } = await import('@/lib/retentionApi');
+    const errSpy = vi.spyOn(toast, 'error');
+    vi.mocked(markPlayDone).mockRejectedValue(new Error('network'));
+    listRetention.mockResolvedValue({
+      truncated: false,
+      computedAt: new Date().toISOString(),
+      items: [
+        {
+          associateId: 'a1',
+          name: 'Ana Lopez',
+          photoUrl: null,
+          score: 55,
+          band: 'HIGH',
+          reasons: [],
+          plays: ['CHECK_IN'],
+          store: null,
+          client: null,
+          recentPlays: [{ id: 'p1', kind: 'CHECK_IN', status: 'OPEN', note: null, createdAt: new Date().toISOString(), approvalId: null }],
+        },
+      ],
+    });
+    renderAs('HR_ADMINISTRATOR', <RetentionDesk />, '/retention');
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark done' }));
+    await waitFor(() => expect(errSpy).toHaveBeenCalledWith('Could not mark that done. Try again.'));
+    errSpy.mockRestore();
+  });
+});
+
 describe('<CrewSignalsCard>', () => {
   it('says how many call-outs still need cover and who might leave, each linking to its desk', async () => {
     listCallOuts.mockResolvedValue({ range: 'today', total: 2, covered: 1, looking: 1, uncovered: 0, late: 0, truncated: false, items: [] });

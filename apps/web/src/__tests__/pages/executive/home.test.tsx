@@ -57,7 +57,7 @@ function overview(over: Partial<ExecOverview> = {}): ExecOverview {
     scorecard: [
       kpi({ id: 'revenue', label: 'Revenue', unit: 'money', value: 82190.5, sub: '3,870 paid hours', compare: 58878.5, delta: 23312, deltaPct: 0.396, status: 'watch', statusLabel: 'Just short of plan', target: 86300, href: '/executive/financials' }),
       kpi({ id: 'marginPct', label: 'Gross margin', unit: 'pct', value: 20.83, sub: '$17.1k margin', compare: 20.83, delta: 0, deltaPct: 0 }),
-      kpi({ id: 'workforce', label: 'Active workforce', unit: 'count', value: 36, sub: 'of 44 on the books', delta: -1, deltaPct: -0.027, basis: 'live', href: '/executive/people' }),
+      kpi({ id: 'workforce', label: 'Working', unit: 'count', value: 36, sub: 'of 44 on the books', delta: -1, deltaPct: -0.027, basis: 'live', href: '/executive/people' }),
       kpi({ id: 'fillRate', label: 'Fill rate', unit: 'pct', value: 99.1, delta: 2.3, status: 'good', statusLabel: 'Healthy', basis: 'live' }),
       kpi({ id: 'turnover', label: 'Turnover', unit: 'pct', value: 0, betterWhen: 'down', basis: 'live' }),
       kpi({ id: 'overtimePct', label: 'Overtime', unit: 'pct', value: 0.3, delta: -1.4, betterWhen: 'down', status: 'good', statusLabel: 'Healthy', basis: 'live' }),
@@ -294,7 +294,7 @@ describe('set the plan', () => {
     expect(revenue).toHaveValue('1,200,000');
     expect(screen.getByLabelText('Gross margin')).toHaveValue('240,000');
     expect(screen.getByText('Quarter to date: $82.2k · on pace for $283k')).toBeInTheDocument();
-    expect(screen.getByText('Active now: 36')).toBeInTheDocument();
+    expect(screen.getByText('Working now: 36')).toBeInTheDocument();
     expect(screen.getByTestId('exec-plan-implied')).toHaveTextContent('Implies a 20.0% margin');
 
     await user.clear(revenue);
@@ -322,8 +322,8 @@ describe('set the plan', () => {
     const fill = await screen.findByLabelText('Fill rate');
     await user.clear(fill);
     await user.type(fill, '120');
-    await user.clear(screen.getByLabelText('Headcount (active)'));
-    await user.type(screen.getByLabelText('Headcount (active)'), '-4');
+    await user.clear(screen.getByLabelText('Headcount (working)'));
+    await user.type(screen.getByLabelText('Headcount (working)'), '-4');
     await user.clear(screen.getByLabelText('Gross margin'));
     await user.type(screen.getByLabelText('Gross margin'), '2,000,000');
     await user.click(screen.getByRole('button', { name: 'Save the plan' }));
@@ -398,7 +398,7 @@ describe('the previews below the scorecard', () => {
     expect(within(cl).getByRole('img', { name: 'Coastal Resort Holdings: 75.9% of billing; the line marks 50%' })).toBeInTheDocument();
 
     const wf = screen.getByTestId('exec-preview-workforce');
-    expect(await within(wf).findByText('36 active · 21 hired and 1 left in 13 weeks.')).toBeInTheDocument();
+    expect(await within(wf).findByText('36 working · 21 hired and 1 left in 13 weeks.')).toBeInTheDocument();
     expect(within(wf).getByTestId('exec-people-turnover')).toHaveTextContent('12.4%');
     expect(within(wf).getByTestId('exec-people-turnover')).toHaveTextContent('Plan 30.0%');
     expect(within(wf).getByTestId('exec-people-ot')).toHaveTextContent('−1.4 pts vs Q3, same days');

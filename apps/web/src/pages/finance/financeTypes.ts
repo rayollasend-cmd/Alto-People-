@@ -89,7 +89,8 @@ export interface CashForecast {
   to: string;
   /** The Books cash position today; null when the books hold no bank account yet. */
   /** `onFile: false` — bank accounts exist but nothing is posted to them yet, so the balance is not a real $0. */
-  opening: { balance: number; accounts: number; asOf: string; onFile?: boolean } | null;
+  /** `overdrawn`: bank accounts below zero today — the balance nets them away (MONEY-18). */
+  opening: { balance: number; accounts: number; asOf: string; onFile?: boolean; overdrawn?: Array<{ id: string; name: string; balance: number }> } | null;
   /** The cash floor from Settings; null when none is set. */
   minimumCash: number | null;
   lowest: { weekStart: string; balance: number; belowMinimum: boolean } | null;
@@ -104,7 +105,8 @@ export interface PayCycle {
   payDate: string;
   schedule: string;
   /** Worked in the period: approved, and still awaiting approval. */
-  hours: { approved: number; pending: number };
+  /** pendingBefore: still waiting for approval, worked before this period began (MONEY-7). */
+  hours: { approved: number; pending: number; pendingBefore?: number };
   /** This period's payroll run, if one was started. */
   run: { id: string; status: 'DRAFT' | 'FINALIZED' | 'DISBURSED'; totalGross: number } | null;
 }
@@ -140,8 +142,10 @@ export interface MarginWeek {
   inProgress: boolean;
   /** Approved hours. */
   hours: number;
-  /** Approved hours × the client's bill rate. */
+  /** Billed at contract rates (METRICS.billedAtContractRates): approved hours × the client's bill rate, as the VMS bills them. */
   revenue: number;
+  /** Billed on statements: the finalized statements' services total for the week, once every client's week is on one (MONEY-20). */
+  billedOnStatements?: number | null;
   /** What payroll pays for them: pay rate, time and a half past 40. */
   wages: number;
   margin: number;

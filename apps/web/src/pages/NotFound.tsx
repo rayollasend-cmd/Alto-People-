@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Compass, Home, Search } from '@/components/ui/icons';
 import { Button } from '@/components/ui/Button';
 import { usePageHero } from '@/lib/pageTitle';
+import { useI18n } from '@/lib/i18n';
 
 /** The palette listens for ⌘K / Ctrl+K on the window (components/ui/CommandPalette). */
 function openSearch() {
@@ -11,8 +12,10 @@ function openSearch() {
 
 export function NotFound() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   // The top bar names the page ("Page not found"), not the product.
-  const hero = usePageHero<HTMLHeadingElement>('Page not found');
+  const hero = usePageHero<HTMLHeadingElement>(t('error.pageNotFound'));
+  const [pressBefore, pressAfter] = t('error.pressToSearch').split('{key}');
   // A first page in the tab has nowhere to go back to.
   const canGoBack = typeof window !== 'undefined' && window.history.length > 1;
   return (
@@ -23,30 +26,30 @@ export function NotFound() {
         </div>
         <div className="space-y-1">
           <h1 ref={hero} className="text-2xl text-white">
-            We couldn&rsquo;t find that page
+            {t('error.notFoundTitle')}
           </h1>
-          <p className="text-sm text-silver">It may have moved, or the link could be out of date. Search for it, or start again from home.</p>
+          <p className="text-sm text-silver">{t('error.notFoundBody')}</p>
         </div>
         <div className="flex flex-wrap justify-center gap-2">
           {canGoBack && (
             <Button variant="outline" onClick={() => navigate(-1)}>
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              Go back
+              {t('error.goBack')}
             </Button>
           )}
           <Button variant="outline" onClick={openSearch}>
             <Search className="h-4 w-4" aria-hidden="true" />
-            Search
+            {t('error.search')}
           </Button>
           <Button asChild>
             <Link to="/">
               <Home className="h-4 w-4" aria-hidden="true" />
-              Go home
+              {t('access.home')}
             </Link>
           </Button>
         </div>
         <p className="hidden text-xs text-ink-muted sm:block">
-          Or press <kbd className="rounded border border-line px-1 font-sans">⌘K</kbd> anywhere to search.
+          {pressBefore}<kbd className="rounded border border-line px-1 font-sans">⌘K</kbd>{pressAfter}
         </p>
       </div>
     </div>

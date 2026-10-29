@@ -12,6 +12,7 @@ import {
   startOfWeekUTC,
   utcInstantOfLocalMidnight,
 } from '../lib/timeAnomalies.js';
+import { addDaysToKey } from '../lib/timezone.js';
 import { soonestPayday } from '../lib/payday.js';
 import { accountPhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
@@ -59,10 +60,7 @@ workforceOverviewRouter.get(
       const now = new Date();
       const todayKey = orgDateKey(now);
       const todayStart = utcInstantOfLocalMidnight(todayKey, ORG_TZ);
-      const dayKeyPlus = (key: string, days: number) => {
-        const [y, m, d] = key.split('-').map(Number);
-        return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
-      };
+      const dayKeyPlus = addDaysToKey;
       const tomorrowStart = utcInstantOfLocalMidnight(dayKeyPlus(todayKey, 1), ORG_TZ);
       const dayAfterStart = utcInstantOfLocalMidnight(dayKeyPlus(todayKey, 2), ORG_TZ);
       const weekStart = startOfWeekUTC(now);
@@ -77,6 +75,9 @@ workforceOverviewRouter.get(
               clockInAt: true,
               shiftId: true,
               clientId: true,
+              // The store the punch is at (its own, else its shift's) — the per-store board.
+              locationId: true,
+              shift: { select: { locationId: true } },
               associate: { select: { id: true, firstName: true, lastName: true } },
             },
             take: 1000,
@@ -97,6 +98,8 @@ workforceOverviewRouter.get(
               position: true,
               payRate: true,
               client: { select: { id: true, name: true } },
+              locationId: true,
+              locationRel: { select: { name: true } },
             },
             take: 2000,
           }),
@@ -107,7 +110,7 @@ workforceOverviewRouter.get(
               ...clamp,
               startsAt: { gte: tomorrowStart, lt: dayAfterStart },
             },
-            select: { status: true, acknowledgedAt: true, client: { select: { id: true } } },
+            select: { status: true, acknowledgedAt: true, client: { select: { id: true } }, locationId: true },
             take: 2000,
           }),
           prisma.attendanceEvent.findMany({
@@ -119,7 +122,7 @@ workforceOverviewRouter.get(
             where: { occurredAt: { gte: todayStart }, ...clamp },
             orderBy: { occurredAt: 'desc' },
             take: 20,
-            select: { occurredAt: true, clientId: true, severity: true },
+            select: { occurredAt: true, clientId: true, severity: true, locationId: true },
           }),
           prisma.shift.count({
             where: {
@@ -138,6 +141,7 @@ workforceOverviewRouter.get(
             select: {
               kind: true,
               clientId: true,
+              shiftId: true,
               createdAt: true,
               associate: { select: { firstName: true, lastName: true } },
             },
@@ -521,6 +525,117 @@ workforceOverviewRouter.get(
         .slice(0, 12);
       const needsAttention = stores.filter((s) => s.status !== 'green').length;
 
+      // THE SAME BOARD, ONE ROW A STORE (LEAD-10). The tiles above are one per
+      // CLIENT, and the ops home drew them under a "Store" header — "2 stores"
+      // with four, Coastal's three rolled into one, so Front Beach being 0 of
+      // 2 on the floor could not be seen. Same counts, keyed by location;
+      // work with no store set stays under its client as "no store set".
+      interface SiteTile {
+        key: string;
+        locationId: string | null;
+        locationName: string | null;
+        clientId: string | null;
+        clientName: string;
+        onFloor: number;
+        scheduledNow: number;
+        scheduledToday: number;
+        openToday: number;
+        callOutsToday: number;
+        noShowsToday: number;
+        incidentsToday: number;
+        unscheduledNow: number;
+        confirmedTomorrow: number;
+        unconfirmedTomorrow: number;
+        openTomorrow: number;
+        status: 'red' | 'amber' | 'green';
+      }
+      const siteMap = new Map<string, SiteTile>();
+      const siteNames = new Map<string, string>();
+      for (const s of todayShifts) if (s.locationId && s.locationRel) siteNames.set(s.locationId, s.locationRel.name);
+      const siteBucket = (clientId: string | null, locationId: string | null): SiteTile => {
+        const key = `${clientId ?? 'none'}|${locationId ?? 'none'}`;
+        let b = siteMap.get(key);
+        if (!b) {
+          b = {
+            key,
+            locationId,
+            locationName: locationId ? (siteNames.get(locationId) ?? null) : null,
+            clientId,
+            clientName: (clientId ? storeMap.get(clientId)?.clientName ?? clientNames.get(clientId) : null) ?? '—',
+            onFloor: 0,
+            scheduledNow: 0,
+            scheduledToday: 0,
+            openToday: 0,
+            callOutsToday: 0,
+            noShowsToday: 0,
+            incidentsToday: 0,
+            unscheduledNow: 0,
+            confirmedTomorrow: 0,
+            unconfirmedTomorrow: 0,
+            openTomorrow: 0,
+            status: 'green',
+          };
+          siteMap.set(key, b);
+        }
+        return b;
+      };
+      const shiftSite = new Map<string, { clientId: string | null; locationId: string | null }>();
+      for (const s of todayShifts) {
+        const b = siteBucket(s.client?.id ?? null, s.locationId);
+        shiftSite.set(s.id, { clientId: s.client?.id ?? null, locationId: s.locationId });
+        if (s.status === 'OPEN') b.openToday += 1;
+        else {
+          b.scheduledToday += 1;
+          if (s.startsAt.getTime() <= now.getTime() && s.endsAt.getTime() > now.getTime()) b.scheduledNow += 1;
+        }
+      }
+      for (const s of tomorrowShifts) {
+        if (!s.client?.id || !siteMap.has(`${s.client.id}|${s.locationId ?? 'none'}`)) continue;
+        const b = siteBucket(s.client.id, s.locationId);
+        if (s.status === 'OPEN') b.openTomorrow += 1;
+        else if (s.acknowledgedAt === null) b.unconfirmedTomorrow += 1;
+        else b.confirmedTomorrow += 1;
+      }
+      for (const e of todayEvents) {
+        if (!e.clientId) continue;
+        const at = e.shiftId ? shiftSite.get(e.shiftId) : undefined;
+        const b = siteMap.get(`${e.clientId}|${at?.locationId ?? 'none'}`) ?? siteBucket(e.clientId, at?.locationId ?? null);
+        if (e.kind === 'NO_CALL_NO_SHOW') b.noShowsToday += 1;
+        if (e.kind === 'CALL_OUT') b.callOutsToday += 1;
+      }
+      for (const i of incidentRows) siteBucket(i.clientId, i.locationId).incidentsToday += 1;
+      for (const e of activeEntries) {
+        if (!e.clientId) continue;
+        const b = siteBucket(e.clientId, e.locationId ?? e.shift?.locationId ?? null);
+        b.onFloor += 1;
+        if (e.shiftId === null) b.unscheduledNow += 1;
+      }
+      // Stores named by a punch or an incident only (no shift today).
+      const unnamed = [...siteMap.values()].filter((s) => s.locationId && !s.locationName).map((s) => s.locationId!);
+      if (unnamed.length > 0) {
+        const named = await prisma.site.findMany({ where: { id: { in: unnamed } }, select: { id: true, name: true } });
+        const byId = new Map(named.map((n) => [n.id, n.name]));
+        for (const s of siteMap.values()) if (s.locationId && !s.locationName) s.locationName = byId.get(s.locationId) ?? null;
+      }
+      const sites = [...siteMap.values()]
+        .filter((s) => s.onFloor + s.scheduledNow + s.scheduledToday + s.openToday + s.unconfirmedTomorrow + s.openTomorrow + s.noShowsToday + s.incidentsToday > 0)
+        .map((s) => {
+          s.status =
+            s.noShowsToday > 0 || s.incidentsToday > 0 || s.unscheduledNow > 0 || s.onFloor < s.scheduledNow
+              ? 'red'
+              : s.openToday > 0 || s.openTomorrow > 0 || s.unconfirmedTomorrow > 0
+                ? 'amber'
+                : 'green';
+          return s;
+        })
+        .sort(
+          (a, b) =>
+            rank[a.status] - rank[b.status] ||
+            b.openToday - a.openToday ||
+            a.clientName.localeCompare(b.clientName) ||
+            (a.locationName ?? '').localeCompare(b.locationName ?? ''),
+        );
+
       // THE WIRE: everything happening everywhere, newest first —
       // exceptions, incidents, and unscheduled punches, one stream.
       const wire = [
@@ -591,6 +706,8 @@ workforceOverviewRouter.get(
           filled: todayShifts.filter((s) => s.status !== 'OPEN').length,
           open: todayShifts.filter((s) => s.status === 'OPEN').length,
           stores,
+          /** One row per store (location), the ops home's "Stores today" board. */
+          sites,
         },
         exceptionsToday: {
           count: todayEvents.length,

@@ -330,7 +330,9 @@ export function ReimbursementsHome() {
           onRowClick={(r) => setActive(r)}
           rowActionLabel={(r) => `${t('rmb.colTitle')}: ${r.title}`}
           selectable={selectable}
-          empty={{ icon: Receipt, title: emptyCopy.title, description: emptyCopy.description, action: submits && !staff ? <Button size="sm" onClick={() => setShowNew(true)}><Plus className="mr-1 h-4 w-4" />{t('rmb.newReport')}</Button> : undefined }}
+          // One "New report" — the page's own action above; the empty state
+          // repeating it read twice on a phone (ASSOC-30).
+          empty={{ icon: Receipt, title: emptyCopy.title, description: emptyCopy.description }}
           footnote={staff && rows && rows.length >= 200 ? desk.newest200 : undefined}
           columns={[
             { key: 'title', header: t('rmb.colTitle'), accessor: (r) => r.title, sortable: true, primary: true, className: 'font-medium text-white' },

@@ -47,7 +47,7 @@ export function EmptyState({
         {Icon && <Icon className="mt-0.5 h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />}
         <div className="min-w-0 text-sm">
           <p className="text-ink">{title}</p>
-          {description && <p className="text-xs text-ink-muted">{description}</p>}
+          {description && <div className="text-xs text-ink-muted">{description}</div>}
           {action && <div className="mt-2">{action}</div>}
         </div>
       </div>
@@ -72,8 +72,10 @@ export function EmptyState({
           Skipped entirely when callers pass an empty title (e.g. the
           Expirations buckets) — an empty <h2> trips axe's empty-heading. */}
       {title && <h2 className="text-xl text-ink mb-1">{title}</h2>}
+      {/* A <div>, not a <p>: a description may hold a <details> or a list
+          (Reliability's "what this covers"), which a <p> can't contain. */}
       {description && (
-        <p className="text-sm text-ink-muted max-w-sm">{description}</p>
+        <div className="text-sm text-ink-muted max-w-sm">{description}</div>
       )}
       {action && <div className="mt-5">{action}</div>}
     </div>

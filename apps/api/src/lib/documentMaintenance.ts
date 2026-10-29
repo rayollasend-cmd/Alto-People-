@@ -5,6 +5,8 @@ import { getBlobStore } from './blobStore.js';
 import { env } from '../config/env.js';
 import { purgeByRetention } from './documentRetention.js';
 import { fmtDay } from './humanDates.js';
+import { dateColumnKey } from './timezone.js';
+import { logger } from './logger.js';
 
 /**
  * Daily document maintenance sweep.
@@ -146,7 +148,7 @@ export async function expireLapsedDocs(
       documentId: doc.id,
       associateId: doc.associateId,
       kind: doc.kind,
-      expiresAt: doc.expiresAt!.toISOString().slice(0, 10),
+      expiresAt: dateColumnKey(doc.expiresAt!),
     });
     void notifyAssociate(doc.associateId, {
       subject: `Your ${doc.kind.replace(/_/g, ' ').toLowerCase()} on file has expired`,
@@ -183,8 +185,8 @@ export function startDocumentMaintenanceCron(): void {
   tick();
   timer = setInterval(tick, seconds * 1000);
   timer.unref();
-  console.log(
-    `[alto-people/api] document maintenance cron armed (every ${seconds}s; ` +
+  logger.info(
+    `document maintenance cron armed (every ${seconds}s; ` +
       `rejected-doc retention ${REJECTED_DOC_RETENTION_DAYS}d; expiry sweep on)`,
   );
 }

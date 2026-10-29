@@ -1,7 +1,7 @@
 {
   "_comment": "Design-lint baseline: per-file counts of the patterns the design system retires. Only ever shrinks; a rising count fails CI. Regenerate with `node scripts/design-lint.mjs --write` after paying debt down.",
   "totals": {
-    "brand-text": 1181,
+    "brand-text": 1175,
     "raw-heading": 78,
     "pill": 32,
     "empty-text": 5
@@ -83,9 +83,6 @@
     "src/pages/admin/EmployersAdmin.tsx": {
       "brand-text": 1
     },
-    "src/pages/admin/HugoPanel.tsx": {
-      "brand-text": 3
-    },
     "src/pages/admin/OrgUnitsAdmin.tsx": {
       "empty-text": 1
     },
@@ -147,7 +144,7 @@
       "brand-text": 2
     },
     "src/pages/clients/StatementsSection.tsx": {
-      "brand-text": 6
+      "brand-text": 4
     },
     "src/pages/communications/AdminCommsView.tsx": {
       "brand-text": 1
@@ -763,7 +760,7 @@
       "brand-text": 2
     },
     "src/components/OutOfOfficeCard.tsx": {
-      "brand-text": 2
+      "brand-text": 1
     },
     "src/components/ProgramAlertsCard.tsx": {
       "brand-text": 2,

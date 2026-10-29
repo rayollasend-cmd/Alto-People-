@@ -17,14 +17,14 @@ import {
   i9CatalogEntry,
   type DocumentRecord,
 } from '@alto-people/shared';
-import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES, toDateOnly } from '@alto-people/shared';
 import type { DocumentKind, TaskKind } from '@prisma/client';
 import { prisma } from '../db.js';
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeActiveAssociates, scopeDocuments } from '../lib/scope.js';
+import { assertAssociateInScope, scopeActiveAssociates, scopeDocuments, scopeWhere } from '../lib/scope.js';
 import {
   enqueueAudit,
   recordCriticalAudit,
@@ -50,6 +50,7 @@ import {
 } from '../lib/uploads.js';
 import { publicBaseUrl } from '../lib/emailLayout.js';
 import { fmtDay } from '../lib/humanDates.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 export const documentsRouter = Router();
 
@@ -129,6 +130,13 @@ type RawDoc = Prisma.DocumentRecordGetPayload<{
   };
 }>;
 
+/** The owner's photo URL when the include read the photo columns (DOC_INCLUDE does); omitted otherwise. */
+function docAssociatePhoto(d: RawDoc): { associatePhotoUrl?: string | null } {
+  const a = d.associate as { photoS3Key?: string | null; photoUpdatedAt?: Date | null } | null;
+  if (!a || a.photoS3Key === undefined) return {};
+  return { associatePhotoUrl: profilePhotoUrlFor({ id: d.associateId, photoS3Key: a.photoS3Key, photoUpdatedAt: a.photoUpdatedAt ?? null }) };
+}
+
 function toRecord(d: RawDoc): DocumentRecord {
   // True when the file blob still exists. We hit the filesystem here
   // because the underlying storage on Railway is ephemeral — a redeploy
@@ -151,6 +159,7 @@ function toRecord(d: RawDoc): DocumentRecord {
     id: d.id,
     associateId: d.associateId,
     associateName: d.associate ? `${d.associate.firstName} ${d.associate.lastName}` : null,
+    ...docAssociatePhoto(d),
     clientId: d.clientId,
     kind: d.kind,
     i9DocTitle: d.i9DocTitle,
@@ -171,7 +180,7 @@ function toRecord(d: RawDoc): DocumentRecord {
 }
 
 const DOC_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true } },
+  associate: { select: { firstName: true, lastName: true, photoS3Key: true, photoUpdatedAt: true } },
   verifiedBy: { select: { email: true } },
 } as const;
 
@@ -341,8 +350,9 @@ documentsRouter.post(
       if (!kindParse.success) {
         throw new HttpError(400, 'invalid_kind', 'Invalid or missing "kind" field');
       }
+      // Only someone in the caller's tenant and reach (CODE-16).
       const associate = await prisma.associate.findFirst({
-        where: { id: associateId, deletedAt: null },
+        where: { AND: [{ id: associateId }, scopeActiveAssociates(user, { former: true })] },
         select: { id: true },
       });
       if (!associate) {
@@ -544,16 +554,17 @@ documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
     // the next N days (the vault's "Expiring in 30 days" tile).
     const expiringDays = z.coerce.number().int().min(1).max(365).optional().parse(req.query.expiringWithin || undefined);
     const now = new Date();
-    const where: Prisma.DocumentRecordWhereInput = {
-      ...scopeDocuments(req.user!),
-      tenantId: tenantIdForWrite(),
-      ...(status ? { status } : expiringDays ? { status: { in: [...EXPIRING_STATUSES] } } : {}),
-      ...(expiringDays ? { expiresAt: { gte: now, lt: new Date(now.getTime() + expiringDays * 86_400_000) } } : {}),
-      ...(kind ? { kind: kind as Prisma.DocumentRecordWhereInput['kind'] } : {}),
-      ...(associateId ? { associateId } : {}),
+    // AND, never spread: a filter must not overwrite the caller's scope (lib/scope scopeWhere).
+    const where: Prisma.DocumentRecordWhereInput = scopeWhere<Prisma.DocumentRecordWhereInput>(
+      scopeDocuments(req.user!),
+      { tenantId: tenantIdForWrite() },
+      status ? { status } : expiringDays ? { status: { in: [...EXPIRING_STATUSES] } } : null,
+      expiringDays ? { expiresAt: { gte: now, lt: new Date(now.getTime() + expiringDays * 86_400_000) } } : null,
+      kind ? { kind: kind as Prisma.DocumentRecordWhereInput['kind'] } : null,
+      associateId ? { associateId } : null,
       // Search belongs here too: filtering a page in the browser searches
       // only what the page happened to contain.
-      ...(q
+      q
         ? {
             OR: [
               { filename: { contains: q, mode: 'insensitive' as const } },
@@ -561,14 +572,16 @@ documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
               { associate: { lastName: { contains: q, mode: 'insensitive' as const } } },
             ],
           }
-        : {}),
-    };
+        : null,
+    );
 
+    // Whole numbers inside the bounds (CODE-24): ?page=1.5 was skip 37.5 and
+    // ?page=1e20 overflowed Prisma's Int — both 500s.
     const pageSize = Math.min(
-      Math.max(Number(req.query.pageSize) || DOC_PAGE_DEFAULT, 1),
+      Math.max(Math.floor(Number(req.query.pageSize)) || DOC_PAGE_DEFAULT, 1),
       DOC_PAGE_MAX,
     );
-    const page = Math.max(Number(req.query.page) || 0, 0);
+    const page = Math.min(Math.max(Math.floor(Number(req.query.page)) || 0, 0), 100_000);
     const orderBy = DOC_ORDER[req.query.sort?.toString() ?? ''] ?? DOC_ORDER.uploaded_desc!;
 
     const [rows, total] = await Promise.all([
@@ -658,6 +671,9 @@ documentsRouter.get('/admin/vault/:associateId', MANAGE, async (req, res, next) 
     if (!associate) {
       throw new HttpError(404, 'associate_not_found', 'Associate not found');
     }
+    // The vault (I-9 dates, E-Verify case, background and drug-test status,
+    // J-1 sponsor) is for the person's own desk only (CODE-16).
+    await assertAssociateInScope(prisma, req.user!, associateId);
 
     const docWhere: Prisma.DocumentRecordWhereInput = {
       ...scopeDocuments(req.user!),
@@ -744,8 +760,8 @@ documentsRouter.get('/admin/vault/:associateId', MANAGE, async (req, res, next) 
               : null,
           j1: j1
             ? {
-                programStartDate: j1.programStartDate.toISOString().slice(0, 10),
-                programEndDate: j1.programEndDate.toISOString().slice(0, 10),
+                programStartDate: toDateOnly(j1.programStartDate)!,
+                programEndDate: toDateOnly(j1.programEndDate)!,
                 sponsorAgency: j1.sponsorAgency,
               }
             : null,
@@ -900,7 +916,9 @@ documentsRouter.post('/admin/:id/verify', MANAGE, async (req, res, next) => {
   try {
     const user = req.user!;
     const doc = await prisma.documentRecord.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      // CODE-16: through the caller's reach — a store-A desk neither reads nor
+      // decides a store-B document; another tenant's id is not found.
+      where: { AND: [{ id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, scopeDocuments(req.user!)] },
     });
     if (!doc) throw new HttpError(404, 'document_not_found', 'Document not found');
     if (doc.status === 'VERIFIED') {
@@ -968,7 +986,9 @@ documentsRouter.post('/admin/:id/reclassify', MANAGE, async (req, res, next) => 
     const toKind = parsed.data.kind;
 
     const doc = await prisma.documentRecord.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      // CODE-16: through the caller's reach — a store-A desk neither reads nor
+      // decides a store-B document; another tenant's id is not found.
+      where: { AND: [{ id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, scopeDocuments(req.user!)] },
     });
     if (!doc) throw new HttpError(404, 'document_not_found', 'Document not found');
     if (doc.kind === toKind) {
@@ -1049,7 +1069,8 @@ documentsRouter.post('/admin/bulk-verify', MANAGE, async (req, res, next) => {
     // classifying against the fetched set; audits stay per-row but are
     // enqueue-only, so they run in a plain JS loop after the write.
     const docs = await prisma.documentRecord.findMany({
-      where: { id: { in: parsed.data.ids }, deletedAt: null },
+      // Only documents inside the caller's reach; the rest come back skipped as not found (CODE-16).
+      where: { AND: [{ id: { in: parsed.data.ids }, deletedAt: null, tenantId: tenantIdForWrite() }, scopeDocuments(user)] },
       select: { id: true, status: true, associateId: true, clientId: true },
     });
     const docById = new Map(docs.map((d) => [d.id, d]));
@@ -1234,7 +1255,9 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'reason is required', parsed.error.flatten());
     }
     const doc = await prisma.documentRecord.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      // CODE-16: through the caller's reach — a store-A desk neither reads nor
+      // decides a store-B document; another tenant's id is not found.
+      where: { AND: [{ id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, scopeDocuments(req.user!)] },
     });
     if (!doc) throw new HttpError(404, 'document_not_found', 'Document not found');
 
@@ -1395,7 +1418,9 @@ documentsRouter.post('/admin/:id/request-reupload', MANAGE, async (req, res, nex
   try {
     const user = req.user!;
     const doc = await prisma.documentRecord.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      // CODE-16: through the caller's reach — a store-A desk neither reads nor
+      // decides a store-B document; another tenant's id is not found.
+      where: { AND: [{ id: req.params.id, deletedAt: null, tenantId: tenantIdForWrite() }, scopeDocuments(req.user!)] },
       include: DOC_INCLUDE,
     });
     if (!doc) throw new HttpError(404, 'document_not_found', 'Document not found');

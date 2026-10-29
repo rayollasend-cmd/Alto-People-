@@ -33,6 +33,7 @@ import {
   syncRecentHires,
 } from '../lib/newHireReporting.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 
 /**
  * Pay compliance (2026): the limits and the Roth catch-up rule, state pay
@@ -64,6 +65,7 @@ const EXPORT_PII = requireCapability('export:payroll-pii');
 const DAY_MS = 86_400_000;
 
 const YearQuery = z.object({ year: z.coerce.number().int().min(2020).max(2100).optional() });
+// eslint-disable-next-line no-restricted-syntax -- UTC on purpose: formats Postgres DATE columns (UTC midnights)
 const ymd = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
 
 // ----- Limits and Roth catch-up --------------------------------------------
@@ -285,7 +287,8 @@ payrollComplianceRouter.get('/pay-compliance/new-hire-reports', requireAuth, PRO
     orderBy: [{ status: 'asc' }, { dueDate: 'asc' }],
     take: 1000,
   });
-  const today = new Date(new Date().toISOString().slice(0, 10));
+  // The company's day, not UTC's (deep audit CODE-14): a report due today isn't "overdue" after 8 PM Eastern.
+  const today = new Date(`${orgDateKey(new Date())}T00:00:00.000Z`);
   const { blocked } = await buildNewHireRecords(prisma, rows.filter((r) => r.status === 'DUE'));
   const blockedBy = new Map(blocked.map((b) => [b.reportId, b]));
   res.json({
@@ -351,7 +354,7 @@ payrollComplianceRouter.get('/pay-compliance/new-hire-reports/file.csv', require
     'payroll.new_hire_report_exported',
   );
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="new-hire-${q.state}-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="new-hire-${q.state}-${orgDateKey(new Date())}.csv"`);
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Report-Ids', records.map((r) => r.reportId).join(','));
   res.send(newHireCsv(records));

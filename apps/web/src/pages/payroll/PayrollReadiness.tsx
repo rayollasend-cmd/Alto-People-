@@ -173,9 +173,20 @@ export function PayrollReadiness() {
                         </>
                       ),
                     },
+                    // The bottom line next to the name, so it never scrolls off at 1024 (deep audit MONEY-15).
+                    {
+                      key: 'ready',
+                      header: 'Ready',
+                      accessor: (row) => (row.ready ? 'Ready' : 'Action required'),
+                      sortable: true,
+                      align: 'center',
+                      cardMeta: true,
+                      cell: (row) => (row.ready ? <Badge variant="success">Ready</Badge> : <Badge variant="destructive">Action required</Badge>),
+                    },
                     {
                       key: 'type',
                       header: 'Type',
+                      hideBelow: 1000,
                       accessor: (row) => (row.employmentType === 'W2_EMPLOYEE' ? 'W-2' : '1099'),
                       sortable: true,
                       cardMeta: true,
@@ -213,6 +224,7 @@ export function PayrollReadiness() {
                     },
                     {
                       key: 'schedule',
+                      hideBelow: 900,
                       header: 'Schedule',
                       accessor: (row) => (row.flags.payScheduleAssigned ? 'Yes' : 'No'),
                       sortable: true,
@@ -223,6 +235,7 @@ export function PayrollReadiness() {
                     },
                     {
                       key: 'user',
+                      hideBelow: 950,
                       header: 'Sign-in',
                       accessor: (row) => (row.flags.userLinked ? 'Yes' : 'No'),
                       sortable: true,
@@ -230,15 +243,6 @@ export function PayrollReadiness() {
                       align: 'center',
                       stopRowClick: true,
                       cell: (row) => <Flag ok={row.flags.userLinked} href={`/people?associateId=${row.associateId}`} title="No user account linked" />,
-                    },
-                    {
-                      key: 'ready',
-                      header: 'Ready',
-                      accessor: (row) => (row.ready ? 'Ready' : 'Action required'),
-                      sortable: true,
-                      align: 'center',
-                      cardMeta: true,
-                      cell: (row) => (row.ready ? <Badge variant="success">Ready</Badge> : <Badge variant="destructive">Action required</Badge>),
                     },
                   ]}
                 />

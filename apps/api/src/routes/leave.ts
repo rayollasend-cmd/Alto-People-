@@ -14,6 +14,7 @@ import { assertAssociateInScope, scopeActiveAssociates, scopeWhere } from '../li
 import { tenantIdForWrite } from '../lib/tenant.js';
 import { safeContentDisposition, sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { fmtDay } from '../lib/claimsPdf.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 import {
   STATE_PROGRAMS,
   certificationRequired,
@@ -60,7 +61,8 @@ const upload = multer({
 
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const day = (s: string) => new Date(`${s}T00:00:00.000Z`);
-const today = () => day(new Date().toISOString().slice(0, 10));
+// The company's calendar day (not UTC's — after 8 PM Eastern that was tomorrow).
+const today = () => day(orgDateKey(new Date()));
 
 const CaseInput = z.object({
   type: z.enum(['FMLA', 'STATE_PFML', 'MILITARY_USERRA', 'ADA_ACCOMMODATION', 'PERSONAL', 'COMPANY']),
@@ -246,7 +248,8 @@ const ListQuery = z.object({
     .default('open'),
   type: z.enum(['FMLA', 'STATE_PFML', 'MILITARY_USERRA', 'ADA_ACCOMMODATION', 'PERSONAL', 'COMPANY']).optional(),
   q: z.string().trim().max(100).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  // CODE-24: whole pages in a range Prisma's skip can hold — `?page=1e9` is a 400, not a 500.
+  page: z.coerce.number().int().min(1).max(100_000).default(1),
 });
 
 leaveRouter.get('/leave/cases', MANAGE, async (req, res) => {

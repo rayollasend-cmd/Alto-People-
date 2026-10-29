@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useChunkLoading } from '@/lib/chunkLoading';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Top progress bar shown when route navigation is pending — typically
@@ -19,6 +20,7 @@ import { useChunkLoading } from '@/lib/chunkLoading';
  * subtle blur shadow for contrast against any background.
  */
 export function NavigationProgress() {
+  const { t } = useI18n();
   const loading = useChunkLoading();
   const [visible, setVisible] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -63,7 +65,7 @@ export function NavigationProgress() {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(progress)}
-      aria-label="Loading page"
+      aria-label={t('common.loadingPage')}
       className="fixed top-0 left-0 right-0 z-[100] h-0.5 pointer-events-none"
     >
       <div

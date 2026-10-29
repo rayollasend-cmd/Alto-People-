@@ -91,6 +91,8 @@ export const enRegion = {
   'region.kpiLateNotIn': 'Late, not in yet',
   'region.colDelivered': 'Delivered',
   'region.cardDelivered': '{pct}% delivered',
+  'region.curveMeta_one': '{open} unfilled slot today',
+  'region.kpiOpenUnit_one': 'slot',
 } as const;
 
 registerEnglish(enRegion);

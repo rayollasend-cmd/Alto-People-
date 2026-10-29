@@ -1,5 +1,7 @@
 // English for the pages that use 'recruiterHome.*' keys — imported by them (scripts/i18n-check.mjs checks it).
 import { registerEnglish } from '../english';
+// Its Spanish travels with it, in the same chunk (es/recruiterHome.ts).
+import '../es/recruiterHome';
 
 export const enRecruiterHome = {
   'recruiterHome.subtitle': 'Your pipeline today — what\'s new, and what\'s waiting.',

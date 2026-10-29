@@ -20,10 +20,6 @@ export function getClientOverview(clientId: string): Promise<ClientOverview> {
   return apiFetch<ClientOverview>(`/clients/${clientId}/overview`);
 }
 
-export function listClientContacts(clientId: string): Promise<{ contacts: ClientContact[] }> {
-  return apiFetch(`/clients/${clientId}/contacts`);
-}
-
 export function createClientContact(clientId: string, body: ClientContactInput): Promise<{ contact: ClientContact }> {
   return apiFetch(`/clients/${clientId}/contacts`, { method: 'POST', body });
 }

@@ -46,6 +46,7 @@ vi.mock('@/lib/recruiting90Api', () => ({
 // The hire dialog is the onboarding invite; its pickers load from these.
 vi.mock('@/lib/onboardingApi', () => ({
   listClients: vi.fn(async () => ({ clients: [{ id: 'c1', name: 'Northside Grill', state: 'FL' }] })),
+  listClientOptions: vi.fn(async () => ({ clients: [{ id: 'c1', name: 'Northside Grill', state: 'FL' }] })),
   listTemplates: vi.fn(async () => ({
     templates: [{ id: 't1', name: 'Standard', track: 'STANDARD', clientId: null }],
   })),
@@ -958,5 +959,56 @@ describe('<RecruitingHome> taking it back', () => {
     expect(opts.message).toMatch(/Maria Lopez hired — their onboarding invite goes out in \d+ seconds/);
     await expect(opts.onUndo()).resolves.toMatch(/no invite was sent/);
     expect(undoHire).toHaveBeenCalledWith('cand-1', 'Undone right after hiring');
+  });
+});
+
+describe('<RecruitingHome> deep audit fix wave (2026-10-29)', () => {
+  const EMMANUEL = { ...MARIA, id: 'cand-9', firstName: 'Emmanuel', lastName: 'Estrada', email: 'emmanuel@example.com', stage: 'OFFER' as const };
+
+  it('a search looks in every stage and says where the matches sit (PEOPLE-15)', async () => {
+    vi.mocked(listCandidates).mockImplementation((async (f: { q?: string }) =>
+      f.q
+        ? { candidates: [EMMANUEL], total: 1, offset: 0, limit: 50, stageCounts: { OFFER: 1 } }
+        : { candidates: [MARIA], total: 1, offset: 0, limit: 50 }) as never);
+    const user = renderHome('/recruiting?view=list');
+    await screen.findByText('Maria Lopez');
+    await user.type(screen.getByLabelText('Search candidates'), 'Emmanuel Estrada');
+    // The chip says Applied, but the search goes to every stage…
+    await waitFor(() => expect(listCandidates).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'Emmanuel Estrada' }), expect.anything()));
+    const last = vi.mocked(listCandidates).mock.calls.at(-1)![0] as { stage?: string };
+    expect(last.stage).toBeUndefined();
+    // …finds him in Offer, and says so instead of "No candidates match".
+    expect(await screen.findByText('Emmanuel Estrada')).toBeInTheDocument();
+    expect(screen.getByTestId('search-scope')).toHaveTextContent('Searching every stage — 0 in Applied, 1 in other stages.');
+    expect(screen.queryByText('No candidates match these filters')).toBeNull();
+  });
+
+  it('an offer line reads in words, and a lapsed one reads expired (PEOPLE-13, PEOPLE-20)', async () => {
+    vi.mocked(listOffers).mockResolvedValue({
+      offers: [
+        {
+          id: 'off-9', candidateId: 'cand-1', candidateName: 'Maria Lopez', clientId: 'c1', clientName: 'Northside Grill', jobTitle: 'Line Cook',
+          startDate: '2026-08-01', salary: null, hourlyRate: '15.00', currency: 'USD', letterBody: null,
+          status: 'SENT', sentAt: '2026-07-10T12:00:00.000Z', decidedAt: null, expiresAt: '2026-07-20T12:00:00.000Z', createdAt: '2026-07-09T12:00:00.000Z',
+        },
+      ],
+    } as never);
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    const line = await drawer.findByText(/starts Aug 1, 2026/);
+    expect(line.textContent).toContain('$15.00/hr');
+    expect(line.textContent).not.toMatch(/USD|2026-08-01/);
+    expect(drawer.getByText('Expired')).toBeInTheDocument();
+    expect(drawer.queryByText(/Awaiting their signature/)).toBeNull();
+  });
+
+  it('asks before Esc throws away a typed note (PEOPLE-14)', async () => {
+    const user = renderHome();
+    const drawer = await openMaria(user);
+    await user.type(drawer.getByLabelText('Add a note'), 'Called — available weekends');
+    await user.keyboard('{Escape}');
+    expect(await screen.findByText('Discard your changes?')).toBeInTheDocument();
+    // The drawer — and the note — are still there.
+    expect(screen.getByLabelText('Add a note')).toHaveValue('Called — available weekends');
   });
 });

@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { MulterError } from 'multer';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { ZodError } from 'zod';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { captureException } from '../lib/sentry.js';
 import { logger } from '../lib/logger.js';
 import {
@@ -80,6 +82,108 @@ export function isAbortedRequest(err: unknown): boolean {
   );
 }
 
+/** "costCenters.0.clientId" for each issue — the offending fields, for the log and Sentry. */
+export function zodIssueFields(err: ZodError): string[] {
+  return [...new Set(err.issues.map((i) => (i.path.length ? i.path.map(String).join('.') : '(root)')))].slice(0, 20);
+}
+
+/** The source lines of a file a stack frame names, cached (a crash loop must not re-read the disk). */
+const sourceLines = new Map<string, string[] | null>();
+function linesOf(file: string): string[] | null {
+  if (sourceLines.has(file)) return sourceLines.get(file)!;
+  let lines: string[] | null;
+  try {
+    lines = readFileSync(file.startsWith('file://') ? fileURLToPath(file) : file, 'utf8').split('\n');
+  } catch {
+    lines = null;
+  }
+  if (sourceLines.size > 500) sourceLines.clear();
+  sourceLines.set(file, lines);
+  return lines;
+}
+
+const FRAME = /\(?((?:file:\/\/)?\/[^():]+?):(\d+):(\d+)\)?\s*$/;
+const REQUEST_INPUT = /\b(?:req|request)\.(?:body|query|params|headers|file|files|cookies)\b/;
+
+/**
+ * What the failed `.parse(` was handed, read from the call site the
+ * error's stack names (zod captures the stack at its caller): the
+ * schema's name and the argument's text. Null when the source can't be
+ * read (a bundled build, an eval) — the caller then falls back on shape.
+ */
+export function zodCallSite(err: ZodError): { callee: string; arg: string; line: string } | null {
+  for (const raw of (err.stack ?? '').split('\n')) {
+    const line = raw.trim();
+    if (!line.startsWith('at ') || /node_modules|node:internal|middleware[\\/]error\.[tj]s/.test(line)) continue;
+    const m = FRAME.exec(line);
+    if (!m) continue;
+    const lines = linesOf(m[1]!);
+    if (!lines) return null;
+    const row = Number(m[2]) - 1;
+    const text = lines.slice(row, row + 6).join('\n');
+    const col = Math.max(0, Number(m[3]) - 1);
+    // The frame points at `parse`; the argument runs to the matching paren.
+    const at = text.indexOf('(', col);
+    if (at < 0) return null;
+    let depth = 0;
+    let end = text.length;
+    for (let i = at; i < text.length; i++) {
+      if (text[i] === '(') depth += 1;
+      else if (text[i] === ')' && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    const before = (lines[row] ?? '').slice(0, col);
+    const callee = /([A-Za-z_$][\w$]*)\s*\.\s*$/.exec(before)?.[1] ?? '';
+    return { callee, arg: text.slice(at + 1, end), line: lines[row] ?? '' };
+  }
+  return null;
+}
+
+function resolvesIn(root: unknown, path: ReadonlyArray<PropertyKey>): boolean {
+  let cur: unknown = root;
+  for (const k of path) {
+    if (cur === null || typeof cur !== 'object') return false;
+    cur = (cur as Record<PropertyKey, unknown>)[k as string];
+  }
+  return cur !== null && typeof cur === 'object';
+}
+
+/**
+ * Whose fault a ZodError is. 'request' — the route parsed what the client
+ * sent (req.body / query / params); answer 400 with the fields.
+ * 'server' — the route parsed something it built (its own response, a
+ * stored row); that is a bug: 500, logged, reported.
+ *
+ *   1. The call site, when its source can be read: an argument that names
+ *      req.body / req.query / req.params is the request; a schema named
+ *      `…Response(Schema)` or a parse inside `.json(` is the answer.
+ *   2. Otherwise the issues' shape: a request error's fields sit in the
+ *      request (a missing field's parent object is there); a field the
+ *      request doesn't have a parent for — `costCenters.0.clientId` on a
+ *      GET — was never the client's.
+ * Undecided stays 400, the answer every ZodError got before.
+ */
+export function zodErrorSource(err: ZodError, req: Pick<Request, 'body' | 'query' | 'params'>): 'request' | 'server' {
+  const site = zodCallSite(err);
+  if (site) {
+    if (REQUEST_INPUT.test(site.arg)) return 'request';
+    // `…ResponseSchema.parse(…)`: the route checking its own answer.
+    if (/Response(?:Schema)?$/.test(site.callee)) return 'server';
+    // `res.json(X.parse({ … }))`: an answer built in place. (A bare variable
+    // handed to the parse may still be the request's, so shape decides it.)
+    if (/\.json\(\s*[\w$.]*\.parse\(/.test(site.line) && !/^\s*[\w$.]+\s*$/.test(site.arg)) return 'server';
+  }
+  const inputs = [req.body, req.query, req.params].filter((x) => x !== null && typeof x === 'object');
+  if (!inputs.length) return 'server';
+  const fromRequest = err.issues.every((issue) => {
+    const parent = issue.path.slice(0, -1) as PropertyKey[];
+    return inputs.some((input) => resolvesIn(input, parent));
+  });
+  return fromRequest ? 'request' : 'server';
+}
+
 export function errorHandler(
   err: unknown,
   req: Request,
@@ -123,12 +227,39 @@ export function errorHandler(
   // safeParse + manual HttpError) bubble a ZodError up here. Translate
   // those into a clean 400 with the field-level details, so clients
   // get something actionable instead of a generic 500.
+  //
+  // But a ZodError is not always the client's: a route that parses its
+  // own ANSWER (`XResponseSchema.parse(payload)`) throws one too, and that
+  // is a server bug — the 2026-10-29 crawl found an org-wide list
+  // answering "400 Invalid request body" for a null column, unlogged and
+  // unreported (CRAWL-1 / CRAWL-6). zodErrorSource() tells them apart; a
+  // server-side parse failure is a 500, logged and reported with the
+  // route and the offending fields, and the user reads our sentence.
   if (err instanceof ZodError) {
-    sendError(req, res, 400, {
-      code: 'invalid_body',
-      message: 'Invalid request body',
-      details: err.flatten(),
+    if (zodErrorSource(err, req) === 'request') {
+      sendError(req, res, 400, {
+        code: 'invalid_body',
+        message: 'Invalid request body',
+        details: err.flatten(),
+      });
+      return;
+    }
+    const route = `${req.method} ${req.baseUrl ?? ''}${typeof req.route?.path === 'string' ? req.route.path : req.path}`;
+    const fields = zodIssueFields(err);
+    (req.log ?? logger).error(
+      { requestId, route, url: req.originalUrl, fields, issues: err.issues.slice(0, 10), userId: req.user?.id ?? null },
+      'response failed its own schema',
+    );
+    captureException(err, {
+      requestId,
+      kind: 'response_schema',
+      route,
+      method: req.method,
+      path: req.path,
+      fields,
+      userId: req.user?.id ?? null,
     });
+    sendError(req, res, 500, { code: 'internal_error', message: 'Something went wrong on our side.' });
     return;
   }
 
